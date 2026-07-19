@@ -21,6 +21,8 @@ model User {
 
   accounts Account[]
   sessions Session[]
+  stores   Store[]
+  draft    StoreDraft?
 }
 
 model Account {
@@ -57,4 +59,84 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model Store {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  slug        String   @unique
+  description String?
+  logoUrl     String?
+  theme       Json?
+  published   Boolean  @default(false)
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products Product[]
+  visions  StoreGeneration[]
+}
+
+model StoreDraft {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  inputStoreName   String?
+  inputProductType String?
+  inputVision      String?
+  name             String
+  description      String?
+  theme            Json?
+  productsDraft    Json?
+  blueprint        Json?
+  pendingChange    Json?
+  status           String   @default("draft")
+  version          Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generations StoreGeneration[]
+  messages    StoreDraftMessage[]
+}
+
+model StoreDraftMessage {
+  id           String   @id @default(cuid())
+  storeDraftId String
+  role         String
+  content      String
+  changes      Json?
+  createdAt    DateTime @default(now())
+
+  storeDraft StoreDraft @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
+}
+
+model StoreGeneration {
+  id              String   @id @default(cuid())
+  storeDraftId    String?
+  storeId         String?
+  version         Int
+  promptVersion   String   @default("v1")
+  milestone       String?
+  generatedOutput Json
+  createdAt       DateTime @default(now())
+
+  storeDraft StoreDraft? @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
+  store      Store?      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  storeId      String
+  name         String
+  description  String?
+  priceInCents Int
+  imageUrl     String?
+  active       Boolean  @default(true)
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }
