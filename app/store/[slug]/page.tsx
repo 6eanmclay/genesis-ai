@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { createCheckoutSession } from "./actions";
+import { SubmitButton } from "@/app/dashboard/SubmitButton";
 
 export async function generateMetadata({
   params,
@@ -92,6 +94,21 @@ export default async function StorefrontPage({
                   <p className="mt-3 text-lg font-semibold text-black dark:text-zinc-50">
                     ${(product.priceInCents / 100).toFixed(2)}
                   </p>
+                  <form
+                    action={createCheckoutSession.bind(
+                      null,
+                      slug,
+                      product.id
+                    )}
+                    className="mt-3"
+                  >
+                    <SubmitButton
+                      pendingText="Redirecting to checkout..."
+                      className="w-full rounded-full bg-foreground px-4 py-2 text-sm text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
+                    >
+                      Buy Now
+                    </SubmitButton>
+                  </form>
                 </div>
               </li>
             ))}
