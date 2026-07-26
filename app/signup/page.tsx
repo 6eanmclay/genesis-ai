@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 import Link from "next/link";
 
 export default function SignUpPage() {
@@ -32,7 +33,26 @@ export default function SignUpPage() {
         return;
       }
 
-      router.push("/login");
+      // Registration only creates the account row — it can't establish a
+      // session itself (that's NextAuth's own signIn flow). Sign in
+      // immediately with the same credentials so a new user lands straight
+      // in onboarding instead of being asked to re-enter what they just
+      // typed.
+      const signInResult = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (signInResult?.error) {
+        // Extremely unlikely (the account was just created with these exact
+        // credentials), but don't strand the user silently if it happens.
+        router.push("/login");
+        return;
+      }
+
+      router.push("/dashboard");
+      router.refresh();
     } catch {
       setError("Something went wrong. Please try again.");
       setLoading(false);

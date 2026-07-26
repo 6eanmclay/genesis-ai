@@ -1,0 +1,160 @@
+import { prisma } from "@/lib/prisma";
+import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
+import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
+import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
+import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, revertApprovalRequest } from "../ai-actions";
+import { grantAuthority, revokeAuthority } from "../actions";
+import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
+import { SubmitButton } from "../SubmitButton";
+
+// The real, wired-up capabilities today: SEO (Genesis-editable via chat,
+// approval-gated, shown here read-only) and the newsletter subscriber list
+// (real data that already existed with zero UI reading it — see the nav
+// plan). A manual SEO edit form, social bios brought to the same parity,
+// and "Social" folding in here once platform connections exist are the
+// next build on this route, not part of this pass.
+export default async function MarketingPage() {
+  const { store, role } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
+  const canManageAuthority = hasPermission(role, PERMISSIONS.AUTHORITY_MANAGE);
+
+  const [subscribers, pendingApprovals, seoAuthorityGrant, recentSeoDecisions] = await Promise.all([
+    prisma.newsletterSignup.findMany({
+      where: { storeId: store.id },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    }),
+    getPendingApprovals(store.id),
+    prisma.delegatedAuthority.findFirst({
+      where: { storeId: store.id, actionType: "update_seo", revokedAt: null },
+    }),
+    // Phase 6 — recent decided (not pending) update_seo approvals, human or
+    // autonomous, each with a Revert affordance — the safety valve for
+    // autonomous execution in particular, since it skips the moment a human
+    // could otherwise have caught something before it happened.
+    prisma.approvalRequest.findMany({
+      where: { storeId: store.id, actionType: "update_seo", status: "EXECUTED" },
+      orderBy: { decidedAt: "desc" },
+      take: 5,
+    }),
+  ]);
+  const seoApprovals = pendingApprovals.filter((a) => a.actionType === "update_seo");
+
+  const blueprint = store.blueprint as BlueprintContextSubset | null;
+  const seoTitle = blueprint?.marketingAssets?.seoTitle;
+  const seoMetaDescription = blueprint?.marketingAssets?.seoMetaDescription;
+
+  return (
+    <div className="min-h-screen p-8">
+      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Marketing</h1>
+
+      {seoApprovals.length > 0 && (
+        <>
+          <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
+            Awaiting Your Approval ({seoApprovals.length})
+          </h2>
+          <ApprovalRequestsPanel
+            approvals={seoApprovals}
+            approveAction={approveGenesisAction}
+            rejectAction={rejectGenesisAction}
+            regenerateAction={regenerateApprovalImage}
+          />
+        </>
+      )}
+
+      {canManageAuthority && (
+        <>
+          <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
+            Genesis&apos;s authority
+          </h2>
+          <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
+            {seoAuthorityGrant
+              ? "Genesis can publish SEO improvements automatically, without waiting for your approval."
+              : "Genesis will always ask before changing your SEO title or description."}
+          </p>
+          <form action={seoAuthorityGrant ? revokeAuthority : grantAuthority} className="mt-3">
+            <input type="hidden" name="actionType" value="update_seo" />
+            <SubmitButton
+              pendingText={seoAuthorityGrant ? "Revoking..." : "Granting..."}
+              className={
+                seoAuthorityGrant
+                  ? "rounded-full border border-black/[.08] px-4 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
+                  : "rounded-full bg-[var(--brand-accent,var(--foreground))] px-4 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              }
+            >
+              {seoAuthorityGrant ? "Ask before publishing SEO changes" : "Let Genesis publish SEO improvements automatically"}
+            </SubmitButton>
+          </form>
+        </>
+      )}
+
+      {recentSeoDecisions.length > 0 && (
+        <>
+          <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
+            Recently handled
+          </h2>
+          <ul className="mt-3 flex max-w-md flex-col gap-3">
+            {recentSeoDecisions.map((decision) => (
+              <li
+                key={decision.id}
+                className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]"
+              >
+                <p className="text-sm text-black dark:text-zinc-50">{decision.summary}</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {decision.decisionMode === "autonomous"
+                    ? "Handled by Genesis automatically"
+                    : "You approved this"}
+                  {decision.decidedAt ? ` — ${decision.decidedAt.toLocaleDateString()}` : ""}
+                </p>
+                <form action={revertApprovalRequest.bind(null, decision.id)} className="mt-2">
+                  <SubmitButton
+                    pendingText="Reverting..."
+                    className="rounded-full border border-black/[.08] px-3 py-1 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
+                  >
+                    Revert
+                  </SubmitButton>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">SEO</h2>
+      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        Ask Genesis to update your SEO title or description — changes go
+        through the usual approval step.
+      </p>
+      <div className="mt-4 max-w-md rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Title</p>
+        <p className="mt-1 text-sm text-black dark:text-zinc-50">
+          {seoTitle || "Not set yet"}
+        </p>
+        <p className="mt-3 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          Meta description
+        </p>
+        <p className="mt-1 text-sm text-black dark:text-zinc-50">
+          {seoMetaDescription || "Not set yet"}
+        </p>
+      </div>
+
+      <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
+        Newsletter subscribers ({subscribers.length})
+      </h2>
+      {subscribers.length === 0 ? (
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+          No signups yet — your storefront&apos;s newsletter form will list
+          them here as they come in.
+        </p>
+      ) : (
+        <ul className="mt-4 max-w-md flex-col gap-1.5 divide-y divide-black/[.05] rounded-lg border border-black/[.08] dark:divide-white/[.08] dark:border-white/[.145]">
+          {subscribers.map((sub) => (
+            <li key={sub.id} className="flex items-center justify-between px-3 py-2 text-sm">
+              <span className="text-black dark:text-zinc-50">{sub.email}</span>
+              <span className="text-xs text-zinc-500">{sub.createdAt.toLocaleDateString()}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

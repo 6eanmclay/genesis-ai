@@ -1,15 +1,8 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import {
-  createProduct,
-  editProduct,
-  editStore,
-  toggleProductActive,
-  deleteProduct,
-  toggleStorePublished,
-} from "./actions";
-import { DeleteProductButton } from "./DeleteProductButton";
 import { SubmitButton } from "./SubmitButton";
 import { GenesisAssistant } from "./GenesisAssistant";
 import {
@@ -20,7 +13,25 @@ import {
   applyThemePersonality,
   restoreStoreDraftVersion,
   confirmStoreDraft,
+  explainRecommendation,
+  reviewBusinessWithGenesis,
 } from "./ai-actions";
+import { DEFAULT_THEME, googleFontsUrl, themeCssVars, type Theme } from "@/lib/theme";
+import { PERMISSIONS, hasPermission, resolveUserStore, type Permission } from "@/lib/permissions";
+import { getOrderSummary, getRecentActivity, getRecentOrders } from "@/lib/dashboard/whatHappened";
+import { getAttentionItems } from "@/lib/dashboard/needsAttention";
+import { getRecommendations } from "@/lib/dashboard/recommendations";
+import { getInventorySnapshot } from "@/lib/dashboard/inventory";
+import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
+import { runOpportunisticAiReviewIfStale } from "@/lib/dashboard/genesisObservations";
+import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
+import { ActivityFeed } from "./ActivityFeed";
+import { AttentionPanel } from "./AttentionPanel";
+import { RecommendationsPanel } from "./RecommendationsPanel";
+import { ApprovalsSummary } from "./ApprovalsSummary";
+import { GreetingHeader } from "./GreetingHeader";
+import { RecentOrdersCard } from "./RecentOrdersCard";
+import { BusinessJourney } from "./BusinessJourney";
 
 const BRAND_PERSONALITIES = [
   "Luxury",
@@ -33,42 +44,71 @@ const BRAND_PERSONALITIES = [
   "Organic",
 ] as const;
 
-type DraftTheme = {
-  colors: {
-    primary: string;
-    secondary: string;
-    accent: string;
-    background: string;
-    surface: string;
-    text: string;
-    textSecondary: string;
-  };
-  typography: {
-    headingFont: string;
-    bodyFont: string;
-  };
-  layout: "grid" | "list" | "featured";
-};
-
 type DraftProduct = {
   name: string;
   description: string;
   price: number;
 };
 
-const DEFAULT_THEME: DraftTheme = {
-  colors: {
-    primary: "#000000",
-    secondary: "#000000",
-    accent: "#000000",
-    background: "#ffffff",
-    surface: "#ffffff",
-    text: "#000000",
-    textSecondary: "#666666",
-  },
-  typography: { headingFont: "", bodyFont: "" },
-  layout: "grid",
-};
+// Small relative-time formatter for "Generated X ago" — this codebase has
+// no existing time-ago utility (elsewhere just uses toLocaleString()), and
+// pulling in a date library for one label wasn't worth it.
+function formatTimeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+// A subtle accent-tinted header for the workspace, plus a monogram avatar
+// and accent-colored primary buttons — this is intentionally lighter-touch
+// than the full theme applied on the public storefront. Body text, form
+// inputs, and card backgrounds stay neutral so the workspace stays
+// readable no matter what palette Genesis generates.
+function BrandHeader({
+  theme,
+  name,
+  eyebrow,
+}: {
+  theme: Theme;
+  name: string;
+  eyebrow?: string;
+}) {
+  const fontsUrl = googleFontsUrl([theme.typography.headingFont]);
+  return (
+    <>
+      {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
+      <div
+        className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[var(--brand-primary)]/10 via-[var(--brand-accent)]/10 to-transparent p-4"
+      >
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--brand-accent)] text-lg font-semibold text-white">
+          {name.trim().charAt(0).toUpperCase() || "?"}
+        </div>
+        <div>
+          {eyebrow && (
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              {eyebrow}
+            </p>
+          )}
+          <p className="font-[var(--font-heading)] text-2xl font-semibold text-black dark:text-zinc-50">
+            {name}
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// Padding/text-size are deliberately excluded so every call site sets its
+// own — Tailwind class order doesn't reliably resolve conflicting utilities
+// (e.g. px-5 from here vs px-4 at the call site), so this only ever
+// contains non-conflicting brand styling.
+const ACCENT_BUTTON =
+  "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -77,9 +117,9 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const store = await prisma.store.findFirst({
-    where: { userId: session.user.id },
-  });
+  const resolved = await resolveUserStore(session.user.id);
+  const store = resolved?.store ?? null;
+  const role = resolved?.role ?? null;
 
   if (!store) {
     const draft = await prisma.storeDraft.findUnique({
@@ -91,14 +131,20 @@ export default async function DashboardPage() {
     });
 
     if (draft) {
-      const theme = (draft.theme as DraftTheme | null) ?? DEFAULT_THEME;
+      const theme = (draft.theme as Theme | null) ?? DEFAULT_THEME;
       const products = (draft.productsDraft as DraftProduct[] | null) ?? [];
 
       return (
-        <div className="min-h-screen bg-gradient-to-b from-zinc-100 via-zinc-50 to-white p-8 dark:from-zinc-950 dark:via-black dark:to-zinc-950">
-          <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-            Draft: {draft.name}
-          </h1>
+        <div
+          style={themeCssVars(theme)}
+          className="min-h-screen bg-gradient-to-b from-zinc-100 via-zinc-50 to-white p-8 dark:from-zinc-950 dark:via-black dark:to-zinc-950"
+        >
+          <BrandHeader theme={theme} name={draft.name} eyebrow="Draft" />
+          {draft.tagline && (
+            <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
+              {draft.tagline}
+            </p>
+          )}
           <p className="mt-1 text-xs text-zinc-500">version {draft.version}</p>
 
           <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
@@ -202,8 +248,8 @@ export default async function DashboardPage() {
               <textarea
                 name="description"
                 defaultValue={draft.description ?? ""}
-                rows={3}
-                className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+                rows={5}
+                className="max-h-64 rounded-lg border border-black/[.08] px-4 py-2 [field-sizing:content] dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
               />
             </div>
 
@@ -289,8 +335,8 @@ export default async function DashboardPage() {
                   <textarea
                     name={`product-${index}-description`}
                     defaultValue={product.description}
-                    rows={2}
-                    className="rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+                    rows={5}
+                    className="max-h-64 rounded-lg border border-black/[.08] px-3 py-1.5 [field-sizing:content] dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
                   />
                   <input
                     name={`product-${index}-price`}
@@ -307,7 +353,7 @@ export default async function DashboardPage() {
 
             <SubmitButton
               pendingText="Saving..."
-              className="mt-6 self-start rounded-full bg-foreground px-5 py-2 text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
+              className={`mt-6 self-start px-5 py-2 ${ACCENT_BUTTON}`}
             >
               Save changes
             </SubmitButton>
@@ -395,7 +441,7 @@ export default async function DashboardPage() {
             <form action={confirmStoreDraft} className="mt-4 flex justify-center">
               <SubmitButton
                 pendingText="Bringing your store to life..."
-                className="rounded-full bg-foreground px-8 py-3 text-base font-medium text-background transition-transform hover:scale-105 disabled:opacity-50 dark:hover:bg-[#ccc]"
+                className={`px-8 py-3 text-base font-medium hover:scale-105 ${ACCENT_BUTTON}`}
               >
                 Confirm &amp; Create Store
               </SubmitButton>
@@ -415,6 +461,12 @@ export default async function DashboardPage() {
             storeName={draft.name}
             messages={draft.messages}
             sendMessage={sendDraftMessage}
+            // Drafts have no ApprovalRequest/GenesisObservation concept at
+            // all (Phase 1/4 both scoped entirely to live stores) — always
+            // false, not a placeholder.
+            hasUrgentIssue={false}
+            hasPendingDecision={false}
+            hasOpportunity={false}
           />
         </div>
       );
@@ -493,212 +545,257 @@ export default async function DashboardPage() {
     );
   }
 
+  // Phase 4 — the opportunistic, cost-gated AI review trigger. Scheduled
+  // via after() so an unlucky page load that happens to be stale never
+  // blocks or slows this render — it only runs once the response has
+  // already been sent. runOpportunisticAiReviewIfStale does its own
+  // staleness/claim check first and is usually a no-op.
+  after(() => runOpportunisticAiReviewIfStale(store.id, session.user.id).catch(() => {}));
+  // Phase 5 — a separate after() call, deliberately not bundled into the
+  // AI-review gate above: measurement is deterministic/zero-AI-cost and
+  // should run on every opportunistic trigger, not only when the (unrelated)
+  // AI-review staleness check happens to fire.
+  after(() => measureDueMeasurements(store.id).catch(() => {}));
+
   const products = await prisma.product.findMany({
     where: { storeId: store.id },
-    orderBy: { position: "asc" },
+    select: { active: true },
   });
 
-  const visions = await prisma.storeGeneration.findMany({
-    where: { storeId: store.id },
-    orderBy: { createdAt: "asc" },
-  });
-  const originalVision = visions.find((v) => v.milestone === "original");
-  const firstRefinedVision = visions.find(
-    (v) => v.milestone === "first_refined"
-  );
+  const [stripeIntegration, paypalIntegration] =
+    role === "OWNER"
+      ? await Promise.all([
+          prisma.storeIntegration.findUnique({
+            where: { storeId_provider: { storeId: store.id, provider: "STRIPE" } },
+            select: { status: true },
+          }),
+          prisma.storeIntegration.findUnique({
+            where: { storeId_provider: { storeId: store.id, provider: "PAYPAL" } },
+            select: { status: true },
+          }),
+        ])
+      : [null, null];
+
+  const can = (permission: Permission) => (role ? hasPermission(role, permission) : false);
+  const canViewOrders = can(PERMISSIONS.ORDERS_VIEW);
+  const canViewRevenue = can(PERMISSIONS.REVENUE_VIEW);
+  const canViewAnalytics = can(PERMISSIONS.ANALYTICS_VIEW);
+  // Activity Feed / Attention Panel mix in action types (Stripe changes,
+  // store renames) an Employee doesn't have visibility into anywhere else
+  // on the dashboard today — Owner-only for now, not architecturally
+  // permanent (see ARCHITECTURE.md).
+  const isOwnerManager = role === "OWNER";
+
+  const [orderSummary, recentOrders, activityItems, attention] = await Promise.all([
+    canViewOrders ? getOrderSummary(store.id, { includeRevenue: canViewRevenue }) : Promise.resolve(null),
+    canViewOrders
+      ? getRecentOrders(store.id, { includeRevenue: canViewRevenue, limit: 5 })
+      : Promise.resolve([]),
+    // Home shows only the highest-signal recent activity — a full,
+    // undifferentiated log isn't what "concise command center" means.
+    isOwnerManager ? getRecentActivity(store.id, 5) : Promise.resolve([]),
+    isOwnerManager
+      ? getAttentionItems(store.id, {
+          store: { published: store.published },
+          products,
+          stripeIntegration,
+          paypalIntegration,
+        })
+      : Promise.resolve({ recentOutcomes: [], currentState: [] }),
+  ]);
+
+  const inventorySnapshot = canViewOrders ? getInventorySnapshot(products) : null;
+  const storeBlueprint = store.blueprint as {
+    brandIdentity?: {
+      brandPersonality?: string;
+      brandVoiceAndTone?: string;
+      targetAudience?: string;
+      uniqueSellingProposition?: string;
+    };
+    homepageContent?: { heroHeadline?: string; aboutUs?: string };
+  } | null;
+
+  const [recommendations, latestGenesisRecommendation, pendingApprovals] = canViewAnalytics
+    ? await Promise.all([
+        getRecommendations({
+          storeId: store.id,
+          storeName: store.name,
+          store: { published: store.published },
+          products: await prisma.product.findMany({
+            where: { storeId: store.id },
+            select: { name: true, description: true, priceInCents: true, active: true },
+          }),
+          stripeIntegration,
+          attentionItems: [...attention.recentOutcomes, ...attention.currentState],
+          orderSummary: orderSummary ?? {
+            orderCount: 0,
+            revenueInCents: null,
+            allTimeOrderCount: 0,
+            allTimeRevenueInCents: null,
+            windowLabel: "Last 30 days",
+          },
+          customerSummaries: [],
+          inventorySnapshot,
+          recentActivity: activityItems,
+          blueprint: storeBlueprint?.brandIdentity
+            ? {
+                brandPersonality: storeBlueprint.brandIdentity.brandPersonality ?? "",
+                brandVoiceAndTone: storeBlueprint.brandIdentity.brandVoiceAndTone ?? "",
+                targetAudience: storeBlueprint.brandIdentity.targetAudience ?? "",
+                uniqueSellingProposition: storeBlueprint.brandIdentity.uniqueSellingProposition ?? "",
+                heroHeadline: storeBlueprint.homepageContent?.heroHeadline ?? "",
+                aboutUs: storeBlueprint.homepageContent?.aboutUs ?? "",
+              }
+            : null,
+        }),
+        prisma.generatedRecommendation.findFirst({
+          where: { storeId: store.id },
+          orderBy: { generatedAt: "desc" },
+          select: { generatedAt: true },
+        }),
+        getPendingApprovals(store.id),
+      ])
+    : [[], null, []];
+
+  const storeTheme = (store.theme as Theme | null) ?? DEFAULT_THEME;
+  const fontsUrl = googleFontsUrl([storeTheme.typography.headingFont]);
+  const hasAttentionOrApprovals = attention.recentOutcomes.length > 0 || pendingApprovals.length > 0;
 
   return (
-    <div className="min-h-screen bg-zinc-50 p-8 dark:bg-black">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-          {store.name}
-        </h1>
-        <form action={toggleStorePublished}>
-          <SubmitButton
-            pendingText="Updating..."
-            className="rounded-full border border-black/[.08] px-4 py-1.5 text-sm disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
-          >
-            {store.published ? "Published — unpublish" : "Unpublished — publish"}
-          </SubmitButton>
-        </form>
-      </div>
+    <div style={themeCssVars(storeTheme)} className="min-h-screen p-8">
+      {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
 
-      <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-        Store settings
-      </h2>
-      <form action={editStore} className="mt-4 flex max-w-md flex-col gap-4">
-        <input
-          name="name"
-          type="text"
-          defaultValue={store.name}
-          required
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <textarea
-          name="description"
-          defaultValue={store.description ?? ""}
-          placeholder="Description (optional)"
-          rows={3}
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <SubmitButton
-          pendingText="Saving..."
-          className="mt-2 self-start rounded-full bg-foreground px-5 py-2 text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-        >
-          Save store info
-        </SubmitButton>
-      </form>
+      {/* Welcome */}
+      <GreetingHeader storeName={store.name} tagline={store.tagline} />
 
-      {originalVision && (
+      {/* Today, at a glance — large numbers, no boxes; spacing and type carry
+          the hierarchy instead of bordered cards. */}
+      {canViewOrders && orderSummary && (
+        <div className="mt-10 flex flex-wrap items-baseline gap-x-12 gap-y-5">
+          {orderSummary.revenueInCents !== null && (
+            <div>
+              <p className="font-[var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
+                ${(orderSummary.revenueInCents / 100).toFixed(2)}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                {orderSummary.windowLabel.toLowerCase()} revenue
+              </p>
+            </div>
+          )}
+          <div>
+            <p className="font-[var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
+              {orderSummary.orderCount}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              order{orderSummary.orderCount === 1 ? "" : "s"}, {orderSummary.windowLabel.toLowerCase()}
+            </p>
+          </div>
+          {inventorySnapshot && (
+            <div>
+              <p className="font-[var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
+                {inventorySnapshot.activeCount}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">active products</p>
+            </div>
+          )}
+          <Link href="/dashboard/website" className="group">
+            <p
+              className={
+                store.published
+                  ? "font-[var(--font-heading)] text-4xl font-semibold text-emerald-600 dark:text-emerald-400"
+                  : "font-[var(--font-heading)] text-4xl font-semibold text-zinc-400 dark:text-zinc-600"
+              }
+            >
+              {store.published ? "Live" : "Unpublished"}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500 group-hover:underline">
+              storefront
+            </p>
+          </Link>
+        </div>
+      )}
+
+      {/* Business Journey — real progress, not a software setup checklist.
+          Leads with what's moving forward before anything problem-shaped. */}
+      {isOwnerManager && canViewOrders && orderSummary && (
+        <BusinessJourney
+          published={store.published}
+          hasActiveProducts={(inventorySnapshot?.activeCount ?? 0) > 0}
+          stripeIntegration={stripeIntegration}
+          paypalIntegration={paypalIntegration}
+          allTimeOrderCount={orderSummary.allTimeOrderCount}
+        />
+      )}
+
+      {/* Needs your attention — genuine issues only now; routine incomplete
+          setup lives positively in Business Journey above instead. */}
+      {isOwnerManager && hasAttentionOrApprovals && (
         <>
-          <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-            Your Store&apos;s Vision
+          <h2 id="attention" className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
+            Needs your attention
           </h2>
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-            The story of how {store.name} came to be — this stays with your
-            store for good.
-          </p>
-          <ul className="mt-4 flex max-w-md flex-col gap-3">
-            <li className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-              <p className="font-medium text-black dark:text-zinc-50">
-                Original Vision
-              </p>
-              <p className="mt-1 text-xs text-zinc-500">
-                The first version Genesis created from your original idea.
-              </p>
-              <p className="mt-1 text-xs text-zinc-400">
-                {originalVision.createdAt.toLocaleDateString()}
-              </p>
-            </li>
-            {firstRefinedVision && (
-              <li className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-                <p className="font-medium text-black dark:text-zinc-50">
-                  First Refined Vision
+          <div className="mt-3 flex max-w-md flex-col gap-4">
+            <AttentionPanel items={attention.recentOutcomes} />
+            {canViewAnalytics && pendingApprovals.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  Awaiting your decision
                 </p>
-                <p className="mt-1 text-xs text-zinc-500">
-                  The first version you chose to bring to life.
-                </p>
-                <p className="mt-1 text-xs text-zinc-400">
-                  {firstRefinedVision.createdAt.toLocaleDateString()}
-                </p>
-              </li>
+                <ApprovalsSummary approvals={pendingApprovals} />
+              </div>
             )}
-            <li className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-              <p className="font-medium text-black dark:text-zinc-50">
-                Current Vision
-              </p>
-              <p className="mt-1 text-xs text-zinc-500">
-                The version currently powering your store.
-              </p>
-              <p className="mt-1 text-xs text-zinc-400">
-                {store.updatedAt.toLocaleDateString()}
-              </p>
-            </li>
-          </ul>
+          </div>
         </>
       )}
 
-      <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-        Products
-      </h2>
-
-      {products.length === 0 ? (
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          No products yet. Add your first one below.
-        </p>
-      ) : (
-        <ul className="mt-4 flex max-w-md flex-col gap-4">
-          {products.map((product) => (
-            <li
-              key={product.id}
-              className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]"
-            >
-              <form
-                action={editProduct.bind(null, product.id)}
-                className="flex flex-col gap-2"
-              >
-                <input
-                  name="name"
-                  type="text"
-                  defaultValue={product.name}
-                  required
-                  className="rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                />
-                <textarea
-                  name="description"
-                  defaultValue={product.description ?? ""}
-                  placeholder="Description (optional)"
-                  rows={2}
-                  className="rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                />
-                <input
-                  name="price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  defaultValue={(product.priceInCents / 100).toFixed(2)}
-                  required
-                  className="rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                />
-                <SubmitButton
-                  pendingText="Saving..."
-                  className="mt-1 self-start rounded-full bg-foreground px-4 py-1 text-sm text-background hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-                >
-                  Save
-                </SubmitButton>
-              </form>
-
-              <div className="mt-3 flex items-center gap-3">
-                <form action={toggleProductActive.bind(null, product.id)}>
-                  <SubmitButton
-                    pendingText="Updating..."
-                    className="text-xs text-zinc-500 underline hover:text-black disabled:opacity-50 dark:hover:text-zinc-50"
-                  >
-                    {product.active ? "Active — hide" : "Hidden — show"}
-                  </SubmitButton>
-                </form>
-                <form action={deleteProduct.bind(null, product.id)}>
-                  <DeleteProductButton />
-                </form>
-              </div>
-            </li>
-          ))}
-        </ul>
+      {/* Recent orders — positive activity, shown separately from anything problem-shaped */}
+      {canViewOrders && recentOrders.length > 0 && (
+        <>
+          <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
+            Recent orders
+          </h2>
+          <RecentOrdersCard orders={recentOrders} />
+        </>
       )}
 
-      <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-        Add a product
-      </h2>
-      <form action={createProduct} className="mt-4 flex max-w-md flex-col gap-4">
-        <input
-          name="name"
-          type="text"
-          placeholder="Product name"
-          required
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <textarea
-          name="description"
-          placeholder="Description (optional)"
-          rows={3}
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <input
-          name="price"
-          type="number"
-          step="0.01"
-          min="0"
-          placeholder="Price (e.g. 19.99)"
-          required
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <SubmitButton
-          pendingText="Adding..."
-          className="mt-2 rounded-full bg-foreground px-5 py-2 text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-        >
-          Add product
-        </SubmitButton>
-      </form>
+      {/* Genesis insights — keeps its review control even with nothing to show right now */}
+      {canViewAnalytics && (
+        <>
+          <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-black dark:text-zinc-50">
+              From Genesis
+            </h2>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-zinc-500">
+                {latestGenesisRecommendation
+                  ? `Reviewed ${formatTimeAgo(latestGenesisRecommendation.generatedAt)}`
+                  : "Genesis hasn't reviewed this business yet"}
+              </span>
+              <form action={reviewBusinessWithGenesis}>
+                <SubmitButton
+                  pendingText="Reviewing..."
+                  className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
+                >
+                  ✨ Ask Genesis to Review My Business
+                </SubmitButton>
+              </form>
+            </div>
+          </div>
+          <RecommendationsPanel recommendations={recommendations} explainAction={explainRecommendation} />
+        </>
+      )}
+
+      {/* Recently — compact, human-readable, absent entirely when there's nothing */}
+      {isOwnerManager && activityItems.length > 0 && (
+        <>
+          <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
+            Recently
+          </h2>
+          <div className="mt-3 max-w-md">
+            <ActivityFeed items={activityItems} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1,22 +1,32 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { signOut } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
+import { getConnector } from "@/lib/integrations/registry";
+import { execute } from "@/lib/execution/engine";
+import { publishStoreExecutable } from "@/lib/execution/executables/storePublish";
+import { editStoreExecutable } from "@/lib/execution/executables/storeEdit";
+import {
+  createProductExecutable,
+  editProductExecutable,
+  toggleProductActiveExecutable,
+  deleteProductExecutable,
+} from "@/lib/execution/executables/products";
+import { connectExecutable, verifyExecutable } from "@/lib/execution/adapters/integrationExecutable";
+import { grantDelegatedAuthority, revokeDelegatedAuthority } from "@/lib/execution/genesisAutonomy";
+
+// JWT session strategy — signing out clears the session cookie itself
+// (there's no server-side session row to revoke), which is what actually
+// stops the browser Back button from restoring access: the cookie is gone,
+// so any subsequent request (including one triggered by Back) has nothing
+// for auth() to read. redirectTo lands on the now-public root entry page.
+export async function signOutOfGenesis() {
+  await signOut({ redirectTo: "/" });
+}
 
 export async function createProduct(formData: FormData) {
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
-
-  const store = await prisma.store.findFirst({
-    where: { userId: session.user.id },
-  });
-  if (!store) {
-    redirect("/dashboard");
-  }
-
   const name = (formData.get("name") as string)?.trim();
   const description = (formData.get("description") as string)?.trim();
   const priceInput = formData.get("price") as string;
@@ -29,36 +39,16 @@ export async function createProduct(formData: FormData) {
     throw new Error("Enter a valid price");
   }
 
-  const productCount = await prisma.product.count({
-    where: { storeId: store.id },
+  await execute(createProductExecutable, {
+    name,
+    description: description || null,
+    priceInCents,
   });
 
-  await prisma.product.create({
-    data: {
-      storeId: store.id,
-      name,
-      description: description || null,
-      priceInCents,
-      position: productCount,
-    },
-  });
-
-  redirect("/dashboard");
+  redirect("/dashboard/products");
 }
 
 export async function editStore(formData: FormData) {
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
-
-  const store = await prisma.store.findFirst({
-    where: { userId: session.user.id },
-  });
-  if (!store) {
-    redirect("/dashboard");
-  }
-
   const name = (formData.get("name") as string)?.trim();
   const description = (formData.get("description") as string)?.trim();
 
@@ -66,44 +56,19 @@ export async function editStore(formData: FormData) {
     throw new Error("Store name is required");
   }
 
-  await prisma.store.update({
-    where: { id: store.id },
-    data: { name, description: description || null },
-  });
+  await execute(editStoreExecutable, { name, description: description || null });
 
-  redirect("/dashboard");
+  redirect("/dashboard/settings");
 }
 
 export async function toggleStorePublished() {
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
+  await execute(publishStoreExecutable, undefined);
 
-  const store = await prisma.store.findFirst({
-    where: { userId: session.user.id },
-  });
-  if (!store) {
-    redirect("/dashboard");
-  }
-
-  await prisma.store.update({
-    where: { id: store.id },
-    data: { published: !store.published },
-  });
-
-  redirect("/dashboard");
+  redirect("/dashboard/website");
 }
 
 export async function editProduct(productId: string, formData: FormData) {
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
-
-  const product = await prisma.product.findFirst({
-    where: { id: productId, store: { userId: session.user.id } },
-  });
+  const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) {
     throw new Error("Product not found");
   }
@@ -120,49 +85,132 @@ export async function editProduct(productId: string, formData: FormData) {
     throw new Error("Enter a valid price");
   }
 
-  await prisma.product.update({
-    where: { id: productId },
-    data: { name, description: description || null, priceInCents },
-  });
+  await execute(
+    editProductExecutable,
+    { productId, name, description: description || null, priceInCents },
+    { storeId: product.storeId }
+  );
 
-  redirect("/dashboard");
+  redirect("/dashboard/products");
 }
 
 export async function toggleProductActive(productId: string) {
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
-
-  const product = await prisma.product.findFirst({
-    where: { id: productId, store: { userId: session.user.id } },
-  });
+  const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) {
     throw new Error("Product not found");
   }
 
-  await prisma.product.update({
-    where: { id: productId },
-    data: { active: !product.active },
-  });
+  await execute(
+    toggleProductActiveExecutable,
+    { productId, currentActive: product.active },
+    { storeId: product.storeId }
+  );
 
-  redirect("/dashboard");
+  redirect("/dashboard/products");
 }
 
 export async function deleteProduct(productId: string) {
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
-
-  const product = await prisma.product.findFirst({
-    where: { id: productId, store: { userId: session.user.id } },
-  });
+  const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) {
     throw new Error("Product not found");
   }
 
-  await prisma.product.delete({ where: { id: productId } });
+  await execute(
+    deleteProductExecutable,
+    { productId, name: product.name },
+    { storeId: product.storeId }
+  );
 
-  redirect("/dashboard");
+  redirect("/dashboard/products");
+}
+
+export async function connectStripe() {
+  const result = await execute(connectExecutable(getConnector("STRIPE")), {});
+  if (result.redirectUrl) {
+    redirect(result.redirectUrl);
+  }
+
+  redirect("/dashboard/payments");
+}
+
+export async function disconnectStripe() {
+  const { storeId } = await requireStorePermission(PERMISSIONS.PAYMENTS_MANAGE);
+
+  await getConnector("STRIPE").disconnect(storeId);
+
+  redirect("/dashboard/payments");
+}
+
+export async function recheckStripe() {
+  await execute(verifyExecutable(getConnector("STRIPE")), undefined);
+
+  redirect("/dashboard/payments");
+}
+
+export async function connectPaypal() {
+  const result = await execute(connectExecutable(getConnector("PAYPAL")), {});
+  if (result.redirectUrl) {
+    redirect(result.redirectUrl); // never true for PayPal today — kept for structural symmetry with connectStripe
+  }
+
+  redirect("/dashboard/payments");
+}
+
+// The second `connect()` call a form-based connector needs — Stripe's OAuth
+// flow never had an equivalent, since the callback route plays this role
+// for redirect-based connectors instead.
+export async function submitPaypalCredentials(formData: FormData) {
+  const clientId = (formData.get("clientId") as string)?.trim();
+  const clientSecret = (formData.get("clientSecret") as string)?.trim();
+  const environment = (formData.get("environment") as string)?.trim();
+
+  if (!clientId || !clientSecret) {
+    throw new Error("Client ID and Secret are required");
+  }
+
+  await execute(connectExecutable(getConnector("PAYPAL")), {
+    params: { clientId, clientSecret, environment },
+  });
+
+  redirect("/dashboard/payments");
+}
+
+export async function disconnectPaypal() {
+  const { storeId } = await requireStorePermission(PERMISSIONS.PAYMENTS_MANAGE);
+
+  await getConnector("PAYPAL").disconnect(storeId);
+
+  redirect("/dashboard/payments");
+}
+
+export async function recheckPaypal() {
+  await execute(verifyExecutable(getConnector("PAYPAL")), undefined);
+
+  redirect("/dashboard/payments");
+}
+
+// Phase 6 — owner-only (AUTHORITY_MANAGE is never granted to EMPLOYEE, see
+// lib/permissions.ts), so grantedByUserId is always an owner: an employee
+// cannot create, benefit from, or influence a delegation. formData carries
+// actionType directly rather than a typed enum since the calling form
+// already only ever renders one delegable action's toggle at a time (see
+// app/dashboard/marketing/page.tsx) — grantDelegatedAuthority itself throws
+// if the actionType turns out not to be delegable, so this can't silently
+// grant something it shouldn't.
+export async function grantAuthority(formData: FormData) {
+  const { storeId, userId } = await requireStorePermission(PERMISSIONS.AUTHORITY_MANAGE);
+  const actionType = formData.get("actionType") as string;
+
+  await grantDelegatedAuthority({ storeId, actionType, grantedByUserId: userId });
+
+  redirect("/dashboard/marketing");
+}
+
+export async function revokeAuthority(formData: FormData) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.AUTHORITY_MANAGE);
+  const actionType = formData.get("actionType") as string;
+
+  await revokeDelegatedAuthority(storeId, actionType);
+
+  redirect("/dashboard/marketing");
 }

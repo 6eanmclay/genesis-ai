@@ -1,0 +1,41 @@
+import type { IntegrationProvider, StoreIntegration } from "@prisma/client";
+import type { Permission } from "@/lib/permissions";
+
+// The framework never assumes how a connector authenticates — the
+// connector decides, and tells the caller what to do next via `kind`.
+export type ConnectResult =
+  // OAuth-style: send the merchant to the provider's own hosted flow.
+  | { kind: "redirect"; url: string }
+  // API-key-style (a future USPS/ERP-shaped provider): collect input from
+  // the merchant, then call connect() again with the submitted values.
+  | { kind: "form"; fields: { name: string; label: string; type: "text" | "password" }[] }
+  // Done in one step (e.g. a device-flow completion, or the second call of
+  // an OAuth exchange once the provider's callback has round-tripped).
+  | { kind: "connected" };
+
+// Every integration (Stripe today; PayPal, Google, Slack, USPS later)
+// implements this same contract — see lib/integrations/stripe.ts for the
+// reference implementation and lib/integrations/registry.ts for lookup.
+export interface IntegrationConnector {
+  provider: IntegrationProvider;
+  displayName: string;
+  requiredPermission: Permission;
+
+  // Called once with no params to kick off a connection; called again with
+  // whatever params that step produced (an OAuth `code`, a submitted API
+  // key, ...) to continue/complete it. The connector owns its own steps.
+  connect(
+    storeId: string,
+    userId: string,
+    params?: Record<string, string>
+  ): Promise<ConnectResult>;
+
+  // Re-checkable at any time — on connect, and on demand (e.g. a "Recheck"
+  // action). No background scheduler exists yet, so "Monitor" today means
+  // "verifiable whenever asked," not a cron job.
+  verify(storeId: string): Promise<{ ok: boolean; error?: string }>;
+
+  disconnect(storeId: string): Promise<void>;
+
+  status(storeId: string): Promise<StoreIntegration | null>;
+}

@@ -19,10 +19,13 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts Account[]
-  sessions Session[]
-  stores   Store[]
-  draft    StoreDraft?
+  accounts              Account[]
+  sessions              Session[]
+  stores                Store[]
+  draft                 StoreDraft?
+  storeMemberships      StoreMember[]
+  connectedIntegrations StoreIntegration[]
+  executionLogs         ExecutionLog[]
 }
 
 model Account {
@@ -62,22 +65,97 @@ model VerificationToken {
 }
 
 model Store {
-  id          String   @id @default(cuid())
-  userId      String
-  name        String
-  slug        String   @unique
-  description String?
-  logoUrl     String?
-  theme       Json?
-  published   Boolean  @default(false)
-  version     Int      @default(1)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  userId        String
+  name          String
+  slug          String   @unique
+  description   String?
+  tagline       String?
+  logoUrl       String?
+  theme         Json?
+  blueprint     Json?
+  pendingChange Json?
+  published     Boolean  @default(false)
+  version       Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  products Product[]
-  visions  StoreGeneration[]
-  orders   Order[]
+  user                     User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products                 Product[]
+  visions                  StoreGeneration[]
+  orders                   Order[]
+  messages                 StoreMessage[]
+  subscribers              NewsletterSignup[]
+  members                  StoreMember[]
+  integrations             StoreIntegration[]
+  executionLogs            ExecutionLog[]
+  generatedRecommendations GeneratedRecommendation[]
+  approvalRequests         ApprovalRequest[]
+  observations             GenesisObservation[]
+  postExecutionMeasurements PostExecutionMeasurement[]
+  delegatedAuthorities      DelegatedAuthority[]
+}
+
+// The owner is still just Store.userId (unchanged) — this table is only for
+// non-owner access (Employee today, more roles later) so existing
+// single-owner flows and data are untouched. See lib/permissions.ts.
+enum StoreRole {
+  OWNER
+  EMPLOYEE
+}
+
+model StoreMember {
+  id        String    @id @default(cuid())
+  storeId   String
+  userId    String
+  role      StoreRole
+  createdAt DateTime  @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, userId])
+}
+
+// Providers named across the roadmap (Stripe, PayPal) plus the ones raised
+// as future examples (Google, Slack, USPS) — extending this later is a
+// one-line enum addition, not a schema redesign. See lib/integrations/.
+enum IntegrationProvider {
+  STRIPE
+  PAYPAL
+  GOOGLE
+  SLACK
+  USPS
+}
+
+enum IntegrationStatus {
+  CONNECTED
+  NEEDS_ATTENTION
+  FAILED
+  DISCONNECTED
+}
+
+// One generic table for every provider — provider-specific detail lives in
+// the opaque `credentials` Json, not as new columns per integration. Same
+// shape philosophy as StoreMember.
+model StoreIntegration {
+  id                String              @id @default(cuid())
+  storeId           String
+  provider          IntegrationProvider
+  status            IntegrationStatus   @default(DISCONNECTED)
+  externalAccountId String?
+  credentials       Json?
+  connectedByUserId String?
+  connectedAt       DateTime?
+  lastVerifiedAt    DateTime?
+  lastError         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  store       Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  connectedBy User? @relation(fields: [connectedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([storeId, provider])
 }
 
 model StoreDraft {
@@ -88,6 +166,7 @@ model StoreDraft {
   inputVision      String?
   name             String
   description      String?
+  tagline          String?
   theme            Json?
   productsDraft    Json?
   blueprint        Json?
@@ -97,9 +176,10 @@ model StoreDraft {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  generations StoreGeneration[]
-  messages    StoreDraftMessage[]
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generations   StoreGeneration[]
+  messages      StoreDraftMessage[]
+  executionLogs ExecutionLog[]
 }
 
 model StoreDraftMessage {
@@ -111,6 +191,17 @@ model StoreDraftMessage {
   createdAt    DateTime @default(now())
 
   storeDraft StoreDraft @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
+}
+
+model StoreMessage {
+  id        String   @id @default(cuid())
+  storeId   String
+  role      String
+  content   String
+  changes   Json?
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }
 
 model StoreGeneration {
@@ -132,6 +223,7 @@ model Product {
   storeId      String
   name         String
   description  String?
+  richContent  Json?
   priceInCents Int
   imageUrl     String?
   active       Boolean  @default(true)
@@ -143,17 +235,236 @@ model Product {
   orders Order[]
 }
 
+model NewsletterSignup {
+  id        String   @id @default(cuid())
+  storeId   String
+  email     String
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, email])
+}
+
+// paymentProvider/externalOrderId are provider-agnostic (PH-06) — replaced
+// the Stripe-specific stripeSessionId column so a PayPal order (or any
+// future provider's) has an equally first-class identity, not a shoehorned
+// one. Composite-unique rather than a bare unique on externalOrderId, so
+// two providers' ids can never collide.
 model Order {
-  id              String   @id @default(cuid())
+  id              String              @id @default(cuid())
   storeId         String
   productId       String?
   productName     String
   amountInCents   Int
   buyerEmail      String
-  status          String   @default("paid")
-  stripeSessionId String   @unique
-  createdAt       DateTime @default(now())
+  status          String              @default("paid")
+  paymentProvider IntegrationProvider
+  externalOrderId String
+  createdAt       DateTime            @default(now())
 
   store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@unique([paymentProvider, externalOrderId])
+}
+
+// The Execution & Verification Engine's history: append-only, never updated.
+// A logical request's status changing over time (e.g. an OAuth handoff going
+// PENDING -> SUCCESS) is a new row sharing `executionId`, not a mutated row —
+// see ARCHITECTURE.md. `action` is a plain String (not an enum) because the
+// action catalog grows with every feature, unlike IntegrationProvider which
+// only grows when a human deliberately writes a new connector.
+//
+// storeId/storeDraftId are both optional, same dual-phase pattern as
+// StoreGeneration: most executions belong to a real Store, but Genesis's
+// draft-side chat happens before a Store exists at all, only a StoreDraft.
+model ExecutionLog {
+  id            String   @id @default(cuid())
+  executionId   String
+  storeId       String?
+  storeDraftId  String?
+  action        String
+  status        String // SUCCESS | WARNING | FAILED | PENDING
+  verified      Boolean  @default(false)
+  message       String
+  retryable     Boolean  @default(false)
+  actorType     String // USER | GENESIS | SYSTEM
+  actorId       String?
+  schemaVersion Int      @default(1)
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  store      Store?      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeDraft StoreDraft? @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
+  actor      User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, createdAt])
+  @@index([storeId, action])
+  @@index([executionId])
+}
+
+// PH-07 Layer 3 — Genesis-generated recommendations, cached so the dashboard
+// never makes an AI call during a normal page render (only an explicit
+// "Refresh Genesis Suggestions" click does). No `source` column: every row
+// here is by definition source: "genesis" once mapped to the shared
+// Recommendation type — see lib/dashboard/recommendations.ts.
+model GeneratedRecommendation {
+  id          String   @id @default(cuid())
+  storeId     String
+  priority    String // high | medium | low
+  message     String
+  actionLabel String
+  actionHref  String
+  generatedAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+}
+
+// PH-07 Layer 4 — the generic approval gate any current or future Genesis
+// capability plugs into. Deliberately not recommendation-specific:
+// recommendationId is a loose, optional reference (no FK — see
+// ARCHITECTURE.md for why), never a required one. Only three statuses:
+// approving and executing collapse into one EXECUTED state since the
+// approve flow is synchronous (execute() never throws past its own
+// boundary) — the actual outcome quality (SUCCESS/WARNING/PARTIAL/FAILED)
+// lives on the linked ExecutionLog row via executionId, not duplicated
+// here. No ExecutionLog row is written at proposal or rejection time —
+// ExecutionLog represents things that were actually executed.
+model ApprovalRequest {
+  id               String    @id @default(cuid())
+  storeId          String
+  recommendationId String?
+  actionType       String
+  input            Json
+  previousValues   Json
+  summary          String
+  status           String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | EXECUTED | REJECTED
+  authorizationTier String   @default("always_ask") // always_ask | auto_below_limit | auto — frozen snapshot of the tier that governed this request at creation time, see lib/execution/genesisActions.ts
+  groupId          String?   // shared across every ApprovalRequest created from one Genesis "thought" (one chat turn, or one recommendation-review run) — Phase 4 — presentational grouping only; never merges the underlying decision or execution
+  // Phase 5 — stable identity of the underlying BUSINESS ISSUE/OPPORTUNITY
+  // this action addresses (same concept as GenesisObservation.dedupeKey for
+  // AI-detected opportunities) — deliberately NOT an identity of this one
+  // recommendation/action instance. Populated only when the proposing
+  // Claude call can name a real, stable underlying issue (today: only
+  // generateGenesisRecommendations.ts's review path); left null rather than
+  // a fabricated/generic slug when no such identity genuinely exists (e.g.
+  // most chat-driven, owner-directed requests like "make my website blue"
+  // — see the Phase 5 plan for why that's an honest null, not a gap).
+  topicKey         String?
+  // Phase 6 — frozen snapshot of HOW this request was decided, never
+  // recomputed. "human" = a real owner/employee click (approveGenesisAction/
+  // rejectGenesisAction/revertApprovalRequest). "autonomous" = Genesis
+  // itself decided, under a specific granted DelegatedAuthority row
+  // (delegatedAuthorityId below) — never the model's own judgment about
+  // whether it's allowed, only a deterministic grant lookup performed in
+  // code before execution. See lib/execution/genesisAutonomy.ts.
+  decisionMode        String  @default("human") // human | autonomous
+  // The specific grant that authorized an autonomous decision, snapshotted
+  // at decision time so "why was Genesis allowed to do this" is answerable
+  // forever, even after the grant is later revoked. Null for "human" rows.
+  // Loose reference (no FK), same convention as recommendationId.
+  delegatedAuthorityId String?
+  executionId      String?
+  decidedByUserId  String?
+  decidedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  postExecutionMeasurement PostExecutionMeasurement?
+
+  @@index([storeId, status])
+}
+
+// Phase 6 — the smallest durable representation of "the owner has authorized
+// Genesis to handle this kind of decision for their business," without a
+// generic policy engine. Scoped per (store, actionType) deliberately, not
+// per category — a category grouping is presentation-only (see
+// GENESIS_ACTIONS' category field); each action type earns trust
+// individually, and a brand-new action type never silently inherits an
+// existing category's grant. Revocation is immediate: every check reads
+// `revokedAt IS NULL` live, at the moment of decision — no caching, no
+// propagation delay, no in-flight action to interrupt (today's Executables
+// are single synchronous writes).
+model DelegatedAuthority {
+  id              String    @id @default(cuid())
+  storeId         String
+  actionType      String
+  grantedAt       DateTime  @default(now())
+  // Always an OWNER — grantDelegatedAuthority requires
+  // PERMISSIONS.AUTHORITY_MANAGE, which only OWNER holds (see
+  // lib/permissions.ts). An employee cannot create, benefit from, or
+  // influence a grant.
+  grantedByUserId String
+  revokedAt       DateTime?
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, actionType])
+}
+
+// Phase 5 — "what we observed in the business after this execution," never
+// "the impact this execution had." One row per measured EXECUTED
+// ApprovalRequest, computed once (deterministically, zero AI cost) when its
+// fixed measurement window has elapsed, never re-evaluated. There is
+// deliberately no field anywhere here for a percentage, a "lift," a
+// direction label, or any other verdict — only two raw before/after counts,
+// a template-generated sentence built from them, and concurrentActionTypes
+// (which other Genesis actions ALSO executed inside the same before/after
+// window). concurrentActionTypes exists purely to flag how confounded a
+// given window is; it is never used to net out or weight anyone's
+// contribution — this system does not and should not calculate attribution.
+model PostExecutionMeasurement {
+  id                 String   @id @default(cuid())
+  approvalRequestId  String   @unique
+  storeId            String
+  actionType         String   // denormalized from ApprovalRequest — cheap grouping without a join
+  topicKey           String?  // denormalized from ApprovalRequest at measurement time — see topicKey's own comment above
+  scope              String   // "store" | "product"
+  productId          String?  // set only when scope is "product" (today: only update_product_image)
+  windowDays         Int      // fixed constant (see lib/dashboard/postExecutionMeasurement.ts), not owner-configurable
+  orderCountBefore   Int
+  orderCountAfter    Int
+  revenueBeforeCents Int?
+  revenueAfterCents  Int?
+  concurrentActionTypes String[] // other Genesis actionTypes EXECUTED for this store inside the same before/after window
+  summary            String   // deterministic, template-generated — the confounding caveat is baked into the sentence itself whenever concurrentActionTypes is non-empty, never a separate field someone could quote without it
+  measuredAt         DateTime @default(now())
+
+  store           Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  approvalRequest ApprovalRequest @relation(fields: [approvalRequestId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, measuredAt])
+}
+
+// Phase 4 — the durable distinction between "Genesis noticed this" and a
+// recommendation being recomputed every render. Keyed by a stable dedupeKey
+// (a hand-written state-issue id, a real ExecutionLog/StoreIntegration row
+// id, or an AI-authored topicKey) so re-detecting the same real condition
+// upserts the existing row instead of spawning a duplicate or re-notifying.
+// genesisState is deliberately narrow — only "opportunity" (Purple) and
+// "urgent" (Red) ever get persisted here; Yellow already has real backing
+// via pending ApprovalRequests and White/Blue need no persisted state at
+// all. Routine incomplete-setup state (unpublished/no products/no payment)
+// is never written here — that stays Business Journey's job, positively
+// framed, never duplicated as an alarming Red signal.
+model GenesisObservation {
+  id              String    @id @default(cuid())
+  storeId         String
+  dedupeKey       String
+  genesisState    String // opportunity | urgent
+  summary         String
+  actionHref      String?
+  status          String    @default("ACTIVE") // ACTIVE | RESOLVED | DISMISSED
+  firstNoticedAt  DateTime  @default(now())
+  lastConfirmedAt DateTime  @default(now())
+  resolvedAt      DateTime?
+  dismissedAt     DateTime?
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, dedupeKey])
+  @@index([storeId, status])
 }

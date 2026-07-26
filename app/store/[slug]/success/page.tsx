@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Stripe from "stripe";
+import { prisma } from "@/lib/prisma";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -8,10 +9,10 @@ export default async function CheckoutSuccessPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ session_id?: string }>;
+  searchParams: Promise<{ session_id?: string; order_id?: string }>;
 }) {
   const { slug } = await params;
-  const { session_id: sessionId } = await searchParams;
+  const { session_id: sessionId, order_id: orderId } = await searchParams;
 
   let amountInCents: number | null = null;
   let productName: string | null = null;
@@ -25,6 +26,15 @@ export default async function CheckoutSuccessPage({
       productName = session.line_items?.data[0]?.description ?? null;
     } catch {
       // Invalid or missing session id — still show a generic thank-you below.
+    }
+  } else if (orderId) {
+    // PayPal's flow captures synchronously and passes our own Order.id
+    // (see app/api/checkout/paypal/return/route.ts), so no external API
+    // call is needed here — the order is already in our own database.
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    if (order) {
+      amountInCents = order.amountInCents;
+      productName = order.productName;
     }
   }
 
