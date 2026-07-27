@@ -4,11 +4,13 @@ import { getBaseUrl } from "@/lib/integrations/util";
 import { getPendingApprovals, type PendingApproval } from "@/lib/dashboard/pendingApprovals";
 import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { SECTION_LABELS, type SectionKey } from "@/lib/storefrontSections";
+import { compareObservationPriority } from "@/lib/dashboard/genesisState";
 import { toggleStorePublished } from "../actions";
 import { approveGenesisAction, rejectGenesisAction } from "../ai-actions";
 import { SubmitButton } from "../SubmitButton";
 import { VisualProposal } from "../VisualProposal";
 import { HeroMock } from "../HeroMock";
+import { ObservationsPanel } from "../ObservationsPanel";
 import { DEFAULT_THEME, type Theme } from "@/lib/theme";
 
 const ACCENT_BUTTON =
@@ -61,10 +63,14 @@ function formatOrder(order: SectionKey[], customSectionTitle: string | null | un
 // owner/employee preview of an unpublished store — see
 // app/store/[slug]/page.tsx) — Visibility and Vision History are real,
 // preserved, and deliberately secondary rather than competing with it.
-export default async function WebsitePage() {
+export default async function WebsitePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ focus?: string }>;
+}) {
   const { store } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
 
-  const [visions, pendingApprovals, firstProduct] = await Promise.all([
+  const [visions, pendingApprovals, firstProduct, rawObservations] = await Promise.all([
     prisma.storeGeneration.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "asc" },
@@ -75,7 +81,15 @@ export default async function WebsitePage() {
       orderBy: { position: "asc" },
       select: { imageUrl: true },
     }),
+    // Real GenesisObservation rows (Red/Purple) whose own actionHref points
+    // directly at this page — the same real data Live Intelligence/the nav
+    // badges already use, just filtered to this one destination.
+    prisma.genesisObservation.findMany({
+      where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/website" },
+      select: { dedupeKey: true, genesisState: true, summary: true },
+    }),
   ]);
+  const websiteObservations = [...rawObservations].sort(compareObservationPriority);
   const originalVision = visions.find((v) => v.milestone === "original");
   const firstRefinedVision = visions.find((v) => v.milestone === "first_refined");
 
@@ -101,6 +115,22 @@ export default async function WebsitePage() {
     if (!websiteApprovalGroups.has(groupKey)) websiteApprovalGroups.set(groupKey, []);
     websiteApprovalGroups.get(groupKey)!.push(approval);
   }
+  // Contextual deep-linking: websiteApprovals is already scoped to this
+  // store/section/PENDING_APPROVAL only, so a match here is automatically
+  // valid — invalid/stale/resolved/mismatched ids simply don't match. Same
+  // reasoning for websiteObservations, already scoped to this exact page.
+  const { focus } = await searchParams;
+  const focusedWebsiteApproval = focus ? websiteApprovals.find((a) => a.id === focus) : undefined;
+  const highlightObservationId =
+    focus && websiteObservations.some((o) => o.dedupeKey === focus) ? focus : undefined;
+  // Rendered once, standalone, above the grouped list — remove it from
+  // whichever group it belongs to so it never renders twice.
+  const remainingApprovalGroups = [...websiteApprovalGroups.entries()]
+    .map(([groupKey, group]) => [
+      groupKey,
+      group.filter((a) => a.id !== focusedWebsiteApproval?.id),
+    ] as const)
+    .filter(([, group]) => group.length > 0);
 
   // The owner/employee can always preview their own storefront now, live or
   // not — the same URL a customer would use once published.
@@ -114,7 +144,7 @@ export default async function WebsitePage() {
 
   // Extracted so grouped and ungrouped proposals render identically either
   // way — only the presence of a shared wrapper around 2+ cards differs.
-  function renderApprovalCard(approval: PendingApproval) {
+  function renderApprovalCard(approval: PendingApproval, highlighted?: boolean) {
     if (approval.actionType === "update_hero") {
       const current = approval.previousValues as { heroHeadline?: string; heroSubheadline?: string };
       const proposed = approval.input as { heroHeadline: string; heroSubheadline: string };
@@ -126,6 +156,7 @@ export default async function WebsitePage() {
           approvalId={approval.id}
           approveAction={approveGenesisAction}
           rejectAction={rejectGenesisAction}
+          highlighted={highlighted}
           current={
             <HeroMock
               theme={theme}
@@ -161,6 +192,7 @@ export default async function WebsitePage() {
           approvalId={approval.id}
           approveAction={approveGenesisAction}
           rejectAction={rejectGenesisAction}
+          highlighted={highlighted}
           current={
             <HeroMock
               theme={currentProposedTheme}
@@ -202,6 +234,7 @@ export default async function WebsitePage() {
           approvalId={approval.id}
           approveAction={approveGenesisAction}
           rejectAction={rejectGenesisAction}
+          highlighted={highlighted}
           stacked
           note={`${formatOrder(currentOrder, customSectionTitle)} becoming ${formatOrder(proposedOrder, customSectionTitle)}`}
           current={
@@ -233,6 +266,7 @@ export default async function WebsitePage() {
         approvalId={approval.id}
         approveAction={approveGenesisAction}
         rejectAction={rejectGenesisAction}
+        highlighted={highlighted}
         current={<FieldValueList fields={fields} values={approval.previousValues} />}
         proposed={<FieldValueList fields={fields} values={approval.input} />}
       />
@@ -240,7 +274,7 @@ export default async function WebsitePage() {
   }
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Website</h1>
 
       {/* The storefront itself — the unmistakable visual center of the
@@ -296,6 +330,18 @@ export default async function WebsitePage() {
         </SubmitButton>
       </form>
 
+      {/* Real GenesisObservation rows (Red/Purple) — separate from the
+          approval surface below; observations have no Approve/Reject, they
+          resolve automatically when the real condition stops being true. */}
+      {websiteObservations.length > 0 && (
+        <>
+          <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
+            Genesis noticed ({websiteObservations.length})
+          </h2>
+          <ObservationsPanel observations={websiteObservations} highlightId={highlightObservationId} />
+        </>
+      )}
+
       {/* One review surface for every Website proposal — but each card
           stays its own independently-decided ApprovalRequest. Cards sharing
           a groupId (one Genesis "thought") get one shared header; every
@@ -307,7 +353,8 @@ export default async function WebsitePage() {
             Genesis&apos;s ideas for your site ({websiteApprovals.length})
           </h2>
           <div className="mt-3 flex flex-col gap-4">
-            {[...websiteApprovalGroups.entries()].map(([groupKey, group]) =>
+            {focusedWebsiteApproval && renderApprovalCard(focusedWebsiteApproval, true)}
+            {remainingApprovalGroups.map(([groupKey, group]) =>
               group.length > 1 ? (
                 <div
                   key={groupKey}

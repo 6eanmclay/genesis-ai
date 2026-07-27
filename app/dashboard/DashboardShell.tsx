@@ -1,15 +1,73 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
-import { MOBILE_TAB_COUNT } from "@/lib/dashboard/navConfig";
+import { PRIMARY_TAB_COUNT } from "@/lib/dashboard/navConfig";
 import { NavIcon } from "./NavIcon";
 import { signOutOfGenesis } from "./actions";
+import { logClientEvent } from "./telemetry-actions";
 import { GenesisAssistant } from "./GenesisAssistant";
+import { GenesisDomicile } from "./GenesisDomicile";
+import { LiveIntelligence } from "./LiveIntelligence";
+import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
+import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 
 type GenesisMessage = { id: string; role: string; content: string; changes: unknown };
+
+// Contextual-review connection layer: one entry per still-pending approval
+// that has a real owning section, resolved server-side in layout.tsx (see
+// the comment there for why — this shell can't safely import
+// ACTION_SECTIONS itself). `href` is the section's own route (without
+// "?focus="), reused by both this shell's focus resolution and
+// LiveIntelligence's decision rows.
+interface FocusableApproval {
+  id: string;
+  section: string;
+  href: string;
+  summary: string;
+  noticedSummary: string | null;
+}
+
+// Genesis Language propagating through navigation — approvals and
+// observations merged into one list DashboardShell resolves "?focus="
+// against (built in layout.tsx), `kind` distinguishing the two so
+// GenesisAssistant's contextual banner knows whether a separate "what I
+// recommend" line is honest to show (see GenesisAssistant.tsx).
+interface FocusableItem extends FocusableApproval {
+  kind: "approval" | "observation";
+}
+
+// Per-section (Identity/Website/Products, plus "home" for Your Business
+// itself) Genesis Language state — computed once in layout.tsx from the
+// same real approvals/observations data, never recomputed independently
+// here. "idle" never renders a badge.
+interface SectionNavState {
+  state: "urgent" | "needs_decision" | "opportunity" | "idle";
+  count: number;
+  focusHref: string;
+}
+
+const SECTION_STATE_BADGE_CLASS: Record<string, string> = {
+  urgent: "bg-red-500",
+  needs_decision: "bg-amber-500",
+  opportunity: "bg-purple-500",
+};
+// Accessible labels so the condition is never communicated by color alone
+// — screen readers (and anyone hovering) get the real word, not just a hue.
+const SECTION_STATE_LABEL: Record<string, string> = {
+  urgent: "urgent issue",
+  needs_decision: "pending decision",
+  opportunity: "opportunity",
+};
+
+interface LiveObservation {
+  dedupeKey: string;
+  genesisState: string;
+  summary: string;
+  actionHref: string | null;
+}
 
 // The one place Genesis and "View Store" are instantiated for a live store
 // — every section route renders as `children` inside this shell, so both
@@ -19,9 +77,20 @@ type GenesisMessage = { id: string; role: string; content: string; changes: unkn
 // client component wrapping server-rendered children.
 export function DashboardShell({
   sections,
+  secondarySections,
+  storeId,
   storeName,
   storefrontUrl,
   sectionBadgeCounts,
+  sectionNavState,
+  focusableItems,
+  focusableApprovals,
+  liveObservations,
+  userName,
+  revenueInCents,
+  orderCount,
+  revenueTrend,
+  newCustomerCount,
   genesisMessages,
   sendGenesisMessage,
   hasUrgentIssue,
@@ -30,9 +99,20 @@ export function DashboardShell({
   children,
 }: {
   sections: NavSection[];
+  secondarySections: NavSection[];
+  storeId: string;
   storeName: string;
   storefrontUrl: string | null;
   sectionBadgeCounts: Record<string, number>;
+  sectionNavState: Record<string, SectionNavState>;
+  focusableItems: FocusableItem[];
+  focusableApprovals: FocusableApproval[];
+  liveObservations: LiveObservation[];
+  userName: string | null;
+  revenueInCents: number | null;
+  orderCount: number | null;
+  revenueTrend: number[] | null;
+  newCustomerCount: number | null;
   genesisMessages: GenesisMessage[];
   sendGenesisMessage: (formData: FormData) => void;
   hasUrgentIssue: boolean;
@@ -41,46 +121,125 @@ export function DashboardShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [moreOpen, setMoreOpen] = useState(false); // mobile bottom sheet
-  const [desktopMoreOpen, setDesktopMoreOpen] = useState(false); // md/lg top-bar dropdown
+  const [desktopMoreOpen, setDesktopMoreOpen] = useState(false); // top-bar dropdown
 
   const isActive = (href: string) =>
     href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
 
-  // Same primary/overflow split mobile's bottom nav already uses — reused,
-  // not reinvented, for the md/lg desktop tier below (see Workspace v1
-  // plan: ~1230px is roughly what all 8 sections + store name + actions
-  // need in one row, so only xl:+ shows them all inline).
-  const tabSections = sections.slice(0, MOBILE_TAB_COUNT);
-  const moreSections = sections.slice(MOBILE_TAB_COUNT);
+  // Product Vision navigation correction — primary nav is exactly this
+  // small at every breakpoint, not just on narrow screens. There is
+  // deliberately no wider-screen tier that shows everything inline again
+  // (the old xl:+ "no overflow needed" tier is gone) — "More" is a
+  // permanent third primary destination, not a responsive overflow trick.
+  const tabSections = sections.slice(0, PRIMARY_TAB_COUNT);
+  const moreSections = sections.slice(PRIMARY_TAB_COUNT);
   const hasHiddenBadge = moreSections.some((s) => (sectionBadgeCounts[s.key] ?? 0) > 0);
 
-  const desktopTabLink = (section: NavSection) => (
-    <Link
-      key={section.key}
-      href={section.href}
-      className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors ${
-        isActive(section.href)
-          ? "bg-[var(--brand-accent,var(--foreground))]/10 font-medium text-[var(--brand-accent,var(--foreground))]"
-          : "text-zinc-600 hover:bg-black/[.03] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-      }`}
-    >
-      <NavIcon section={section.key} className="h-4 w-4 shrink-0" />
-      {section.label}
-      {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
-        <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
-          {sectionBadgeCounts[section.key]}
-        </span>
-      )}
-    </Link>
-  );
+  // Secondary nav only renders while the current route is genuinely one of
+  // Your Business's own workspaces (Overview/Identity/Website/Products) —
+  // never on Customers or anything under More.
+  const isInYourBusiness = secondarySections.some((s) => isActive(s.href));
 
+  // Contextual-review connection layer: a "?focus=<id>" is only honored
+  // when it names a still-pending approval OR real observation (either
+  // "kind" in the merged focusableItems list) AND that item's own section
+  // matches where we actually are — an invalid, stale, resolved, or
+  // mismatched-section id simply resolves to no context, never an error.
+  const currentSecondarySection = secondarySections.find((s) => isActive(s.href));
+  const focusId = searchParams.get("focus");
+  const focusedItem =
+    focusId && currentSecondarySection
+      ? focusableItems.find((a) => a.id === focusId && a.section === currentSecondarySection.key)
+      : undefined;
+
+  // Family-beta instrumentation (v20) — navigation is otherwise completely
+  // stateless (nothing records a page view today). Fire-and-forget, never
+  // awaited by the caller and never blocking a real navigation — a failed
+  // write here (see logProductEvent) can't break the page.
+  const prevPathnameRef = useRef<string | null>(null);
+  useEffect(() => {
+    const fromSection = prevPathnameRef.current;
+    prevPathnameRef.current = pathname;
+    logClientEvent({
+      storeId,
+      name: "nav.section_view",
+      category: "navigation",
+      metadata: { section: pathname, fromSection },
+    });
+    // Only the pathname itself should re-trigger this — storeId is stable
+    // for the life of this shell.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  // Whether a "?focus=" link actually resolved to a real item is currently
+  // invisible (a stale/mismatched-section id silently no-ops) — this is the
+  // one place that outcome becomes visible, both for reconstructing "did
+  // v19's routing take the tester to the right place" and as a real latent-
+  // bug signal (route_unresolved on a link Genesis itself just generated).
+  useEffect(() => {
+    if (!focusId || !currentSecondarySection) return;
+    logClientEvent({
+      storeId,
+      name: focusedItem ? "focus.route_resolved" : "focus.route_unresolved",
+      category: "navigation",
+      attemptKey: focusId,
+      outcome: focusedItem ? "success" : "failure",
+      metadata: { section: currentSecondarySection.key },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, currentSecondarySection?.key, !!focusedItem]);
+
+  const desktopTabLink = (section: NavSection) => {
+    // Only "home" (Your Business) gets the color-aware treatment today —
+    // every other primary section (Marketing/Payments/etc.) keeps its
+    // existing flat Yellow-only badge from sectionBadgeCounts, unchanged.
+    const nav = sectionNavState[section.key];
+    const count = nav ? nav.count : sectionBadgeCounts[section.key] ?? 0;
+    const badgeClass = nav && nav.state !== "idle" ? SECTION_STATE_BADGE_CLASS[nav.state] : "bg-amber-500";
+    const badgeLabel = nav && nav.state !== "idle" ? SECTION_STATE_LABEL[nav.state] : "pending decision";
+    return (
+      <Link
+        key={section.key}
+        href={section.href}
+        className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors ${
+          isActive(section.href)
+            ? "bg-[var(--brand-accent,var(--foreground))]/10 font-medium text-[var(--brand-accent,var(--foreground))]"
+            : "text-zinc-600 hover:bg-black/[.03] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+        }`}
+      >
+        <NavIcon section={section.key} className="h-4 w-4 shrink-0" />
+        {section.label}
+        {count > 0 && (
+          <span
+            className={`rounded-full ${badgeClass} px-1.5 py-0.5 text-[10px] font-medium text-white`}
+            aria-label={`${count} ${badgeLabel}${count === 1 ? "" : "s"}`}
+          >
+            {count}
+          </span>
+        )}
+      </Link>
+    );
+  };
+
+  // bg-foreground/text-background (not bg-[var(--brand-accent,...)]/text-white)
+  // deliberately — this renders in DashboardShell's persistent chrome
+  // (both the pre-lg: header and the TV-frame header below use this same
+  // const), a separate DOM branch from any page's own themeCssVars(), so
+  // --brand-accent is never actually in scope here and always falls back
+  // to --foreground. --foreground flips light/dark (see globals.css) and
+  // is meant for text, not "a bg white text stays readable on" — in dark
+  // mode that fallback made this button white-on-near-white. The
+  // foreground/background token pair (already used correctly elsewhere,
+  // e.g. GenesisAssistant's user-message bubble) inverts correctly in
+  // both modes automatically.
   const viewStoreLink = storefrontUrl ? (
     <a
       href={storefrontUrl}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex items-center gap-2 rounded-lg bg-[var(--brand-accent,var(--foreground))] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+      className="flex items-center gap-2 rounded-lg bg-foreground px-3 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
     >
       View Store ↗
     </a>
@@ -93,90 +252,275 @@ export function DashboardShell({
     </span>
   );
 
-  return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-black">
-      {/* Desktop top workspace bar — replaces the old left sidebar (Genesis
-          Workspace v1). Two overflow tiers, both driven by the exact same
-          `sections`/`sectionBadgeCounts` data as mobile: md/lg show the
-          same primary-4 set as the mobile bottom nav plus a "More"
-          dropdown; xl+ has room to show every section inline with no
-          overflow at all (see the Workspace v1 plan for the width math). */}
-      <header className="fixed inset-x-0 top-0 z-40 hidden h-14 items-center gap-4 border-b border-black/[.06] bg-white px-4 dark:border-white/[.1] dark:bg-zinc-950 md:flex">
-        <p className="shrink-0 truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
+  // Primary nav row content — storeName + tabs/More dropdown + View Store/
+  // Sign out. Rendered from this one JSX value in two different homes (the
+  // full-width bar below xl:, the framed TV's own header at xl:+ — see the
+  // Genesis Environment shell below), the same "one value, multiple
+  // mounted homes" pattern viewStoreLink above already uses. Sharing
+  // `desktopMoreOpen` across both is safe since exactly one is ever
+  // visible at a given viewport width — they never show simultaneously.
+  const primaryNavRow = (
+    <>
+      <p className="shrink-0 truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
 
-        {/* md/lg tier */}
-        <nav className="flex flex-1 items-center gap-1 overflow-hidden xl:hidden">
-          {tabSections.map(desktopTabLink)}
-          {moreSections.length > 0 && (
-            <div className="relative shrink-0">
-              <button
-                onClick={() => setDesktopMoreOpen((open) => !open)}
-                className={`relative flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm transition-colors ${
-                  desktopMoreOpen
-                    ? "bg-black/[.03] text-black dark:bg-white/[.05] dark:text-zinc-50"
-                    : "text-zinc-600 hover:bg-black/[.03] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                }`}
-              >
-                More
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="h-3.5 w-3.5">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-                {hasHiddenBadge && (
-                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-red-500" />
-                )}
-              </button>
-              {desktopMoreOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setDesktopMoreOpen(false)} />
-                  <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-lg border border-black/[.08] bg-white py-1 shadow-lg dark:border-white/[.145] dark:bg-zinc-900">
-                    {moreSections.map((section) => (
+      <nav className="flex flex-1 items-center gap-1 overflow-hidden">
+        {tabSections.map(desktopTabLink)}
+        {moreSections.length > 0 && (
+          <div className="relative shrink-0">
+            <button
+              onClick={() => setDesktopMoreOpen((open) => !open)}
+              className={`relative flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                desktopMoreOpen
+                  ? "bg-black/[.03] text-black dark:bg-white/[.05] dark:text-zinc-50"
+                  : "text-zinc-600 hover:bg-black/[.03] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+              }`}
+            >
+              More
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="h-3.5 w-3.5">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+              {hasHiddenBadge && (
+                <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-400" />
+              )}
+            </button>
+            {desktopMoreOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setDesktopMoreOpen(false)} />
+                <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-lg border border-black/[.08] bg-white py-1 shadow-lg dark:border-white/[.145] dark:bg-zinc-900">
+                  {moreSections.map((section) => {
+                    // The row itself gets a subtle amber tint (not just the
+                    // number pill) so the connection between the outer
+                    // yellow "Decision" dot on the More button and the
+                    // specific destination carrying it is unmistakable at
+                    // a glance, not just a small badge easy to miss among
+                    // plain-looking rows.
+                    const hasBadge = (sectionBadgeCounts[section.key] ?? 0) > 0;
+                    return (
                       <Link
                         key={section.key}
                         href={section.href}
                         onClick={() => setDesktopMoreOpen(false)}
-                        className="flex items-center gap-3 px-3 py-2 text-sm text-black hover:bg-black/[.03] dark:text-zinc-50 dark:hover:bg-white/[.05]"
+                        className={`flex items-center gap-3 px-3 py-2 text-sm text-black dark:text-zinc-50 ${
+                          hasBadge
+                            ? "bg-amber-400/10 hover:bg-amber-400/15"
+                            : "hover:bg-black/[.03] dark:hover:bg-white/[.05]"
+                        }`}
                       >
                         <NavIcon section={section.key} className="h-4 w-4 shrink-0" />
                         <span className="flex-1">{section.label}</span>
-                        {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
-                          <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                        {hasBadge && (
+                          <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
                             {sectionBadgeCounts[section.key]}
                           </span>
                         )}
                       </Link>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </nav>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </nav>
 
-        {/* xl+ tier — no overflow needed at this width */}
-        <nav className="hidden flex-1 items-center gap-1 xl:flex">
-          {sections.map(desktopTabLink)}
-        </nav>
+      <div className="flex shrink-0 items-center gap-2">
+        {viewStoreLink}
+        <form action={signOutOfGenesis}>
+          <button
+            type="submit"
+            className="rounded-lg border border-black/[.08] px-3 py-2 text-sm text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
+          >
+            Sign out
+          </button>
+        </form>
+      </div>
+    </>
+  );
 
-        <div className="flex shrink-0 items-center gap-2">
-          {viewStoreLink}
-          <form action={signOutOfGenesis}>
-            <button
-              type="submit"
-              className="rounded-lg border border-black/[.08] px-3 py-2 text-sm text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
+  // Secondary nav — persistent, not a menu: rendered directly below the
+  // primary bar (desktop) or mobile header, always visible the moment
+  // you're anywhere inside Your Business, so switching Overview/Identity/
+  // Website/Products never costs an extra click or a hidden state. Fixed
+  // height (h-10) on both breakpoints so <main>'s padding math below stays
+  // exact rather than measured at runtime.
+  const secondaryNav = isInYourBusiness && (
+    <nav
+      className="fixed inset-x-0 top-16 z-30 flex h-10 items-center gap-1 overflow-x-auto border-b border-black/[.06] bg-white px-4 dark:border-white/[.1] dark:bg-zinc-950 md:top-14 lg:static lg:inset-auto lg:w-full lg:shrink-0 lg:px-4"
+      aria-label="Your Business"
+    >
+      {secondarySections.map((section) => {
+        // Badged secondary nav takes the owner to the work, not merely the
+        // page — a section with an outstanding item deep-links straight to
+        // its single highest-priority item (layout.tsx's sectionNavState,
+        // reusing the same urgent > decision > opportunity priority the
+        // rest of the Genesis Language already uses). Overview never gets
+        // a badge — it aggregates/displays, it never "owns" an item (see
+        // layout.tsx's audit comment). A colored, numbered pill (not just
+        // a dot) so quantity and severity are both visible at a glance,
+        // with an accessible label stating the real condition in words.
+        const nav = section.key === "overview" ? undefined : sectionNavState[section.key];
+        const hasBadge = !!nav && nav.state !== "idle";
+        const href = hasBadge ? nav!.focusHref : section.href;
+        return (
+          <Link
+            key={section.key}
+            href={href}
+            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1 text-sm transition-colors ${
+              isActive(section.href)
+                ? "bg-[var(--brand-accent,var(--foreground))]/10 font-medium text-[var(--brand-accent,var(--foreground))]"
+                : "text-zinc-600 hover:bg-black/[.03] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+            }`}
+          >
+            {section.label}
+            {hasBadge && (
+              <span
+                className={`rounded-full ${SECTION_STATE_BADGE_CLASS[nav!.state]} px-1.5 py-0.5 text-[10px] font-medium text-white`}
+                aria-label={`${nav!.count} ${SECTION_STATE_LABEL[nav!.state]}${nav!.count === 1 ? "" : "s"}`}
+              >
+                {nav!.count}
+              </span>
+            )}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+
+  return (
+    // The lg:bg-[#07060d] below is GENESIS_ATMOSPHERE.bg written literally,
+    // not interpolated — Tailwind's class scanner works on static source
+    // text, so a template-literal-interpolated arbitrary value like
+    // `lg:bg-[${GENESIS_ATMOSPHERE.bg}]` never resolves to real CSS (the
+    // scanner can't see through the JS expression). Every lg:-scoped
+    // Tailwind color class in this file and GenesisAssistant.tsx is a
+    // literal for the same reason; components that only ever render at
+    // lg:+ to begin with (GenesisDomicile/LiveIntelligence/
+    // GenesisLanguageLegend, all parent-gated via hidden lg:block) don't
+    // have this problem and correctly use GENESIS_ATMOSPHERE via inline
+    // `style` instead. Keep this value in sync with genesisAtmosphere.ts.
+    <div className="min-h-screen bg-zinc-50 dark:bg-black lg:h-screen lg:overflow-hidden lg:bg-[#07060d]">
+      {/* Genesis's environment backdrop — lg:+ only, fixed regardless of
+          the owner's light/dark toggle (this is Genesis's own identity,
+          not the app's dark mode; see genesisAtmosphere.ts). Purely
+          decorative and non-interactive; a restrained radial wash for
+          atmospheric depth, not a spotlight. The TV frame's own explicit
+          background is unaffected — it reads as a bright object floating
+          in this environment, not lit by it. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none hidden lg:fixed lg:inset-0 lg:-z-10 lg:block"
+        style={{
+          background: `radial-gradient(ellipse 70% 55% at 8% 15%, ${GENESIS_ATMOSPHERE.violetGlow}, transparent 60%)`,
+        }}
+      />
+
+      {/* Desktop top workspace bar — exactly the primary set (tabSections)
+          plus one permanent "More". Below lg: this is the only nav
+          chrome, exactly as already verified. At lg:+ it's hidden
+          entirely — the Genesis Environment composition below replaces it
+          with the same nav content moved into the framed Business
+          workspace's own header, not a second competing nav system. */}
+      <header className="fixed inset-x-0 top-0 z-40 hidden h-14 items-center gap-4 border-b border-black/[.06] bg-white px-4 dark:border-white/[.1] dark:bg-zinc-950 md:flex lg:hidden">
+        {primaryNavRow}
       </header>
 
-      {/* Mobile top bar */}
-      <header className="fixed inset-x-0 top-0 z-40 flex items-center justify-between border-b border-black/[.08] bg-white/90 px-4 py-3 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/90 md:hidden">
+      {/* Mobile top bar — explicit h-16 (not padding-driven) so the
+          secondary nav below can stack under it at a known, exact offset. */}
+      <header className="fixed inset-x-0 top-0 z-40 flex h-16 items-center justify-between border-b border-black/[.08] bg-white/90 px-4 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/90 md:hidden">
         <p className="truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
         {viewStoreLink}
       </header>
 
-      <main className="pt-16 pb-20 md:pb-0 md:pt-14">{children}</main>
+      {/* Genesis Environment shell — lg:+ (1024px and up). Below lg:, this
+          wrapper has no layout effect at all: secondaryNav/<main> render
+          exactly as they do today (fixed, full width, unchanged padding
+          math), and the old top bar above is what's actually visible.
+          At lg:+, with that top bar hidden, this starts right at the top
+          of the viewport (a deliberate lg:pt-10 for breathing room, not
+          compensating for a header that no longer exists) as a
+          height-contained composition — root's lg:h-screen
+          lg:overflow-hidden above is the one true viewport boundary; only
+          <main>'s own interior (below) is ever allowed to scroll. Left
+          Genesis Domicile + center (Live Intelligence, unframed and
+          ticker-style, directly above the framed Business "TV") render
+          from lg: up; the right Genesis Language legend is the one piece
+          that stays xl:-only (1280px+) — the lowest-priority region,
+          deliberately the first (and only) thing to collapse as width
+          decreases, per the grid template below. The TV houses its own
+          primary + secondary navigation, replacing the old full-width bar
+          rather than competing with it. */}
+      <div className="lg:grid lg:h-full lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-6 lg:px-6 lg:pt-10 lg:pb-10 xl:mx-auto xl:max-w-[1600px] xl:grid-cols-[260px_minmax(0,1fr)_260px] xl:gap-8 xl:px-8">
+        <aside
+          className="hidden lg:block lg:border-r"
+          style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+        >
+          <GenesisDomicile
+            hasUrgentIssue={hasUrgentIssue}
+            hasPendingDecision={hasPendingDecision}
+            hasOpportunity={hasOpportunity}
+          />
+        </aside>
+
+        <div className="lg:flex lg:h-full lg:min-h-0 lg:min-w-0 lg:flex-col">
+          <div className="hidden lg:block lg:shrink-0">
+            <LiveIntelligence
+              focusableApprovals={focusableApprovals}
+              liveObservations={liveObservations}
+              userName={userName}
+              revenueInCents={revenueInCents}
+              orderCount={orderCount}
+              revenueTrend={revenueTrend}
+              newCustomerCount={newCustomerCount}
+            />
+          </div>
+
+          {/* Framed Business workspace ("the TV") — the border/background/
+              flex-fill only ever apply at lg: (no `hidden` on this
+              element, so secondaryNav's own fixed positioning and <main>
+              keep rendering correctly below lg: exactly as before). Your
+              Business / Customers / Marketing / Payments / Analytics /
+              Settings live in this frame's own header now; when Your
+              Business is active, Overview/Identity/Website/Products
+              render directly beneath it as the second level, inside the
+              same frame. A flex-grow *weight* (not lg:flex-1) deliberately
+              caps this at roughly 80% of whatever's left below Live
+              Intelligence — the empty spacer right after it claims the
+              rest, so the environment reads as real, unclaimed space
+              beneath an object ("the TV") rather than the TV filling the
+              whole environment. <main>'s own lg:overflow-y-auto still
+              makes it the one real scrolling surface if routed content is
+              taller than this now-smaller footprint. */}
+          <div className="lg:mt-4 lg:flex lg:min-h-0 lg:flex-[4] lg:flex-col lg:overflow-hidden lg:rounded-2xl lg:border lg:border-black/[.08] lg:bg-white dark:lg:border-white/[.145] dark:lg:bg-zinc-950">
+            <div className="hidden lg:flex lg:h-14 lg:shrink-0 lg:items-center lg:gap-4 lg:border-b lg:border-black/[.08] lg:bg-black/[.02] lg:px-4 dark:lg:border-white/[.145] dark:lg:bg-white/[.03]">
+              {primaryNavRow}
+            </div>
+
+            {secondaryNav}
+
+            <main
+              className={`pb-20 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
+                isInYourBusiness ? "pt-[104px] md:pt-24 lg:pt-0" : "pt-16 md:pt-14 lg:pt-0"
+              }`}
+            >
+              {children}
+            </main>
+          </div>
+
+          {/* Deliberately open environment beneath the TV — empty, no
+              border/background/content of its own; the page's own
+              backdrop shows through. This is the "intentionally open"
+              space from the wireframe review, not a placeholder for
+              future content. */}
+          <div className="hidden lg:block lg:flex-[1]" aria-hidden="true" />
+        </div>
+
+        <aside
+          className="hidden xl:block xl:border-l xl:pl-6"
+          style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+        >
+          <GenesisLanguageLegend />
+        </aside>
+      </div>
 
       {/* Mobile bottom tab bar */}
       <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-black/[.08] bg-white/95 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden">
@@ -193,7 +537,7 @@ export function DashboardShell({
             <NavIcon section={section.key} className="h-5 w-5" />
             {section.label}
             {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
-              <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-red-500" />
+              <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
             )}
           </Link>
         ))}
@@ -207,7 +551,7 @@ export function DashboardShell({
             <span className="text-base leading-none">•••</span>
             More
             {hasHiddenBadge && (
-              <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-red-500" />
+              <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
             )}
           </button>
         )}
@@ -238,22 +582,29 @@ export function DashboardShell({
               />
             </div>
             <nav className="flex flex-col gap-1">
-              {moreSections.map((section) => (
-                <Link
-                  key={section.key}
-                  href={section.href}
-                  onClick={() => setMoreOpen(false)}
-                  className="flex items-center gap-3 rounded-lg px-2 py-2.5 text-sm text-black dark:text-zinc-50"
-                >
-                  <NavIcon section={section.key} className="h-4 w-4 shrink-0" />
-                  <span className="flex-1">{section.label}</span>
-                  {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
-                    <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                      {sectionBadgeCounts[section.key]}
-                    </span>
-                  )}
-                </Link>
-              ))}
+              {moreSections.map((section) => {
+                // Same amber row-tint reasoning as the desktop dropdown
+                // above — keeps the two "More" surfaces consistent.
+                const hasBadge = (sectionBadgeCounts[section.key] ?? 0) > 0;
+                return (
+                  <Link
+                    key={section.key}
+                    href={section.href}
+                    onClick={() => setMoreOpen(false)}
+                    className={`flex items-center gap-3 rounded-lg px-2 py-2.5 text-sm text-black dark:text-zinc-50 ${
+                      hasBadge ? "bg-amber-400/10" : ""
+                    }`}
+                  >
+                    <NavIcon section={section.key} className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">{section.label}</span>
+                    {hasBadge && (
+                      <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                        {sectionBadgeCounts[section.key]}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
             </nav>
             {/* Visually separated from navigation on purpose — a divider and
                 red text so this never reads as "the way to close the menu"
@@ -278,6 +629,11 @@ export function DashboardShell({
         hasUrgentIssue={hasUrgentIssue}
         hasPendingDecision={hasPendingDecision}
         hasOpportunity={hasOpportunity}
+        focusedContext={
+          focusedItem
+            ? { summary: focusedItem.summary, noticedSummary: focusedItem.noticedSummary, kind: focusedItem.kind }
+            : null
+        }
       />
     </div>
   );

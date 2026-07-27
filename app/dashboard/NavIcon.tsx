@@ -3,6 +3,7 @@
 // viewBox/stroke setup so new entries drop in without re-tuning.
 const PATHS: Record<string, string> = {
   home: "M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5",
+  brand: "M12 2 L14.5 9 L22 9.5 L16 14.5 L18 22 L12 17.5 L6 22 L8 14.5 L2 9.5 L9.5 9 Z",
   website: "M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18ZM3 12a9 9 0 0 1 18 0 9 9 0 0 1-18 0Z",
   orders: "M7 3h10v18l-5-3-5 3V3ZM9 8h6M9 11h6",
   products: "m3 8 9-5 9 5-9 5-9-5Zm0 0v8l9 5 9-5V8M12 13v8",

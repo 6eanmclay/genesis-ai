@@ -3,14 +3,20 @@ import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permis
 import { createProduct, editProduct, toggleProductActive, deleteProduct } from "../actions";
 import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage } from "../ai-actions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
+import { compareObservationPriority } from "@/lib/dashboard/genesisState";
 import { DeleteProductButton } from "../DeleteProductButton";
 import { SubmitButton } from "../SubmitButton";
 import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
+import { ObservationsPanel } from "../ObservationsPanel";
 
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
 
-export default async function ProductsPage() {
+export default async function ProductsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ focus?: string }>;
+}) {
   const { store, role } = await requireStorePageAccess(PERMISSIONS.PRODUCTS_MANAGE);
   // approveGenesisAction/rejectGenesisAction/regenerateApprovalImage all
   // require ANALYTICS_VIEW (OWNER-only) — Employees have PRODUCTS_MANAGE
@@ -18,18 +24,45 @@ export default async function ProductsPage() {
   // rather than rendering working-looking buttons that would throw on click.
   const canReviewApprovals = hasPermission(role, PERMISSIONS.ANALYTICS_VIEW);
 
-  const [products, pendingApprovals] = await Promise.all([
+  const [products, pendingApprovals, rawObservations] = await Promise.all([
     prisma.product.findMany({
       where: { storeId: store.id },
       orderBy: { position: "asc" },
     }),
     canReviewApprovals ? getPendingApprovals(store.id) : Promise.resolve([]),
+    // Real GenesisObservation rows (Red/Purple) whose own actionHref points
+    // directly at this page — the same real data Live Intelligence/the nav
+    // badges already use, just filtered to this one destination.
+    prisma.genesisObservation.findMany({
+      where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/products" },
+      select: { dedupeKey: true, genesisState: true, summary: true },
+    }),
   ]);
+  const productObservations = [...rawObservations].sort(compareObservationPriority);
   const imageApprovals = pendingApprovals.filter((a) => a.actionType === "update_product_image");
+  // Contextual deep-linking: see brand/page.tsx for why a match here is
+  // already fully validated (store/section/status-scoped) by construction.
+  // Same reasoning for productObservations, already scoped to this page.
+  const { focus } = await searchParams;
+  const highlightId = focus && imageApprovals.some((a) => a.id === focus) ? focus : undefined;
+  const highlightObservationId =
+    focus && productObservations.some((o) => o.dedupeKey === focus) ? focus : undefined;
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Products</h1>
+
+      {/* Real GenesisObservation rows (Red/Purple) — separate from the
+          approval surface below; observations have no Approve/Reject, they
+          resolve automatically when the real condition stops being true. */}
+      {productObservations.length > 0 && (
+        <>
+          <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
+            Genesis noticed ({productObservations.length})
+          </h2>
+          <ObservationsPanel observations={productObservations} highlightId={highlightObservationId} />
+        </>
+      )}
 
       {imageApprovals.length > 0 && (
         <>
@@ -41,6 +74,7 @@ export default async function ProductsPage() {
             approveAction={approveGenesisAction}
             rejectAction={rejectGenesisAction}
             regenerateAction={regenerateApprovalImage}
+            highlightId={highlightId}
           />
         </>
       )}

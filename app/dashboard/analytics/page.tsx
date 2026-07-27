@@ -88,7 +88,7 @@ export default async function AnalyticsPage() {
   });
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen p-8 lg:min-h-0">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Analytics</h1>
         <div className="flex items-center gap-3">

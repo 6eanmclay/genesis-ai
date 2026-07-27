@@ -3,6 +3,7 @@ import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
+import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -52,12 +53,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     jwt({ token, user }) {
       if (user) {
         token.id = user.id;
+        // Minted only on a real sign-in (this branch), never on token
+        // refresh — one id per "sitting" for the family-beta instrumentation
+        // (ProductEvent.sessionInstanceId). Persists for the JWT's lifetime,
+        // not per browser tab; see the v20 plan for that known tradeoff.
+        token.sessionInstanceId = randomUUID();
       }
       return token;
     },
     session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
+        session.user.sessionInstanceId = token.sessionInstanceId as string;
       }
       return session;
     },

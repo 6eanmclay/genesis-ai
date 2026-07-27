@@ -1,11 +1,12 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { signOut } from "@/auth";
+import { auth, signOut } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
 import { getConnector } from "@/lib/integrations/registry";
 import { execute } from "@/lib/execution/engine";
+import type { ExecutionResult } from "@/lib/execution/types";
 import { publishStoreExecutable } from "@/lib/execution/executables/storePublish";
 import { editStoreExecutable } from "@/lib/execution/executables/storeEdit";
 import {
@@ -16,6 +17,33 @@ import {
 } from "@/lib/execution/executables/products";
 import { connectExecutable, verifyExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { grantDelegatedAuthority, revokeDelegatedAuthority } from "@/lib/execution/genesisAutonomy";
+import { logProductEvent } from "@/lib/telemetry/events";
+
+// Family-beta instrumentation (v20) — one attempt per real connect/recheck
+// call already exists as its own ExecutionLog row; this adds the
+// `attemptKey`/session correlation ExecutionLog doesn't carry, so a
+// sequence of attempts for the same (provider, store) can be reconstructed
+// as "entered -> attempt 1 -> attempt 2 -> ... -> recovered/abandoned"
+// without inventing a separate retry counter. Never blocks or throws —
+// logProductEvent already swallows its own failures.
+async function logConnectAttempt(
+  provider: "stripe" | "paypal",
+  action: string,
+  result: ExecutionResult<unknown>
+) {
+  const session = await auth();
+  if (!session?.user || !result.storeId) return;
+  await logProductEvent({
+    userId: session.user.id,
+    storeId: result.storeId,
+    sessionInstanceId: session.user.sessionInstanceId,
+    name: action,
+    category: "integration",
+    attemptKey: `${provider}_connect:${result.storeId}`,
+    outcome: result.status === "FAILED" ? "failure" : "success",
+    metadata: { status: result.status, message: result.message },
+  });
+}
 
 // JWT session strategy — signing out clears the session cookie itself
 // (there's no server-side session row to revoke), which is what actually
@@ -126,6 +154,7 @@ export async function deleteProduct(productId: string) {
 
 export async function connectStripe() {
   const result = await execute(connectExecutable(getConnector("STRIPE")), {});
+  await logConnectAttempt("stripe", "integration.connect_attempt", result);
   if (result.redirectUrl) {
     redirect(result.redirectUrl);
   }
@@ -142,13 +171,15 @@ export async function disconnectStripe() {
 }
 
 export async function recheckStripe() {
-  await execute(verifyExecutable(getConnector("STRIPE")), undefined);
+  const result = await execute(verifyExecutable(getConnector("STRIPE")), undefined);
+  await logConnectAttempt("stripe", "integration.recheck_attempt", result);
 
   redirect("/dashboard/payments");
 }
 
 export async function connectPaypal() {
   const result = await execute(connectExecutable(getConnector("PAYPAL")), {});
+  await logConnectAttempt("paypal", "integration.connect_attempt", result);
   if (result.redirectUrl) {
     redirect(result.redirectUrl); // never true for PayPal today — kept for structural symmetry with connectStripe
   }
@@ -168,9 +199,10 @@ export async function submitPaypalCredentials(formData: FormData) {
     throw new Error("Client ID and Secret are required");
   }
 
-  await execute(connectExecutable(getConnector("PAYPAL")), {
+  const result = await execute(connectExecutable(getConnector("PAYPAL")), {
     params: { clientId, clientSecret, environment },
   });
+  await logConnectAttempt("paypal", "integration.connect_attempt", result);
 
   redirect("/dashboard/payments");
 }
@@ -184,7 +216,8 @@ export async function disconnectPaypal() {
 }
 
 export async function recheckPaypal() {
-  await execute(verifyExecutable(getConnector("PAYPAL")), undefined);
+  const result = await execute(verifyExecutable(getConnector("PAYPAL")), undefined);
+  await logConnectAttempt("paypal", "integration.recheck_attempt", result);
 
   redirect("/dashboard/payments");
 }

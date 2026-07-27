@@ -25,7 +25,6 @@ import {
 } from "@/lib/theme";
 import {
   ProductImage,
-  OwnerDashboardLink,
   PreviewModeBanner,
   resolveSectionOrder,
   type Blueprint,
@@ -638,7 +637,6 @@ export default async function StorefrontPage({
       className="min-h-screen bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
-      <OwnerDashboardLink role={viewerRole} />
       {!store.published && viewerRole && <PreviewModeBanner />}
 
       {/* Customer-facing nav — store name plus real, content-backed links

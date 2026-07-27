@@ -29,9 +29,9 @@ import { ActivityFeed } from "./ActivityFeed";
 import { AttentionPanel } from "./AttentionPanel";
 import { RecommendationsPanel } from "./RecommendationsPanel";
 import { ApprovalsSummary } from "./ApprovalsSummary";
-import { GreetingHeader } from "./GreetingHeader";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessJourney } from "./BusinessJourney";
+import { logJourneyStageIfChanged } from "@/lib/dashboard/journeyStage";
 
 const BRAND_PERSONALITIES = [
   "Luxury",
@@ -146,60 +146,6 @@ export default async function DashboardPage() {
             </p>
           )}
           <p className="mt-1 text-xs text-zinc-500">version {draft.version}</p>
-
-          <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-            Your input
-          </h2>
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-            These are the details you provided to Genesis. Edit them anytime
-            to guide your next store vision — regenerating creates a new
-            version, replacing the store details, theme, and products below.
-          </p>
-          <form
-            action={generateStoreDraft}
-            className="mt-4 flex max-w-md flex-col gap-4"
-          >
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-black dark:text-zinc-50">
-                Store name
-              </label>
-              <input
-                name="inputStoreName"
-                type="text"
-                defaultValue={draft.inputStoreName ?? ""}
-                className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-black dark:text-zinc-50">
-                What do you want to sell?
-              </label>
-              <input
-                name="inputProductType"
-                type="text"
-                defaultValue={draft.inputProductType ?? ""}
-                className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-black dark:text-zinc-50">
-                Describe your vision*
-              </label>
-              <textarea
-                name="inputVision"
-                defaultValue={draft.inputVision ?? ""}
-                rows={3}
-                required
-                className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-              />
-            </div>
-            <SubmitButton
-              pendingText="Regenerating..."
-              className="mt-2 self-start rounded-full border border-black/[.08] px-5 py-2 text-sm disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
-            >
-              Regenerate
-            </SubmitButton>
-          </form>
 
           <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
             Theme
@@ -448,7 +394,71 @@ export default async function DashboardPage() {
             </form>
           </div>
 
-          <form action={discardStoreDraft} className="mt-10">
+          {/* "Welcome to Genesis" (v20) — deliberately demoted and relabeled
+              from "Your input"/"Regenerate": talking to Genesis (above) is
+              the normal way to refine the business, since it's tracked
+              conversationally (a real StoreDraftMessage + diff + version).
+              This form calls the same generateStoreDraft action but bypasses
+              that entirely — a full, untracked regeneration from these raw
+              fields — so it's framed here as a rare "start over" escape
+              hatch, not the primary refinement mechanism. */}
+          <details className="mt-10">
+            <summary className="cursor-pointer text-sm font-medium text-zinc-500 hover:text-black dark:hover:text-zinc-300">
+              Start over from scratch
+            </summary>
+            <p className="mt-2 max-w-md text-xs text-zinc-500">
+              This replaces your store details, theme, and products with a
+              brand new generation from these fields — skip this and just
+              tell Genesis what you&apos;d like to change instead, if you can.
+            </p>
+            <form
+              action={generateStoreDraft}
+              className="mt-4 flex max-w-md flex-col gap-4"
+            >
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-black dark:text-zinc-50">
+                  Store name
+                </label>
+                <input
+                  name="inputStoreName"
+                  type="text"
+                  defaultValue={draft.inputStoreName ?? ""}
+                  className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-black dark:text-zinc-50">
+                  What do you want to sell?
+                </label>
+                <input
+                  name="inputProductType"
+                  type="text"
+                  defaultValue={draft.inputProductType ?? ""}
+                  className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-black dark:text-zinc-50">
+                  Describe your vision*
+                </label>
+                <textarea
+                  name="inputVision"
+                  defaultValue={draft.inputVision ?? ""}
+                  rows={3}
+                  required
+                  className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+                />
+              </div>
+              <SubmitButton
+                pendingText="Starting over..."
+                className="mt-2 self-start rounded-full border border-black/[.08] px-5 py-2 text-sm disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
+              >
+                Start over
+              </SubmitButton>
+            </form>
+          </details>
+
+          <form action={discardStoreDraft} className="mt-6">
             <SubmitButton
               pendingText="Discarding..."
               className="rounded-full border border-black/[.08] px-4 py-1.5 text-sm disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
@@ -467,6 +477,10 @@ export default async function DashboardPage() {
             hasUrgentIssue={false}
             hasPendingDecision={false}
             hasOpportunity={false}
+            // "Welcome to Genesis" (v20) — open by default here so talking
+            // to Genesis reads as the primary way to shape the business,
+            // not an easy-to-miss auxiliary widget.
+            defaultOpen
           />
         </div>
       );
@@ -475,11 +489,13 @@ export default async function DashboardPage() {
     return (
       <div className="min-h-screen bg-zinc-50 p-8 dark:bg-black">
         <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-          Create your store
+          Welcome to Genesis
         </h1>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Tell Genesis about your business. Share your vision, and Genesis
-          will transform it into a complete online store.
+        <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
+          Tell Genesis what you want to build, in your own words — a real
+          business, not a demo. Genesis will ask for anything it still needs
+          as you go; by the time you&apos;re done, your store will already
+          exist.
         </p>
 
         <form
@@ -605,6 +621,23 @@ export default async function DashboardPage() {
   ]);
 
   const inventorySnapshot = canViewOrders ? getInventorySnapshot(products) : null;
+
+  // Family-beta instrumentation (v20) — same gate BusinessJourney itself
+  // renders under, reusing its exact stage logic (lib/dashboard/
+  // journeyStage.ts) rather than a second computation. Scheduled via
+  // after() so it never adds latency to this page load; a no-op unless the
+  // stage genuinely changed since the last time this ran.
+  if (isOwnerManager && canViewOrders && orderSummary) {
+    after(() =>
+      logJourneyStageIfChanged(session.user.id, store.id, session.user.sessionInstanceId, {
+        published: store.published,
+        hasActiveProducts: (inventorySnapshot?.activeCount ?? 0) > 0,
+        stripeIntegration,
+        paypalIntegration,
+        allTimeOrderCount: orderSummary.allTimeOrderCount,
+      }).catch(() => {})
+    );
+  }
   const storeBlueprint = store.blueprint as {
     brandIdentity?: {
       brandPersonality?: string;
@@ -662,16 +695,17 @@ export default async function DashboardPage() {
   const hasAttentionOrApprovals = attention.recentOutcomes.length > 0 || pendingApprovals.length > 0;
 
   return (
-    <div style={themeCssVars(storeTheme)} className="min-h-screen p-8">
+    <div style={themeCssVars(storeTheme)} className="min-h-screen p-8 lg:min-h-0">
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
 
-      {/* Welcome */}
-      <GreetingHeader storeName={store.name} tagline={store.tagline} />
-
-      {/* Today, at a glance — large numbers, no boxes; spacing and type carry
-          the hierarchy instead of bordered cards. */}
+      {/* Today, at a glance — the workspace now begins directly with real
+          business state; the greeting moved to Live Intelligence (see
+          GenesisGreeting.tsx/LiveIntelligence.tsx), which already briefs
+          the owner by name before they ever reach this page. Large
+          numbers, no boxes; spacing and type carry the hierarchy instead
+          of bordered cards. */}
       {canViewOrders && orderSummary && (
-        <div className="mt-10 flex flex-wrap items-baseline gap-x-12 gap-y-5">
+        <div className="flex flex-wrap items-baseline gap-x-12 gap-y-5">
           {orderSummary.revenueInCents !== null && (
             <div>
               <p className="font-[var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
@@ -715,20 +749,21 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Business Journey — real progress, not a software setup checklist.
-          Leads with what's moving forward before anything problem-shaped. */}
-      {isOwnerManager && canViewOrders && orderSummary && (
-        <BusinessJourney
-          published={store.published}
-          hasActiveProducts={(inventorySnapshot?.activeCount ?? 0) > 0}
-          stripeIntegration={stripeIntegration}
-          paypalIntegration={paypalIntegration}
-          allTimeOrderCount={orderSummary.allTimeOrderCount}
-        />
-      )}
-
-      {/* Needs your attention — genuine issues only now; routine incomplete
-          setup lives positively in Business Journey above instead. */}
+      {/* Needs your attention — genuine issues only (Red) and real pending
+          decisions (Yellow), in that priority order; routine incomplete
+          setup lives positively in Business Journey below instead.
+          Deliberately rendered here, directly under Snapshot and before
+          Business Journey, rather than further down the page: when a
+          genuine owner-action state exists, the thing requiring the owner
+          should be visible in the initial viewport without scrolling — the
+          greeting/Live Intelligence above already says as much, so the
+          page itself shouldn't bury the reason. This is presentation
+          ordering of the exact same gated block, not a second alert — when
+          hasAttentionOrApprovals is false (nothing renders here at all),
+          Business Journey below is exactly what a visitor sees first,
+          unchanged from before. Purple ("From Genesis") and Recent Orders
+          deliberately keep their own current position further down — this
+          reordering is scoped to genuine Red/Yellow states only. */}
       {isOwnerManager && hasAttentionOrApprovals && (
         <>
           <h2 id="attention" className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
@@ -746,6 +781,20 @@ export default async function DashboardPage() {
             )}
           </div>
         </>
+      )}
+
+      {/* Business Journey — real progress, not a software setup checklist.
+          Leads with what's moving forward before anything problem-shaped
+          (when nothing above needed the owner, this is the first thing
+          shown after Snapshot, unchanged from before). */}
+      {isOwnerManager && canViewOrders && orderSummary && (
+        <BusinessJourney
+          published={store.published}
+          hasActiveProducts={(inventorySnapshot?.activeCount ?? 0) > 0}
+          stripeIntegration={stripeIntegration}
+          paypalIntegration={paypalIntegration}
+          allTimeOrderCount={orderSummary.allTimeOrderCount}
+        />
       )}
 
       {/* Recent orders — positive activity, shown separately from anything problem-shaped */}

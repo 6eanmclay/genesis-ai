@@ -20,6 +20,7 @@ export function VisualProposal({
   rejectAction,
   stacked,
   note,
+  highlighted,
 }: {
   title: string;
   summary: string;
@@ -37,9 +38,24 @@ export function VisualProposal({
   // content — e.g. a plain-text order diff. Secondary to the visual
   // comparison above it, never the primary evidence.
   note?: React.ReactNode;
+  // Contextual-review connection layer: the one proposal Genesis brought
+  // the owner here to review (via "?focus="). Omitted/false preserves
+  // every existing caller's appearance exactly.
+  highlighted?: boolean;
 }) {
   return (
-    <div className="mt-4 max-w-2xl rounded-2xl border border-[var(--brand-accent)]/15 bg-[var(--brand-accent)]/[0.035] px-5 py-4">
+    <div
+      className={`mt-4 max-w-2xl rounded-2xl border bg-[var(--brand-accent)]/[0.035] px-5 py-4 ${
+        highlighted
+          ? "border-[var(--brand-accent)] ring-1 ring-[var(--brand-accent)]"
+          : "border-[var(--brand-accent)]/15"
+      }`}
+    >
+      {highlighted && (
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--brand-accent)]">
+          Genesis brought you here to review this
+        </p>
+      )}
       <p className="text-sm font-medium text-black dark:text-zinc-50">{title}</p>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{summary}</p>
       {note && <p className="mt-2 text-xs text-zinc-500">{note}</p>}

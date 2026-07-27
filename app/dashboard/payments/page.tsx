@@ -118,7 +118,7 @@ export default async function PaymentsPage() {
       : null;
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Payments</h1>
 
       {!stripeIntegration || stripeIntegration.status === "DISCONNECTED" ? (
@@ -128,7 +128,11 @@ export default async function PaymentsPage() {
             Until then, checkout uses Genesis&apos;s shared test account.
           </p>
           <form action={connectStripe} className="mt-4">
-            <SubmitButton pendingText="Redirecting to Stripe..." className={`px-5 py-2 ${ACCENT_BUTTON}`}>
+            <SubmitButton
+              pendingText="Redirecting to Stripe..."
+              className={`px-5 py-2 ${ACCENT_BUTTON}`}
+              trackPerf={{ label: "Connect Stripe", storeId: store.id, attemptKey: `stripe_connect:${store.id}` }}
+            >
               Connect Stripe
             </SubmitButton>
           </form>
@@ -144,13 +148,18 @@ export default async function PaymentsPage() {
                   <SubmitButton
                     pendingText="Checking..."
                     className="rounded-full border border-black/[.08] px-4 py-1.5 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
+                    trackPerf={{ label: "Recheck Stripe", storeId: store.id, attemptKey: `stripe_connect:${store.id}` }}
                   >
                     Recheck
                   </SubmitButton>
                 </form>
                 {stripeIntegration.status !== "CONNECTED" && (
                   <form action={connectStripe}>
-                    <SubmitButton pendingText="Redirecting..." className={`px-4 py-1.5 text-xs ${ACCENT_BUTTON}`}>
+                    <SubmitButton
+                      pendingText="Redirecting..."
+                      className={`px-4 py-1.5 text-xs ${ACCENT_BUTTON}`}
+                      trackPerf={{ label: "Reconnect Stripe", storeId: store.id, attemptKey: `stripe_connect:${store.id}` }}
+                    >
                       Reconnect
                     </SubmitButton>
                   </form>
@@ -195,7 +204,11 @@ export default async function PaymentsPage() {
                 className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
               />
             ))}
-            <SubmitButton pendingText="Connecting..." className={`self-start px-5 py-2 ${ACCENT_BUTTON}`}>
+            <SubmitButton
+              pendingText="Connecting..."
+              className={`self-start px-5 py-2 ${ACCENT_BUTTON}`}
+              trackPerf={{ label: "Submit PayPal credentials", storeId: store.id, attemptKey: `paypal_connect:${store.id}` }}
+            >
               Connect PayPal
             </SubmitButton>
           </form>
@@ -211,7 +224,11 @@ export default async function PaymentsPage() {
               </p>
             )}
             <form action={connectPaypal} className="mt-4">
-              <SubmitButton pendingText="Starting..." className={`px-5 py-2 ${ACCENT_BUTTON}`}>
+              <SubmitButton
+                pendingText="Starting..."
+                className={`px-5 py-2 ${ACCENT_BUTTON}`}
+                trackPerf={{ label: "Connect PayPal", storeId: store.id, attemptKey: `paypal_connect:${store.id}` }}
+              >
                 Connect PayPal
               </SubmitButton>
             </form>
@@ -228,6 +245,7 @@ export default async function PaymentsPage() {
                   <SubmitButton
                     pendingText="Checking..."
                     className="rounded-full border border-black/[.08] px-4 py-1.5 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
+                    trackPerf={{ label: "Recheck PayPal", storeId: store.id, attemptKey: `paypal_connect:${store.id}` }}
                   >
                     Recheck
                   </SubmitButton>

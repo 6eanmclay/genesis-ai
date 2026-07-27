@@ -26,6 +26,7 @@ model User {
   storeMemberships      StoreMember[]
   connectedIntegrations StoreIntegration[]
   executionLogs         ExecutionLog[]
+  productEvents         ProductEvent[]
 }
 
 model Account {
@@ -94,6 +95,7 @@ model Store {
   observations             GenesisObservation[]
   postExecutionMeasurements PostExecutionMeasurement[]
   delegatedAuthorities      DelegatedAuthority[]
+  productEvents             ProductEvent[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -467,4 +469,50 @@ model GenesisObservation {
 
   @@unique([storeId, dedupeKey])
   @@index([storeId, status])
+}
+
+// Family-beta behavioral/friction instrumentation (v20). One generic,
+// append-only event table — deliberately not several bespoke tables — for
+// everything the existing audit/business models (ExecutionLog, StoreMessage,
+// ApprovalRequest, GenesisObservation) don't already capture: navigation,
+// focus-routing outcomes, chat turn latency, perceived-loading duration, and
+// the pre-launch creation ("Welcome to Genesis") journey. `name` is a plain,
+// freely-growing String catalog (see EXECUTION_ACTIONS's own reasoning),
+// never an enum. `attemptKey` is the correlation seam for reconstructing an
+// attempt sequence (entered -> problem -> attempt 1 -> attempt 2 -> recovered
+// or abandoned) — always a real, already-meaningful identity already used
+// elsewhere (topicKey, groupId, dedupeKey, a storeDraftId, a fixed flow name)
+// rather than an invented counter. `metadata` only ever holds small,
+// allow-listed structured fields and *references* to other rows' own ids —
+// never raw chat/form content, which stays in its own real row and is joined
+// at reconstruction time.
+model ProductEvent {
+  id                String    @id @default(cuid())
+  userId            String?
+  storeId           String?
+  // Deliberately NOT a real relation (unlike storeId/userId below) — a
+  // StoreDraft is deleted as the normal, successful terminal step of the
+  // creation journey (confirmStoreDraft), not an edge case, and the
+  // "creation.confirmed" event is written *after* that delete. A hard FK
+  // here would either cascade-delete the very creation.* history this
+  // table exists to preserve, or reject the terminal event's own insert —
+  // same "no FK, might legitimately outlive its referent" reasoning
+  // ApprovalRequest.recommendationId already uses.
+  storeDraftId      String?
+  sessionInstanceId String
+  name              String
+  category          String // navigation | chat | approval | integration | creation | performance | journey
+  attemptKey        String?
+  outcome           String? // success | failure | abandoned | null (in progress / not applicable)
+  durationMs        Int?
+  metadata          Json?
+  createdAt         DateTime  @default(now())
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store? @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([sessionInstanceId, createdAt])
+  @@index([attemptKey])
+  @@index([storeId, createdAt])
 }

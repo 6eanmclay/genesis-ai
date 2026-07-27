@@ -15,11 +15,17 @@ export function ApprovalRequestsPanel({
   approveAction,
   rejectAction,
   regenerateAction,
+  highlightId,
 }: {
   approvals: PendingApproval[];
   approveAction: (id: string) => Promise<void>;
   rejectAction: (id: string) => Promise<void>;
   regenerateAction: (id: string) => Promise<void>;
+  // Contextual-review connection layer: the one approval, if any, that
+  // Genesis brought the owner here to review (via "?focus=") — gets an
+  // auto-expanded diff and a visual callout, everything else renders as
+  // it always has.
+  highlightId?: string;
 }) {
   if (approvals.length === 0) {
     return null;
@@ -30,12 +36,22 @@ export function ApprovalRequestsPanel({
       {approvals.map((approval) => {
         const isImageAction = approval.actionType === "update_product_image";
         const diffKeys = Object.keys(approval.input).filter((key) => !HIDDEN_DIFF_KEYS.has(key));
+        const isHighlighted = approval.id === highlightId;
 
         return (
           <li
             key={approval.id}
-            className="rounded-lg border border-black/[.08] px-3 py-2 dark:border-white/[.145]"
+            className={`rounded-lg border px-3 py-2 ${
+              isHighlighted
+                ? "border-[var(--brand-accent,var(--foreground))] ring-1 ring-[var(--brand-accent,var(--foreground))]"
+                : "border-black/[.08] dark:border-white/[.145]"
+            }`}
           >
+            {isHighlighted && (
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--brand-accent,var(--foreground))]">
+                Genesis brought you here to review this
+              </p>
+            )}
             <p className="text-sm text-black dark:text-zinc-50">{approval.summary}</p>
             {approval.lastFailedExecutionId && (
               <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
@@ -44,7 +60,7 @@ export function ApprovalRequestsPanel({
               </p>
             )}
 
-            <details className="mt-1.5">
+            <details className="mt-1.5" open={isHighlighted}>
               <summary className="cursor-pointer text-xs text-zinc-500 underline">
                 Review changes
               </summary>
@@ -112,7 +128,7 @@ export function ApprovalRequestsPanel({
               <form action={approveAction.bind(null, approval.id)}>
                 <button
                   type="submit"
-                  className="rounded-full bg-[var(--brand-accent,var(--foreground))] px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                  className="rounded-full bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-opacity hover:opacity-90"
                 >
                   Approve
                 </button>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { isPaymentConnected } from "@/lib/dashboard/needsAttention";
+import { deriveJourneyStage } from "@/lib/dashboard/journeyStage";
 
 type ChecklistItem = { label: string; done: boolean; href?: string };
 
@@ -54,10 +55,18 @@ export function BusinessJourney({
   paypalIntegration: { status: string } | null;
   allTimeOrderCount: number;
 }) {
-  if (allTimeOrderCount > 1) {
+  const stage = deriveJourneyStage({
+    published,
+    hasActiveProducts,
+    stripeIntegration,
+    paypalIntegration,
+    allTimeOrderCount,
+  });
+
+  if (stage === "up-and-running") {
     return (
       <div className="mt-6 max-w-2xl">
-        <p className="text-lg font-medium text-black dark:text-zinc-50">Your store is up and running.</p>
+        <p className="text-lg font-medium text-black dark:text-zinc-50">Your business is up and running.</p>
         <p className="mt-1 text-sm text-zinc-500">
           {allTimeOrderCount.toLocaleString()} orders so far.
         </p>
@@ -65,7 +74,7 @@ export function BusinessJourney({
     );
   }
 
-  if (allTimeOrderCount === 1) {
+  if (stage === "first-sale") {
     return (
       <p className="mt-6 max-w-2xl text-lg font-medium text-emerald-600 dark:text-emerald-400">
         You just made your first sale! 🎉
@@ -87,7 +96,7 @@ export function BusinessJourney({
         ? "Almost there — one more step before you're ready to sell."
         : setupDoneCount === 1
           ? "You're making progress — a couple more steps to go."
-          : "Let's get your store ready for its first customer.";
+          : "Let's get your business ready for its first customer.";
 
   return (
     <div className="mt-6 max-w-2xl">

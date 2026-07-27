@@ -2,8 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/auth";
-import { getStoreRole } from "@/lib/permissions";
 import { createCheckoutSession } from "../../actions";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import {
@@ -18,7 +16,6 @@ import {
 } from "@/lib/theme";
 import {
   ProductImage,
-  OwnerDashboardLink,
   type Blueprint,
   type ProductRichContent,
 } from "../../shared";
@@ -54,9 +51,6 @@ export default async function ProductDetailPage({
     notFound();
   }
 
-  const session = await auth();
-  const viewerRole = session?.user ? await getStoreRole(session.user.id, store.id) : null;
-
   const product = await prisma.product.findFirst({
     where: { id: productId, storeId: store.id, active: true },
   });
@@ -79,7 +73,6 @@ export default async function ProductDetailPage({
       className="min-h-screen bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
-      <OwnerDashboardLink role={viewerRole} />
 
       <div className="mx-auto max-w-5xl px-8 py-8">
         <Link

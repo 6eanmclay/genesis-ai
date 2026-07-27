@@ -20,6 +20,10 @@ export interface PendingApproval {
   // what actually went wrong rather than just "something failed."
   lastFailedExecutionId: string | null;
   lastFailureMessage: string | null;
+  // Phase 5 field, exposed here for the contextual-review connection layer
+  // (deep-linking + Genesis's auto-opened context message) — lets a caller
+  // join back to a GenesisObservation's summary without a new query.
+  topicKey: string | null;
 }
 
 // Cheap indexed DB read, not an AI call — safe on every dashboard load,
@@ -55,6 +59,7 @@ export async function getPendingApprovals(storeId: string): Promise<PendingAppro
     // proposal always has it null.
     lastFailedExecutionId: row.executionId,
     lastFailureMessage: row.executionId ? failureMessageByExecutionId.get(row.executionId) ?? null : null,
+    topicKey: row.topicKey,
   }));
 }
 

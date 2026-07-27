@@ -46,3 +46,20 @@ export async function getCustomerSummaries(
     lastOrderAt: row._max.createdAt!,
   }));
 }
+
+// Real first-time-buyer count for Live Intelligence's Business Pulse widget
+// — a customer only counts as "new" if their true first-ever order (not
+// just their first order *in the window*) falls inside the last `days`.
+// Requires grouping across ALL of the store's orders (not a windowed
+// where-clause) so a customer who bought long ago and again recently isn't
+// miscounted as new. Gated by ORDERS_VIEW (a count, not a dollar figure),
+// independent of REVENUE_VIEW — same tier as getOrderSummary's orderCount.
+export async function getNewCustomerCount(storeId: string, days: number = 30): Promise<number> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const rows = await prisma.order.groupBy({
+    by: ["buyerEmail"],
+    where: { storeId },
+    _min: { createdAt: true },
+  });
+  return rows.filter((row) => row._min.createdAt && row._min.createdAt >= since).length;
+}

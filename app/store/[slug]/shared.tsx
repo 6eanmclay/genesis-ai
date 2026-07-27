@@ -1,23 +1,4 @@
-import Link from "next/link";
-import type { StoreRole } from "@prisma/client";
 import { resolveSectionOrder, type SectionKey } from "@/lib/storefrontSections";
-
-// Lets an authenticated owner/employee find their way back to the
-// dashboard while previewing the public storefront — invisible to
-// customers and logged-out visitors (role is null for both). Styled with
-// fixed colors rather than the store's own --brand-* CSS vars so it stays
-// legible regardless of the active theme (dark, light, any accent).
-export function OwnerDashboardLink({ role }: { role: StoreRole | null }) {
-  if (!role) return null;
-  return (
-    <Link
-      href="/dashboard"
-      className="fixed top-3 left-3 z-50 rounded-full border border-white/20 bg-black/80 px-3.5 py-2 text-sm font-medium text-white shadow-sm backdrop-blur transition-colors hover:bg-black"
-    >
-      &larr; Dashboard
-    </Link>
-  );
-}
 
 // Shown only when an owner/employee is viewing their own unpublished store
 // (the notFound() gate in page.tsx already keeps everyone else out entirely)

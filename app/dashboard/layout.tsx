@@ -3,8 +3,10 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
-import { NAV_SECTIONS } from "@/lib/dashboard/navConfig";
+import { NAV_SECTIONS, YOUR_BUSINESS_SECTIONS } from "@/lib/dashboard/navConfig";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
+import { getOrderSummary, getRevenueTrend } from "@/lib/dashboard/whatHappened";
+import { getNewCustomerCount } from "@/lib/dashboard/customers";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { sendStoreMessage } from "./ai-actions";
@@ -51,20 +53,39 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const sections = NAV_SECTIONS.filter(
     (section) => !section.permission || hasPermission(role, section.permission)
   );
+  const secondarySections = YOUR_BUSINESS_SECTIONS.filter(
+    (section) => !section.permission || hasPermission(role, section.permission)
+  );
 
-  const [storeMessages, pendingApprovals, activeObservations] = await Promise.all([
-    prisma.storeMessage.findMany({ where: { storeId: store.id }, orderBy: { createdAt: "asc" } }),
-    hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
-    // Phase 4 — the real, deduplicated Purple/Red signals. A cheap, indexed
-    // read (same status/storeId index every other approval query already
-    // uses the shape of) — never an AI call.
-    prisma.genesisObservation.findMany({
-      where: { storeId: store.id, status: "ACTIVE" },
-      select: { genesisState: true },
-    }),
-  ]);
+  // Live Intelligence's Business Pulse widget — same permission pattern
+  // Home already uses (app/dashboard/page.tsx): revenue is never fetched at
+  // all for a caller without REVENUE_VIEW, not just hidden in the UI.
+  const canViewOrders = hasPermission(role, PERMISSIONS.ORDERS_VIEW);
+  const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
+
+  const [storeMessages, pendingApprovals, activeObservations, orderSummary, revenueTrend, newCustomerCount] =
+    await Promise.all([
+      prisma.storeMessage.findMany({ where: { storeId: store.id }, orderBy: { createdAt: "asc" } }),
+      hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
+      // Phase 4 — the real, deduplicated Purple/Red signals. A cheap, indexed
+      // read (same status/storeId index every other approval query already
+      // uses the shape of) — never an AI call. dedupeKey/summary added for the
+      // contextual connection layer: joins an ApprovalRequest back to the
+      // GenesisObservation that noticed the underlying issue, via topicKey.
+      prisma.genesisObservation.findMany({
+        where: { storeId: store.id, status: "ACTIVE" },
+        select: { genesisState: true, dedupeKey: true, summary: true, actionHref: true },
+      }),
+      canViewOrders ? getOrderSummary(store.id, { includeRevenue: canViewRevenue }) : Promise.resolve(null),
+      // Revenue trend/New Customers — same permission tiers as the flat
+      // revenue/order figures above (see getRevenueTrend/getNewCustomerCount
+      // for why each is gated the way it is).
+      canViewRevenue ? getRevenueTrend(store.id, 30) : Promise.resolve(null),
+      canViewOrders ? getNewCustomerCount(store.id, 30) : Promise.resolve(null),
+    ]);
   const hasUrgentIssue = activeObservations.some((o) => o.genesisState === "urgent");
   const hasOpportunity = activeObservations.some((o) => o.genesisState === "opportunity");
+  const observationSummaryByTopicKey = new Map(activeObservations.map((o) => [o.dedupeKey, o.summary]));
 
   // The owner/employee can now preview their own storefront whether it's
   // published or not (app/store/[slug]/page.tsx allows owner/employee
@@ -81,6 +102,10 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // not three, everywhere a badge/count is shown.
   const seenGroupsPerSection = new Map<string, Set<string>>();
   const seenGroupsTotal = new Set<string>();
+  // For each section, the oldest still-pending approval's id —
+  // pendingApprovals is already createdAt-asc, so the first one seen per
+  // section key is the oldest.
+  const oldestApprovalIdBySection: Record<string, string> = {};
   for (const approval of pendingApprovals) {
     const groupKey = approval.groupId ?? approval.id;
     seenGroupsTotal.add(groupKey);
@@ -88,19 +113,162 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     if (key) {
       if (!seenGroupsPerSection.has(key)) seenGroupsPerSection.set(key, new Set());
       seenGroupsPerSection.get(key)!.add(groupKey);
+      if (!(key in oldestApprovalIdBySection)) oldestApprovalIdBySection[key] = approval.id;
     }
   }
+  // Unchanged meaning: every primary section's own flat (Yellow-only) badge
+  // count — Marketing/Payments/etc. via the "More" dropdown (fixed last
+  // pass). "home" stays the store-wide total here; the color-aware,
+  // Your-Business-scoped replacement for the "Your Business" nav item
+  // itself is computed separately below (sectionNavState.home).
   const sectionBadgeCounts: Record<string, number> = { home: seenGroupsTotal.size };
   for (const [key, groupSet] of seenGroupsPerSection) {
     sectionBadgeCounts[key] = groupSet.size;
   }
 
+  // Per-approval context DashboardShell (a client component) needs to
+  // resolve a "?focus=" param on its own — it can't read searchParams
+  // itself (layouts don't receive them), and pulling ACTION_SECTIONS'
+  // definitions (which transitively import prisma-backed Executables) into
+  // client code isn't safe, so the section key is resolved here instead.
+  const focusableApprovals = pendingApprovals
+    .map((approval) => {
+      const section = ACTION_SECTIONS[approval.actionType];
+      if (!section) return null;
+      return {
+        id: approval.id,
+        section: section.key,
+        href: section.href,
+        summary: approval.summary,
+        noticedSummary: approval.topicKey
+          ? observationSummaryByTopicKey.get(approval.topicKey) ?? null
+          : null,
+      };
+    })
+    .filter((a): a is NonNullable<typeof a> => a !== null);
+
+  // Genesis Environment shell — Live Intelligence's "noticing" register.
+  // Real ACTIVE GenesisObservation rows already fetched above, excluding
+  // any whose underlying issue is already represented by a focusableApproval
+  // (via topicKey) so the same real issue never appears twice in one feed.
+  const coveredTopicKeys = new Set(
+    pendingApprovals.map((a) => a.topicKey).filter((k): k is string => k !== null)
+  );
+  const liveObservations = activeObservations
+    .filter((o) => !coveredTopicKeys.has(o.dedupeKey))
+    .map((o) => ({
+      dedupeKey: o.dedupeKey,
+      genesisState: o.genesisState,
+      summary: o.summary,
+      actionHref: o.actionHref,
+    }));
+
+  // Genesis Language propagating through Your Business's own hierarchy —
+  // reuses the exact priority order already established in
+  // lib/dashboard/genesisState.ts (urgent > needs_decision > opportunity;
+  // "working"/Blue has no destination and is correctly never part of
+  // this), scoped per real destination rather than store-wide. The reverse
+  // lookup is built from YOUR_BUSINESS_SECTIONS itself — not a hand-written
+  // table — so it can never silently drift from the real secondary nav.
+  // Overview deliberately never "owns" anything: no approval or
+  // observation's real destination is ever plain "/dashboard" (confirmed
+  // by direct audit of ACTION_SECTIONS and every observation source).
+  const sectionKeyByHref = new Map(
+    YOUR_BUSINESS_SECTIONS.filter((s) => s.key !== "overview").map((s) => [s.href, s.key])
+  );
+  const YOUR_BUSINESS_OWNED_KEYS = ["brand", "website", "products"] as const;
+  const SECTION_STATE_PRIORITY = { urgent: 0, needs_decision: 1, opportunity: 2, idle: 3 } as const;
+  type SectionState = keyof typeof SECTION_STATE_PRIORITY;
+
+  const sectionNavState: Record<string, { state: SectionState; count: number; focusHref: string }> = {};
+  for (const key of YOUR_BUSINESS_OWNED_KEYS) {
+    const sectionHref = YOUR_BUSINESS_SECTIONS.find((s) => s.key === key)!.href;
+    const urgentObs = liveObservations.filter(
+      (o) => o.genesisState === "urgent" && o.actionHref && sectionKeyByHref.get(o.actionHref) === key
+    );
+    const opportunityObs = liveObservations.filter(
+      (o) => o.genesisState === "opportunity" && o.actionHref && sectionKeyByHref.get(o.actionHref) === key
+    );
+    const approvalCount = seenGroupsPerSection.get(key)?.size ?? 0;
+    const state: SectionState =
+      urgentObs.length > 0
+        ? "urgent"
+        : approvalCount > 0
+          ? "needs_decision"
+          : opportunityObs.length > 0
+            ? "opportunity"
+            : "idle";
+    const focusHref =
+      state === "urgent"
+        ? `${sectionHref}?focus=${urgentObs[0].dedupeKey}`
+        : state === "needs_decision"
+          ? `${sectionHref}?focus=${oldestApprovalIdBySection[key]}`
+          : state === "opportunity"
+            ? `${sectionHref}?focus=${opportunityObs[0].dedupeKey}`
+            : sectionHref;
+    sectionNavState[key] = {
+      state,
+      count: urgentObs.length + approvalCount + opportunityObs.length,
+      focusHref,
+    };
+  }
+  // "Your Business" itself — color = highest-priority state among its own
+  // three children; count = their sum. Deliberately scoped to only what
+  // Your Business actually owns (unlike sectionBadgeCounts.home above,
+  // which stays store-wide) — e.g. a Marketing-only SEO approval is
+  // Marketing's own signal (via "More"), not Your Business's.
+  const yourBusinessChildren = YOUR_BUSINESS_OWNED_KEYS.map((key) => sectionNavState[key]);
+  const yourBusinessState = yourBusinessChildren.reduce((best, s) =>
+    SECTION_STATE_PRIORITY[s.state] < SECTION_STATE_PRIORITY[best.state] ? s : best
+  );
+  sectionNavState.home = {
+    state: yourBusinessState.state,
+    count: yourBusinessChildren.reduce((sum, s) => sum + s.count, 0),
+    focusHref: "/dashboard",
+  };
+
+  // Merged focus-target list DashboardShell resolves "?focus=" against —
+  // approvals (existing shape, tagged "approval") plus observations that
+  // genuinely belong to one of Your Business's own sections (tagged
+  // "observation"), so the one mechanism the contextual notification layer
+  // already verified extends to Red/Purple instead of becoming a second
+  // lookup system.
+  const focusableObservations = liveObservations
+    .map((o) => {
+      const key = o.actionHref ? sectionKeyByHref.get(o.actionHref) : undefined;
+      if (!key) return null;
+      return {
+        kind: "observation" as const,
+        id: o.dedupeKey,
+        section: key,
+        href: o.actionHref!,
+        summary: o.summary,
+        noticedSummary: null as string | null,
+      };
+    })
+    .filter((o): o is NonNullable<typeof o> => o !== null);
+  const focusableItems = [
+    ...focusableApprovals.map((a) => ({ ...a, kind: "approval" as const })),
+    ...focusableObservations,
+  ];
+
   return (
     <DashboardShell
       sections={sections}
+      secondarySections={secondarySections}
+      storeId={store.id}
       storeName={store.name}
       storefrontUrl={storefrontUrl}
       sectionBadgeCounts={sectionBadgeCounts}
+      sectionNavState={sectionNavState}
+      focusableItems={focusableItems}
+      focusableApprovals={focusableApprovals}
+      liveObservations={liveObservations}
+      userName={session.user.name ?? null}
+      revenueInCents={orderSummary?.revenueInCents ?? null}
+      orderCount={orderSummary?.orderCount ?? null}
+      revenueTrend={revenueTrend}
+      newCustomerCount={newCustomerCount}
       genesisMessages={storeMessages}
       sendGenesisMessage={sendStoreMessage}
       // The real Genesis Language signals — Yellow reuses the same grouped

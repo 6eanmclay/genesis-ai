@@ -44,7 +44,7 @@ export default async function MarketingPage() {
   const seoMetaDescription = blueprint?.marketingAssets?.seoMetaDescription;
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Marketing</h1>
 
       {seoApprovals.length > 0 && (

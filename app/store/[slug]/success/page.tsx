@@ -51,7 +51,7 @@ export default async function CheckoutSuccessPage({
         </p>
       )}
       <p className="mt-2 text-sm text-zinc-500">
-        A confirmation has been sent to your email.
+        Your order is confirmed.
       </p>
       <Link
         href={`/store/${slug}`}

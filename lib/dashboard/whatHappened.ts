@@ -53,6 +53,31 @@ export async function getOrderSummary(
   };
 }
 
+// Real daily revenue over the same 30-day window getOrderSummary already
+// uses — for Live Intelligence's Business Pulse sparkline. Prisma has no
+// day-truncated groupBy without raw SQL, so this fetches the real (small-
+// volume, already-indexed-by-storeId) order rows in the window and buckets
+// them in plain JS — still genuine Order data, just aggregated differently.
+// Same REVENUE_VIEW gating as getOrderSummary's revenueInCents — this is a
+// revenue metric, so callers must check that permission before calling
+// this at all (see layout.tsx).
+export async function getRevenueTrend(storeId: string, days: number = 30): Promise<number[]> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const orders = await prisma.order.findMany({
+    where: { storeId, createdAt: { gte: since } },
+    select: { createdAt: true, amountInCents: true },
+  });
+
+  const buckets = new Array(days).fill(0) as number[];
+  const now = Date.now();
+  for (const order of orders) {
+    const daysAgo = Math.floor((now - order.createdAt.getTime()) / (24 * 60 * 60 * 1000));
+    const index = days - 1 - daysAgo;
+    if (index >= 0 && index < days) buckets[index] += order.amountInCents;
+  }
+  return buckets;
+}
+
 // Individual recent orders, not just the aggregate getOrderSummary() above —
 // used for Home's positively-framed "recent orders" section. Same
 // includeRevenue gating pattern as getOrderSummary/getCustomerSummaries:

@@ -28,6 +28,7 @@ import { GENESIS_ACTIONS, type GenesisActionContext } from "@/lib/execution/gene
 import { supersedePendingApproval } from "@/lib/dashboard/pendingApprovals";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
 import { execute } from "@/lib/execution/engine";
+import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 
 const anthropic = new Anthropic();
 
@@ -318,10 +319,23 @@ const GENERATION_COMPOSITION_SYSTEM_PROMPT = `You are Genesis, an expert e-comme
 ${COMPOSITION_GUIDANCE}`;
 
 export async function generateStoreDraft(formData: FormData) {
+  // Family-beta instrumentation (v20) — the "Welcome to Genesis" creation
+  // journey's own real duration; see the creation.* events below.
+  const creationStartedAt = Date.now();
+
   const session = await auth();
   if (!session?.user) {
     redirect("/login");
   }
+
+  // A pre-existing draft means this call is the "Regenerate" mini-form (a
+  // real, one-shot regeneration that bypasses the conversational/diff-
+  // tracked chat path entirely — see the v20 plan's Welcome-to-Genesis
+  // audit) rather than the very first generation.
+  const existingDraft = await prisma.storeDraft.findUnique({
+    where: { userId: session.user.id },
+    select: { id: true },
+  });
 
   const inputStoreName =
     (formData.get("inputStoreName") as string)?.trim() || null;
@@ -355,6 +369,16 @@ export async function generateStoreDraft(formData: FormData) {
   const primaryMessage = await primaryStream.finalMessage();
   const primary = primaryMessage.parsed_output;
   if (!primary) {
+    await logProductEvent({
+      userId: session.user.id,
+      storeDraftId: existingDraft?.id ?? null,
+      sessionInstanceId: session.user.sessionInstanceId,
+      name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
+      category: "creation",
+      attemptKey: existingDraft?.id ?? session.user.id,
+      outcome: "failure",
+      durationMs: Date.now() - creationStartedAt,
+    });
     throw new Error("Failed to generate store blueprint");
   }
 
@@ -418,11 +442,18 @@ export async function generateStoreDraft(formData: FormData) {
       .finalMessage(),
   ]);
   const secondary = secondaryMessage.parsed_output;
-  if (!secondary) {
-    throw new Error("Failed to generate store blueprint");
-  }
   const composition = compositionMessage.parsed_output;
-  if (!composition) {
+  if (!secondary || !composition) {
+    await logProductEvent({
+      userId: session.user.id,
+      storeDraftId: existingDraft?.id ?? null,
+      sessionInstanceId: session.user.sessionInstanceId,
+      name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
+      category: "creation",
+      attemptKey: existingDraft?.id ?? session.user.id,
+      outcome: "failure",
+      durationMs: Date.now() - creationStartedAt,
+    });
     throw new Error("Failed to generate store blueprint");
   }
 
@@ -486,6 +517,17 @@ export async function generateStoreDraft(formData: FormData) {
       milestone: draft.version === 1 ? "original" : null,
       generatedOutput,
     },
+  });
+
+  await logProductEvent({
+    userId: session.user.id,
+    storeDraftId: draft.id,
+    sessionInstanceId: session.user.sessionInstanceId,
+    name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
+    category: "creation",
+    attemptKey: draft.id,
+    outcome: "success",
+    durationMs: Date.now() - creationStartedAt,
   });
 
   redirect("/dashboard");
@@ -898,7 +940,47 @@ Most messages are not this — identity, theme, branding, policy, and general qu
 
 If it IS an image request, try to identify exactly which single product from the list is meant. If you can confidently tell which one, set productName to that product's exact name and write reply as a short, natural acknowledgment that you're finding a new photo for it (you don't yet know what the new photo will look like — don't describe it). If you cannot confidently tell which single product is meant — no product was named, the name doesn't match anything specific enough, or it could plausibly be more than one product — do NOT guess. Leave productName empty (or your best partial guess, which will not be trusted) and write reply as a genuine, specific clarifying question naming the plausible candidates from the real list, so the merchant can just answer with the right one.`;
 
+// Family-beta instrumentation (v20) — shared by both applyGenesisMessage
+// (draft chat) and applyGenesisMessageToStore (live chat) so a real chat
+// turn's server-side duration (Claude call + DB writes, distinct from "the
+// page was open") and its likely-rephrase flag are captured exactly once,
+// the same way regardless of which phase the conversation is in.
+// attemptKey is the draft/store id itself, so a whole conversation's turns
+// correlate together, the same identity already used for creation.* events.
+async function logChatTurnEvent(params: {
+  userId: string;
+  storeId?: string | null;
+  storeDraftId?: string | null;
+  turnStartedAt: number;
+  outcome: "success" | "failure";
+  requiresConfirmation?: boolean;
+  likelyRephraseOf?: string | null;
+}) {
+  const session = await auth();
+  if (!session?.user) return;
+  await logProductEvent({
+    userId: params.userId,
+    storeId: params.storeId ?? null,
+    storeDraftId: params.storeDraftId ?? null,
+    sessionInstanceId: session.user.sessionInstanceId,
+    name: "chat.turn_completed",
+    category: "chat",
+    attemptKey: params.storeDraftId ?? params.storeId ?? params.userId,
+    outcome: params.outcome,
+    durationMs: Date.now() - params.turnStartedAt,
+    metadata: {
+      requiresConfirmation: params.requiresConfirmation ?? false,
+      likelyRephraseOf: params.likelyRephraseOf ?? null,
+    },
+  });
+}
+
 async function applyGenesisMessage(userId: string, userMessage: string) {
+  // Family-beta instrumentation (v20) — real server-side duration (distinct
+  // from "the page was open"), and a likely-rephrase flag computed against
+  // the conversation's own prior user turns, already fetched below.
+  const turnStartedAt = Date.now();
+
   const draft = await prisma.storeDraft.findUnique({
     where: { userId },
     include: { messages: { orderBy: { createdAt: "asc" } } },
@@ -906,6 +988,11 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
   if (!draft) {
     redirect("/dashboard");
   }
+
+  const likelyRephraseOf = findLikelyRephraseOf(
+    userMessage,
+    draft.messages.filter((m) => m.role === "user")
+  );
 
   await prisma.storeDraftMessage.create({
     data: { storeDraftId: draft.id, role: "user", content: userMessage },
@@ -982,6 +1069,13 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
       storeDraftId: draft.id,
       metadata: {},
     });
+    await logChatTurnEvent({
+      userId,
+      storeDraftId: draft.id,
+      turnStartedAt,
+      outcome: "failure",
+      likelyRephraseOf,
+    });
     throw new Error("Genesis couldn't process that request");
   }
 
@@ -1057,6 +1151,13 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
         userId,
         storeDraftId: draft.id,
         metadata: {},
+      });
+      await logChatTurnEvent({
+        userId,
+        storeDraftId: draft.id,
+        turnStartedAt,
+        outcome: "failure",
+        likelyRephraseOf,
       });
       throw new Error("Genesis couldn't process that request");
     }
@@ -1233,6 +1334,15 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
     },
   });
 
+  await logChatTurnEvent({
+    userId,
+    storeDraftId: draft.id,
+    turnStartedAt,
+    outcome: "success",
+    requiresConfirmation: controlResult.requiresConfirmation,
+    likelyRephraseOf,
+  });
+
   redirect("/dashboard");
 }
 
@@ -1347,6 +1457,9 @@ function diffStoreChanges(before: StoreState, after: StoreState): string[] {
 }
 
 async function applyGenesisMessageToStore(userId: string, userMessage: string, returnTo: string) {
+  // Family-beta instrumentation (v20) — see logChatTurnEvent's own comment.
+  const turnStartedAt = Date.now();
+
   const resolved = await resolveUserStore(userId);
   if (!resolved) {
     redirect(returnTo);
@@ -1360,6 +1473,11 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     where: { storeId: store.id },
     orderBy: { createdAt: "asc" },
   });
+
+  const likelyRephraseOf = findLikelyRephraseOf(
+    userMessage,
+    existingMessages.filter((m) => m.role === "user")
+  );
 
   await prisma.storeMessage.create({
     data: { storeId: store.id, role: "user", content: userMessage },
@@ -1393,6 +1511,13 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       userId,
       storeId: store.id,
       metadata: {},
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      turnStartedAt,
+      outcome: "failure",
+      likelyRephraseOf,
     });
     redirect(returnTo);
   }
@@ -1495,6 +1620,13 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       await prisma.storeMessage.create({
         data: { storeId: store.id, role: "assistant", content: clarification },
       });
+      await logChatTurnEvent({
+        userId,
+        storeId: store.id,
+        turnStartedAt,
+        outcome: "failure",
+        likelyRephraseOf,
+      });
       redirect(returnTo);
     }
 
@@ -1557,6 +1689,13 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       storeId: store.id,
       metadata: { productId: targetProduct.id },
     });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      turnStartedAt,
+      outcome: candidate ? "success" : "failure",
+      likelyRephraseOf,
+    });
 
     redirect(returnTo);
   }
@@ -1588,6 +1727,13 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       userId,
       storeId: store.id,
       metadata: {},
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      turnStartedAt,
+      outcome: "failure",
+      likelyRephraseOf,
     });
     throw new Error("Genesis couldn't process that request");
   }
@@ -1986,6 +2132,14 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     },
   });
 
+  await logChatTurnEvent({
+    userId,
+    storeId: store.id,
+    turnStartedAt,
+    outcome: "success",
+    likelyRephraseOf,
+  });
+
   redirect(returnTo);
 }
 
@@ -2172,6 +2326,23 @@ export async function confirmStoreDraft() {
 
   await prisma.storeDraft.delete({ where: { id: draft.id } });
 
+  // Family-beta instrumentation (v20) — the creation journey's terminal
+  // success event. draft.id stays the attemptKey even though the row above
+  // is now gone — it's still a stable string tying every creation.* event
+  // for this one journey together. draft.version doubles as a free "how
+  // many refinement rounds happened before confirming" signal.
+  await logProductEvent({
+    userId: session.user.id,
+    storeId: store.id,
+    storeDraftId: draft.id,
+    sessionInstanceId: session.user.sessionInstanceId,
+    name: "creation.confirmed",
+    category: "creation",
+    attemptKey: draft.id,
+    outcome: "success",
+    metadata: { versionsBeforeConfirm: draft.version },
+  });
+
   redirect("/dashboard");
 }
 
@@ -2214,6 +2385,38 @@ export async function reviewBusinessWithGenesis() {
 // authorization is execute()'s own requiredPermission check on the
 // underlying Executable (e.g. STORE_MANAGE) — same two-layer pattern as
 // every prior phase, not just cosmetic.
+// Family-beta instrumentation (v20) — attemptKey reuses the same real
+// identity (topicKey, falling back to groupId, falling back to the action
+// type itself) already used elsewhere, so a reject-then-reprosose-then-
+// approve sequence for "the same underlying thing" correlates together
+// without a new counter. waitMs (createdAt -> now) gives real
+// time-to-decision for free — ApprovalRequest already orders by this,
+// just never surfaced as a number before.
+async function logApprovalDecisionEvent(params: {
+  userId: string;
+  storeId: string;
+  approval: { id: string; actionType: string; topicKey: string | null; groupId: string | null; createdAt: Date };
+  name: string;
+  outcome: "success" | "failure";
+}) {
+  const session = await auth();
+  if (!session?.user) return;
+  await logProductEvent({
+    userId: params.userId,
+    storeId: params.storeId,
+    sessionInstanceId: session.user.sessionInstanceId,
+    name: params.name,
+    category: "approval",
+    attemptKey: params.approval.topicKey ?? params.approval.groupId ?? params.approval.actionType,
+    outcome: params.outcome,
+    metadata: {
+      approvalId: params.approval.id,
+      actionType: params.approval.actionType,
+      waitMs: Date.now() - params.approval.createdAt.getTime(),
+    },
+  });
+}
+
 export async function approveGenesisAction(approvalRequestId: string) {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
   const approval = await prisma.approvalRequest.findFirstOrThrow({
@@ -2250,6 +2453,13 @@ export async function approveGenesisAction(approvalRequestId: string) {
       where: { id: approval.id },
       data: { executionId: result.executionId },
     });
+    await logApprovalDecisionEvent({
+      userId,
+      storeId,
+      approval,
+      name: "approval.approve_failed",
+      outcome: "failure",
+    });
     redirect("/dashboard");
   }
 
@@ -2267,6 +2477,14 @@ export async function approveGenesisAction(approvalRequestId: string) {
   if (approval.recommendationId) {
     await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId } });
   }
+
+  await logApprovalDecisionEvent({
+    userId,
+    storeId,
+    approval,
+    name: "approval.approved",
+    outcome: "success",
+  });
 
   redirect("/dashboard");
 }
@@ -2286,6 +2504,14 @@ export async function rejectGenesisAction(approvalRequestId: string) {
   if (approval.recommendationId) {
     await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId } });
   }
+
+  await logApprovalDecisionEvent({
+    userId,
+    storeId,
+    approval,
+    name: "approval.rejected",
+    outcome: "success",
+  });
 
   redirect("/dashboard");
 }
@@ -2326,6 +2552,13 @@ export async function revertApprovalRequest(approvalRequestId: string) {
   );
 
   if (result.status === "FAILED") {
+    await logApprovalDecisionEvent({
+      userId,
+      storeId,
+      approval: original,
+      name: "approval.revert_failed",
+      outcome: "failure",
+    });
     throw new Error(result.message);
   }
 
@@ -2346,6 +2579,14 @@ export async function revertApprovalRequest(approvalRequestId: string) {
       decidedByUserId: userId,
       decidedAt: new Date(),
     },
+  });
+
+  await logApprovalDecisionEvent({
+    userId,
+    storeId,
+    approval: original,
+    name: "approval.reverted",
+    outcome: "success",
   });
 
   redirect("/dashboard");

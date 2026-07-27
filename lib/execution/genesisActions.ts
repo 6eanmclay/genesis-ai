@@ -379,7 +379,7 @@ export const FIELD_LABELS: Record<string, string> = {
   brandVoiceAndTone: "Brand Voice & Tone",
   targetAudience: "Target Audience",
   uniqueSellingProposition: "Unique Selling Proposition",
-  name: "Store Name",
+  name: "Business Name",
   tagline: "Tagline",
   description: "Description",
   primaryCallToAction: "Primary Call to Action",
@@ -396,22 +396,19 @@ export const FIELD_LABELS: Record<string, string> = {
 // per-nav-item badge count. A future action type needs one new entry here,
 // same shape as GENESIS_ACTIONS/FIELD_LABELS above.
 //
-// update_brand_identity/update_store_identity routing to Settings is a
-// temporary presentation choice, not a permanent product decision — Settings
-// happens to be where store-identity editing already lives today, and there
-// is no better surface yet. Sean's stated longer-term direction is that
-// Home/Genesis stays the one surface that tells the owner something needs
-// them, while a contextual workspace (Website, Settings, a future Brand
-// section, etc.) is where they go to actually inspect a specific proposal —
-// this mapping should move once that surface exists, not be treated as
-// settled.
+// Product Vision Phase 1 — update_brand_identity/update_store_identity now
+// route to Brand (app/dashboard/brand/page.tsx), their real home — no
+// longer the temporary Settings placement from earlier phases. Labeled
+// "Identity" here (the user-facing word in the nav secondary-nav
+// correction, lib/dashboard/navConfig.ts's YOUR_BUSINESS_SECTIONS) even
+// though the key/route/file underneath stay "brand".
 export const ACTION_SECTIONS: Record<string, { key: string; label: string; href: string }> = {
   update_hero: { key: "website", label: "Website", href: "/dashboard/website" },
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },
   update_theme: { key: "website", label: "Website", href: "/dashboard/website" },
   update_homepage_content: { key: "website", label: "Website", href: "/dashboard/website" },
-  update_brand_identity: { key: "settings", label: "Settings", href: "/dashboard/settings" },
-  update_store_identity: { key: "settings", label: "Settings", href: "/dashboard/settings" },
+  update_brand_identity: { key: "brand", label: "Identity", href: "/dashboard/brand" },
+  update_store_identity: { key: "brand", label: "Identity", href: "/dashboard/brand" },
   update_section_order: { key: "website", label: "Website", href: "/dashboard/website" },
 };
