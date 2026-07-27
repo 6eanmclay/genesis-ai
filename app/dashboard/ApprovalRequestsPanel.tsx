@@ -31,16 +31,28 @@ export function ApprovalRequestsPanel({
     return null;
   }
 
-  return (
-    <ul className="mt-4 flex max-w-md flex-col gap-2">
-      {approvals.map((approval) => {
-        const isImageAction = approval.actionType === "update_product_image";
-        const diffKeys = Object.keys(approval.input).filter((key) => !HIDDEN_DIFF_KEYS.has(key));
-        const isHighlighted = approval.id === highlightId;
+  // Multi-object delegated objectives (e.g. "replace all my product
+  // photos") produce several ApprovalRequests sharing one groupId — same
+  // grouping Website's own review surface already uses. Grouped here too so
+  // the owner sees "Genesis has N related changes from one idea" as a
+  // single cluster, never N disconnected cards; every card underneath
+  // keeps its own independent Approve/Reject regardless — grouping is
+  // presentational only, never a combined decision.
+  const groups = new Map<string, PendingApproval[]>();
+  for (const approval of approvals) {
+    const groupKey = approval.groupId ?? approval.id;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey)!.push(approval);
+  }
 
-        return (
-          <li
-            key={approval.id}
+  const renderRow = (approval: PendingApproval) => {
+    const isImageAction = approval.actionType === "update_product_image";
+    const diffKeys = Object.keys(approval.input).filter((key) => !HIDDEN_DIFF_KEYS.has(key));
+    const isHighlighted = approval.id === highlightId;
+
+    return (
+      <li
+        key={approval.id}
             className={`rounded-lg border px-3 py-2 ${
               isHighlighted
                 ? "border-[var(--brand-accent,var(--foreground))] ring-1 ring-[var(--brand-accent,var(--foreground))]"
@@ -153,8 +165,23 @@ export function ApprovalRequestsPanel({
               )}
             </div>
           </li>
-        );
-      })}
+    );
+  };
+
+  return (
+    <ul className="mt-4 flex max-w-md flex-col gap-2">
+      {[...groups.entries()].map(([groupKey, group]) =>
+        group.length > 1 ? (
+          <li key={groupKey} className="rounded-2xl border border-dashed border-[var(--brand-accent)]/25 p-3">
+            <p className="px-1 pb-2 text-xs font-medium text-zinc-500">
+              Genesis has {group.length} related changes from one idea
+            </p>
+            <ul className="flex flex-col gap-2">{group.map(renderRow)}</ul>
+          </li>
+        ) : (
+          renderRow(group[0])
+        )
+      )}
     </ul>
   );
 }

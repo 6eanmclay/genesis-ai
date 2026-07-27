@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { deriveGenesisState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
@@ -93,6 +93,21 @@ export function GenesisAssistant({
   const [open, setOpen] = useState(defaultOpen || messages.length > 0 || !!focusedContext);
   const pathname = usePathname();
 
+  // Keep the newest turn in view — on first open, and whenever a new
+  // message genuinely arrives (messages.length only ever grows; there's no
+  // live/streaming append mid-scroll in this architecture, since a new
+  // message always means a full page render with the complete, final
+  // conversation). Never fires just because the user scrolled up to read
+  // history — nothing here reacts to scroll position, only to message
+  // count actually changing. `current` is null while closed (this element
+  // isn't rendered then), so the effect is a no-op until the panel opens.
+  const messageListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
+
   if (!open) {
     // No form is mounted while closed, so "working" is structurally
     // impossible here — isWorking is always false, not a placeholder.
@@ -156,7 +171,7 @@ export function GenesisAssistant({
         </button>
       </div>
 
-      <div className="flex max-h-80 flex-col gap-3 overflow-y-auto p-4">
+      <div ref={messageListRef} className="flex max-h-80 flex-col gap-3 overflow-y-auto p-4">
         {focusedContext && (
           <div className="self-start rounded-lg border border-[var(--brand-accent,var(--foreground))]/30 bg-[var(--brand-accent,var(--foreground))]/[.06] px-3 py-2 text-sm text-black dark:text-zinc-50 lg:border-[#8b7cf6]/30 lg:bg-[#8b7cf6]/10 lg:text-[#f4f2fb]">
             {focusedContext.kind === "observation" ? (

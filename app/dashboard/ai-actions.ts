@@ -5,6 +5,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 // Aliased — this file already has a local `const after: StoreState` inside
 // applyGenesisMessageToStore, which would otherwise shadow this import.
 import { after as scheduleAfterResponse } from "next/server";
@@ -924,21 +925,30 @@ Structure your reply in this order: first, confirm specifically what you changed
 // ever writes to Product directly, it only proposes an ApprovalRequest.
 const ProductImageRequestSchema = z.object({
   isImageRequest: z.boolean(),
-  // The model's best-guess single product name — informational only. The
-  // caller re-verifies this against the real product list; never trusted
-  // directly, and never used to create an approval on its own say-so.
-  productName: z.string().nullable(),
+  // Authorized scope, not just a product name — "all" means every currently
+  // active product, "specific" means exactly the names in productNames.
+  // null means the scope itself is genuinely unresolved (ask a clarifying
+  // question) — never used to mean "more than one product," which is a
+  // perfectly valid, resolved scope on its own. The caller re-verifies
+  // productNames against the real active product list regardless; neither
+  // field is ever trusted on its own say-so.
+  scope: z.enum(["all", "specific"]).nullable(),
+  productNames: z.array(z.string()).nullable(),
   // Used verbatim as the assistant's reply in every outcome when
-  // isImageRequest is true: acknowledging a resolved request, or asking a
-  // genuine clarifying question when the product can't be pinned down.
+  // isImageRequest is true: acknowledging a resolved request (naming what
+  // was resolved), or asking a genuine clarifying question when the scope
+  // can't be pinned down.
   reply: z.string(),
 });
 
-const STORE_CHAT_IMAGE_REQUEST_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. You are given the store's active product names and the merchant's latest message. Decide only one thing: is this message asking to replace, regenerate, or find a new photo for a specific existing product?
+const STORE_CHAT_IMAGE_REQUEST_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. You are given the store's active product names and the merchant's latest message. Decide only one thing: is this message asking to replace, regenerate, or find a new photo for one or more existing products?
 
 Most messages are not this — identity, theme, branding, policy, and general questions are handled elsewhere and should get isImageRequest: false with an empty reply (it's ignored in that case).
 
-If it IS an image request, try to identify exactly which single product from the list is meant. If you can confidently tell which one, set productName to that product's exact name and write reply as a short, natural acknowledgment that you're finding a new photo for it (you don't yet know what the new photo will look like — don't describe it). If you cannot confidently tell which single product is meant — no product was named, the name doesn't match anything specific enough, or it could plausibly be more than one product — do NOT guess. Leave productName empty (or your best partial guess, which will not be trusted) and write reply as a genuine, specific clarifying question naming the plausible candidates from the real list, so the merchant can just answer with the right one.`;
+If it IS an image request, resolve scope — clarify ambiguity, not complexity:
+- If the merchant clearly means every active product ("all of them," "all my products," "every product," or a direct "all" answer after you already asked which one), set scope: "all", leave productNames empty, and write reply as a short, natural acknowledgment that you're finding new photos for all of them. Never ask the merchant to pick one first when they've already told you it's all of them — resolving multiple products yourself is your job, not theirs.
+- If the merchant names one or more specific products you can confidently match against the real list, set scope: "specific" and productNames to their exact names (one name is a completely normal, valid case of this), and write reply as a short, natural acknowledgment naming exactly which one(s).
+- Only set scope to null when the scope itself is genuinely unclear — no product was named, "all" wasn't said, and the name given doesn't match anything specific enough. In that case write reply as a genuine, specific clarifying question naming the plausible candidates from the real list. "The request touches more than one product" is never by itself a reason to leave scope null — that's scope: "all" or a multi-item scope: "specific", not ambiguity.`;
 
 // Family-beta instrumentation (v20) — shared by both applyGenesisMessage
 // (draft chat) and applyGenesisMessageToStore (live chat) so a real chat
@@ -1343,6 +1353,11 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
     likelyRephraseOf,
   });
 
+  // Server Action redirects default to a "push"-type navigation, which is
+  // not guaranteed to pick up the StoreDraftMessage(s) just persisted above
+  // without an explicit revalidation — see the chat-panel-collapse
+  // investigation (v20 follow-up). Narrowly scoped to this redirect only.
+  revalidatePath("/dashboard");
   redirect("/dashboard");
 }
 
@@ -1519,6 +1534,10 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       outcome: "failure",
       likelyRephraseOf,
     });
+    // See the chat-panel-collapse investigation (v20 follow-up) — a Server
+    // Action redirect() alone doesn't reliably guarantee the just-persisted
+    // StoreMessage is reflected without an explicit revalidation.
+    revalidatePath(returnTo);
     redirect(returnTo);
   }
 
@@ -1596,25 +1615,33 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   const imageRequestResult = (await imageRequestStream.finalMessage()).parsed_output;
 
   if (imageRequestResult?.isImageRequest) {
-    // Resolution happens here, never by trusting the model's claim — exact,
-    // case-insensitive match against the real product list. Zero or
-    // multiple matches both count as unresolved; only exactly one match
-    // proceeds. This deliberately stays simple for beta — no fuzzy
+    // Resolution happens here, never by trusting the model's claim
+    // directly — exact, case-insensitive matching against the real product
+    // list. "all" resolves to every currently active product; "specific"
+    // resolves only the names that actually match one of them (an unmatched
+    // name is silently dropped rather than treated as ambiguous — the
+    // model's own reply already named what it understood). A genuinely
+    // unresolved scope, or a resolved set that ends up empty, falls back to
+    // a clarifying question. Deliberately stays simple for beta — no fuzzy
     // matching, no embeddings.
-    const requestedName = imageRequestResult.productName?.trim().toLowerCase();
-    const matches = requestedName
-      ? currentProducts.filter((p) => p.name.trim().toLowerCase() === requestedName)
-      : [];
+    const targetProducts =
+      imageRequestResult.scope === "all"
+        ? currentProducts
+        : imageRequestResult.scope === "specific"
+          ? currentProducts.filter((p) =>
+              (imageRequestResult.productNames ?? [])
+                .map((n) => n.trim().toLowerCase())
+                .includes(p.name.trim().toLowerCase())
+            )
+          : [];
 
-    if (matches.length !== 1) {
-      // Unresolved or ambiguous: create no approval, and do not fall
-      // through to the general chat call either. If the model named
-      // something that didn't uniquely match one real product (a
-      // hallucination or typo), its own reply may reference that wrong
-      // name, so fall back to a safe, generic clarifying question instead
-      // of trusting it in that specific case.
+    if (targetProducts.length === 0) {
+      // Unresolved, or a named product didn't match anything real: create
+      // no approval, and do not fall through to the general chat call
+      // either — fall back to a safe, generic clarifying question rather
+      // than trusting an unmatched name.
       const clarification =
-        requestedName && matches.length === 0
+        imageRequestResult.scope === "specific"
           ? `I want to make sure I update the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
           : imageRequestResult.reply;
       await prisma.storeMessage.create({
@@ -1627,76 +1654,98 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         outcome: "failure",
         likelyRephraseOf,
       });
+      revalidatePath(returnTo);
       redirect(returnTo);
     }
 
-    const targetProduct = matches[0];
-    const candidate = await sourceProductImageCandidate({
-      name: targetProduct.name,
-      description: targetProduct.description,
-    });
-
-    if (candidate) {
-      // A fresh proposal for this product supersedes any earlier
-      // still-pending one — scoped to this product's id specifically, so a
-      // pending proposal for a different product is never touched.
-      await prisma.approvalRequest.deleteMany({
-        where: {
-          storeId: store.id,
-          actionType: "update_product_image",
-          status: "PENDING_APPROVAL",
-          input: { path: ["productId"], equals: targetProduct.id },
-        },
+    // Genesis orchestrates the whole authorized set as one delegated
+    // objective, never surfacing that the underlying operation is still
+    // one product at a time: every proposal from this turn shares one
+    // groupId (the same grouping already used for multi-proposal chat turns
+    // elsewhere in this file), so the owner sees "Genesis proposed new
+    // photos for N products" as a single cluster, never N separate asks or
+    // N separate clarifying questions.
+    const groupId = randomUUID();
+    const outcomes: { id: string; name: string; candidate: string | null }[] = [];
+    for (const product of targetProducts) {
+      const candidate = await sourceProductImageCandidate({
+        name: product.name,
+        description: product.description,
       });
-      await prisma.approvalRequest.create({
-        data: {
-          storeId: store.id,
-          recommendationId: null,
-          actionType: "update_product_image",
-          input: { productId: targetProduct.id, imageUrl: candidate },
-          previousValues: {
-            productId: targetProduct.id,
-            imageUrl: targetProduct.imageUrl,
-            rejectedCandidates: [],
+      if (candidate) {
+        // A fresh proposal for this product supersedes any earlier
+        // still-pending one — scoped to this product's id specifically, so
+        // a pending proposal for a different product is never touched.
+        await prisma.approvalRequest.deleteMany({
+          where: {
+            storeId: store.id,
+            actionType: "update_product_image",
+            status: "PENDING_APPROVAL",
+            input: { path: ["productId"], equals: product.id },
           },
-          summary: `Replace image for "${targetProduct.name}"`,
-          authorizationTier: GENESIS_ACTIONS.update_product_image.authorizationTier,
-        },
-      });
+        });
+        await prisma.approvalRequest.create({
+          data: {
+            storeId: store.id,
+            recommendationId: null,
+            actionType: "update_product_image",
+            input: { productId: product.id, imageUrl: candidate },
+            previousValues: {
+              productId: product.id,
+              imageUrl: product.imageUrl,
+              rejectedCandidates: [],
+            },
+            summary: `Replace image for "${product.name}"`,
+            authorizationTier: GENESIS_ACTIONS.update_product_image.authorizationTier,
+            groupId,
+          },
+        });
+      }
+      outcomes.push({ id: product.id, name: product.name, candidate });
+    }
+
+    const foundNames = outcomes.filter((o) => o.candidate).map((o) => o.name);
+    const missedNames = outcomes.filter((o) => !o.candidate).map((o) => o.name);
+    const replyParts = [imageRequestResult.reply];
+    if (missedNames.length > 0) {
+      replyParts.push(
+        `I couldn't find a good option for ${missedNames.join(", ")} — you may want to upload ${missedNames.length > 1 ? "those" : "that one"} directly for now.`
+      );
     }
 
     await prisma.storeMessage.create({
       data: {
         storeId: store.id,
         role: "assistant",
-        content: candidate
-          ? imageRequestResult.reply
-          : `I looked for a new photo for "${targetProduct.name}" but couldn't find a good option — you may want to upload one directly for now.`,
+        content: replyParts.join(" "),
       },
     });
 
     // A designed conversational outcome, not a generation failure — the
-    // model call for this turn already succeeded either way.
+    // model call for this turn already succeeded either way. One row for
+    // the whole delegated objective, not one per product.
     await recordGenesisExecution({
       action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: candidate ? "PENDING" : "WARNING",
+      status: foundNames.length > 0 ? "PENDING" : "WARNING",
       verified: false,
-      message: candidate
-        ? `Proposed a new image for "${targetProduct.name}"`
-        : `Couldn't find a new image for "${targetProduct.name}"`,
-      retryable: !candidate,
+      message:
+        foundNames.length > 0
+          ? `Proposed new images for ${foundNames.join(", ")}`
+          : `Couldn't find new images for ${missedNames.join(", ")}`,
+      retryable: foundNames.length === 0,
       userId,
       storeId: store.id,
-      metadata: { productId: targetProduct.id },
+      metadata: { groupId, productIds: outcomes.filter((o) => o.candidate).map((o) => o.id) },
     });
     await logChatTurnEvent({
       userId,
       storeId: store.id,
       turnStartedAt,
-      outcome: candidate ? "success" : "failure",
+      outcome: foundNames.length > 0 ? "success" : "failure",
       likelyRephraseOf,
     });
 
+    revalidatePath(returnTo);
     redirect(returnTo);
   }
 
@@ -2140,6 +2189,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     likelyRephraseOf,
   });
 
+  revalidatePath(returnTo);
   redirect(returnTo);
 }
 
