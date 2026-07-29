@@ -446,9 +446,21 @@ export function DashboardShell({
       {/* Mobile top bar — explicit h-16 (not padding-driven) so the
           secondary nav below can stack under it at a known, exact offset. */}
       <header className="fixed inset-x-0 top-0 z-40 flex h-16 items-center justify-between border-b border-black/[.08] bg-white/90 px-4 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/90 md:hidden">
-        <div className="flex min-w-0 items-center gap-2">
-          {genesisIcon}
-          <p className="truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
+        {/* Business identity is the primary visual element here, not the
+            View Store button — icon and store name both sized up from
+            the shared desktop treatment so they read with real
+            prominence at a glance. min-w-0 + truncate on the name (not
+            the button) means if space ever runs out, the name is what
+            gives way, never View Store. */}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Image
+            src="/brand/genesis-j4-avatar.png"
+            alt="Genesis"
+            width={36}
+            height={36}
+            className="shrink-0 rounded-[8px]"
+          />
+          <p className="truncate text-lg font-bold text-black dark:text-zinc-50">{storeName}</p>
         </div>
         {viewStoreLink}
       </header>
