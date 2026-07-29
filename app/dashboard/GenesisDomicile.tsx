@@ -1,6 +1,6 @@
+import Image from "next/image";
 import { deriveGenesisState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
-import { GenesisOrbitRing } from "./GenesisOrbitRing";
 
 // Genesis's persistent visual presence in the left rail — lg:+ only (see
 // DashboardShell.tsx), always the atmospheric treatment regardless of the
@@ -8,16 +8,16 @@ import { GenesisOrbitRing } from "./GenesisOrbitRing";
 // dark mode). Not a widget contained inside a card: no border/background
 // box around it, just the presence occupying the column's own space.
 //
-// Orbit redesign — the glow-orb (a flat filled circle) is retired in favor
-// of a Saturn-style ring on a tilted plane, genuinely passing behind and in
-// front of a real celestial-body planet — all of that (ring, planet, the
-// two have to be interleaved in one stacking order) lives together in
-// GenesisOrbitRing now; see its own comment for the full reasoning. This
-// component stays responsible for the outer atmospheric wash and the
-// wordmark, plus resolving the real GenesisState this whole presence
-// reflects. Still an explicit placeholder for Genesis's eventual final
-// visual identity — this pass is the interaction/energy language, not
-// final artwork.
+// The animated SVG ring+planet (formerly GenesisOrbitRing, an
+// interaction/energy-language placeholder, not final artwork) has been
+// replaced with the canonical J4 icon (see
+// memory/project_j4_avatar_branding.md) — the same unmodified brand asset
+// now also used as the dashboard nav icon. This is explicitly a Phase 1
+// stand-in: the outer atmospheric wash still shifts color/intensity with
+// real GenesisState (so ambient state-signaling isn't lost), but the icon
+// itself is static — a future branding phase will replace it with a fully
+// realized 3D Saturn-style avatar with a premium metallic ring, at which
+// point per-state ring animation can return.
 //
 // "working" is real (a chat request genuinely in flight) but today it's
 // only knowable inside GenesisAssistant's own <form>, via useFormStatus —
@@ -67,12 +67,22 @@ export function GenesisDomicile({
           }}
         />
 
-        {/* Ring + planet, interleaved (back ring → planet → front ring) —
-            client-side (see GenesisOrbitRing's own comment) so it can also
-            catch the real "just finished working" transition and give it
-            a genuine completion flourish. No text is drawn on it; the ring
-            and planet together are the icon. */}
-        <GenesisOrbitRing state={state} glowColor={meta.glowColor} isStableAttention={isStableAttention} />
+        {/* Canonical J4 icon — same footprint (aspect-square, 78% of the
+            rail's width) the animated ring+planet previously occupied, so
+            spacing/composition around it is unchanged. Unmodified image;
+            no per-state recoloring (that's the deferred future-3D-avatar
+            capability) — the outer glow wash above is what still carries
+            live state today. */}
+        <div className="relative aspect-square w-[78%] overflow-hidden rounded-2xl">
+          <Image
+            src="/brand/genesis-j4-avatar.png"
+            alt="Genesis"
+            fill
+            sizes="(min-width: 1024px) 20vw, 200px"
+            className="object-cover"
+            priority
+          />
+        </div>
       </div>
       <p
         className="mt-8 font-[var(--font-heading,inherit)] text-2xl font-semibold"
