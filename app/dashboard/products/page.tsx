@@ -122,9 +122,12 @@ export default async function ProductsPage({
                     (see uploadProductImage's own comment). Distinct from
                     the Genesis-proposed photos above, which still go
                     through Approve/Reject. */}
+                {/* No explicit encType here — React manages it
+                    automatically for a function action and errors if it's
+                    set manually; file inputs still submit correctly as
+                    part of the FormData React builds for the action. */}
                 <form
                   action={uploadProductImage.bind(null, product.id)}
-                  encType="multipart/form-data"
                   className="flex flex-col gap-1"
                 >
                   <input
