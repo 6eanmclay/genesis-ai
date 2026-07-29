@@ -564,7 +564,15 @@ export default async function StorefrontPage({
     const subheading = homepage?.heroSubheadline || storeTagline || storeDescription;
 
     if (heroLayout === "split") {
-      const heroImage = products[0]?.imageUrl;
+      // Priority 4 fix — the hero used to fall back straight to
+      // products[0]'s own image, coupling storefront identity to array
+      // order and to whichever product happened to get a real photo. A
+      // deliberately-sourced hero image (see lib/productImagery.ts) is now
+      // the primary source; products[0] stays as a real fallback for
+      // stores created before this existed or when sourcing failed, and
+      // the gradient stays the last resort — never worse than before, but
+      // no longer dependent on product-array position for the common case.
+      const heroImage = homepage?.heroImageUrl || products[0]?.imageUrl;
       return (
         <header className="border-b border-[var(--brand-text)]/[.08]">
           <div

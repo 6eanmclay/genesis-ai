@@ -4,10 +4,11 @@ import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
 import { editStore } from "../actions";
-import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage } from "../ai-actions";
+import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, approveGenesisActionGroup } from "../ai-actions";
 import { SubmitButton } from "../SubmitButton";
 import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
 import { ObservationsPanel } from "../ObservationsPanel";
+import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
@@ -75,10 +76,16 @@ export default async function BrandPage({
     focus && brandObservations.some((o) => o.dedupeKey === focus) ? focus : undefined;
 
   const brandIdentity = (store.blueprint as BlueprintContextSubset | null)?.brandIdentity;
+  const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   return (
-    <div className="min-h-screen p-8 lg:min-h-0">
-      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Brand</h1>
+    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
+      {/* Beta polish pass (v22) — aligned to "Identity," the deliberate
+          user-facing word already chosen for this section's nav tab (see
+          navConfig.ts's YOUR_BUSINESS_SECTIONS comment) — the page heading
+          had never been updated to match. Route/key/data stay "brand"
+          throughout, unchanged. */}
+      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Identity</h1>
       <p className="mt-2 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
         Who your business is — the identity every part of your presence draws from.
       </p>
@@ -105,6 +112,7 @@ export default async function BrandPage({
             approveAction={approveGenesisAction}
             rejectAction={rejectGenesisAction}
             regenerateAction={regenerateApprovalImage}
+            approveGroupAction={approveGenesisActionGroup}
             highlightId={highlightId}
           />
         </>

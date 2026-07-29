@@ -4,9 +4,15 @@ import { resolveSectionOrder, type SectionKey } from "@/lib/storefrontSections";
 // (the notFound() gate in page.tsx already keeps everyone else out entirely)
 // — makes it unmistakable that this is a preview, never confusable with the
 // live customer view, whether opened directly or embedded in the dashboard.
+// Deliberately in normal document flow (not `fixed`) so it pushes the
+// storefront's own nav bar down instead of floating on top of it — a fixed,
+// centered pill here used to sit directly over the store's name in the nav,
+// regardless of the nav's real (content-driven, non-fixed) height. `sticky`
+// keeps the same "stays visible while scrolling" behavior without the
+// overlap risk.
 export function PreviewModeBanner() {
   return (
-    <div className="fixed top-3 left-1/2 z-50 -translate-x-1/2 rounded-full border border-amber-400/30 bg-black/80 px-3.5 py-2 text-sm font-medium text-amber-300 shadow-sm backdrop-blur">
+    <div className="sticky top-0 z-50 w-full border-b border-amber-400/30 bg-black/90 px-3.5 py-2 text-center text-sm font-medium text-amber-300 shadow-sm backdrop-blur">
       Preview — not published yet
     </div>
   );
@@ -34,6 +40,11 @@ export type BrandIdentity = {
 export type HomepageContent = {
   heroHeadline: string;
   heroSubheadline: string;
+  // Sourced independently of any product (see lib/productImagery.ts's
+  // sourceHeroImageCandidate) — absent on stores created before this field
+  // existed, and always absent for hero layouts that don't render an image
+  // at all (only "split" does; see renderHero in page.tsx).
+  heroImageUrl?: string | null;
   primaryCallToAction: string;
   secondaryCallToAction: string | null;
   aboutUs: string;

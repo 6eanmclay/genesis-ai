@@ -6,12 +6,12 @@ import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genes
 import { SECTION_LABELS, type SectionKey } from "@/lib/storefrontSections";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
 import { toggleStorePublished } from "../actions";
-import { approveGenesisAction, rejectGenesisAction } from "../ai-actions";
+import { approveGenesisAction, rejectGenesisAction, approveGenesisActionGroup } from "../ai-actions";
 import { SubmitButton } from "../SubmitButton";
 import { VisualProposal } from "../VisualProposal";
 import { HeroMock } from "../HeroMock";
 import { ObservationsPanel } from "../ObservationsPanel";
-import { DEFAULT_THEME, type Theme } from "@/lib/theme";
+import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
@@ -274,7 +274,7 @@ export default async function WebsitePage({
   }
 
   return (
-    <div className="min-h-screen p-8 lg:min-h-0">
+    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Website</h1>
 
       {/* The storefront itself — the unmistakable visual center of the
@@ -360,9 +360,19 @@ export default async function WebsitePage({
                   key={groupKey}
                   className="rounded-2xl border border-dashed border-[var(--brand-accent)]/25 p-3"
                 >
-                  <p className="px-2 pb-2 text-xs font-medium text-zinc-500">
-                    Genesis has {group.length} related changes from one idea
-                  </p>
+                  <div className="flex items-center justify-between gap-2 px-2 pb-2">
+                    <p className="text-xs font-medium text-zinc-500">
+                      Genesis has {group.length} related changes from one idea
+                    </p>
+                    <form action={approveGenesisActionGroup.bind(null, groupKey)}>
+                      <button
+                        type="submit"
+                        className="rounded-full bg-[var(--brand-accent,var(--foreground))] px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                      >
+                        Use all {group.length}
+                      </button>
+                    </form>
+                  </div>
                   <div className="flex flex-col gap-4">{group.map((approval) => renderApprovalCard(approval))}</div>
                 </div>
               ) : (

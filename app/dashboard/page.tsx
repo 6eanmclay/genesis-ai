@@ -154,6 +154,12 @@ export default async function DashboardPage() {
             How should your brand feel? Genesis will create a custom color
             palette, typography, and visual style that matches it.
           </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Every version is saved automatically — try as many as you like,
+            you can always come back to an earlier look in{" "}
+            <span className="font-medium">Your Store&apos;s Vision</span>{" "}
+            below.
+          </p>
           <form
             action={applyThemePersonality}
             className="mt-4 flex max-w-md flex-wrap gap-2"
@@ -307,27 +313,33 @@ export default async function DashboardPage() {
 
           {draft.generations.length > 0 &&
             (() => {
-              const original =
-                draft.generations.find((g) => g.milestone === "original") ??
-                draft.generations[0];
-              const cards = [
-                {
-                  key: "original",
-                  label: "Original Vision",
-                  blurb:
-                    "The first version Genesis created from your original idea.",
-                  date: original.createdAt,
-                  restoreId:
-                    original.version !== draft.version ? original.id : null,
-                },
-                {
-                  key: "current",
-                  label: "Current Vision",
-                  blurb: "The version currently shaping your store.",
-                  date: draft.updatedAt,
-                  restoreId: null as string | null,
-                },
-              ];
+              // Every version — not just the original and current endpoints
+              // — is a real, restorable checkpoint (restoreStoreDraftVersion
+              // already accepts any generation id). Listing all of them,
+              // newest first, is what actually makes theme exploration feel
+              // safe: a beta tester who tried three looks in a row needs to
+              // get back to the second one, not just all the way to the
+              // start. Reversed for display so the most likely restore
+              // target (something tried recently) is at the top.
+              const cards = [...draft.generations].reverse().map((gen) => {
+                const isCurrent = gen.version === draft.version;
+                const isOriginal = gen.milestone === "original";
+                return {
+                  key: gen.id,
+                  label: isOriginal
+                    ? "Original Vision"
+                    : isCurrent
+                      ? "Current Vision"
+                      : `Version ${gen.version}`,
+                  blurb: isOriginal
+                    ? "The first version Genesis created from your original idea."
+                    : isCurrent
+                      ? "The version currently shaping your store."
+                      : "An earlier version, saved along the way.",
+                  date: gen.createdAt,
+                  restoreId: isCurrent ? null : gen.id,
+                };
+              });
 
               return (
                 <>
@@ -336,8 +348,9 @@ export default async function DashboardPage() {
                   </h2>
                   <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
                     See how your store&apos;s direction has evolved, and bring
-                    back an earlier vision anytime. This stays with your
-                    store for good — even after it goes live.
+                    back any earlier vision anytime — not just the original.
+                    This stays with your store for good — even after it goes
+                    live.
                   </p>
                   <ul className="mt-4 flex max-w-md flex-col gap-3">
                     {cards.map((card) => (
@@ -481,6 +494,11 @@ export default async function DashboardPage() {
             // to Genesis reads as the primary way to shape the business,
             // not an easy-to-miss auxiliary widget.
             defaultOpen
+            // This standalone page has no left Domicile rail to dock
+            // beside — its own form content already occupies the left
+            // side, so left-anchoring here overlaps Theme/Store-details
+            // controls instead of sitting cleanly next to them.
+            dockLeft={false}
           />
         </div>
       );

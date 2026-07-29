@@ -1,10 +1,28 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { deriveGenesisState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
 import { SubmitButton } from "./SubmitButton";
+
+// Hydration-safe read of the same lg: breakpoint (1024px) this codebase
+// already uses everywhere else — useSyncExternalStore (not useState+effect)
+// is the correct tool here: it gives server and the first client render the
+// same value (false, via getServerSnapshot) with zero mismatch warning, then
+// reacts automatically if the viewport crosses the breakpoint, without ever
+// calling setState from an effect.
+function subscribeToDesktopWidth(onChange: () => void) {
+  const mql = window.matchMedia("(min-width: 1024px)");
+  mql.addEventListener("change", onChange);
+  return () => mql.removeEventListener("change", onChange);
+}
+function getIsDesktopSnapshot() {
+  return window.matchMedia("(min-width: 1024px)").matches;
+}
+function getIsDesktopServerSnapshot() {
+  return false;
+}
 
 // Every lg:-scoped color below is GENESIS_ATMOSPHERE (lib/dashboard/
 // genesisAtmosphere.ts) written as literal hex/rgba, not imported and
@@ -79,6 +97,7 @@ export function GenesisAssistant({
   hasOpportunity,
   focusedContext,
   defaultOpen,
+  dockLeft = true,
 }: {
   storeName: string;
   messages: Message[];
@@ -89,8 +108,37 @@ export function GenesisAssistant({
   // Genesis is meant to be the primary way to shape the business, not
   // something a new user has to discover behind a closed pill.
   defaultOpen?: boolean;
+  // The lg:+ left-anchor exists to sit beside DashboardShell's left
+  // Domicile rail (see GenesisDomicile.tsx). The standalone draft-review
+  // page has no such rail — its own form content occupies the left side
+  // of the page instead — so left-anchoring there just overlaps the
+  // Theme/Store-details controls underneath. Callers without a Domicile
+  // rail (the draft page) pass false to keep the bottom-right position.
+  dockLeft?: boolean;
 } & GenesisSignals) {
-  const [open, setOpen] = useState(defaultOpen || messages.length > 0 || !!focusedContext);
+  // Mobile chat fix — traced the actual complaint ("chat buries the
+  // business after any conversation exists") to the old computation here:
+  // reopening purely because messages.length > 0 was designed around
+  // desktop, where the panel only ever claims ~25% of a 1440px screen. At
+  // phone width the exact same panel is most of the viewport, and it did
+  // this on every single page load for any account that had ever talked to
+  // Genesis — not a one-time welcome moment, a permanent standing state.
+  //
+  // Fix: the message-history trigger is now desktop-only (isDesktop, via
+  // useSyncExternalStore above — hydration-safe, and reacts live if the
+  // window crosses the breakpoint). `open` is a plain derived value most of
+  // the time; `userOverride` only exists to remember an explicit close/open
+  // click, which must always win over the auto-open condition afterward —
+  // this is what keeps "closing chat sticks" (verified behavior) true even
+  // though the auto-open condition itself never stops being true.
+  // defaultOpen/focusedContext are real, deliberate, one-time reasons to
+  // show chat immediately (the "Welcome to Genesis" moment; "Genesis
+  // brought you here to review this") and still apply on every viewport —
+  // those aren't the pattern that caused the complaint.
+  const isDesktop = useSyncExternalStore(subscribeToDesktopWidth, getIsDesktopSnapshot, getIsDesktopServerSnapshot);
+  const [userOverride, setUserOverride] = useState<boolean | null>(null);
+  const open = userOverride ?? (defaultOpen || !!focusedContext || (isDesktop && messages.length > 0));
+  const setOpen = setUserOverride;
   const pathname = usePathname();
 
   // Keep the newest turn in view — on first open, and whenever a new
@@ -122,7 +170,11 @@ export function GenesisAssistant({
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 lg:right-auto lg:left-6 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
+        className={
+          dockLeft
+            ? "fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 lg:right-auto lg:left-6 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
+            : "fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
+        }
       >
         <StateDot state={closedState} />
         ✨ Genesis
@@ -141,11 +193,15 @@ export function GenesisAssistant({
   return (
     <form
       action={sendMessage}
-      className="fixed bottom-6 right-6 z-50 flex w-96 max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-black/[.08] bg-white shadow-xl dark:border-white/[.145] dark:bg-zinc-900 lg:right-auto lg:left-6 lg:w-80 xl:w-96 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#100d1c] lg:shadow-2xl"
+      className={
+        dockLeft
+          ? "fixed bottom-6 right-6 z-50 flex max-h-[60vh] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-black/[.08] bg-white shadow-xl dark:border-white/[.145] dark:bg-zinc-900 lg:right-auto lg:left-6 lg:max-h-none lg:w-80 xl:w-96 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#100d1c] lg:shadow-2xl"
+          : "fixed bottom-6 right-6 z-50 flex max-h-[60vh] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-black/[.08] bg-white shadow-xl dark:border-white/[.145] dark:bg-zinc-900 lg:max-h-none lg:w-80 xl:w-96 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#100d1c] lg:shadow-2xl"
+      }
     >
       <input type="hidden" name="currentPath" value={pathname} />
 
-      <div className="flex items-start justify-between border-b border-black/[.08] p-4 dark:border-white/[.145] lg:border-[rgba(139,124,246,0.18)]">
+      <div className="flex shrink-0 items-start justify-between border-b border-black/[.08] p-4 dark:border-white/[.145] lg:border-[rgba(139,124,246,0.18)]">
         <div>
           <div className="flex items-center gap-2">
             <p className="font-[var(--font-heading,inherit)] font-semibold text-black dark:text-zinc-50 lg:text-[#f4f2fb]">
@@ -171,7 +227,7 @@ export function GenesisAssistant({
         </button>
       </div>
 
-      <div ref={messageListRef} className="flex max-h-80 flex-col gap-3 overflow-y-auto p-4">
+      <div ref={messageListRef} className="flex min-h-0 max-h-48 flex-col gap-3 overflow-y-auto p-4 lg:max-h-80">
         {focusedContext && (
           <div className="self-start rounded-lg border border-[var(--brand-accent,var(--foreground))]/30 bg-[var(--brand-accent,var(--foreground))]/[.06] px-3 py-2 text-sm text-black dark:text-zinc-50 lg:border-[#8b7cf6]/30 lg:bg-[#8b7cf6]/10 lg:text-[#f4f2fb]">
             {focusedContext.kind === "observation" ? (
@@ -234,7 +290,7 @@ export function GenesisAssistant({
         )}
       </div>
 
-      <div className="flex flex-col gap-2 border-t border-black/[.08] p-4 dark:border-white/[.145] lg:border-[rgba(139,124,246,0.18)]">
+      <div className="flex shrink-0 flex-col gap-2 border-t border-black/[.08] p-4 dark:border-white/[.145] lg:border-[rgba(139,124,246,0.18)]">
         <textarea
           name="message"
           placeholder="Ask Genesis anything about your business…"

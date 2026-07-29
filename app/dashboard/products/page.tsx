@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
+import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { createProduct, editProduct, toggleProductActive, deleteProduct } from "../actions";
-import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage } from "../ai-actions";
+import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, approveGenesisActionGroup } from "../ai-actions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
 import { DeleteProductButton } from "../DeleteProductButton";
@@ -18,6 +19,13 @@ export default async function ProductsPage({
   searchParams: Promise<{ focus?: string }>;
 }) {
   const { store, role } = await requireStorePageAccess(PERMISSIONS.PRODUCTS_MANAGE);
+  // Reliability/polish pass (v22) — this page's own root never applied the
+  // store's theme, so --brand-accent (used by ACCENT_BUTTON and several
+  // shared components below) was never actually in scope, silently
+  // rendering primary buttons as invisible white-on-transparent. Every
+  // dashboard page except Home had this gap — see the audit for the full
+  // list; this is the same fix applied consistently everywhere.
+  const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   // approveGenesisAction/rejectGenesisAction/regenerateApprovalImage all
   // require ANALYTICS_VIEW (OWNER-only) — Employees have PRODUCTS_MANAGE
   // but not that, so the approval block itself is gated the same way here,
@@ -49,7 +57,7 @@ export default async function ProductsPage({
     focus && productObservations.some((o) => o.dedupeKey === focus) ? focus : undefined;
 
   return (
-    <div className="min-h-screen p-8 lg:min-h-0">
+    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Products</h1>
 
       {/* Real GenesisObservation rows (Red/Purple) — separate from the
@@ -74,6 +82,7 @@ export default async function ProductsPage({
             approveAction={approveGenesisAction}
             rejectAction={rejectGenesisAction}
             regenerateAction={regenerateApprovalImage}
+            approveGroupAction={approveGenesisActionGroup}
             highlightId={highlightId}
           />
         </>

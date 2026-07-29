@@ -1,9 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { RECOMMENDATION_MESSAGES } from "./recommendations";
-
-const anthropic = new Anthropic();
+import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 
 export interface RecommendationExplanation {
   explanation: string;
@@ -36,7 +34,7 @@ export async function getRecommendationExplanation(params: {
     throw new Error(`Unknown recommendation id: ${params.recommendationId}`);
   }
 
-  const stream = anthropic.messages.stream({
+  const outcome = await callGenesisModel({
     model: "claude-opus-4-8",
     max_tokens: 1024,
     thinking: { type: "adaptive" },
@@ -53,8 +51,11 @@ export async function getRecommendationExplanation(params: {
     },
   });
 
-  const finalMessage = await stream.finalMessage();
-  const result = finalMessage.parsed_output;
+  if (!outcome.ok) {
+    throw new Error(genesisModelFailureMessage(outcome.kind));
+  }
+
+  const result = outcome.message.parsed_output;
   if (!result) {
     throw new Error("Genesis couldn't generate an explanation");
   }

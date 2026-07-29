@@ -8,7 +8,11 @@ import { getInventorySnapshot } from "@/lib/dashboard/inventory";
 import { explainRecommendation, reviewBusinessWithGenesis } from "../ai-actions";
 import { RecommendationsPanel } from "../RecommendationsPanel";
 import { SubmitButton } from "../SubmitButton";
+import { OrderSummaryCard } from "../OrderSummaryCard";
+import { InventorySnapshotCard } from "../InventorySnapshotCard";
+import { ActivityFeed } from "../ActivityFeed";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
+import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 function formatTimeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -63,6 +67,7 @@ export default async function AnalyticsPage() {
 
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
+  const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   const recommendations = await getRecommendations({
     storeId: store.id,
@@ -88,7 +93,7 @@ export default async function AnalyticsPage() {
   });
 
   return (
-    <div className="min-h-screen p-8 lg:min-h-0">
+    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Analytics</h1>
         <div className="flex items-center gap-3">
@@ -107,7 +112,36 @@ export default async function AnalyticsPage() {
           </form>
         </div>
       </div>
-      <RecommendationsPanel recommendations={recommendations} explainAction={explainRecommendation} />
+
+      {/* Polish pass (v22) — this page already fetched real order/inventory/
+          activity data for the recommendation engine's own context, but
+          never rendered any of it, leaving Analytics as a bare duplicate of
+          Home's "From Genesis" box. Surfacing the data it already has. */}
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <OrderSummaryCard summary={orderSummary} />
+        <InventorySnapshotCard snapshot={inventorySnapshot} />
+        <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+          <div className="flex items-baseline gap-2">
+            <p className="text-2xl font-semibold text-black dark:text-zinc-50">{customerSummaries.length}</p>
+            <p className="text-sm text-zinc-500">customer{customerSummaries.length === 1 ? "" : "s"}</p>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">Derived from order history.</p>
+        </div>
+      </div>
+
+      {activityItems.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-sm font-semibold text-black dark:text-zinc-50">Recent activity</h2>
+          <div className="mt-3">
+            <ActivityFeed items={activityItems} />
+          </div>
+        </div>
+      )}
+
+      <div className="mt-8">
+        <h2 className="text-sm font-semibold text-black dark:text-zinc-50">From Genesis</h2>
+        <RecommendationsPanel recommendations={recommendations} explainAction={explainRecommendation} />
+      </div>
     </div>
   );
 }

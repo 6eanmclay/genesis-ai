@@ -36,8 +36,21 @@ export function SubmitButton({
   value?: string;
   trackPerf?: SubmitButtonPerfTracking;
 }) {
-  const { pending } = useFormStatus();
+  const { pending, data } = useFormStatus();
   const startedAtRef = useRef<number | null>(null);
+
+  // When several same-named submit buttons share one form (e.g. the brand
+  // personality picker), a native form submission only includes the
+  // actually-clicked button's name/value pair in FormData — every other
+  // button's value is absent even though the whole form is pending. Use
+  // that to show pendingText only on the button the user actually clicked;
+  // siblings stay disabled (via the pending check below) but keep their
+  // normal label instead of all flashing "Applying..." at once, which read
+  // as the whole picker resetting rather than one choice being made.
+  const isThisButtonPending =
+    name !== undefined && value !== undefined
+      ? pending && data?.get(name) === value
+      : pending;
 
   useEffect(() => {
     if (!trackPerf) return;
@@ -68,7 +81,7 @@ export function SubmitButton({
       disabled={pending}
       className={className}
     >
-      {pending ? pendingText : children}
+      {isThisButtonPending ? pendingText : children}
     </button>
   );
 }

@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { z } from "zod";
@@ -11,8 +10,7 @@ import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction } from "@/lib/execution/genesisAutonomy";
-
-const anthropic = new Anthropic();
+import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 
 // Real section routes, not the single-page anchors this used to be (see
 // ARCHITECTURE.md / the nav plan) — "/dashboard#attention" is the one
@@ -167,7 +165,7 @@ export async function generateGenesisRecommendations(params: {
     recentGenesisHistory,
   };
 
-  const stream = anthropic.messages.stream({
+  const outcome = await callGenesisModel({
     model: "claude-opus-4-8",
     max_tokens: 4000,
     thinking: { type: "adaptive" },
@@ -184,8 +182,21 @@ export async function generateGenesisRecommendations(params: {
     },
   });
 
-  const finalMessage = await stream.finalMessage();
-  const result = finalMessage.parsed_output;
+  if (!outcome.ok) {
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_RECOMMENDATIONS_GENERATE,
+      status: "FAILED",
+      verified: false,
+      message: `Provider error (${outcome.kind}): ${outcome.message}`,
+      retryable: outcome.retryable,
+      userId,
+      storeId,
+      metadata: { providerErrorKind: outcome.kind, providerStatus: outcome.status },
+    });
+    throw new Error(genesisModelFailureMessage(outcome.kind));
+  }
+
+  const result = outcome.message.parsed_output;
   if (!result) {
     await recordGenesisExecution({
       action: EXECUTION_ACTIONS.GENESIS_RECOMMENDATIONS_GENERATE,

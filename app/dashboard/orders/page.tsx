@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import { getOrderSummary } from "@/lib/dashboard/whatHappened";
 import { OrderSummaryCard } from "../OrderSummaryCard";
+import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 const STATUS_LABEL: Record<string, string> = {
   paid: "Paid",
@@ -34,9 +35,10 @@ export default async function OrdersPage() {
       },
     }),
   ]);
+  const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   return (
-    <div className="min-h-screen p-8 lg:min-h-0">
+    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Orders</h1>
 
       <div className="mt-6 max-w-md">

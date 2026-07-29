@@ -15,12 +15,19 @@ export function ApprovalRequestsPanel({
   approveAction,
   rejectAction,
   regenerateAction,
+  approveGroupAction,
   highlightId,
 }: {
   approvals: PendingApproval[];
   approveAction: (id: string) => Promise<void>;
   rejectAction: (id: string) => Promise<void>;
   regenerateAction: (id: string) => Promise<void>;
+  // Executes every still-pending member of a groupId in one action — see
+  // approveGenesisActionGroup's own comment for why this exists (grouping
+  // was presentational-only before; this is the real batch action). Optional
+  // so any caller not yet passing it renders exactly as before (no group
+  // action button), rather than crashing.
+  approveGroupAction?: (groupId: string) => Promise<void>;
   // Contextual-review connection layer: the one approval, if any, that
   // Genesis brought the owner here to review (via "?focus=") — gets an
   // auto-expanded diff and a visual callout, everything else renders as
@@ -142,7 +149,7 @@ export function ApprovalRequestsPanel({
                   type="submit"
                   className="rounded-full bg-foreground px-2.5 py-1 text-xs font-medium text-background transition-opacity hover:opacity-90"
                 >
-                  Approve
+                  Use this
                 </button>
               </form>
               <form action={rejectAction.bind(null, approval.id)}>
@@ -150,7 +157,7 @@ export function ApprovalRequestsPanel({
                   type="submit"
                   className="rounded-full border border-black/[.08] px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
                 >
-                  Reject
+                  Keep current
                 </button>
               </form>
               {isImageAction && (
@@ -173,9 +180,21 @@ export function ApprovalRequestsPanel({
       {[...groups.entries()].map(([groupKey, group]) =>
         group.length > 1 ? (
           <li key={groupKey} className="rounded-2xl border border-dashed border-[var(--brand-accent)]/25 p-3">
-            <p className="px-1 pb-2 text-xs font-medium text-zinc-500">
-              Genesis has {group.length} related changes from one idea
-            </p>
+            <div className="flex items-center justify-between gap-2 px-1 pb-2">
+              <p className="text-xs font-medium text-zinc-500">
+                Genesis has {group.length} related changes from one idea
+              </p>
+              {approveGroupAction && (
+                <form action={approveGroupAction.bind(null, groupKey)}>
+                  <button
+                    type="submit"
+                    className="rounded-full bg-[var(--brand-accent,var(--foreground))] px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                  >
+                    Use all {group.length}
+                  </button>
+                </form>
+              )}
+            </div>
             <ul className="flex flex-col gap-2">{group.map(renderRow)}</ul>
           </li>
         ) : (

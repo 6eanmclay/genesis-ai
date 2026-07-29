@@ -2,10 +2,11 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
-import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, revertApprovalRequest } from "../ai-actions";
+import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, revertApprovalRequest, approveGenesisActionGroup } from "../ai-actions";
 import { grantAuthority, revokeAuthority } from "../actions";
 import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
 import { SubmitButton } from "../SubmitButton";
+import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 // The real, wired-up capabilities today: SEO (Genesis-editable via chat,
 // approval-gated, shown here read-only) and the newsletter subscriber list
@@ -42,9 +43,10 @@ export default async function MarketingPage() {
   const blueprint = store.blueprint as BlueprintContextSubset | null;
   const seoTitle = blueprint?.marketingAssets?.seoTitle;
   const seoMetaDescription = blueprint?.marketingAssets?.seoMetaDescription;
+  const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   return (
-    <div className="min-h-screen p-8 lg:min-h-0">
+    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Marketing</h1>
 
       {seoApprovals.length > 0 && (
@@ -57,6 +59,7 @@ export default async function MarketingPage() {
             approveAction={approveGenesisAction}
             rejectAction={rejectGenesisAction}
             regenerateAction={regenerateApprovalImage}
+            approveGroupAction={approveGenesisActionGroup}
           />
         </>
       )}

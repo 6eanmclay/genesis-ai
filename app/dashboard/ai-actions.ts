@@ -1,6 +1,5 @@
 "use server";
 
-import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { z } from "zod";
@@ -13,7 +12,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/slugify";
 import { searchProductImage } from "@/lib/unsplash";
-import { sourceProductImageCandidate } from "@/lib/productImagery";
+import { sourceProductImageCandidate, sourceHeroImageCandidate } from "@/lib/productImagery";
 import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -30,8 +29,11 @@ import { supersedePendingApproval } from "@/lib/dashboard/pendingApprovals";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
 import { execute } from "@/lib/execution/engine";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
-
-const anthropic = new Anthropic();
+import {
+  callGenesisModel,
+  genesisModelFailureMessage,
+  type GenesisModelErrorKind,
+} from "@/lib/genesisModel";
 
 const PROMPT_VERSION = "v2";
 
@@ -279,6 +281,17 @@ secondaryCallToAction is optional — only include one (e.g. "Our Story", "See H
 
 const BRAND_PROMISE_GUIDANCE = `brandIdentity.brandPromise is distinct from missionStatement and visionStatement — it's not an internal aspiration, it's a short, concrete, customer-facing commitment (e.g. "Every piece hand-finished within 48 hours" or "Free returns, no questions asked, always"). It should be specific enough that a customer could actually notice if it wasn't kept.`;
 
+// Shared by both draft and live chat CONTROL prompts — the fix for a real
+// beta incident where a user pasted a large, comprehensive-sounding
+// business description into chat and Genesis treated it as grounds for a
+// sweeping rewrite instead of new context to fold into the business
+// already being built. Placed at CONTROL (the decision stage) rather than
+// CONTENT, since this is a judgment call about intent, not about how to
+// write a field once scope is already decided.
+const CONTINUATION_GUIDANCE = `Default to continuation, not replacement. When the user shares new or additional information about their business — a longer description, more detail about what they sell or who it's for, a pasted write-up, expanded context — treat it as material to weave into the business that already exists, not as a fresh brief to build from scratch. Preserve everything about the current identity, tone, and story that the new information doesn't actually contradict; incorporate what's new as an addition or refinement, the way a real co-founder folds new information into an ongoing plan rather than throwing out the whiteboard.
+
+Only treat a message as a request to start over when the user actually says so — "start over," "let's try something completely different," "scrap this," "redesign everything," or equivalent. A message that merely contains a lot of new detail is not, on its own, a request to replace anything, no matter how comprehensive or polished it reads (including text that looks like it was drafted elsewhere and pasted in). If a message is genuinely ambiguous — it reads like it could describe a different business entirely, and nothing indicates whether the user wants it merged in or wants a fresh start — treat that the same as an unconfirmed identity change: set requiresConfirmation true and ask directly, rather than silently guessing.`;
+
 const GENERATION_SYSTEM_PROMPT = `You are Genesis, an expert e-commerce consultant and brand strategist building a new business from scratch — not a form-filler producing the bare minimum needed to populate a database. Given a business description, produce a complete, professional, launch-ready brand identity and storefront content package.
 
 Users may specify some details themselves (a store name, what they sell, and/or a vision for their brand) and leave the rest for you to invent.
@@ -356,7 +369,7 @@ export async function generateStoreDraft(formData: FormData) {
     `Vision: ${inputVision ?? "(not specified — use your best judgment)"}`,
   ].join("\n");
 
-  const primaryStream = anthropic.messages.stream({
+  const primaryOutcome = await callGenesisModel({
     model: "claude-opus-4-8",
     max_tokens: 16000,
     thinking: { type: "adaptive" },
@@ -367,8 +380,21 @@ export async function generateStoreDraft(formData: FormData) {
       format: zodOutputFormat(PrimaryBlueprintSchema),
     },
   });
-  const primaryMessage = await primaryStream.finalMessage();
-  const primary = primaryMessage.parsed_output;
+  if (!primaryOutcome.ok) {
+    await logProductEvent({
+      userId: session.user.id,
+      storeDraftId: existingDraft?.id ?? null,
+      sessionInstanceId: session.user.sessionInstanceId,
+      name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
+      category: "creation",
+      attemptKey: existingDraft?.id ?? session.user.id,
+      outcome: "failure",
+      durationMs: Date.now() - creationStartedAt,
+      metadata: { providerErrorKind: primaryOutcome.kind, providerStatus: primaryOutcome.status },
+    });
+    throw new Error(genesisModelFailureMessage(primaryOutcome.kind));
+  }
+  const primary = primaryOutcome.message.parsed_output;
   if (!primary) {
     await logProductEvent({
       userId: session.user.id,
@@ -385,65 +411,93 @@ export async function generateStoreDraft(formData: FormData) {
 
   // SECONDARY and COMPOSITION both only depend on PRIMARY's output, not on
   // each other — run them concurrently rather than back-to-back.
-  const [secondaryMessage, compositionMessage] = await Promise.all([
-    anthropic.messages
-      .stream({
-        model: "claude-opus-4-8",
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: GENERATION_SECONDARY_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: `Business brief:\n${briefText}\n\nAlready-produced brand identity, homepage content, and products (JSON):\n${JSON.stringify(
-              {
-                storeName: primary.storeName,
-                tagline: primary.tagline,
-                description: primary.description,
-                brandIdentity: primary.brandIdentity,
-                homepageContent: primary.homepageContent,
-                products: primary.products,
-              },
-              null,
-              2
-            )}`,
-          },
-        ],
-        output_config: {
-          effort: "high",
-          format: zodOutputFormat(SecondaryBlueprintSchema),
+  const [secondaryOutcome, compositionOutcome] = await Promise.all([
+    callGenesisModel({
+      model: "claude-opus-4-8",
+      max_tokens: 16000,
+      thinking: { type: "adaptive" },
+      system: GENERATION_SECONDARY_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Business brief:\n${briefText}\n\nAlready-produced brand identity, homepage content, and products (JSON):\n${JSON.stringify(
+            {
+              storeName: primary.storeName,
+              tagline: primary.tagline,
+              description: primary.description,
+              brandIdentity: primary.brandIdentity,
+              homepageContent: primary.homepageContent,
+              products: primary.products,
+            },
+            null,
+            2
+          )}`,
         },
-      })
-      .finalMessage(),
-    anthropic.messages
-      .stream({
-        model: "claude-opus-4-8",
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: GENERATION_COMPOSITION_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: `Brand identity, homepage content, and visual theme (JSON):\n${JSON.stringify(
-              {
-                brandIdentity: primary.brandIdentity,
-                homepageContent: primary.homepageContent,
-                theme: primary.theme,
-              },
-              null,
-              2
-            )}`,
-          },
-        ],
-        output_config: {
-          effort: "high",
-          format: zodOutputFormat(CompositionSchema),
+      ],
+      output_config: {
+        effort: "high",
+        format: zodOutputFormat(SecondaryBlueprintSchema),
+      },
+    }),
+    callGenesisModel({
+      model: "claude-opus-4-8",
+      max_tokens: 16000,
+      thinking: { type: "adaptive" },
+      system: GENERATION_COMPOSITION_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Brand identity, homepage content, and visual theme (JSON):\n${JSON.stringify(
+            {
+              brandIdentity: primary.brandIdentity,
+              homepageContent: primary.homepageContent,
+              theme: primary.theme,
+            },
+            null,
+            2
+          )}`,
         },
-      })
-      .finalMessage(),
+      ],
+      output_config: {
+        effort: "high",
+        format: zodOutputFormat(CompositionSchema),
+      },
+    }),
   ]);
-  const secondary = secondaryMessage.parsed_output;
-  const composition = compositionMessage.parsed_output;
+  // Checked independently (not via a shared "whichever failed" variable) so
+  // TypeScript actually narrows each of secondaryOutcome/compositionOutcome
+  // to its success variant below — narrowing a third variable derived from
+  // them doesn't narrow the originals.
+  if (!secondaryOutcome.ok) {
+    await logProductEvent({
+      userId: session.user.id,
+      storeDraftId: existingDraft?.id ?? null,
+      sessionInstanceId: session.user.sessionInstanceId,
+      name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
+      category: "creation",
+      attemptKey: existingDraft?.id ?? session.user.id,
+      outcome: "failure",
+      durationMs: Date.now() - creationStartedAt,
+      metadata: { providerErrorKind: secondaryOutcome.kind, providerStatus: secondaryOutcome.status },
+    });
+    throw new Error(genesisModelFailureMessage(secondaryOutcome.kind));
+  }
+  if (!compositionOutcome.ok) {
+    await logProductEvent({
+      userId: session.user.id,
+      storeDraftId: existingDraft?.id ?? null,
+      sessionInstanceId: session.user.sessionInstanceId,
+      name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
+      category: "creation",
+      attemptKey: existingDraft?.id ?? session.user.id,
+      outcome: "failure",
+      durationMs: Date.now() - creationStartedAt,
+      metadata: { providerErrorKind: compositionOutcome.kind, providerStatus: compositionOutcome.status },
+    });
+    throw new Error(genesisModelFailureMessage(compositionOutcome.kind));
+  }
+  const secondary = secondaryOutcome.message.parsed_output;
+  const composition = compositionOutcome.message.parsed_output;
   if (!secondary || !composition) {
     await logProductEvent({
       userId: session.user.id,
@@ -839,6 +893,8 @@ ${BRAND_PROMISE_GUIDANCE}
 
 ${CALIBRATION_GUIDANCE}
 
+${CONTINUATION_GUIDANCE}
+
 Structure your reply in this order: first, state specifically what you changed (not a vague "done!" — name the actual thing and direction); then, if relevant, note any expert recommendations you added unprompted, named specifically and calibrated per the guidance above; only after that, optionally end with one proactive suggestion for what to consider next. Never lead with a suggestion before confirming what you did. Read like a short, natural message from a real person — never a list of field names, never the phrase "content updated" or similar. Keep it to 2-4 sentences.`;
 
 // Runs only when CONTROL decided requiresConfirmation is false. Uses
@@ -914,6 +970,8 @@ ${BRAND_PROMISE_GUIDANCE}
 
 ${CALIBRATION_GUIDANCE}
 
+${CONTINUATION_GUIDANCE}
+
 Structure your reply in this order: first, confirm specifically what you changed (not a vague "done!" — name the actual thing); then, if relevant, note any expert recommendations you added unprompted, named specifically and calibrated per the guidance above; only after that, optionally end with one proactive suggestion for what to consider next. Never lead with a suggestion before confirming what you did. Read like a short, natural message from a real person — never a list of field names, never the phrase "content updated" or similar. Keep it to 2-4 sentences.`;
 
 // A separate, tiny, first-run detection call — never folded into
@@ -957,32 +1015,104 @@ If it IS an image request, resolve scope — clarify ambiguity, not complexity:
 // the same way regardless of which phase the conversation is in.
 // attemptKey is the draft/store id itself, so a whole conversation's turns
 // correlate together, the same identity already used for creation.* events.
+//
+// Latency audit follow-up: `durationMs`/`stageDurationsMs` are now computed
+// by the caller *before* calling this (Date.now() deltas captured at the
+// real moments they happen), not recomputed here — this function only
+// resolves `sessionInstanceId` synchronously (a fast JWT read, not a DB
+// call) and then defers the actual ProductEvent write via after(), so the
+// write itself never sits on the user-facing critical path. Deferring the
+// whole function (including the auth() call) would be unsafe — cookies
+// aren't reliably readable once the response has already been sent — so
+// only the DB write moves, not the session lookup.
 async function logChatTurnEvent(params: {
   userId: string;
   storeId?: string | null;
   storeDraftId?: string | null;
-  turnStartedAt: number;
+  durationMs: number;
   outcome: "success" | "failure";
   requiresConfirmation?: boolean;
   likelyRephraseOf?: string | null;
+  stageDurationsMs?: Record<string, number | null>;
 }) {
   const session = await auth();
   if (!session?.user) return;
-  await logProductEvent({
+  const sessionInstanceId = session.user.sessionInstanceId;
+  scheduleAfterResponse(() =>
+    logProductEvent({
+      userId: params.userId,
+      storeId: params.storeId ?? null,
+      storeDraftId: params.storeDraftId ?? null,
+      sessionInstanceId,
+      name: "chat.turn_completed",
+      category: "chat",
+      attemptKey: params.storeDraftId ?? params.storeId ?? params.userId,
+      outcome: params.outcome,
+      durationMs: params.durationMs,
+      metadata: {
+        requiresConfirmation: params.requiresConfirmation ?? false,
+        likelyRephraseOf: params.likelyRephraseOf ?? null,
+        stageDurationsMs: params.stageDurationsMs ?? null,
+      },
+    }).catch(() => {})
+  );
+}
+
+// Reliability architecture (v21, Phase 1) — the one place a failed
+// callGenesisModel() outcome becomes a graceful chat turn instead of an
+// uncaught exception, shared by applyGenesisMessage and
+// applyGenesisMessageToStore (the two functions this can fire from). Per
+// the project's continuity principle ("Genesis never throws away work"),
+// this always writes a real, visible assistant reply into the conversation
+// — the merchant sees why nothing happened, not a crashed page — rather
+// than letting the raw provider error propagate to app/dashboard/error.tsx.
+// That boundary still exists as the safety net for the *unclassified* case
+// (see callGenesisModel's own "unknown" kind), not the primary path.
+// Never returns — always redirects, exactly like every other handled
+// outcome in these two functions.
+async function bailOnProviderFailure(params: {
+  kind: GenesisModelErrorKind;
+  action: string;
+  userId: string;
+  storeId?: string;
+  storeDraftId?: string;
+  returnTo: string;
+  turnStartedAt: number;
+  likelyRephraseOf: string | null;
+  stageDurationsMs?: Record<string, number | null>;
+}): Promise<never> {
+  const failureMessage = genesisModelFailureMessage(params.kind);
+  await recordGenesisExecution({
+    action: params.action,
+    status: "FAILED",
+    verified: false,
+    message: `Provider error (${params.kind})`,
+    retryable: params.kind === "rate_limit" || params.kind === "overloaded" || params.kind === "network",
+    userId: params.userId,
+    storeId: params.storeId,
+    storeDraftId: params.storeDraftId,
+    metadata: { providerErrorKind: params.kind },
+  });
+  if (params.storeDraftId) {
+    await prisma.storeDraftMessage.create({
+      data: { storeDraftId: params.storeDraftId, role: "assistant", content: failureMessage },
+    });
+  } else if (params.storeId) {
+    await prisma.storeMessage.create({
+      data: { storeId: params.storeId, role: "assistant", content: failureMessage },
+    });
+  }
+  await logChatTurnEvent({
     userId: params.userId,
     storeId: params.storeId ?? null,
     storeDraftId: params.storeDraftId ?? null,
-    sessionInstanceId: session.user.sessionInstanceId,
-    name: "chat.turn_completed",
-    category: "chat",
-    attemptKey: params.storeDraftId ?? params.storeId ?? params.userId,
-    outcome: params.outcome,
     durationMs: Date.now() - params.turnStartedAt,
-    metadata: {
-      requiresConfirmation: params.requiresConfirmation ?? false,
-      likelyRephraseOf: params.likelyRephraseOf ?? null,
-    },
+    outcome: "failure",
+    likelyRephraseOf: params.likelyRephraseOf,
+    stageDurationsMs: params.stageDurationsMs,
   });
+  revalidatePath(params.returnTo);
+  redirect(params.returnTo);
 }
 
 async function applyGenesisMessage(userId: string, userMessage: string) {
@@ -1051,7 +1181,11 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
     content: m.content,
   }));
 
-  const controlStream = anthropic.messages.stream({
+  // Latency audit — durationMs for each real stage comes straight from
+  // callGenesisModel's own return value now, reused in every logChatTurnEvent
+  // call below as `stageDurationsMs` so PRIMARY/CONTROL/CONTENT/SECONDARY/
+  // COMPOSITION can be compared individually, not just the whole turn's total.
+  const controlOutcome = await callGenesisModel({
     model: "claude-opus-4-8",
     max_tokens: 16000,
     thinking: { type: "adaptive" },
@@ -1065,9 +1199,21 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
       format: zodOutputFormat(ChatControlSchema),
     },
   });
+  if (!controlOutcome.ok) {
+    return bailOnProviderFailure({
+      kind: controlOutcome.kind,
+      action: EXECUTION_ACTIONS.GENESIS_DRAFT_MESSAGE,
+      userId,
+      storeDraftId: draft.id,
+      returnTo: "/dashboard",
+      turnStartedAt,
+      likelyRephraseOf,
+      stageDurationsMs: { control: controlOutcome.durationMs },
+    });
+  }
 
-  const controlMessage = await controlStream.finalMessage();
-  const controlResult = controlMessage.parsed_output;
+  const controlDurationMs = controlOutcome.durationMs;
+  const controlResult = controlOutcome.message.parsed_output;
   if (!controlResult) {
     await recordGenesisExecution({
       action: EXECUTION_ACTIONS.GENESIS_DRAFT_MESSAGE,
@@ -1082,14 +1228,22 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
     await logChatTurnEvent({
       userId,
       storeDraftId: draft.id,
-      turnStartedAt,
+      durationMs: Date.now() - turnStartedAt,
       outcome: "failure",
       likelyRephraseOf,
+      stageDurationsMs: { control: controlDurationMs },
     });
     throw new Error("Genesis couldn't process that request");
   }
 
   let changes: string[] = [];
+  // Latency audit — declared at this scope (not inside the else branch
+  // below) so the final logChatTurnEvent call can report them either way;
+  // they stay null when requiresConfirmation short-circuits before any of
+  // these stages run.
+  let contentDurationMs: number | null = null;
+  let secondaryDurationMs: number | null = null;
+  let compositionDurationMs: number | null = null;
 
   if (controlResult.requiresConfirmation) {
     await prisma.storeDraft.update({
@@ -1127,7 +1281,7 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
         ? scopeParts.join(", ")
         : "nothing — reproduce every field unchanged";
 
-    const contentStream = anthropic.messages.stream({
+    const contentOutcome = await callGenesisModel({
       model: "claude-opus-4-8",
       max_tokens: 16000,
       thinking: { type: "adaptive" },
@@ -1148,9 +1302,20 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
         format: zodOutputFormat(PrimaryBlueprintSchema),
       },
     });
-
-    const contentMessage = await contentStream.finalMessage();
-    const contentResult = contentMessage.parsed_output;
+    if (!contentOutcome.ok) {
+      return bailOnProviderFailure({
+        kind: contentOutcome.kind,
+        action: EXECUTION_ACTIONS.GENESIS_DRAFT_MESSAGE,
+        userId,
+        storeDraftId: draft.id,
+        returnTo: "/dashboard",
+        turnStartedAt,
+        likelyRephraseOf,
+        stageDurationsMs: { control: controlDurationMs, content: contentOutcome.durationMs },
+      });
+    }
+    contentDurationMs = contentOutcome.durationMs;
+    const contentResult = contentOutcome.message.parsed_output;
     if (!contentResult) {
       await recordGenesisExecution({
         action: EXECUTION_ACTIONS.GENESIS_DRAFT_MESSAGE,
@@ -1165,9 +1330,10 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
       await logChatTurnEvent({
         userId,
         storeDraftId: draft.id,
-        turnStartedAt,
+        durationMs: Date.now() - turnStartedAt,
         outcome: "failure",
         likelyRephraseOf,
+        stageDurationsMs: { control: controlDurationMs, content: contentDurationMs },
       });
       throw new Error("Genesis couldn't process that request");
     }
@@ -1182,37 +1348,90 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
       designDirection: currentBlueprint?.designDirection ?? DEFAULT_DESIGN_DIRECTION,
     };
 
-    if (controlResult.touchesSecondaryContent) {
-      const secondaryStream = anthropic.messages.stream({
-        model: "claude-opus-4-8",
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: CHAT_SECONDARY_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [
-              `Brand identity (for tone/voice reference, JSON):\n${JSON.stringify(
-                contentResult.brandIdentity,
-                null,
-                2
-              )}`,
-              `Current policies/marketing/design (JSON):\n${JSON.stringify(
-                secondaryContent,
-                null,
-                2
-              )}`,
-              `User's request: ${userMessage}`,
-            ].join("\n\n"),
+    let themeResult: ThemeWithComposition = currentTheme;
+
+    // Latency audit — SECONDARY and COMPOSITION each only ever read
+    // contentResult (the earlier CONTENT call's output), never each
+    // other's, so nothing forces them to run sequentially. Started
+    // together and run via Promise.all — the same pattern
+    // generateStoreDraft already uses for this identical pair — instead of
+    // fully awaiting one before even starting the other. Each is still
+    // timed individually via its own .then() (capturing its own real
+    // completion time, not just when the slower of the two finishes).
+    const secondaryPromise = controlResult.touchesSecondaryContent
+      ? callGenesisModel({
+          model: "claude-opus-4-8",
+          max_tokens: 16000,
+          thinking: { type: "adaptive" },
+          system: CHAT_SECONDARY_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: [
+                `Brand identity (for tone/voice reference, JSON):\n${JSON.stringify(
+                  contentResult.brandIdentity,
+                  null,
+                  2
+                )}`,
+                `Current policies/marketing/design (JSON):\n${JSON.stringify(
+                  secondaryContent,
+                  null,
+                  2
+                )}`,
+                `User's request: ${userMessage}`,
+              ].join("\n\n"),
+            },
+          ],
+          output_config: {
+            effort: "high",
+            format: zodOutputFormat(SecondaryChatSchema),
           },
-        ],
-        output_config: {
-          effort: "high",
-          format: zodOutputFormat(SecondaryChatSchema),
-        },
-      });
-      const secondaryMessage = await secondaryStream.finalMessage();
-      const secondaryResult = secondaryMessage.parsed_output;
+        })
+      : Promise.resolve(null);
+
+    // Composition is a separate call for the same reason CONTENT is split
+    // from CONTROL — adding it to PrimaryBlueprintSchema reproduces the
+    // grammar-size error. Only run it when theme is actually in scope.
+    const compositionPromise = controlResult.touchesTheme
+      ? callGenesisModel({
+          model: "claude-opus-4-8",
+          max_tokens: 16000,
+          thinking: { type: "adaptive" },
+          system: CHAT_COMPOSITION_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: [
+                `Brand identity and visual theme (JSON):\n${JSON.stringify(
+                  { brandIdentity: contentResult.brandIdentity, theme: contentResult.theme },
+                  null,
+                  2
+                )}`,
+                `User's latest message: ${userMessage}`,
+                `Plan already communicated to the user: ${controlResult.reply}`,
+              ].join("\n\n"),
+            },
+          ],
+          output_config: {
+            effort: "high",
+            format: zodOutputFormat(CompositionSchema),
+          },
+        })
+      : Promise.resolve(null);
+
+    const [secondaryOutcome, compositionOutcome] = await Promise.all([secondaryPromise, compositionPromise]);
+    secondaryDurationMs = secondaryOutcome?.durationMs ?? null;
+    compositionDurationMs = compositionOutcome?.durationMs ?? null;
+
+    // A provider failure on either of these two optional stages degrades
+    // exactly like a missing parsed_output already did below (soft skip,
+    // not a turn-wide bail) — CONTROL and CONTENT already succeeded and may
+    // have already made real, reported changes, so failing the whole turn
+    // here would contradict what the merchant was just told happened.
+    // callGenesisModel's own console.error already makes the real failure
+    // visible server-side.
+    if (secondaryOutcome?.ok) {
+      const secondaryResult = secondaryOutcome.message.parsed_output;
       if (secondaryResult) {
         // Only take the categories the model actually flagged as changed —
         // an untouched category keeps the exact pre-existing value instead
@@ -1232,37 +1451,8 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
       }
     }
 
-    // Composition is a separate call for the same reason CONTENT is split
-    // from CONTROL — adding it to PrimaryBlueprintSchema reproduces the
-    // grammar-size error. Only run it when theme is actually in scope.
-    let themeResult: ThemeWithComposition = currentTheme;
-    if (controlResult.touchesTheme) {
-      const compositionStream = anthropic.messages.stream({
-        model: "claude-opus-4-8",
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: CHAT_COMPOSITION_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [
-              `Brand identity and visual theme (JSON):\n${JSON.stringify(
-                { brandIdentity: contentResult.brandIdentity, theme: contentResult.theme },
-                null,
-                2
-              )}`,
-              `User's latest message: ${userMessage}`,
-              `Plan already communicated to the user: ${controlResult.reply}`,
-            ].join("\n\n"),
-          },
-        ],
-        output_config: {
-          effort: "high",
-          format: zodOutputFormat(CompositionSchema),
-        },
-      });
-      const compositionMessage = await compositionStream.finalMessage();
-      const compositionResult = compositionMessage.parsed_output;
+    if (compositionOutcome?.ok) {
+      const compositionResult = compositionOutcome.message.parsed_output;
       themeResult = {
         ...contentResult.theme,
         composition: compositionResult ?? currentTheme.composition,
@@ -1347,10 +1537,16 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
   await logChatTurnEvent({
     userId,
     storeDraftId: draft.id,
-    turnStartedAt,
+    durationMs: Date.now() - turnStartedAt,
     outcome: "success",
     requiresConfirmation: controlResult.requiresConfirmation,
     likelyRephraseOf,
+    stageDurationsMs: {
+      control: controlDurationMs,
+      content: contentDurationMs,
+      secondary: secondaryDurationMs,
+      composition: compositionDurationMs,
+    },
   });
 
   // Server Action redirects default to a "push"-type navigation, which is
@@ -1530,7 +1726,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     await logChatTurnEvent({
       userId,
       storeId: store.id,
-      turnStartedAt,
+      durationMs: Date.now() - turnStartedAt,
       outcome: "failure",
       likelyRephraseOf,
     });
@@ -1596,7 +1792,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   // this isn't folded into StoreChatPrimarySchema. Any detection failure
   // (parse error, API error) falls through to the normal chat flow below
   // rather than blocking the turn on a secondary classifier.
-  const imageRequestStream = anthropic.messages.stream({
+  const imageRequestOutcome = await callGenesisModel({
     model: "claude-opus-4-8",
     max_tokens: 500,
     thinking: { type: "adaptive" },
@@ -1612,7 +1808,13 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       format: zodOutputFormat(ProductImageRequestSchema),
     },
   });
-  const imageRequestResult = (await imageRequestStream.finalMessage()).parsed_output;
+  // A provider failure here falls through to the normal chat flow below,
+  // same as the pre-existing "detection failure" comment already intended
+  // for a parse miss — this classifier was, before this pass, the one call
+  // site whose failure crashed the entire turn immediately (every chat
+  // message passes through it first), making it the most likely single
+  // candidate for what actually crashed in the 2026-07-28 incident.
+  const imageRequestResult = imageRequestOutcome.ok ? imageRequestOutcome.message.parsed_output : null;
 
   if (imageRequestResult?.isImageRequest) {
     // Resolution happens here, never by trusting the model's claim
@@ -1650,7 +1852,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       await logChatTurnEvent({
         userId,
         storeId: store.id,
-        turnStartedAt,
+        durationMs: Date.now() - turnStartedAt,
         outcome: "failure",
         likelyRephraseOf,
       });
@@ -1707,6 +1909,20 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     const foundNames = outcomes.filter((o) => o.candidate).map((o) => o.name);
     const missedNames = outcomes.filter((o) => !o.candidate).map((o) => o.name);
     const replyParts = [imageRequestResult.reply];
+    // Deterministic, not model-generated — same reasoning as finalReply's
+    // own grouping clause below: the model has no idea these become N
+    // separate ApprovalRequest rows, so it can't honestly describe the
+    // review mechanics itself. Naming the count and pointing at the "Use
+    // all" action directly closes the gap Priority 1's audit traced: a
+    // merchant reading "I found new photos" had no way to know reviewing
+    // meant N individual decisions, not one.
+    if (foundNames.length > 1) {
+      replyParts.push(
+        `These are grouped as one idea on Products — review each, or use "Use all ${foundNames.length}" to apply them together.`
+      );
+    } else if (foundNames.length === 1) {
+      replyParts.push(`You'll find it waiting for your review on Products.`);
+    }
     if (missedNames.length > 0) {
       replyParts.push(
         `I couldn't find a good option for ${missedNames.join(", ")} — you may want to upload ${missedNames.length > 1 ? "those" : "that one"} directly for now.`
@@ -1740,7 +1956,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     await logChatTurnEvent({
       userId,
       storeId: store.id,
-      turnStartedAt,
+      durationMs: Date.now() - turnStartedAt,
       outcome: foundNames.length > 0 ? "success" : "failure",
       likelyRephraseOf,
     });
@@ -1749,7 +1965,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     redirect(returnTo);
   }
 
-  const primaryStream = anthropic.messages.stream({
+  const primaryOutcome = await callGenesisModel({
     model: "claude-opus-4-8",
     max_tokens: 16000,
     thinking: { type: "adaptive" },
@@ -1763,9 +1979,21 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       format: zodOutputFormat(StoreChatPrimarySchema),
     },
   });
+  if (!primaryOutcome.ok) {
+    return bailOnProviderFailure({
+      kind: primaryOutcome.kind,
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      userId,
+      storeId: store.id,
+      returnTo,
+      turnStartedAt,
+      likelyRephraseOf,
+      stageDurationsMs: { primary: primaryOutcome.durationMs },
+    });
+  }
 
-  const primaryMessage = await primaryStream.finalMessage();
-  const primaryResult = primaryMessage.parsed_output;
+  const primaryDurationMs = primaryOutcome.durationMs;
+  const primaryResult = primaryOutcome.message.parsed_output;
   if (!primaryResult) {
     await recordGenesisExecution({
       action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
@@ -1780,9 +2008,10 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     await logChatTurnEvent({
       userId,
       storeId: store.id,
-      turnStartedAt,
+      durationMs: Date.now() - turnStartedAt,
       outcome: "failure",
       likelyRephraseOf,
+      stageDurationsMs: { primary: primaryDurationMs },
     });
     throw new Error("Genesis couldn't process that request");
   }
@@ -1792,6 +2021,8 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   // than applied directly — used to correct the model's reply, which has
   // no idea some of what it just "did" is actually only proposed.
   const proposalSummaries: string[] = [];
+  let secondaryDurationMs: number | null = null;
+  let compositionDurationMs: number | null = null;
 
   if (primaryResult.requiresConfirmation) {
     await prisma.store.update({
@@ -1825,38 +2056,84 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     // the recommendation engine were writing the identical fields two
     // different ways).
     let proposedSeo: { seoTitle: string; seoMetaDescription: string } | null = null;
+    let proposedTheme: ThemeWithComposition | null = null;
 
-    if (primaryResult.touchesSecondaryContent) {
-      const secondaryStream = anthropic.messages.stream({
-        model: "claude-opus-4-8",
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: CHAT_SECONDARY_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [
-              `Brand identity (for tone/voice reference, JSON):\n${JSON.stringify(
-                primaryResult.brandIdentity,
-                null,
-                2
-              )}`,
-              `Current policies/marketing/design (JSON):\n${JSON.stringify(
-                secondaryContent,
-                null,
-                2
-              )}`,
-              `User's request: ${userMessage}`,
-            ].join("\n\n"),
+    // Latency audit — SECONDARY and COMPOSITION each only read
+    // primaryResult (never each other's output), so nothing forces them to
+    // run sequentially. Started together and run via Promise.all — the same
+    // pattern generateStoreDraft and applyGenesisMessage already use for
+    // this identical pair — instead of fully awaiting one before even
+    // starting the other. Each is still timed individually via its own
+    // .then() (capturing its own real completion time, not just when the
+    // slower of the two finishes).
+    const secondaryPromise = primaryResult.touchesSecondaryContent
+      ? callGenesisModel({
+          model: "claude-opus-4-8",
+          max_tokens: 16000,
+          thinking: { type: "adaptive" },
+          system: CHAT_SECONDARY_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: [
+                `Brand identity (for tone/voice reference, JSON):\n${JSON.stringify(
+                  primaryResult.brandIdentity,
+                  null,
+                  2
+                )}`,
+                `Current policies/marketing/design (JSON):\n${JSON.stringify(
+                  secondaryContent,
+                  null,
+                  2
+                )}`,
+                `User's request: ${userMessage}`,
+              ].join("\n\n"),
+            },
+          ],
+          output_config: {
+            effort: "high",
+            format: zodOutputFormat(SecondaryChatSchema),
           },
-        ],
-        output_config: {
-          effort: "high",
-          format: zodOutputFormat(SecondaryChatSchema),
-        },
-      });
-      const secondaryMessage = await secondaryStream.finalMessage();
-      const secondaryResult = secondaryMessage.parsed_output;
+        })
+      : Promise.resolve(null);
+
+    // Composition is a separate call, same reasoning as draft chat — adding
+    // it to StoreChatPrimarySchema would risk the same grammar-size error.
+    // The result is now a proposal (update_theme), not a direct write — see
+    // the Phase 1 plan for why theme is the highest-value fork closure.
+    const compositionPromise = primaryResult.touchesTheme
+      ? callGenesisModel({
+          model: "claude-opus-4-8",
+          max_tokens: 16000,
+          thinking: { type: "adaptive" },
+          system: CHAT_COMPOSITION_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: [
+                `Brand identity and visual theme (JSON):\n${JSON.stringify(
+                  { brandIdentity: primaryResult.brandIdentity, theme: primaryResult.theme },
+                  null,
+                  2
+                )}`,
+                `User's latest message: ${userMessage}`,
+                `Plan already communicated to the user: ${primaryResult.reply}`,
+              ].join("\n\n"),
+            },
+          ],
+          output_config: {
+            effort: "high",
+            format: zodOutputFormat(CompositionSchema),
+          },
+        })
+      : Promise.resolve(null);
+
+    const [secondaryOutcome, compositionOutcome] = await Promise.all([secondaryPromise, compositionPromise]);
+    secondaryDurationMs = secondaryOutcome?.durationMs ?? null;
+    compositionDurationMs = compositionOutcome?.durationMs ?? null;
+
+    if (secondaryOutcome?.ok) {
+      const secondaryResult = secondaryOutcome.message.parsed_output;
       if (secondaryResult) {
         if (secondaryResult.touchesMarketingAssets) {
           proposedSeo = {
@@ -1884,38 +2161,8 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       }
     }
 
-    // Composition is a separate call, same reasoning as draft chat — adding
-    // it to StoreChatPrimarySchema would risk the same grammar-size error.
-    // The result is now a proposal (update_theme), not a direct write — see
-    // the Phase 1 plan for why theme is the highest-value fork closure.
-    let proposedTheme: ThemeWithComposition | null = null;
-    if (primaryResult.touchesTheme) {
-      const compositionStream = anthropic.messages.stream({
-        model: "claude-opus-4-8",
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: CHAT_COMPOSITION_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [
-              `Brand identity and visual theme (JSON):\n${JSON.stringify(
-                { brandIdentity: primaryResult.brandIdentity, theme: primaryResult.theme },
-                null,
-                2
-              )}`,
-              `User's latest message: ${userMessage}`,
-              `Plan already communicated to the user: ${primaryResult.reply}`,
-            ].join("\n\n"),
-          },
-        ],
-        output_config: {
-          effort: "high",
-          format: zodOutputFormat(CompositionSchema),
-        },
-      });
-      const compositionMessage = await compositionStream.finalMessage();
-      const compositionResult = compositionMessage.parsed_output;
+    if (compositionOutcome?.ok) {
+      const compositionResult = compositionOutcome.message.parsed_output;
       proposedTheme = {
         ...primaryResult.theme,
         composition: compositionResult ?? currentTheme.composition,
@@ -2167,10 +2414,21 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   // trusting the model's own phrasing for fields that are now
   // approval-gated (see the Phase 1 plan — a full prompt rewrite teaching
   // the model this boundary is a reasonable follow-up, not done here).
+  //
+  // The >1 case also names the count and says plainly that they're related
+  // — traced live this session to a real trust gap: one narrow request
+  // ("update the hero headline") silently produced 4 separate approval
+  // cards across 3 pages with nothing ever saying they came from the same
+  // idea. The grouping already existed in the data (groupId) and in the
+  // review UI ("Genesis has N related changes from one idea") — it just
+  // was never said here, in the one place the merchant sees immediately
+  // after asking for something that felt like one small change.
   const finalReply =
-    proposalSummaries.length > 0
-      ? `${primaryResult.reply}\n\nA few of these need your review before they go live — I've prepared them for you: ${proposalSummaries.join("; ")}.`
-      : primaryResult.reply;
+    proposalSummaries.length > 1
+      ? `${primaryResult.reply}\n\nI broke your request into ${proposalSummaries.length} related changes — they're all part of one idea, and you'll see them grouped together for review before any of it goes live: ${proposalSummaries.join("; ")}.`
+      : proposalSummaries.length === 1
+        ? `${primaryResult.reply}\n\nThis needs your review before it goes live — I've prepared it for you: ${proposalSummaries[0]}.`
+        : primaryResult.reply;
 
   await prisma.storeMessage.create({
     data: {
@@ -2184,9 +2442,14 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   await logChatTurnEvent({
     userId,
     storeId: store.id,
-    turnStartedAt,
+    durationMs: Date.now() - turnStartedAt,
     outcome: "success",
     likelyRephraseOf,
+    stageDurationsMs: {
+      primary: primaryDurationMs,
+      secondary: secondaryDurationMs,
+      composition: compositionDurationMs,
+    },
   });
 
   revalidatePath(returnTo);
@@ -2328,6 +2591,38 @@ export async function confirmStoreDraft() {
     products.map((p) => searchProductImage(p.name, p.imagePrompt))
   );
 
+  // Hero-image architecture fix (Priority 4) — only the "split" hero layout
+  // ever renders an image at all (confirmed in app/store/[slug]/page.tsx —
+  // centered/fullBleed/minimal are deliberately text-led compositions,
+  // chosen per brand personality, and must stay that way rather than having
+  // an image forced into them just because one now exists). Sourcing is
+  // skipped entirely for the other three layouts — no wasted API cost for a
+  // photo that would never render.
+  const heroImageUrl =
+    theme.composition?.heroLayout === "split"
+      ? await sourceHeroImageCandidate({
+          productType: draft.inputProductType,
+          vision: draft.inputVision ?? draft.description ?? draft.name,
+        })
+      : null;
+
+  // Merges into the existing blueprint JSON rather than a schema field —
+  // homepageContent already houses heroHeadline/heroSubheadline, so this is
+  // the same content, sourced the same way the draft's own content already
+  // is, not a new concept. Never asked of Claude (see sourceHeroImageCandidate's
+  // own comment), so it's deliberately not added to HomepageContentSchema —
+  // that schema is validated AI output; heroImageUrl is attached here, after
+  // generation, exactly like productImages above. Left untyped against
+  // Blueprint (which stays the AI-facing shape) rather than widening that
+  // type for one storage-only field only this write path produces.
+  const draftBlueprint = draft.blueprint as Blueprint | null;
+  const blueprintWithHero = draftBlueprint
+    ? {
+        ...draftBlueprint,
+        homepageContent: { ...draftBlueprint.homepageContent, heroImageUrl },
+      }
+    : draftBlueprint;
+
   const store = await prisma.store.create({
     data: {
       userId: session.user.id,
@@ -2336,7 +2631,7 @@ export async function confirmStoreDraft() {
       description: draft.description,
       tagline: draft.tagline,
       theme,
-      blueprint: draft.blueprint ?? Prisma.DbNull,
+      blueprint: (blueprintWithHero as object | null) ?? Prisma.DbNull,
       version: draft.version,
       products: {
         create: products.map((p, index) => ({
@@ -2465,6 +2760,112 @@ async function logApprovalDecisionEvent(params: {
       waitMs: Date.now() - params.approval.createdAt.getTime(),
     },
   });
+}
+
+// The real fix for "Genesis said it would generate images for 3 products,
+// but only one actually gets applied" — traced end to end: detection
+// already correctly creates one real ApprovalRequest per missing image,
+// all sharing one groupId (see the image-request branch of
+// applyGenesisMessageToStore above), and every review surface
+// (ApprovalRequestsPanel, website/page.tsx) already displays them as one
+// visual cluster ("Genesis has N related changes from one idea"). The
+// architectural gap was one level down: grouping was presentational only —
+// there was no action that could execute a whole group, so "approving"
+// still meant N separate manual clicks, and reviewing what looked like one
+// idea silently left N-1 of them still pending. This is that missing
+// action: it executes every still-pending member of one groupId through
+// the exact same execute()/registry path approveGenesisAction already
+// uses, one at a time, and reports one honest outcome for the batch
+// (including a real partial-failure count) rather than leaving the owner
+// to infer completeness from which cards happened to disappear. Every
+// member keeps its own real ApprovalRequest row and its own
+// EXECUTED/PENDING_APPROVAL status — this batches real individual
+// decisions, it never fabricates one merged decision.
+export async function approveGenesisActionGroup(groupId: string) {
+  const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+  const members = await prisma.approvalRequest.findMany({
+    where: { storeId, groupId, status: "PENDING_APPROVAL" },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (members.length === 0) {
+    redirect("/dashboard");
+  }
+
+  const succeeded: string[] = [];
+  const failed: string[] = [];
+
+  for (const approval of members) {
+    const definition = GENESIS_ACTIONS[approval.actionType];
+    if (!definition) {
+      failed.push(approval.summary);
+      continue;
+    }
+
+    const result = await execute(
+      definition.executable,
+      // Dynamic dispatch by actionType, same as approveGenesisAction below.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      approval.input as any,
+      { storeId, actorType: "GENESIS" }
+    );
+
+    if (result.status === "FAILED") {
+      // Same FAILED-never-reads-as-EXECUTED guarantee as the single-item
+      // path — reverts to pending (implicitly, by simply not updating
+      // status) with executionId recorded so the card surfaces "couldn't
+      // apply this last time" and stays individually retryable.
+      await prisma.approvalRequest.update({
+        where: { id: approval.id },
+        data: { executionId: result.executionId },
+      });
+      await logApprovalDecisionEvent({
+        userId,
+        storeId,
+        approval,
+        name: "approval.approve_failed",
+        outcome: "failure",
+      });
+      failed.push(approval.summary);
+      continue;
+    }
+
+    await prisma.approvalRequest.update({
+      where: { id: approval.id },
+      data: {
+        status: "EXECUTED",
+        executionId: result.executionId,
+        decidedByUserId: userId,
+        decidedAt: new Date(),
+      },
+    });
+    if (approval.recommendationId) {
+      await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId } });
+    }
+    await logApprovalDecisionEvent({
+      userId,
+      storeId,
+      approval,
+      name: "approval.approved",
+      outcome: "success",
+    });
+    succeeded.push(approval.summary);
+  }
+
+  // One honest, human-readable outcome for the whole batch, visible in the
+  // real conversation history — not just inferable from which cards
+  // happened to disappear from the review page.
+  const summaryText =
+    failed.length === 0
+      ? `Applied all ${succeeded.length} change${succeeded.length === 1 ? "" : "s"} from that idea.`
+      : succeeded.length === 0
+        ? `Couldn't apply ${failed.length === 1 ? "that change" : `any of the ${failed.length} changes`} — still pending, so you can retry from the review page.`
+        : `Applied ${succeeded.length} of ${members.length} — ${failed.length} couldn't be applied and ${failed.length === 1 ? "is" : "are"} still pending so you can retry.`;
+  await prisma.storeMessage.create({
+    data: { storeId, role: "assistant", content: summaryText },
+  });
+
+  redirect("/dashboard");
 }
 
 export async function approveGenesisAction(approvalRequestId: string) {

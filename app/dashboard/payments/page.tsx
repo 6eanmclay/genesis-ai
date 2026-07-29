@@ -12,12 +12,14 @@ import {
   disconnectPaypal,
   recheckPaypal,
 } from "../actions";
+import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
 
 export default async function PaymentsPage() {
   const { store } = await requireStorePageAccess(PERMISSIONS.PAYMENTS_MANAGE);
+  const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   const stripeIntegration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId: store.id, provider: "STRIPE" } },
@@ -118,7 +120,7 @@ export default async function PaymentsPage() {
       : null;
 
   return (
-    <div className="min-h-screen p-8 lg:min-h-0">
+    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Payments</h1>
 
       {!stripeIntegration || stripeIntegration.status === "DISCONNECTED" ? (

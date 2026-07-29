@@ -24,3 +24,66 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Genesis Domicile orbit — always-on presence, never "off". Breathing
+   reads as calm/idle (on the planet, in GenesisOrbitRing.tsx). The ring's
+   own tilt stays fixed (a rigid spin would drag its front/back Saturn
+   split around with it and break the illusion); genesis-orbit-travel is
+   what moves instead — a highlight circulating *along* the fixed ring, an
+   honest real-time "alive" signal, not discrete named phases (see
+   GenesisOrbitRing.tsx's own comment for the fuller reasoning). */
+@keyframes genesis-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+@keyframes genesis-orbit-travel {
+  to {
+    stroke-dashoffset: -1000;
+  }
+}
+
+/* "Working" gains energy over real time, never fake phase markers — the
+   leading arc starts modest and organically grows thicker, brighter, and
+   longer, then holds at that peak for however long the real request takes
+   (forwards fill; a request lasting 10s or 100s both just sustain at
+   maximum once reached — neither implies a false "percent done"). The
+   trailing arc mirrors this at lower opacity/higher width for a soft
+   comet-tail quality behind the bright leading edge. 540 is comfortably
+   larger than the ring's real circumference, so the dash-array's gap (the
+   second number) never wraps around twice — only the "on" segment (the
+   first number) visibly grows. */
+@keyframes genesis-energy-build-lead {
+  0% {
+    stroke-width: 4;
+    opacity: 0.55;
+    stroke-dasharray: 30 540;
+  }
+  100% {
+    stroke-width: 8;
+    opacity: 1;
+    stroke-dasharray: 165 540;
+  }
+}
+@keyframes genesis-energy-build-trail {
+  0% {
+    stroke-width: 9;
+    opacity: 0.12;
+    stroke-dasharray: 50 540;
+  }
+  100% {
+    stroke-width: 14;
+    opacity: 0.3;
+    stroke-dasharray: 210 540;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .genesis-orbit-motion {
+    animation: none !important;
+  }
+}
