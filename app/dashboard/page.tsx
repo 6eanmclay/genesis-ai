@@ -490,10 +490,20 @@ export default async function DashboardPage() {
             hasUrgentIssue={false}
             hasPendingDecision={false}
             hasOpportunity={false}
-            // "Welcome to Genesis" (v20) — open by default here so talking
-            // to Genesis reads as the primary way to shape the business,
-            // not an easy-to-miss auxiliary widget.
-            defaultOpen
+            // "Welcome to Genesis" (v20) — open by default for a genuinely
+            // fresh landing (nothing to show yet), so talking to Genesis
+            // reads as the primary way to shape the business rather than an
+            // easy-to-miss auxiliary widget. Deliberately NOT unconditional:
+            // every message send redirects back to this same page, which
+            // remounts GenesisAssistant and resets its local open/closed
+            // state — an unconditional defaultOpen meant the panel forced
+            // itself back open after every single message, permanently,
+            // for the lifetime of the draft. A real user got trapped by
+            // this exact bug, unable to reach the rest of the page no
+            // matter how many times they closed it. Once real conversation
+            // exists, the panel goes back to respecting whatever the owner
+            // actually did with it.
+            defaultOpen={draft.messages.length === 0}
             // This standalone page has no left Domicile rail to dock
             // beside — its own form content already occupies the left
             // side, so left-anchoring here overlaps Theme/Store-details

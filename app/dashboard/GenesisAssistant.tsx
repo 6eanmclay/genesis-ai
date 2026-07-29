@@ -221,7 +221,12 @@ export function GenesisAssistant({
           type="button"
           onClick={() => setOpen(false)}
           aria-label="Close"
-          className="text-zinc-400 hover:text-black dark:hover:text-zinc-50 lg:text-[rgba(244,242,251,0.62)] lg:hover:text-[#f4f2fb]"
+          // A real user got stuck unable to close this panel on a phone —
+          // whatever else was wrong, a bare "✕" glyph with no padding is a
+          // genuinely small, easy-to-miss touch target. -m-2 p-2 expands
+          // the actual tappable area to a reasonable ~40px+ without moving
+          // the glyph itself or affecting layout.
+          className="-m-2 shrink-0 p-2 text-zinc-400 hover:text-black dark:hover:text-zinc-50 lg:text-[rgba(244,242,251,0.62)] lg:hover:text-[#f4f2fb]"
         >
           ✕
         </button>
