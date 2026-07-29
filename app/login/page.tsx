@@ -42,6 +42,17 @@ export default function LoginPage() {
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
           Log in to continue building with Genesis AI.
         </p>
+        {/* Reassurance for anyone who got signed out unexpectedly (session
+            expiry, a private/incognito tab, an in-app browser closing) —
+            see memory/project_beta_readiness_audit.md's mobile-logout
+            investigation. Nothing here is ever lost: StoreDraft/Store rows
+            persist independently of the session, so signing back in always
+            picks up exactly where things were left. */}
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
+          If you were signed out, don&apos;t worry — your business and
+          progress are saved. Signing back in picks up right where you left
+          off.
+        </p>
 
         <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
           <input
