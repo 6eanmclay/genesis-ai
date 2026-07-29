@@ -247,7 +247,11 @@ export const GENESIS_ACTIONS: Record<
   },
   update_product_image: {
     executable: updateProductImageExecutable,
-    inputSchema: z.object({ productId: z.string(), imageUrl: z.string() }),
+    inputSchema: z.object({
+      productId: z.string(),
+      imageUrl: z.string(),
+      generationPrompt: z.string().optional(),
+    }),
     getCurrentValues: ({ product }) => ({
       productId: product?.id ?? "",
       imageUrl: product?.imageUrl ?? "",

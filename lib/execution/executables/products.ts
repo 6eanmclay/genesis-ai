@@ -38,6 +38,9 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
         priceInCents: input.priceInCents,
         position: productCount,
         imageUrl,
+        // Preserves a generated image's prompt the same way
+        // updateProductImageExecutable does — see its own comment.
+        ...(sourced?.generationPrompt ? { richContent: { imagePrompt: sourced.generationPrompt } } : {}),
       },
     });
     return {

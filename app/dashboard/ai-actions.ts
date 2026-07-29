@@ -1910,7 +1910,11 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
             storeId: store.id,
             recommendationId: null,
             actionType: "update_product_image",
-            input: { productId: product.id, imageUrl: candidate },
+            input: {
+              productId: product.id,
+              imageUrl: candidate,
+              ...(sourced?.generationPrompt ? { generationPrompt: sourced.generationPrompt } : {}),
+            },
             previousValues: {
               productId: product.id,
               imageUrl: product.imageUrl,
@@ -3119,7 +3123,11 @@ export async function regenerateApprovalImage(approvalRequestId: string) {
     await prisma.approvalRequest.update({
       where: { id: approval.id },
       data: {
-        input: { productId: input.productId, imageUrl: candidate },
+        input: {
+          productId: input.productId,
+          imageUrl: candidate,
+          ...(sourced?.generationPrompt ? { generationPrompt: sourced.generationPrompt } : {}),
+        },
         previousValues: {
           ...previousValues,
           rejectedCandidates: [...rejectedCandidates, input.imageUrl],

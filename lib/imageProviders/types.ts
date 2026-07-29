@@ -29,6 +29,13 @@ export interface ImageSourceResult {
   // requirement, so this stays optional and provider-specific rather than
   // forcing every provider to invent one.
   attribution?: string;
+  // The exact prompt actually sent to the generation model — set only by
+  // GeneratedImageProvider. Callers that persist an image sourced this way
+  // (see ai-actions.ts's update_product_image call sites and
+  // updateProductImageExecutable) carry this into Product.richContent's
+  // imagePrompt, so a generated image's provenance survives past the
+  // initial call rather than being discarded once the URL is in hand.
+  generationPrompt?: string;
 }
 
 export interface ImageProvider {
