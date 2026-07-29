@@ -42,18 +42,28 @@ import { GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisSt
 // color swap needed for that anymore, since the base was already blue.
 // Breathing on the planet is unchanged, exactly as asked.
 // Canonical visual reference (per direction): the "GENESIS J4" hero image.
-// Two proportion/lighting corrections against it, applied below: the ring
-// reads noticeably larger relative to the planet there (~2.3:1 vs. the
-// ~1.8:1 this had before) — rx up, planet width down; and its brightest
-// arc isn't flat blue, it has a near-white hot core inside the blue glow,
-// like a real plasma filament. WHITE_CORE is that extra thin, pale layer,
-// used only where the reference actually shows it (the front/brightest
-// arc, and only at meaningful brightness — not on the dim back arc, not
-// buried under a low-opacity idle highlight).
+// Artistic-detail pass against it (the structural Saturn-occlusion work is
+// done — this tunes proportion/texture/cohesion, not architecture):
+//
+// - The planet is the hero there, not the ring — it reads as a large,
+//   present body the ring wraps around, not a small dark hole punched
+//   into a dominant ring. Planet sized up, ring sized down from the
+//   previous pass to rebalance that.
+// - The ring reads as living plasma, not a vector-perfect uniform stroke —
+//   genesis-plasma-flicker (globals.css) gives the bright layers a real,
+//   irregular (not sinusoidal) brightness fluctuation, the way actual
+//   energy/light never holds perfectly steady.
+// - The two need to read as one object, not a ring layer plus a separate
+//   planet layer — the rim-glow's spread was widened substantially so the
+//   ring's light visibly wraps a real portion of the planet's near
+//   hemisphere, not just a thin edge line.
+//
+// WHITE_CORE is the near-white filament inside the blue glow on the
+// brightest (front) arc — real plasma has a hot core, not flat color.
 const FLOURISH_MS = 1300;
 const WHITE_CORE = "#eef6ff";
 
-const RING = { cx: 100, cy: 100, rx: 98, ry: 30, transform: "rotate(-18 100 100)" };
+const RING = { cx: 100, cy: 100, rx: 84, ry: 27, transform: "rotate(-18 100 100)" };
 
 export function GenesisOrbitRing({
   state,
@@ -115,17 +125,26 @@ export function GenesisOrbitRing({
         </defs>
         <g clipPath={`url(#${backClipId})`} style={{ transition: `opacity ${transitionMs}ms ease-out` }} opacity={backOpacity}>
           <ellipse {...RING} fill="none" stroke={baseColor} strokeWidth={coreWidth * 3} filter={`url(#${blurId})`} opacity="0.55" />
-          <ellipse {...RING} fill="none" stroke={baseColor} strokeWidth={coreWidth * 0.6} opacity="0.85" />
+          <ellipse
+            {...RING}
+            fill="none"
+            stroke={baseColor}
+            strokeWidth={coreWidth * 0.6}
+            className="genesis-orbit-motion"
+            style={{ animation: "genesis-plasma-flicker 4.5s ease-in-out infinite" }}
+          />
         </g>
       </svg>
 
-      {/* Planet — a real celestial body, lit mostly by the ring itself: a
-          quiet, mostly-shadowed body with a soft rim-glow along the edge
-          nearest the front (bottom) arc, plus gentle inner shading for
-          roundness rather than a flat disc. The rim-glow is where the
-          accent actually shows up — blue ambient light normally, a real
-          accent hue when something needs attention. Breathing preserved
-          exactly. */}
+      {/* Planet — the hero of the composition: a large, present celestial
+          body, not a small dark hole inside a dominant ring. Lit mostly by
+          the ring itself: the rim-glow is deliberately wide and soft here
+          (not a thin crisp edge) so the ring's light genuinely wraps a real
+          portion of the planet's near hemisphere — the two reading as one
+          lit object, not a ring layer sitting in front of a separate dark
+          circle. The rim-glow is also where the accent actually shows up —
+          blue ambient light normally, a real accent hue when something
+          needs attention. Breathing preserved exactly. */}
       <div
         aria-hidden="true"
         className="genesis-orbit-motion absolute rounded-full"
@@ -133,19 +152,18 @@ export function GenesisOrbitRing({
           animation: "genesis-breathe 4.5s ease-in-out infinite",
           left: "50%",
           top: "50%",
-          width: "46%",
-          height: "46%",
+          width: "58%",
+          height: "58%",
           transform: "translate(-50%, -50%)",
-          background: `radial-gradient(circle at 42% 38%, #201c34 0%, ${GENESIS_ATMOSPHERE.bgElevated} 26%, #030207 76%)`,
+          background: `radial-gradient(circle at 40% 36%, #23203a 0%, ${GENESIS_ATMOSPHERE.bgElevated} 22%, #030207 72%)`,
           boxShadow: [
-            "inset -6px -8px 18px 0 rgba(0,0,0,0.6)",
+            "inset -8px -10px 22px 0 rgba(0,0,0,0.6)",
             "inset 3px 4px 10px 0 rgba(255,255,255,0.04)",
-            // A crisper near-edge rim-light — the ring is what's lighting
-            // this part of the planet, so it reads as a defined crescent
-            // rather than a soft ambient wash.
-            `0 6px ${isStableAttention ? 22 : 14}px -4px ${WHITE_CORE}${isStableAttention ? "90" : "60"}`,
-            `0 12px ${isStableAttention ? 40 : 26}px -6px ${accentColor}${isStableAttention ? "80" : "55"}`,
-            `0 0 ${isStableAttention ? 22 : 12}px 0 ${accentColor}${isStableAttention ? "35" : "1e"}`,
+            // Wide, soft light wrapping a real arc of the near hemisphere —
+            // the ring's own glow spilling onto the planet, not a thin rim.
+            `0 10px ${isStableAttention ? 46 : 30}px 2px ${WHITE_CORE}${isStableAttention ? "55" : "38"}`,
+            `0 22px ${isStableAttention ? 70 : 48}px 6px ${accentColor}${isStableAttention ? "75" : "50"}`,
+            `0 0 ${isStableAttention ? 30 : 18}px 4px ${accentColor}${isStableAttention ? "30" : "1c"}`,
           ].join(", "),
           transition: `box-shadow ${transitionMs}ms ease-out`,
         }}
@@ -169,37 +187,51 @@ export function GenesisOrbitRing({
         </defs>
         <g clipPath={`url(#${frontClipId})`}>
           {/* Outer bloom — wide and soft, the dramatic glow radius the
-              reference has, not a tight blur hugging the stroke. */}
-          <ellipse
-            {...RING}
-            fill="none"
-            stroke={baseColor}
-            strokeWidth={coreWidth * 3.4}
-            filter={`url(#${blurId}-f)`}
-            opacity={frontOpacity * 0.5}
-            style={{ transition: `all ${transitionMs}ms ease-out` }}
-          />
-          {/* Blue core. */}
-          <ellipse
-            {...RING}
-            fill="none"
-            stroke={baseColor}
-            strokeWidth={coreWidth}
-            opacity={frontOpacity}
-            style={{ transition: `all ${transitionMs}ms ease-out` }}
-          />
+              reference has, not a tight blur hugging the stroke. A slow,
+              wide flicker keeps even the bloom from reading as a static
+              painted glow. Flicker and state-brightness are on separate
+              elements (opacity composes multiplicatively on nested SVG/CSS
+              elements) rather than both fighting over one `opacity`
+              property, where the animation would simply win and silently
+              erase the state-driven value. */}
+          <g style={{ opacity: frontOpacity * 0.5, transition: `opacity ${transitionMs}ms ease-out` }}>
+            <ellipse
+              {...RING}
+              fill="none"
+              stroke={baseColor}
+              strokeWidth={coreWidth * 3.4}
+              filter={`url(#${blurId}-f)`}
+              className="genesis-orbit-motion"
+              style={{ animation: "genesis-plasma-flicker 6s ease-in-out infinite 0.4s" }}
+            />
+          </g>
+          {/* Blue core — the irregular flicker is most visible here,
+              genuine energy fluctuation rather than a held, uniform glow. */}
+          <g style={{ opacity: frontOpacity, transition: `opacity ${transitionMs}ms ease-out` }}>
+            <ellipse
+              {...RING}
+              fill="none"
+              stroke={baseColor}
+              strokeWidth={coreWidth}
+              className="genesis-orbit-motion"
+              style={{ animation: "genesis-plasma-flicker 4.5s ease-in-out infinite" }}
+            />
+          </g>
           {/* White-hot filament — the reference's brightest arc isn't flat
               blue, it's a near-white core inside the blue glow, like a
               real plasma filament. Thin, high-opacity, only on the front
-              (nearest, brightest) arc. */}
-          <ellipse
-            {...RING}
-            fill="none"
-            stroke={WHITE_CORE}
-            strokeWidth={coreWidth * 0.32}
-            opacity={frontOpacity * 0.9}
-            style={{ transition: `all ${transitionMs}ms ease-out` }}
-          />
+              (nearest, brightest) arc, its own faster/offset flicker so it
+              doesn't pulse in perfect lockstep with the core beneath it. */}
+          <g style={{ opacity: frontOpacity * 0.9, transition: `opacity ${transitionMs}ms ease-out` }}>
+            <ellipse
+              {...RING}
+              fill="none"
+              stroke={WHITE_CORE}
+              strokeWidth={coreWidth * 0.32}
+              className="genesis-orbit-motion"
+              style={{ animation: "genesis-plasma-flicker 3.2s ease-in-out infinite 0.8s" }}
+            />
+          </g>
 
           {isWorking ? (
             <>

@@ -23,6 +23,24 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  transition: padding-bottom 300ms ease;
+}
+
+/* Mobile safe-area for the Genesis chat panel — see GenesisAssistant.tsx's
+   own comment for the full reasoning (hit-tested, confirmed real: without
+   this, Confirm & Create Store / Publish Store become fully unclickable
+   whenever chat is open on a phone, because the fixed panel intercepts the
+   tap). Reserves the panel's own max height so scrolling to a bottom-of-
+   page CTA moves it above the covered zone instead of underneath it,
+   rather than shrinking or repositioning the panel itself. lg:+ is
+   untouched — the panel is a small corner element there, not a
+   near-full-width sheet, and this class only ever gets added below lg:
+   (see the isDesktop check in GenesisAssistant). 1023.98px matches
+   Tailwind's own lg: boundary (1024px) exactly. */
+@media (max-width: 1023.98px) {
+  body.genesis-chat-open {
+    padding-bottom: 60vh;
+  }
 }
 
 /* Genesis Domicile orbit — always-on presence, never "off". Breathing
@@ -79,6 +97,40 @@ body {
     stroke-width: 14;
     opacity: 0.3;
     stroke-dasharray: 210 540;
+  }
+}
+
+/* "Living plasma, not a uniform light ribbon" — a small, irregular (not a
+   smooth sine wave) opacity fluctuation applied to the ring's bright
+   layers. Deliberately uneven step sizes/timing between stops, the way
+   real energy/light never holds perfectly steady, rather than a clean
+   pulse. Each layer that uses this picks its own duration/delay (see
+   GenesisOrbitRing.tsx) so multiple layers never flicker in lockstep. */
+@keyframes genesis-plasma-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  8% {
+    opacity: 0.86;
+  }
+  23% {
+    opacity: 1;
+  }
+  34% {
+    opacity: 0.79;
+  }
+  51% {
+    opacity: 0.96;
+  }
+  63% {
+    opacity: 0.83;
+  }
+  79% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 0.88;
   }
 }
 

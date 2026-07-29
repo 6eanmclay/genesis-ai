@@ -11,8 +11,8 @@ import { after as scheduleAfterResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/slugify";
-import { searchProductImage } from "@/lib/unsplash";
-import { sourceProductImageCandidate, sourceHeroImageCandidate } from "@/lib/productImagery";
+import { sourceHeroImageCandidate } from "@/lib/productImagery";
+import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -717,6 +717,18 @@ const DEFAULT_THEME_COMPOSITION: ThemeWithComposition["composition"] = {
   imageTreatment: "contained",
   ctaEmphasis: "button",
 };
+
+// Live Product.richContent is untyped JSON ({keyFeatures, benefits,
+// specifications, imagePrompt}, written at confirmStoreDraft time) — unlike
+// the draft-stage ProductContent below, imagePrompt is nested here rather
+// than a direct column, so every live-product read needs this extraction.
+function extractRichContentImagePrompt(richContent: unknown): string | null {
+  if (richContent && typeof richContent === "object" && "imagePrompt" in richContent) {
+    const value = (richContent as { imagePrompt?: unknown }).imagePrompt;
+    return typeof value === "string" && value.length > 0 ? value : null;
+  }
+  return null;
+}
 
 type ProductSpec = { label: string; value: string };
 
@@ -1741,7 +1753,11 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   const currentBlueprint = store.blueprint as Blueprint | null;
   const currentProducts = await prisma.product.findMany({
     where: { storeId: store.id, active: true },
-    select: { id: true, name: true, description: true, priceInCents: true, imageUrl: true },
+    // richContent added for imagePrompt — see resolveProductImage's own
+    // call below. Stored at confirmStoreDraft time as
+    // {keyFeatures, benefits, specifications, imagePrompt}; every other
+    // field here is read elsewhere already and stays untouched.
+    select: { id: true, name: true, description: true, priceInCents: true, imageUrl: true, richContent: true },
     orderBy: { position: "asc" },
   });
 
@@ -1870,10 +1886,13 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     const groupId = randomUUID();
     const outcomes: { id: string; name: string; candidate: string | null }[] = [];
     for (const product of targetProducts) {
-      const candidate = await sourceProductImageCandidate({
+      const sourced = await resolveProductImage({
+        prompt: extractRichContentImagePrompt(product.richContent) ?? product.description ?? product.name,
         name: product.name,
         description: product.description,
+        excludeUrls: product.imageUrl ? [product.imageUrl] : [],
       });
+      const candidate = sourced?.url ?? null;
       if (candidate) {
         // A fresh proposal for this product supersedes any earlier
         // still-pending one — scoped to this product's id specifically, so
@@ -2588,7 +2607,14 @@ export async function confirmStoreDraft() {
 
   // Resolved once here, not on every storefront page load — see lib/unsplash.ts.
   const productImages = await Promise.all(
-    products.map((p) => searchProductImage(p.name, p.imagePrompt))
+    products.map((p) =>
+      resolveProductImage({
+        prompt: p.imagePrompt || p.description || p.name,
+        name: p.name,
+        description: p.description,
+        excludeUrls: [],
+      }).then((sourced) => sourced?.url ?? null)
+    )
   );
 
   // Hero-image architecture fix (Priority 4) — only the "split" hero layout
@@ -3071,7 +3097,7 @@ export async function regenerateApprovalImage(approvalRequestId: string) {
 
   const product = await prisma.product.findUniqueOrThrow({
     where: { id: input.productId },
-    select: { name: true, description: true },
+    select: { name: true, description: true, richContent: true },
   });
 
   const rejectedCandidates = previousValues.rejectedCandidates ?? [];
@@ -3081,7 +3107,13 @@ export async function regenerateApprovalImage(approvalRequestId: string) {
     ...rejectedCandidates,
   ];
 
-  const candidate = await sourceProductImageCandidate(product, excludeUrls);
+  const sourced = await resolveProductImage({
+    prompt: extractRichContentImagePrompt(product.richContent) ?? product.description ?? product.name,
+    name: product.name,
+    description: product.description,
+    excludeUrls,
+  });
+  const candidate = sourced?.url ?? null;
 
   if (candidate) {
     await prisma.approvalRequest.update({

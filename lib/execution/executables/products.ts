@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
-import { searchProductImage } from "@/lib/unsplash";
+import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
 
@@ -23,7 +23,13 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
   requiredPermission: PERMISSIONS.PRODUCTS_MANAGE,
   async run(input, ctx) {
     const productCount = await prisma.product.count({ where: { storeId: ctx.storeId } });
-    const imageUrl = await searchProductImage(input.name);
+    const sourced = await resolveProductImage({
+      prompt: input.description || input.name,
+      name: input.name,
+      description: input.description,
+      excludeUrls: [],
+    });
+    const imageUrl = sourced?.url ?? null;
     const product = await prisma.product.create({
       data: {
         storeId: ctx.storeId,

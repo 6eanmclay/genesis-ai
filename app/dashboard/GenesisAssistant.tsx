@@ -156,6 +156,27 @@ export function GenesisAssistant({
     el.scrollTop = el.scrollHeight;
   }, [messages.length]);
 
+  // Mobile safe-area fix — hit-tested and confirmed real: below lg:, this
+  // panel is nearly full-width and up to 60vh tall, fixed at the bottom of
+  // the viewport. A primary CTA positioned near the bottom of its own page
+  // (Confirm & Create Store, Publish Store — both terminal actions, both
+  // naturally end-of-page) can end up entirely underneath it. Scrolling to
+  // where the button visually is doesn't help, because it's not just
+  // covered — clicking there hits the fixed panel instead, silently, with
+  // no error. The fix is reserved layout space, not a smaller/repositioned
+  // panel: toggling this class adds bottom padding to the *document*
+  // itself (see globals.css) exactly when, and only when, the panel is
+  // actually open and covering something — every dashboard page below lg:
+  // relies on plain document-level scroll (no internal scroll container
+  // exists until lg:, per the viewport-containment chain), so one rule on
+  // <body> correctly reaches the draft page and every live page uniformly.
+  useEffect(() => {
+    document.body.classList.toggle("genesis-chat-open", open);
+    return () => {
+      document.body.classList.remove("genesis-chat-open");
+    };
+  }, [open]);
+
   if (!open) {
     // No form is mounted while closed, so "working" is structurally
     // impossible here — isWorking is always false, not a placeholder.
