@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
@@ -252,6 +253,23 @@ export function DashboardShell({
     </span>
   );
 
+  // Genesis's own app icon (the canonical J4 brand asset — see
+  // memory/project_j4_avatar_branding.md) — a fixed-identity badge, not
+  // themed to light/dark like the surrounding chrome, the same way a real
+  // app icon never adapts to its host's theme. Small and rounded so it
+  // reads as a premium app icon next to the store name, not an
+  // illustration competing with it. Shared so the desktop, TV-header, and
+  // mobile homes below all render the exact same element.
+  const genesisIcon = (
+    <Image
+      src="/brand/genesis-j4-avatar.png"
+      alt="Genesis"
+      width={28}
+      height={28}
+      className="shrink-0 rounded-[7px]"
+    />
+  );
+
   // Primary nav row content — storeName + tabs/More dropdown + View Store/
   // Sign out. Rendered from this one JSX value in two different homes (the
   // full-width bar below xl:, the framed TV's own header at xl:+ — see the
@@ -261,6 +279,7 @@ export function DashboardShell({
   // visible at a given viewport width — they never show simultaneously.
   const primaryNavRow = (
     <>
+      {genesisIcon}
       <p className="shrink-0 truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
 
       <nav className="flex flex-1 items-center gap-1 overflow-hidden">
@@ -427,7 +446,10 @@ export function DashboardShell({
       {/* Mobile top bar — explicit h-16 (not padding-driven) so the
           secondary nav below can stack under it at a known, exact offset. */}
       <header className="fixed inset-x-0 top-0 z-40 flex h-16 items-center justify-between border-b border-black/[.08] bg-white/90 px-4 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/90 md:hidden">
-        <p className="truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
+        <div className="flex min-w-0 items-center gap-2">
+          {genesisIcon}
+          <p className="truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
+        </div>
         {viewStoreLink}
       </header>
 
