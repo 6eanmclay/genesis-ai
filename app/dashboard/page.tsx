@@ -130,7 +130,14 @@ export default async function DashboardPage() {
       },
     });
 
-    if (draft) {
+    // Onboarding-resume fix — a StoreDraft row can now exist in a genuine
+    // pre-generation state (status "draft", written by generateStoreDraft
+    // before its slow Claude calls run — see that function's own comment)
+    // when the very first generation attempt was interrupted before
+    // completing. Only a "ready" draft is a real, fully-generated business
+    // to review; anything else falls through to the initial form below,
+    // which pre-fills from it instead of starting blank.
+    if (draft && draft.status === "ready") {
       const theme = (draft.theme as Theme | null) ?? DEFAULT_THEME;
       const products = (draft.productsDraft as DraftProduct[] | null) ?? [];
 
@@ -514,16 +521,25 @@ export default async function DashboardPage() {
       );
     }
 
+    // A draft in any non-"ready" status (today, only "draft") means a
+    // first-generation attempt started and was interrupted before
+    // finishing — resume with a friendly note and their own words already
+    // filled in, rather than a blank screen that looks like nothing ever
+    // happened.
+    const resuming = draft !== null;
+
     return (
       <div className="min-h-screen bg-zinc-50 p-8 dark:bg-black">
         <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
           Welcome to Genesis
         </h1>
         <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
-          Tell Genesis what you want to build, in your own words — a real
-          business, not a demo. Genesis will ask for anything it still needs
-          as you go; by the time you&apos;re done, your store will already
-          exist.
+          {resuming
+            ? "Looks like your last attempt didn't finish — no problem. Your answers are still here, so just pick up where you left off."
+            : <>Tell Genesis what you want to build, in your own words — a real
+            business, not a demo. Genesis will ask for anything it still needs
+            as you go; by the time you&apos;re done, your store will already
+            exist.</>}
         </p>
 
         <form
@@ -541,6 +557,7 @@ export default async function DashboardPage() {
             <input
               name="inputStoreName"
               type="text"
+              defaultValue={draft?.inputStoreName ?? ""}
               placeholder="e.g. Atlas Athletics"
               className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
             />
@@ -556,6 +573,7 @@ export default async function DashboardPage() {
             <input
               name="inputProductType"
               type="text"
+              defaultValue={draft?.inputProductType ?? ""}
               placeholder="e.g. Performance gym clothing"
               className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
             />
@@ -571,6 +589,7 @@ export default async function DashboardPage() {
             </p>
             <textarea
               name="inputVision"
+              defaultValue={draft?.inputVision ?? ""}
               placeholder={`"Cozy rustic candle shop."\n"Dark luxury fitness brand."\n"Minimalist clothing company."`}
               rows={4}
               required
@@ -582,7 +601,7 @@ export default async function DashboardPage() {
             pendingText="Creating..."
             className="mt-2 self-start rounded-full bg-foreground px-5 py-2 text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
           >
-            Create My Store
+            {resuming ? "Try Again" : "Create My Store"}
           </SubmitButton>
         </form>
       </div>

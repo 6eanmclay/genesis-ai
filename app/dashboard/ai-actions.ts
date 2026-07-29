@@ -361,6 +361,45 @@ export async function generateStoreDraft(formData: FormData) {
     throw new Error("Please describe your vision");
   }
 
+  // Onboarding-resume reliability fix — persist the owner's own typed
+  // inputs *before* the slow (tens-of-seconds, multi-call) generation
+  // sequence below, not after. Previously nothing touched the database
+  // until every call succeeded, so any interruption (closed tab,
+  // dropped network, a backgrounded phone) during that window silently
+  // lost the business description with zero trace — the next /dashboard
+  // load found no StoreDraft and showed the exact same blank "Welcome to
+  // Genesis" form, no different from a first-ever visit. Scoped to
+  // genuine first-time generation only (`!existingDraft`) — the
+  // "Regenerate" mini-form on an already-`ready` draft already has a
+  // real fallback if its own attempt is interrupted (the still-good
+  // previous draft content, untouched by this write), so it doesn't
+  // need this extra persist. `status: "draft"` matches the schema's own
+  // existing default and is read by app/dashboard/page.tsx's `!store`
+  // branch to distinguish "resumable" from "fully generated" (`"ready"`,
+  // set unchanged by this function's existing final upsert below).
+  if (!existingDraft) {
+    await prisma.storeDraft.upsert({
+      where: { userId: session.user.id },
+      create: {
+        userId: session.user.id,
+        inputStoreName,
+        inputProductType,
+        inputVision,
+        name: inputStoreName || "New store",
+        status: "draft",
+      },
+      update: {
+        // Reached only on a genuine race (e.g. two tabs submitting the
+        // first-ever generation at once) — refresh the raw inputs rather
+        // than fail; the second submission's own generation still runs
+        // and produces the real draft as usual.
+        inputStoreName,
+        inputProductType,
+        inputVision,
+      },
+    });
+  }
+
   const briefText = [
     `Store name: ${inputStoreName ?? "(not specified — invent one)"}`,
     `What they sell: ${
