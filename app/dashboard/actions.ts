@@ -15,6 +15,8 @@ import {
   toggleProductActiveExecutable,
   deleteProductExecutable,
 } from "@/lib/execution/executables/products";
+import { updateProductImageExecutable } from "@/lib/execution/executables/updateProductImage";
+import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
 import { connectExecutable, verifyExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { grantDelegatedAuthority, revokeDelegatedAuthority } from "@/lib/execution/genesisAutonomy";
 import { logProductEvent } from "@/lib/telemetry/events";
@@ -71,6 +73,41 @@ export async function createProduct(formData: FormData) {
     name,
     description: description || null,
     priceInCents,
+  });
+
+  redirect("/dashboard/products");
+}
+
+// Owner-initiated upload — bypasses the ApprovalRequest workflow entirely,
+// per explicit direction: a manual upload is the owner's own direct
+// decision, unlike Genesis-generated/stock-sourced images, which continue
+// through approval (see the update_product_image chat/regenerate call
+// sites in ai-actions.ts). Reuses updateProductImageExecutable — the
+// underlying write ("set this product's image to this URL") is identical
+// regardless of where the URL came from; only the approval step differs.
+export async function uploadProductImage(productId: string, formData: FormData) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+
+  const file = formData.get("image");
+  if (!(file instanceof File) || file.size === 0) {
+    throw new Error("Please choose an image to upload");
+  }
+
+  const sourced = await uploadProductImageFile(file);
+  await execute(updateProductImageExecutable, { productId, imageUrl: sourced.url }, { storeId });
+
+  // A manual upload supersedes any still-pending Genesis-proposed image for
+  // this exact product — the owner just made their own direct decision, so
+  // an old proposed candidate left pending would be stale and confusing,
+  // not useful. Scoped to this product's id, same as every other
+  // update_product_image supersede in this codebase.
+  await prisma.approvalRequest.deleteMany({
+    where: {
+      storeId,
+      actionType: "update_product_image",
+      status: "PENDING_APPROVAL",
+      input: { path: ["productId"], equals: productId },
+    },
   });
 
   redirect("/dashboard/products");

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
-import { createProduct, editProduct, toggleProductActive, deleteProduct } from "../actions";
+import { createProduct, editProduct, toggleProductActive, deleteProduct, uploadProductImage } from "../actions";
 import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, approveGenesisActionGroup } from "../ai-actions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
@@ -99,22 +99,48 @@ export default async function ProductsPage({
               key={product.id}
               className="flex gap-4 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]"
             >
-              {/* Real product photo only — no placeholder/fake image when
-                  one hasn't been sourced yet, matching the same honest
-                  "No image" treatment the public storefront already uses. */}
-              <div className="h-24 w-24 shrink-0 overflow-hidden rounded-lg bg-black/[.03] dark:bg-white/[.05]">
-                {product.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={product.imageUrl}
-                    alt={product.name}
-                    className="h-full w-full object-cover"
+              <div className="flex w-24 shrink-0 flex-col gap-2">
+                {/* Real product photo only — no placeholder/fake image when
+                    one hasn't been sourced yet, matching the same honest
+                    "No image" treatment the public storefront already uses. */}
+                <div className="h-24 w-24 overflow-hidden rounded-lg bg-black/[.03] dark:bg-white/[.05]">
+                  {product.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={product.imageUrl}
+                      alt={product.name}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-center text-[10px] text-zinc-400">
+                      No image
+                    </div>
+                  )}
+                </div>
+
+                {/* Upload your own photo — a direct write, no approval step
+                    (see uploadProductImage's own comment). Distinct from
+                    the Genesis-proposed photos above, which still go
+                    through Approve/Reject. */}
+                <form
+                  action={uploadProductImage.bind(null, product.id)}
+                  encType="multipart/form-data"
+                  className="flex flex-col gap-1"
+                >
+                  <input
+                    type="file"
+                    name="image"
+                    accept="image/png,image/jpeg,image/webp"
+                    required
+                    className="w-full text-[10px] text-zinc-500 file:mr-1 file:rounded-full file:border-0 file:bg-black/[.05] file:px-2 file:py-1 file:text-[10px] file:text-black hover:file:bg-black/[.08] dark:text-zinc-400 dark:file:bg-white/[.1] dark:file:text-zinc-50 dark:hover:file:bg-white/[.15]"
                   />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-center text-[10px] text-zinc-400">
-                    No image
-                  </div>
-                )}
+                  <SubmitButton
+                    pendingText="Uploading..."
+                    className="w-full rounded-full bg-black/[.05] px-2 py-1 text-[10px] text-black hover:bg-black/[.08] disabled:opacity-50 dark:bg-white/[.1] dark:text-zinc-50 dark:hover:bg-white/[.15]"
+                  >
+                    Upload photo
+                  </SubmitButton>
+                </form>
               </div>
 
               <div className="min-w-0 flex-1">
