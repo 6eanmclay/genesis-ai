@@ -35,6 +35,7 @@ import {
   type GenesisModelErrorKind,
 } from "@/lib/genesisModel";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
+import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 
 const PROMPT_VERSION = "v2";
 
@@ -1182,6 +1183,44 @@ If it IS an image request, resolve scope — clarify ambiguity, not complexity:
 - If the merchant names one or more specific products you can confidently match against the real list, set scope: "specific" and productNames to their exact names (one name is a completely normal, valid case of this), and write reply as a short, natural acknowledgment naming exactly which one(s).
 - Only set scope to null when the scope itself is genuinely unclear — no product was named, "all" wasn't said, and the name given doesn't match anything specific enough. In that case write reply as a genuine, specific clarifying question naming the plausible candidates from the real list. "The request touches more than one product" is never by itself a reason to leave scope null — that's scope: "all" or a multi-item scope: "specific", not ambiguity.`;
 
+// Phase 3 Milestone 1 (J4 Foundation) — a cheap, separate classifier
+// mirroring ProductImageRequestSchema's own pattern, run before ANY of the
+// existing content-generation pipeline. Distinguishes a pure informational
+// question ("what was my revenue last week") from a request to change
+// something. Kept deliberately minimal (no relevantEntityTypes field) —
+// the answer call below fetches a bounded recent-data context for every
+// entity type regardless (see buildChatDataContext), which is simpler and
+// safer than trusting a classifier to correctly predict which data a
+// question needs.
+const DataQuestionSchema = z.object({
+  isDataQuestion: z.boolean(),
+});
+
+const STORE_CHAT_DATA_QUESTION_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is this message a pure informational question about the business's own data (revenue, orders, customers, upcoming appointments, campaign performance, and similar) — something answerable by looking up real numbers/records, not a request to change anything?
+
+Most messages are NOT this — a request to change identity, theme, branding, copy, policy, or product images is handled elsewhere and should get isDataQuestion: false. A vague or conversational message that isn't really asking for specific business data should also get isDataQuestion: false. Only set isDataQuestion: true when the merchant is genuinely asking to be told something about their business's own numbers or records.`;
+
+// The actual answer, once isDataQuestion is true — a separate, focused call
+// (not folded into the classifier above) so the classifier's job stays
+// cheap and simple, and this call can be given the real fetched data before
+// it has to say anything. Must never state a number/fact it wasn't given —
+// this is the central trust bar for the whole capability. See
+// lib/businessModel/reasoning.ts's buildChatDataContext for what "asOf"
+// and "recent" mean here.
+const StoreChatDataAnswerSchema = z.object({
+  reply: z.string(),
+});
+
+const STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT = `You are Genesis (J4), a merchant's business partner, answering a real question about their own business using only the data given to you below. This data comes from the business's own records — some of it computed live (always current), some of it may eventually come from connected third-party systems and carry its own "as of" recency.
+
+Rules, non-negotiable:
+- Never state a number, name, or fact that isn't present in the data provided. If the data needed to answer isn't there, say so plainly and warmly — never guess or estimate.
+- The revenue figures and top-contacts list are already correctly computed for you — relay them, don't recompute or "correct" them.
+- If a question needs something you don't have any relevant data for at all (e.g. they're asking about a system that isn't connected), say so honestly, without listing every unrelated field you do have.
+- Translate any specialized or technical language into plain, everyday terms a small-business owner would understand — never make them decode jargon.
+- Keep the tone warm, direct, and conversational, like a knowledgeable partner giving a real answer — not a report or a bulleted dump of every field.
+- This is a read-only answer. Never propose, imply, or claim you're making any change to the store — you're only reporting on what already exists.`;
+
 // Family-beta instrumentation (v20) — shared by both applyGenesisMessage
 // (draft chat) and applyGenesisMessageToStore (live chat) so a real chat
 // turn's server-side duration (Claude call + DB writes, distinct from "the
@@ -1964,6 +2003,105 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
     content: m.content,
   }));
+
+  // Phase 3 Milestone 1 (J4 Foundation) — detect a pure data question
+  // before anything else runs, via a separate tiny call (same convention
+  // as the image-request classifier immediately below): a genuine question
+  // should never wastefully trigger that classifier or the
+  // content-generation pipeline further down, and must never risk a bogus
+  // content-change proposal for a message that was only ever asking to be
+  // told something. Any detection failure (parse error, API error) falls
+  // through to the normal chat flow below, same as the image-request
+  // classifier's own convention.
+  const dataQuestionOutcome = await callGenesisModel({
+    model: "claude-opus-4-8",
+    max_tokens: 500,
+    thinking: { type: "adaptive" },
+    system: STORE_CHAT_DATA_QUESTION_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: userMessage }],
+    output_config: {
+      effort: "low",
+      format: zodOutputFormat(DataQuestionSchema),
+    },
+  });
+  const dataQuestionResult = dataQuestionOutcome.ok
+    ? dataQuestionOutcome.message.parsed_output
+    : null;
+
+  if (dataQuestionResult?.isDataQuestion) {
+    const dataContext = await buildChatDataContext(store.id);
+    const answerOutcome = await callGenesisModel({
+      model: "claude-opus-4-8",
+      max_tokens: 1500,
+      thinking: { type: "adaptive" },
+      system: STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Business data (JSON):\n${JSON.stringify(dataContext, null, 2)}\n\nMerchant's question: ${userMessage}`,
+        },
+      ],
+      output_config: {
+        effort: "medium",
+        format: zodOutputFormat(StoreChatDataAnswerSchema),
+      },
+    });
+
+    if (!answerOutcome.ok) {
+      return bailOnProviderFailure({
+        kind: answerOutcome.kind,
+        action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+        userId,
+        storeId: store.id,
+        returnTo,
+        turnStartedAt,
+        likelyRephraseOf,
+        stageDurationsMs: { dataQuestion: answerOutcome.durationMs },
+      });
+    }
+    const dataAnswer = answerOutcome.message.parsed_output;
+    if (!dataAnswer) {
+      return bailOnProviderFailure({
+        kind: "unknown",
+        action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+        userId,
+        storeId: store.id,
+        returnTo,
+        turnStartedAt,
+        likelyRephraseOf,
+        stageDurationsMs: { dataQuestion: answerOutcome.durationMs },
+      });
+    }
+
+    // A designed conversational outcome, not a store change — no
+    // ApprovalRequest, no diff, matching "informational, not a change".
+    await prisma.storeMessage.create({
+      data: {
+        storeId: store.id,
+        role: "assistant",
+        content: dataAnswer.reply,
+      },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "SUCCESS",
+      verified: false,
+      message: dataAnswer.reply,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: { kind: "data_question" },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
+      likelyRephraseOf,
+    });
+    revalidatePath(returnTo);
+    redirect(returnTo);
+  }
 
   // Detect "replace this product's image" requests first, via a separate
   // tiny call — see the comment above ProductImageRequestSchema for why

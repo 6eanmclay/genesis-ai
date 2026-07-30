@@ -96,6 +96,7 @@ model Store {
   postExecutionMeasurements PostExecutionMeasurement[]
   delegatedAuthorities      DelegatedAuthority[]
   productEvents             ProductEvent[]
+  businessRecords           BusinessRecord[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -515,4 +516,39 @@ model ProductEvent {
   @@index([sessionInstanceId, createdAt])
   @@index([attemptKey])
   @@index([storeId, createdAt])
+}
+
+// Phase 3 Milestone 1 (J4 Foundation) — J4's canonical, provider-agnostic
+// understanding of "a business." One generic table for every entity type
+// (contact/transaction/item/appointment/campaign/... — see
+// lib/businessModel/entities.ts's registry), same shape philosophy as
+// StoreIntegration/GenesisObservation/ProductEvent: entityType and
+// sourceProvider are plain Strings, not enums, so a new entity type or a new
+// connector never needs a migration. `data`'s shape is validated against
+// entities.ts's Zod schema for entityType at write time, not enforced here.
+// Cross-entity relationships are NOT a separate join table — any field in
+// `data` named `xxxId`/`xxxIds` is a reference to another BusinessRecord.id
+// by convention; see lib/businessModel/reasoning.ts's findRelated for why
+// this is enough to make relationship traversal generic across every
+// entity type, including ones added later.
+//
+// sourceProvider "internal" (the live store's own Order/Product data) is
+// reserved but never actually written here — lib/businessModel/
+// internalMapper.ts computes those records live on every read instead of
+// persisting a synced copy, since that data is already live in Postgres.
+// This table is created now so a real external connector (Phase 3
+// Milestone 2) needs zero schema change of its own, only population.
+model BusinessRecord {
+  id             String   @id @default(cuid())
+  storeId        String
+  entityType     String
+  sourceProvider String
+  externalId     String
+  data           Json
+  syncedAt       DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, entityType, sourceProvider, externalId])
+  @@index([storeId, entityType])
 }
