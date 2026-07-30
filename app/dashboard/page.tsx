@@ -5,6 +5,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { SubmitButton } from "./SubmitButton";
 import { GenesisAssistant } from "./GenesisAssistant";
+import { CreateStoreForm } from "./CreateStoreForm";
 import {
   generateStoreDraft,
   updateStoreDraft,
@@ -542,68 +543,12 @@ export default async function DashboardPage() {
             exist.</>}
         </p>
 
-        <form
-          action={generateStoreDraft}
-          className="mt-6 flex max-w-md flex-col gap-4"
-        >
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-black dark:text-zinc-50">
-              Store name
-            </label>
-            <p className="text-xs text-zinc-500">
-              Optional — If you already have a name, tell us. If not, Genesis
-              will create one for you.
-            </p>
-            <input
-              name="inputStoreName"
-              type="text"
-              defaultValue={draft?.inputStoreName ?? ""}
-              placeholder="e.g. Atlas Athletics"
-              className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-black dark:text-zinc-50">
-              What do you want to sell?
-            </label>
-            <p className="text-xs text-zinc-500">
-              Optional — Tell us what products or services you want to offer.
-            </p>
-            <input
-              name="inputProductType"
-              type="text"
-              defaultValue={draft?.inputProductType ?? ""}
-              placeholder="e.g. Performance gym clothing"
-              className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-black dark:text-zinc-50">
-              Describe your vision*
-            </label>
-            <p className="text-xs text-zinc-500">
-              Required — Tell Genesis about your style, audience, colors,
-              branding, and the feeling you want your store to create.
-            </p>
-            <textarea
-              name="inputVision"
-              defaultValue={draft?.inputVision ?? ""}
-              placeholder={`"Cozy rustic candle shop."\n"Dark luxury fitness brand."\n"Minimalist clothing company."`}
-              rows={4}
-              required
-              className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-            />
-          </div>
-
-          <SubmitButton
-            pendingText="Creating..."
-            className="mt-2 self-start rounded-full bg-foreground px-5 py-2 text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-          >
-            {resuming ? "Try Again" : "Create My Store"}
-          </SubmitButton>
-        </form>
+        <CreateStoreForm
+          resuming={resuming}
+          initialStoreName={draft?.inputStoreName ?? ""}
+          initialProductType={draft?.inputProductType ?? ""}
+          initialVision={draft?.inputVision ?? ""}
+        />
       </div>
     );
   }

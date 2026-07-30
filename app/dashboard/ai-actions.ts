@@ -332,22 +332,43 @@ const GENERATION_COMPOSITION_SYSTEM_PROMPT = `You are Genesis, an expert e-comme
 
 ${COMPOSITION_GUIDANCE}`;
 
-export async function generateStoreDraft(formData: FormData) {
+// Core generation logic, extracted so it can be driven two ways: the
+// Server Action below (progressive-enhancement fallback — a plain
+// <form action={generateStoreDraft}> still works with JS disabled) and
+// the Route Handler at app/api/generate-store-draft/route.ts (what
+// CreateStoreForm.tsx's client-driven progress UI actually calls).
+//
+// This split exists because of a real, verified React/Next.js behavior,
+// not a style preference: invoking a Server Action programmatically
+// requires wrapping the call in startTransition (React's documented
+// calling convention for actions outside a <form>), but startTransition
+// defers the *commit* of the whole component tree — including sibling
+// state updates made outside the transition — until the transition
+// itself settles. Confirmed live: a local isGenerating state flip:
+// react re-ran the component's render function every tick (proving the
+// state update itself fired), but the actual DOM never repainted for
+// the full ~110s the real generateStoreDraft action was in flight,
+// because React held the prior committed UI on screen the whole time,
+// exactly per startTransition's real semantics (built for de-prioritizing
+// non-urgent updates, not for keeping a UI responsive during one long
+// operation). A plain fetch() to a Route Handler has no such coupling —
+// the local isGenerating flip commits immediately, completely
+// independent of the fetch's own lifecycle.
+async function generateStoreDraftCore(
+  userId: string,
+  sessionInstanceId: string,
+  formData: FormData
+): Promise<void> {
   // Family-beta instrumentation (v20) — the "Welcome to Genesis" creation
   // journey's own real duration; see the creation.* events below.
   const creationStartedAt = Date.now();
-
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
 
   // A pre-existing draft means this call is the "Regenerate" mini-form (a
   // real, one-shot regeneration that bypasses the conversational/diff-
   // tracked chat path entirely — see the v20 plan's Welcome-to-Genesis
   // audit) rather than the very first generation.
   const existingDraft = await prisma.storeDraft.findUnique({
-    where: { userId: session.user.id },
+    where: { userId },
     select: { id: true },
   });
 
@@ -373,20 +394,26 @@ export async function generateStoreDraft(formData: FormData) {
   // "Regenerate" mini-form on an already-`ready` draft already has a
   // real fallback if its own attempt is interrupted (the still-good
   // previous draft content, untouched by this write), so it doesn't
-  // need this extra persist. `status: "draft"` matches the schema's own
-  // existing default and is read by app/dashboard/page.tsx's `!store`
-  // branch to distinguish "resumable" from "fully generated" (`"ready"`,
-  // set unchanged by this function's existing final upsert below).
+  // need this extra persist.
+  //
+  // `status` does double duty: app/dashboard/page.tsx's `!store` branch
+  // treats anything other than `"ready"` as "not fully generated yet, show
+  // the resume form" (unchanged by adding more granular values below —
+  // still a simple ready/not-ready check there), while
+  // CreateStoreForm.tsx's progress UI polls app/api/draft-status for the
+  // *specific* value to show an honest "which real phase are we in"
+  // message. `"generating_primary"` here, `"generating_secondary"` right
+  // before the next real call below, `"ready"` unchanged at the end.
   if (!existingDraft) {
     await prisma.storeDraft.upsert({
-      where: { userId: session.user.id },
+      where: { userId: userId },
       create: {
-        userId: session.user.id,
+        userId: userId,
         inputStoreName,
         inputProductType,
         inputVision,
         name: inputStoreName || "New store",
-        status: "draft",
+        status: "generating_primary",
       },
       update: {
         // Reached only on a genuine race (e.g. two tabs submitting the
@@ -396,6 +423,7 @@ export async function generateStoreDraft(formData: FormData) {
         inputStoreName,
         inputProductType,
         inputVision,
+        status: "generating_primary",
       },
     });
   }
@@ -421,12 +449,12 @@ export async function generateStoreDraft(formData: FormData) {
   });
   if (!primaryOutcome.ok) {
     await logProductEvent({
-      userId: session.user.id,
+      userId: userId,
       storeDraftId: existingDraft?.id ?? null,
-      sessionInstanceId: session.user.sessionInstanceId,
+      sessionInstanceId: sessionInstanceId,
       name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
       category: "creation",
-      attemptKey: existingDraft?.id ?? session.user.id,
+      attemptKey: existingDraft?.id ?? userId,
       outcome: "failure",
       durationMs: Date.now() - creationStartedAt,
       metadata: { providerErrorKind: primaryOutcome.kind, providerStatus: primaryOutcome.status },
@@ -436,20 +464,51 @@ export async function generateStoreDraft(formData: FormData) {
   const primary = primaryOutcome.message.parsed_output;
   if (!primary) {
     await logProductEvent({
-      userId: session.user.id,
+      userId: userId,
       storeDraftId: existingDraft?.id ?? null,
-      sessionInstanceId: session.user.sessionInstanceId,
+      sessionInstanceId: sessionInstanceId,
       name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
       category: "creation",
-      attemptKey: existingDraft?.id ?? session.user.id,
+      attemptKey: existingDraft?.id ?? userId,
       outcome: "failure",
       durationMs: Date.now() - creationStartedAt,
     });
     throw new Error("Failed to generate store blueprint");
   }
 
+  // Real phase transition, not a timer — see the early-persist upsert's
+  // own comment. Scoped to first-time generation only, matching that
+  // upsert's own scoping.
+  if (!existingDraft) {
+    await prisma.storeDraft.update({
+      where: { userId: userId },
+      data: { status: "generating_secondary" },
+    });
+  }
+
   // SECONDARY and COMPOSITION both only depend on PRIMARY's output, not on
   // each other — run them concurrently rather than back-to-back.
+  //
+  // KNOWN ARCHITECTURAL CONSTRAINT, audited 2026-07-29 (Phase 1 Beta
+  // Excellence checklist #2 — see memory/project_beta_readiness_audit.md
+  // for the full real-timing measurement this closes out): PRIMARY must
+  // fully complete before SECONDARY/COMPOSITION can start. Two independent
+  // reasons, either one alone would be sufficient:
+  // 1. Both prompts below genuinely need nearly all of PRIMARY's output —
+  //    SECONDARY's prompt embeds storeName/tagline/description/
+  //    brandIdentity/homepageContent/products; COMPOSITION's embeds
+  //    brandIdentity/homepageContent/theme. There's no small early subset
+  //    of PRIMARY that would unblock either call sooner — they need
+  //    essentially the complete object either way.
+  // 2. callGenesisModel() (lib/genesisModel.ts) calls
+  //    `.stream(params).finalMessage()` — the SDK stream is used for
+  //    transport/reliability, not exposed to callers incrementally. A
+  //    caller only ever gets a complete, Zod-validated result or a
+  //    classified failure, never partial output. Making PRIMARY's fields
+  //    available before its call fully resolves would need a genuinely
+  //    different architecture (incremental partial-JSON parsing against a
+  //    still-streaming response, with its own validation/error-handling
+  //    risks) for, per point 1, minimal real benefit — not attempted.
   const [secondaryOutcome, compositionOutcome] = await Promise.all([
     callGenesisModel({
       model: "claude-opus-4-8",
@@ -509,12 +568,12 @@ export async function generateStoreDraft(formData: FormData) {
   // them doesn't narrow the originals.
   if (!secondaryOutcome.ok) {
     await logProductEvent({
-      userId: session.user.id,
+      userId: userId,
       storeDraftId: existingDraft?.id ?? null,
-      sessionInstanceId: session.user.sessionInstanceId,
+      sessionInstanceId: sessionInstanceId,
       name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
       category: "creation",
-      attemptKey: existingDraft?.id ?? session.user.id,
+      attemptKey: existingDraft?.id ?? userId,
       outcome: "failure",
       durationMs: Date.now() - creationStartedAt,
       metadata: { providerErrorKind: secondaryOutcome.kind, providerStatus: secondaryOutcome.status },
@@ -523,12 +582,12 @@ export async function generateStoreDraft(formData: FormData) {
   }
   if (!compositionOutcome.ok) {
     await logProductEvent({
-      userId: session.user.id,
+      userId: userId,
       storeDraftId: existingDraft?.id ?? null,
-      sessionInstanceId: session.user.sessionInstanceId,
+      sessionInstanceId: sessionInstanceId,
       name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
       category: "creation",
-      attemptKey: existingDraft?.id ?? session.user.id,
+      attemptKey: existingDraft?.id ?? userId,
       outcome: "failure",
       durationMs: Date.now() - creationStartedAt,
       metadata: { providerErrorKind: compositionOutcome.kind, providerStatus: compositionOutcome.status },
@@ -539,12 +598,12 @@ export async function generateStoreDraft(formData: FormData) {
   const composition = compositionOutcome.message.parsed_output;
   if (!secondary || !composition) {
     await logProductEvent({
-      userId: session.user.id,
+      userId: userId,
       storeDraftId: existingDraft?.id ?? null,
-      sessionInstanceId: session.user.sessionInstanceId,
+      sessionInstanceId: sessionInstanceId,
       name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
       category: "creation",
-      attemptKey: existingDraft?.id ?? session.user.id,
+      attemptKey: existingDraft?.id ?? userId,
       outcome: "failure",
       durationMs: Date.now() - creationStartedAt,
     });
@@ -571,9 +630,9 @@ export async function generateStoreDraft(formData: FormData) {
   };
 
   const draft = await prisma.storeDraft.upsert({
-    where: { userId: session.user.id },
+    where: { userId: userId },
     create: {
-      userId: session.user.id,
+      userId: userId,
       inputStoreName,
       inputProductType,
       inputVision,
@@ -614,17 +673,60 @@ export async function generateStoreDraft(formData: FormData) {
   });
 
   await logProductEvent({
-    userId: session.user.id,
+    userId,
     storeDraftId: draft.id,
-    sessionInstanceId: session.user.sessionInstanceId,
+    sessionInstanceId,
     name: existingDraft ? "creation.regenerated_via_form" : "creation.started",
     category: "creation",
     attemptKey: draft.id,
     outcome: "success",
     durationMs: Date.now() - creationStartedAt,
   });
+}
+
+// Server Action wrapper — progressive-enhancement fallback only (a plain
+// <form action={generateStoreDraft}> still works with JS disabled). The
+// real client flow (CreateStoreForm.tsx) calls
+// app/api/generate-store-draft/route.ts instead — see
+// generateStoreDraftCore's own comment for why.
+export async function generateStoreDraft(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  await generateStoreDraftCore(session.user.id, session.user.sessionInstanceId, formData);
 
   redirect("/dashboard");
+}
+
+// What app/api/generate-store-draft/route.ts actually calls — a Route
+// Handler, not a Server Action, so CreateStoreForm.tsx's client-driven
+// progress UI can call generation via a plain fetch() (see
+// generateStoreDraftCore's own comment for why that matters). This
+// function is exported from a "use server" file, which technically makes
+// it Server-Action-referenceable, but it's safe to expose regardless:
+// exactly like generateStoreDraft above, it independently re-derives
+// identity from auth() rather than trusting any caller-supplied value —
+// the same security convention every Server Action in this file already
+// follows. Route Handlers calling an exported async function directly is
+// an ordinary server-to-server call; the startTransition requirement (and
+// the render-commit-blocking behavior that caused this whole split) only
+// applies to *client* code invoking a Server Action, never to this.
+export async function generateStoreDraftForApi(
+  formData: FormData
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = await auth();
+  if (!session?.user) {
+    return { ok: false, error: "Not signed in" };
+  }
+
+  try {
+    await generateStoreDraftCore(session.user.id, session.user.sessionInstanceId, formData);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Something went wrong" };
+  }
 }
 
 const LAYOUTS = ["grid", "list", "featured"] as const;
