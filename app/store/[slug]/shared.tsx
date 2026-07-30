@@ -1,4 +1,32 @@
 import { resolveSectionOrder, type SectionKey } from "@/lib/storefrontSections";
+import { prisma } from "@/lib/prisma";
+import { isPaymentConnected } from "@/lib/dashboard/needsAttention";
+
+// Phase 1 Beta Excellence #4 — a published store with real products for
+// sale but no CONNECTED payment provider must never offer a working-
+// looking checkout: real customers would always fail at Stripe's/PayPal's
+// own hosted page (or, worse, succeed against Genesis's own shared test
+// account, per lib/payments/router.ts, which real cards can't actually
+// pay into). No separate "does this store sell products" check is needed
+// here — this is only ever called in the context of an actual active
+// Product (BuyButton/createCheckoutSession), so that condition is already
+// true by construction wherever this is checked.
+export async function canStoreAcceptPayments(storeId: string): Promise<boolean> {
+  const [stripeIntegration, paypalIntegration] = await Promise.all([
+    prisma.storeIntegration.findUnique({
+      where: { storeId_provider: { storeId, provider: "STRIPE" } },
+      select: { status: true },
+    }),
+    prisma.storeIntegration.findUnique({
+      where: { storeId_provider: { storeId, provider: "PAYPAL" } },
+      select: { status: true },
+    }),
+  ]);
+  return isPaymentConnected({ stripeIntegration, paypalIntegration });
+}
+
+export const CHECKOUT_UNAVAILABLE_MESSAGE =
+  "This store isn't accepting online payments yet. The business owner is still completing payment setup. Please check back soon or contact them directly if you'd like to make a purchase.";
 
 // Shown only when an owner/employee is viewing their own unpublished store
 // (the notFound() gate in page.tsx already keeps everyone else out entirely)

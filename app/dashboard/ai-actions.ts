@@ -3,7 +3,7 @@
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { revalidatePath } from "next/cache";
 // Aliased — this file already has a local `const after: StoreState` inside
 // applyGenesisMessageToStore, which would otherwise shadow this import.
@@ -34,6 +34,7 @@ import {
   genesisModelFailureMessage,
   type GenesisModelErrorKind,
 } from "@/lib/genesisModel";
+import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 
 const PROMPT_VERSION = "v2";
 
@@ -379,7 +380,7 @@ async function generateStoreDraftCore(
   const inputVision = (formData.get("inputVision") as string)?.trim() || null;
 
   if (!inputVision) {
-    throw new Error("Please describe your vision");
+    throw new RecoverableError("Please describe your vision");
   }
 
   // Onboarding-resume reliability fix — persist the owner's own typed
@@ -459,7 +460,7 @@ async function generateStoreDraftCore(
       durationMs: Date.now() - creationStartedAt,
       metadata: { providerErrorKind: primaryOutcome.kind, providerStatus: primaryOutcome.status },
     });
-    throw new Error(genesisModelFailureMessage(primaryOutcome.kind));
+    throw new RecoverableError(genesisModelFailureMessage(primaryOutcome.kind));
   }
   const primary = primaryOutcome.message.parsed_output;
   if (!primary) {
@@ -473,7 +474,7 @@ async function generateStoreDraftCore(
       outcome: "failure",
       durationMs: Date.now() - creationStartedAt,
     });
-    throw new Error("Failed to generate store blueprint");
+    throw new RecoverableError("Failed to generate store blueprint");
   }
 
   // Real phase transition, not a timer — see the early-persist upsert's
@@ -578,7 +579,7 @@ async function generateStoreDraftCore(
       durationMs: Date.now() - creationStartedAt,
       metadata: { providerErrorKind: secondaryOutcome.kind, providerStatus: secondaryOutcome.status },
     });
-    throw new Error(genesisModelFailureMessage(secondaryOutcome.kind));
+    throw new RecoverableError(genesisModelFailureMessage(secondaryOutcome.kind));
   }
   if (!compositionOutcome.ok) {
     await logProductEvent({
@@ -592,7 +593,7 @@ async function generateStoreDraftCore(
       durationMs: Date.now() - creationStartedAt,
       metadata: { providerErrorKind: compositionOutcome.kind, providerStatus: compositionOutcome.status },
     });
-    throw new Error(genesisModelFailureMessage(compositionOutcome.kind));
+    throw new RecoverableError(genesisModelFailureMessage(compositionOutcome.kind));
   }
   const secondary = secondaryOutcome.message.parsed_output;
   const composition = compositionOutcome.message.parsed_output;
@@ -607,7 +608,7 @@ async function generateStoreDraftCore(
       outcome: "failure",
       durationMs: Date.now() - creationStartedAt,
     });
-    throw new Error("Failed to generate store blueprint");
+    throw new RecoverableError("Failed to generate store blueprint");
   }
 
   const blueprintContent: Blueprint = {
@@ -725,7 +726,7 @@ export async function generateStoreDraftForApi(
     await generateStoreDraftCore(session.user.id, session.user.sessionInstanceId, formData);
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Something went wrong" };
+    return toActionState(error);
   }
 }
 
@@ -3041,9 +3042,15 @@ export async function approveGenesisActionGroup(groupId: string) {
 
 export async function approveGenesisAction(approvalRequestId: string) {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  const approval = await prisma.approvalRequest.findFirstOrThrow({
+  const approval = await prisma.approvalRequest.findFirst({
     where: { id: approvalRequestId, storeId, status: "PENDING_APPROVAL" },
   });
+
+  // Already decided/reverted elsewhere (a real race, not a bug) — nothing
+  // left to do, so this is a no-op redirect, never a thrown error.
+  if (!approval) {
+    redirect("/dashboard");
+  }
 
   const definition = GENESIS_ACTIONS[approval.actionType];
   if (!definition) {
@@ -3113,9 +3120,13 @@ export async function approveGenesisAction(approvalRequestId: string) {
 
 export async function rejectGenesisAction(approvalRequestId: string) {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  const approval = await prisma.approvalRequest.findFirstOrThrow({
+  const approval = await prisma.approvalRequest.findFirst({
     where: { id: approvalRequestId, storeId, status: "PENDING_APPROVAL" },
   });
+
+  if (!approval) {
+    redirect("/dashboard");
+  }
 
   await prisma.approvalRequest.update({
     where: { id: approval.id },
@@ -3147,69 +3158,86 @@ export async function rejectGenesisAction(approvalRequestId: string) {
 // changes. actorType/decisionMode are both "human" here regardless of
 // whether the ORIGINAL action was autonomous — clicking "revert" is itself
 // a real, immediate human decision, not Genesis's judgment.
-export async function revertApprovalRequest(approvalRequestId: string) {
+export async function revertApprovalRequest(
+  approvalRequestId: string,
+  _prevState: ActionState,
+  _formData: FormData
+): Promise<ActionState> {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  const original = await prisma.approvalRequest.findFirstOrThrow({
+  const original = await prisma.approvalRequest.findFirst({
     where: { id: approvalRequestId, storeId, status: "EXECUTED" },
   });
 
-  const definition = GENESIS_ACTIONS[original.actionType];
-  if (!definition) {
-    throw new Error(`Unknown Genesis action type: ${original.actionType}`);
+  // Already reverted elsewhere (a real race, not a bug) — nothing left to
+  // do, so this is a no-op redirect, never a thrown error.
+  if (!original) {
+    redirect("/dashboard");
   }
 
-  // Defense in depth, same as every other creation path — previousValues
-  // was itself computed by this same registry's getCurrentValues at
-  // proposal time, but re-validate before trusting it as fresh input.
-  const parsedRevertInput = definition.inputSchema.safeParse(original.previousValues);
-  if (!parsedRevertInput.success) {
-    throw new Error("Can't revert this action — its previous value no longer matches the expected shape.");
-  }
+  try {
+    const definition = GENESIS_ACTIONS[original.actionType];
+    if (!definition) {
+      throw new Error(`Unknown Genesis action type: ${original.actionType}`);
+    }
 
-  const result = await execute(
-    definition.executable,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    parsedRevertInput.data as any,
-    { storeId, actorType: "USER" }
-  );
+    // Defense in depth, same as every other creation path — previousValues
+    // was itself computed by this same registry's getCurrentValues at
+    // proposal time, but re-validate before trusting it as fresh input.
+    const parsedRevertInput = definition.inputSchema.safeParse(original.previousValues);
+    if (!parsedRevertInput.success) {
+      throw new RecoverableError(
+        "Can't revert this action — its previous value no longer matches the expected shape."
+      );
+    }
 
-  if (result.status === "FAILED") {
+    const result = await execute(
+      definition.executable,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      parsedRevertInput.data as any,
+      { storeId, actorType: "USER" }
+    );
+
+    if (result.status === "FAILED") {
+      await logApprovalDecisionEvent({
+        userId,
+        storeId,
+        approval: original,
+        name: "approval.revert_failed",
+        outcome: "failure",
+      });
+      throw new RecoverableError(result.message);
+    }
+
+    await prisma.approvalRequest.create({
+      data: {
+        storeId,
+        actionType: original.actionType,
+        // Deliberately swapped: reverting means restoring the ORIGINAL's
+        // previousValues, and the thing being undone (for this new row's own
+        // "previous" record) is the ORIGINAL's input.
+        input: original.previousValues as object,
+        previousValues: original.input as object,
+        summary: `Reverted: ${original.summary}`,
+        status: "EXECUTED",
+        authorizationTier: "always_ask",
+        decisionMode: "human",
+        executionId: result.executionId,
+        decidedByUserId: userId,
+        decidedAt: new Date(),
+      },
+    });
+
     await logApprovalDecisionEvent({
       userId,
       storeId,
       approval: original,
-      name: "approval.revert_failed",
-      outcome: "failure",
+      name: "approval.reverted",
+      outcome: "success",
     });
-    throw new Error(result.message);
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionState(error);
   }
-
-  await prisma.approvalRequest.create({
-    data: {
-      storeId,
-      actionType: original.actionType,
-      // Deliberately swapped: reverting means restoring the ORIGINAL's
-      // previousValues, and the thing being undone (for this new row's own
-      // "previous" record) is the ORIGINAL's input.
-      input: original.previousValues as object,
-      previousValues: original.input as object,
-      summary: `Reverted: ${original.summary}`,
-      status: "EXECUTED",
-      authorizationTier: "always_ask",
-      decisionMode: "human",
-      executionId: result.executionId,
-      decidedByUserId: userId,
-      decidedAt: new Date(),
-    },
-  });
-
-  await logApprovalDecisionEvent({
-    userId,
-    storeId,
-    approval: original,
-    name: "approval.reverted",
-    outcome: "success",
-  });
 
   redirect("/dashboard");
 }
@@ -3224,7 +3252,7 @@ export async function revertApprovalRequest(approvalRequestId: string) {
 // thrown error (there's no error boundary yet to catch one gracefully).
 export async function regenerateApprovalImage(approvalRequestId: string) {
   const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  const approval = await prisma.approvalRequest.findFirstOrThrow({
+  const approval = await prisma.approvalRequest.findFirst({
     where: {
       id: approvalRequestId,
       storeId,
@@ -3232,6 +3260,10 @@ export async function regenerateApprovalImage(approvalRequestId: string) {
       actionType: "update_product_image",
     },
   });
+
+  if (!approval) {
+    redirect("/dashboard");
+  }
 
   const input = approval.input as { productId: string; imageUrl: string };
   const previousValues = approval.previousValues as {

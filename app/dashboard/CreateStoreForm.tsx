@@ -56,11 +56,17 @@ export function CreateStoreForm({
   initialStoreName,
   initialProductType,
   initialVision,
+  submitLabel,
 }: {
   resuming: boolean;
   initialStoreName: string;
   initialProductType: string;
   initialVision: string;
+  // Overrides the default resuming-based label — used when this same form
+  // is reused for the live-draft "Start over from scratch" entry point,
+  // which needs its own copy but the identical rich progress panel below
+  // (same ~110s operation CreateStoreForm already built this for).
+  submitLabel?: string;
 }) {
   const router = useRouter();
   const [isGenerating, setIsGenerating] = useState(false);
@@ -198,7 +204,7 @@ export function CreateStoreForm({
         type="submit"
         className="mt-2 self-start rounded-full bg-foreground px-5 py-2 text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
       >
-        {resuming ? "Try Again" : "Create My Store"}
+        {submitLabel ?? (resuming ? "Try Again" : "Create My Store")}
       </button>
     </form>
   );

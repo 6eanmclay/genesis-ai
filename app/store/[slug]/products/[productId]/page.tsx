@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { createCheckoutSession } from "../../actions";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
+import { ActionForm } from "@/app/dashboard/ActionForm";
 import {
   DEFAULT_THEME,
   googleFontsUrl,
@@ -16,6 +17,8 @@ import {
 } from "@/lib/theme";
 import {
   ProductImage,
+  canStoreAcceptPayments,
+  CHECKOUT_UNAVAILABLE_MESSAGE,
   type Blueprint,
   type ProductRichContent,
 } from "../../shared";
@@ -57,6 +60,8 @@ export default async function ProductDetailPage({
   if (!product) {
     notFound();
   }
+
+  const canAcceptPayments = await canStoreAcceptPayments(store.id);
 
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const brandIdentity = (store.blueprint as Blueprint | null)?.brandIdentity;
@@ -106,14 +111,18 @@ export default async function ProductDetailPage({
             )}
 
             <div className="mt-6 max-w-xs">
-              <form action={createCheckoutSession.bind(null, slug, product.id)}>
-                <SubmitButton
-                  pendingText="Redirecting to checkout..."
-                  className={`w-full ${buttonRadius} bg-[var(--brand-accent)] px-6 py-3 text-base font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50`}
-                >
-                  Buy Now
-                </SubmitButton>
-              </form>
+              {canAcceptPayments ? (
+                <ActionForm action={createCheckoutSession.bind(null, slug, product.id)}>
+                  <SubmitButton
+                    pendingText="Redirecting to checkout..."
+                    className={`w-full ${buttonRadius} bg-[var(--brand-accent)] px-6 py-3 text-base font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50`}
+                  >
+                    Buy Now
+                  </SubmitButton>
+                </ActionForm>
+              ) : (
+                <p className="text-sm text-[var(--brand-text-secondary)]">{CHECKOUT_UNAVAILABLE_MESSAGE}</p>
+              )}
             </div>
 
             {brandIdentity?.brandPromise && (

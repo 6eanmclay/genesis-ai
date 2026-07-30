@@ -1,6 +1,10 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
+import { recordExecution } from "@/lib/execution/log";
+import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 
 // The buyer lands here after approving on PayPal's site. No webhook for
 // PH-06's MVP (see ARCHITECTURE.md) — capture happens synchronously right
@@ -96,22 +100,72 @@ export async function GET(request: NextRequest) {
   const amountInCents = Math.round(parseFloat(amountValue) * 100);
   const buyerEmail = orderData.payer?.email_address ?? "unknown";
 
-  const product = await prisma.product.findUnique({ where: { id: productId } });
-
-  const order = await prisma.order.upsert({
-    where: { paymentProvider_externalOrderId: { paymentProvider: "PAYPAL", externalOrderId: token } },
-    create: {
-      storeId: store.id,
-      productId,
-      productName: product?.name ?? "Unknown product",
-      amountInCents,
-      buyerEmail,
-      status: "paid",
-      paymentProvider: "PAYPAL",
-      externalOrderId: token,
-    },
-    update: {},
+  // Real money has now moved (capture succeeded, custom_id matched this
+  // store). Everything from here on (product lookup, Order.upsert) is a
+  // separate DB step that could throw — without this durable marker, a
+  // transient failure here would strand a real captured payment with zero
+  // trace anywhere (no webhook exists for PayPal to backstop it — see this
+  // route's own top-of-file comment). Written directly via recordExecution,
+  // same pattern already used in app/api/integrations/[provider]/callback
+  // and lib/execution/genesis.ts's recordGenesisExecution.
+  const executionId = randomUUID();
+  await recordExecution({
+    executionId,
+    action: EXECUTION_ACTIONS.CHECKOUT_PAYPAL_CAPTURE,
+    status: "PENDING",
+    verified: false,
+    message: `PayPal capture succeeded for order ${token}, finishing order creation`,
+    retryable: false,
+    actorType: "USER",
+    actorId: null,
+    storeId: store.id,
+    storeDraftId: null,
+    schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
+    timestamp: new Date(),
+    metadata: { token, productId, amountInCents },
   });
 
-  return NextResponse.redirect(new URL(`/store/${slug}/success?order_id=${order.id}`, request.url));
+  try {
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+
+    const order = await prisma.order.upsert({
+      where: { paymentProvider_externalOrderId: { paymentProvider: "PAYPAL", externalOrderId: token } },
+      create: {
+        storeId: store.id,
+        productId,
+        productName: product?.name ?? "Unknown product",
+        amountInCents,
+        buyerEmail,
+        status: "paid",
+        paymentProvider: "PAYPAL",
+        externalOrderId: token,
+      },
+      update: {},
+    });
+
+    return NextResponse.redirect(new URL(`/store/${slug}/success?order_id=${order.id}`, request.url));
+  } catch (error) {
+    console.error(`[paypal/return] order creation failed after real capture for order ${token}:`, error);
+    await recordExecution({
+      executionId,
+      action: EXECUTION_ACTIONS.CHECKOUT_PAYPAL_CAPTURE,
+      status: "FAILED",
+      verified: false,
+      message: error instanceof Error ? error.message : "Order creation failed after capture",
+      retryable: true,
+      actorType: "USER",
+      actorId: null,
+      storeId: store.id,
+      storeDraftId: null,
+      schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
+      timestamp: new Date(),
+      metadata: { token, productId, amountInCents },
+    });
+    // The payment is real and already captured — never show a crash screen
+    // for this. Redirect to a calm, honest reassurance instead, with the
+    // PayPal order token as the reference an admin can reconcile against.
+    return NextResponse.redirect(
+      new URL(`/store/${slug}?payment_pending=1&ref=${token}`, request.url)
+    );
+  }
 }

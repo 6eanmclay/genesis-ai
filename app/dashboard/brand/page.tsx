@@ -3,15 +3,11 @@ import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permis
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
-import { editStore } from "../actions";
 import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, approveGenesisActionGroup } from "../ai-actions";
-import { SubmitButton } from "../SubmitButton";
+import { EditStoreForm } from "../EditStoreForm";
 import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
 import { ObservationsPanel } from "../ObservationsPanel";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
-
-const ACCENT_BUTTON =
-  "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
 
 // The 9 AI-generated identity fields, in the same order FIELD_LABELS
 // already names them — no manual edit form exists for these today (only
@@ -119,41 +115,9 @@ export default async function BrandPage({
       )}
 
       <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">Business identity</h2>
-      <form action={editStore} className="mt-4 flex max-w-md flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            {FIELD_LABELS.name}
-          </label>
-          <input
-            name="name"
-            type="text"
-            defaultValue={store.name}
-            required
-            className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            {FIELD_LABELS.tagline}
-          </label>
-          <p className="text-sm text-black dark:text-zinc-50">{store.tagline || "Not set yet"}</p>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            {FIELD_LABELS.description}
-          </label>
-          <textarea
-            name="description"
-            defaultValue={store.description ?? ""}
-            placeholder="Description (optional)"
-            rows={3}
-            className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-          />
-        </div>
-        <SubmitButton pendingText="Saving..." className={`mt-2 self-start px-5 py-2 ${ACCENT_BUTTON}`}>
-          Save
-        </SubmitButton>
-      </form>
+      <EditStoreForm
+        store={{ name: store.name, tagline: store.tagline, description: store.description }}
+      />
 
       <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">Brand identity</h2>
       <p className="mt-2 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">

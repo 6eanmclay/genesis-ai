@@ -1,11 +1,13 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
 import { selectProvider } from "@/lib/payments/router";
+import { canStoreAcceptPayments, CHECKOUT_UNAVAILABLE_MESSAGE } from "./shared";
+import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import type { Product, Store } from "@prisma/client";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
@@ -125,26 +127,45 @@ async function createPaypalCheckoutSession(
   return approveLink;
 }
 
-export async function createCheckoutSession(slug: string, productId: string) {
-  const store = await prisma.store.findUnique({ where: { slug } });
-  if (!store || !store.published) {
-    throw new Error("Store not found");
+export async function createCheckoutSession(
+  slug: string,
+  productId: string,
+  _prevState: ActionState,
+  _formData: FormData
+): Promise<ActionState> {
+  let redirectUrl: string;
+
+  try {
+    const store = await prisma.store.findUnique({ where: { slug } });
+    if (!store || !store.published) {
+      throw new RecoverableError("Store not found");
+    }
+
+    const product = await prisma.product.findFirst({
+      where: { id: productId, storeId: store.id, active: true },
+    });
+    if (!product) {
+      throw new RecoverableError("Product not found");
+    }
+
+    // Defense in depth, not just the UI gate (BuyButton already hides
+    // itself when this is false) — the callback URL/action is still a
+    // public POST target regardless of whether the button rendered.
+    if (!(await canStoreAcceptPayments(store.id))) {
+      throw new RecoverableError(CHECKOUT_UNAVAILABLE_MESSAGE);
+    }
+
+    const baseUrl = await getBaseUrl();
+    const provider = await selectProvider(store.id);
+
+    redirectUrl =
+      provider === "PAYPAL"
+        ? await createPaypalCheckoutSession(store, product, slug, baseUrl)
+        : await createStripeCheckoutSession(store, product, slug, baseUrl);
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionState(error);
   }
-
-  const product = await prisma.product.findFirst({
-    where: { id: productId, storeId: store.id, active: true },
-  });
-  if (!product) {
-    throw new Error("Product not found");
-  }
-
-  const baseUrl = await getBaseUrl();
-  const provider = await selectProvider(store.id);
-
-  const redirectUrl =
-    provider === "PAYPAL"
-      ? await createPaypalCheckoutSession(store, product, slug, baseUrl)
-      : await createStripeCheckoutSession(store, product, slug, baseUrl);
 
   redirect(redirectUrl);
 }

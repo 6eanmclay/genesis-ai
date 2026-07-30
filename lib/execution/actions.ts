@@ -14,6 +14,7 @@ export const EXECUTION_ACTIONS = {
   INTEGRATION_STRIPE_VERIFY: "integration.stripe.verify",
   INTEGRATION_PAYPAL_CONNECT: "integration.paypal.connect",
   INTEGRATION_PAYPAL_VERIFY: "integration.paypal.verify",
+  CHECKOUT_PAYPAL_CAPTURE: "checkout.paypal.capture",
   GENESIS_DRAFT_MESSAGE: "genesis.draft.message",
   GENESIS_STORE_MESSAGE: "genesis.store.message",
   GENESIS_RECOMMENDATIONS_GENERATE: "genesis.recommendations.generate",

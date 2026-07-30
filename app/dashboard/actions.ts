@@ -1,7 +1,8 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { auth, signOut } from "@/auth";
+import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
 import { getConnector } from "@/lib/integrations/registry";
@@ -56,24 +57,32 @@ export async function signOutOfGenesis() {
   await signOut({ redirectTo: "/" });
 }
 
-export async function createProduct(formData: FormData) {
-  const name = (formData.get("name") as string)?.trim();
-  const description = (formData.get("description") as string)?.trim();
-  const priceInput = formData.get("price") as string;
-  const priceInCents = Math.round(parseFloat(priceInput) * 100);
+export async function createProduct(
+  prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    const name = (formData.get("name") as string)?.trim();
+    const description = (formData.get("description") as string)?.trim();
+    const priceInput = formData.get("price") as string;
+    const priceInCents = Math.round(parseFloat(priceInput) * 100);
 
-  if (!name) {
-    throw new Error("Product name is required");
-  }
-  if (!Number.isFinite(priceInCents) || priceInCents < 0) {
-    throw new Error("Enter a valid price");
-  }
+    if (!name) {
+      throw new RecoverableError("Product name is required");
+    }
+    if (!Number.isFinite(priceInCents) || priceInCents < 0) {
+      throw new RecoverableError("Enter a valid price");
+    }
 
-  await execute(createProductExecutable, {
-    name,
-    description: description || null,
-    priceInCents,
-  });
+    await execute(createProductExecutable, {
+      name,
+      description: description || null,
+      priceInCents,
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionState(error, formData);
+  }
 
   redirect("/dashboard/products");
 }
@@ -113,15 +122,23 @@ export async function uploadProductImage(productId: string, formData: FormData) 
   redirect("/dashboard/products");
 }
 
-export async function editStore(formData: FormData) {
-  const name = (formData.get("name") as string)?.trim();
-  const description = (formData.get("description") as string)?.trim();
+export async function editStore(
+  prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    const name = (formData.get("name") as string)?.trim();
+    const description = (formData.get("description") as string)?.trim();
 
-  if (!name) {
-    throw new Error("Store name is required");
+    if (!name) {
+      throw new RecoverableError("Store name is required");
+    }
+
+    await execute(editStoreExecutable, { name, description: description || null });
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionState(error, formData);
   }
-
-  await execute(editStoreExecutable, { name, description: description || null });
 
   redirect("/dashboard/settings");
 }
@@ -132,29 +149,38 @@ export async function toggleStorePublished() {
   redirect("/dashboard/website");
 }
 
-export async function editProduct(productId: string, formData: FormData) {
-  const product = await prisma.product.findUnique({ where: { id: productId } });
-  if (!product) {
-    throw new Error("Product not found");
-  }
+export async function editProduct(
+  productId: string,
+  prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product) {
+      throw new RecoverableError("Product not found");
+    }
 
-  const name = (formData.get("name") as string)?.trim();
-  const description = (formData.get("description") as string)?.trim();
-  const priceInput = formData.get("price") as string;
-  const priceInCents = Math.round(parseFloat(priceInput) * 100);
+    const name = (formData.get("name") as string)?.trim();
+    const description = (formData.get("description") as string)?.trim();
+    const priceInput = formData.get("price") as string;
+    const priceInCents = Math.round(parseFloat(priceInput) * 100);
 
-  if (!name) {
-    throw new Error("Product name is required");
-  }
-  if (!Number.isFinite(priceInCents) || priceInCents < 0) {
-    throw new Error("Enter a valid price");
-  }
+    if (!name) {
+      throw new RecoverableError("Product name is required");
+    }
+    if (!Number.isFinite(priceInCents) || priceInCents < 0) {
+      throw new RecoverableError("Enter a valid price");
+    }
 
-  await execute(
-    editProductExecutable,
-    { productId, name, description: description || null, priceInCents },
-    { storeId: product.storeId }
-  );
+    await execute(
+      editProductExecutable,
+      { productId, name, description: description || null, priceInCents },
+      { storeId: product.storeId }
+    );
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionState(error, formData);
+  }
 
   redirect("/dashboard/products");
 }

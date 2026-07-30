@@ -134,6 +134,32 @@ export function getStateIssues(params: {
   return items;
 }
 
+// Phase 1 Beta Excellence #4 — a genuinely urgent condition (real customers
+// hitting a dead end right now), not routine incomplete setup like
+// state.no_payments above — so this belongs in the Red "Needs your
+// attention" panel via recentOutcomes, not just Business Journey's calm
+// checklist. No separate schema/query: every input here is already fetched
+// for getStateIssues by every caller today.
+function getUnsellableStoreIssue(params: {
+  store: { published: boolean };
+  products: { active: boolean }[];
+  stripeIntegration: { status: string } | null;
+  paypalIntegration: { status: string } | null;
+}): AttentionItem | null {
+  if (params.store.published && params.products.some((p) => p.active) && !isPaymentConnected(params)) {
+    return {
+      id: "state.unsellable",
+      kind: "unsellable-store",
+      severity: "FAILED",
+      message:
+        "Customers can't complete a purchase — your store is live with products for sale, but no payment method is connected.",
+      occurredAt: null,
+      actionHref: "/dashboard/payments",
+    };
+  }
+  return null;
+}
+
 // Combines all four sources into the two UI groups AttentionPanel renders
 // — never blended, per the design: "Recent issues" (timestamped, things
 // that happened) vs. "Needs fixing now" (ongoing conditions).
@@ -147,9 +173,14 @@ export async function getAttentionItems(
     getIntegrationIssues(storeId),
   ]);
 
-  const recentOutcomes = [...recentFailures, ...staleExecutions, ...integrationIssues].sort(
-    (a, b) => (b.occurredAt?.getTime() ?? 0) - (a.occurredAt?.getTime() ?? 0)
-  );
+  const unsellableStoreIssue = getUnsellableStoreIssue(currentStateParams);
+
+  const recentOutcomes = [
+    ...recentFailures,
+    ...staleExecutions,
+    ...integrationIssues,
+    ...(unsellableStoreIssue ? [unsellableStoreIssue] : []),
+  ].sort((a, b) => (b.occurredAt?.getTime() ?? 0) - (a.occurredAt?.getTime() ?? 0));
 
   return { recentOutcomes, currentState: getStateIssues(currentStateParams) };
 }

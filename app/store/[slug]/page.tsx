@@ -6,6 +6,7 @@ import { auth } from "@/auth";
 import { getStoreRole } from "@/lib/permissions";
 import { createCheckoutSession, subscribeToNewsletter } from "./actions";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
+import { ActionForm } from "@/app/dashboard/ActionForm";
 import {
   DEFAULT_THEME,
   googleFontsUrl,
@@ -27,6 +28,8 @@ import {
   ProductImage,
   PreviewModeBanner,
   resolveSectionOrder,
+  canStoreAcceptPayments,
+  CHECKOUT_UNAVAILABLE_MESSAGE,
   type Blueprint,
   type SectionKey,
   type StoreProduct,
@@ -70,17 +73,27 @@ function BuyButton({
   slug,
   product,
   className,
+  canAcceptPayments,
 }: {
   slug: string;
   product: StoreProduct;
   className: string;
+  canAcceptPayments: boolean;
 }) {
+  // Phase 1 Beta Excellence #4 — never render a working-looking Buy button
+  // for a store that can't actually complete a purchase; a disabled/dead
+  // button would look broken, so this is a calm message in its place, not
+  // a mocked-up control.
+  if (!canAcceptPayments) {
+    return <p className="text-sm text-[var(--brand-text-secondary)]">{CHECKOUT_UNAVAILABLE_MESSAGE}</p>;
+  }
+
   return (
-    <form action={createCheckoutSession.bind(null, slug, product.id)}>
+    <ActionForm action={createCheckoutSession.bind(null, slug, product.id)}>
       <SubmitButton pendingText="Redirecting to checkout..." className={className}>
         Buy Now
       </SubmitButton>
-    </form>
+    </ActionForm>
   );
 }
 
@@ -89,10 +102,16 @@ export default async function StorefrontPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ subscribed?: string; previewOrder?: string }>;
+  searchParams: Promise<{
+    subscribed?: string;
+    previewOrder?: string;
+    payment_pending?: string;
+    ref?: string;
+  }>;
 }) {
   const { slug } = await params;
-  const { subscribed, previewOrder } = await searchParams;
+  const { subscribed, previewOrder, payment_pending: paymentPending, ref: paymentRef } =
+    await searchParams;
 
   const store = await prisma.store.findUnique({
     where: { slug },
@@ -117,6 +136,11 @@ export default async function StorefrontPage({
     where: { storeId: store.id, active: true },
     orderBy: { position: "asc" },
   });
+
+  // Only queried when it's actually relevant (products exist) — an
+  // informational/service store with zero products never needs this check
+  // at all, matching the "only stores that actually sell products" scope.
+  const canAcceptPayments = products.length === 0 || (await canStoreAcceptPayments(store.id));
 
   // Captured as plain locals — TypeScript doesn't carry the `!store` null
   // narrowing above into nested function declarations like renderHero().
@@ -351,6 +375,7 @@ export default async function StorefrontPage({
                       buyButtonClass={buyButtonClass}
                       detailsLinkClass={detailsLinkClass}
                       className="sm:w-64"
+                      canAcceptPayments={canAcceptPayments}
                     />
                   </li>
                 ))}
@@ -384,6 +409,7 @@ export default async function StorefrontPage({
                       buyButtonClass={buyButtonClass}
                       detailsLinkClass={detailsLinkClass}
                       className="mt-4 max-w-sm"
+                      canAcceptPayments={canAcceptPayments}
                     />
                   </div>
                 </div>
@@ -398,6 +424,7 @@ export default async function StorefrontPage({
                         buyButtonClass={buyButtonClass}
                         detailsLinkClass={detailsLinkClass}
                         cardClass={cardClass}
+                        canAcceptPayments={canAcceptPayments}
                       />
                     ))}
                   </ul>
@@ -413,6 +440,7 @@ export default async function StorefrontPage({
                     buyButtonClass={buyButtonClass}
                     detailsLinkClass={detailsLinkClass}
                     cardClass={cardClass}
+                    canAcceptPayments={canAcceptPayments}
                   />
                 ))}
               </ul>
@@ -646,6 +674,13 @@ export default async function StorefrontPage({
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
       {!store.published && viewerRole && <PreviewModeBanner />}
+      {paymentPending === "1" && (
+        <div className="border-b border-[var(--brand-text)]/[.08] bg-[var(--brand-accent)]/5 px-8 py-4 text-center text-sm">
+          Your payment was received. We&apos;re finishing your order — if you
+          don&apos;t see a confirmation shortly, contact us with reference{" "}
+          <span className="font-medium">{paymentRef}</span>.
+        </div>
+      )}
 
       {/* Customer-facing nav — store name plus real, content-backed links
           only. Desktop shows them inline; mobile gets a proper collapsed
@@ -703,16 +738,23 @@ function ProductActions({
   buyButtonClass,
   detailsLinkClass,
   className,
+  canAcceptPayments,
 }: {
   slug: string;
   product: StoreProduct;
   buyButtonClass: string;
   detailsLinkClass: string;
   className?: string;
+  canAcceptPayments: boolean;
 }) {
   return (
     <div className={`flex gap-2 ${className ?? ""}`}>
-      <BuyButton slug={slug} product={product} className={buyButtonClass} />
+      <BuyButton
+        slug={slug}
+        product={product}
+        className={buyButtonClass}
+        canAcceptPayments={canAcceptPayments}
+      />
       <Link href={`/store/${slug}/products/${product.id}`} className={detailsLinkClass}>
         View Details
       </Link>
@@ -726,12 +768,14 @@ function ProductCard({
   buyButtonClass,
   detailsLinkClass,
   cardClass,
+  canAcceptPayments,
 }: {
   slug: string;
   product: StoreProduct;
   buyButtonClass: string;
   detailsLinkClass: string;
   cardClass: string;
+  canAcceptPayments: boolean;
 }) {
   return (
     <li className={cardClass}>
@@ -759,6 +803,7 @@ function ProductCard({
           buyButtonClass={buyButtonClass}
           detailsLinkClass={detailsLinkClass}
           className="mt-3"
+          canAcceptPayments={canAcceptPayments}
         />
       </div>
     </li>

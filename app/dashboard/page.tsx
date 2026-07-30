@@ -7,7 +7,6 @@ import { SubmitButton } from "./SubmitButton";
 import { GenesisAssistant } from "./GenesisAssistant";
 import { CreateStoreForm } from "./CreateStoreForm";
 import {
-  generateStoreDraft,
   updateStoreDraft,
   discardStoreDraft,
   sendDraftMessage,
@@ -419,10 +418,14 @@ export default async function DashboardPage() {
               from "Your input"/"Regenerate": talking to Genesis (above) is
               the normal way to refine the business, since it's tracked
               conversationally (a real StoreDraftMessage + diff + version).
-              This form calls the same generateStoreDraft action but bypasses
-              that entirely — a full, untracked regeneration from these raw
-              fields — so it's framed here as a rare "start over" escape
-              hatch, not the primary refinement mechanism. */}
+              This calls the same underlying generation as first-time
+              creation but bypasses conversational tracking entirely — a
+              full, untracked regeneration from these raw fields — so it's
+              framed here as a rare "start over" escape hatch, not the
+              primary refinement mechanism. Reuses CreateStoreForm directly
+              (Phase 1 Beta Excellence #5) so this ~110s operation gets the
+              identical progress panel/elapsed timer/inline-error treatment
+              as first-time creation, instead of a bare pending button. */}
           <details className="mt-10">
             <summary className="cursor-pointer text-sm font-medium text-zinc-500 hover:text-black dark:hover:text-zinc-300">
               Start over from scratch
@@ -432,51 +435,13 @@ export default async function DashboardPage() {
               brand new generation from these fields — skip this and just
               tell Genesis what you&apos;d like to change instead, if you can.
             </p>
-            <form
-              action={generateStoreDraft}
-              className="mt-4 flex max-w-md flex-col gap-4"
-            >
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-black dark:text-zinc-50">
-                  Store name
-                </label>
-                <input
-                  name="inputStoreName"
-                  type="text"
-                  defaultValue={draft.inputStoreName ?? ""}
-                  className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-black dark:text-zinc-50">
-                  What do you want to sell?
-                </label>
-                <input
-                  name="inputProductType"
-                  type="text"
-                  defaultValue={draft.inputProductType ?? ""}
-                  className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-black dark:text-zinc-50">
-                  Describe your vision*
-                </label>
-                <textarea
-                  name="inputVision"
-                  defaultValue={draft.inputVision ?? ""}
-                  rows={3}
-                  required
-                  className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                />
-              </div>
-              <SubmitButton
-                pendingText="Starting over..."
-                className="mt-2 self-start rounded-full border border-black/[.08] px-5 py-2 text-sm disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
-              >
-                Start over
-              </SubmitButton>
-            </form>
+            <CreateStoreForm
+              resuming={false}
+              initialStoreName={draft.inputStoreName ?? ""}
+              initialProductType={draft.inputProductType ?? ""}
+              initialVision={draft.inputVision ?? ""}
+              submitLabel="Start over"
+            />
           </details>
 
           <form action={discardStoreDraft} className="mt-6">

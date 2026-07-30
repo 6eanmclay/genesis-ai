@@ -6,6 +6,7 @@ import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, rev
 import { grantAuthority, revokeAuthority } from "../actions";
 import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
 import { SubmitButton } from "../SubmitButton";
+import { RevertDecisionButton } from "../RevertDecisionButton";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 // The real, wired-up capabilities today: SEO (Genesis-editable via chat,
@@ -108,14 +109,7 @@ export default async function MarketingPage() {
                     : "You approved this"}
                   {decision.decidedAt ? ` — ${decision.decidedAt.toLocaleDateString()}` : ""}
                 </p>
-                <form action={revertApprovalRequest.bind(null, decision.id)} className="mt-2">
-                  <SubmitButton
-                    pendingText="Reverting..."
-                    className="rounded-full border border-black/[.08] px-3 py-1 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
-                  >
-                    Revert
-                  </SubmitButton>
-                </form>
+                <RevertDecisionButton action={revertApprovalRequest.bind(null, decision.id)} />
               </li>
             ))}
           </ul>

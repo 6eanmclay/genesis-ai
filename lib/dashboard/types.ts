@@ -31,7 +31,8 @@ export type AttentionKind =
   | "recent-failure"
   | "stale-pending"
   | "integration-issue"
-  | "state-issue";
+  | "state-issue"
+  | "unsellable-store";
 
 export interface AttentionItem {
   id: string;

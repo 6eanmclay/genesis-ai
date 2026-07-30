@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
-import { createProduct, editProduct, toggleProductActive, deleteProduct, uploadProductImage } from "../actions";
+import { toggleProductActive, deleteProduct, uploadProductImage } from "../actions";
 import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, approveGenesisActionGroup } from "../ai-actions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
@@ -9,9 +9,8 @@ import { DeleteProductButton } from "../DeleteProductButton";
 import { SubmitButton } from "../SubmitButton";
 import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
 import { ObservationsPanel } from "../ObservationsPanel";
-
-const ACCENT_BUTTON =
-  "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
+import { CreateProductForm } from "./CreateProductForm";
+import { EditProductForm } from "./EditProductForm";
 
 export default async function ProductsPage({
   searchParams,
@@ -147,40 +146,14 @@ export default async function ProductsPage({
               </div>
 
               <div className="min-w-0 flex-1">
-                <form
-                  action={editProduct.bind(null, product.id)}
-                  className="flex flex-col gap-2"
-                >
-                  <input
-                    name="name"
-                    type="text"
-                    defaultValue={product.name}
-                    required
-                    className="rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                  />
-                  <textarea
-                    name="description"
-                    defaultValue={product.description ?? ""}
-                    placeholder="Description (optional)"
-                    rows={2}
-                    className="rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                  />
-                  <input
-                    name="price"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    defaultValue={(product.priceInCents / 100).toFixed(2)}
-                    required
-                    className="rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-                  />
-                  <SubmitButton
-                    pendingText="Saving..."
-                    className={`mt-1 self-start px-4 py-1 text-sm ${ACCENT_BUTTON}`}
-                  >
-                    Save
-                  </SubmitButton>
-                </form>
+                <EditProductForm
+                  product={{
+                    id: product.id,
+                    name: product.name,
+                    description: product.description,
+                    priceInCents: product.priceInCents,
+                  }}
+                />
 
                 <div className="mt-3 flex items-center gap-3">
                   <form action={toggleProductActive.bind(null, product.id)}>
@@ -204,33 +177,7 @@ export default async function ProductsPage({
       <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
         Add a product
       </h2>
-      <form action={createProduct} className="mt-4 flex max-w-md flex-col gap-4">
-        <input
-          name="name"
-          type="text"
-          placeholder="Product name"
-          required
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <textarea
-          name="description"
-          placeholder="Description (optional)"
-          rows={3}
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <input
-          name="price"
-          type="number"
-          step="0.01"
-          min="0"
-          placeholder="Price (e.g. 19.99)"
-          required
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <SubmitButton pendingText="Adding..." className={`mt-2 px-5 py-2 ${ACCENT_BUTTON}`}>
-          Add product
-        </SubmitButton>
-      </form>
+      <CreateProductForm />
     </div>
   );
 }
