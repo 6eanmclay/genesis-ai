@@ -25,6 +25,18 @@ import {
   updateSectionOrderExecutable,
   type UpdateSectionOrderInput,
 } from "./executables/updateSectionOrder";
+import {
+  updateStoreContentExecutable,
+  type UpdateStoreContentInput,
+} from "./executables/updateStoreContent";
+import {
+  updateDesignDirectionExecutable,
+  type UpdateDesignDirectionInput,
+} from "./executables/updateDesignDirection";
+import {
+  updateMarketingAssetsExecutable,
+  type UpdateMarketingAssetsInput,
+} from "./executables/updateMarketingAssets";
 
 // The minimal subset of Store.blueprint relevant to the actions registered
 // below — shared between generateGenesisRecommendations.ts (which fetches
@@ -51,10 +63,31 @@ export interface BlueprintContextSubset {
     whyChooseUs?: string;
     sectionOrder?: SectionKey[];
     customSection?: { title: string; body: string } | null;
+    featuredCollections?: string[];
+    faq?: { question: string; answer: string }[];
+    newsletterSection?: string;
+    footerContent?: string;
   };
   marketingAssets?: {
     seoTitle?: string;
     seoMetaDescription?: string;
+    brandKeywords?: string[];
+    instagramBio?: string;
+    facebookDescription?: string;
+    xBio?: string;
+  };
+  storeContent?: {
+    shippingPolicy?: string;
+    returnPolicy?: string;
+    privacyPolicy?: string;
+    termsAndConditions?: string;
+    contactPageCopy?: string;
+  };
+  designDirection?: {
+    visualStyle?: string;
+    brandMood?: string;
+    photographyStyle?: string;
+    iconStyle?: string;
   };
 }
 
@@ -214,6 +247,9 @@ export const GENESIS_ACTIONS: Record<
     | UpdateStoreIdentityInput
     | UpdateHomepageContentInput
     | UpdateSectionOrderInput
+    | UpdateStoreContentInput
+    | UpdateDesignDirectionInput
+    | UpdateMarketingAssetsInput
   >
 > = {
   update_seo: {
@@ -319,12 +355,83 @@ export const GENESIS_ACTIONS: Record<
       secondaryCallToAction: z.string().nullable(),
       aboutUs: z.string(),
       whyChooseUs: z.string(),
+      // Phase 2 Milestone 1 — the structured fields deferred since the
+      // original pivot's Phase 1 (arrays/nested objects, no diff UI existed
+      // for them yet). Kept on this same action rather than a second
+      // homepage-content type: they're conceptually the same field group,
+      // just the harder-to-diff half.
+      featuredCollections: z.array(z.string()),
+      faq: z.array(z.object({ question: z.string(), answer: z.string() })),
+      newsletterSection: z.string(),
+      footerContent: z.string(),
+      customSection: z.object({ title: z.string(), body: z.string() }).nullable(),
     }),
     getCurrentValues: ({ blueprint }) => ({
       primaryCallToAction: blueprint?.homepageContent?.primaryCallToAction ?? "",
       secondaryCallToAction: blueprint?.homepageContent?.secondaryCallToAction ?? null,
       aboutUs: blueprint?.homepageContent?.aboutUs ?? "",
       whyChooseUs: blueprint?.homepageContent?.whyChooseUs ?? "",
+      featuredCollections: blueprint?.homepageContent?.featuredCollections ?? [],
+      faq: blueprint?.homepageContent?.faq ?? [],
+      newsletterSection: blueprint?.homepageContent?.newsletterSection ?? "",
+      footerContent: blueprint?.homepageContent?.footerContent ?? "",
+      customSection: blueprint?.homepageContent?.customSection ?? null,
+    }),
+    category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  update_store_content: {
+    executable: updateStoreContentExecutable,
+    inputSchema: z.object({
+      shippingPolicy: z.string(),
+      returnPolicy: z.string(),
+      privacyPolicy: z.string(),
+      termsAndConditions: z.string(),
+      contactPageCopy: z.string(),
+    }),
+    getCurrentValues: ({ blueprint }) => ({
+      shippingPolicy: blueprint?.storeContent?.shippingPolicy ?? "",
+      returnPolicy: blueprint?.storeContent?.returnPolicy ?? "",
+      privacyPolicy: blueprint?.storeContent?.privacyPolicy ?? "",
+      termsAndConditions: blueprint?.storeContent?.termsAndConditions ?? "",
+      contactPageCopy: blueprint?.storeContent?.contactPageCopy ?? "",
+    }),
+    category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  update_design_direction: {
+    executable: updateDesignDirectionExecutable,
+    inputSchema: z.object({
+      visualStyle: z.string(),
+      brandMood: z.string(),
+      photographyStyle: z.string(),
+      iconStyle: z.string(),
+    }),
+    getCurrentValues: ({ blueprint }) => ({
+      visualStyle: blueprint?.designDirection?.visualStyle ?? "",
+      brandMood: blueprint?.designDirection?.brandMood ?? "",
+      photographyStyle: blueprint?.designDirection?.photographyStyle ?? "",
+      iconStyle: blueprint?.designDirection?.iconStyle ?? "",
+    }),
+    category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  update_marketing_assets: {
+    executable: updateMarketingAssetsExecutable,
+    inputSchema: z.object({
+      brandKeywords: z.array(z.string()),
+      instagramBio: z.string(),
+      facebookDescription: z.string(),
+      xBio: z.string(),
+    }),
+    getCurrentValues: ({ blueprint }) => ({
+      brandKeywords: blueprint?.marketingAssets?.brandKeywords ?? [],
+      instagramBio: blueprint?.marketingAssets?.instagramBio ?? "",
+      facebookDescription: blueprint?.marketingAssets?.facebookDescription ?? "",
+      xBio: blueprint?.marketingAssets?.xBio ?? "",
     }),
     category: "content",
     authorizationTier: "always_ask",
@@ -390,6 +497,25 @@ export const FIELD_LABELS: Record<string, string> = {
   secondaryCallToAction: "Secondary Call to Action",
   aboutUs: "About Us",
   whyChooseUs: "Why Choose Us",
+  featuredCollections: "Featured Collections",
+  faq: "FAQ",
+  newsletterSection: "Newsletter",
+  footerContent: "Footer",
+  customSectionTitle: "Custom Section Title",
+  customSectionBody: "Custom Section Body",
+  shippingPolicy: "Shipping Policy",
+  returnPolicy: "Return Policy",
+  privacyPolicy: "Privacy Policy",
+  termsAndConditions: "Terms & Conditions",
+  contactPageCopy: "Contact Page",
+  visualStyle: "Visual Style",
+  brandMood: "Brand Mood",
+  photographyStyle: "Photography Style",
+  iconStyle: "Icon Style",
+  brandKeywords: "Brand Keywords",
+  instagramBio: "Instagram Bio",
+  facebookDescription: "Facebook Description",
+  xBio: "X (Twitter) Bio",
 };
 
 // Which dashboard section actually owns the Approve/Reject/Regenerate
@@ -415,4 +541,11 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_brand_identity: { key: "brand", label: "Identity", href: "/dashboard/brand" },
   update_store_identity: { key: "brand", label: "Identity", href: "/dashboard/brand" },
   update_section_order: { key: "website", label: "Website", href: "/dashboard/website" },
+  // Phase 2 Milestone 1 — Settings was genuinely empty before this ("nothing
+  // to configure here yet"); store policies and design direction are
+  // business-configuration content, not creative identity (Brand) or
+  // storefront-visual content (Website), so they land here.
+  update_store_content: { key: "settings", label: "Settings", href: "/dashboard/settings" },
+  update_design_direction: { key: "settings", label: "Settings", href: "/dashboard/settings" },
+  update_marketing_assets: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
 };

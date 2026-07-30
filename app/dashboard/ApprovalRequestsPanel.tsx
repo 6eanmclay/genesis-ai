@@ -10,6 +10,17 @@ import { FIELD_LABELS } from "@/lib/execution/genesisActions";
 // which is deliberately excluded from the generic loop below.
 const HIDDEN_DIFF_KEYS = new Set(["productId"]);
 
+// A plain string array (e.g. coreValues, brandKeywords) formatted for one
+// diff row — Array.prototype.toString() joins with a bare comma, no space,
+// which reads as a bug rather than a list. Everything else still falls
+// through to String() unchanged.
+function formatDiffValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.join(", ") : "(empty)";
+  }
+  return String(value ?? "(empty)");
+}
+
 export function ApprovalRequestsPanel({
   approvals,
   approveAction,
@@ -132,10 +143,10 @@ export function ApprovalRequestsPanel({
                     <div key={key} className="text-xs">
                       <dt className="font-medium text-zinc-500">{FIELD_LABELS[key] ?? key}</dt>
                       <dd className="mt-0.5 text-zinc-400 line-through">
-                        {String(previous ?? "(empty)")}
+                        {formatDiffValue(previous)}
                       </dd>
                       <dd className="mt-0.5 text-black dark:text-zinc-50">
-                        {String(proposed ?? "")}
+                        {formatDiffValue(proposed)}
                       </dd>
                     </div>
                   );

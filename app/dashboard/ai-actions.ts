@@ -673,6 +673,26 @@ async function generateStoreDraftCore(
     },
   });
 
+  // Phase 2 Milestone 1 — "Start over from scratch" used to be a fully
+  // untracked regeneration: no StoreDraftMessage, no diff, no visible
+  // record that it happened, unlike every real chat turn. Regeneration
+  // itself still goes through this exact function (generateStoreDraftCore),
+  // preserving CreateStoreForm's progress panel — this only adds the
+  // conversational record on top, gated to the regenerate case specifically
+  // (first-time creation has no prior conversation to record against).
+  if (existingDraft) {
+    await prisma.storeDraftMessage.create({
+      data: { storeDraftId: draft.id, role: "user", content: briefText },
+    });
+    await prisma.storeDraftMessage.create({
+      data: {
+        storeDraftId: draft.id,
+        role: "assistant",
+        content: "I've started your business over from scratch based on this new description.",
+      },
+    });
+  }
+
   await logProductEvent({
     userId,
     storeDraftId: draft.id,
@@ -2205,7 +2225,11 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       metadata: {},
     });
   } else {
-    let secondaryContent: {
+    // Phase 2 Milestone 1 — never reassigned now that storeContent/
+    // marketingAssets/designDirection all flow through their own approvals;
+    // this stays exactly the "current" snapshot resultBlueprint's
+    // direct-write fallback needs (see below).
+    const secondaryContent: {
       storeContent: StoreContent;
       marketingAssets: MarketingAssets;
       designDirection: DesignDirection;
@@ -2297,6 +2321,33 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     secondaryDurationMs = secondaryOutcome?.durationMs ?? null;
     compositionDurationMs = compositionOutcome?.durationMs ?? null;
 
+    // Phase 2 Milestone 1 — storeContent/marketingAssets(non-SEO)/
+    // designDirection now flow through their own approvals, same as every
+    // other field group already carved out of this direct-write path.
+    // secondaryContent itself is never reassigned anymore — it stays at
+    // whatever currentBlueprint held (see its own declaration above), which
+    // is exactly the "keep current until approved" semantics resultBlueprint
+    // below needs.
+    let proposedStoreContent: {
+      shippingPolicy: string;
+      returnPolicy: string;
+      privacyPolicy: string;
+      termsAndConditions: string;
+      contactPageCopy: string;
+    } | null = null;
+    let proposedMarketingAssets: {
+      brandKeywords: string[];
+      instagramBio: string;
+      facebookDescription: string;
+      xBio: string;
+    } | null = null;
+    let proposedDesignDirection: {
+      visualStyle: string;
+      brandMood: string;
+      photographyStyle: string;
+      iconStyle: string;
+    } | null = null;
+
     if (secondaryOutcome?.ok) {
       const secondaryResult = secondaryOutcome.message.parsed_output;
       if (secondaryResult) {
@@ -2305,24 +2356,19 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
             seoTitle: secondaryResult.marketingAssets.seoTitle,
             seoMetaDescription: secondaryResult.marketingAssets.seoMetaDescription,
           };
+          proposedMarketingAssets = {
+            brandKeywords: secondaryResult.marketingAssets.brandKeywords,
+            instagramBio: secondaryResult.marketingAssets.instagramBio,
+            facebookDescription: secondaryResult.marketingAssets.facebookDescription,
+            xBio: secondaryResult.marketingAssets.xBio,
+          };
         }
-        secondaryContent = {
-          storeContent: secondaryResult.touchesStoreContent
-            ? secondaryResult.storeContent
-            : secondaryContent.storeContent,
-          marketingAssets: secondaryResult.touchesMarketingAssets
-            ? {
-                ...secondaryResult.marketingAssets,
-                // Kept at the current value in the direct write — proposed
-                // via update_seo instead.
-                seoTitle: secondaryContent.marketingAssets.seoTitle,
-                seoMetaDescription: secondaryContent.marketingAssets.seoMetaDescription,
-              }
-            : secondaryContent.marketingAssets,
-          designDirection: secondaryResult.touchesDesignDirection
-            ? secondaryResult.designDirection
-            : secondaryContent.designDirection,
-        };
+        if (secondaryResult.touchesStoreContent) {
+          proposedStoreContent = secondaryResult.storeContent;
+        }
+        if (secondaryResult.touchesDesignDirection) {
+          proposedDesignDirection = secondaryResult.designDirection;
+        }
       }
     }
 
@@ -2335,21 +2381,25 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     }
 
     // touchesBrandContent covered brandIdentity and all of homepageContent
-    // together — it now splits four further ways: brand identity, the
-    // hero/scalar homepage fields, and section order all become proposals
-    // (update_brand_identity / update_hero / update_homepage_content /
-    // update_section_order — the last is Phase 3B, Genesis's first
-    // structural Website action); the remaining structured homepage fields
-    // (featuredCollections, FAQ, newsletter, footer, customSection) still
-    // apply directly, since no diff/preview exists for them yet (still
-    // explicitly deferred).
+    // together — it now splits four further ways: brand identity, homepage
+    // content (now the FULL set — Phase 2 Milestone 1 folded the structured
+    // fields featuredCollections/FAQ/newsletter/footer/customSection into
+    // this same action, closing the last deferred piece of that field
+    // group), and section order all become proposals (update_brand_identity
+    // / update_hero / update_homepage_content / update_section_order — the
+    // last is Phase 3B, Genesis's first structural Website action).
     let proposedBrandIdentity: BrandIdentity | null = null;
     let proposedHero: { heroHeadline: string; heroSubheadline: string } | null = null;
-    let proposedHomepageScalars: {
+    let proposedHomepageContent: {
       primaryCallToAction: string;
       secondaryCallToAction: string | null;
       aboutUs: string;
       whyChooseUs: string;
+      featuredCollections: string[];
+      faq: { question: string; answer: string }[];
+      newsletterSection: string;
+      footerContent: string;
+      customSection: { title: string; body: string } | null;
     } | null = null;
     let proposedSectionOrder: { sectionOrder: (typeof SECTION_KEYS)[number][] } | null = null;
 
@@ -2359,11 +2409,16 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         heroHeadline: primaryResult.homepageContent.heroHeadline,
         heroSubheadline: primaryResult.homepageContent.heroSubheadline,
       };
-      proposedHomepageScalars = {
+      proposedHomepageContent = {
         primaryCallToAction: primaryResult.homepageContent.primaryCallToAction,
         secondaryCallToAction: primaryResult.homepageContent.secondaryCallToAction,
         aboutUs: primaryResult.homepageContent.aboutUs,
         whyChooseUs: primaryResult.homepageContent.whyChooseUs,
+        featuredCollections: primaryResult.homepageContent.featuredCollections,
+        faq: primaryResult.homepageContent.faq,
+        newsletterSection: primaryResult.homepageContent.newsletterSection,
+        footerContent: primaryResult.homepageContent.footerContent,
+        customSection: primaryResult.homepageContent.customSection,
       };
       proposedSectionOrder = { sectionOrder: primaryResult.homepageContent.sectionOrder };
     }
@@ -2385,27 +2440,19 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
           currentHomepageContent?.secondaryCallToAction ?? primaryResult.homepageContent.secondaryCallToAction,
         aboutUs: currentHomepageContent?.aboutUs ?? primaryResult.homepageContent.aboutUs,
         whyChooseUs: currentHomepageContent?.whyChooseUs ?? primaryResult.homepageContent.whyChooseUs,
-        // The structured fields still apply directly — carried from the
-        // model's output when brand content was touched, otherwise kept.
-        featuredCollections: primaryResult.touchesBrandContent
-          ? primaryResult.homepageContent.featuredCollections
-          : currentHomepageContent?.featuredCollections ?? [],
-        faq: primaryResult.touchesBrandContent
-          ? primaryResult.homepageContent.faq
-          : currentHomepageContent?.faq ?? [],
-        newsletterSection: primaryResult.touchesBrandContent
-          ? primaryResult.homepageContent.newsletterSection
-          : currentHomepageContent?.newsletterSection ?? "",
-        footerContent: primaryResult.touchesBrandContent
-          ? primaryResult.homepageContent.footerContent
-          : currentHomepageContent?.footerContent ?? "",
+        // Phase 2 Milestone 1 — the structured fields now flow through the
+        // extended update_homepage_content approval too; the direct write
+        // keeps their current values untouched until approved, same as
+        // every other carved-out field.
+        featuredCollections: currentHomepageContent?.featuredCollections ?? [],
+        faq: currentHomepageContent?.faq ?? [],
+        newsletterSection: currentHomepageContent?.newsletterSection ?? "",
+        footerContent: currentHomepageContent?.footerContent ?? "",
         // Now flows through update_section_order (Phase 3B) — the direct
         // write keeps the current order untouched until approved, same as
         // hero/scalars/brandIdentity/storeIdentity above.
         sectionOrder: currentHomepageContent?.sectionOrder ?? [],
-        customSection: primaryResult.touchesBrandContent
-          ? primaryResult.homepageContent.customSection
-          : currentHomepageContent?.customSection ?? null,
+        customSection: currentHomepageContent?.customSection ?? null,
       },
       storeContent: secondaryContent.storeContent,
       marketingAssets: secondaryContent.marketingAssets,
@@ -2521,10 +2568,10 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     if (proposedHero) {
       await proposeAction("update_hero", proposedHero, "Genesis has an idea for your homepage hero");
     }
-    if (proposedHomepageScalars) {
+    if (proposedHomepageContent) {
       await proposeAction(
         "update_homepage_content",
-        proposedHomepageScalars,
+        proposedHomepageContent,
         "Genesis has updates for your homepage content"
       );
     }
@@ -2544,6 +2591,27 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     }
     if (proposedSeo) {
       await proposeAction("update_seo", proposedSeo, "Genesis has an SEO update for you");
+    }
+    if (proposedStoreContent) {
+      await proposeAction(
+        "update_store_content",
+        proposedStoreContent,
+        "Genesis has updates for your store policies"
+      );
+    }
+    if (proposedDesignDirection) {
+      await proposeAction(
+        "update_design_direction",
+        proposedDesignDirection,
+        "Genesis has updates for your design direction"
+      );
+    }
+    if (proposedMarketingAssets) {
+      await proposeAction(
+        "update_marketing_assets",
+        proposedMarketingAssets,
+        "Genesis has updates for your social bios and keywords"
+      );
     }
 
     await recordGenesisExecution({

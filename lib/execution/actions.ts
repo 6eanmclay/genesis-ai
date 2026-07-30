@@ -25,6 +25,9 @@ export const EXECUTION_ACTIONS = {
   STORE_UPDATE_STORE_IDENTITY: "store.update_store_identity",
   STORE_UPDATE_HOMEPAGE_CONTENT: "store.update_homepage_content",
   STORE_UPDATE_SECTION_ORDER: "store.update_section_order",
+  STORE_UPDATE_STORE_CONTENT: "store.update_store_content",
+  STORE_UPDATE_DESIGN_DIRECTION: "store.update_design_direction",
+  STORE_UPDATE_MARKETING_ASSETS: "store.update_marketing_assets",
 } as const;
 
 export type ExecutionAction = (typeof EXECUTION_ACTIONS)[keyof typeof EXECUTION_ACTIONS];

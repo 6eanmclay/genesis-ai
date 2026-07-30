@@ -40,10 +40,18 @@ export default async function MarketingPage() {
     }),
   ]);
   const seoApprovals = pendingApprovals.filter((a) => a.actionType === "update_seo");
+  // Phase 2 Milestone 1 — brandKeywords/instagramBio/facebookDescription/
+  // xBio now flow through the same approval framework SEO already uses,
+  // closing one more piece of the chat-vs-manual fork.
+  const marketingAssetsApprovals = pendingApprovals.filter((a) => a.actionType === "update_marketing_assets");
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
   const seoTitle = blueprint?.marketingAssets?.seoTitle;
   const seoMetaDescription = blueprint?.marketingAssets?.seoMetaDescription;
+  const brandKeywords = blueprint?.marketingAssets?.brandKeywords ?? [];
+  const instagramBio = blueprint?.marketingAssets?.instagramBio;
+  const facebookDescription = blueprint?.marketingAssets?.facebookDescription;
+  const xBio = blueprint?.marketingAssets?.xBio;
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   return (
@@ -57,6 +65,21 @@ export default async function MarketingPage() {
           </h2>
           <ApprovalRequestsPanel
             approvals={seoApprovals}
+            approveAction={approveGenesisAction}
+            rejectAction={rejectGenesisAction}
+            regenerateAction={regenerateApprovalImage}
+            approveGroupAction={approveGenesisActionGroup}
+          />
+        </>
+      )}
+
+      {marketingAssetsApprovals.length > 0 && (
+        <>
+          <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
+            Genesis&apos;s ideas for your social presence ({marketingAssetsApprovals.length})
+          </h2>
+          <ApprovalRequestsPanel
+            approvals={marketingAssetsApprovals}
             approveAction={approveGenesisAction}
             rejectAction={rejectGenesisAction}
             regenerateAction={regenerateApprovalImage}
@@ -132,6 +155,26 @@ export default async function MarketingPage() {
         <p className="mt-1 text-sm text-black dark:text-zinc-50">
           {seoMetaDescription || "Not set yet"}
         </p>
+      </div>
+
+      <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">Social presence</h2>
+      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        Ask Genesis to update your social bios or keywords — changes go
+        through the usual approval step, same as SEO.
+      </p>
+      <div className="mt-4 max-w-md rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Brand keywords</p>
+        <p className="mt-1 text-sm text-black dark:text-zinc-50">
+          {brandKeywords.length > 0 ? brandKeywords.join(", ") : "Not set yet"}
+        </p>
+        <p className="mt-3 text-xs font-medium uppercase tracking-wide text-zinc-500">Instagram bio</p>
+        <p className="mt-1 text-sm text-black dark:text-zinc-50">{instagramBio || "Not set yet"}</p>
+        <p className="mt-3 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          Facebook description
+        </p>
+        <p className="mt-1 text-sm text-black dark:text-zinc-50">{facebookDescription || "Not set yet"}</p>
+        <p className="mt-3 text-xs font-medium uppercase tracking-wide text-zinc-500">X (Twitter) bio</p>
+        <p className="mt-1 text-sm text-black dark:text-zinc-50">{xBio || "Not set yet"}</p>
       </div>
 
       <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">

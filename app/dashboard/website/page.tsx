@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { getPendingApprovals, type PendingApproval } from "@/lib/dashboard/pendingApprovals";
-import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
+import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { SECTION_LABELS, type SectionKey } from "@/lib/storefrontSections";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
 import { toggleStorePublished } from "../actions";
@@ -11,36 +11,13 @@ import { SubmitButton } from "../SubmitButton";
 import { VisualProposal } from "../VisualProposal";
 import { HeroMock } from "../HeroMock";
 import { ObservationsPanel } from "../ObservationsPanel";
+import { FieldValueList } from "../FieldValueList";
+import { StringListView } from "../StringListView";
+import { FaqListView } from "../FaqListView";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
-
-// A small, honest preview of real field values — reuses the exact
-// FIELD_LABELS lookup ApprovalRequestsPanel already uses, just split into
-// two columns (current/proposed) instead of one line-through-old/bold-new
-// column, so update_homepage_content can render through the same
-// VisualProposal shell as update_hero/update_theme. Deliberately not a
-// themed section mock (that's HeroMock's job, and it isn't being extended
-// here) — this is plainly "here are the words," not a claim about layout.
-function FieldValueList({
-  fields,
-  values,
-}: {
-  fields: string[];
-  values: Record<string, unknown>;
-}) {
-  return (
-    <dl className="flex flex-col gap-2 rounded-xl border border-black/[.06] bg-black/[.02] p-3 dark:border-white/[.08] dark:bg-white/[.03]">
-      {fields.map((key) => (
-        <div key={key} className="text-xs">
-          <dt className="font-medium text-zinc-500">{FIELD_LABELS[key] ?? key}</dt>
-          <dd className="mt-0.5 text-black dark:text-zinc-50">{String(values[key] ?? "(empty)")}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
 
 // Supporting text for the section-reorder proposal — the real iframes below
 // are the primary evidence, this is just a plain-language recap. Hero is
@@ -256,8 +233,41 @@ export default async function WebsitePage({
     }
 
     // update_homepage_content — real field values, honestly presented as
-    // text (see FieldValueList above), not a themed section mock.
-    const fields = Object.keys(approval.input);
+    // text (see FieldValueList) — plus, since Phase 2 Milestone 1 extended
+    // this action to cover the structured fields too, two small dedicated
+    // renderers for the two shapes that don't fit a flat key/value row:
+    // featuredCollections (a plain string list) and faq (a list of Q&A
+    // pairs). customSection ({title, body} | null) is small/bounded enough
+    // to just flatten into two more FieldValueList rows rather than earn
+    // its own component.
+    const NON_FLAT_KEYS = new Set(["featuredCollections", "faq", "customSection"]);
+    const flatFields = Object.keys(approval.input).filter((key) => !NON_FLAT_KEYS.has(key));
+    const flattenValues = (values: Record<string, unknown>) => {
+      const customSection = values.customSection as { title: string; body: string } | null;
+      return {
+        ...values,
+        customSectionTitle: customSection?.title ?? "(none)",
+        customSectionBody: customSection?.body ?? "(none)",
+      };
+    };
+    const flatFieldsWithCustomSection = [
+      ...flatFields,
+      ...("customSection" in approval.input ? ["customSectionTitle", "customSectionBody"] : []),
+    ];
+    const renderHomepageContentSide = (values: Record<string, unknown>) => (
+      <div className="flex flex-col gap-2">
+        <FieldValueList fields={flatFieldsWithCustomSection} values={flattenValues(values)} />
+        {"featuredCollections" in approval.input && (
+          <StringListView
+            label="Featured Collections"
+            items={(values.featuredCollections as string[] | undefined) ?? []}
+          />
+        )}
+        {"faq" in approval.input && (
+          <FaqListView items={(values.faq as { question: string; answer: string }[] | undefined) ?? []} />
+        )}
+      </div>
+    );
     return (
       <VisualProposal
         key={approval.id}
@@ -267,8 +277,9 @@ export default async function WebsitePage({
         approveAction={approveGenesisAction}
         rejectAction={rejectGenesisAction}
         highlighted={highlighted}
-        current={<FieldValueList fields={fields} values={approval.previousValues} />}
-        proposed={<FieldValueList fields={fields} values={approval.input} />}
+        stacked
+        current={renderHomepageContentSide(approval.previousValues)}
+        proposed={renderHomepageContentSide(approval.input)}
       />
     );
   }
