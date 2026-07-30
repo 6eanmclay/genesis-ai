@@ -196,7 +196,12 @@ export async function connectStripe() {
     redirect(result.redirectUrl);
   }
 
-  redirect("/dashboard/payments");
+  // Reached only when this very first call already failed (e.g. Stripe
+  // Connect isn't configured) — no OAuth round-trip ever started, so the
+  // callback route's own failure-surfacing never gets a chance to run.
+  // Without this flash param, a merchant could click "Connect Stripe" and
+  // silently land right back where they started with no explanation.
+  redirect(result.status === "FAILED" ? "/dashboard/payments?integration_error=stripe" : "/dashboard/payments");
 }
 
 export async function disconnectStripe() {
@@ -241,7 +246,16 @@ export async function submitPaypalCredentials(formData: FormData) {
   });
   await logConnectAttempt("paypal", "integration.connect_attempt", result);
 
-  redirect("/dashboard/payments");
+  // PayPal never leaves this app (no OAuth round-trip), so this is the one
+  // place a PayPal connect attempt actually resolves — flash param mirrors
+  // the Stripe callback route's own for a consistent experience across both
+  // providers, on top of the durable "Last attempt failed" line already
+  // shown below when no integration exists yet.
+  redirect(
+    result.status === "FAILED"
+      ? "/dashboard/payments?integration_error=paypal"
+      : "/dashboard/payments?integration_connected=paypal"
+  );
 }
 
 export async function disconnectPaypal() {

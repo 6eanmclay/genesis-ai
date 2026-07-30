@@ -17,7 +17,13 @@ import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
 
-export default async function PaymentsPage() {
+export default async function PaymentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ integration_error?: string; integration_connected?: string }>;
+}) {
+  const { integration_error: integrationError, integration_connected: integrationConnected } =
+    await searchParams;
   const { store } = await requireStorePageAccess(PERMISSIONS.PAYMENTS_MANAGE);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
@@ -26,17 +32,20 @@ export default async function PaymentsPage() {
     include: { connectedBy: { select: { name: true, email: true } } },
   });
 
-  const latestStripeLog = stripeIntegration
-    ? await prisma.executionLog.findFirst({
-        where: {
-          storeId: store.id,
-          action: {
-            in: [EXECUTION_ACTIONS.INTEGRATION_STRIPE_CONNECT, EXECUTION_ACTIONS.INTEGRATION_STRIPE_VERIFY],
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      })
-    : null;
+  // Queried unconditionally, not just when stripeIntegration already exists
+  // — a StoreIntegration row is only ever created on a *successful* connect
+  // (see lib/integrations/stripe.ts), so a failed first attempt would
+  // otherwise have nowhere to surface: the page would look identical to
+  // having never tried at all.
+  const latestStripeLog = await prisma.executionLog.findFirst({
+    where: {
+      storeId: store.id,
+      action: {
+        in: [EXECUTION_ACTIONS.INTEGRATION_STRIPE_CONNECT, EXECUTION_ACTIONS.INTEGRATION_STRIPE_VERIFY],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
   // Falls back to StoreIntegration's own fields for a connection made
   // before this phase existed (no ExecutionLog row yet) — the card still
@@ -119,9 +128,39 @@ export default async function PaymentsPage() {
         }
       : null;
 
+  // A one-time flash from the redirect that just landed here (OAuth
+  // callback, or PayPal's own credential-submission redirect) — sourced
+  // from the same real log message the inline/card displays below already
+  // show, never a separately-invented string, so the two can't drift.
+  const flashProvider =
+    integrationError === "stripe" || integrationConnected === "stripe"
+      ? "stripe"
+      : integrationError === "paypal" || integrationConnected === "paypal"
+        ? "paypal"
+        : null;
+  const flashLabel = flashProvider === "stripe" ? "Stripe" : flashProvider === "paypal" ? "PayPal" : null;
+  const flashLog = flashProvider === "stripe" ? latestStripeLog : flashProvider === "paypal" ? latestPaypalLog : null;
+
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Payments</h1>
+
+      {integrationError && flashLabel && (
+        <div className="mt-4 max-w-md rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/30">
+          <p className="font-medium text-red-800 dark:text-red-300">{flashLabel} couldn&apos;t connect.</p>
+          <p className="mt-1 text-red-700 dark:text-red-400">
+            {flashLog?.status === "FAILED"
+              ? flashLog.message
+              : "Something went wrong during the connection. Please try again."}
+          </p>
+        </div>
+      )}
+      {integrationConnected && flashLabel && (
+        <div className="mt-4 max-w-md rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/40 dark:bg-emerald-950/30">
+          <p className="font-medium text-emerald-800 dark:text-emerald-300">{flashLabel} connected.</p>
+          <p className="mt-1 text-emerald-700 dark:text-emerald-400">You&apos;re ready to accept payments.</p>
+        </div>
+      )}
 
       {!stripeIntegration || stripeIntegration.status === "DISCONNECTED" ? (
         <>
@@ -129,6 +168,11 @@ export default async function PaymentsPage() {
             Connect your own Stripe account to receive payments directly.
             Until then, checkout uses Genesis&apos;s shared test account.
           </p>
+          {latestStripeLog?.status === "FAILED" && (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+              Last attempt failed: {latestStripeLog.message}
+            </p>
+          )}
           <form action={connectStripe} className="mt-4">
             <SubmitButton
               pendingText="Redirecting to Stripe..."
