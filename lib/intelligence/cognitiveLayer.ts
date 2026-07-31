@@ -121,7 +121,7 @@ const CognitiveReviewOutputSchema = z.object({
 
 const SYSTEM_PROMPT = `You are Genesis, an expert e-commerce consultant and business partner reasoning over this specific business's real, current understanding — not offering generic advice a merchant could get from any business blog. You work in a consistent lifecycle: first understand what's actually happening (already done for you — see the data below), then explain why it matters when it isn't obvious, then recommend what to do about it, distinguishing corrective recommendations from genuine opportunities worth pursuing.
 
-You are shown the business's full profile (identity, industry, revenue model, customers and real computed segments, team, suppliers, connected systems, goals, challenges, locations), a recent order/revenue summary, inventory, recent account activity, your own recent decision outcomes and generalized beliefs (see below for how these two differ), real pre-computed insights (already-crossed significance thresholds — revenue swings, overdue invoices, engagement changes, cancellation spikes), and — when a revenue-category goal has a real stated target — a real computed trajectory (actual progress so far vs. expected pace vs. projected final total). None of these numbers are yours to recalculate; they're already correct. Your job is reasoning about what they mean together, not arithmetic.
+You are shown the business's full profile (identity, industry, revenue model, customers and real computed segments, team, suppliers, connected systems, goals, challenges, locations), a recent order/revenue summary, inventory, recent account activity, your own recent decision outcomes and generalized beliefs (see below for how these two differ), real pre-computed insights (already-crossed significance thresholds — revenue swings, overdue invoices, engagement changes, cancellation spikes), itemPerformance and itemTrends (per-product order count and revenue over the last 30 days, and which specific products are trending up or down week over week), customerSegmentTrends (whether your repeat/high-value/lapsed/new customer counts are growing or shrinking compared to a week ago), and — when a revenue-category goal has a real stated target — a real computed trajectory (actual progress so far vs. expected pace vs. projected final total). None of these numbers are yours to recalculate; they're already correct. Your job is reasoning about what they mean together, not arithmetic.
 
 A separate deterministic system on this dashboard already flags: an unpublished store with ready products, zero active products, no connected payment method, a stale/incomplete payment connection attempt, recent failures or warnings, and zero orders in the last 30 days. Do not repeat any of these — assume the merchant already sees them elsewhere.
 
@@ -332,6 +332,28 @@ export async function runCognitiveReview(params: {
     revenueStreams: businessProfile.classification.revenueStreams,
     connectedSystems: businessProfile.connectedSystems,
     goalTrajectories,
+    // Tier 4 validation, Stage B — wired directly from businessProfile
+    // (already fetched above), not a new query. Only items with a real
+    // trend (a genuine prior-window baseline) are shown, matching the same
+    // honest-omission discipline recentInsights already uses — a null
+    // trend means "nothing to compare yet," not "flat."
+    itemPerformance: businessProfile.offerings.performance.map((p) => ({
+      name: p.item.data.name,
+      orderCount: p.orderCount,
+      revenueLast30Days: p.revenueInCents / 100,
+    })),
+    itemTrends: businessProfile.offerings.trends
+      .filter((t) => t.trend !== null)
+      .map((t) => ({
+        name: t.item.data.name,
+        direction: t.trend!.direction,
+        changePct: Math.round(t.trend!.changeRatio * 100),
+      })),
+    // Passed through as its own fixed {repeatCustomers, highValueCustomers,
+    // lapsedCustomers, newCustomers} shape, nulls included — a small,
+    // fixed object, not a variable list, so a null entry here just means
+    // "no real baseline for this segment," not something worth filtering.
+    customerSegmentTrends: businessProfile.customers.segmentTrends,
   };
 
   const outcome = await callGenesisModel({

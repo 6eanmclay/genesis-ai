@@ -7,8 +7,14 @@ import {
   getRevenue,
   getTopContacts,
   getCustomerSegments,
+  getItemPerformance,
+  getItemPerformanceTrend,
+  getCustomerSegmentTrend,
   type TopContact,
   type CustomerSegments,
+  type ItemPerformance,
+  type ItemPerformanceTrend,
+  type CustomerSegmentTrends,
 } from "./reasoning";
 import type { CanonicalRecord } from "./entities";
 
@@ -54,6 +60,12 @@ export interface BusinessProfile {
   offerings: {
     items: CanonicalRecord<"item">[];
     activeCount: number;
+    // Tier 4 validation, Stage B — wired here (not a new query elsewhere)
+    // so this stays the one place any future consumer reads item-level
+    // business facts, same "single source of truth" discipline the rest of
+    // this file already follows.
+    performance: ItemPerformance[];
+    trends: ItemPerformanceTrend[];
   };
   revenue: {
     last30DaysInCents: number;
@@ -62,6 +74,7 @@ export interface BusinessProfile {
   customers: {
     topContacts: TopContact[];
     segments: CustomerSegments;
+    segmentTrends: CustomerSegmentTrends;
     totalContactCount: number;
   };
   people: {
@@ -107,6 +120,9 @@ export async function getBusinessProfile(
     revenueAllTime,
     topContacts,
     segments,
+    itemPerformance30d,
+    itemTrends,
+    segmentTrends,
   ] = await Promise.all([
     prisma.store.findUniqueOrThrow({
       where: { id: storeId },
@@ -127,6 +143,9 @@ export async function getBusinessProfile(
     getRevenue(storeId),
     getTopContacts(storeId),
     getCustomerSegments(storeId),
+    getItemPerformance(storeId, { since: thirtyDaysAgo }),
+    getItemPerformanceTrend(storeId),
+    getCustomerSegmentTrend(storeId),
   ]);
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
@@ -158,6 +177,8 @@ export async function getBusinessProfile(
     offerings: {
       items,
       activeCount: items.filter((r) => r.data.active !== false).length,
+      performance: itemPerformance30d,
+      trends: itemTrends,
     },
     revenue: {
       last30DaysInCents: revenue30d,
@@ -166,6 +187,7 @@ export async function getBusinessProfile(
     customers: {
       topContacts,
       segments,
+      segmentTrends,
       totalContactCount: contacts.length,
     },
     people: {
