@@ -105,6 +105,7 @@ model Store {
   delegatedAuthorities      DelegatedAuthority[]
   productEvents             ProductEvent[]
   businessRecords           BusinessRecord[]
+  businessEvents            BusinessEvent[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -172,6 +173,17 @@ model StoreIntegration {
   connectedAt       DateTime?
   lastVerifiedAt    DateTime?
   lastError         String?
+  // Phase 3 Milestone 3 (Business Intelligence Engine) — sync *scheduling*
+  // state, deliberately separate from status/lastVerifiedAt/lastError above
+  // (connection *health* — is the credential valid — a different concern
+  // from sync *cadence*). nextSyncDueAt is what makes the scheduler
+  // trigger-frequency-agnostic: computed once per attempt, independent of
+  // how often the cron route itself gets invoked — see lib/intelligence/
+  // scheduler.ts. Full sync attempt history lives in ExecutionLog
+  // (already written by syncExecutable), not duplicated here.
+  lastSyncedAt      DateTime?
+  nextSyncDueAt     DateTime?
+  syncFailureCount  Int                 @default(0)
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
@@ -179,6 +191,7 @@ model StoreIntegration {
   connectedBy User? @relation(fields: [connectedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([storeId, provider])
+  @@index([status, nextSyncDueAt])
 }
 
 model StoreDraft {
@@ -574,4 +587,31 @@ model BusinessRecord {
 
   @@unique([storeId, entityType, sourceProvider, externalId])
   @@index([storeId, entityType])
+}
+
+// Phase 3 Milestone 3 (Business Intelligence Engine) — the standardized,
+// provider-independent event Change Detection produces (lib/intelligence/
+// changeDetection.ts) whenever a BusinessRecord meaningfully changes, or a
+// time-based condition becomes true (e.g. an invoice crossing its due
+// date with no new sync data at all). Deliberately carries no
+// severity/importance of its own — that judgment belongs to the Insight
+// Engine downstream (lib/intelligence/insights.ts); this table only ever
+// records facts. Append-only, no dedup at this layer — dedup/auto-resolve
+// already exists one layer further down, on GenesisObservation.
+model BusinessEvent {
+  id             String    @id @default(cuid())
+  storeId        String
+  entityType     String
+  eventType      String // "contact.created" | "invoice.paid" | "invoice.overdue" | "appointment.cancelled" | ...
+  recordId       String? // the BusinessRecord.id this is about — null for store-level aggregate events
+  sourceProvider String
+  summary        String
+  data           Json?
+  occurredAt     DateTime  @default(now())
+  processedAt    DateTime? // set once the Insight Engine has considered it — null means new/unprocessed
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, occurredAt])
+  @@index([storeId, processedAt])
 }

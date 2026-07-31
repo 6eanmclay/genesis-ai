@@ -50,6 +50,12 @@ export const ItemSchema = z.object({
   priceInCents: z.number().int().nullable(),
   category: z.string().nullable(),
   active: z.boolean().nullable(),
+  // Phase 3 Milestone 3 — added for the "inventory low/depleted" event
+  // named explicitly in that milestone's spec. Honest gap, stated plainly:
+  // no connector populates this yet (none of the 3 proof integrations
+  // track stock), so the change-detection rule reading this field has a
+  // real code path but nothing to detect against until one does.
+  quantityAvailable: z.number().int().nullable(),
 });
 export type Item = z.infer<typeof ItemSchema>;
 

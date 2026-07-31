@@ -15,7 +15,12 @@ export async function recordGenesisExecution<TMetadata>(params: {
   verified: boolean;
   message: string;
   retryable: boolean;
-  userId: string;
+  // Phase 3 Milestone 3 — nullable so lib/intelligence/scheduler.ts's
+  // unattended calls (no human session, no userId to attribute this to)
+  // can still write a real ExecutionLog row. actorType stays "GENESIS"
+  // either way — this is Genesis's own review running, whether triggered
+  // by a page load or the scheduler.
+  userId: string | null;
   storeId?: string;
   storeDraftId?: string;
   metadata: TMetadata;

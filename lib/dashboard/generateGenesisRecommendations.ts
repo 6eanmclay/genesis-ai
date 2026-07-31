@@ -6,6 +6,7 @@ import { getOrderSummary, getRecentActivity } from "./whatHappened";
 import { getCustomerSummaries } from "./customers";
 import { getInventorySnapshot } from "./inventory";
 import { getRecentGenesisHistory } from "./genesisLearning";
+import { computeInsights, type Insight } from "@/lib/intelligence/insights";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
@@ -78,6 +79,8 @@ Write like a business partner sharing an observation, not an admin system issuin
 
 You are also shown, under recentGenesisHistory, up to 5 of your own recent proposals from the last 60 days and, where applicable, what happened afterward. An entry with decision "executed" includes a plain before/after order comparison for the 14 days after that change — treat this strictly as correlated timing, never as proof that specific change caused the difference, especially when the entry's outcome text mentions other concurrent changes. An executed entry's decisionMode tells you HOW it was decided: "human" means the owner personally reviewed and approved it; "autonomous" means you handled it yourself under authority the owner had previously granted for that action type, without asking first — this is informational context about how confident a prior review's judgment turned out to be in practice, nothing more; it never changes what you are currently allowed to do, and you have no ability to grant yourself more authority by citing past outcomes. An entry with decision "rejected" means the owner declined that specific proposal — this does not necessarily mean the underlying issue is wrong; it may have been the wording, timing, or exact implementation rather than the idea itself. Do not simply repeat a recently rejected proposal unchanged. You may raise the same underlying topicKey again if the current data gives you a genuinely new or stronger reason to — if you do, acknowledge that a similar idea was recently declined rather than presenting it as first-time news.
 
+You are also shown, under recentInsights, real pre-computed findings — already-crossed significance thresholds (a real revenue swing, invoices going overdue, engagement changing, appointment cancellations rising), never raw numbers you have to calculate yourself. Treat these as the strongest, most current signal available: when a recommendation is explained by one or more of these, name the real numbers from the insight directly rather than restating it vaguely, and where multiple insights plausibly relate to each other (e.g. declining revenue alongside declining engagement), you may suggest that connection — framed as a plausible contributing factor ("this may be related to..."), never asserted as proven causation. An empty recentInsights list is a normal, healthy state, not a gap to fill with speculation.
+
 actionHref must be exactly one of: "/dashboard#attention" (needs-attention items), "/dashboard/website" (publishing/unpublishing, storefront visibility), "/dashboard/settings" (store name/description), "/dashboard/payments" (Stripe/PayPal), "/dashboard/products" (the product catalog) — whichever dashboard section the recommendation relates to.
 
 If, and only if, a recommendation maps directly onto one of these two actions the merchant could approve exactly as you propose it, attach a proposedAction with the precise, ready-to-apply new values:
@@ -105,7 +108,15 @@ export interface GeneratedRecommendationSummary {
 
 export async function generateGenesisRecommendations(params: {
   storeId: string;
-  userId: string;
+  // Phase 3 Milestone 3 — nullable so the scheduler's unattended review
+  // pass (no human session) can call this too; see recordGenesisExecution's
+  // own comment for why actorType stays "GENESIS" regardless.
+  userId: string | null;
+  // Phase 3 Milestone 3 — pre-computed by the scheduler when this call is
+  // part of a sync cycle (see the comment where it's read below for why);
+  // omitted by the existing human-triggered review path, which computes a
+  // fresh batch itself.
+  recentInsights?: Insight[];
 }): Promise<GeneratedRecommendationSummary[]> {
   const { storeId, userId } = params;
 
@@ -126,6 +137,13 @@ export async function generateGenesisRecommendations(params: {
     getRecentActivity(storeId, 10),
     getRecentGenesisHistory(storeId),
   ]);
+  // Phase 3 Milestone 3 — the scheduler computes insights once per cycle
+  // and passes them in (computeInsights has a real side effect, marking
+  // BusinessEvent rows processed, so it must not run twice in one pass);
+  // the existing human-triggered "Ask Genesis to Review My Business" path
+  // has no pre-computed batch, so it computes fresh here instead — either
+  // way, every caller of this function gets insight-aware review.
+  const recentInsights = params.recentInsights ?? (await computeInsights(storeId));
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
 
@@ -163,6 +181,15 @@ export async function generateGenesisRecommendations(params: {
     // Phase 5 — bounded (<=5, <=60 days), deterministic learning context, see
     // lib/dashboard/genesisLearning.ts and the prompt instructions above.
     recentGenesisHistory,
+    // Phase 3 Milestone 3 — real, pre-computed, significance-thresholded
+    // findings from connected/internal data (lib/intelligence/insights.ts)
+    // — never raw numbers Claude has to compute itself. See the prompt
+    // instructions above for how these differ from recentActivity.
+    recentInsights: recentInsights.map((i) => ({
+      type: i.type,
+      severity: i.severity,
+      summary: i.summary,
+    })),
   };
 
   const outcome = await callGenesisModel({

@@ -57,6 +57,9 @@ export function mapProductsToItems(
       priceInCents: product.priceInCents,
       category: null,
       active: product.active,
+      // The storefront's own Product model has no stock/quantity concept
+      // at all — an honest null, not a fabricated number.
+      quantityAvailable: null,
     },
     syncedAt: new Date(),
   }));

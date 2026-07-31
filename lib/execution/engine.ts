@@ -28,6 +28,20 @@ interface ExecuteOptions {
   // active, does it match this exact action), not a re-derivation of
   // everything the caller already verified.
   preAuthorizedGrantId?: string;
+  // Phase 3 Milestone 3 (Business Intelligence Engine) — the scheduler's
+  // own bypass, mirroring preAuthorizedGrantId's shape: the ONLY other way
+  // to skip requireStorePermission's human-session requirement. Unlike
+  // preAuthorizedGrantId there is no grant row to re-verify — this is a
+  // deliberately narrow, unconditional bypass, so it carries a real, new
+  // trust boundary of its own: this is the first path in this codebase
+  // that can execute with genuinely zero human/request context (every
+  // "autonomous" execution before this still rode a real request via
+  // after()). The only legitimate caller is lib/intelligence/scheduler.ts,
+  // itself only ever invoked from the CRON_SECRET-gated cron route — never
+  // reachable from any browser-facing code path. ctx.actorType is always
+  // forced to "SYSTEM" regardless of opts.actorType, exactly like the
+  // existing requiredPermission-null branch below already does.
+  systemStoreId?: string;
 }
 
 function buildResult<TMetadata>(
@@ -81,6 +95,8 @@ export async function execute<TInput, TMetadata>(
         );
       }
       ctx = { storeId: grant.storeId, userId: null, actorType };
+    } else if (opts.systemStoreId) {
+      ctx = { storeId: opts.systemStoreId, userId: null, actorType: "SYSTEM" };
     } else if (executable.requiredPermission) {
       const { userId, storeId } = await requireStorePermission(
         executable.requiredPermission,

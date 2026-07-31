@@ -1,6 +1,6 @@
 import type { IntegrationProvider } from "@prisma/client";
 import type { IntegrationConnector } from "@/lib/integrations/types";
-import { persistSyncedRecords } from "@/lib/businessModel/sync";
+import { persistSyncedRecords, type PersistSyncResult } from "@/lib/businessModel/sync";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
 
@@ -93,6 +93,21 @@ export function verifyExecutable(
   };
 }
 
+export interface SyncMetadata {
+  written: number;
+  errors: number;
+  // Phase 3 Milestone 3 — the scheduler's own input to Change Detection.
+  // Included here (not a separate return channel) because execute()'s
+  // ExecutionResult is what actually reaches the caller in-memory; the
+  // same object also lands in ExecutionLog.metadata, matching the existing
+  // precedent of GENESIS_RECOMMENDATIONS_GENERATE storing its full result
+  // there too ("nothing reads this yet" there; here the scheduler is the
+  // real, immediate reader). Sync volumes for a real small business are
+  // small (the same assumption reasoning.ts's findRelated already makes),
+  // so this isn't the storage risk it would be at a different scale.
+  changes: PersistSyncResult["changes"];
+}
+
 // Phase 3 Milestone 2 — the third adapter, same shape as
 // connectExecutable/verifyExecutable above. Persists a connector's synced
 // data into BusinessRecord via persistSyncedRecords (lib/businessModel/
@@ -101,7 +116,7 @@ export function verifyExecutable(
 // bookkeeping, matching the other two adapters' division of labor.
 export function syncExecutable(
   connector: IntegrationConnector
-): Executable<void, { written: number; errors: number }> {
+): Executable<void, SyncMetadata> {
   return {
     action:
       SYNC_ACTIONS[connector.provider] ??
@@ -109,7 +124,10 @@ export function syncExecutable(
     requiredPermission: connector.requiredPermission,
     async run(_input, ctx) {
       if (!connector.sync) {
-        return { message: `${connector.displayName} has nothing to sync` };
+        return {
+          message: `${connector.displayName} has nothing to sync`,
+          metadata: { written: 0, errors: 0, changes: [] },
+        };
       }
       const records = await connector.sync(ctx.storeId);
       const result = await persistSyncedRecords(
@@ -121,7 +139,7 @@ export function syncExecutable(
         message: `Synced ${result.written} record(s) from ${connector.displayName}${
           result.errors.length > 0 ? ` (${result.errors.length} couldn't be saved)` : ""
         }`,
-        metadata: { written: result.written, errors: result.errors.length },
+        metadata: { written: result.written, errors: result.errors.length, changes: result.changes },
         retryable: result.errors.length > 0,
       };
     },

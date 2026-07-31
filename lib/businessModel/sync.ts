@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { ENTITY_REGISTRY } from "./entities";
+import { ENTITY_REGISTRY, type EntityType } from "./entities";
 import type { SyncedRecord } from "@/lib/integrations/types";
 
 // Phase 3 Milestone 2 — the write side of the Foundation's mapping
@@ -17,6 +17,18 @@ import type { SyncedRecord } from "@/lib/integrations/types";
 export interface PersistSyncResult {
   written: number;
   errors: { externalId: string; entityType: string; error: string }[];
+  // Phase 3 Milestone 3 (Business Intelligence Engine) — one pair per
+  // successfully-written record, `previous: null` for a genuinely new
+  // record. This is Change Detection's entire input; no separate history/
+  // version table exists — the diff happens transiently here, at the one
+  // moment both values are actually in hand, and anything worth
+  // remembering durably becomes a BusinessEvent downstream.
+  changes: {
+    recordId: string;
+    entityType: EntityType;
+    previous: unknown | null;
+    current: unknown;
+  }[];
 }
 
 export async function persistSyncedRecords(
@@ -25,6 +37,7 @@ export async function persistSyncedRecords(
   records: SyncedRecord[]
 ): Promise<PersistSyncResult> {
   const errors: PersistSyncResult["errors"] = [];
+  const changes: PersistSyncResult["changes"] = [];
   let written = 0;
 
   for (const record of records) {
@@ -48,7 +61,19 @@ export async function persistSyncedRecords(
       continue;
     }
 
-    await prisma.businessRecord.upsert({
+    const existing = await prisma.businessRecord.findUnique({
+      where: {
+        storeId_entityType_sourceProvider_externalId: {
+          storeId,
+          entityType: record.entityType,
+          sourceProvider,
+          externalId: record.externalId,
+        },
+      },
+      select: { id: true, data: true },
+    });
+
+    const row = await prisma.businessRecord.upsert({
       where: {
         storeId_entityType_sourceProvider_externalId: {
           storeId,
@@ -70,7 +95,13 @@ export async function persistSyncedRecords(
       },
     });
     written++;
+    changes.push({
+      recordId: row.id,
+      entityType: record.entityType,
+      previous: existing?.data ?? null,
+      current: parsed.data,
+    });
   }
 
-  return { written, errors };
+  return { written, errors, changes };
 }

@@ -231,6 +231,24 @@ export async function getTopContacts(
     .slice(0, limit);
 }
 
+// Phase 3 Milestone 3 — the Insight Engine's revenue/engagement trend
+// detection reads this rather than recomputing open rates itself,
+// matching the "generic primitives, small growing library" split already
+// established for getRevenue/getTopContacts. Returns null (not 0) when
+// there's no real data to average — an honest "nothing to compare," never
+// a fabricated baseline.
+export async function getAverageOpenRate(
+  storeId: string,
+  opts: { since?: Date; until?: Date } = {}
+): Promise<number | null> {
+  const campaigns = await queryRecords(storeId, "campaign", opts);
+  const rates = campaigns
+    .filter((c) => c.data.metrics?.opens != null && c.data.audienceSize)
+    .map((c) => c.data.metrics!.opens / c.data.audienceSize!);
+  if (rates.length === 0) return null;
+  return rates.reduce((sum, rate) => sum + rate, 0) / rates.length;
+}
+
 // Returns [] until an Appointment producer exists (Phase 3 Milestone 2) —
 // an honest empty state, not an error.
 export async function getUpcomingAppointments(
