@@ -279,6 +279,66 @@ export async function detectDecisionOutcomePattern(storeId: string): Promise<voi
   }
 }
 
+// A claim about ONE specific record doesn't need the same evidence breadth
+// a store-wide trend claim does — deliberately lower than
+// INSIGHT_RECURRENCE_WEEKS_THRESHOLD (3), matching the existing precedent
+// that REJECTION_PATTERN_THRESHOLD/OUTCOME_PATTERN_THRESHOLD both already
+// use 2 for a narrower, more specific claim.
+const EVENT_RECURRENCE_WEEKS_THRESHOLD = 2;
+
+// Detector 3 — recurring events tied to one specific record. Reads
+// BusinessEvent (all time, no capped window, matching detectInsightRecurrence's
+// own "all time" discipline), grouped by (eventType, recordId). recordId
+// alone is the canonical, entity-agnostic identity — a BusinessRecord.id
+// (or its internal-mapper equivalent) means the same thing regardless of
+// which registered entity type it belongs to, so this never needs to know
+// or branch on what kind of entity it's looking at; entityType is carried
+// through into the belief's own field for downstream labeling, not
+// because grouping needs it. The claim text is built entirely from real
+// data already on the events (entityType, eventType, occurrence count, the
+// latest event's own summary) — never a per-eventType special case, which
+// is the one place genericness had to be deliberately designed in rather
+// than assumed. The first Learn detector capable of forming a belief tied
+// to one record rather than a store-wide aggregate — this is what makes
+// getEntityHistory's beliefs field (Understand, reasoning.ts) return real
+// content for the first time.
+export async function detectRecordEventRecurrence(storeId: string): Promise<void> {
+  const rows = await prisma.businessEvent.findMany({
+    where: { storeId, recordId: { not: null } },
+    orderBy: { occurredAt: "asc" },
+  });
+
+  const byKey = groupBy(rows, (r) => `${r.eventType}::${r.recordId}`);
+  for (const [, group] of byKey) {
+    const distinctWeeks = new Set(group.map((r) => weekBucket(r.occurredAt)));
+    if (distinctWeeks.size < EVENT_RECURRENCE_WEEKS_THRESHOLD) continue;
+
+    const latest = group[group.length - 1];
+    const recordId = latest.recordId!;
+    const eventType = latest.eventType;
+
+    // No contradiction concept modeled here, same reasoning
+    // detectInsightRecurrence already states: a resolving event (e.g.
+    // "invoice.paid" after "invoice.overdue") is a different eventType
+    // entirely under this grouping, so there's nothing genuine to count as
+    // contradicting evidence for THIS specific pattern.
+    await upsertBelief(storeId, {
+      topicKey: `event_recurrence:${eventType}:${recordId}`,
+      claim: `Genesis has now flagged "${eventType}" ${distinctWeeks.size} weeks in a row for this ${latest.entityType}: ${latest.summary}`,
+      category: "event_recurrence",
+      supportingCount: group.length,
+      contradictingCount: 0,
+      firstObservedAt: group[0].occurredAt,
+      lastConfirmedAt: latest.occurredAt,
+      lastContradictedAt: null,
+      evidenceRefs: group.map((r) => r.id),
+      data: { eventType, occurrences: group.length, distinctWeeks: distinctWeeks.size },
+      recordId,
+      entityType: latest.entityType,
+    });
+  }
+}
+
 // The single entry point every trigger site calls — mirrors computeInsights'
 // own call shape exactly. Deliberately called ALONGSIDE computeInsights,
 // never from inside Reason (runCognitiveReview) itself and never triggered
@@ -287,6 +347,7 @@ export async function detectDecisionOutcomePattern(storeId: string): Promise<voi
 export async function distillBeliefs(storeId: string): Promise<void> {
   await detectInsightRecurrence(storeId);
   await detectDecisionOutcomePattern(storeId);
+  await detectRecordEventRecurrence(storeId);
 }
 
 const MATURE_DURATION_DAYS_THRESHOLD = 30; // real, named — "well-established" needs breadth AND time, not one alone

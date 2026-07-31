@@ -733,7 +733,7 @@ model Belief {
   // instead of spawning a duplicate every time it's re-confirmed.
   topicKey String
   claim    String // a real, self-contained sentence Reason can use directly
-  category String // open vocabulary: "insight_recurrence" | "outcome_pattern" | "owner_preference" | ...
+  category String // open vocabulary: "insight_recurrence" | "outcome_pattern" | "owner_preference" | "event_recurrence" | ...
 
   confidence Float // 0-1 — current strength of evidential support, see computeConfidence in lib/intelligence/learn.ts
   evidenceCount Int // breadth — how many independent instances support this, distinct from confidence on purpose
