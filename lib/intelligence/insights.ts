@@ -188,6 +188,14 @@ export async function computeInsights(storeId: string): Promise<Insight[]> {
       summary: insight.summary,
       data: insight.metrics,
       priority: insight.severity === "urgent" ? "high" : "medium",
+      // J4 Foundation Phase 2 (Learn) — insight.type ("revenue.decreased",
+      // etc.) is the stable identity a recurring insight needs to be
+      // recognized across weeks; topicKey is the exact existing field this
+      // codebase already uses for "the underlying pattern, independent of
+      // wording" (ApprovalRequest/CognitiveOutput both already lean on it
+      // for recommendation/opportunity rows) — reused here rather than
+      // inventing a second identity concept for the same purpose.
+      topicKey: insight.type,
     });
   }
 

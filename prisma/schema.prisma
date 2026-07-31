@@ -112,6 +112,7 @@ model Store {
   businessRecords           BusinessRecord[]
   businessEvents            BusinessEvent[]
   cognitiveOutputs          CognitiveOutput[]
+  beliefs                   Belief[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -705,4 +706,58 @@ model BusinessEvent {
 
   @@index([storeId, occurredAt])
   @@index([storeId, processedAt])
+}
+
+// J4 Foundation Phase 2 — the Learn cognitive subsystem's durable store.
+// Deliberately distinct in kind from every other model in this file:
+// BusinessRecord/BusinessEvent/CognitiveOutput all hold verified,
+// first-order fact or Reason's own point-in-time conclusions; a Belief
+// holds an INFERRED, REVISABLE generalization drawn from many of those over
+// time, and must never be merged into or confused with either — see the
+// Learn subsystem specification (memory: project_j4_cognitive_architecture.md)
+// for the full "fact vs. belief" epistemic boundary this table exists to
+// keep honest.
+//
+// No stored "maturity stage" (Observation/Hypothesis/Established Belief/...)
+// — deliberately. Maturity is a DERIVED read computed from evidenceCount/
+// firstObservedAt/lastContradictedAt/confidence at the moment something
+// needs a human-readable label, never an independently authored or
+// transitioned piece of state — this keeps the schema honest, with nothing
+// here representing a category boundary someone had to judge.
+model Belief {
+  id       String @id @default(cuid())
+  storeId  String
+  // Same stable-identity concept ApprovalRequest.topicKey/CognitiveOutput.
+  // topicKey already use — the underlying pattern this belief is about,
+  // independent of exact wording, so new evidence updates the SAME belief
+  // instead of spawning a duplicate every time it's re-confirmed.
+  topicKey String
+  claim    String // a real, self-contained sentence Reason can use directly
+  category String // open vocabulary: "insight_recurrence" | "outcome_pattern" | "owner_preference" | ...
+
+  confidence Float // 0-1 — current strength of evidential support, see computeConfidence in lib/intelligence/learn.ts
+  evidenceCount Int // breadth — how many independent instances support this, distinct from confidence on purpose
+
+  firstObservedAt    DateTime // when the earliest contributing evidence occurred, not when this row was created
+  lastConfirmedAt    DateTime // most recent evidence that supported (or didn't contradict) this belief
+  lastContradictedAt DateTime? // most recent evidence that went AGAINST it — comparing this to lastConfirmedAt is what detects Reconsideration (a long-stable belief suddenly facing contradiction)
+
+  // Real, inspectable grounding — ExecutionLog/CognitiveOutput/BusinessEvent/
+  // PostExecutionMeasurement ids that contributed, plus the actual computed
+  // numbers behind the claim. A belief with nothing here is not allowed to
+  // exist, per Learn's own traceability invariant.
+  evidenceRefs String[] @default([])
+  data         Json?
+
+  recordId   String? // same honest-null convention as CognitiveOutput/BusinessEvent — set only when genuinely about one specific record
+  entityType String?
+
+  status        String    @default("ACTIVE") // ACTIVE | RETIRED
+  retiredAt     DateTime?
+  retiredReason String? // plain text, not a rigid enum — "absorbed into a more general belief" | "did not generalize" | "contradicted by new evidence"
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, topicKey])
+  @@index([storeId, status])
 }

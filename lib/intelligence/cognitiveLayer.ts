@@ -7,6 +7,7 @@ import { getCustomerSummaries } from "@/lib/dashboard/customers";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
 import { getRecentGenesisHistory } from "@/lib/dashboard/genesisLearning";
 import { computeInsights, type Insight } from "./insights";
+import { distillBeliefs } from "./learn";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
@@ -197,6 +198,15 @@ export async function runCognitiveReview(params: {
       getBusinessProfile(storeId),
     ]);
   const recentInsights = params.recentInsights ?? (await computeInsights(storeId));
+  // J4 Foundation Phase 2 (Learn) — a separate call, deliberately not folded
+  // into the reasoning below: distillBeliefs reads its own persisted
+  // evidence fresh (all of it, never just recentInsights or this one call's
+  // window), so it runs unconditionally here rather than depending on
+  // whether computeInsights happened to run fresh this call. Read-only from
+  // this function's perspective — its output isn't consumed yet (Phase 3
+  // wires Reason to actually read getBeliefs()); this phase only proves the
+  // distillation itself is real and keeps running every time Observe does.
+  await distillBeliefs(storeId);
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
 
