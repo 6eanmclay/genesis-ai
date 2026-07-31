@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
+import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 import {
   getRecentNegativeOutcomes,
   getStaleExecutions,
@@ -98,6 +99,23 @@ const DETERMINISTIC_PREFIX = "deterministic:";
 // deliberately never getStateIssues (routine setup state stays Business
 // Journey's job, positively framed — it must never also become an alarming
 // Red signal). Safe to call from every opportunistic trigger point.
+//
+// First constitutional compliance fix (post-Phase-3 audit) — GenesisObservation
+// itself is legitimate Embodiment Layer/Expression (a presentation cache with
+// its own dedup/auto-resolve semantics, unchanged below), but every finding
+// it displays must first exist as a real CognitiveOutput, produced through
+// communicateFinding()/Execute, before Expression ever projects it. These
+// urgent items are exactly what the Insight Engine already means by
+// kind: "insight" (deterministic, real, computed findings, never AI
+// judgment) — they were just never recorded as one. Only communicated once
+// per still-active occurrence: an already-ACTIVE CognitiveOutput for a
+// topicKey means the condition is already durably recorded and doesn't need
+// re-communicating on every sweep (this runs far more often than the
+// once-daily-gated AI review — recording a fresh row every call would flood
+// the table with duplicates for the same ongoing problem). Once it resolves
+// and later genuinely recurs, a fresh row is created — real, spaced-out
+// recurrence, exactly what Learn's detectInsightRecurrence is designed to
+// notice over time, not incidental noise.
 export async function runDeterministicObservationSweep(storeId: string): Promise<void> {
   const [recentFailures, staleExecutions, integrationIssues] = await Promise.all([
     getRecentNegativeOutcomes(storeId),
@@ -105,23 +123,48 @@ export async function runDeterministicObservationSweep(storeId: string): Promise
     getIntegrationIssues(storeId),
   ]);
   const urgentItems = [...recentFailures, ...staleExecutions, ...integrationIssues];
+  const currentTopicKeys = urgentItems.map((item) => `${DETERMINISTIC_PREFIX}${item.id}`);
 
-  await Promise.all(
-    urgentItems.map((item) =>
-      upsertObservation(storeId, {
-        dedupeKey: `${DETERMINISTIC_PREFIX}${item.id}`,
-        genesisState: "urgent",
+  const alreadyActive = await prisma.cognitiveOutput.findMany({
+    where: { storeId, topicKey: { in: currentTopicKeys }, status: "ACTIVE" },
+    select: { topicKey: true },
+  });
+  const alreadyActiveTopicKeys = new Set(alreadyActive.map((r) => r.topicKey as string));
+
+  for (const item of urgentItems) {
+    const topicKey = `${DETERMINISTIC_PREFIX}${item.id}`;
+    if (!alreadyActiveTopicKeys.has(topicKey)) {
+      await communicateFinding(storeId, {
+        kind: "insight",
         summary: item.message,
+        priority: "high",
         actionHref: item.actionHref ?? null,
-      })
-    )
-  );
-  await resolveMissingObservations(
-    storeId,
-    urgentItems.map((item) => `${DETERMINISTIC_PREFIX}${item.id}`),
-    "urgent",
-    DETERMINISTIC_PREFIX
-  );
+        topicKey,
+      });
+    }
+    await upsertObservation(storeId, {
+      dedupeKey: topicKey,
+      genesisState: "urgent",
+      summary: item.message,
+      actionHref: item.actionHref ?? null,
+    });
+  }
+
+  await resolveMissingObservations(storeId, currentTopicKeys, "urgent", DETERMINISTIC_PREFIX);
+
+  // The CognitiveOutput side resolves in parallel with the badge side —
+  // closing out an already-recorded finding is bookkeeping on an existing
+  // row, not originating a new one, so this is a direct update rather than
+  // another communicateFinding call (the same distinction Phase 1/2 already
+  // established for superseding stale predictions).
+  await prisma.cognitiveOutput.updateMany({
+    where: {
+      storeId,
+      topicKey: { startsWith: DETERMINISTIC_PREFIX, notIn: currentTopicKeys },
+      status: "ACTIVE",
+    },
+    data: { status: "RESOLVED", resolvedAt: new Date() },
+  });
 }
 
 const AI_REVIEW_PREFIX = "ai_review:";
