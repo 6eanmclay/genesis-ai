@@ -409,17 +409,34 @@ export interface CustomerSegments {
   newCustomers: TopContact[];
 }
 
+// Business Intelligence Engine — `asOf` generalizes this from a pure
+// current-state snapshot to a point-in-time one, computing segment
+// membership exactly as it existed at any moment, not just "now". Powers
+// getCustomerSegmentTrend below (two snapshots compared via computeTrend)
+// without duplicating any of this function's own logic. Defaults to
+// `new Date()`, so the one existing caller (lib/businessModel/profile.ts)
+// gets byte-identical behavior.
 export async function getCustomerSegments(
-  storeId: string
+  storeId: string,
+  opts: { asOf?: Date } = {}
 ): Promise<CustomerSegments> {
-  const [contacts, saleTransactions] = await Promise.all([
+  const asOf = opts.asOf ?? new Date();
+  const [allContacts, saleTransactions] = await Promise.all([
     queryRecords(storeId, "contact"),
     queryRecords(storeId, "transaction", {
+      until: asOf, // excludes any sale that happened after this snapshot point
       filter: (data) => data.type === "sale",
     }),
   ]);
+  // contact has no DATE_FIELD entry (unlike transaction), so its own
+  // existence-as-of-asOf has to be filtered here explicitly — a contact
+  // whose firstSeenAt is after asOf didn't exist yet at that snapshot and
+  // must not appear in it at all.
+  const contacts = allContacts.filter(
+    (c) => new Date((c as CanonicalRecord<"contact">).data.firstSeenAt).getTime() <= asOf.getTime()
+  );
 
-  const now = Date.now();
+  const now = asOf.getTime();
   const spentByContactId = new Map<string, number>();
   const orderCountByContactId = new Map<string, number>();
   const lastSaleAtByContactId = new Map<string, number>();
@@ -481,6 +498,51 @@ export async function getCustomerSegments(
     highValueCustomers: highValueCustomers.sort(bySpendDesc),
     lapsedCustomers: lapsedCustomers.sort(bySpendDesc),
     newCustomers: newCustomers.sort(bySpendDesc),
+  };
+}
+
+// Business Intelligence Engine — the business question this answers: "Is
+// my customer base actually growing — more new customers, more repeat
+// business, more or less churn — or is today's revenue just one good
+// week?" Distinct from getRevenueTrend, which can't tell "more customers"
+// apart from "existing customers spending more."
+//
+// Revenue/item performance are FLOW quantities (summed over a window), so
+// their trend compares two summed windows. Customer segments are
+// STATE/LEVEL quantities (how many customers currently qualify) — the
+// meaningful comparison is a point-in-time snapshot now vs. N days ago,
+// not two summed windows. That's why this compares two getCustomerSegments
+// calls at two different `asOf` moments, not two windowed sums.
+//
+// highValueCustomers' threshold is self-normalizing (computed fresh from
+// each snapshot's own spend distribution), so the exact dollar bar can
+// shift slightly between the two compared snapshots — the count is still a
+// real, meaningful comparison ("how many customers are meaningfully
+// above-average, and is that growing"), just not against one fixed
+// absolute threshold. A known property, not a defect.
+export interface CustomerSegmentTrends {
+  repeatCustomers: Trend | null;
+  highValueCustomers: Trend | null;
+  lapsedCustomers: Trend | null;
+  newCustomers: Trend | null;
+}
+
+export async function getCustomerSegmentTrend(
+  storeId: string,
+  opts: { windowDays?: number } = {}
+): Promise<CustomerSegmentTrends> {
+  const windowMs = (opts.windowDays ?? 7) * 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const priorAsOf = new Date(now.getTime() - windowMs);
+  const [current, previous] = await Promise.all([
+    getCustomerSegments(storeId, { asOf: now }),
+    getCustomerSegments(storeId, { asOf: priorAsOf }),
+  ]);
+  return {
+    repeatCustomers: computeTrend(current.repeatCustomers.length, previous.repeatCustomers.length),
+    highValueCustomers: computeTrend(current.highValueCustomers.length, previous.highValueCustomers.length),
+    lapsedCustomers: computeTrend(current.lapsedCustomers.length, previous.lapsedCustomers.length),
+    newCustomers: computeTrend(current.newCustomers.length, previous.newCustomers.length),
   };
 }
 
