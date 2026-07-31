@@ -5,16 +5,19 @@ import { prisma } from "@/lib/prisma";
 import { getOrderSummary, getRecentActivity } from "@/lib/dashboard/whatHappened";
 import { getCustomerSummaries } from "@/lib/dashboard/customers";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
-import { getRecentGenesisHistory } from "@/lib/dashboard/genesisLearning";
 import { computeInsights, type Insight } from "./insights";
-import { distillBeliefs } from "./learn";
+import { distillBeliefs, getBeliefs } from "./learn";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessProfile } from "@/lib/businessModel/profile";
-import { predictGoalTrajectory, type GoalTrajectory } from "@/lib/businessModel/reasoning";
+import {
+  predictGoalTrajectory,
+  getRecentDecisionOutcomes,
+  type GoalTrajectory,
+} from "@/lib/businessModel/reasoning";
 
 // Phase 3 Milestone 6 — the J4 Cognitive Layer's own reasoning pipeline.
 // Was generateGenesisRecommendations.ts (lib/dashboard/), relocated here
@@ -81,6 +84,12 @@ const CognitiveOutputItemSchema = z.discriminatedUnion("kind", [
     kind: z.literal("explanation"),
     summary: z.string(),
     relatedRecordId: z.string().nullable(),
+    // J4 Foundation Phase 3 (Reason) — real, checkable grounding in a
+    // belief, mirroring relatedRecordId's own defense-in-depth exactly:
+    // only a topicKey matching a real, already-fetched belief is ever
+    // persisted (see the validation below), never trusted from the model
+    // blindly.
+    relatedBeliefTopicKey: z.string().nullable(),
   }),
   z.object({
     kind: z.literal("recommendation"),
@@ -90,6 +99,7 @@ const CognitiveOutputItemSchema = z.discriminatedUnion("kind", [
     actionHref: z.enum(GENESIS_ACTION_HREFS),
     topicKey: z.string(),
     relatedRecordId: z.string().nullable(),
+    relatedBeliefTopicKey: z.string().nullable(),
     proposedAction: ProposedActionSchema.nullable(),
   }),
   z.object({
@@ -100,6 +110,7 @@ const CognitiveOutputItemSchema = z.discriminatedUnion("kind", [
     actionHref: z.enum(GENESIS_ACTION_HREFS),
     topicKey: z.string(),
     relatedRecordId: z.string().nullable(),
+    relatedBeliefTopicKey: z.string().nullable(),
     proposedAction: ProposedActionSchema.nullable(),
   }),
 ]);
@@ -110,7 +121,7 @@ const CognitiveReviewOutputSchema = z.object({
 
 const SYSTEM_PROMPT = `You are Genesis, an expert e-commerce consultant and business partner reasoning over this specific business's real, current understanding — not offering generic advice a merchant could get from any business blog. You work in a consistent lifecycle: first understand what's actually happening (already done for you — see the data below), then explain why it matters when it isn't obvious, then recommend what to do about it, distinguishing corrective recommendations from genuine opportunities worth pursuing.
 
-You are shown the business's full profile (identity, industry, revenue model, customers and real computed segments, team, suppliers, connected systems, goals, challenges, locations), a recent order/revenue summary, inventory, recent account activity, your own recent proposal history, real pre-computed insights (already-crossed significance thresholds — revenue swings, overdue invoices, engagement changes, cancellation spikes), and — when a revenue-category goal has a real stated target — a real computed trajectory (actual progress so far vs. expected pace vs. projected final total). None of these numbers are yours to recalculate; they're already correct. Your job is reasoning about what they mean together, not arithmetic.
+You are shown the business's full profile (identity, industry, revenue model, customers and real computed segments, team, suppliers, connected systems, goals, challenges, locations), a recent order/revenue summary, inventory, recent account activity, your own recent decision outcomes and generalized beliefs (see below for how these two differ), real pre-computed insights (already-crossed significance thresholds — revenue swings, overdue invoices, engagement changes, cancellation spikes), and — when a revenue-category goal has a real stated target — a real computed trajectory (actual progress so far vs. expected pace vs. projected final total). None of these numbers are yours to recalculate; they're already correct. Your job is reasoning about what they mean together, not arithmetic.
 
 A separate deterministic system on this dashboard already flags: an unpublished store with ready products, zero active products, no connected payment method, a stale/incomplete payment connection attempt, recent failures or warnings, and zero orders in the last 30 days. Do not repeat any of these — assume the merchant already sees them elsewhere.
 
@@ -130,9 +141,15 @@ recommendation/opportunity items need a topicKey: a short, stable, lowercase_sna
 
 Write like a business partner sharing an observation, not an admin system issuing a task. Favor phrasing like "Genesis noticed..." or "Worth considering..." over bare imperatives.
 
-You are also shown, under recentGenesisHistory, up to 5 of your own recent proposals from the last 60 days and, where applicable, what happened afterward. An entry with decision "executed" includes a plain before/after order comparison for the 14 days after that change — treat this strictly as correlated timing, never as proof that change caused the difference. An executed entry's decisionMode tells you HOW it was decided: "human" means the owner personally reviewed and approved it; "autonomous" means you handled it yourself under authority the owner had previously granted, without asking first — informational context only, it never changes what you're currently allowed to do. An entry with decision "rejected" means the owner declined that specific proposal, not necessarily that the underlying issue is wrong. Do not simply repeat a recently rejected proposal unchanged; you may raise the same topicKey again with a genuinely new or stronger reason, acknowledging the prior decline rather than presenting it as first-time news.
+You are shown two distinct kinds of information about your own past reasoning, and they carry different weight — do not treat them the same way.
+
+recentDecisionOutcomes lists real, objective facts about the last 14 days: specific proposals that were executed or rejected, each with its own topicKey and summary. This is current state, not a pattern — even a single rejection is worth respecting: do not simply repeat that exact topicKey unchanged, but one decline is not proof of a firm rule, so a genuinely new or stronger reason is enough to raise it again, acknowledging the prior decline rather than presenting it as first-time news.
+
+beliefs lists patterns Learn has already generalized from real, repeated evidence over time — each with a claim, a category, a confidence score, and a maturity label. Maturity matters as much as confidence: an "early signal" or "an emerging pattern" belief is real but thin — mention it cautiously if at all, and never let it alone justify attaching a proposedAction that assumes strong trust. A "well-established" belief is a premise you can build a genuinely confident recommendation on. A belief "being reconsidered" means something you've relied on may be breaking down right now — that tension (what was established vs. what's newly contradicting it) is often itself worth a real explanation output, not something to quietly average away.
 
 Every business's own stated goals and challenges are shown with their real ids. When an output is genuinely about one specific stated goal, challenge, or other business record, set relatedRecordId to its real id — leave it null for anything that isn't really about one specific record, which is most outputs. When a goal has a real computed trajectory and it's off track, that's exactly the kind of thing worth an explanation and/or a recommendation, naming the real numbers directly.
+
+Each belief you're shown includes its own real topicKey. When an output is genuinely built on one specific belief, set relatedBeliefTopicKey to that belief's exact topicKey as shown; leave it null when no specific belief was actually used as grounding, which is most outputs.
 
 actionHref must be exactly one of: "/dashboard#attention", "/dashboard/website", "/dashboard/settings", "/dashboard/payments", "/dashboard/products" — whichever dashboard section a recommendation/opportunity relates to.
 
@@ -189,12 +206,19 @@ export async function runCognitiveReview(params: {
     select: { name: true, description: true, priceInCents: true, active: true },
   });
 
-  const [orderSummary, customerSummaries, recentActivity, recentGenesisHistory, businessProfile] =
+  const [orderSummary, customerSummaries, recentActivity, recentDecisionOutcomes, businessProfile] =
     await Promise.all([
       getOrderSummary(storeId, { includeRevenue: true }),
       getCustomerSummaries(storeId, { includeRevenue: true, limit: 10 }),
       getRecentActivity(storeId, 10),
-      getRecentGenesisHistory(storeId),
+      // J4 Foundation Phase 3 (Reason) — replaces getRecentGenesisHistory's
+      // 60-day/5-item capped proxy. A single recent decision is an
+      // objective, current-state fact (Understand's own read layer), never
+      // a Learn belief — see this milestone's own plan for why that
+      // distinction matters (a proposal declined exactly once must stay
+      // visible to Reason, even though it's below Learn's own 2-occurrence
+      // threshold for generalizing it into a real pattern).
+      getRecentDecisionOutcomes(storeId),
       getBusinessProfile(storeId),
     ]);
   const recentInsights = params.recentInsights ?? (await computeInsights(storeId));
@@ -202,11 +226,13 @@ export async function runCognitiveReview(params: {
   // into the reasoning below: distillBeliefs reads its own persisted
   // evidence fresh (all of it, never just recentInsights or this one call's
   // window), so it runs unconditionally here rather than depending on
-  // whether computeInsights happened to run fresh this call. Read-only from
-  // this function's perspective — its output isn't consumed yet (Phase 3
-  // wires Reason to actually read getBeliefs()); this phase only proves the
-  // distillation itself is real and keeps running every time Observe does.
+  // whether computeInsights happened to run fresh this call.
   await distillBeliefs(storeId);
+  // J4 Foundation Phase 3 (Reason) — read AFTER distillation, so this same
+  // pass's own fresh beliefs are what Reason sees, never a stale snapshot
+  // from before this call's own Learn pass ran. A fresh read every call,
+  // nothing cached — Reason stays exactly as stateless as before.
+  const beliefs = await getBeliefs(storeId);
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
 
@@ -283,7 +309,19 @@ export async function runCognitiveReview(params: {
       message: a.message,
       createdAt: a.createdAt,
     })),
-    recentGenesisHistory,
+    // J4 Foundation Phase 3 (Reason) — two distinctly-named fields,
+    // deliberately never merged into one: recentDecisionOutcomes is
+    // objective current fact (Understand), beliefs is Learn's own
+    // generalized, evidence-backed, revisable pattern. See SYSTEM_PROMPT
+    // below for how each should be weighed differently.
+    recentDecisionOutcomes,
+    beliefs: beliefs.map((b) => ({
+      topicKey: b.topicKey,
+      claim: b.claim,
+      category: b.category,
+      confidence: b.confidence,
+      maturity: b.maturity,
+    })),
     recentInsights: recentInsights.map((i) => ({
       type: i.type,
       severity: i.severity,
@@ -349,6 +387,11 @@ export async function runCognitiveReview(params: {
     ...businessProfile.goals.map((g) => [g.id, "goal"] as const),
     ...businessProfile.challenges.map((c) => [c.id, "challenge"] as const),
   ]);
+  // J4 Foundation Phase 3 (Reason) — same defense-in-depth for
+  // relatedBeliefTopicKey: only a topicKey that matches a real,
+  // already-fetched belief is ever persisted, never trusted from the
+  // model's own output blindly.
+  const realBeliefTopicKeys = new Set(beliefs.map((b) => b.topicKey));
 
   // J4 Foundation Phase 1 (Execute Hardening) — one communicateFinding()
   // call per item, sequential rather than a batched $transaction: each of
@@ -364,6 +407,10 @@ export async function runCognitiveReview(params: {
         ? item.relatedRecordId
         : null;
     const entityType = recordId ? (entityTypeByRecordId.get(recordId) ?? null) : null;
+    const relatedBeliefTopicKey =
+      "relatedBeliefTopicKey" in item && item.relatedBeliefTopicKey && realBeliefTopicKeys.has(item.relatedBeliefTopicKey)
+        ? item.relatedBeliefTopicKey
+        : null;
     const { cognitiveOutputId } = await communicateFinding(storeId, {
       kind: item.kind,
       summary: item.summary,
@@ -374,6 +421,7 @@ export async function runCognitiveReview(params: {
       entityType,
       topicKey: "topicKey" in item ? item.topicKey : null,
       proposedAction: "proposedAction" in item && item.proposedAction ? item.proposedAction : null,
+      data: relatedBeliefTopicKey ? { relatedBeliefTopicKey } : null,
     });
     createdOutputs.push({ id: cognitiveOutputId, recordId, entityType });
   }

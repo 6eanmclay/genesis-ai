@@ -289,9 +289,43 @@ export async function distillBeliefs(storeId: string): Promise<void> {
   await detectDecisionOutcomePattern(storeId);
 }
 
+const MATURE_DURATION_DAYS_THRESHOLD = 30; // real, named — "well-established" needs breadth AND time, not one alone
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// J4 Foundation Phase 3 (Reason) — the derived read Learn's own "no stored
+// maturity stage" invariant depends on: computed fresh from real signals
+// every time, never an independently authored or persisted category. A
+// belief "being reconsidered" — the most recent real evidence contradicted
+// it, after a run of confirmations — takes priority over evidence count,
+// because a belief that just broke matters more than how long it used to
+// hold. Written generally enough to handle a belief with evidenceCount
+// below any detector's own creation threshold, even though none of today's
+// two detectors (learn.ts) ever create one that low yet.
+export function describeMaturity(belief: {
+  evidenceCount: number;
+  firstObservedAt: Date;
+  lastConfirmedAt: Date;
+  lastContradictedAt: Date | null;
+}): string {
+  const isBeingReconsidered =
+    belief.lastContradictedAt !== null &&
+    belief.lastContradictedAt.getTime() > belief.lastConfirmedAt.getTime();
+  if (isBeingReconsidered) {
+    return "being reconsidered — this held for a while but was recently contradicted";
+  }
+  if (belief.evidenceCount < 2) {
+    return "early signal — only one supporting instance so far";
+  }
+  const daysHeld = (belief.lastConfirmedAt.getTime() - belief.firstObservedAt.getTime()) / DAY_MS;
+  if (belief.evidenceCount >= EVIDENCE_SATURATION_COUNT && daysHeld >= MATURE_DURATION_DAYS_THRESHOLD) {
+    return "well-established — tested repeatedly over time";
+  }
+  return "an emerging pattern — real, but still building evidence";
+}
+
 // Reason's read contract — the only way Reason may ever consume Learn's
-// output. Phase 2 builds and proves this path; wiring runCognitiveReview to
-// actually call it instead of getRecentGenesisHistory is Phase 3's job.
+// output. Includes the derived maturity label directly so every caller
+// gets it for free, never computes its own notion of maturity separately.
 export async function getBeliefs(storeId: string): Promise<
   {
     id: string;
@@ -299,6 +333,7 @@ export async function getBeliefs(storeId: string): Promise<
     claim: string;
     category: string;
     confidence: number;
+    maturity: string;
     evidenceCount: number;
     firstObservedAt: Date;
     lastConfirmedAt: Date;
@@ -315,6 +350,7 @@ export async function getBeliefs(storeId: string): Promise<
     claim: r.claim,
     category: r.category,
     confidence: r.confidence,
+    maturity: describeMaturity(r),
     evidenceCount: r.evidenceCount,
     firstObservedAt: r.firstObservedAt,
     lastConfirmedAt: r.lastConfirmedAt,

@@ -247,6 +247,45 @@ export async function getEntityHistory<T extends EntityType>(
   };
 }
 
+export interface RecentDecisionOutcome {
+  topicKey: string | null;
+  actionType: string;
+  decision: "executed" | "rejected";
+  decidedAt: string; // plain date, for prompt readability
+  summary: string; // the real proposal's own summary text
+}
+
+// J4 Foundation Phase 3 (Reason) — a single recent decision is an objective,
+// current-state fact ("the owner declined this proposal on this date"), not
+// a generalized pattern — it belongs here, in Understand's own read layer,
+// not in Learn (lib/intelligence/learn.ts), which only ever generalizes
+// across 2+ real occurrences. This isn't a new kind of read: getEntityHistory
+// above already reads ExecutionLog/GenesisObservation/CognitiveOutput —
+// Execute's own records — as part of answering "what's currently true";
+// this is the same pattern, scoped to recent proposal decisions store-wide
+// rather than one record. A real, principled recency window (days), never
+// an arbitrary row-count cap — the old 60-day/5-item limit this replaces
+// existed to bound a PATTERN-detection read; a plain "what happened
+// recently" read doesn't need that same defense, just an honest bound on
+// what "recently" means.
+export async function getRecentDecisionOutcomes(
+  storeId: string,
+  days = 14
+): Promise<RecentDecisionOutcome[]> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const decided = await prisma.approvalRequest.findMany({
+    where: { storeId, status: { in: ["EXECUTED", "REJECTED"] }, decidedAt: { gte: since } },
+    orderBy: { decidedAt: "desc" },
+  });
+  return decided.map((a) => ({
+    topicKey: a.topicKey,
+    actionType: a.actionType,
+    decision: a.status === "EXECUTED" ? "executed" : "rejected",
+    decidedAt: a.decidedAt!.toISOString().slice(0, 10),
+    summary: a.summary,
+  }));
+}
+
 export function aggregate(
   records: CanonicalRecord[],
   opts: { field: string; op: "sum" | "count" | "avg" }
