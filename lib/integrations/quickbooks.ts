@@ -28,7 +28,7 @@ type QuickBooksCredentials = {
 };
 
 const AUTH_URL = "https://appcenter.intuit.com/connect/oauth2";
-const TOKEN_URL = "https://oauth2.bearer.intuit.com/oauth2/v1/tokens/bearer";
+const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 const SCOPE = "com.intuit.quickbooks.accounting";
 
 function apiBase(environment: QuickBooksEnvironment): string {
