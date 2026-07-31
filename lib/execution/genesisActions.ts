@@ -45,6 +45,10 @@ import {
   resolveChallengeExecutable,
   type ResolveChallengeInput,
 } from "./executables/resolveChallenge";
+import {
+  communicateFindingExecutable,
+  type CommunicateFindingInput,
+} from "./executables/communicateFinding";
 
 // The minimal subset of Store.blueprint relevant to the actions registered
 // below — shared between generateGenesisRecommendations.ts (which fetches
@@ -217,6 +221,16 @@ interface GenesisActionDefinition<TInput> {
   // maxAuthorityTier is "always_ask" — the concept of delegation doesn't
   // exist for it, not just "defaults to off."
   maxAuthorityTier: AuthorizationTier;
+  // J4 Foundation Phase 1 (Execute Hardening) — true ONLY for a mechanic
+  // whose run() has zero effect beyond recording what's being communicated
+  // to the owner (see communicateFinding.ts). Lets execute() skip the
+  // DelegatedAuthority grant lookup entirely for this specific action,
+  // narrowly, because nothing about the business changes and there is
+  // nothing to authorize. Enforced at module load below: this may only be
+  // true for maxAuthorityTier "auto" in category "communication" — never
+  // set this on an action that changes business state, reaches an external
+  // system, or otherwise has any effect beyond this one record write.
+  authorityExempt?: boolean;
 }
 
 // The zod shape mirrors ThemeSchema/CompositionSchema in
@@ -268,6 +282,7 @@ export const GENESIS_ACTIONS: Record<
     | UpdateMarketingAssetsInput
     | UpdateGoalStatusInput
     | ResolveChallengeInput
+    | CommunicateFindingInput
   >
 > = {
   update_seo: {
@@ -506,6 +521,39 @@ export const GENESIS_ACTIONS: Record<
     authorizationTier: "always_ask",
     maxAuthorityTier: "auto",
   },
+  // J4 Foundation Phase 1 (Execute Hardening) — the first "communication"-
+  // category action, and the only one marked authorityExempt (see that
+  // field's own comment above). getCurrentValues has no real "current" to
+  // report — a communicated finding is purely additive, never a change to
+  // an existing value — so it returns the input unchanged, matching the
+  // input schema exactly (this action is never shown through the
+  // current/proposed diff UI; getCurrentValues exists only because the
+  // registry's shape requires it).
+  communicate_finding: {
+    executable: communicateFindingExecutable,
+    inputSchema: z.object({
+      kind: z.enum(["insight", "prediction", "explanation", "recommendation", "opportunity"]),
+      summary: z.string(),
+      data: z.record(z.string(), z.unknown()).nullable().optional(),
+      priority: z.enum(["high", "medium", "low"]).nullable().optional(),
+      actionLabel: z.string().nullable().optional(),
+      actionHref: z.string().nullable().optional(),
+      recordId: z.string().nullable().optional(),
+      entityType: z.string().nullable().optional(),
+      topicKey: z.string().nullable().optional(),
+      proposedAction: z.record(z.string(), z.unknown()).nullable().optional(),
+    }),
+    // Never actually invoked in practice — communicateFinding() (see
+    // genesisAutonomy.ts) never creates an ApprovalRequest for this action
+    // (there is no decision to diff, only an additive record), so nothing
+    // ever calls getCurrentValues for it. Present only because the registry
+    // shape requires every entry to have one.
+    getCurrentValues: (): CommunicateFindingInput => ({ kind: "insight", summary: "" }),
+    category: "communication",
+    authorizationTier: "auto",
+    maxAuthorityTier: "auto",
+    authorityExempt: true,
+  },
 };
 
 // Phase 6 — every registered action's maxAuthorityTier must fit within its
@@ -517,6 +565,16 @@ for (const [actionType, definition] of Object.entries(GENESIS_ACTIONS)) {
   if (AUTHORITY_TIER_RANK[definition.maxAuthorityTier] > AUTHORITY_TIER_RANK[ceiling]) {
     throw new Error(
       `GENESIS_ACTIONS.${actionType}: maxAuthorityTier "${definition.maxAuthorityTier}" exceeds its category "${definition.category}"'s ceiling "${ceiling}"`
+    );
+  }
+  // J4 Foundation Phase 1 — authorityExempt is a narrow, deliberate carve-out
+  // (see its own doc comment above), not a blanket property of a category.
+  // Enforced here, not just documented, so a future action can't silently
+  // inherit the exemption by being registered under "communication" or
+  // "auto" alone.
+  if (definition.authorityExempt && (definition.category !== "communication" || definition.maxAuthorityTier !== "auto")) {
+    throw new Error(
+      `GENESIS_ACTIONS.${actionType}: authorityExempt is only valid for category "communication" with maxAuthorityTier "auto"`
     );
   }
 }
@@ -604,4 +662,8 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   // real, honest landing spot, not a placeholder page invented for this.
   update_goal_status: { key: "home", label: "Home", href: "/dashboard" },
   resolve_challenge: { key: "home", label: "Home", href: "/dashboard" },
+  // J4 Foundation Phase 1 — never actually surfaced through this map in
+  // practice (no ApprovalRequest is created for a communicated finding),
+  // present only for completeness/type-safety alongside every other entry.
+  communicate_finding: { key: "home", label: "Home", href: "/dashboard" },
 };

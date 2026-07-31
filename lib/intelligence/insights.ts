@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { queryRecords, getRevenue, getAverageOpenRate } from "@/lib/businessModel/reasoning";
+import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 
 // Phase 3 Milestone 3 (Business Intelligence Engine) — Part 3, the Insight
 // Engine. Deliberately 100% deterministic — no AI call anywhere in this
@@ -172,17 +173,21 @@ export async function computeInsights(storeId: string): Promise<Insight[]> {
   // before this — computed fresh every pass, visible nowhere durable — so
   // getEntityHistory() (M5) could never show "here's what Genesis has
   // actually noticed about this record," only its downstream observations/
-  // recommendations. One additive write, same "one generic table, JSON
-  // payload" convention as everything else.
-  if (computed.length > 0) {
-    await prisma.cognitiveOutput.createMany({
-      data: computed.map((insight) => ({
-        storeId,
-        kind: "insight",
-        summary: insight.summary,
-        data: insight.metrics as object,
-        priority: insight.severity === "urgent" ? "high" : "medium",
-      })),
+  // recommendations.
+  //
+  // J4 Foundation Phase 1 (Execute Hardening) — routes through
+  // communicateFinding() instead of a raw createMany, so each insight gets
+  // the same authorization check and honest ExecutionLog record as every
+  // other mechanic, closing the exact bypass this phase exists to close.
+  // Sequential, not Promise.all — these are real, independently-recordable
+  // acts, not a batch; a failure on one must not obscure whether the others
+  // succeeded.
+  for (const insight of computed) {
+    await communicateFinding(storeId, {
+      kind: "insight",
+      summary: insight.summary,
+      data: insight.metrics,
+      priority: insight.severity === "urgent" ? "high" : "medium",
     });
   }
 

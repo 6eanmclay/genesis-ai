@@ -44,6 +44,10 @@ export const EXECUTION_ACTIONS = {
   // a specific BusinessRecord row instead).
   GOAL_UPDATE_STATUS: "goal.update_status",
   CHALLENGE_RESOLVE: "challenge.resolve",
+  // J4 Foundation Phase 1 (Execute Hardening) — the first "communication"-
+  // category action: Reason surfacing a finding to the owner, routed
+  // through execute() like every other mechanic instead of a raw write.
+  GENESIS_COMMUNICATE_FINDING: "genesis.communicate_finding",
 } as const;
 
 export type ExecutionAction = (typeof EXECUTION_ACTIONS)[keyof typeof EXECUTION_ACTIONS];

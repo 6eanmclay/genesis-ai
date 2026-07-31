@@ -42,6 +42,22 @@ interface ExecuteOptions {
   // forced to "SYSTEM" regardless of opts.actorType, exactly like the
   // existing requiredPermission-null branch below already does.
   systemStoreId?: string;
+  // J4 Foundation Phase 1 (Execute Hardening) — the third and narrowest way
+  // to skip requireStorePermission's human-session requirement. Unlike
+  // preAuthorizedGrantId there is no DelegatedAuthority row to re-verify:
+  // this path exists specifically for a mechanic the registry itself marks
+  // authorityExempt (see genesisActions.ts's own doc comment on that field)
+  // — one whose run() has zero effect beyond recording what's being
+  // communicated. execute() independently re-verifies the named actionType
+  // really resolves to this exact executable AND really carries
+  // authorityExempt: true before using it for anything; a caller cannot
+  // skip a grant check for an ordinary action just by naming it here.
+  // actorType is always forced to "GENESIS" — this is Genesis's own act,
+  // never an unattended scheduler tick (systemStoreId's job) and never
+  // something a delegated grant was needed for (preAuthorizedGrantId's
+  // job). The only legitimate caller is communicateFinding() in
+  // lib/execution/genesisAutonomy.ts.
+  authorityExemptAction?: { storeId: string; actionType: string };
 }
 
 function buildResult<TMetadata>(
@@ -97,6 +113,14 @@ export async function execute<TInput, TMetadata>(
       ctx = { storeId: grant.storeId, userId: null, actorType };
     } else if (opts.systemStoreId) {
       ctx = { storeId: opts.systemStoreId, userId: null, actorType: "SYSTEM" };
+    } else if (opts.authorityExemptAction) {
+      const def = GENESIS_ACTIONS[opts.authorityExemptAction.actionType];
+      if (!def || def.executable !== executable || !def.authorityExempt) {
+        throw new Error(
+          `"${opts.authorityExemptAction.actionType}" is not registered as authority-exempt`
+        );
+      }
+      ctx = { storeId: opts.authorityExemptAction.storeId, userId: null, actorType: "GENESIS" };
     } else if (executable.requiredPermission) {
       const { userId, storeId } = await requireStorePermission(
         executable.requiredPermission,

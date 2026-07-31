@@ -1,7 +1,6 @@
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getOrderSummary, getRecentActivity } from "@/lib/dashboard/whatHappened";
 import { getCustomerSummaries } from "@/lib/dashboard/customers";
@@ -11,7 +10,7 @@ import { computeInsights, type Insight } from "./insights";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
-import { tryExecuteAutonomousAction } from "@/lib/execution/genesisAutonomy";
+import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessProfile } from "@/lib/businessModel/profile";
 import { predictGoalTrajectory, type GoalTrajectory } from "@/lib/businessModel/reasoning";
@@ -222,21 +221,25 @@ export async function runCognitiveReview(params: {
   // Genesis's reasoning about what to do with it.
   if (goalTrajectories.length > 0) {
     const descriptionByGoalId = new Map(businessProfile.goals.map((g) => [g.id, g.data.description]));
+    // Superseding prior predictions is bookkeeping on existing rows, not a
+    // new finding being communicated — stays a direct write. Each NEW
+    // prediction, below, is a real communicated finding and routes through
+    // communicateFinding() like every other one, one execute() call per
+    // trajectory (never a batch) for the same reason computeInsights does.
     await prisma.cognitiveOutput.updateMany({
       where: { storeId, kind: "prediction", status: "ACTIVE" },
       data: { status: "SUPERSEDED" },
     });
-    await prisma.cognitiveOutput.createMany({
-      data: goalTrajectories.map((t) => ({
-        storeId,
+    for (const t of goalTrajectories) {
+      await communicateFinding(storeId, {
         kind: "prediction",
         summary: describeTrajectory(descriptionByGoalId.get(t.goalId) ?? "Goal", t),
         priority: t.onTrack ? "low" : "medium",
         recordId: t.goalId,
         entityType: "goal",
-        data: t as unknown as Prisma.InputJsonValue,
-      })),
-    });
+        data: t as unknown as object,
+      });
+    }
   }
 
   const contextForPrompt = {
@@ -337,34 +340,33 @@ export async function runCognitiveReview(params: {
     ...businessProfile.challenges.map((c) => [c.id, "challenge"] as const),
   ]);
 
-  const createdOutputs = await prisma.$transaction(
-    result.outputs.map((item) => {
-      const recordId =
-        item.relatedRecordId && entityTypeByRecordId.has(item.relatedRecordId)
-          ? item.relatedRecordId
-          : null;
-      return prisma.cognitiveOutput.create({
-        data: {
-          storeId,
-          kind: item.kind,
-          summary: item.summary,
-          priority: "priority" in item ? item.priority : null,
-          actionLabel: "actionLabel" in item ? item.actionLabel : null,
-          actionHref: "actionHref" in item ? item.actionHref : null,
-          recordId,
-          entityType: recordId ? entityTypeByRecordId.get(recordId) : null,
-          topicKey: "topicKey" in item ? item.topicKey : null,
-          // Prisma's Json? fields need Prisma.DbNull, not plain null, to
-          // explicitly write a null value — same idiom already used for
-          // Store.blueprint elsewhere in this codebase (ai-actions.ts).
-          proposedAction:
-            "proposedAction" in item && item.proposedAction
-              ? (item.proposedAction as object)
-              : Prisma.DbNull,
-        },
-      });
-    })
-  );
+  // J4 Foundation Phase 1 (Execute Hardening) — one communicateFinding()
+  // call per item, sequential rather than a batched $transaction: each of
+  // Reason's outputs is its own real, independently-recordable act, exactly
+  // the fidelity the Constitution asks for, not a single opaque write. This
+  // is also what makes each item's ExecutionLog row genuinely traceable to
+  // its own authorization check, even though that check always trivially
+  // clears for this authority-exempt action.
+  const createdOutputs: { id: string; recordId: string | null; entityType: "goal" | "challenge" | null }[] = [];
+  for (const item of result.outputs) {
+    const recordId =
+      item.relatedRecordId && entityTypeByRecordId.has(item.relatedRecordId)
+        ? item.relatedRecordId
+        : null;
+    const entityType = recordId ? (entityTypeByRecordId.get(recordId) ?? null) : null;
+    const { cognitiveOutputId } = await communicateFinding(storeId, {
+      kind: item.kind,
+      summary: item.summary,
+      priority: "priority" in item ? item.priority : null,
+      actionLabel: "actionLabel" in item ? item.actionLabel : null,
+      actionHref: "actionHref" in item ? item.actionHref : null,
+      recordId,
+      entityType,
+      topicKey: "topicKey" in item ? item.topicKey : null,
+      proposedAction: "proposedAction" in item && item.proposedAction ? item.proposedAction : null,
+    });
+    createdOutputs.push({ id: cognitiveOutputId, recordId, entityType });
+  }
 
   // A fresh review supersedes any earlier still-pending proposal of the
   // same actionType — without this, two review runs would each add their

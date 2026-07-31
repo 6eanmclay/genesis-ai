@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getStoreRole, hasPermission } from "@/lib/permissions";
 import { execute } from "./engine";
 import { GENESIS_ACTIONS, type GenesisActionContext, type BlueprintContextSubset } from "./genesisActions";
+import type { CommunicateFindingInput } from "./executables/communicateFinding";
 import type { Theme } from "@/lib/theme";
 
 // Phase 6 — the one place that decides "may Genesis handle this without
@@ -193,6 +194,44 @@ export async function tryExecuteAutonomousAction(
   }
 
   return true;
+}
+
+// J4 Foundation Phase 1 (Execute Hardening) — the only legitimate caller of
+// execute()'s authorityExemptAction bypass. Deliberately does NOT create an
+// ApprovalRequest: a communicated finding is purely additive (there is no
+// previousValues/proposedValues diff, no decision being made — see
+// communicate_finding's own getCurrentValues comment), so ApprovalRequest's
+// decision-tracking shape doesn't apply here. The CognitiveOutput row execute()
+// creates (via its metadata.cognitiveOutputId) is itself the durable record —
+// exactly what generateEntityHistory already reads — and the ExecutionLog
+// row execute() writes automatically is what proves this went through the
+// same honest, authorized-mechanic discipline as every other action, even
+// though no grant was checked. Throws on failure rather than swallowing it —
+// callers (computeInsights, runCognitiveReview) should surface a genuine
+// write failure, not silently drop a finding.
+export async function communicateFinding(
+  storeId: string,
+  input: CommunicateFindingInput
+): Promise<{ cognitiveOutputId: string }> {
+  const actionType = "communicate_finding";
+  const definition = GENESIS_ACTIONS[actionType];
+  const parsedInput = definition.inputSchema.safeParse(input);
+  if (!parsedInput.success) {
+    throw new Error(`Invalid communicate_finding input: ${parsedInput.error.message}`);
+  }
+
+  const result = await execute(definition.executable, parsedInput.data, {
+    authorityExemptAction: { storeId, actionType },
+  });
+
+  if (result.status === "FAILED") {
+    throw new Error(`Failed to communicate finding: ${result.message}`);
+  }
+  const metadata = result.metadata as { cognitiveOutputId?: string } | undefined;
+  if (!metadata?.cognitiveOutputId) {
+    throw new Error("communicate_finding executable did not return a cognitiveOutputId");
+  }
+  return { cognitiveOutputId: metadata.cognitiveOutputId };
 }
 
 // --- Grant / revoke — always OWNER-only, enforced by the caller via
