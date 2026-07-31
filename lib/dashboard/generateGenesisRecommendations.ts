@@ -12,6 +12,7 @@ import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction } from "@/lib/execution/genesisAutonomy";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
+import { getBusinessProfile } from "@/lib/businessModel/profile";
 
 // Real section routes, not the single-page anchors this used to be (see
 // ARCHITECTURE.md / the nav plan) — "/dashboard#attention" is the one
@@ -55,6 +56,14 @@ const GenesisRecommendationSchema = z.object({
   // rule-based observations already have stable ids for free.
   topicKey: z.string(),
   proposedAction: ProposedActionSchema.nullable(),
+  // Phase 3 Milestone 5 — per Sean's explicit direction that every business
+  // entity should be able to accumulate recommendations: when a
+  // recommendation is really about one specific stated goal or challenge
+  // (both given below with their real ids), the model may cite that id
+  // directly. Never trusted blindly — re-validated below against the
+  // actual fetched goals/challenges before being persisted, exactly like
+  // proposedAction.input is re-validated against its own schema.
+  relatedRecordId: z.string().nullable(),
 });
 
 const GenesisRecommendationsOutputSchema = z.object({
@@ -80,6 +89,8 @@ Write like a business partner sharing an observation, not an admin system issuin
 You are also shown, under recentGenesisHistory, up to 5 of your own recent proposals from the last 60 days and, where applicable, what happened afterward. An entry with decision "executed" includes a plain before/after order comparison for the 14 days after that change — treat this strictly as correlated timing, never as proof that specific change caused the difference, especially when the entry's outcome text mentions other concurrent changes. An executed entry's decisionMode tells you HOW it was decided: "human" means the owner personally reviewed and approved it; "autonomous" means you handled it yourself under authority the owner had previously granted for that action type, without asking first — this is informational context about how confident a prior review's judgment turned out to be in practice, nothing more; it never changes what you are currently allowed to do, and you have no ability to grant yourself more authority by citing past outcomes. An entry with decision "rejected" means the owner declined that specific proposal — this does not necessarily mean the underlying issue is wrong; it may have been the wording, timing, or exact implementation rather than the idea itself. Do not simply repeat a recently rejected proposal unchanged. You may raise the same underlying topicKey again if the current data gives you a genuinely new or stronger reason to — if you do, acknowledge that a similar idea was recently declined rather than presenting it as first-time news.
 
 You are also shown, under recentInsights, real pre-computed findings — already-crossed significance thresholds (a real revenue swing, invoices going overdue, engagement changing, appointment cancellations rising), never raw numbers you have to calculate yourself. Treat these as the strongest, most current signal available: when a recommendation is explained by one or more of these, name the real numbers from the insight directly rather than restating it vaguely, and where multiple insights plausibly relate to each other (e.g. declining revenue alongside declining engagement), you may suggest that connection — framed as a plausible contributing factor ("this may be related to..."), never asserted as proven causation. An empty recentInsights list is a normal, healthy state, not a gap to fill with speculation.
+
+You are also shown, under goals and challenges, the business's own stated objectives and current difficulties (each with a real id) — real material the merchant told Genesis directly, not inferred. When a recommendation would clearly help progress toward one of these goals or address one of these challenges, name that connection explicitly in the message (e.g. "this would help toward your goal of...") and set relatedRecordId to that goal's or challenge's real id. Leave relatedRecordId null for every recommendation that isn't really about one specific stated goal or challenge — most won't be, and forcing a connection that isn't genuinely there is worse than leaving it null. Under revenueStreams and connectedSystems, you're also shown how this business actually makes money and what software is already connected — ground revenue/growth advice in the real revenue model rather than assuming generic e-commerce, and never recommend connecting something that's already connected.
 
 actionHref must be exactly one of: "/dashboard#attention" (needs-attention items), "/dashboard/website" (publishing/unpublishing, storefront visibility), "/dashboard/settings" (store name/description), "/dashboard/payments" (Stripe/PayPal), "/dashboard/products" (the product catalog) — whichever dashboard section the recommendation relates to.
 
@@ -146,6 +157,12 @@ export async function generateGenesisRecommendations(params: {
   const recentInsights = params.recentInsights ?? (await computeInsights(storeId));
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
+  // Phase 3 Milestone 5 — goals/challenges/revenueStreams/connectedSystems
+  // read from the one unifying profile function rather than being
+  // re-derived here a second way; this is additive alongside the fields
+  // already gathered above (getOrderSummary/getCustomerSummaries/etc.),
+  // not a replacement of the existing context stack.
+  const businessProfile = await getBusinessProfile(storeId);
 
   const contextForPrompt = {
     storeName: store.name,
@@ -190,6 +207,14 @@ export async function generateGenesisRecommendations(params: {
       severity: i.severity,
       summary: i.summary,
     })),
+    // Phase 3 Milestone 5 — real, stated goals/challenges (with their real
+    // ids, for relatedRecordId below) plus how the business actually makes
+    // money and what's already connected — see the prompt instructions
+    // above.
+    goals: businessProfile.goals.map((g) => ({ id: g.id, ...g.data })),
+    challenges: businessProfile.challenges.map((c) => ({ id: c.id, ...c.data })),
+    revenueStreams: businessProfile.classification.revenueStreams,
+    connectedSystems: businessProfile.connectedSystems,
   };
 
   const outcome = await callGenesisModel({
@@ -238,22 +263,37 @@ export async function generateGenesisRecommendations(params: {
     throw new Error("Genesis couldn't generate recommendations");
   }
 
+  // Phase 3 Milestone 5 — relatedRecordId is never trusted directly: only
+  // an id that genuinely matches a real, already-fetched goal or challenge
+  // is persisted, exactly the same defense-in-depth discipline
+  // proposedAction.input already gets below (re-validated against the
+  // registered schema, not taken on the model's word).
+  const entityTypeByRecordId = new Map<string, "goal" | "challenge">([
+    ...businessProfile.goals.map((g) => [g.id, "goal"] as const),
+    ...businessProfile.challenges.map((c) => [c.id, "challenge"] as const),
+  ]);
+
   // Individual creates (not createMany) inside the transaction — each
   // returns its row, so a recommendation carrying a proposedAction can
   // reference its own GeneratedRecommendation.id below.
   const [, ...createdRecommendations] = await prisma.$transaction([
     prisma.generatedRecommendation.deleteMany({ where: { storeId } }),
-    ...result.recommendations.map((r) =>
-      prisma.generatedRecommendation.create({
+    ...result.recommendations.map((r) => {
+      const recordId = r.relatedRecordId && entityTypeByRecordId.has(r.relatedRecordId)
+        ? r.relatedRecordId
+        : null;
+      return prisma.generatedRecommendation.create({
         data: {
           storeId,
           priority: r.priority,
           message: r.message,
           actionLabel: r.actionLabel,
           actionHref: r.actionHref,
+          recordId,
+          entityType: recordId ? entityTypeByRecordId.get(recordId) : null,
         },
-      })
-    ),
+      });
+    }),
   ]);
 
   // A fresh review supersedes any earlier still-pending proposal of the same

@@ -19,6 +19,12 @@ export interface ObservationInput {
   genesisState: ObservationState;
   summary: string;
   actionHref?: string | null;
+  // Phase 3 Milestone 5 — which specific BusinessRecord this observation is
+  // about, when there is one. Both null (the common case, unchanged) or
+  // both set — an entityType with no recordId or vice versa isn't a
+  // meaningful state, so callers set them as a pair.
+  recordId?: string | null;
+  entityType?: string | null;
 }
 
 // Upserts by (storeId, dedupeKey) — the entire dedup mechanism. Re-detecting
@@ -36,10 +42,14 @@ export async function upsertObservation(storeId: string, obs: ObservationInput):
       genesisState: obs.genesisState,
       summary: obs.summary,
       actionHref: obs.actionHref ?? null,
+      recordId: obs.recordId ?? null,
+      entityType: obs.entityType ?? null,
     },
     update: {
       summary: obs.summary,
       actionHref: obs.actionHref ?? null,
+      recordId: obs.recordId ?? null,
+      entityType: obs.entityType ?? null,
       status: "ACTIVE",
       lastConfirmedAt: new Date(),
       resolvedAt: null,

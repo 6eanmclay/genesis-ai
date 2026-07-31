@@ -161,6 +161,84 @@ export async function findRelated(
   return related;
 }
 
+// Phase 3 Milestone 5 — per Sean's explicit direction: every business
+// entity should be able to accumulate observations, insights,
+// recommendations, and history, and future reasoning depends more on the
+// relationships between entities than on any one record in isolation. This
+// is the concrete query surface for that: everything Genesis has ever
+// noticed, recommended, or logged about ONE specific record, plus every
+// other record connected to it via the same reference convention
+// findRelated already traverses.
+//
+// Three real sources, no new storage: BusinessEvent (Milestone 3, already
+// recordId-linked — the append-only fact log, i.e. "history"),
+// GenesisObservation and GeneratedRecommendation (both just gained a
+// nullable recordId/entityType pair, same honest-null convention as
+// BusinessEvent's own — most existing rows predate this and are correctly
+// unlinked/store-level; only rows created going forward that are genuinely
+// about one entity populate it).
+export interface EntityHistory {
+  record: CanonicalRecord | null;
+  related: CanonicalRecord[];
+  events: { eventType: string; summary: string; occurredAt: Date }[];
+  observations: {
+    genesisState: string;
+    summary: string;
+    status: string;
+    firstNoticedAt: Date;
+  }[];
+  recommendations: {
+    message: string;
+    priority: string;
+    generatedAt: Date;
+  }[];
+}
+
+export async function getEntityHistory<T extends EntityType>(
+  storeId: string,
+  entityType: T,
+  recordId: string
+): Promise<EntityHistory> {
+  const [records, related, events, observations, recommendations] =
+    await Promise.all([
+      queryRecords(storeId, entityType),
+      findRelated(storeId, recordId),
+      prisma.businessEvent.findMany({
+        where: { storeId, recordId },
+        orderBy: { occurredAt: "desc" },
+      }),
+      prisma.genesisObservation.findMany({
+        where: { storeId, recordId },
+        orderBy: { firstNoticedAt: "desc" },
+      }),
+      prisma.generatedRecommendation.findMany({
+        where: { storeId, recordId },
+        orderBy: { generatedAt: "desc" },
+      }),
+    ]);
+
+  return {
+    record: records.find((r) => r.id === recordId) ?? null,
+    related,
+    events: events.map((e) => ({
+      eventType: e.eventType,
+      summary: e.summary,
+      occurredAt: e.occurredAt,
+    })),
+    observations: observations.map((o) => ({
+      genesisState: o.genesisState,
+      summary: o.summary,
+      status: o.status,
+      firstNoticedAt: o.firstNoticedAt,
+    })),
+    recommendations: recommendations.map((r) => ({
+      message: r.message,
+      priority: r.priority,
+      generatedAt: r.generatedAt,
+    })),
+  };
+}
+
 export function aggregate(
   records: CanonicalRecord[],
   opts: { field: string; op: "sum" | "count" | "avg" }
@@ -229,6 +307,101 @@ export async function getTopContacts(
     }))
     .sort((a, b) => b.totalSpentInCents - a.totalSpentInCents)
     .slice(0, limit);
+}
+
+// Phase 3 Milestone 5 — customer segments, computed rather than stored.
+// A persisted `segments: string[]` field would need active maintenance and
+// could silently go stale (a "repeat customer" tag nobody removes once
+// they've lapsed) — every segment here is directly derivable from existing
+// Contact + Transaction data, always fresh by construction, the exact
+// reasoning M1 already used to justify computing internal records live
+// instead of persisting a synced copy. A new segment definition later is a
+// new named-threshold block below, never a schema change.
+const REPEAT_CUSTOMER_MIN_ORDERS = 2;
+const HIGH_VALUE_SPEND_MULTIPLIER = 2; // at least 2x the average spending customer
+const LAPSED_WINDOW_MS = 60 * 24 * 60 * 60 * 1000; // 60 days since last purchase
+const NEW_CUSTOMER_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days since first seen
+
+export interface CustomerSegments {
+  repeatCustomers: TopContact[];
+  highValueCustomers: TopContact[];
+  lapsedCustomers: TopContact[];
+  newCustomers: TopContact[];
+}
+
+export async function getCustomerSegments(
+  storeId: string
+): Promise<CustomerSegments> {
+  const [contacts, saleTransactions] = await Promise.all([
+    queryRecords(storeId, "contact"),
+    queryRecords(storeId, "transaction", {
+      filter: (data) => data.type === "sale",
+    }),
+  ]);
+
+  const now = Date.now();
+  const spentByContactId = new Map<string, number>();
+  const orderCountByContactId = new Map<string, number>();
+  const lastSaleAtByContactId = new Map<string, number>();
+  for (const transaction of saleTransactions) {
+    const contactId = transaction.data.contactId;
+    if (!contactId) continue;
+    spentByContactId.set(
+      contactId,
+      (spentByContactId.get(contactId) ?? 0) + transaction.data.amountInCents
+    );
+    orderCountByContactId.set(
+      contactId,
+      (orderCountByContactId.get(contactId) ?? 0) + 1
+    );
+    const saleTime = new Date(transaction.data.date).getTime();
+    const existing = lastSaleAtByContactId.get(contactId);
+    if (existing === undefined || saleTime > existing) {
+      lastSaleAtByContactId.set(contactId, saleTime);
+    }
+  }
+
+  const spenders = [...spentByContactId.values()];
+  const averageSpend =
+    spenders.length > 0
+      ? spenders.reduce((sum, v) => sum + v, 0) / spenders.length
+      : 0;
+
+  const withSpend: TopContact[] = contacts.map((contact) => ({
+    contact: contact as CanonicalRecord<"contact">,
+    totalSpentInCents: spentByContactId.get(contact.id) ?? 0,
+  }));
+
+  const repeatCustomers = withSpend.filter(
+    (c) => (orderCountByContactId.get(c.contact.id) ?? 0) >= REPEAT_CUSTOMER_MIN_ORDERS
+  );
+
+  const highValueCustomers =
+    averageSpend > 0
+      ? withSpend.filter(
+          (c) => c.totalSpentInCents >= averageSpend * HIGH_VALUE_SPEND_MULTIPLIER
+        )
+      : [];
+
+  const lapsedCustomers = withSpend.filter((c) => {
+    const lastSaleAt = lastSaleAtByContactId.get(c.contact.id);
+    return lastSaleAt !== undefined && now - lastSaleAt > LAPSED_WINDOW_MS;
+  });
+
+  const newCustomers = withSpend.filter((c) => {
+    const firstSeenAt = new Date(c.contact.data.firstSeenAt).getTime();
+    return now - firstSeenAt <= NEW_CUSTOMER_WINDOW_MS;
+  });
+
+  const bySpendDesc = (a: TopContact, b: TopContact) =>
+    b.totalSpentInCents - a.totalSpentInCents;
+
+  return {
+    repeatCustomers: repeatCustomers.sort(bySpendDesc),
+    highValueCustomers: highValueCustomers.sort(bySpendDesc),
+    lapsedCustomers: lapsedCustomers.sort(bySpendDesc),
+    newCustomers: newCustomers.sort(bySpendDesc),
+  };
 }
 
 // Phase 3 Milestone 3 — the Insight Engine's revenue/engagement trend

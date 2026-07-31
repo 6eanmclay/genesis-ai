@@ -27,7 +27,12 @@ import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement
 import { GENESIS_ACTIONS, type GenesisActionContext } from "@/lib/execution/genesisActions";
 import { supersedePendingApproval } from "@/lib/dashboard/pendingApprovals";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
-import { BUSINESS_SUBCATEGORY_SLUGS, filterKnownBusinessCategories } from "@/lib/businessTaxonomy";
+import {
+  BUSINESS_SUBCATEGORY_SLUGS,
+  filterKnownBusinessCategories,
+  REVENUE_STREAM_SLUGS,
+  filterKnownRevenueStreams,
+} from "@/lib/businessTaxonomy";
 import { execute } from "@/lib/execution/engine";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 import {
@@ -37,6 +42,10 @@ import {
 } from "@/lib/genesisModel";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
+import { getBusinessProfile } from "@/lib/businessModel/profile";
+import { persistSyncedRecords } from "@/lib/businessModel/sync";
+import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
+import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
 
 const PROMPT_VERSION = "v2";
 
@@ -192,8 +201,15 @@ const CoreFieldsSchema = z.object({
 // confirmed live, not a hypothetical — so this rides its own small call
 // instead, run concurrently with the primary generation call (same input,
 // no added latency) rather than sequentially after it.
+// Phase 3 Milestone 5 — revenueStreams classification rides this exact same
+// call rather than its own third API call: same input (briefText), same
+// low-stakes/non-fatal treatment, and the reason this call exists at all in
+// the first place (avoiding an oversized combined schema on the primary
+// call) applies equally here — no reason to pay a second round-trip for
+// another small classification field.
 const BusinessCategorySchema = z.object({
   businessCategories: z.array(z.string()),
+  revenueStreams: z.array(z.string()),
 });
 
 const PrimaryBlueprintSchema = CoreFieldsSchema.extend({
@@ -313,7 +329,10 @@ Only treat a message as a request to start over when the user actually says so �
 // categories; filterKnownBusinessCategories() still drops anything
 // unrecognized after parsing as a second real check, not just prompt-level
 // guidance.
-const BUSINESS_CATEGORY_SYSTEM_PROMPT = `You are classifying a new business's type, for internal use in recommending relevant business software later — this is never shown to the customer. Given the business's name, what it sells, and its vision, choose 1-3 of the closest-matching slugs from this list: ${BUSINESS_SUBCATEGORY_SLUGS.join(", ")}. Pick "other" only if nothing else genuinely fits.`;
+const BUSINESS_CATEGORY_SYSTEM_PROMPT = `You are classifying a new business, for internal use only — none of this is shown to the customer. Given the business's name, what it sells, and its vision, do two separate classifications:
+
+1. businessCategories: choose 1-3 of the closest-matching industry slugs from this list: ${BUSINESS_SUBCATEGORY_SLUGS.join(", ")}. Pick "other" only if nothing else genuinely fits.
+2. revenueStreams: choose 1-2 of the closest-matching slugs describing how this business actually makes money, from this list: ${REVENUE_STREAM_SLUGS.join(", ")}. Pick "other" only if nothing else genuinely fits.`;
 
 const GENERATION_SYSTEM_PROMPT = `You are Genesis, an expert e-commerce consultant and brand strategist building a new business from scratch — not a form-filler producing the bare minimum needed to populate a database. Given a business description, produce a complete, professional, launch-ready brand identity and storefront content package.
 
@@ -492,6 +511,11 @@ async function generateStoreDraftCore(
   const businessCategories = filterKnownBusinessCategories(
     businessCategoryOutcome.ok
       ? (businessCategoryOutcome.message.parsed_output?.businessCategories ?? [])
+      : []
+  );
+  const revenueStreams = filterKnownRevenueStreams(
+    businessCategoryOutcome.ok
+      ? (businessCategoryOutcome.message.parsed_output?.revenueStreams ?? [])
       : []
   );
   if (!primaryOutcome.ok) {
@@ -690,6 +714,7 @@ async function generateStoreDraftCore(
       productsDraft: primary.products,
       blueprint: blueprintContent,
       businessCategories,
+      revenueStreams,
       status: "ready",
     },
     update: {
@@ -703,6 +728,7 @@ async function generateStoreDraftCore(
       productsDraft: primary.products,
       blueprint: blueprintContent,
       businessCategories,
+      revenueStreams,
       status: "ready",
       version: { increment: 1 },
     },
@@ -1243,9 +1269,9 @@ const DataQuestionSchema = z.object({
   isDataQuestion: z.boolean(),
 });
 
-const STORE_CHAT_DATA_QUESTION_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is this message a pure informational question about the business's own data (revenue, orders, customers, upcoming appointments, campaign performance, and similar) — something answerable by looking up real numbers/records, not a request to change anything?
+const STORE_CHAT_DATA_QUESTION_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is this message a pure informational question about the business itself — its own data (revenue, orders, customers, upcoming appointments, campaign performance, and similar) or its own understanding (what business this is, how it makes money, what it sells, who its customers/segments are, who works there, its suppliers/vendors, its locations, what systems are connected, its stated goals, its current challenges, or how any of these relate to each other) — something answerable by looking up real records, not a request to change anything?
 
-Most messages are NOT this — a request to change identity, theme, branding, copy, policy, or product images is handled elsewhere and should get isDataQuestion: false. A vague or conversational message that isn't really asking for specific business data should also get isDataQuestion: false. Only set isDataQuestion: true when the merchant is genuinely asking to be told something about their business's own numbers or records.`;
+Most messages are NOT this — a request to change identity, theme, branding, copy, policy, or product images is handled elsewhere and should get isDataQuestion: false. A vague or conversational message that isn't really asking for specific business data should also get isDataQuestion: false. Only set isDataQuestion: true when the merchant is genuinely asking to be told something about their business's own numbers, records, or understanding.`;
 
 // The actual answer, once isDataQuestion is true — a separate, focused call
 // (not folded into the classifier above) so the classifier's job stays
@@ -1260,13 +1286,81 @@ const StoreChatDataAnswerSchema = z.object({
 
 const STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT = `You are Genesis (J4), a merchant's business partner, answering a real question about their own business using only the data given to you below. This data comes from the business's own records — some of it computed live (always current), some of it may eventually come from connected third-party systems and carry its own "as of" recency.
 
+Under businessProfile, you're given the business's actual understanding of itself: identity (brand story, mission, values, target audience, USP), industry and revenue-model classification, its offerings, revenue, customers and real computed customer segments (repeat/high-value/lapsed/new), its owner/team/employees, suppliers/vendors, connected systems, stated goals, current challenges, and locations — this is the real source for "what business is this," "how does it make money," "who works here," "what are my goals/challenges," and similar business-understanding questions, not just transactional numbers. Any of these lists may be genuinely empty (e.g. no goals stated yet) — an honest "you haven't told me that yet" is correct, never a fabricated answer.
+
 Rules, non-negotiable:
 - Never state a number, name, or fact that isn't present in the data provided. If the data needed to answer isn't there, say so plainly and warmly — never guess or estimate.
-- The revenue figures and top-contacts list are already correctly computed for you — relay them, don't recompute or "correct" them.
+- The revenue figures, top-contacts list, and customer segments are already correctly computed for you — relay them, don't recompute or "correct" them.
 - If a question needs something you don't have any relevant data for at all (e.g. they're asking about a system that isn't connected), say so honestly, without listing every unrelated field you do have.
 - Translate any specialized or technical language into plain, everyday terms a small-business owner would understand — never make them decode jargon.
 - Keep the tone warm, direct, and conversational, like a knowledgeable partner giving a real answer — not a report or a bulleted dump of every field.
 - This is a read-only answer. Never propose, imply, or claim you're making any change to the store — you're only reporting on what already exists.`;
+
+// Phase 3 Milestone 5 — another cheap, separate classifier, same pattern as
+// DataQuestionSchema/ProductImageRequestSchema above: recognizes when the
+// owner is stating a durable fact about their business — a goal, a current
+// challenge, a new employee, a location — as opposed to a question, a
+// content-change request, or ordinary conversation.
+//
+// A discriminated union, not a generic z.record(z.unknown()) bag — the
+// first version of this schema used a loose record and, confirmed live
+// against the real API, Claude correctly identified the entityType every
+// time but frequently left `data` an empty object, since a generic record
+// gives the structured-output grammar no per-field pressure (no required
+// fields, no enum constraints) — only this prompt's prose said fields were
+// required, and prose alone wasn't enough. Real per-entity-type object
+// schemas, exactly the same fix ProposedActionSchema already relies on in
+// generateGenesisRecommendations.ts, make the API's own grammar compiler
+// enforce it. Each "Capture" schema deliberately covers only what Claude
+// can plausibly infer from one message — status/identifiedAt/the
+// relatedGoalIds/relatedChallengeIds reference arrays are derived in code
+// at the write site below, never asked of the model (it has no way to know
+// a real prior goal/challenge id from one isolated message).
+const GoalCaptureSchema = z.object({
+  description: z.string(),
+  category: z.enum(["revenue", "growth", "efficiency", "expansion", "customer_experience", "product", "hiring", "other"]).nullable(),
+  priority: z.enum(["high", "medium", "low"]).nullable(),
+  targetDate: z.string().nullable(),
+});
+const ChallengeCaptureSchema = z.object({
+  description: z.string(),
+  category: z.enum(["cash_flow", "staffing", "competition", "operations", "marketing", "supply_chain", "other"]).nullable(),
+  severity: z.enum(["high", "medium", "low"]).nullable(),
+});
+const EmployeeCaptureSchema = z.object({
+  name: z.string(),
+  title: z.string().nullable(),
+  roles: z.array(z.string()),
+  email: z.string().nullable(),
+  startedAt: z.string().nullable(),
+});
+const LocationCaptureSchema = z.object({
+  name: z.string(),
+  type: z.enum(["storefront", "warehouse", "office", "service_area"]).nullable(),
+  address: z.string().nullable(),
+  city: z.string().nullable(),
+  state: z.string().nullable(),
+  postalCode: z.string().nullable(),
+  country: z.string().nullable(),
+});
+
+const BusinessFactSchema = z.discriminatedUnion("entityType", [
+  z.object({ entityType: z.literal("goal"), data: GoalCaptureSchema, confirmationReply: z.string() }),
+  z.object({ entityType: z.literal("challenge"), data: ChallengeCaptureSchema, confirmationReply: z.string() }),
+  z.object({ entityType: z.literal("employee"), data: EmployeeCaptureSchema, confirmationReply: z.string() }),
+  z.object({ entityType: z.literal("location"), data: LocationCaptureSchema, confirmationReply: z.string() }),
+  z.object({ entityType: z.literal("none"), data: z.null(), confirmationReply: z.null() }),
+]);
+
+const STORE_CHAT_BUSINESS_FACT_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live business, before anything else runs. Decide whether the merchant is stating a durable fact about their business that you should remember — a goal they have, a challenge they're currently facing, a new employee who works there, or a location/property the business operates from — as opposed to asking a question, requesting a content change, or just making ordinary conversation.
+
+Most messages are NOT this — set entityType: "none" for anything else. Only pick one of the other four when the merchant is clearly telling you something true and lasting about their business:
+- "goal": something they want to achieve (e.g. "my goal this quarter is $10k in monthly revenue"). Always fill in description with a real, specific sentence — never leave it vague or generic.
+- "challenge": something currently difficult for the business (e.g. "keeping enough inventory in stock has been a real problem"). Always fill in description with a real, specific sentence.
+- "employee": a person who works at the business (e.g. "I just hired Jane as store manager"). name is required — everything else, only what's actually stated.
+- "location": a physical place the business operates from (e.g. "we also have a small warehouse in Austin"). name is required (a short label like "Austin Warehouse") — everything else, only what's actually stated.
+
+For every field beyond the required one(s) above, fill it in only when you can confidently infer it from the actual message — leave it null (or, for the array fields, empty) rather than guessing. Write a short, warm confirmationReply that states back exactly what you're recording, e.g. "Got it — I'll remember that your Q3 goal is $10k in monthly revenue." so the merchant can see and correct it. For entityType: "none", leave data and confirmationReply null.`;
 
 // Family-beta instrumentation (v20) — shared by both applyGenesisMessage
 // (draft chat) and applyGenesisMessageToStore (live chat) so a real chat
@@ -2076,7 +2170,16 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     : null;
 
   if (dataQuestionResult?.isDataQuestion) {
-    const dataContext = await buildChatDataContext(store.id);
+    // Phase 3 Milestone 5 — businessProfile is fetched alongside
+    // buildChatDataContext (not folded into that function itself, which
+    // lives in lib/businessModel/reasoning.ts and would create a circular
+    // import if it depended on profile.ts, which itself depends on
+    // reasoning.ts's own primitives) and merged into one JSON payload —
+    // Claude sees a single combined context either way.
+    const [dataContext, businessProfile] = await Promise.all([
+      buildChatDataContext(store.id),
+      getBusinessProfile(store.id),
+    ]);
     const answerOutcome = await callGenesisModel({
       model: "claude-opus-4-8",
       max_tokens: 1500,
@@ -2085,7 +2188,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       messages: [
         {
           role: "user",
-          content: `Business data (JSON):\n${JSON.stringify(dataContext, null, 2)}\n\nMerchant's question: ${userMessage}`,
+          content: `Business data (JSON):\n${JSON.stringify({ ...dataContext, businessProfile }, null, 2)}\n\nMerchant's question: ${userMessage}`,
         },
       ],
       output_config: {
@@ -2148,6 +2251,120 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     });
     revalidatePath(returnTo);
     redirect(returnTo);
+  }
+
+  // Phase 3 Milestone 5 — a fourth independent triage step, same
+  // "own small call, own schema, doesn't touch the main pipeline" pattern
+  // as the data-question and image-request classifiers around it. Captures
+  // a stated goal/challenge/employee/location directly into BusinessRecord
+  // via persistSyncedRecords (sourceProvider: "genesis_chat") — the exact
+  // same validate-and-upsert path a real connector's sync() already uses,
+  // reused as-is. Written directly, not through ApprovalRequest: this is
+  // Genesis's own internal understanding, never customer-facing storefront
+  // content, so it doesn't carry update_hero/update_theme's risk profile —
+  // it's still fully traceable (sourceProvider on the row, normal chat
+  // history, the confirmation reply itself) and correctable in the next
+  // turn, the same trust model the read-only Q&A path above already uses.
+  const businessFactOutcome = await callGenesisModel({
+    model: "claude-opus-4-8",
+    max_tokens: 800,
+    thinking: { type: "adaptive" },
+    system: STORE_CHAT_BUSINESS_FACT_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: userMessage }],
+    output_config: {
+      effort: "low",
+      format: zodOutputFormat(BusinessFactSchema),
+    },
+  });
+  const businessFactResult = businessFactOutcome.ok
+    ? businessFactOutcome.message.parsed_output
+    : null;
+
+  if (businessFactResult && businessFactResult.entityType !== "none") {
+    const entityType = businessFactResult.entityType;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    // The model only ever fills in what one isolated message can support
+    // (BusinessFactSchema's per-entityType Capture shape above) — status,
+    // identifiedAt, and the relatedGoalIds/relatedChallengeIds reference
+    // arrays are derived here, never asked of the model, since it has no
+    // way to know a real prior goal/challenge id from one message alone.
+    const fullData =
+      entityType === "goal"
+        ? { ...businessFactResult.data, status: "active", identifiedAt: todayIso, relatedChallengeIds: [] }
+        : entityType === "challenge"
+          ? { ...businessFactResult.data, status: "active", identifiedAt: todayIso, resolvedAt: null, relatedGoalIds: [] }
+          : entityType === "employee"
+            ? { ...businessFactResult.data, status: "active", locationId: null }
+            : businessFactResult.data; // location — Capture shape already matches LocationSchema exactly
+
+    const parsed = ENTITY_REGISTRY[entityType].schema.safeParse(fullData);
+    // A malformed/underspecified extraction is silently dropped, exactly
+    // like persistSyncedRecords already drops a bad connector record —
+    // never a crash, never bad data reaching BusinessRecord. Falls through
+    // to the normal chat flow below rather than confirming a capture that
+    // didn't actually happen.
+    if (parsed.success) {
+      const { changes } = await persistSyncedRecords(store.id, "genesis_chat", [
+        { entityType, externalId: randomUUID(), data: parsed.data },
+      ]);
+
+      // Enrich the already-existing Business Intelligence Engine (Phase 3
+      // Milestone 3), per Sean's explicit direction — not a second
+      // notification system. A high-severity, active challenge becomes a
+      // real, namespaced GenesisObservation, exactly like notify.ts already
+      // does for insights, reusing upsertObservation/
+      // resolveMissingObservations as-is with its own "challenge:" prefix
+      // (the same multi-writer namespacing discipline "deterministic:"/
+      // "ai_review:"/"insight:" already coexist under).
+      if (entityType === "challenge" && changes[0]) {
+        const challengeData = parsed.data as { severity: string | null; status: string };
+        const recordId = changes[0].recordId;
+        if (challengeData.severity === "high" && challengeData.status === "active") {
+          await upsertObservation(store.id, {
+            dedupeKey: `challenge:${recordId}`,
+            genesisState: "urgent",
+            summary: (parsed.data as { description: string }).description,
+            actionHref: null,
+            recordId,
+            entityType: "challenge",
+          });
+        } else {
+          // Not (or no longer) high-severity/active — clear just this one
+          // observation if it exists. Passing the full dedupeKey as the
+          // "prefix" with an empty still-active list resolves exactly this
+          // one row (no other real dedupeKey can start with one specific
+          // record's own cuid) without touching any other challenge's
+          // observation, which a genesisState-wide resolve pass would risk.
+          await resolveMissingObservations(store.id, [], "urgent", `challenge:${recordId}`);
+        }
+      }
+
+      const reply =
+        businessFactResult.confirmationReply ??
+        "Got it — I'll remember that about your business.";
+      await prisma.storeMessage.create({
+        data: { storeId: store.id, role: "assistant", content: reply },
+      });
+      await recordGenesisExecution({
+        action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+        status: "SUCCESS",
+        verified: false,
+        message: reply,
+        retryable: false,
+        userId,
+        storeId: store.id,
+        metadata: { kind: "business_fact", entityType },
+      });
+      await logChatTurnEvent({
+        userId,
+        storeId: store.id,
+        durationMs: Date.now() - turnStartedAt,
+        outcome: "success",
+        likelyRephraseOf,
+      });
+      revalidatePath(returnTo);
+      redirect(returnTo);
+    }
   }
 
   // Detect "replace this product's image" requests first, via a separate
@@ -3059,6 +3276,7 @@ export async function confirmStoreDraft() {
       blueprint: (blueprintWithHero as object | null) ?? Prisma.DbNull,
       version: draft.version,
       businessCategories: draft.businessCategories,
+      revenueStreams: draft.revenueStreams,
       products: {
         create: products.map((p, index) => ({
           name: p.name,

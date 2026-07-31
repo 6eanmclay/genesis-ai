@@ -130,3 +130,46 @@ const LABEL_BY_SLUG = new Map(
 export function businessCategoryLabel(slug: string): string {
   return LABEL_BY_SLUG.get(slug) ?? slug;
 }
+
+// Phase 3 Milestone 5 — a second, small, open classification taxonomy:
+// *how* a business makes money, distinct from *what industry* it's in
+// (above). Colocated here rather than a new file since it's the same
+// pattern — small, open, purely-additive, used for AI classification +
+// validation at store-generation time (see ai-actions.ts's CoreFieldsSchema)
+// — not because it's conceptually the same axis.
+
+export interface RevenueStreamType {
+  slug: string;
+  label: string;
+}
+
+export const REVENUE_STREAM_TYPES: RevenueStreamType[] = [
+  { slug: "product_sales", label: "Product Sales" },
+  { slug: "service_fees", label: "Service Fees" },
+  { slug: "subscriptions", label: "Subscriptions" },
+  { slug: "bookings_appointments", label: "Bookings / Appointments" },
+  { slug: "commissions", label: "Commissions" },
+  { slug: "rentals", label: "Rentals" },
+  { slug: "licensing", label: "Licensing" },
+  { slug: "advertising", label: "Advertising" },
+  { slug: "donations", label: "Donations" },
+  { slug: "other", label: "Other" },
+];
+
+export const REVENUE_STREAM_SLUGS: string[] = REVENUE_STREAM_TYPES.map(
+  (t) => t.slug
+);
+
+const REVENUE_STREAM_SLUG_SET = new Set(REVENUE_STREAM_SLUGS);
+
+export function filterKnownRevenueStreams(candidates: string[]): string[] {
+  return candidates.filter((slug) => REVENUE_STREAM_SLUG_SET.has(slug));
+}
+
+const REVENUE_STREAM_LABEL_BY_SLUG = new Map(
+  REVENUE_STREAM_TYPES.map((t) => [t.slug, t.label] as const)
+);
+
+export function revenueStreamLabel(slug: string): string {
+  return REVENUE_STREAM_LABEL_BY_SLUG.get(slug) ?? slug;
+}

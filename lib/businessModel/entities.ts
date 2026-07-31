@@ -1,11 +1,10 @@
 import { z } from "zod";
 
 // Phase 3 Milestone 1 (J4 Foundation) — the canonical entity registry.
-// Adding a new entity type later (Location, Employee, Project, Subscription,
-// Asset, Position — all named in the milestone's own design pass as things
-// this must grow into without a redesign) is a new entry here, nothing else:
-// no change to BusinessRecord's Prisma model (already generic/JSON), the
-// mapping contract, or reasoning.ts's core primitives.
+// Adding a new entity type later (Location and Employee, added in Milestone
+// 5; Project, Subscription, Asset, Position still future) is a new entry
+// here, nothing else: no change to BusinessRecord's Prisma model (already
+// generic/JSON), the mapping contract, or reasoning.ts's core primitives.
 //
 // Categorical/type-like fields (type, status, channel, category, roles) are
 // z.string()/z.array(z.string()), never z.enum() — the same "avoid
@@ -94,6 +93,71 @@ export const DocumentSchema = z.object({
 });
 export type Document = z.infer<typeof DocumentSchema>;
 
+// Phase 3 Milestone 5 (J4 Business Understanding Model) — the first real
+// proof that the registry design promised in the comment above actually
+// holds: 4 new entity types, zero changes to BusinessRecord's Prisma model,
+// the mapping contract, or reasoning.ts's core primitives. Goal/Challenge
+// cross-reference each other and Employee references Location, all via the
+// same xxxId/xxxIds convention every other entity already uses — findRelated
+// needs no changes to traverse them.
+
+export const GoalSchema = z.object({
+  description: z.string(),
+  // "revenue" | "growth" | "efficiency" | "expansion" | "customer_experience" | "product" | "hiring" | "other"
+  category: z.string().nullable(),
+  // "active" | "achieved" | "abandoned"
+  status: z.string(),
+  // "high" | "medium" | "low"
+  priority: z.string().nullable(),
+  targetDate: z.string().nullable(), // ISO date
+  identifiedAt: z.string(), // ISO date — when first captured
+  relatedChallengeIds: z.array(z.string()),
+});
+export type Goal = z.infer<typeof GoalSchema>;
+
+export const ChallengeSchema = z.object({
+  description: z.string(),
+  // "cash_flow" | "staffing" | "competition" | "operations" | "marketing" | "supply_chain" | "other"
+  category: z.string().nullable(),
+  // "active" | "resolved"
+  status: z.string(),
+  // "high" | "medium" | "low"
+  severity: z.string().nullable(),
+  identifiedAt: z.string(), // ISO date
+  resolvedAt: z.string().nullable(), // ISO date
+  relatedGoalIds: z.array(z.string()),
+});
+export type Challenge = z.infer<typeof ChallengeSchema>;
+
+export const EmployeeSchema = z.object({
+  name: z.string(),
+  title: z.string().nullable(),
+  // Open vocabulary: "manager" | "sales" | "support" | "operations" | ...
+  roles: z.array(z.string()),
+  email: z.string().nullable(),
+  startedAt: z.string().nullable(), // ISO date
+  // "active" | "former"
+  status: z.string().nullable(),
+  // Which Location this person works at/from — deliberately not a bridge to
+  // StoreMember (the access-control role table): a business can have staff
+  // with no dashboard login, and a dashboard user doesn't need a full staff
+  // profile just to sign in. Different concerns, kept separate.
+  locationId: z.string().nullable(),
+});
+export type Employee = z.infer<typeof EmployeeSchema>;
+
+export const LocationSchema = z.object({
+  name: z.string(),
+  // "storefront" | "warehouse" | "office" | "service_area" | ...
+  type: z.string().nullable(),
+  address: z.string().nullable(),
+  city: z.string().nullable(),
+  state: z.string().nullable(),
+  postalCode: z.string().nullable(),
+  country: z.string().nullable(),
+});
+export type Location = z.infer<typeof LocationSchema>;
+
 export const ENTITY_REGISTRY = {
   contact: { schema: ContactSchema, label: "Contact" },
   transaction: { schema: TransactionSchema, label: "Transaction" },
@@ -101,6 +165,10 @@ export const ENTITY_REGISTRY = {
   appointment: { schema: AppointmentSchema, label: "Appointment" },
   campaign: { schema: CampaignSchema, label: "Campaign" },
   document: { schema: DocumentSchema, label: "Document" },
+  goal: { schema: GoalSchema, label: "Goal" },
+  challenge: { schema: ChallengeSchema, label: "Challenge" },
+  employee: { schema: EmployeeSchema, label: "Employee" },
+  location: { schema: LocationSchema, label: "Location" },
 } as const;
 
 export type EntityType = keyof typeof ENTITY_REGISTRY;

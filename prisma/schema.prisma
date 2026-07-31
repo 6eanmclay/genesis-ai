@@ -86,6 +86,11 @@ model Store {
   // CoreFieldsSchema); a real backfill for pre-existing stores is a later,
   // smaller addition.
   businessCategories String[] @default([])
+  // Phase 3 Milestone 5 — same shape/reasoning as businessCategories above,
+  // a second, independent classification axis: *how* the business makes
+  // money (product_sales/service_fees/subscriptions/...), not *what
+  // industry* it's in. See lib/businessTaxonomy.ts's REVENUE_STREAM_TYPES.
+  revenueStreams String[] @default([])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -212,6 +217,9 @@ model StoreDraft {
   // Phase 3 Milestone 2 — see Store.businessCategories's own comment; this
   // is the draft-stage copy, carried over to Store at confirmStoreDraft.
   businessCategories String[] @default([])
+  // Phase 3 Milestone 5 — see Store.revenueStreams's own comment; same
+  // draft-stage-copy pattern as businessCategories above.
+  revenueStreams String[] @default([])
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -356,6 +364,18 @@ model GeneratedRecommendation {
   actionLabel String
   actionHref  String
   generatedAt DateTime @default(now())
+  // Phase 3 Milestone 5 — same shape/nullability as BusinessEvent.recordId
+  // above: which specific BusinessRecord (a Goal, a Challenge, a Contact,
+  // ...) this recommendation is actually about, when it's about one
+  // specific entity rather than the business in aggregate. Null is the
+  // honest, common case — most recommendations (today: theme/hero/SEO
+  // copy) aren't about any one record. ApprovalRequest deliberately does
+  // NOT duplicate this column — it already links back here via
+  // recommendationId, so recordId is read by joining through, matching how
+  // topicKey's own "underlying issue identity" is likewise only ever set
+  // here, not copied onto every table that references a recommendation.
+  recordId    String?
+  entityType  String?
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
@@ -501,6 +521,13 @@ model GenesisObservation {
   lastConfirmedAt DateTime  @default(now())
   resolvedAt      DateTime?
   dismissedAt     DateTime?
+  // Phase 3 Milestone 5 — same shape/nullability/reasoning as
+  // GeneratedRecommendation.recordId above: which specific BusinessRecord
+  // this observation is about, when there is one (e.g. a specific
+  // high-severity Challenge) — null for genuinely store-wide observations
+  // (e.g. "no payment connected"), same honest-null convention.
+  recordId        String?
+  entityType      String?
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
