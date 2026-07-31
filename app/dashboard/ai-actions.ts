@@ -46,6 +46,7 @@ import { getBusinessProfile } from "@/lib/businessModel/profile";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
+import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 
 const PROMPT_VERSION = "v2";
 
@@ -2321,12 +2322,37 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       // resolveMissingObservations as-is with its own "challenge:" prefix
       // (the same multi-writer namespacing discipline "deterministic:"/
       // "ai_review:"/"insight:" already coexist under).
+      //
+      // J4 Foundation final verification pass — a real, deterministic
+      // judgment ("this specific stated fact is currently urgent") must
+      // exist as a real CognitiveOutput, produced through
+      // communicateFinding()/Execute, before GenesisObservation ever
+      // projects it — the same requirement already applied to the
+      // deterministic sweep and already satisfied by notify.ts. Only
+      // recorded once per still-active occurrence, same reasoning as the
+      // sweep: restating an already-flagged challenge shouldn't create a
+      // duplicate CognitiveOutput row.
       if (entityType === "challenge" && changes[0]) {
         const challengeData = parsed.data as { severity: string | null; status: string };
         const recordId = changes[0].recordId;
+        const topicKey = `challenge:${recordId}`;
         if (challengeData.severity === "high" && challengeData.status === "active") {
+          const alreadyActive = await prisma.cognitiveOutput.findFirst({
+            where: { storeId: store.id, topicKey, status: "ACTIVE" },
+            select: { id: true },
+          });
+          if (!alreadyActive) {
+            await communicateFinding(store.id, {
+              kind: "insight",
+              summary: (parsed.data as { description: string }).description,
+              priority: "high",
+              topicKey,
+              recordId,
+              entityType: "challenge",
+            });
+          }
           await upsertObservation(store.id, {
-            dedupeKey: `challenge:${recordId}`,
+            dedupeKey: topicKey,
             genesisState: "urgent",
             summary: (parsed.data as { description: string }).description,
             actionHref: null,
@@ -2340,7 +2366,13 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
           // one row (no other real dedupeKey can start with one specific
           // record's own cuid) without touching any other challenge's
           // observation, which a genesisState-wide resolve pass would risk.
-          await resolveMissingObservations(store.id, [], "urgent", `challenge:${recordId}`);
+          await resolveMissingObservations(store.id, [], "urgent", topicKey);
+          // The CognitiveOutput side resolves alongside the badge, same
+          // pairing the deterministic sweep already established.
+          await prisma.cognitiveOutput.updateMany({
+            where: { storeId: store.id, topicKey, status: "ACTIVE" },
+            data: { status: "RESOLVED", resolvedAt: new Date() },
+          });
         }
       }
 
