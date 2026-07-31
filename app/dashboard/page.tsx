@@ -13,21 +13,20 @@ import {
   applyThemePersonality,
   restoreStoreDraftVersion,
   confirmStoreDraft,
-  explainRecommendation,
   reviewBusinessWithGenesis,
 } from "./ai-actions";
 import { DEFAULT_THEME, googleFontsUrl, themeCssVars, type Theme } from "@/lib/theme";
 import { PERMISSIONS, hasPermission, resolveUserStore, type Permission } from "@/lib/permissions";
 import { getOrderSummary, getRecentActivity, getRecentOrders } from "@/lib/dashboard/whatHappened";
 import { getAttentionItems } from "@/lib/dashboard/needsAttention";
-import { getRecommendations } from "@/lib/dashboard/recommendations";
+import { getDiscoveryFeed, getLastDiscoveryRunAt } from "@/lib/dashboard/discovery";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { runOpportunisticAiReviewIfStale } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { ActivityFeed } from "./ActivityFeed";
 import { AttentionPanel } from "./AttentionPanel";
-import { RecommendationsPanel } from "./RecommendationsPanel";
+import { DiscoveryFeed } from "./DiscoveryFeed";
 import { ApprovalsSummary } from "./ApprovalsSummary";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessJourney } from "./BusinessJourney";
@@ -595,56 +594,8 @@ export default async function DashboardPage() {
       }).catch(() => {})
     );
   }
-  const storeBlueprint = store.blueprint as {
-    brandIdentity?: {
-      brandPersonality?: string;
-      brandVoiceAndTone?: string;
-      targetAudience?: string;
-      uniqueSellingProposition?: string;
-    };
-    homepageContent?: { heroHeadline?: string; aboutUs?: string };
-  } | null;
-
-  const [recommendations, latestGenesisRecommendation, pendingApprovals] = canViewAnalytics
-    ? await Promise.all([
-        getRecommendations({
-          storeId: store.id,
-          storeName: store.name,
-          store: { published: store.published },
-          products: await prisma.product.findMany({
-            where: { storeId: store.id },
-            select: { name: true, description: true, priceInCents: true, active: true },
-          }),
-          stripeIntegration,
-          attentionItems: [...attention.recentOutcomes, ...attention.currentState],
-          orderSummary: orderSummary ?? {
-            orderCount: 0,
-            revenueInCents: null,
-            allTimeOrderCount: 0,
-            allTimeRevenueInCents: null,
-            windowLabel: "Last 30 days",
-          },
-          customerSummaries: [],
-          inventorySnapshot,
-          recentActivity: activityItems,
-          blueprint: storeBlueprint?.brandIdentity
-            ? {
-                brandPersonality: storeBlueprint.brandIdentity.brandPersonality ?? "",
-                brandVoiceAndTone: storeBlueprint.brandIdentity.brandVoiceAndTone ?? "",
-                targetAudience: storeBlueprint.brandIdentity.targetAudience ?? "",
-                uniqueSellingProposition: storeBlueprint.brandIdentity.uniqueSellingProposition ?? "",
-                heroHeadline: storeBlueprint.homepageContent?.heroHeadline ?? "",
-                aboutUs: storeBlueprint.homepageContent?.aboutUs ?? "",
-              }
-            : null,
-        }),
-        prisma.generatedRecommendation.findFirst({
-          where: { storeId: store.id },
-          orderBy: { generatedAt: "desc" },
-          select: { generatedAt: true },
-        }),
-        getPendingApprovals(store.id),
-      ])
+  const [discoveryItems, lastDiscoveryRunAt, pendingApprovals] = canViewAnalytics
+    ? await Promise.all([getDiscoveryFeed(store.id), getLastDiscoveryRunAt(store.id), getPendingApprovals(store.id)])
     : [[], null, []];
 
   const storeTheme = (store.theme as Theme | null) ?? DEFAULT_THEME;
@@ -706,24 +657,23 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Needs your attention — genuine issues only (Red) and real pending
-          decisions (Yellow), in that priority order; routine incomplete
-          setup lives positively in Business Journey below instead.
-          Deliberately rendered here, directly under Snapshot and before
-          Business Journey, rather than further down the page: when a
-          genuine owner-action state exists, the thing requiring the owner
-          should be visible in the initial viewport without scrolling — the
-          greeting/Live Intelligence above already says as much, so the
-          page itself shouldn't bury the reason. This is presentation
-          ordering of the exact same gated block, not a second alert — when
-          hasAttentionOrApprovals is false (nothing renders here at all),
-          Business Journey below is exactly what a visitor sees first,
-          unchanged from before. Purple ("From Genesis") and Recent Orders
-          deliberately keep their own current position further down — this
-          reordering is scoped to genuine Red/Yellow states only. */}
+      {/* Needs your attention (Watching) — genuine issues only (Red) and
+          real pending decisions (Yellow), in that priority order; routine
+          incomplete setup lives positively in Business Journey below
+          instead. Deliberately rendered here, directly under Snapshot and
+          before Discovery/Business Journey, rather than further down the
+          page: when a genuine owner-action state exists, the thing
+          requiring the owner should be visible in the initial viewport
+          without scrolling. This is presentation ordering of the exact
+          same gated block, not a second alert — when hasAttentionOrApprovals
+          is false (nothing renders here at all), Discovery below is exactly
+          what a visitor sees first. Watching vs. Working (v30): this
+          section is mechanical monitoring — what already happened and needs
+          a look — distinct from Discovery's active search for value below. */}
       {isOwnerManager && hasAttentionOrApprovals && (
         <>
-          <h2 id="attention" className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
+          <p className="mt-10 text-[10px] font-medium uppercase tracking-wide text-zinc-500">Watching</p>
+          <h2 id="attention" className="text-lg font-semibold text-black dark:text-zinc-50">
             Needs your attention
           </h2>
           <div className="mt-3 flex max-w-md flex-col gap-4">
@@ -740,10 +690,40 @@ export default async function DashboardPage() {
         </>
       )}
 
-      {/* Business Journey — real progress, not a software setup checklist.
-          Leads with what's moving forward before anything problem-shaped
-          (when nothing above needed the owner, this is the first thing
-          shown after Snapshot, unchanged from before). */}
+      {/* Discovery (Working) — the centerpiece (v30): what Genesis found
+          while actively searching for ways to improve the business, not
+          another dashboard panel reporting what already happened. Replaces
+          the old "From Genesis" recommendations slice; keeps its manual
+          review control even when there's nothing to show right now — the
+          empty state itself is the honest, calm answer, not a fallback. */}
+      {canViewAnalytics && (
+        <>
+          <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">Working</p>
+              <h2 className="text-lg font-semibold text-black dark:text-zinc-50">Discovery</h2>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-zinc-500">
+                {lastDiscoveryRunAt
+                  ? `Reviewed ${formatTimeAgo(lastDiscoveryRunAt)}`
+                  : "Genesis hasn't reviewed this business yet"}
+              </span>
+              <form action={reviewBusinessWithGenesis}>
+                <SubmitButton
+                  pendingText="Reviewing..."
+                  className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
+                >
+                  ✨ Ask Genesis to Review My Business
+                </SubmitButton>
+              </form>
+            </div>
+          </div>
+          <DiscoveryFeed items={discoveryItems} />
+        </>
+      )}
+
+      {/* Business Journey — real progress, not a software setup checklist. */}
       {isOwnerManager && canViewOrders && orderSummary && (
         <BusinessJourney
           published={store.published}
@@ -761,33 +741,6 @@ export default async function DashboardPage() {
             Recent orders
           </h2>
           <RecentOrdersCard orders={recentOrders} />
-        </>
-      )}
-
-      {/* Genesis insights — keeps its review control even with nothing to show right now */}
-      {canViewAnalytics && (
-        <>
-          <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-black dark:text-zinc-50">
-              From Genesis
-            </h2>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-zinc-500">
-                {latestGenesisRecommendation
-                  ? `Reviewed ${formatTimeAgo(latestGenesisRecommendation.generatedAt)}`
-                  : "Genesis hasn't reviewed this business yet"}
-              </span>
-              <form action={reviewBusinessWithGenesis}>
-                <SubmitButton
-                  pendingText="Reviewing..."
-                  className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
-                >
-                  ✨ Ask Genesis to Review My Business
-                </SubmitButton>
-              </form>
-            </div>
-          </div>
-          <RecommendationsPanel recommendations={recommendations} explainAction={explainRecommendation} />
         </>
       )}
 

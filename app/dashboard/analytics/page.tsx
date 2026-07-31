@@ -3,6 +3,7 @@ import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permis
 import { getOrderSummary, getRecentActivity } from "@/lib/dashboard/whatHappened";
 import { getAttentionItems } from "@/lib/dashboard/needsAttention";
 import { getRecommendations } from "@/lib/dashboard/recommendations";
+import { getLastDiscoveryRunAt } from "@/lib/dashboard/discovery";
 import { getCustomerSummaries } from "@/lib/dashboard/customers";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
 import { explainRecommendation, reviewBusinessWithGenesis } from "../ai-actions";
@@ -47,7 +48,7 @@ export default async function AnalyticsPage() {
     }),
   ]);
 
-  const [orderSummary, customerSummaries, activityItems, attention, latestGenesisRecommendation] =
+  const [orderSummary, customerSummaries, activityItems, attention, lastDiscoveryRunAt] =
     await Promise.all([
       getOrderSummary(store.id, { includeRevenue: canViewRevenue }),
       getCustomerSummaries(store.id, { includeRevenue: canViewRevenue }),
@@ -58,11 +59,7 @@ export default async function AnalyticsPage() {
         stripeIntegration,
         paypalIntegration,
       }),
-      prisma.generatedRecommendation.findFirst({
-        where: { storeId: store.id },
-        orderBy: { generatedAt: "desc" },
-        select: { generatedAt: true },
-      }),
+      getLastDiscoveryRunAt(store.id),
     ]);
 
   const inventorySnapshot = getInventorySnapshot(products);
@@ -98,8 +95,8 @@ export default async function AnalyticsPage() {
         <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Analytics</h1>
         <div className="flex items-center gap-3">
           <span className="text-xs text-zinc-500">
-            {latestGenesisRecommendation
-              ? `Generated ${formatTimeAgo(latestGenesisRecommendation.generatedAt)}`
+            {lastDiscoveryRunAt
+              ? `Generated ${formatTimeAgo(lastDiscoveryRunAt)}`
               : "Genesis hasn't reviewed this business yet"}
           </span>
           <form action={reviewBusinessWithGenesis}>

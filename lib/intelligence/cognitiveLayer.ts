@@ -14,7 +14,7 @@ import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/ge
 import { tryExecuteAutonomousAction } from "@/lib/execution/genesisAutonomy";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessProfile } from "@/lib/businessModel/profile";
-import { predictGoalTrajectory } from "@/lib/businessModel/reasoning";
+import { predictGoalTrajectory, type GoalTrajectory } from "@/lib/businessModel/reasoning";
 
 // Phase 3 Milestone 6 — the J4 Cognitive Layer's own reasoning pipeline.
 // Was generateGenesisRecommendations.ts (lib/dashboard/), relocated here
@@ -143,6 +143,19 @@ If, and only if, a recommendation or opportunity maps directly onto one of these
 - "resolve_challenge": input: { challengeRecordId: string } — only when the data clearly shows the challenge is no longer a real problem. Use the challenge's own real id.
 Most recommendations/opportunities should NOT include a proposedAction — only attach one when you can specify the exact values, never a vague intent. Leave proposedAction null otherwise.`;
 
+// Home Redesign (v30) — Goal progress becomes a real, standalone Discovery
+// item: a deterministic "prediction" CognitiveOutput row, built in code
+// (never by the model), matching the Insight Engine's own "100%
+// deterministic, no AI judgment" principle extended to this kind.
+function describeTrajectory(description: string, t: GoalTrajectory): string {
+  const target = `$${(t.targetValueInCents / 100).toLocaleString()}`;
+  const actual = `$${(t.actualSoFarInCents / 100).toLocaleString()}`;
+  const pace = `${t.paceRatio.toFixed(1)}x`;
+  return t.onTrack
+    ? `"${description}" is on track — ${actual} so far toward a ${target} goal, running at ${pace} the expected pace.`
+    : `"${description}" is behind pace — ${actual} so far toward a ${target} goal, running at ${pace} the expected pace.`;
+}
+
 export interface CognitiveReviewSummary {
   topicKey: string;
   priority: "high" | "medium" | "low";
@@ -198,6 +211,33 @@ export async function runCognitiveReview(params: {
         .map((g) => predictGoalTrajectory(storeId, g))
     )
   ).filter((t) => t !== null);
+
+  // Persist each trajectory as its own durable, deterministic "prediction"
+  // row — prior ACTIVE prediction rows are superseded first (status update,
+  // not delete, same convention every other supersede in this file already
+  // uses), so a re-run never duplicates a goal's progress. The model still
+  // separately sees goalTrajectories as prompt context above/below and may
+  // reference it in an Explanation/Recommendation's own prose — these
+  // aren't mutually exclusive, one is the deterministic fact, the other is
+  // Genesis's reasoning about what to do with it.
+  if (goalTrajectories.length > 0) {
+    const descriptionByGoalId = new Map(businessProfile.goals.map((g) => [g.id, g.data.description]));
+    await prisma.cognitiveOutput.updateMany({
+      where: { storeId, kind: "prediction", status: "ACTIVE" },
+      data: { status: "SUPERSEDED" },
+    });
+    await prisma.cognitiveOutput.createMany({
+      data: goalTrajectories.map((t) => ({
+        storeId,
+        kind: "prediction",
+        summary: describeTrajectory(descriptionByGoalId.get(t.goalId) ?? "Goal", t),
+        priority: t.onTrack ? "low" : "medium",
+        recordId: t.goalId,
+        entityType: "goal",
+        data: t as unknown as Prisma.InputJsonValue,
+      })),
+    });
+  }
 
   const contextForPrompt = {
     storeName: store.name,

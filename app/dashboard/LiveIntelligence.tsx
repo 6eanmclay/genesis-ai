@@ -48,7 +48,7 @@ function leadCopy(topItem: MergedItem, count: number): { lead: string; cta: stri
     return { lead: `Genesis needs your attention on ${plural ? `${count} things` : "one thing"} today`, cta };
   }
   return {
-    lead: `Genesis noticed ${plural ? `${count} things` : "something"} worth considering today`,
+    lead: `Genesis found ${plural ? `${count} things` : "something"} worth considering today`,
     cta: plural ? "start here" : "take a look",
   };
 }
