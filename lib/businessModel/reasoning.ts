@@ -199,6 +199,28 @@ export interface EntityHistory {
     priority: string | null;
     generatedAt: Date;
   }[];
+  // Business Intelligence Engine, Tier 1 (Current Truth) — closes a
+  // half-built gap: Belief.recordId/entityType have existed on the schema
+  // since Learn's own Phase 2, but nothing ever read them back here
+  // alongside events/observations/cognitiveOutputs. The business question
+  // this answers: "What has Genesis already learned about this specific
+  // goal/challenge/item?" — same kind of read as cognitiveOutputs above,
+  // not a new belief-formation mechanism, so it belongs in Understand's own
+  // read layer, not Learn. No status filter, matching observations'/
+  // cognitiveOutputs' own behavior — full history, including retired
+  // beliefs, since this is "everything Genesis has ever noticed or
+  // believed about this record," not a live-only view. Returns [] honestly
+  // until a Learn detector actually populates recordId on a belief — no
+  // detector does yet (see plan's explicit non-goals), the same "real code
+  // path, nothing to detect against yet" pattern already used for
+  // Item.quantityAvailable.
+  beliefs: {
+    claim: string;
+    category: string;
+    confidence: number;
+    status: string;
+    lastConfirmedAt: Date;
+  }[];
 }
 
 export async function getEntityHistory<T extends EntityType>(
@@ -206,7 +228,7 @@ export async function getEntityHistory<T extends EntityType>(
   entityType: T,
   recordId: string
 ): Promise<EntityHistory> {
-  const [records, related, events, observations, cognitiveOutputs] =
+  const [records, related, events, observations, cognitiveOutputs, beliefs] =
     await Promise.all([
       queryRecords(storeId, entityType),
       findRelated(storeId, recordId),
@@ -221,6 +243,10 @@ export async function getEntityHistory<T extends EntityType>(
       prisma.cognitiveOutput.findMany({
         where: { storeId, recordId },
         orderBy: { generatedAt: "desc" },
+      }),
+      prisma.belief.findMany({
+        where: { storeId, recordId },
+        orderBy: { lastConfirmedAt: "desc" },
       }),
     ]);
 
@@ -243,6 +269,13 @@ export async function getEntityHistory<T extends EntityType>(
       message: r.summary,
       priority: r.priority,
       generatedAt: r.generatedAt,
+    })),
+    beliefs: beliefs.map((b) => ({
+      claim: b.claim,
+      category: b.category,
+      confidence: b.confidence,
+      status: b.status,
+      lastConfirmedAt: b.lastConfirmedAt,
     })),
   };
 }
@@ -451,6 +484,155 @@ export async function getCustomerSegments(
   };
 }
 
+// Business Intelligence Engine, Tier 1 (Current Truth) — attributes real
+// Transaction data to whichever entity its `field` value(s) reference,
+// honoring the same xxxId/xxxIds convention findRelated already uses.
+// getTopContacts/getCustomerSegments above already independently implement
+// this exact pattern for the contactId case; this is the same mechanism,
+// generalized, not a second one — getItemPerformance below is its first new
+// caller. Revenue is attributed only when a transaction resolves to EXACTLY
+// ONE entity via `field` — a transaction touching zero or multiple entities
+// is excluded from revenue attribution rather than split evenly, since
+// Transaction carries one total amount, not a per-line price. This is a
+// real, named limitation of Transaction's current shape, not a bug here.
+function attributeTransactions(
+  transactions: CanonicalRecord<"transaction">[],
+  field: "contactId" | "itemIds"
+): Map<string, { orderCount: number; revenueInCents: number }> {
+  const summaries = new Map<string, { orderCount: number; revenueInCents: number }>();
+  for (const t of transactions) {
+    const raw = t.data[field];
+    const ids = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    if (ids.length !== 1) continue;
+    const id = ids[0];
+    const existing = summaries.get(id) ?? { orderCount: 0, revenueInCents: 0 };
+    existing.orderCount += 1;
+    existing.revenueInCents += t.data.amountInCents;
+    summaries.set(id, existing);
+  }
+  return summaries;
+}
+
+export interface ItemPerformance {
+  item: CanonicalRecord<"item">;
+  // Sale transactions only — a later refund doesn't undo that a sale
+  // occurred, it only reduces net revenue (below).
+  orderCount: number;
+  // Sales minus refunds, mirroring getRevenue's own definition of
+  // "revenue" exactly — an item's revenue should mean the same thing
+  // store-wide revenue means, not a narrower sales-only number.
+  revenueInCents: number;
+}
+
+// The business question this answers: "What am I actually selling, and
+// what's underperforming?" — currently unanswerable in any form; Understand
+// can report total revenue and top customers but nothing about what's
+// actually moving. Generalizes beyond Genesis's current business types
+// because `item` already means "a product, service, or SKU" per
+// entities.ts's own doc comment, and this uses the same generic primitives
+// (queryRecords, attributeTransactions) every other function here does.
+export async function getItemPerformance(
+  storeId: string,
+  opts: { since?: Date; until?: Date } = {}
+): Promise<ItemPerformance[]> {
+  const [items, transactions] = await Promise.all([
+    queryRecords(storeId, "item"),
+    queryRecords(storeId, "transaction", opts),
+  ]);
+  const sales = attributeTransactions(
+    transactions.filter((t) => t.data.type === "sale"),
+    "itemIds"
+  );
+  const refunds = attributeTransactions(
+    transactions.filter((t) => t.data.type === "refund"),
+    "itemIds"
+  );
+  return items
+    .map((item) => {
+      const sale = sales.get(item.id) ?? { orderCount: 0, revenueInCents: 0 };
+      const refund = refunds.get(item.id) ?? { orderCount: 0, revenueInCents: 0 };
+      return {
+        item: item as CanonicalRecord<"item">,
+        orderCount: sale.orderCount,
+        revenueInCents: sale.revenueInCents - refund.revenueInCents,
+      };
+    })
+    .sort((a, b) => b.revenueInCents - a.revenueInCents);
+}
+
+// Business Intelligence Engine, Tier 2 (Temporal Understanding) — a
+// deterministic comparison of two real windows, generalized past any one
+// metric. The business question this answers: "Is this getting better or
+// worse, and by how much, compared to before?" — asked generically, not
+// "is revenue trending" as a one-off case. Pure function, no query — takes
+// two plain numbers and has no idea what metric it's comparing, which is
+// what lets it generalize to revenue, item performance, or any future
+// numeric read without change. Belongs in Understand, not Learn: this is a
+// deterministic computation over current facts, not a belief requiring
+// repeated evidence over time — it becomes Learn's concern only if the
+// *recurrence* of a trend itself needs recognizing (detectInsightRecurrence
+// already covers that, reading Insight Engine output).
+export interface Trend {
+  currentValue: number;
+  previousValue: number;
+  change: number;
+  changeRatio: number;
+  direction: "up" | "down" | "flat";
+}
+
+const FLAT_THRESHOLD = 0.01; // change under 1% reads as flat, not noise
+
+export function computeTrend(currentValue: number, previousValue: number): Trend | null {
+  if (previousValue === 0) return null; // no honest baseline — matches insights.ts's existing "no baseline" behavior
+  const change = currentValue - previousValue;
+  const changeRatio = change / previousValue;
+  const direction =
+    Math.abs(changeRatio) < FLAT_THRESHOLD ? "flat" : changeRatio > 0 ? "up" : "down";
+  return { currentValue, previousValue, change, changeRatio, direction };
+}
+
+export async function getRevenueTrend(
+  storeId: string,
+  opts: { windowDays?: number } = {}
+): Promise<Trend | null> {
+  const windowMs = (opts.windowDays ?? 7) * 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - windowMs);
+  const priorStart = new Date(now.getTime() - 2 * windowMs);
+  const [current, previous] = await Promise.all([
+    getRevenue(storeId, { since: windowStart, until: now }),
+    getRevenue(storeId, { since: priorStart, until: windowStart }),
+  ]);
+  return computeTrend(current, previous);
+}
+
+export interface ItemPerformanceTrend {
+  item: CanonicalRecord<"item">;
+  trend: Trend | null;
+}
+
+// Unlocks for Reason: trend becomes a directly-callable fact for item
+// performance too, not something trapped inside one hardcoded Insight
+// Engine detector the way revenue trend currently is.
+export async function getItemPerformanceTrend(
+  storeId: string,
+  opts: { windowDays?: number } = {}
+): Promise<ItemPerformanceTrend[]> {
+  const windowMs = (opts.windowDays ?? 7) * 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - windowMs);
+  const priorStart = new Date(now.getTime() - 2 * windowMs);
+  const [current, previous] = await Promise.all([
+    getItemPerformance(storeId, { since: windowStart, until: now }),
+    getItemPerformance(storeId, { since: priorStart, until: windowStart }),
+  ]);
+  const previousByItemId = new Map(previous.map((p) => [p.item.id, p]));
+  return current.map((c) => ({
+    item: c.item,
+    trend: computeTrend(c.revenueInCents, previousByItemId.get(c.item.id)?.revenueInCents ?? 0),
+  }));
+}
+
 // Phase 3 Milestone 3 — the Insight Engine's revenue/engagement trend
 // detection reads this rather than recomputing open rates itself,
 // matching the "generic primitives, small growing library" split already
@@ -489,6 +671,24 @@ export interface GoalTrajectory {
   deadlinePassed: boolean;
 }
 
+// Business Intelligence Engine, Tier 2 (Temporal Understanding) — extracted
+// from predictGoalTrajectory's own projection math, unchanged behavior,
+// so the same "given a rate, project forward" mechanism is available the
+// moment a second real numeric target exists (a future non-revenue goal
+// with a real target number) without rewriting it. Belongs in Understand:
+// a projection is a computed extrapolation of current facts, not a belief
+// — forecast *accuracy* becoming a belief is a separate, later Learn
+// concern (Tier 3), not this. Fully metric-agnostic by construction: three
+// plain numbers in, one out.
+export function projectForward(
+  actualSoFar: number,
+  elapsedMs: number,
+  totalWindowMs: number
+): number {
+  if (elapsedMs <= 0) return actualSoFar;
+  return Math.round((actualSoFar / elapsedMs) * totalWindowMs);
+}
+
 export async function predictGoalTrajectory(
   storeId: string,
   goal: CanonicalRecord<"goal">
@@ -512,10 +712,7 @@ export async function predictGoalTrajectory(
   });
 
   const expectedByNowInCents = Math.round(targetValueInCents * expectedProgressFraction);
-  const projectedFinalInCents =
-    elapsedMs > 0
-      ? Math.round((actualSoFarInCents / elapsedMs) * totalWindowMs)
-      : actualSoFarInCents;
+  const projectedFinalInCents = projectForward(actualSoFarInCents, elapsedMs, totalWindowMs);
 
   return {
     goalId: goal.id,
