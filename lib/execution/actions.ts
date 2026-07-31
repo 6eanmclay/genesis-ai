@@ -38,6 +38,12 @@ export const EXECUTION_ACTIONS = {
   STORE_UPDATE_STORE_CONTENT: "store.update_store_content",
   STORE_UPDATE_DESIGN_DIRECTION: "store.update_design_direction",
   STORE_UPDATE_MARKETING_ASSETS: "store.update_marketing_assets",
+  // Phase 3 Milestone 6 (J4 Cognitive Layer) — the first two "operations"-
+  // category actions, deliberately not "store."-prefixed like everything
+  // above (those all write to Store's own columns/blueprint; these write to
+  // a specific BusinessRecord row instead).
+  GOAL_UPDATE_STATUS: "goal.update_status",
+  CHALLENGE_RESOLVE: "challenge.resolve",
 } as const;
 
 export type ExecutionAction = (typeof EXECUTION_ACTIONS)[keyof typeof EXECUTION_ACTIONS];

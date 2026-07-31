@@ -29,15 +29,35 @@ async function getActiveDelegatedAuthority(storeId: string, actionType: string) 
   });
 }
 
-async function buildActionContext(storeId: string): Promise<GenesisActionContext> {
-  const store = await prisma.store.findUniqueOrThrow({
-    where: { id: storeId },
-    select: { name: true, tagline: true, description: true, theme: true, blueprint: true },
-  });
+// Phase 3 Milestone 6 — gained an optional `record` param, populating the
+// new businessRecord context field for the record-scoped operations
+// actions (update_goal_status/resolve_challenge), the same way `product`
+// already gets populated for update_product_image elsewhere in this
+// codebase — just resolved here instead, since this is the one place that
+// builds context for the autonomous-execution path specifically.
+async function buildActionContext(
+  storeId: string,
+  record?: { id: string; entityType: string } | null
+): Promise<GenesisActionContext> {
+  const [store, businessRecord] = await Promise.all([
+    prisma.store.findUniqueOrThrow({
+      where: { id: storeId },
+      select: { name: true, tagline: true, description: true, theme: true, blueprint: true },
+    }),
+    record
+      ? prisma.businessRecord.findFirst({
+          where: { id: record.id, storeId, entityType: record.entityType },
+          select: { id: true, entityType: true, data: true },
+        })
+      : Promise.resolve(null),
+  ]);
   return {
     blueprint: store.blueprint as BlueprintContextSubset | null,
     theme: store.theme as Theme | null,
     storeIdentity: { name: store.name, tagline: store.tagline, description: store.description },
+    businessRecord: businessRecord
+      ? { id: businessRecord.id, entityType: businessRecord.entityType, data: businessRecord.data }
+      : null,
   };
 }
 
@@ -47,7 +67,15 @@ interface TryExecuteAutonomousActionParams {
   input: unknown;
   summary: string;
   topicKey: string;
-  recommendationId: string | null;
+  // Phase 3 Milestone 6 — the Cognitive Layer's own CognitiveOutput id,
+  // replacing the legacy recommendationId (GeneratedRecommendation is no
+  // longer written to going forward — see cognitiveLayer.ts). recordId/
+  // entityType are new, optional — set only when the proposing output was
+  // genuinely about one specific BusinessRecord (a Goal, a Challenge...),
+  // letting this function resolve that record into context.businessRecord.
+  cognitiveOutputId: string | null;
+  recordId?: string | null;
+  entityType?: string | null;
   groupId: string;
 }
 
@@ -59,7 +87,7 @@ interface TryExecuteAutonomousActionParams {
 export async function tryExecuteAutonomousAction(
   params: TryExecuteAutonomousActionParams
 ): Promise<boolean> {
-  const { storeId, actionType, input, summary, topicKey, recommendationId, groupId } = params;
+  const { storeId, actionType, input, summary, topicKey, cognitiveOutputId, recordId, entityType, groupId } = params;
 
   const definition = GENESIS_ACTIONS[actionType];
   if (!definition || definition.maxAuthorityTier === "always_ask") {
@@ -87,7 +115,10 @@ export async function tryExecuteAutonomousAction(
   const parsedInput = definition.inputSchema.safeParse(input);
   if (!parsedInput.success) return false;
 
-  const context = await buildActionContext(storeId);
+  const context = await buildActionContext(
+    storeId,
+    recordId && entityType ? { id: recordId, entityType } : null
+  );
   const previousValues = definition.getCurrentValues(context);
 
   // Same supersede convention every other proposal-creation path already
@@ -100,7 +131,7 @@ export async function tryExecuteAutonomousAction(
   const approval = await prisma.approvalRequest.create({
     data: {
       storeId,
-      recommendationId,
+      cognitiveOutputId,
       actionType,
       input: parsedInput.data as object,
       previousValues: previousValues as object,
@@ -128,6 +159,17 @@ export async function tryExecuteAutonomousAction(
       where: { id: approval.id },
       data: { executionId: result.executionId },
     });
+    // Phase 3 Milestone 6 — either way an ApprovalRequest now exists for
+    // this output (pending-after-failure or executed below), so it stops
+    // also showing in the recommendations list — same rule the human
+    // approval path already follows (genesisProducer excludes anything
+    // with a live approval), just applied on the write side here.
+    if (cognitiveOutputId) {
+      await prisma.cognitiveOutput.update({
+        where: { id: cognitiveOutputId },
+        data: { status: "SUPERSEDED", approvalRequestId: approval.id },
+      });
+    }
     return true; // handled (declined to silently retry) -- caller must not also create a normal PENDING row
   }
 
@@ -140,8 +182,14 @@ export async function tryExecuteAutonomousAction(
     },
   });
 
-  if (recommendationId) {
-    await prisma.generatedRecommendation.deleteMany({ where: { id: recommendationId } });
+  if (cognitiveOutputId) {
+    // Durable, unlike the old GeneratedRecommendation.deleteMany this
+    // replaces — CognitiveOutput is meant to be queryable history (see
+    // getEntityHistory), so a resolved output is marked, never deleted.
+    await prisma.cognitiveOutput.update({
+      where: { id: cognitiveOutputId },
+      data: { status: "RESOLVED", approvalRequestId: approval.id, resolvedAt: new Date() },
+    });
   }
 
   return true;

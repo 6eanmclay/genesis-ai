@@ -137,45 +137,41 @@ export const ruleBasedProducer: RecommendationProducer = {
   },
 };
 
-// PH-07 Layer 3 — a cheap indexed DB read, not an AI call, so it's safe to
-// run on every getRecommendations() invocation exactly like
-// ruleBasedProducer. Actual generation happens separately, via an explicit
-// "Ask Genesis to Review My Business" action — see
-// generateGenesisRecommendations.ts. This producer only ever reads the
-// cached result of that action.
+// Phase 3 Milestone 6 (J4 Cognitive Layer) — a cheap indexed DB read, not
+// an AI call, so it's safe to run on every getRecommendations() invocation
+// exactly like ruleBasedProducer. Actual generation happens separately, via
+// an explicit "Ask Genesis to Review My Business" action or the scheduler —
+// see lib/intelligence/cognitiveLayer.ts's runCognitiveReview(). This
+// producer only ever reads its durable output.
+//
+// Reads CognitiveOutput, not the legacy GeneratedRecommendation (superseded
+// — see that model's own schema comment). Only "recommendation"/
+// "opportunity" kinds surface here — "insight"/"explanation"/"prediction"
+// are supporting material, either folded into a recommendation/
+// opportunity's own self-contained summary or queryable via
+// getEntityHistory, never their own dashboard row. status: "ACTIVE" alone
+// is the exclusion filter that replaces the old ApprovalRequest join-check
+// — an output that spawned a real ApprovalRequest is marked SUPERSEDED/
+// RESOLVED at that moment (cognitiveLayer.ts, genesisAutonomy.ts), so it
+// naturally stops appearing here without a second query.
 export const genesisProducer: RecommendationProducer = {
   name: "genesis",
   async produce(ctx) {
-    const [rows, approvalRequests] = await Promise.all([
-      prisma.generatedRecommendation.findMany({
-        where: { storeId: ctx.storeId },
-        orderBy: { generatedAt: "desc" },
-      }),
-      // PH-07 Layer 4 — a recommendation with an attached ApprovalRequest
-      // (pending, executed, or rejected) surfaces in the Awaiting Approval
-      // section instead, not here, so the same suggestion never appears in
-      // two places at once. In practice resolved ones are deleted at
-      // decision time (see ai-actions.ts) — this exclusion mainly covers
-      // the brief window one is still PENDING_APPROVAL.
-      prisma.approvalRequest.findMany({
-        where: { storeId: ctx.storeId, recommendationId: { not: null } },
-        select: { recommendationId: true },
-      }),
-    ]);
-    const recommendationIdsWithApproval = new Set(approvalRequests.map((a) => a.recommendationId));
+    const rows = await prisma.cognitiveOutput.findMany({
+      where: { storeId: ctx.storeId, kind: { in: ["recommendation", "opportunity"] }, status: "ACTIVE" },
+      orderBy: { generatedAt: "desc" },
+    });
 
-    return rows
-      .filter((row) => !recommendationIdsWithApproval.has(row.id))
-      .map((row) => ({
-        // Real DB id — trivially stable, satisfies the future dismiss/track
-        // need noted (not built) since PH-05.
-        id: row.id,
-        priority: row.priority as Recommendation["priority"],
-        message: row.message,
-        actionLabel: row.actionLabel,
-        actionHref: row.actionHref,
-        source: "genesis",
-      }));
+    return rows.map((row) => ({
+      // Real DB id — trivially stable, satisfies the future dismiss/track
+      // need noted (not built) since PH-05.
+      id: row.id,
+      priority: (row.priority ?? "medium") as Recommendation["priority"],
+      message: row.summary,
+      actionLabel: row.actionLabel ?? "Learn more",
+      actionHref: row.actionHref ?? "/dashboard",
+      source: "genesis",
+    }));
   },
 };
 

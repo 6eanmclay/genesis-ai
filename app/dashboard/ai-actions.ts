@@ -21,7 +21,7 @@ import {
   getRecommendationExplanation,
   type RecommendationExplanation,
 } from "@/lib/dashboard/explainRecommendation";
-import { generateGenesisRecommendations } from "@/lib/dashboard/generateGenesisRecommendations";
+import { runCognitiveReview } from "@/lib/intelligence/cognitiveLayer";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { GENESIS_ACTIONS, type GenesisActionContext } from "@/lib/execution/genesisActions";
@@ -1321,6 +1321,11 @@ const GoalCaptureSchema = z.object({
   category: z.enum(["revenue", "growth", "efficiency", "expansion", "customer_experience", "product", "hiring", "other"]).nullable(),
   priority: z.enum(["high", "medium", "low"]).nullable(),
   targetDate: z.string().nullable(),
+  // Phase 3 Milestone 6 — a real dollar figure in cents, only when the
+  // merchant actually stated one (e.g. "$10k in monthly revenue" -> 1000000
+  // cents) — never inferred or estimated. Powers a real, computed
+  // prediction later; a goal with no number simply never gets one.
+  targetValueInCents: z.number().int().nullable(),
 });
 const ChallengeCaptureSchema = z.object({
   description: z.string(),
@@ -1355,7 +1360,7 @@ const BusinessFactSchema = z.discriminatedUnion("entityType", [
 const STORE_CHAT_BUSINESS_FACT_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live business, before anything else runs. Decide whether the merchant is stating a durable fact about their business that you should remember — a goal they have, a challenge they're currently facing, a new employee who works there, or a location/property the business operates from — as opposed to asking a question, requesting a content change, or just making ordinary conversation.
 
 Most messages are NOT this — set entityType: "none" for anything else. Only pick one of the other four when the merchant is clearly telling you something true and lasting about their business:
-- "goal": something they want to achieve (e.g. "my goal this quarter is $10k in monthly revenue"). Always fill in description with a real, specific sentence — never leave it vague or generic.
+- "goal": something they want to achieve (e.g. "my goal this quarter is $10k in monthly revenue"). Always fill in description with a real, specific sentence — never leave it vague or generic. If a real dollar figure was stated, also fill in targetValueInCents (e.g. "$10k" -> 1000000) — leave it null if no real number was given, never estimate one.
 - "challenge": something currently difficult for the business (e.g. "keeping enough inventory in stock has been a real problem"). Always fill in description with a real, specific sentence.
 - "employee": a person who works at the business (e.g. "I just hired Jane as store manager"). name is required — everything else, only what's actually stated.
 - "location": a physical place the business operates from (e.g. "we also have a small warehouse in Austin"). name is required (a short label like "Austin Warehouse") — everything else, only what's actually stated.
@@ -3362,10 +3367,10 @@ export async function explainRecommendation(
 // PH-07 Layer 3 — "Ask Genesis to Review My Business" on the dashboard.
 // Plain redirect-based Server Action (not the Layer 2 call-directly pattern)
 // since a refresh naturally causes a full page re-render that reads the
-// freshly-persisted GeneratedRecommendation rows — no inline result needed.
+// freshly-persisted CognitiveOutput rows — no inline result needed.
 export async function reviewBusinessWithGenesis() {
   const { userId, storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  await generateGenesisRecommendations({ storeId, userId });
+  await runCognitiveReview({ storeId, userId });
   redirect("/dashboard");
 }
 

@@ -37,6 +37,14 @@ import {
   updateMarketingAssetsExecutable,
   type UpdateMarketingAssetsInput,
 } from "./executables/updateMarketingAssets";
+import {
+  updateGoalStatusExecutable,
+  type UpdateGoalStatusInput,
+} from "./executables/updateGoalStatus";
+import {
+  resolveChallengeExecutable,
+  type ResolveChallengeInput,
+} from "./executables/resolveChallenge";
 
 // The minimal subset of Store.blueprint relevant to the actions registered
 // below — shared between generateGenesisRecommendations.ts (which fetches
@@ -102,6 +110,11 @@ export interface GenesisActionContext {
   product?: { id: string; name: string; imageUrl: string | null } | null;
   theme?: Theme | null;
   storeIdentity?: { name: string; tagline: string | null; description: string | null } | null;
+  // Phase 3 Milestone 6 — same "one context field per record-scoped action
+  // kind" pattern `product` above already established, generalized to any
+  // BusinessRecord (a Goal, a Challenge, ...) instead of a second
+  // product-shaped field per new entity type.
+  businessRecord?: { id: string; entityType: string; data: unknown } | null;
 }
 
 // Phase 0 of the architecture-pivot roadmap (see memory:
@@ -146,10 +159,13 @@ const AUTHORITY_TIER_RANK: Record<AuthorizationTier, number> = {
 // action of that kind is designed, never a runtime setting.
 //   content       — auto: reversible, non-monetary, publicly correctable,
 //                   already has the previousValues safety net.
-//   operations    — always_ask for now: no operations actions exist yet: we
-//                   don't want to pre-authorize a category before we know
-//                   what those actions actually are. Raise deliberately when
-//                   the first one is designed.
+//   operations    — Phase 3 Milestone 6 — raised to "auto" deliberately, the
+//                   exact moment this comment always anticipated: the first
+//                   real operations actions (goal.update_status,
+//                   challenge.resolve) are Genesis's own internal
+//                   understanding, zero customer-facing risk, and exist
+//                   specifically to prove the autonomy ladder generalizes
+//                   past storefront content, not just to skip ceremony.
 //   integration   — auto_below_limit: touches an external/connected
 //                   account, so never fully unrestricted — reserved the
 //                   same way AuthorizationTier itself reserves
@@ -166,7 +182,7 @@ const AUTHORITY_TIER_RANK: Record<AuthorizationTier, number> = {
 //   destructive   — always_ask, hard: same.
 const CATEGORY_MAX_TIER: Record<GenesisActionCategory, AuthorizationTier> = {
   content: "auto",
-  operations: "always_ask",
+  operations: "auto",
   integration: "auto_below_limit",
   communication: "auto",
   money: "always_ask",
@@ -250,6 +266,8 @@ export const GENESIS_ACTIONS: Record<
     | UpdateStoreContentInput
     | UpdateDesignDirectionInput
     | UpdateMarketingAssetsInput
+    | UpdateGoalStatusInput
+    | ResolveChallengeInput
   >
 > = {
   update_seo: {
@@ -456,6 +474,38 @@ export const GENESIS_ACTIONS: Record<
     authorizationTier: "always_ask",
     maxAuthorityTier: "always_ask",
   },
+  // Phase 3 Milestone 6 (J4 Cognitive Layer) — the first two "operations"
+  // actions, both record-scoped (not blueprint-scoped) via the new
+  // businessRecord context field above. Both auto-delegable from day one —
+  // Genesis's own internal understanding, zero customer-facing risk, the
+  // deliberate first real test of whether the autonomy ladder generalizes
+  // past storefront content.
+  update_goal_status: {
+    executable: updateGoalStatusExecutable,
+    inputSchema: z.object({
+      goalRecordId: z.string(),
+      status: z.enum(["active", "achieved", "abandoned"]),
+    }),
+    getCurrentValues: ({ businessRecord }) => ({
+      goalRecordId: businessRecord?.id ?? "",
+      status:
+        (businessRecord?.data as { status?: "active" | "achieved" | "abandoned" } | undefined)
+          ?.status ?? "active",
+    }),
+    category: "operations",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "auto",
+  },
+  resolve_challenge: {
+    executable: resolveChallengeExecutable,
+    inputSchema: z.object({ challengeRecordId: z.string() }),
+    getCurrentValues: ({ businessRecord }) => ({
+      challengeRecordId: businessRecord?.id ?? "",
+    }),
+    category: "operations",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "auto",
+  },
 };
 
 // Phase 6 — every registered action's maxAuthorityTier must fit within its
@@ -548,4 +598,10 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_store_content: { key: "settings", label: "Settings", href: "/dashboard/settings" },
   update_design_direction: { key: "settings", label: "Settings", href: "/dashboard/settings" },
   update_marketing_assets: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
+  // Phase 3 Milestone 6 — no dedicated Goals/Challenges page exists yet, so
+  // these route to Home, where the Cognitive Layer's own recommendation/
+  // opportunity output already surfaces (see RecommendationsPanel) — a
+  // real, honest landing spot, not a placeholder page invented for this.
+  update_goal_status: { key: "home", label: "Home", href: "/dashboard" },
+  resolve_challenge: { key: "home", label: "Home", href: "/dashboard" },
 };

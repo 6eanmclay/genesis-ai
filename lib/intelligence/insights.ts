@@ -163,7 +163,28 @@ export async function computeInsights(storeId: string): Promise<Insight[]> {
     data: { processedAt: new Date() },
   });
 
-  return [revenue, engagement, overdue, lowStock, cancellations].filter(
+  const computed = [revenue, engagement, overdue, lowStock, cancellations].filter(
     (insight): insight is Insight => insight !== null
   );
+
+  // Phase 3 Milestone 6 (J4 Cognitive Layer) — durability, for free, with
+  // zero change to detection logic above. Insights were never persisted
+  // before this — computed fresh every pass, visible nowhere durable — so
+  // getEntityHistory() (M5) could never show "here's what Genesis has
+  // actually noticed about this record," only its downstream observations/
+  // recommendations. One additive write, same "one generic table, JSON
+  // payload" convention as everything else.
+  if (computed.length > 0) {
+    await prisma.cognitiveOutput.createMany({
+      data: computed.map((insight) => ({
+        storeId,
+        kind: "insight",
+        summary: insight.summary,
+        data: insight.metrics as object,
+        priority: insight.severity === "urgent" ? "high" : "medium",
+      })),
+    });
+  }
+
+  return computed;
 }

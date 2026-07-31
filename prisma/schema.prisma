@@ -111,6 +111,7 @@ model Store {
   productEvents             ProductEvent[]
   businessRecords           BusinessRecord[]
   businessEvents            BusinessEvent[]
+  cognitiveOutputs          CognitiveOutput[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -356,6 +357,14 @@ model ExecutionLog {
 // "Refresh Genesis Suggestions" click does). No `source` column: every row
 // here is by definition source: "genesis" once mapped to the shared
 // Recommendation type — see lib/dashboard/recommendations.ts.
+// Phase 3 Milestone 6 (J4 Cognitive Layer) — superseded as a write target.
+// lib/intelligence/cognitiveLayer.ts's runCognitiveReview() (formerly
+// generateGenesisRecommendations()) now writes CognitiveOutput rows
+// instead. Left in place, unwritten-to going forward, rather than deleted
+// or migrated — matching this codebase's "don't rewrite history" discipline
+// (ExecutionLog is append-only for the same reason). Historical rows and
+// this model's own shape stay exactly as they were; retiring it fully is
+// separate, explicit future cleanup, not forced here.
 model GeneratedRecommendation {
   id          String   @id @default(cuid())
   storeId     String
@@ -382,6 +391,55 @@ model GeneratedRecommendation {
   @@index([storeId])
 }
 
+// Phase 3 Milestone 6 (J4 Cognitive Layer) — the durable, queryable record
+// of everything Genesis has reasoned about the business, polymorphic across
+// every real output kind (same "one generic table, JSON payload, code-level
+// discrimination" convention as BusinessRecord/GenesisObservation/
+// ExecutionLog/ProductEvent — never a table per kind). Produced by the
+// Observe -> Explain -> Recommend stages of runCognitiveReview();
+// approvalRequestId is set once the Execute stage (unchanged — the existing
+// GENESIS_ACTIONS/execute()/DelegatedAuthority machinery) acts on one.
+//
+// relatedOutputIds is a second, deliberately SEPARATE reference space from
+// BusinessRecord's own xxxId/xxxIds convention: recordId points into "what's
+// true about the business" (a Goal, a Challenge, a Contact...);
+// relatedOutputIds points into "what Genesis has reasoned about it" (a
+// Recommendation citing the Opportunity it addresses, an Opportunity citing
+// the Explanation it's grounded in). Not merged into findRelated(), which
+// only ever walks BusinessRecord space — these are two distinct graphs.
+model CognitiveOutput {
+  id          String    @id @default(cuid())
+  storeId     String
+  kind        String    // insight | prediction | explanation | recommendation | opportunity
+  summary     String    // self-contained — matches every existing "message must be self-contained" convention
+  data        Json?     // structured supporting detail specific to kind (e.g. an insight's own real metrics)
+  priority    String?   // high | medium | low — recommendation/opportunity/prediction; null for insight/explanation
+  // Real columns, not buried in `data` — matches GeneratedRecommendation's
+  // own precedent, since these are directly queried/displayed (Home's
+  // "From Genesis" panel), not just supporting detail. Null for kinds that
+  // never carry a direct action (insight, explanation).
+  actionLabel String?
+  actionHref  String?
+  recordId    String?   // which BusinessRecord this is about, if any — same honest-null convention as BusinessEvent.recordId
+  entityType  String?
+  relatedOutputIds String[] @default([])
+  // Same stable-issue-identity concept as ApprovalRequest.topicKey, used the
+  // same way: dedup/supersede across review runs for the same underlying
+  // finding, honest null when no such stable identity exists.
+  topicKey    String?
+  proposedAction   Json?   // {actionType, input} — same shape as ProposedActionSchema
+  approvalRequestId String?
+  status      String    @default("ACTIVE") // ACTIVE | RESOLVED | SUPERSEDED
+  generatedAt DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, kind])
+  @@index([storeId, status])
+  @@index([storeId, recordId])
+}
+
 // PH-07 Layer 4 — the generic approval gate any current or future Genesis
 // capability plugs into. Deliberately not recommendation-specific:
 // recommendationId is a loose, optional reference (no FK — see
@@ -396,6 +454,12 @@ model ApprovalRequest {
   id               String    @id @default(cuid())
   storeId          String
   recommendationId String?
+  // Phase 3 Milestone 6 (J4 Cognitive Layer) — parallel to
+  // recommendationId above, not a replacement: set when this approval
+  // originates from the Cognitive Layer's own CognitiveOutput rows instead
+  // of the legacy GeneratedRecommendation model. Both stay nullable and
+  // independently optional — an approval only ever has at most one set.
+  cognitiveOutputId String?
   actionType       String
   input            Json
   previousValues   Json

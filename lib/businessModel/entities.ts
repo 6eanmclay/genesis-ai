@@ -112,6 +112,13 @@ export const GoalSchema = z.object({
   targetDate: z.string().nullable(), // ISO date
   identifiedAt: z.string(), // ISO date — when first captured
   relatedChallengeIds: z.array(z.string()),
+  // Phase 3 Milestone 6 (J4 Cognitive Layer) — a real, structured target
+  // number, honest-null when the owner never stated one (e.g. "grow the
+  // business" has no number; "$10k in monthly revenue" does). Without this,
+  // a genuinely computed prediction (reasoning.ts's predictGoalTrajectory)
+  // is impossible — description alone is prose, not something to do math
+  // against. Only ever meaningful today for category: "revenue" goals.
+  targetValueInCents: z.number().int().nullable(),
 });
 export type Goal = z.infer<typeof GoalSchema>;
 

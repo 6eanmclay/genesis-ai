@@ -187,9 +187,16 @@ export interface EntityHistory {
     status: string;
     firstNoticedAt: Date;
   }[];
-  recommendations: {
+  // Phase 3 Milestone 6 — reads CognitiveOutput now, not the legacy
+  // GeneratedRecommendation (superseded, see that model's own schema
+  // comment). Covers every kind Genesis has reasoned about this record —
+  // insights, explanations, recommendations, opportunities, predictions —
+  // not just recommendations, hence the rename from this field's original
+  // M5 name.
+  cognitiveOutputs: {
+    kind: string;
     message: string;
-    priority: string;
+    priority: string | null;
     generatedAt: Date;
   }[];
 }
@@ -199,7 +206,7 @@ export async function getEntityHistory<T extends EntityType>(
   entityType: T,
   recordId: string
 ): Promise<EntityHistory> {
-  const [records, related, events, observations, recommendations] =
+  const [records, related, events, observations, cognitiveOutputs] =
     await Promise.all([
       queryRecords(storeId, entityType),
       findRelated(storeId, recordId),
@@ -211,7 +218,7 @@ export async function getEntityHistory<T extends EntityType>(
         where: { storeId, recordId },
         orderBy: { firstNoticedAt: "desc" },
       }),
-      prisma.generatedRecommendation.findMany({
+      prisma.cognitiveOutput.findMany({
         where: { storeId, recordId },
         orderBy: { generatedAt: "desc" },
       }),
@@ -231,8 +238,9 @@ export async function getEntityHistory<T extends EntityType>(
       status: o.status,
       firstNoticedAt: o.firstNoticedAt,
     })),
-    recommendations: recommendations.map((r) => ({
-      message: r.message,
+    cognitiveOutputs: cognitiveOutputs.map((r) => ({
+      kind: r.kind,
+      message: r.summary,
       priority: r.priority,
       generatedAt: r.generatedAt,
     })),
@@ -420,6 +428,66 @@ export async function getAverageOpenRate(
     .map((c) => c.data.metrics!.opens / c.data.audienceSize!);
   if (rates.length === 0) return null;
   return rates.reduce((sum, rate) => sum + rate, 0) / rates.length;
+}
+
+// Phase 3 Milestone 6 (J4 Cognitive Layer) — a real, deterministic
+// prediction primitive: the Insight Engine's own "100% deterministic, no AI
+// judgment" principle extended to forward-looking statements. Claude never
+// invents a projection — it narrates one that was actually computed here
+// from real Transaction data via the already-existing getRevenue(). Returns
+// null (never a fabricated number) whenever there's nothing real to project
+// against: not a revenue-category goal, no targetDate, no
+// targetValueInCents, or a malformed window (target before the goal was
+// even identified).
+export interface GoalTrajectory {
+  goalId: string;
+  targetValueInCents: number;
+  actualSoFarInCents: number;
+  expectedByNowInCents: number;
+  projectedFinalInCents: number;
+  onTrack: boolean;
+  paceRatio: number; // actualSoFar / expectedByNow — 1.0 is exactly on pace
+  deadlinePassed: boolean;
+}
+
+export async function predictGoalTrajectory(
+  storeId: string,
+  goal: CanonicalRecord<"goal">
+): Promise<GoalTrajectory | null> {
+  const { category, targetDate, identifiedAt, targetValueInCents } = goal.data;
+  if (category !== "revenue" || !targetDate || targetValueInCents == null) return null;
+
+  const start = new Date(identifiedAt).getTime();
+  const end = new Date(targetDate).getTime();
+  if (!(end > start)) return null; // malformed window — nothing sensible to compute
+
+  const now = Date.now();
+  const elapsedMs = Math.max(0, now - start);
+  const totalWindowMs = end - start;
+  const deadlinePassed = now > end;
+  const expectedProgressFraction = Math.min(1, elapsedMs / totalWindowMs);
+
+  const actualSoFarInCents = await getRevenue(storeId, {
+    since: new Date(start),
+    until: new Date(Math.min(now, end)),
+  });
+
+  const expectedByNowInCents = Math.round(targetValueInCents * expectedProgressFraction);
+  const projectedFinalInCents =
+    elapsedMs > 0
+      ? Math.round((actualSoFarInCents / elapsedMs) * totalWindowMs)
+      : actualSoFarInCents;
+
+  return {
+    goalId: goal.id,
+    targetValueInCents,
+    actualSoFarInCents,
+    expectedByNowInCents,
+    projectedFinalInCents,
+    onTrack: actualSoFarInCents >= expectedByNowInCents,
+    paceRatio: expectedByNowInCents > 0 ? actualSoFarInCents / expectedByNowInCents : 1,
+    deadlinePassed,
+  };
 }
 
 // Returns [] until an Appointment producer exists (Phase 3 Milestone 2) —

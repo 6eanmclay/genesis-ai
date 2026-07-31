@@ -6,7 +6,7 @@ import {
   getStaleExecutions,
   getIntegrationIssues,
 } from "./needsAttention";
-import { generateGenesisRecommendations } from "./generateGenesisRecommendations";
+import { runCognitiveReview } from "@/lib/intelligence/cognitiveLayer";
 import type { Insight } from "@/lib/intelligence/insights";
 
 const STALE_REVIEW_MS = 24 * 60 * 60 * 1000;
@@ -134,19 +134,18 @@ export async function runOpportunisticAiReviewIfStale(
   // Phase 3 Milestone 3 — nullable so the scheduler's unattended cycle can
   // call this too, alongside the existing after()-driven human path.
   userId: string | null,
-  // Pre-computed by the scheduler (see generateGenesisRecommendations's own
-  // comment for why computeInsights must not run twice) — undefined for
-  // the existing after()-driven human path, which has none to pass.
+  // Pre-computed by the scheduler (see runCognitiveReview's own comment for
+  // why computeInsights must not run twice) — undefined for the existing
+  // after()-driven human path, which has none to pass.
   recentInsights?: Insight[]
 ): Promise<void> {
-  // Staleness reads the latest matching ExecutionLog row, not
-  // GeneratedRecommendation.generatedAt — that function's transaction is
-  // [deleteMany, ...creates], so a genuine zero-recommendation review
-  // creates no new row and generatedAt never advances, which would make a
-  // healthy store look stale forever. recordGenesisExecution's SUCCESS row
-  // is written unconditionally (zero results or not), so it's the real
-  // durable "reviewed at time T" signal. A recent PENDING row is treated as
-  // "another request already claimed this" — best-effort concurrency
+  // Staleness reads the latest matching ExecutionLog row, not a
+  // CognitiveOutput/GeneratedRecommendation timestamp — a genuine
+  // zero-output review would produce no new row either way, which would
+  // make a healthy store look stale forever. recordGenesisExecution's
+  // SUCCESS row is written unconditionally (zero results or not), so it's
+  // the real durable "reviewed at time T" signal. A recent PENDING row is
+  // treated as "another request already claimed this" — best-effort concurrency
   // control, not an airtight lock (see the plan for why that tradeoff is
   // fine here: the bounded failure mode is an extra Claude call in a narrow
   // race, never corrupted data).
@@ -180,7 +179,7 @@ export async function runOpportunisticAiReviewIfStale(
     metadata: {},
   });
 
-  const recommendations = await generateGenesisRecommendations({ storeId, userId, recentInsights });
+  const recommendations = await runCognitiveReview({ storeId, userId, recentInsights });
 
   // Only "high" priority becomes a Purple ambient signal — keeps it as
   // narrow/high-signal as Red, never "a recommendation row happens to
