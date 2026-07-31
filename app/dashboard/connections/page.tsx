@@ -9,6 +9,7 @@ import {
 import {
   connectExecutable,
   verifyExecutable,
+  syncExecutable,
 } from "@/lib/execution/adapters/integrationExecutable";
 import { ConnectorCard } from "../ConnectorCard";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
@@ -53,8 +54,17 @@ async function resolveEntry(storeId: string, entry: CatalogEntry): Promise<Resol
     prisma.executionLog.findFirst({
       where: {
         storeId,
+        // Sync's own action was missing here — after a real "Sync now"
+        // click, the log the card actually needs to show (e.g. "Synced 3
+        // record(s) from Google Calendar") was silently never found, so
+        // the card kept displaying the stale connect-time message instead
+        // — indistinguishable from the sync having done nothing at all.
         action: {
-          in: [connectExecutable(entry.connector).action, verifyExecutable(entry.connector).action],
+          in: [
+            connectExecutable(entry.connector).action,
+            verifyExecutable(entry.connector).action,
+            syncExecutable(entry.connector).action,
+          ],
         },
       },
       orderBy: { createdAt: "desc" },
