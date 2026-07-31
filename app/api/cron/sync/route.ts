@@ -17,5 +17,18 @@ export async function GET(request: NextRequest) {
   const synced = summaries.filter((s) => s.ok).length;
   const failed = summaries.length - synced;
 
-  return NextResponse.json({ synced, failed, total: summaries.length });
+  return NextResponse.json({
+    synced,
+    failed,
+    total: summaries.length,
+    // Per-connector detail — without this, a bare count can't say which
+    // provider actually ran, the first thing worth knowing when diagnosing
+    // a sync.
+    results: summaries.map((s) => ({
+      provider: s.provider,
+      ok: s.ok,
+      written: s.written,
+      errors: s.errors,
+    })),
+  });
 }
