@@ -4,6 +4,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
+import { encryptCredentials } from "./credentials";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -47,6 +48,7 @@ export const stripeConnector: IntegrationConnector = {
         scope: token.scope,
         livemode: token.livemode ?? false,
       };
+      const encryptedCredentials = encryptCredentials(credentials);
 
       await prisma.storeIntegration.upsert({
         where: { storeId_provider: { storeId, provider: "STRIPE" } },
@@ -55,7 +57,7 @@ export const stripeConnector: IntegrationConnector = {
           provider: "STRIPE",
           status: "CONNECTED",
           externalAccountId: token.stripe_user_id,
-          credentials,
+          credentials: encryptedCredentials,
           connectedByUserId: userId,
           connectedAt: new Date(),
           lastVerifiedAt: new Date(),
@@ -63,7 +65,7 @@ export const stripeConnector: IntegrationConnector = {
         update: {
           status: "CONNECTED",
           externalAccountId: token.stripe_user_id,
-          credentials,
+          credentials: encryptedCredentials,
           connectedByUserId: userId,
           connectedAt: new Date(),
           lastVerifiedAt: new Date(),

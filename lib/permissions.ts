@@ -23,6 +23,14 @@ export const PERMISSIONS = {
   // Genesis may do unsupervised" are different-stakes decisions. OWNER-only,
   // same as EMPLOYEES_MANAGE — never granted to EMPLOYEE.
   AUTHORITY_MANAGE: "authority:manage",
+  // Phase 3 Milestone 2 — connecting/managing third-party business software
+  // (Google Calendar, QuickBooks, Mailchimp, ...). OWNER-only by omission
+  // from ROLE_PERMISSIONS.EMPLOYEE below, matching PAYMENTS_MANAGE's own
+  // precedent — one flat flag for now, not per-provider granularity (a
+  // calendar connection and a bank-adjacent one differ in real stakes, but
+  // this codebase's permission model is deliberately coarse everywhere
+  // else too; revisit only if a real need for finer grain shows up).
+  CONNECTIONS_MANAGE: "connections:manage",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

@@ -27,6 +27,7 @@ import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement
 import { GENESIS_ACTIONS, type GenesisActionContext } from "@/lib/execution/genesisActions";
 import { supersedePendingApproval } from "@/lib/dashboard/pendingApprovals";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
+import { BUSINESS_SUBCATEGORY_SLUGS, filterKnownBusinessCategories } from "@/lib/businessTaxonomy";
 import { execute } from "@/lib/execution/engine";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 import {
@@ -183,6 +184,18 @@ const CoreFieldsSchema = z.object({
   products: z.array(ProductBlueprintSchema),
 });
 
+// Phase 3 Milestone 2 — a small, separate classifier, same pattern as
+// ProductImageRequestSchema/STORE_CHAT_IMAGE_REQUEST_SYSTEM_PROMPT below:
+// bolting businessCategories directly onto PrimaryBlueprintSchema (already
+// a large schema — theme, products, brandIdentity, homepageContent) hit a
+// real Claude API limit in practice ("the compiled grammar is too large"),
+// confirmed live, not a hypothetical — so this rides its own small call
+// instead, run concurrently with the primary generation call (same input,
+// no added latency) rather than sequentially after it.
+const BusinessCategorySchema = z.object({
+  businessCategories: z.array(z.string()),
+});
+
 const PrimaryBlueprintSchema = CoreFieldsSchema.extend({
   brandIdentity: BrandIdentitySchema,
   homepageContent: HomepageContentSchema,
@@ -293,6 +306,14 @@ const BRAND_PROMISE_GUIDANCE = `brandIdentity.brandPromise is distinct from miss
 const CONTINUATION_GUIDANCE = `Default to continuation, not replacement. When the user shares new or additional information about their business — a longer description, more detail about what they sell or who it's for, a pasted write-up, expanded context — treat it as material to weave into the business that already exists, not as a fresh brief to build from scratch. Preserve everything about the current identity, tone, and story that the new information doesn't actually contradict; incorporate what's new as an addition or refinement, the way a real co-founder folds new information into an ongoing plan rather than throwing out the whiteboard.
 
 Only treat a message as a request to start over when the user actually says so — "start over," "let's try something completely different," "scrap this," "redesign everything," or equivalent. A message that merely contains a lot of new detail is not, on its own, a request to replace anything, no matter how comprehensive or polished it reads (including text that looks like it was drafted elsewhere and pasted in). If a message is genuinely ambiguous — it reads like it could describe a different business entirely, and nothing indicates whether the user wants it merged in or wants a fresh start — treat that the same as an unconfirmed identity change: set requiresConfirmation true and ask directly, rather than silently guessing.`;
+
+// Phase 3 Milestone 2 — a small, standalone classification prompt (its own
+// call, see BusinessCategorySchema above) so Claude picks from the real,
+// current taxonomy (lib/businessTaxonomy.ts) rather than inventing its own
+// categories; filterKnownBusinessCategories() still drops anything
+// unrecognized after parsing as a second real check, not just prompt-level
+// guidance.
+const BUSINESS_CATEGORY_SYSTEM_PROMPT = `You are classifying a new business's type, for internal use in recommending relevant business software later — this is never shown to the customer. Given the business's name, what it sells, and its vision, choose 1-3 of the closest-matching slugs from this list: ${BUSINESS_SUBCATEGORY_SLUGS.join(", ")}. Pick "other" only if nothing else genuinely fits.`;
 
 const GENERATION_SYSTEM_PROMPT = `You are Genesis, an expert e-commerce consultant and brand strategist building a new business from scratch — not a form-filler producing the bare minimum needed to populate a database. Given a business description, produce a complete, professional, launch-ready brand identity and storefront content package.
 
@@ -438,17 +459,41 @@ async function generateStoreDraftCore(
     `Vision: ${inputVision ?? "(not specified — use your best judgment)"}`,
   ].join("\n");
 
-  const primaryOutcome = await callGenesisModel({
-    model: "claude-opus-4-8",
-    max_tokens: 16000,
-    thinking: { type: "adaptive" },
-    system: GENERATION_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: briefText }],
-    output_config: {
-      effort: "high",
-      format: zodOutputFormat(PrimaryBlueprintSchema),
-    },
-  });
+  // Phase 3 Milestone 2 — the business-category classifier runs
+  // concurrently with the primary call, not after it: same input
+  // (briefText), no dependency on primary's output, so there's no reason
+  // to pay its latency sequentially. Deliberately non-fatal — a
+  // classification failure/timeout falls back to an empty array rather
+  // than failing the whole store creation over a low-stakes side field.
+  const [primaryOutcome, businessCategoryOutcome] = await Promise.all([
+    callGenesisModel({
+      model: "claude-opus-4-8",
+      max_tokens: 16000,
+      thinking: { type: "adaptive" },
+      system: GENERATION_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: briefText }],
+      output_config: {
+        effort: "high",
+        format: zodOutputFormat(PrimaryBlueprintSchema),
+      },
+    }),
+    callGenesisModel({
+      model: "claude-opus-4-8",
+      max_tokens: 300,
+      thinking: { type: "adaptive" },
+      system: BUSINESS_CATEGORY_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: briefText }],
+      output_config: {
+        effort: "low",
+        format: zodOutputFormat(BusinessCategorySchema),
+      },
+    }),
+  ]);
+  const businessCategories = filterKnownBusinessCategories(
+    businessCategoryOutcome.ok
+      ? (businessCategoryOutcome.message.parsed_output?.businessCategories ?? [])
+      : []
+  );
   if (!primaryOutcome.ok) {
     await logProductEvent({
       userId: userId,
@@ -644,6 +689,7 @@ async function generateStoreDraftCore(
       theme: themeWithComposition,
       productsDraft: primary.products,
       blueprint: blueprintContent,
+      businessCategories,
       status: "ready",
     },
     update: {
@@ -656,6 +702,7 @@ async function generateStoreDraftCore(
       theme: themeWithComposition,
       productsDraft: primary.products,
       blueprint: blueprintContent,
+      businessCategories,
       status: "ready",
       version: { increment: 1 },
     },
@@ -3011,6 +3058,7 @@ export async function confirmStoreDraft() {
       theme,
       blueprint: (blueprintWithHero as object | null) ?? Prisma.DbNull,
       version: draft.version,
+      businessCategories: draft.businessCategories,
       products: {
         create: products.map((p, index) => ({
           name: p.name,

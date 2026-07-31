@@ -5,6 +5,7 @@ import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
+import { decryptCredentials } from "@/lib/integrations/credentials";
 import { selectProvider } from "@/lib/payments/router";
 import { canStoreAcceptPayments, CHECKOUT_UNAVAILABLE_MESSAGE } from "./shared";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
@@ -22,8 +23,8 @@ async function getStripeClientForStore(storeId: string): Promise<Stripe> {
     where: { storeId_provider: { storeId, provider: "STRIPE" } },
   });
   const credentials =
-    integration?.status === "CONNECTED"
-      ? (integration.credentials as { accessToken?: string } | null)
+    integration?.status === "CONNECTED" && integration.credentials
+      ? decryptCredentials<{ accessToken?: string }>(integration.credentials)
       : null;
 
   return credentials?.accessToken ? new Stripe(credentials.accessToken) : stripe;
@@ -78,7 +79,9 @@ async function createPaypalCheckoutSession(
   const integration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId: store.id, provider: "PAYPAL" } },
   });
-  const credentials = integration?.credentials as PaypalCredentials | null;
+  const credentials = integration?.credentials
+    ? decryptCredentials<PaypalCredentials>(integration.credentials)
+    : null;
   if (integration?.status !== "CONNECTED" || !credentials) {
     throw new Error("PayPal is not connected for this store");
   }

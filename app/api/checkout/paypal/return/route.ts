@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
+import { decryptCredentials } from "@/lib/integrations/credentials";
 import { recordExecution } from "@/lib/execution/log";
 import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -28,7 +29,9 @@ export async function GET(request: NextRequest) {
   const integration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId: store.id, provider: "PAYPAL" } },
   });
-  const credentials = integration?.credentials as PaypalCredentials | null;
+  const credentials = integration?.credentials
+    ? decryptCredentials<PaypalCredentials>(integration.credentials)
+    : null;
   if (!credentials) {
     console.error(`[paypal/return] no credentials for store ${store.id}`);
     return NextResponse.redirect(storeUrl);

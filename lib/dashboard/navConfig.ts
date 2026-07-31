@@ -42,6 +42,11 @@ export const NAV_SECTIONS: NavSection[] = [
   { key: "marketing", label: "Marketing", href: "/dashboard/marketing", permission: "store:manage" },
   { key: "payments", label: "Payments", href: "/dashboard/payments", permission: "payments:manage" },
   { key: "analytics", label: "Analytics", href: "/dashboard/analytics", permission: "analytics:view" },
+  // Phase 3 Milestone 2 — connecting third-party business software.
+  // Deliberately separate from Payments: Payments is "how you get paid,"
+  // already shipped and stable; Connections covers everything else
+  // (calendars, accounting, marketing, CRM, ...).
+  { key: "connections", label: "Connections", href: "/dashboard/connections", permission: "connections:manage" },
   { key: "settings", label: "Settings", href: "/dashboard/settings", permission: "store:manage" },
 ];
 

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector } from "./types";
+import { encryptCredentials, decryptCredentials } from "./credentials";
 
 export type PaypalEnvironment = "sandbox" | "live";
 
@@ -78,6 +79,7 @@ export const paypalConnector: IntegrationConnector = {
         clientSecret,
         environment,
       };
+      const encryptedCredentials = encryptCredentials(credentials);
 
       await prisma.storeIntegration.upsert({
         where: { storeId_provider: { storeId, provider: "PAYPAL" } },
@@ -86,7 +88,7 @@ export const paypalConnector: IntegrationConnector = {
           provider: "PAYPAL",
           status: "CONNECTED",
           externalAccountId: clientId,
-          credentials,
+          credentials: encryptedCredentials,
           connectedByUserId: userId,
           connectedAt: new Date(),
           lastVerifiedAt: new Date(),
@@ -94,7 +96,7 @@ export const paypalConnector: IntegrationConnector = {
         update: {
           status: "CONNECTED",
           externalAccountId: clientId,
-          credentials,
+          credentials: encryptedCredentials,
           connectedByUserId: userId,
           connectedAt: new Date(),
           lastVerifiedAt: new Date(),
@@ -121,7 +123,10 @@ export const paypalConnector: IntegrationConnector = {
     const integration = await prisma.storeIntegration.findUnique({
       where: { storeId_provider: { storeId, provider: "PAYPAL" } },
     });
-    const credentials = integration?.credentials as PaypalCredentials | null;
+    if (!integration?.credentials) {
+      return { ok: false, error: "Not connected" };
+    }
+    const credentials = decryptCredentials<PaypalCredentials>(integration.credentials);
     if (!credentials?.clientId || !credentials?.clientSecret) {
       return { ok: false, error: "Not connected" };
     }

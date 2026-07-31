@@ -1,5 +1,19 @@
 import type { IntegrationProvider, StoreIntegration } from "@prisma/client";
 import type { Permission } from "@/lib/permissions";
+import type { EntityType } from "@/lib/businessModel/entities";
+
+// Phase 3 Milestone 2 — the Foundation's mapping contract, made real. A
+// connector's sync() output, before validation: entityType/data are
+// checked against lib/businessModel/entities.ts's real Zod schema by
+// persistSyncedRecords, never trusted here. externalId is the provider's
+// own id for the record, so a re-sync updates BusinessRecord in place
+// (matching its @@unique([storeId, entityType, sourceProvider,
+// externalId]) constraint) rather than duplicating.
+export interface SyncedRecord {
+  entityType: EntityType;
+  externalId: string;
+  data: unknown;
+}
 
 // The framework never assumes how a connector authenticates — the
 // connector decides, and tells the caller what to do next via `kind`.
@@ -38,4 +52,12 @@ export interface IntegrationConnector {
   disconnect(storeId: string): Promise<void>;
 
   status(storeId: string): Promise<StoreIntegration | null>;
+
+  // Optional — not every connector produces business data (a future
+  // notification-only integration might not). When present, fetches this
+  // connector's own current data and maps it into the Foundation's
+  // canonical shape. Read-only: never writes back to the provider,
+  // matching this phase's "leaving the underlying software responsible
+  // for its own operational workflows" non-goal.
+  sync?(storeId: string): Promise<SyncedRecord[]>;
 }

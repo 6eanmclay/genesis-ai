@@ -78,6 +78,14 @@ model Store {
   pendingChange Json?
   published     Boolean  @default(false)
   version       Int      @default(1)
+  // Phase 3 Milestone 2 — code-level taxonomy slugs (lib/businessTaxonomy.ts),
+  // never a Prisma enum: a String[] so a new category/subcategory is a
+  // purely additive code change, matching ApprovalRequest.status's own
+  // "avoid enum-migration friction" convention. Drives Recommended
+  // Connections. Classified once at generation time (see ai-actions.ts's
+  // CoreFieldsSchema); a real backfill for pre-existing stores is a later,
+  // smaller addition.
+  businessCategories String[] @default([])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -123,12 +131,24 @@ model StoreMember {
 // Providers named across the roadmap (Stripe, PayPal) plus the ones raised
 // as future examples (Google, Slack, USPS) — extending this later is a
 // one-line enum addition, not a schema redesign. See lib/integrations/.
+//
+// Phase 3 Milestone 2 (Connector Framework) — GOOGLE_CALENDAR/QUICKBOOKS/
+// MAILCHIMP added as the 3 proof integrations. GOOGLE itself is left
+// reserved-but-unused rather than repurposed for Calendar specifically:
+// @@unique([storeId, provider]) on StoreIntegration means each distinct
+// integration *surface* needs its own identity, since a business could
+// plausibly connect Calendar and (later) Gmail/Drive independently — a
+// single shared "Google" value would make status ambiguous once a second
+// Google surface exists.
 enum IntegrationProvider {
   STRIPE
   PAYPAL
   GOOGLE
   SLACK
   USPS
+  GOOGLE_CALENDAR
+  QUICKBOOKS
+  MAILCHIMP
 }
 
 enum IntegrationStatus {
@@ -176,6 +196,9 @@ model StoreDraft {
   pendingChange    Json?
   status           String   @default("draft")
   version          Int      @default(1)
+  // Phase 3 Milestone 2 — see Store.businessCategories's own comment; this
+  // is the draft-stage copy, carried over to Store at confirmStoreDraft.
+  businessCategories String[] @default([])
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

@@ -28,13 +28,22 @@ export async function GET(
   const storeId = searchParams.get("state");
   const code = searchParams.get("code");
   const oauthError = searchParams.get("error");
+  // QuickBooks' own callback includes realmId (its company id) alongside
+  // code — the one real per-provider extra param this generic route needs
+  // to pass through. Every other provider simply never sends it.
+  const realmId = searchParams.get("realmId");
 
-  // Every outcome lands on Payments, not bare Home — that's where the
-  // explanation (this route's own flash param, plus the durable
-  // ExecutionLog-backed status card) and the recovery action (Reconnect)
-  // actually live. Redirecting to Home left both success and failure
-  // effectively silent: the owner had to already know to go check Payments.
-  const paymentsUrl = new URL("/dashboard/payments", request.url);
+  // Every outcome lands on the page that owns this provider, not bare
+  // Home — that's where the explanation (this route's own flash param,
+  // plus the durable ExecutionLog-backed status card) and the recovery
+  // action (Reconnect) actually live. Stripe/PayPal own Payments (already
+  // shipped, unchanged); every other provider (Phase 3 Milestone 2
+  // onward) owns Connections.
+  const PAYMENTS_PROVIDERS = new Set(["STRIPE", "PAYPAL"]);
+  const redirectUrl = new URL(
+    PAYMENTS_PROVIDERS.has(provider.toUpperCase()) ? "/dashboard/payments" : "/dashboard/connections",
+    request.url
+  );
 
   if (oauthError || !storeId || !code) {
     // Without this, a cancelled or expired OAuth handoff leaves the PENDING
@@ -75,8 +84,8 @@ export async function GET(
         // param below is still a real, if less detailed, signal.
       }
     }
-    paymentsUrl.searchParams.set("integration_error", provider);
-    return NextResponse.redirect(paymentsUrl);
+    redirectUrl.searchParams.set("integration_error", provider);
+    return NextResponse.redirect(redirectUrl);
   }
 
   const session = await auth();
@@ -104,20 +113,20 @@ export async function GET(
     // flow — the callback URL itself is a public redirect target.
     const result = await execute(
       executable,
-      { params: { code } },
+      { params: realmId ? { code, realmId } : { code } },
       { storeId, executionId: pending?.executionId }
     );
 
     if (result.status === "FAILED") {
-      paymentsUrl.searchParams.set("integration_error", provider);
+      redirectUrl.searchParams.set("integration_error", provider);
     } else {
-      paymentsUrl.searchParams.set("integration_connected", provider);
+      redirectUrl.searchParams.set("integration_connected", provider);
     }
   } catch (error) {
     unstable_rethrow(error);
     console.error(`[integrations/${provider}/callback]`, error);
-    paymentsUrl.searchParams.set("integration_error", provider);
+    redirectUrl.searchParams.set("integration_error", provider);
   }
 
-  return NextResponse.redirect(paymentsUrl);
+  return NextResponse.redirect(redirectUrl);
 }
