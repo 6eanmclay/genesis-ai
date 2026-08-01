@@ -37,6 +37,19 @@ import {
 // shared store (lib/dashboard/genesisActivity.ts) exactly as before.
 const RESPONSE_DURATION_MS = 1400; // matches globals.css's genesis-exhale duration
 
+// "Waking up" — an opt-in one-shot mount phase for the full-screen arrival
+// moment only (GenesisArrivalOverlay.tsx passes wakeOnMount; the persistent
+// rail/toolbar mounts never do — they're chrome, not a ritual, and
+// shouldn't replay a wake-up every time they render). Sean's explicit ask
+// after seeing the ritual at full speed: "don't have it already fully
+// energized. Let it start as a dim, quiet glow. Over the first second or
+// two, let the light intensify, the orbitals begin moving, and the energy
+// build naturally — as if Genesis is literally waking up because you
+// arrived." WAKE_DURATION_MS is deliberately the value genesisArrivalCopy.ts
+// sizes its first beat's pauseBeforeMs against, so the greeting text lands
+// right as the orb finishes waking.
+const WAKE_DURATION_MS = 1700;
+
 // The photo's own dominant hue — measured against its actual blue, not a
 // guess — so idle (hueRotate === 0) shows the reference exactly as shot,
 // and every other state's rotation is computed relative to real ground
@@ -72,11 +85,15 @@ const ACTIVITY_CLASS: Record<VisualState, string> = {
 export function GenesisAvatar({
   state,
   className = "",
+  wakeOnMount = false,
 }: {
   state: GenesisState;
   // Caller controls sizing entirely via className (aspect-square + a
   // width), same convention every call site already used before.
   className?: string;
+  // Opt-in: start dim and still, then ramp up to full presence over
+  // WAKE_DURATION_MS. Only the full-screen arrival overlay sets this.
+  wakeOnMount?: boolean;
 }) {
   const activity = useSyncExternalStore(
     subscribeGenesisActivity,
@@ -84,6 +101,22 @@ export function GenesisAvatar({
     getGenesisActivityServerSnapshot
   );
   const activityState = deriveActivityState(activity);
+
+  // One-shot local phase, same "start true, flip once via a mount effect"
+  // shape as the rest of this component's local state — never re-triggers
+  // on prop changes, only on this instance's own real mount. Commits the
+  // dim/stopped style on the first paint, then flips on the very next
+  // frame — the CSS transition (WAKE_DURATION_MS, set alongside each
+  // dimmed property below) is what actually carries the whole ramp, so
+  // brightness genuinely climbs for the full ~1.7s starting at mount,
+  // instead of holding flat-dim and only then snapping bright.
+  const [waking, setWaking] = useState(wakeOnMount);
+  useEffect(() => {
+    if (!waking) return;
+    const raf = requestAnimationFrame(() => setWaking(false));
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Response is a one-shot local phase, not shared external state — each
   // mounted instance independently detects the real isWorking true->false
@@ -111,7 +144,9 @@ export function GenesisAvatar({
   const hueRotateDeg = state === "idle" ? 0 : hexHue(color) - SOURCE_IMAGE_HUE;
 
   return (
-    <div className={`relative ${ACTIVITY_CLASS[visualState]} ${className}`}>
+    <div
+      className={`relative ${waking ? "genesis-avatar-dormant" : ""} ${ACTIVITY_CLASS[visualState]} ${className}`}
+    >
       {/* A dark backdrop disc, always rendered regardless of the host
           page's own background — mix-blend-mode: screen below only
           produces visible glow against something dark behind it (every
@@ -130,11 +165,16 @@ export function GenesisAvatar({
       {/* Haze — a soft background wash extending the photo's own glow
           outward past its frame, so the transition from photo to
           surrounding UI never reads as a hard edge. Kept faint — this is
-          the one atmosphere layer allowed behind the photo. */}
+          the one atmosphere layer allowed behind the photo. Dims further
+          during the wake ramp (see the Image's filter comment below for the
+          full "waking up" rationale) — a plain opacity multiplier composites
+          correctly under any child regardless of how that child sets its
+          own opacity, so this doesn't fight the particles' own inline
+          opacity values below. */}
       <div
         aria-hidden="true"
-        className="genesis-haze absolute inset-[-45%] rounded-full blur-3xl transition-colors duration-1000"
-        style={{ backgroundColor: color, opacity: 0.16 }}
+        className="genesis-haze absolute inset-[-45%] rounded-full blur-3xl transition-all"
+        style={{ backgroundColor: color, opacity: (waking ? 0.3 : 1) * 0.16, transitionDuration: `${WAKE_DURATION_MS}ms` }}
       />
 
       {/* The real reference photo — the dominant layer. mix-blend-mode:
@@ -143,16 +183,24 @@ export function GenesisAvatar({
           bright orb blends additively with the haze/atmosphere around it
           instead of sitting flatly on top. hue-rotate is the only real
           per-state color change — 0deg at idle leaves the photo exactly
-          as shot. */}
+          as shot. brightness ramps from a dim, quiet 0.35 up to its normal
+          1.15 across WAKE_DURATION_MS when wakeOnMount is set — the core
+          itself is baked into the photo, so dimming brightness dims the
+          whole orb, not just the atmosphere around it. The ramp starts
+          essentially at mount (waking flips false on the very next frame,
+          not after a real delay) so this CSS transition is what actually
+          carries the "over the first second or two, let the light
+          intensify" build, rather than holding flat-dim and snapping. */}
       <Image
         src="/brand/genesis-avatar-orb.png"
         alt="Genesis"
         fill
         sizes="(min-width: 1024px) 20vw, 200px"
-        className="object-contain transition-[filter] duration-1000"
+        className="object-contain transition-[filter]"
         style={{
           mixBlendMode: "screen",
-          filter: `brightness(1.15) saturate(${state === "idle" ? 1 : 1.2}) hue-rotate(${hueRotateDeg}deg)`,
+          transitionDuration: `${WAKE_DURATION_MS}ms`,
+          filter: `brightness(${waking ? 0.35 : 1.15}) saturate(${state === "idle" ? 1 : 1.2}) hue-rotate(${hueRotateDeg}deg)`,
           // The source photo (546x350, landscape) isn't perfectly square
           // and its "black" background is a few RGB values above zero
           // (confirmed by sampling) — object-contain's letterboxing plus
@@ -169,11 +217,22 @@ export function GenesisAvatar({
           highlights), lightly blended on top of the photo, never a
           second static ring/sparkle system competing with the real ones
           already visible in the photo itself. Sean's explicit framing:
-          "lightly blended on top — not replace it." */}
+          "lightly blended on top — not replace it." Faded out and its
+          ribbons/particles/shimmer held motionless for their first frame
+          (via the genesis-avatar-dormant class on the root above, which
+          pauses their animation-name — see globals.css) so they genuinely
+          start their loop at mount rather than resuming mid-cycle, then
+          fade in alongside the same wake ramp as everything else. */}
       <svg
         viewBox="0 0 200 200"
-        className="absolute inset-0 h-full w-full transition-colors duration-1000"
-        style={{ overflow: "visible", color, mixBlendMode: "screen" }}
+        className="absolute inset-0 h-full w-full transition-all"
+        style={{
+          overflow: "visible",
+          color,
+          mixBlendMode: "screen",
+          opacity: waking ? 0.12 : 1,
+          transitionDuration: `${WAKE_DURATION_MS}ms`,
+        }}
         aria-hidden="true"
       >
         {/* Two orbits, tightly matched to the rings already visible in the

@@ -48,14 +48,19 @@ export function GenesisArrivalOverlay({
 }) {
   return (
     <div
-      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center gap-6 px-8 text-center transition-opacity duration-[350ms] ${
+      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center gap-8 px-8 text-center transition-opacity duration-[700ms] ${
         fullScreenOnDesktop ? "" : "md:hidden"
       } ${leaving ? "pointer-events-none opacity-0" : "opacity-100"}`}
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
     >
-      <GenesisAvatar state={state} className="h-24 w-24" />
+      {/* "Right now it feels like an icon... the first thing they should
+          feel is: I'm entering Genesis." Scales with the viewport (nearly
+          spanning it on mobile) but caps well short of dominating a large
+          desktop screen. wakeOnMount: this is the one context where Genesis
+          should visibly wake up — see GenesisAvatar.tsx. */}
+      <GenesisAvatar state={state} className="aspect-square w-[min(72vw,440px)]" wakeOnMount />
       <p
-        className="max-w-xs text-lg font-medium"
+        className="max-w-sm text-lg font-medium"
         style={{ color: GENESIS_ATMOSPHERE.text }}
       >
         {text}

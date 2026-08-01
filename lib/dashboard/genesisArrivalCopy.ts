@@ -9,14 +9,17 @@ import type { Beat } from "./arrivalBeats";
 // for, don't build," the same discipline the original Arrival Experience
 // design record already applied to multi-business.
 //
-// Timing is deliberately tight — Sean's explicit call: "~1-2 seconds,
-// polished not slow... the animation isn't there to hide loading, it
-// represents Genesis becoming active." Nothing here is ever really
-// "still loading" (the dashboard's own data is already server-rendered by
-// the time this mounts) — this is an honest, deliberate pause, not a
-// progress indicator, just a brief one. Exact milliseconds are expected to
-// move after being experienced live, same as every other beat sequence
-// this milestone.
+// Timing was originally tight (~1-2s) and got walked back after Sean saw it
+// live: "the pacing is still too fast... allow each message to remain on
+// screen long enough to actually be read... think calm confidence, not fast
+// loading." Nothing here is ever really "still loading" (the dashboard's
+// own data is already server-rendered by the time this mounts) — this is an
+// honest, deliberate pause, not a progress indicator, now given real room to
+// breathe: roughly 5-8 seconds total, matching the beat "Genesis awakens ->
+// greets you -> prepares your business -> opens your workspace," not "load
+// dashboard." The opening mode's first pauseBeforeMs is sized to line up
+// with GenesisAvatar's own wakeOnMount ramp (~1.7s) so the greeting lands
+// right as the orb finishes waking, not mid-ramp or long after it settles.
 export type ArrivalMode = "opening" | "switching";
 
 export function buildArrivalBeats({
@@ -35,21 +38,21 @@ export function buildArrivalBeats({
 }): Beat[] {
   if (mode === "switching") {
     return [
-      { text: `Switching to ${storeName}…`, pauseBeforeMs: 120, holdMs: 480 },
-      { text: "Loading business intelligence…", holdMs: 380 },
-      { text: "Checking overnight activity…", holdMs: 380 },
-      { text: "Preparing your workspace…", holdMs: 380 },
+      { text: `Switching to ${storeName}…`, pauseBeforeMs: 400, holdMs: 1300 },
+      { text: "Loading business intelligence…", holdMs: 1100 },
+      { text: "Checking overnight activity…", holdMs: 1100 },
+      { text: "Preparing your workspace…", holdMs: 1100 },
     ];
   }
 
   const greeting = userName ? `Welcome back, ${userName}.` : "Welcome back.";
   return [
-    { text: greeting, pauseBeforeMs: 120, holdMs: 480 },
-    { text: `Opening ${storeName}…`, holdMs: 380 },
-    { text: "Preparing today's workspace…", holdMs: 380 },
+    { text: greeting, pauseBeforeMs: 1700, holdMs: 1500 },
+    { text: `Opening ${storeName}…`, holdMs: 1300 },
+    { text: "Preparing today's workspace…", holdMs: 1300 },
     {
       text: hasRealBriefing ? "Reviewing what changed while you were away…" : "Everything's running smoothly…",
-      holdMs: 380,
+      holdMs: 1300,
     },
   ];
 }

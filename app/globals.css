@@ -158,6 +158,23 @@ body {
   animation: genesis-exhale 1.4s ease-out 1;
 }
 
+/* Waking up — GenesisAvatar's wakeOnMount prop (the full-screen arrival
+   moment only). The opacity/brightness ramp itself lives inline in
+   GenesisAvatar.tsx (those values are already computed in JS per-element,
+   so a CSS class can't safely override them — inline styles always win the
+   cascade over a class regardless of specificity). What genuinely needs a
+   class is this: literally halting the ribbons/particles/shimmer's own
+   animation-name mid-cycle, since animation-play-state isn't set inline
+   anywhere and a descendant selector like this reaches it cleanly. Once
+   wakeOnMount's ramp ends, this class is removed and every animation just
+   resumes — "the orbitals begin moving" is a real, not simulated, effect. */
+.genesis-avatar-dormant .genesis-ribbon,
+.genesis-avatar-dormant .genesis-particle,
+.genesis-avatar-dormant .genesis-shimmer,
+.genesis-avatar-dormant .genesis-haze {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .genesis-ribbon,
   .genesis-particle,

@@ -172,8 +172,9 @@ export function DashboardShell({
     buildBriefing({ focusableApprovals, liveObservations, curiosityItems }) !== null;
   // mode: "opening" is the only real trigger today — no business switcher
   // exists to ever call this with mode: "switching" (see
-  // genesisArrivalCopy.ts's own comment). Deliberately tight timing —
-  // Sean's explicit call: "~1-2 seconds, polished not slow."
+  // genesisArrivalCopy.ts's own comment). Deliberately given room to
+  // breathe now — Sean's explicit call after the first pass felt rushed:
+  // "think calm confidence, not fast loading," ~5-8s total.
   const returningBeats = useMemo(
     () => buildArrivalBeats({ mode: "opening", userName, storeName, hasRealBriefing }),
     [userName, storeName, hasRealBriefing]
@@ -195,7 +196,7 @@ export function DashboardShell({
         consume();
         setJustArrived(true);
         setTimeout(() => setJustArrived(false), 8000);
-      }, 350);
+      }, 700); // must match GenesisArrivalOverlay's own CSS fade duration
     },
   });
 
