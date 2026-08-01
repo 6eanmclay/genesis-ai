@@ -17,7 +17,6 @@ import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { MobileArrivalOverlay } from "./MobileArrivalOverlay";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
-import { buildBriefing } from "@/lib/dashboard/genesisBriefing";
 import { useFreshLaunch } from "@/lib/dashboard/useFreshLaunch";
 import { useBeatSequence, type Beat } from "@/lib/dashboard/arrivalBeats";
 
@@ -168,16 +167,26 @@ export function DashboardShell({
       setReturningActive(true);
     }
   }
-  const returningBriefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
+  // Recognition, then transition — deliberately just these two. The
+  // ritual's "has been watching" idea is no longer spoken as its own empty
+  // beat here; it's what the post-arrival briefing below actually *is* —
+  // Sean's correction: the owner should be inside the business before
+  // Genesis starts talking about it, not briefed from outside the door.
   const returningBeats: Beat[] = useMemo(
     () => [
-      { text: userName ? `Welcome back, ${userName}.` : "Welcome back.", pauseBeforeMs: 300, holdMs: 1400 },
-      { text: "Genesis has been watching over your business.", holdMs: 1400 },
-      { text: returningBriefing ? returningBriefing.lead : "Everything's running smoothly today.", holdMs: 1600 },
-      { text: `Let's open ${storeName}…`, holdMs: 1200 },
+      { text: userName ? `Welcome back, ${userName}.` : "Welcome back.", pauseBeforeMs: 300, holdMs: 1600 },
+      { text: `Opening ${storeName}…`, holdMs: 1400 },
     ],
-    [userName, returningBriefing, storeName]
+    [userName, storeName]
   );
+
+  // True for a brief real window right after the overlay clears — reframes
+  // LiveIntelligence/MobileGenesisPresence's own real briefing line as
+  // "While you were away," spoken only once the owner is genuinely inside
+  // (never fabricated content; same real buildBriefing data those
+  // components already compute for their permanent, ambient state).
+  const [justArrived, setJustArrived] = useState(false);
+
   const { activeBeat: returningBeat } = useBeatSequence(returningBeats, {
     autoStart: returningActive,
     onComplete: () => {
@@ -185,6 +194,8 @@ export function DashboardShell({
       setTimeout(() => {
         setReturningActive(false);
         consume();
+        setJustArrived(true);
+        setTimeout(() => setJustArrived(false), 8000);
       }, 700);
     },
   });
@@ -544,6 +555,7 @@ export function DashboardShell({
         liveObservations={liveObservations}
         curiosityItems={curiosityItems}
         userName={userName}
+        justArrived={justArrived}
       />
 
       {/* Mobile top bar — explicit h-16 (not padding-driven) so the
@@ -614,6 +626,7 @@ export function DashboardShell({
               revenueTrend={revenueTrend}
               newCustomerCount={newCustomerCount}
               dormant={dormant}
+              justArrived={justArrived}
             />
           </div>
 

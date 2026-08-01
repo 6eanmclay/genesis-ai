@@ -30,6 +30,7 @@ export function MobileGenesisPresence({
   liveObservations,
   curiosityItems,
   userName,
+  justArrived = false,
 }: {
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
@@ -39,11 +40,25 @@ export function MobileGenesisPresence({
   liveObservations: LiveObservationBrief[];
   curiosityItems: CuriosityBrief[];
   userName: string | null;
+  // Arrival Experience — true for a brief real window right after the
+  // returning-user ritual's full-screen overlay clears (DashboardShell.tsx).
+  // Reframes this same real briefing line as "While you were away" rather
+  // than its permanent, ambient framing — Sean's explicit sequencing
+  // correction: the briefing is only ever spoken once the owner is
+  // genuinely inside, never during the ritual itself.
+  justArrived?: boolean;
 }) {
   const state = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
   const meta = GENESIS_STATE_META[state];
   const stable = isStableAttentionState(state);
   const briefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
+  const briefingText = briefing
+    ? justArrived
+      ? `While you were away — ${briefing.lead}.`
+      : briefing.lead
+    : justArrived
+      ? "While you were away, everything ran smoothly."
+      : "Everything's running smoothly today.";
 
   return (
     <div
@@ -75,7 +90,7 @@ export function MobileGenesisPresence({
             communicates the state in Genesis's own voice, which is a
             better fit for this compact format. */}
         <p className="truncate text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-          {briefing ? briefing.lead : "Everything's running smoothly today."}
+          {briefingText}
         </p>
       </div>
     </div>

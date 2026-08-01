@@ -35,6 +35,7 @@ export function LiveIntelligence({
   revenueTrend,
   newCustomerCount,
   dormant = false,
+  justArrived = false,
 }: {
   focusableApprovals: FocusableApproval[];
   liveObservations: LiveObservation[];
@@ -48,8 +49,28 @@ export function LiveIntelligence({
   // opacity-transition treatment, kept in sync so the rail and the
   // greeting always wake together.
   dormant?: boolean;
+  // Arrival Experience — true for a brief real window right after the
+  // returning-user ritual's overlay clears (DashboardShell.tsx). Reframes
+  // this same real line as "While you were away" rather than its
+  // permanent, ambient framing — the briefing is only ever spoken once the
+  // owner is genuinely inside, per Sean's explicit sequencing correction.
+  justArrived?: boolean;
 }) {
   const briefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
+
+  // Real counts only — no fabricated categories (no abandoned-checkout or
+  // payout tracking exists yet). Silently omits whichever of these isn't
+  // real/nonzero rather than padding the sentence with a zero.
+  const awayFacts: string[] = [];
+  if (justArrived) {
+    if (newCustomerCount) awayFacts.push(`${newCustomerCount} new customer${newCustomerCount === 1 ? "" : "s"}`);
+    if (orderCount) awayFacts.push(`${orderCount} order${orderCount === 1 ? "" : "s"}`);
+  }
+  const awayPrefix = justArrived
+    ? awayFacts.length > 0
+      ? `While you were away: ${awayFacts.join(", ")}. `
+      : "While you were away — "
+    : "";
 
   return (
     <div
@@ -70,6 +91,7 @@ export function LiveIntelligence({
 
           {briefing ? (
             <p className="mt-2 text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+              {awayPrefix}
               {briefing.lead}
               {briefing.ctaHref ? (
                 <>
@@ -88,7 +110,7 @@ export function LiveIntelligence({
             </p>
           ) : (
             <p className="mt-2 text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-              Everything&apos;s running smoothly today.
+              {justArrived ? "While you were away, everything ran smoothly." : "Everything's running smoothly today."}
             </p>
           )}
         </div>
