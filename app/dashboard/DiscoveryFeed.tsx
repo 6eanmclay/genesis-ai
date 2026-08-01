@@ -1,12 +1,6 @@
 import Link from "next/link";
 import type { DiscoveryItem } from "@/lib/dashboard/discovery";
-
-const KIND_LABEL: Record<DiscoveryItem["kind"], string> = {
-  recommendation: "Recommendation",
-  opportunity: "Opportunity",
-  explanation: "Worth understanding",
-  prediction: "Goal progress",
-};
+import { COGNITIVE_OUTPUT_KIND_LABEL } from "@/lib/dashboard/cognitiveOutputLabels";
 
 function formatTimeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -54,7 +48,7 @@ export function DiscoveryFeed({ items }: { items: DiscoveryItem[] }) {
         >
           <div className="flex items-center justify-between gap-3">
             <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-              {KIND_LABEL[item.kind]}
+              {COGNITIVE_OUTPUT_KIND_LABEL[item.kind]}
             </p>
             <p className="text-[10px] text-zinc-400">found {formatTimeAgo(item.generatedAt)}</p>
           </div>

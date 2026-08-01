@@ -25,6 +25,12 @@ export interface ActivityItem {
   // "Genesis handled this automatically" without touching the underlying
   // (append-only, never rewritten) ExecutionLog.message itself.
   decisionMode?: "human" | "autonomous";
+  // Genesis Experience Principles, "Spoken, not logged" — set only for
+  // genesis.communicate_finding rows, whose `message` above has already
+  // been swapped for the real CognitiveOutput.summary (see
+  // getRecentActivity in whatHappened.ts). Lets ActivityFeed render the
+  // same kind label Discovery uses, never a raw log wrapper.
+  cognitiveOutputKind?: string;
 }
 
 export type AttentionKind =

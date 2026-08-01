@@ -1,5 +1,6 @@
 import type { ActivityItem } from "@/lib/dashboard/types";
 import { STATUS_DOT } from "@/lib/execution/statusDisplay";
+import { COGNITIVE_OUTPUT_KIND_LABEL } from "@/lib/dashboard/cognitiveOutputLabels";
 
 const ACTOR_LABEL: Record<ActivityItem["actorType"], string> = {
   USER: "You",
@@ -30,6 +31,11 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
         <li key={item.id} className="flex items-start gap-2 py-2 first:pt-0">
           <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[item.status]}`} />
           <div>
+            {item.cognitiveOutputKind && (
+              <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                {COGNITIVE_OUTPUT_KIND_LABEL[item.cognitiveOutputKind] ?? item.cognitiveOutputKind}
+              </p>
+            )}
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               {truncate(item.message)}
               {item.decisionMode === "autonomous" && (

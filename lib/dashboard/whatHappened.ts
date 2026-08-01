@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import type { ActivityItem, OrderSummary, RecentOrder } from "./types";
 
 const WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -140,15 +141,49 @@ export async function getRecentActivity(
     approvals.map((a) => [a.executionId, a.decisionMode as "human" | "autonomous"])
   );
 
-  return rows.map((row) => ({
-    id: row.id,
-    action: row.action,
-    status: row.status as ActivityItem["status"],
-    message: row.message,
-    actorType: row.actorType as ActivityItem["actorType"],
-    actorName: row.actor ? (row.actor.name ?? row.actor.email) : null,
-    createdAt: row.createdAt,
-    metadata: row.metadata,
-    decisionMode: decisionModeByExecutionId.get(row.executionId),
-  }));
+  // Genesis Experience Principles, "Spoken, not logged" — a
+  // genesis.communicate_finding row's own ExecutionLog.message is a raw,
+  // mechanical audit-log wrapper (see communicateFinding.ts's run()), never
+  // meant for an owner to read. The real sentence Genesis wrote lives on the
+  // CognitiveOutput row it created — reliably findable via the
+  // cognitiveOutputId this executable's own run() always returns as
+  // metadata (see engine.ts/log.ts — persisted onto ExecutionLog.metadata
+  // for every successful run, no schema change needed). A small second
+  // query enriching the existing append-only log, same shape as the
+  // decisionModeByExecutionId lookup just above — never a rewrite of what's
+  // actually stored.
+  const findingRowIds = rows
+    .filter((row) => row.action === EXECUTION_ACTIONS.GENESIS_COMMUNICATE_FINDING)
+    .map((row) => {
+      const metadata = row.metadata as { cognitiveOutputId?: string } | null;
+      return metadata?.cognitiveOutputId;
+    })
+    .filter((id): id is string => typeof id === "string");
+  const cognitiveOutputs = findingRowIds.length
+    ? await prisma.cognitiveOutput.findMany({
+        where: { id: { in: findingRowIds } },
+        select: { id: true, summary: true, kind: true },
+      })
+    : [];
+  const cognitiveOutputById = new Map(cognitiveOutputs.map((c) => [c.id, c]));
+
+  return rows.map((row) => {
+    const metadata = row.metadata as { cognitiveOutputId?: string } | null;
+    const cognitiveOutput =
+      row.action === EXECUTION_ACTIONS.GENESIS_COMMUNICATE_FINDING && metadata?.cognitiveOutputId
+        ? cognitiveOutputById.get(metadata.cognitiveOutputId)
+        : undefined;
+    return {
+      id: row.id,
+      action: row.action,
+      status: row.status as ActivityItem["status"],
+      message: cognitiveOutput ? cognitiveOutput.summary : row.message,
+      actorType: row.actorType as ActivityItem["actorType"],
+      actorName: row.actor ? (row.actor.name ?? row.actor.email) : null,
+      createdAt: row.createdAt,
+      metadata: row.metadata,
+      decisionMode: decisionModeByExecutionId.get(row.executionId),
+      cognitiveOutputKind: cognitiveOutput?.kind,
+    };
+  });
 }
