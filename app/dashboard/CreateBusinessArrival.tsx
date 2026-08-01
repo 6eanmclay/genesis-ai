@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { useBeatSequence, type Beat } from "@/lib/dashboard/arrivalBeats";
-import { MobileArrivalOverlay } from "./MobileArrivalOverlay";
+import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
 
 // Real phase status (StoreDraft.status, polled from /api/draft-status —
@@ -59,7 +59,7 @@ export function CreateBusinessArrival({
 
   return (
     <>
-      <MobileArrivalOverlay text={liveText} state={state} />
+      <GenesisArrivalOverlay text={liveText} state={state} />
 
       {/* Desktop — deliberately not a full-screen takeover (see the design
           record's platform split). This page has no live Store yet, so

@@ -17,7 +17,7 @@ export function useFreshLaunch(): { isFreshLaunch: boolean; consume: () => void 
   // Always starts false, matching the server-rendered pass (sessionStorage
   // doesn't exist during SSR) — reading it eagerly during the first client
   // render instead produces a real hydration mismatch (DashboardShell's
-  // header vs. MobileArrivalOverlay), the same class of client-only-state
+  // header vs. GenesisArrivalOverlay), the same class of client-only-state
   // problem GenesisGreeting.tsx already works around for its own
   // time-of-day read. The real value is read in an effect, one tick after
   // mount — invisible in practice, and the only hydration-safe way to

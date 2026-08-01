@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
@@ -14,11 +13,14 @@ import { GenesisDomicile } from "./GenesisDomicile";
 import { LiveIntelligence } from "./LiveIntelligence";
 import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
 import { MobileGenesisPresence } from "./MobileGenesisPresence";
-import { MobileArrivalOverlay } from "./MobileArrivalOverlay";
+import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
+import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
-import { GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
+import { GENESIS_STATE_META, deriveAssessmentState } from "@/lib/dashboard/genesisState";
+import { buildBriefing } from "@/lib/dashboard/genesisBriefing";
 import { useFreshLaunch, resetFreshLaunch } from "@/lib/dashboard/useFreshLaunch";
-import { useBeatSequence, type Beat } from "@/lib/dashboard/arrivalBeats";
+import { useBeatSequence } from "@/lib/dashboard/arrivalBeats";
+import { buildArrivalBeats } from "@/lib/dashboard/genesisArrivalCopy";
 
 type GenesisMessage = { id: string; role: string; content: string; changes: unknown };
 
@@ -129,33 +131,30 @@ export function DashboardShell({
   const [moreOpen, setMoreOpen] = useState(false); // mobile bottom sheet
   const [desktopMoreOpen, setDesktopMoreOpen] = useState(false); // top-bar dropdown
 
-  // Arrival Experience V1 — returning-user "wake the office" (see memory
-  // project_arrival_experience_milestone.md). isFreshLaunch starts false
-  // (matching the server-rendered pass — see useFreshLaunch's own comment)
-  // and flips true in an effect shortly after mount, at most once per real
-  // fresh launch. dormant/returningActive below both start false too (for
-  // the same hydration-safety reason) and pick up that flip using React's
-  // documented "adjusting state when a value changes" pattern — the same
-  // fix arrivalBeats.ts's useBeatSequence needed for its own autoStart
-  // prop, and for the same reason: a plain mount-only effect keyed on
-  // isFreshLaunch would only ever see its initial (always-false) value.
+  // The real business-assessment color behind every avatar surface in this
+  // shell — the primary nav icon and mobile header icon below, plus (via
+  // their own props) GenesisDomicile/LiveIntelligence/MobileGenesisPresence.
+  // Computed once here from the same real signals every one of those
+  // already receives, rather than each surface re-deriving it independently.
+  const genesisState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
+
+  // The Genesis Avatar login moment — a real fresh launch fades the whole
+  // screen to Genesis becoming aware of the owner's presence before the
+  // dashboard appears, now unified across desktop and mobile (see memory
+  // project_genesis_avatar_v2.md — Sean's explicit call once Genesis had a
+  // real animated presence worth a proper moment: "desktop shouldn't
+  // simply dim into the dashboard anymore... one consistent first
+  // impression"). isFreshLaunch starts false (matching the server-rendered
+  // pass — see useFreshLaunch's own comment) and flips true in an effect
+  // shortly after mount, at most once per real fresh launch. returningActive
+  // below starts false too (for the same hydration-safety reason) and
+  // picks up that flip using React's documented "adjusting state when a
+  // value changes" pattern — the same fix arrivalBeats.ts's useBeatSequence
+  // needed for its own autoStart prop, and for the same reason: a plain
+  // mount-only effect keyed on isFreshLaunch would only ever see its
+  // initial (always-false) value.
   const { isFreshLaunch, consume } = useFreshLaunch();
 
-  // Desktop — a brief, independent wake (see GenesisDomicile/
-  // LiveIntelligence's own dormant prop): starts dim, fades to full
-  // opacity shortly after becoming true. Deliberately not tied to the
-  // mobile beat sequence below — "briefly wake up," not the fuller mobile
-  // ritual.
-  const [dormant, setDormant] = useState(false);
-  useEffect(() => {
-    if (!dormant) return;
-    const timer = setTimeout(() => setDormant(false), 1200);
-    return () => clearTimeout(timer);
-  }, [dormant]);
-
-  // Mobile — the fuller "wake the office" ritual: a full-screen overlay
-  // (shared with CreateBusinessArrival) playing a short, real beat
-  // sequence, then fading out into MobileGenesisPresence's real position.
   const [returningActive, setReturningActive] = useState(false);
   const [returningLeaving, setReturningLeaving] = useState(false);
 
@@ -163,21 +162,21 @@ export function DashboardShell({
   if (isFreshLaunch !== prevIsFreshLaunch) {
     setPrevIsFreshLaunch(isFreshLaunch);
     if (isFreshLaunch) {
-      setDormant(true);
       setReturningActive(true);
     }
   }
-  // Recognition, then transition — deliberately just these two. The
-  // ritual's "has been watching" idea is no longer spoken as its own empty
-  // beat here; it's what the post-arrival briefing below actually *is* —
-  // Sean's correction: the owner should be inside the business before
-  // Genesis starts talking about it, not briefed from outside the door.
-  const returningBeats: Beat[] = useMemo(
-    () => [
-      { text: userName ? `Welcome back, ${userName}.` : "Welcome back.", pauseBeforeMs: 300, holdMs: 1600 },
-      { text: `Opening ${storeName}…`, holdMs: 1400 },
-    ],
-    [userName, storeName]
+
+  // Real signal, not a generic line — keeps the closing beat honest when
+  // there's genuinely nothing pending (see buildArrivalBeats's own comment).
+  const hasRealBriefing =
+    buildBriefing({ focusableApprovals, liveObservations, curiosityItems }) !== null;
+  // mode: "opening" is the only real trigger today — no business switcher
+  // exists to ever call this with mode: "switching" (see
+  // genesisArrivalCopy.ts's own comment). Deliberately tight timing —
+  // Sean's explicit call: "~1-2 seconds, polished not slow."
+  const returningBeats = useMemo(
+    () => buildArrivalBeats({ mode: "opening", userName, storeName, hasRealBriefing }),
+    [userName, storeName, hasRealBriefing]
   );
 
   // True for a brief real window right after the overlay clears — reframes
@@ -196,7 +195,7 @@ export function DashboardShell({
         consume();
         setJustArrived(true);
         setTimeout(() => setJustArrived(false), 8000);
-      }, 700);
+      }, 350);
     },
   });
 
@@ -326,22 +325,15 @@ export function DashboardShell({
     </span>
   );
 
-  // Genesis's own app icon (the canonical J4 brand asset — see
-  // memory/project_j4_avatar_branding.md) — a fixed-identity badge, not
-  // themed to light/dark like the surrounding chrome, the same way a real
-  // app icon never adapts to its host's theme. Small and rounded so it
-  // reads as a premium app icon next to the store name, not an
-  // illustration competing with it. Shared so the desktop, TV-header, and
-  // mobile homes below all render the exact same element.
-  const genesisIcon = (
-    <Image
-      src="/brand/genesis-j4-avatar.png"
-      alt="Genesis"
-      width={28}
-      height={28}
-      className="shrink-0 rounded-[7px]"
-    />
-  );
+  // Genesis's own presence, now the real animated avatar everywhere the
+  // assistant appears — completing the rollout the static J4 PNG started
+  // (see memory project_genesis_avatar_v2.md; the mark itself gets a real
+  // redesign later, per Sean's own note, this is just finishing where the
+  // *current* identity shows up). Small and rounded so it reads as a
+  // premium app icon next to the store name, not an illustration competing
+  // with it. Shared so the desktop, TV-header, and mobile homes below all
+  // render the exact same element.
+  const genesisIcon = <GenesisAvatar state={genesisState} className="h-7 w-7 shrink-0" />;
 
   // Primary nav row content — storeName + tabs/More dropdown + View Store/
   // Sign out. Rendered from this one JSX value in two different homes (the
@@ -524,13 +516,19 @@ export function DashboardShell({
         }}
       />
 
-      {/* Arrival Experience V1 — returning-user mobile ritual (see memory
-          project_arrival_experience_milestone.md, "wake the office"). Fixed
-          full-screen, so its position in the tree doesn't matter beyond
-          being mounted; only renders on a real fresh launch, and only ever
-          once per real sign-in (isFreshLaunch/consume above). */}
+      {/* The Genesis Avatar login moment — now full-screen on every
+          platform, not just mobile (see the state block above and
+          GenesisArrivalOverlay.tsx's own comment for why fullScreenOnDesktop
+          exists). Fixed full-screen, so its position in the tree doesn't
+          matter beyond being mounted; only renders on a real fresh launch,
+          and only ever once per real sign-in (isFreshLaunch/consume above). */}
       {returningActive && (
-        <MobileArrivalOverlay text={returningBeat?.text ?? ""} leaving={returningLeaving} />
+        <GenesisArrivalOverlay
+          text={returningBeat?.text ?? ""}
+          state={genesisState}
+          leaving={returningLeaving}
+          fullScreenOnDesktop
+        />
       )}
 
       {/* Desktop top workspace bar — exactly the primary set (tabSections)
@@ -571,13 +569,7 @@ export function DashboardShell({
             the button) means if space ever runs out, the name is what
             gives way, never View Store. */}
         <div className="flex min-w-0 items-center gap-2.5">
-          <Image
-            src="/brand/genesis-j4-avatar.png"
-            alt="Genesis"
-            width={36}
-            height={36}
-            className="shrink-0 rounded-[8px]"
-          />
+          <GenesisAvatar state={genesisState} className="h-9 w-9 shrink-0" />
           <p className="truncate text-lg font-bold text-black dark:text-zinc-50">{storeName}</p>
         </div>
         {viewStoreLink}
@@ -611,7 +603,6 @@ export function DashboardShell({
             hasPendingDecision={hasPendingDecision}
             hasOpportunity={hasOpportunity}
             hasCuriosity={hasCuriosity}
-            dormant={dormant}
           />
         </aside>
 
@@ -626,7 +617,6 @@ export function DashboardShell({
               orderCount={orderCount}
               revenueTrend={revenueTrend}
               newCustomerCount={newCustomerCount}
-              dormant={dormant}
               justArrived={justArrived}
             />
           </div>

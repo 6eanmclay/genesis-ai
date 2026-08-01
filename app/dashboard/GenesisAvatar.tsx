@@ -112,6 +112,21 @@ export function GenesisAvatar({
 
   return (
     <div className={`relative ${ACTIVITY_CLASS[visualState]} ${className}`}>
+      {/* A dark backdrop disc, always rendered regardless of the host
+          page's own background — mix-blend-mode: screen below only
+          produces visible glow against something dark behind it (every
+          other mount site is already Genesis's own dark atmosphere, but
+          the two small toolbar-icon spots in DashboardShell.tsx sit on a
+          plain white card; without this, the whole avatar nearly vanished
+          there — confirmed by screenshot). Matches the photo's own
+          natural black background, so on dark hosts it's invisible
+          (nothing changes), and on light hosts it now reads correctly. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-[6%] rounded-full"
+        style={{ background: "radial-gradient(circle, #100d1c 0%, #050409 100%)" }}
+      />
+
       {/* Haze — a soft background wash extending the photo's own glow
           outward past its frame, so the transition from photo to
           surrounding UI never reads as a hard edge. Kept faint — this is
