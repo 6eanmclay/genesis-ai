@@ -200,14 +200,20 @@ export function GenesisAssistant({
     // partial mitigation only. This does not dock the panel into the
     // rail's own geometry; that redesign (conversation feeling like it
     // comes from Genesis rather than a separate widget) stays deferred.
+    // bottom-20 (not bottom-6) below md: — true mobile has its own fixed
+    // bottom tab bar (DashboardShell.tsx, md:hidden); confirmed via real
+    // bounding-box inspection that bottom-6 put this launcher directly on
+    // top of the tab bar's "More" button, covering roughly half its tap
+    // target. md:bottom-6 reverts to the original offset the moment that
+    // tab bar disappears.
     const closedState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
     return (
       <button
         onClick={() => setOpen(true)}
         className={
           dockLeft
-            ? "fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 lg:right-auto lg:left-6 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
-            : "fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
+            ? "fixed bottom-20 right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 md:bottom-6 lg:right-auto lg:left-6 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
+            : "fixed bottom-20 right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 md:bottom-6 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
         }
       >
         <StateDot state={closedState} />
@@ -229,8 +235,8 @@ export function GenesisAssistant({
       action={sendMessage}
       className={
         dockLeft
-          ? "fixed bottom-6 right-6 z-50 flex max-h-[60vh] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-black/[.08] bg-white shadow-xl dark:border-white/[.145] dark:bg-zinc-900 lg:right-auto lg:left-6 lg:max-h-none lg:w-80 xl:w-96 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#100d1c] lg:shadow-2xl"
-          : "fixed bottom-6 right-6 z-50 flex max-h-[60vh] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-black/[.08] bg-white shadow-xl dark:border-white/[.145] dark:bg-zinc-900 lg:max-h-none lg:w-80 xl:w-96 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#100d1c] lg:shadow-2xl"
+          ? "fixed bottom-20 right-6 z-50 flex max-h-[60vh] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-black/[.08] bg-white shadow-xl dark:border-white/[.145] dark:bg-zinc-900 md:bottom-6 lg:right-auto lg:left-6 lg:max-h-none lg:w-80 xl:w-96 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#100d1c] lg:shadow-2xl"
+          : "fixed bottom-20 right-6 z-50 flex max-h-[60vh] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-black/[.08] bg-white shadow-xl dark:border-white/[.145] dark:bg-zinc-900 md:bottom-6 lg:max-h-none lg:w-80 xl:w-96 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#100d1c] lg:shadow-2xl"
       }
     >
       <input type="hidden" name="currentPath" value={pathname} />
