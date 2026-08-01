@@ -312,6 +312,8 @@ Prisma 7 with the driver-adapter pattern (`@prisma/adapter-pg`'s `PrismaPg`, con
 
 Most AI-generated content lives in `Json` columns (`Store.blueprint`, `Product.richContent`, etc.) rather than fully normalized tables — a deliberate choice verified to pay off: the entire brand-model expansion and the entire presentation-styling system were added with **zero Prisma migrations**, because the content shape could evolve inside existing Json columns. Migrations were only needed for genuinely new *relational* concepts (roles, integrations, newsletter signups) — a useful signal for where to draw that line on future schema decisions.
 
+**Production migrations are a deliberate, manual step, not part of the build.** `prisma migrate deploy` used to run automatically inside `package.json`'s `build` script on every push to `master` — no review gate between a schema change and it landing on the real production database. Removed 2026-08-01; see `DEPLOYMENT.md` for the actual runbook (`npm run migrate:deploy`, run by hand against production, before the dependent code deploys). Production Postgres is Neon (`Launch` plan) with automatic point-in-time recovery — up to 7 days, on by default — which is a real safety net but doesn't replace having a gate before a migration lands.
+
 ---
 
 ## API design
