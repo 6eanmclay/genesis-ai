@@ -14,6 +14,7 @@ import { GenesisDomicile } from "./GenesisDomicile";
 import { LiveIntelligence } from "./LiveIntelligence";
 import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
+import { GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 
 type GenesisMessage = { id: string; role: string; content: string; changes: unknown };
 
@@ -50,19 +51,6 @@ interface SectionNavState {
   focusHref: string;
 }
 
-const SECTION_STATE_BADGE_CLASS: Record<string, string> = {
-  urgent: "bg-red-500",
-  needs_decision: "bg-amber-500",
-  opportunity: "bg-purple-500",
-};
-// Accessible labels so the condition is never communicated by color alone
-// — screen readers (and anyone hovering) get the real word, not just a hue.
-const SECTION_STATE_LABEL: Record<string, string> = {
-  urgent: "urgent issue",
-  needs_decision: "pending decision",
-  opportunity: "opportunity",
-};
-
 interface LiveObservation {
   dedupeKey: string;
   genesisState: string;
@@ -87,6 +75,7 @@ export function DashboardShell({
   focusableItems,
   focusableApprovals,
   liveObservations,
+  curiosityItems,
   userName,
   revenueInCents,
   orderCount,
@@ -97,6 +86,7 @@ export function DashboardShell({
   hasUrgentIssue,
   hasPendingDecision,
   hasOpportunity,
+  hasCuriosity,
   children,
 }: {
   sections: NavSection[];
@@ -109,6 +99,7 @@ export function DashboardShell({
   focusableItems: FocusableItem[];
   focusableApprovals: FocusableApproval[];
   liveObservations: LiveObservation[];
+  curiosityItems: { id: string; summary: string }[];
   userName: string | null;
   revenueInCents: number | null;
   orderCount: number | null;
@@ -119,6 +110,7 @@ export function DashboardShell({
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
   hasOpportunity: boolean;
+  hasCuriosity: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -198,8 +190,7 @@ export function DashboardShell({
     // existing flat Yellow-only badge from sectionBadgeCounts, unchanged.
     const nav = sectionNavState[section.key];
     const count = nav ? nav.count : sectionBadgeCounts[section.key] ?? 0;
-    const badgeClass = nav && nav.state !== "idle" ? SECTION_STATE_BADGE_CLASS[nav.state] : "bg-amber-500";
-    const badgeLabel = nav && nav.state !== "idle" ? SECTION_STATE_LABEL[nav.state] : "pending decision";
+    const meta = nav && nav.state !== "idle" ? GENESIS_STATE_META[nav.state] : GENESIS_STATE_META.needs_decision;
     return (
       <Link
         key={section.key}
@@ -214,8 +205,8 @@ export function DashboardShell({
         {section.label}
         {count > 0 && (
           <span
-            className={`rounded-full ${badgeClass} px-1.5 py-0.5 text-[10px] font-medium text-white`}
-            aria-label={`${count} ${badgeLabel}${count === 1 ? "" : "s"}`}
+            className={`rounded-full ${meta.dotClassName.replace("animate-pulse ", "")} px-1.5 py-0.5 text-[10px] font-medium text-white`}
+            aria-label={`${meta.label}: ${count}`}
           >
             {count}
           </span>
@@ -393,8 +384,8 @@ export function DashboardShell({
             {section.label}
             {hasBadge && (
               <span
-                className={`rounded-full ${SECTION_STATE_BADGE_CLASS[nav!.state]} px-1.5 py-0.5 text-[10px] font-medium text-white`}
-                aria-label={`${nav!.count} ${SECTION_STATE_LABEL[nav!.state]}${nav!.count === 1 ? "" : "s"}`}
+                className={`rounded-full ${GENESIS_STATE_META[nav!.state].dotClassName.replace("animate-pulse ", "")} px-1.5 py-0.5 text-[10px] font-medium text-white`}
+                aria-label={`${GENESIS_STATE_META[nav!.state].label}: ${nav!.count}`}
               >
                 {nav!.count}
               </span>
@@ -492,6 +483,7 @@ export function DashboardShell({
             hasUrgentIssue={hasUrgentIssue}
             hasPendingDecision={hasPendingDecision}
             hasOpportunity={hasOpportunity}
+            hasCuriosity={hasCuriosity}
           />
         </aside>
 
@@ -500,6 +492,7 @@ export function DashboardShell({
             <LiveIntelligence
               focusableApprovals={focusableApprovals}
               liveObservations={liveObservations}
+              curiosityItems={curiosityItems}
               userName={userName}
               revenueInCents={revenueInCents}
               orderCount={orderCount}
@@ -663,6 +656,7 @@ export function DashboardShell({
         hasUrgentIssue={hasUrgentIssue}
         hasPendingDecision={hasPendingDecision}
         hasOpportunity={hasOpportunity}
+        hasCuriosity={hasCuriosity}
         focusedContext={
           focusedItem
             ? { summary: focusedItem.summary, noticedSummary: focusedItem.noticedSummary, kind: focusedItem.kind }

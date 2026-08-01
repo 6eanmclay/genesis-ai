@@ -1,11 +1,13 @@
 import { GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 
-// Matches the reference composition's ordering (Available, Working,
-// Opportunity, Decision, Important), not deriveGenesisState's priority
-// order — this is a teaching legend, read top-to-bottom once, not a
-// ranked list.
-const LEGEND_ORDER: GenesisState[] = ["idle", "working", "opportunity", "needs_decision", "urgent"];
+// Genesis Language v2 (memory project_genesis_language_model.md) — the five
+// real assessment states, in semantic order (Peace, Curiosity, Optimism,
+// Responsibility, Concern), not deriveAssessmentState's priority order —
+// this is a teaching legend, read top-to-bottom once, not a ranked list.
+// "Working" is deliberately not one of these five (see the note below the
+// list) — it's a process signal, not a business assessment.
+const LEGEND_ORDER: GenesisState[] = ["idle", "curiosity", "opportunity", "needs_decision", "urgent"];
 
 // Right rail, xl:+ only (see DashboardShell.tsx) — a static, isolated
 // explanation of the state colors the owner already sees elsewhere
@@ -43,6 +45,14 @@ export function GenesisLanguageLegend() {
           );
         })}
       </ul>
+      {/* Working is not a sixth color — a real request in flight is a
+          process signal, not a business assessment, so it never suppresses
+          or replaces one of the five colors above. Explained honestly here
+          rather than misrepresented as a peer state. */}
+      <p className="mt-3 text-xs leading-relaxed" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+        A pulsing ring means Genesis is actively working on your last
+        request — layered on top of whichever color is already showing.
+      </p>
     </div>
   );
 }

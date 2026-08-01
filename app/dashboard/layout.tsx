@@ -63,28 +63,45 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const canViewOrders = hasPermission(role, PERMISSIONS.ORDERS_VIEW);
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
 
-  const [storeMessages, pendingApprovals, activeObservations, orderSummary, revenueTrend, newCustomerCount] =
-    await Promise.all([
-      prisma.storeMessage.findMany({ where: { storeId: store.id }, orderBy: { createdAt: "asc" } }),
-      hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
-      // Phase 4 — the real, deduplicated Purple/Red signals. A cheap, indexed
-      // read (same status/storeId index every other approval query already
-      // uses the shape of) — never an AI call. dedupeKey/summary added for the
-      // contextual connection layer: joins an ApprovalRequest back to the
-      // GenesisObservation that noticed the underlying issue, via topicKey.
-      prisma.genesisObservation.findMany({
-        where: { storeId: store.id, status: "ACTIVE" },
-        select: { genesisState: true, dedupeKey: true, summary: true, actionHref: true },
-      }),
-      canViewOrders ? getOrderSummary(store.id, { includeRevenue: canViewRevenue }) : Promise.resolve(null),
-      // Revenue trend/New Customers — same permission tiers as the flat
-      // revenue/order figures above (see getRevenueTrend/getNewCustomerCount
-      // for why each is gated the way it is).
-      canViewRevenue ? getRevenueTrend(store.id, 30) : Promise.resolve(null),
-      canViewOrders ? getNewCustomerCount(store.id, 30) : Promise.resolve(null),
-    ]);
+  const [
+    storeMessages,
+    pendingApprovals,
+    activeObservations,
+    activeExplanations,
+    orderSummary,
+    revenueTrend,
+    newCustomerCount,
+  ] = await Promise.all([
+    prisma.storeMessage.findMany({ where: { storeId: store.id }, orderBy: { createdAt: "asc" } }),
+    hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
+    // Phase 4 — the real, deduplicated Purple/Red signals. A cheap, indexed
+    // read (same status/storeId index every other approval query already
+    // uses the shape of) — never an AI call. dedupeKey/summary added for the
+    // contextual connection layer: joins an ApprovalRequest back to the
+    // GenesisObservation that noticed the underlying issue, via topicKey.
+    prisma.genesisObservation.findMany({
+      where: { storeId: store.id, status: "ACTIVE" },
+      select: { genesisState: true, dedupeKey: true, summary: true, actionHref: true },
+    }),
+    // Genesis Language v2 — the real Curiosity signal (see memory
+    // project_genesis_language_model.md). Explanation-kind CognitiveOutput
+    // rows carry no actionHref (never a destination), so this can only ever
+    // feed the global/ambient surfaces — never a per-section nav badge.
+    prisma.cognitiveOutput.findMany({
+      where: { storeId: store.id, kind: "explanation", status: "ACTIVE" },
+      select: { id: true, summary: true },
+    }),
+    canViewOrders ? getOrderSummary(store.id, { includeRevenue: canViewRevenue }) : Promise.resolve(null),
+    // Revenue trend/New Customers — same permission tiers as the flat
+    // revenue/order figures above (see getRevenueTrend/getNewCustomerCount
+    // for why each is gated the way it is).
+    canViewRevenue ? getRevenueTrend(store.id, 30) : Promise.resolve(null),
+    canViewOrders ? getNewCustomerCount(store.id, 30) : Promise.resolve(null),
+  ]);
   const hasUrgentIssue = activeObservations.some((o) => o.genesisState === "urgent");
   const hasOpportunity = activeObservations.some((o) => o.genesisState === "opportunity");
+  const hasCuriosity = activeExplanations.length > 0;
+  const curiosityItems = activeExplanations.map((e) => ({ id: e.id, summary: e.summary }));
   const observationSummaryByTopicKey = new Map(activeObservations.map((o) => [o.dedupeKey, o.summary]));
 
   // The owner/employee can now preview their own storefront whether it's
@@ -264,6 +281,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       focusableItems={focusableItems}
       focusableApprovals={focusableApprovals}
       liveObservations={liveObservations}
+      curiosityItems={curiosityItems}
       userName={session.user.name ?? null}
       revenueInCents={orderSummary?.revenueInCents ?? null}
       orderCount={orderSummary?.orderCount ?? null}
@@ -277,6 +295,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       hasUrgentIssue={hasUrgentIssue}
       hasPendingDecision={seenGroupsTotal.size > 0}
       hasOpportunity={hasOpportunity}
+      hasCuriosity={hasCuriosity}
     >
       {children}
     </DashboardShell>

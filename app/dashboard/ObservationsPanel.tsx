@@ -6,15 +6,20 @@ interface ObservationItem {
 
 // Mirrors ApprovalRequestsPanel's shape/conventions (same highlightId
 // pattern, same card structure) for the one kind of item that panel can't
-// show — real GenesisObservation rows (Red/Purple). Read-only by design:
-// no Approve/Reject/dismiss action exists anywhere in this codebase for an
-// observation (confirmed by grep) — it resolves automatically when the
-// real condition stops being true (lib/dashboard/genesisObservations.ts),
+// show — real GenesisObservation rows (Concern/Optimism). Read-only by
+// design: no Approve/Reject/dismiss action exists anywhere in this codebase
+// for an observation (confirmed by grep) — it resolves automatically when
+// the real condition stops being true (lib/dashboard/genesisObservations.ts),
 // so none is invented here. Observations never get forced through the
-// approval UI, and approvals never get forced through this one. Same
-// red-500/purple-500 Genesis Language colors used everywhere else
-// (LiveIntelligence's ticker dots, the Genesis Language legend) — not a
-// new palette.
+// approval UI, and approvals never get forced through this one. Colors below
+// are literal red-500/purple-500 (Tailwind's class scanner needs complete
+// static strings, so they can't safely be interpolated from
+// GENESIS_STATE_META, lib/dashboard/genesisState.ts's own shared source of
+// truth — the same documented constraint GenesisAssistant.tsx/
+// DashboardShell.tsx already work around this same way) — kept in sync with
+// it by hand if that palette ever changes; this was a real, independently
+// hand-copied duplicate before the Genesis Language v2 retrofit, now at
+// least named and pointed at its one source of truth instead of silent.
 export function ObservationsPanel({
   observations,
   highlightId,

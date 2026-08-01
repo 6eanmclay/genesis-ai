@@ -1,42 +1,48 @@
-// The durable "what is Genesis doing right now" abstraction behind every
-// visual expression of the Genesis Language — today a colored dot on the
-// chat pill, later the full G-ring visual. Consumers should branch on this
-// value and its priority order, never recompute their own from raw
-// booleans, so a future richer visual only has to change how a state is
-// rendered, not how it's decided.
+// The Genesis Language, v2 (see memory project_genesis_language_model.md) —
+// the assessment layer: every real conclusion Genesis reaches resolves, at
+// the moment it's formed, to exactly one of these five states via a fixed,
+// closed mapping. Computed once, UI-agnostic, never re-derived per screen.
+// Consumers should branch on this value and its priority order, never
+// recompute their own from raw booleans.
+//
+// "working" (blue, formerly a sixth peer state) is deliberately NOT part of
+// this union — it's a mechanical "a request is in flight" signal, not a
+// business judgment, and must never suppress or outrank a real assessment.
+// It's now a separate, additive `isWorking` overlay (see StateDot in
+// GenesisAssistant.tsx) rendered on top of whichever real state is showing,
+// never a state of its own.
 export type GenesisState =
-  | "idle" // WHITE — available, nothing to report
-  | "working" // BLUE — a real request is in flight right now
-  | "needs_decision" // YELLOW — at least one real ApprovalRequest is pending
-  | "opportunity" // PURPLE — a real, deduplicated GenesisObservation exists (see lib/dashboard/genesisObservations.ts)
-  | "urgent"; // RED — a real, deduplicated operational anomaly needs the owner, never routine setup state
+  | "idle" // Peace — no active non-Peace assessment for this scope
+  | "curiosity" // Curiosity — an active explanation-kind CognitiveOutput
+  | "needs_decision" // Responsibility — at least one real ApprovalRequest is pending
+  | "opportunity" // Optimism — a real, deduplicated opportunity GenesisObservation exists
+  | "urgent"; // Concern — a real, deduplicated operational anomaly needs the owner, never routine setup state
 
-// isWorking can only ever be known from React's useFormStatus(), which only
-// works inside the <form> tree it belongs to — it can't be computed once
-// and passed down as a prop. So this gets called from more than one place
-// (see GenesisAssistant.tsx), but every call site shares this one priority
-// rule, confirmed in the Phase 4 plan: a genuine blocker outranks
-// everything; "working" is transient, real-time feedback that outranks the
-// two durable states; a concrete decision waiting is more actionable than
-// an idea Genesis merely noticed.
-export function deriveGenesisState(signals: {
-  isWorking: boolean;
+// Pure assessment — computed once from real, already-fetched signals, never
+// aware of isWorking (a separate, orthogonal concern layered on top by
+// callers that need it; see StateDot). Priority order, per the frozen
+// model: a genuine problem outranks a decision outranks a positive
+// opportunity outranks mere curiosity outranks nothing.
+export function deriveAssessmentState(signals: {
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
   hasOpportunity: boolean;
+  hasCuriosity: boolean;
 }): GenesisState {
   if (signals.hasUrgentIssue) return "urgent";
-  if (signals.isWorking) return "working";
   if (signals.hasPendingDecision) return "needs_decision";
   if (signals.hasOpportunity) return "opportunity";
+  if (signals.hasCuriosity) return "curiosity";
   return "idle";
 }
 
 // The single source of truth for how a GenesisState becomes a color/label —
-// consumed by GenesisAssistant's dot, the Genesis Domicile, and the Genesis
-// Language legend, so all three can never drift into three independently
-// hand-copied palettes. Labels are the owner-facing words (confirmed
-// against the reference composition), not the internal state keys above.
+// consumed by GenesisAssistant's dot, the Genesis Domicile, Live
+// Intelligence, the Genesis Language legend, DashboardShell's nav pills, and
+// ObservationsPanel, so none of them can drift into independently
+// hand-copied palettes (a real drift that existed before this pass — see
+// the retrofit plan). Labels and descriptions are the frozen Genesis
+// Language vocabulary, in Genesis's own voice (never internal state keys).
 // `glowColor` is the same hue as `dotClassName`, as a raw value — needed
 // anywhere a flat Tailwind background class can't express what's wanted
 // (gradients, box-shadow glows in GenesisDomicile's atmospheric orb), kept
@@ -46,34 +52,34 @@ export const GENESIS_STATE_META: Record<
   { label: string; dotClassName: string; glowColor: string; description: string }
 > = {
   idle: {
-    label: "Available",
+    label: "Peace",
     dotClassName: "bg-zinc-300 dark:bg-zinc-600",
     glowColor: "#a1a1aa",
-    description: "Nothing needs you right now — Genesis is watching.",
+    description: "Nothing needs you right now — everything is under control.",
   },
-  working: {
-    label: "Working",
-    dotClassName: "animate-pulse bg-blue-500",
-    glowColor: "#3b82f6",
-    description: "Genesis is actively handling a request.",
+  curiosity: {
+    label: "Curiosity",
+    dotClassName: "bg-teal-400",
+    glowColor: "#2dd4bf",
+    description: "Genesis found something worth understanding.",
   },
   needs_decision: {
-    label: "Decision",
+    label: "Responsibility",
     dotClassName: "bg-amber-400",
     glowColor: "#fbbf24",
-    description: "A real proposal is waiting on your approval.",
+    description: "A real proposal is waiting on your decision.",
   },
   opportunity: {
-    label: "Opportunity",
+    label: "Optimism",
     dotClassName: "bg-purple-500",
     glowColor: "#a855f7",
-    description: "Genesis noticed something worth considering.",
+    description: "Genesis found a genuine opportunity here.",
   },
   urgent: {
-    label: "Important",
+    label: "Concern",
     dotClassName: "animate-pulse bg-red-500",
     glowColor: "#ef4444",
-    description: "Something needs your attention now.",
+    description: "Genesis found something that materially affects the business.",
   },
 };
 

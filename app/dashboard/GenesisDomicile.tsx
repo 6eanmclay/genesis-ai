@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { deriveGenesisState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
+import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 
 // Genesis's persistent visual presence in the left rail — lg:+ only (see
@@ -19,53 +19,70 @@ import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 // realized 3D Saturn-style avatar with a premium metallic ring, at which
 // point per-state ring animation can return.
 //
-// "working" is real (a chat request genuinely in flight) but today it's
-// only knowable inside GenesisAssistant's own <form>, via useFormStatus —
-// it can't be computed once and passed down as a prop the way the other
-// three signals can (see deriveGenesisState's own comment). This component
-// accepts isWorking so it's ready the moment that plumbing exists; every
-// current call site simply doesn't pass it yet, which is identical to
-// passing false — idle/needs_decision/opportunity/urgent are completely
-// unaffected by this addition.
+// "working" (a chat request genuinely in flight) is only knowable inside
+// GenesisAssistant's own <form>, via useFormStatus — it can't be computed
+// once and passed down as a prop the way the other four signals can. Per
+// Genesis Language v2 (memory project_genesis_language_model.md), it's also
+// no longer a peer assessment state at all — it's a separate, additive
+// overlay that never suppresses or replaces the real assessment glow below,
+// only adds a pulse on top of it. Every current call site simply doesn't
+// pass isWorking yet, which is identical to passing false.
 export function GenesisDomicile({
   hasUrgentIssue,
   hasPendingDecision,
   hasOpportunity,
+  hasCuriosity,
   isWorking = false,
 }: {
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
   hasOpportunity: boolean;
+  hasCuriosity: boolean;
   isWorking?: boolean;
 }) {
-  const state = deriveGenesisState({
-    isWorking,
+  const state = deriveAssessmentState({
     hasUrgentIssue,
     hasPendingDecision,
     hasOpportunity,
+    hasCuriosity,
   });
   const meta = GENESIS_STATE_META[state];
-  // "Stable attention" states (a real decision, opportunity, or urgent
-  // issue) render the ring at full intensity — categorically equal weight
-  // to each other (this mirrors the existing Genesis Language legend's own
-  // flat, non-hierarchical treatment of these three), just different hues.
-  // idle and working both get the calmer, thinner base-ring treatment;
-  // working additionally gets the chasing highlight described above.
-  const isStableAttention = state === "needs_decision" || state === "opportunity" || state === "urgent";
+  // "Stable attention" states (a real decision, opportunity, curiosity, or
+  // urgent issue) render the ring at full intensity — categorically equal
+  // weight to each other (this mirrors the existing Genesis Language
+  // legend's own flat, non-hierarchical treatment), just different hues.
+  // Only idle (Peace) gets the calmer, thinner base-ring treatment.
+  // Working is a separate, additive pulse layered on top of whichever of
+  // these is currently true — it never dims or replaces the real glow.
+  const isStableAttention =
+    state === "needs_decision" || state === "opportunity" || state === "urgent" || state === "curiosity";
 
   return (
     <div className="flex w-full flex-col items-center pt-2 text-center">
       <div className="relative flex w-full items-center justify-center">
         {/* Outer atmospheric wash — large, soft, heavily blurred; brighter
-            for a stable attention state, dimmer (but never absent) at idle. */}
+            for a stable attention state, dimmer (but never absent) at idle.
+            Always reflects the real assessment; Working never changes this. */}
         <div
           aria-hidden="true"
           className="absolute aspect-square w-[85%] rounded-full blur-3xl transition-colors duration-700"
           style={{
             backgroundColor: meta.glowColor,
-            opacity: isStableAttention ? 0.45 : state === "working" ? 0.32 : 0.2,
+            opacity: isStableAttention ? 0.45 : 0.2,
           }}
         />
+
+        {/* Working overlay — a separate, additive pulse (always blue,
+            regardless of the real assessment hue above) proving a request
+            is genuinely in flight right now. Never replaces or dims the
+            wash above it; purely layered on top. */}
+        {isWorking && (
+          <div
+            aria-hidden="true"
+            className="absolute aspect-square w-[85%] animate-pulse rounded-full blur-2xl"
+            style={{ backgroundColor: "#3b82f6", opacity: 0.25 }}
+          />
+        )}
 
         {/* Canonical J4 icon — same footprint (aspect-square, 78% of the
             rail's width) the animated ring+planet previously occupied, so

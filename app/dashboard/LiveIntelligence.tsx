@@ -20,16 +20,23 @@ interface LiveObservation {
 
 type MergedItem =
   | { kind: "approval"; key: string; summary: string; href: string }
-  | { kind: "observation"; key: string; summary: string; href: string | null; genesisState: string };
+  | { kind: "observation"; key: string; summary: string; href: string | null; genesisState: string }
+  // Genesis Language v2 — Curiosity (explanation-kind CognitiveOutput, see
+  // layout.tsx). No href: explanation-kind outputs carry no actionHref by
+  // design (nothing to route to), so this renders as plain text, never a
+  // fabricated link — same convention an hrefless observation already uses.
+  | { kind: "curiosity"; key: string; summary: string; href: null };
 
 // Real priority, not list order — an urgent observation outranks a pending
-// decision, which outranks an opportunity. GenesisObservation rows are only
-// ever "urgent" or "opportunity" (see lib/dashboard/genesisState.ts), so
-// these three buckets are exhaustive.
+// decision, which outranks an opportunity, which outranks mere curiosity.
+// Matches deriveAssessmentState's own priority order in
+// lib/dashboard/genesisState.ts. GenesisObservation rows are only ever
+// "urgent" or "opportunity", so these buckets are exhaustive.
 function priorityRank(item: MergedItem): number {
   if (item.kind === "observation" && item.genesisState === "urgent") return 0;
   if (item.kind === "approval") return 1;
-  return 2;
+  if (item.kind === "observation") return 2; // opportunity
+  return 3; // curiosity
 }
 
 // A short, count-based briefing line rather than echoing the real
@@ -44,8 +51,14 @@ function leadCopy(topItem: MergedItem, count: number): { lead: string; cta: stri
   if (topItem.kind === "approval") {
     return { lead: `Genesis needs your decision on ${plural ? `${count} things` : "one thing"} today`, cta };
   }
-  if (topItem.genesisState === "urgent") {
+  if (topItem.kind === "observation" && topItem.genesisState === "urgent") {
     return { lead: `Genesis needs your attention on ${plural ? `${count} things` : "one thing"} today`, cta };
+  }
+  if (topItem.kind === "curiosity") {
+    return {
+      lead: `Genesis is curious about ${plural ? `${count} things` : "something"} today`,
+      cta: plural ? "start here" : "take a look",
+    };
   }
   return {
     lead: `Genesis found ${plural ? `${count} things` : "something"} worth considering today`,
@@ -69,6 +82,7 @@ function leadCopy(topItem: MergedItem, count: number): { lead: string; cta: stri
 export function LiveIntelligence({
   focusableApprovals,
   liveObservations,
+  curiosityItems,
   userName,
   revenueInCents,
   orderCount,
@@ -77,6 +91,7 @@ export function LiveIntelligence({
 }: {
   focusableApprovals: FocusableApproval[];
   liveObservations: LiveObservation[];
+  curiosityItems: { id: string; summary: string }[];
   userName: string | null;
   revenueInCents: number | null;
   orderCount: number | null;
@@ -95,6 +110,9 @@ export function LiveIntelligence({
         href: o.actionHref,
         genesisState: o.genesisState,
       })
+    ),
+    ...curiosityItems.map(
+      (c): MergedItem => ({ kind: "curiosity", key: c.id, summary: c.summary, href: null })
     ),
   ].sort((a, b) => priorityRank(a) - priorityRank(b));
 

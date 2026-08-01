@@ -456,12 +456,13 @@ export default async function DashboardPage() {
             storeName={draft.name}
             messages={draft.messages}
             sendMessage={sendDraftMessage}
-            // Drafts have no ApprovalRequest/GenesisObservation concept at
-            // all (Phase 1/4 both scoped entirely to live stores) — always
-            // false, not a placeholder.
+            // Drafts have no ApprovalRequest/GenesisObservation/
+            // CognitiveOutput concept at all (Phase 1/4/6 all scoped
+            // entirely to live stores) — always false, not a placeholder.
             hasUrgentIssue={false}
             hasPendingDecision={false}
             hasOpportunity={false}
+            hasCuriosity={false}
             // "Welcome to Genesis" (v20) — open by default for a genuinely
             // fresh landing (nothing to show yet), so talking to Genesis
             // reads as the primary way to shape the business rather than an

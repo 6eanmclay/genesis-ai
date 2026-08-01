@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { useFormStatus } from "react-dom";
-import { deriveGenesisState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
+import { deriveAssessmentState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
 import { SubmitButton } from "./SubmitButton";
 
 // Hydration-safe read of the same lg: breakpoint (1024px) this codebase
@@ -42,19 +42,30 @@ type Message = {
 };
 
 // The one place a GenesisState becomes a visual on the chat pill — "idle"
-// renders nothing here (this pill isn't the place "Available" needs a
-// visible dot; the Genesis Language legend is), the rest read their color
-// from the shared GENESIS_STATE_META so this, the Domicile, and the legend
-// can never drift into three independently hand-copied palettes.
-function StateDot({ state }: { state: GenesisState }) {
-  if (state === "idle") return null;
+// renders nothing here (this pill isn't the place "Peace" needs a visible
+// dot; the Genesis Language legend is), the rest read their color from the
+// shared GENESIS_STATE_META so this, the Domicile, and the legend can never
+// drift into independently hand-copied palettes.
+//
+// isWorking is a fully separate, additive concern (Genesis Language v2 —
+// see memory project_genesis_language_model.md): it never changes which
+// color renders, only whether a pulsing ring is layered on top of it. A
+// real request in flight must never hide a real assessment (a pending
+// decision, an urgent issue) behind a blue "working" dot the way the old
+// model did.
+function StateDot({ state, isWorking = false }: { state: GenesisState; isWorking?: boolean }) {
+  if (state === "idle" && !isWorking) return null;
   const meta = GENESIS_STATE_META[state];
   return (
     <span
-      className={`h-2 w-2 shrink-0 rounded-full ${meta.dotClassName}`}
+      className={`relative inline-flex h-2 w-2 shrink-0 rounded-full ${meta.dotClassName}`}
       aria-hidden="true"
-      title={meta.description}
-    />
+      title={isWorking ? "Genesis is actively working on your last request" : meta.description}
+    >
+      {isWorking && (
+        <span className="absolute -inset-1 rounded-full ring-2 ring-blue-400/70 animate-pulse" aria-hidden="true" />
+      )}
+    </span>
   );
 }
 
@@ -68,12 +79,13 @@ interface GenesisSignals {
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
   hasOpportunity: boolean;
+  hasCuriosity: boolean;
 }
 
-function GenesisStatusDot({ hasUrgentIssue, hasPendingDecision, hasOpportunity }: GenesisSignals) {
+function GenesisStatusDot({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity }: GenesisSignals) {
   const { pending } = useFormStatus();
-  const state = deriveGenesisState({ isWorking: pending, hasUrgentIssue, hasPendingDecision, hasOpportunity });
-  return <StateDot state={state} />;
+  const state = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
+  return <StateDot state={state} isWorking={pending} />;
 }
 
 // The contextual-review connection layer's ephemeral "why you're here"
@@ -95,6 +107,7 @@ export function GenesisAssistant({
   hasUrgentIssue,
   hasPendingDecision,
   hasOpportunity,
+  hasCuriosity,
   focusedContext,
   defaultOpen,
   dockLeft = true,
@@ -187,7 +200,7 @@ export function GenesisAssistant({
     // partial mitigation only. This does not dock the panel into the
     // rail's own geometry; that redesign (conversation feeling like it
     // comes from Genesis rather than a separate widget) stays deferred.
-    const closedState = deriveGenesisState({ isWorking: false, hasUrgentIssue, hasPendingDecision, hasOpportunity });
+    const closedState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
     return (
       <button
         onClick={() => setOpen(true)}
@@ -232,6 +245,7 @@ export function GenesisAssistant({
               hasUrgentIssue={hasUrgentIssue}
               hasPendingDecision={hasPendingDecision}
               hasOpportunity={hasOpportunity}
+              hasCuriosity={hasCuriosity}
             />
           </div>
           <p className="mt-1 text-xs text-zinc-500 lg:text-[rgba(244,242,251,0.62)]">
