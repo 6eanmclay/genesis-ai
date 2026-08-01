@@ -133,111 +133,132 @@ export function GenesisAvatar({
           </radialGradient>
         </defs>
 
-        {/* Ribbons — soft drifting streaks along curved paths, drawn behind
-            the orb. A moving stroke-dasharray segment along an invisible
-            path (pathLength="1" normalizes the dash math to the path's own
-            length, see globals.css's genesis-flow), not a literal moving
-            object — the well-supported, responsive-safe way to get "light
-            flowing along a curve" purely in CSS/SVG. */}
-        <path
-          d="M 14,146 C 46,58 154,58 186,104"
-          fill="none"
-          stroke="currentColor"
-          strokeOpacity="0.28"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.22 0.78"
-          className="genesis-ribbon"
-        />
-        <path
-          d="M 12,62 C 66,166 134,166 188,86"
-          fill="none"
-          stroke="currentColor"
-          strokeOpacity="0.2"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.18 0.82"
-          className="genesis-ribbon"
-          style={{ animationDelay: "-9s", animationDirection: "reverse" }}
-        />
+        {/* The atmosphere — everything in this group is deliberately faint
+            and screen-blended (mix-blend-mode: screen ≈ additive light —
+            it brightens where things overlap rather than compositing as
+            flat opaque strokes) so the whole field reads as embedded
+            glow, not lines drawn on top of the orb. Per Sean's explicit
+            refinement: the static orbital rings/sparkles are a "faint
+            gravitational field," barely visible on their own (strokeOpacity
+            reduced to roughly 15-25% of a normal line) — the moving
+            ribbons/particles stay noticeably brighter, since they're the
+            one thing meant to actually draw the eye; most of the time a
+            viewer should notice a highlight traveling before they
+            consciously register the field it's moving along. */}
+        <g style={{ mixBlendMode: "screen" }}>
+          {/* Ribbons — soft drifting streaks along curved paths. A moving
+              stroke-dasharray segment along an invisible path
+              (pathLength="1" normalizes the dash math to the path's own
+              length, see globals.css's genesis-flow), not a literal moving
+              object — the well-supported, responsive-safe way to get
+              "light flowing along a curve" purely in CSS/SVG. */}
+          <path
+            d="M 14,146 C 46,58 154,58 186,104"
+            fill="none"
+            stroke="currentColor"
+            strokeOpacity="0.5"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            pathLength="1"
+            strokeDasharray="0.22 0.78"
+            className="genesis-ribbon"
+          />
+          <path
+            d="M 12,62 C 66,166 134,166 188,86"
+            fill="none"
+            stroke="currentColor"
+            strokeOpacity="0.4"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            pathLength="1"
+            strokeDasharray="0.18 0.82"
+            className="genesis-ribbon"
+            style={{ animationDelay: "-9s", animationDirection: "reverse" }}
+          />
 
-        {/* Particles — tiny round-capped dots drifting along their own
-            wider loop around the orb, same technique as the ribbons above,
-            just a much shorter dash so each reads as a single mote rather
-            than a streak. */}
-        <path
-          d="M 24,100 C 24,46 176,46 176,100 C 176,154 24,154 24,100 Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.02 0.98"
-          className="genesis-particle"
-          opacity="0.7"
-        />
-        <path
-          d="M 24,100 C 24,46 176,46 176,100 C 176,154 24,154 24,100 Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.015 0.985"
-          className="genesis-particle"
-          opacity="0.5"
-          style={{ animationDelay: "-6s", animationDirection: "reverse" }}
-        />
-        <path
-          d="M 100,8 C 172,26 192,100 172,174 C 100,192 28,174 8,100 C 28,26 100,8 100,8 Z"
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.015 0.985"
-          className="genesis-particle"
-          opacity="0.55"
-          style={{ animationDelay: "-11s" }}
-        />
+          {/* Particles — tiny round-capped dots drifting along their own
+              wider loop around the orb, same technique as the ribbons
+              above, just a much shorter dash so each reads as a single
+              mote rather than a streak. The brightest elements here,
+              on purpose — "the only elements that should naturally draw
+              the eye." */}
+          <path
+            d="M 24,100 C 24,46 176,46 176,100 C 176,154 24,154 24,100 Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            pathLength="1"
+            strokeDasharray="0.02 0.98"
+            className="genesis-particle"
+            opacity="0.85"
+          />
+          <path
+            d="M 24,100 C 24,46 176,46 176,100 C 176,154 24,154 24,100 Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            pathLength="1"
+            strokeDasharray="0.015 0.985"
+            className="genesis-particle"
+            opacity="0.65"
+            style={{ animationDelay: "-6s", animationDirection: "reverse" }}
+          />
+          <path
+            d="M 100,8 C 172,26 192,100 172,174 C 100,192 28,174 8,100 C 28,26 100,8 100,8 Z"
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            pathLength="1"
+            strokeDasharray="0.015 0.985"
+            className="genesis-particle"
+            opacity="0.7"
+            style={{ animationDelay: "-11s" }}
+          />
 
-        {/* The orb — static artwork, faithfully recreated: a translucent
-            sphere, three crossing orbital rings, a scattering of sparkle
-            points, and a bright core. Nothing below this line is ever
-            animated by anything in globals.css. */}
+          {/* The faint gravitational field — same orbital geometry as
+              before, strokeOpacity dropped to roughly 15-25% of a normal
+              line so it's barely visible until a highlight above travels
+              across it. */}
+          <ellipse cx="100" cy="100" rx="88" ry="30" transform="rotate(-18 100 100)" fill="none" stroke="currentColor" strokeOpacity="0.11" strokeWidth="1.2" />
+          <ellipse cx="100" cy="100" rx="88" ry="30" transform="rotate(55 100 100)" fill="none" stroke="currentColor" strokeOpacity="0.07" strokeWidth="1" />
+          <ellipse cx="100" cy="100" rx="88" ry="30" transform="rotate(122 100 100)" fill="none" stroke="currentColor" strokeOpacity="0.09" strokeWidth="1" />
+
+          <circle cx="184" cy="100" r="1.5" fill="currentColor" opacity="0.35" />
+          <circle cx="157" cy="41" r="1" fill="#ffffff" opacity="0.3" />
+          <circle cx="100" cy="16" r="1.3" fill="currentColor" opacity="0.25" />
+          <circle cx="43" cy="44" r="1" fill="#ffffff" opacity="0.2" />
+          <circle cx="16" cy="103" r="1.4" fill="currentColor" opacity="0.3" />
+          <circle cx="47" cy="159" r="1" fill="#ffffff" opacity="0.25" />
+          <circle cx="103" cy="184" r="1.3" fill="currentColor" opacity="0.2" />
+          <circle cx="159" cy="156" r="1" fill="#ffffff" opacity="0.3" />
+
+          {/* Edge shimmer — the one motion element allowed right at the
+              orb's own boundary, deliberately the slowest and subtlest of
+              everything here. */}
+          <circle
+            cx="100"
+            cy="100"
+            r="68"
+            fill="none"
+            stroke="currentColor"
+            strokeOpacity="0.3"
+            strokeWidth="1"
+            strokeLinecap="round"
+            pathLength="1"
+            strokeDasharray="0.05 0.95"
+            className="genesis-shimmer"
+          />
+        </g>
+
+        {/* The orb itself — static artwork, faithfully recreated, rendered
+            last (on top, normal blending) so it stays the unmistakable
+            visual anchor the atmosphere surrounds rather than competes
+            with. Nothing below this line is ever animated by anything in
+            globals.css. */}
         <circle cx="100" cy="100" r="66" fill={`url(#${sphereGradientId})`} stroke="currentColor" strokeOpacity="0.32" strokeWidth="1" />
-        <ellipse cx="100" cy="100" rx="88" ry="30" transform="rotate(-18 100 100)" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeWidth="1.2" />
-        <ellipse cx="100" cy="100" rx="88" ry="30" transform="rotate(55 100 100)" fill="none" stroke="currentColor" strokeOpacity="0.32" strokeWidth="1" />
-        <ellipse cx="100" cy="100" rx="88" ry="30" transform="rotate(122 100 100)" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeWidth="1" />
-
-        <circle cx="184" cy="100" r="1.5" fill="currentColor" opacity="0.9" />
-        <circle cx="157" cy="41" r="1" fill="#ffffff" opacity="0.85" />
-        <circle cx="100" cy="16" r="1.3" fill="currentColor" opacity="0.7" />
-        <circle cx="43" cy="44" r="1" fill="#ffffff" opacity="0.6" />
-        <circle cx="16" cy="103" r="1.4" fill="currentColor" opacity="0.85" />
-        <circle cx="47" cy="159" r="1" fill="#ffffff" opacity="0.7" />
-        <circle cx="103" cy="184" r="1.3" fill="currentColor" opacity="0.6" />
-        <circle cx="159" cy="156" r="1" fill="#ffffff" opacity="0.8" />
-
-        {/* Edge shimmer — the one motion element allowed right at the
-            orb's own boundary, deliberately the slowest and subtlest of
-            everything here. */}
-        <circle
-          cx="100"
-          cy="100"
-          r="68"
-          fill="none"
-          stroke="currentColor"
-          strokeOpacity="0.45"
-          strokeWidth="1"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.05 0.95"
-          className="genesis-shimmer"
-        />
-
         <circle cx="100" cy="100" r="24" fill={`url(#${coreGradientId})`} />
         <circle cx="100" cy="100" r="6.5" fill="#ffffff" />
       </svg>
