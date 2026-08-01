@@ -17,7 +17,7 @@ import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { MobileArrivalOverlay } from "./MobileArrivalOverlay";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
-import { useFreshLaunch } from "@/lib/dashboard/useFreshLaunch";
+import { useFreshLaunch, resetFreshLaunch } from "@/lib/dashboard/useFreshLaunch";
 import { useBeatSequence, type Beat } from "@/lib/dashboard/arrivalBeats";
 
 type GenesisMessage = { id: string; role: string; content: string; changes: unknown };
@@ -437,6 +437,7 @@ export function DashboardShell({
         <form action={signOutOfGenesis}>
           <button
             type="submit"
+            onClick={resetFreshLaunch}
             className="rounded-lg border border-black/[.08] px-3 py-2 text-sm text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
           >
             Sign out
@@ -769,6 +770,7 @@ export function DashboardShell({
             <form action={signOutOfGenesis} className="mt-3 border-t border-black/[.08] pt-3 dark:border-white/[.145]">
               <button
                 type="submit"
+                onClick={resetFreshLaunch}
                 className="w-full rounded-lg px-2 py-2.5 text-left text-sm text-red-600 hover:bg-red-500/5 dark:text-red-400"
               >
                 Log out

@@ -46,3 +46,19 @@ export function useFreshLaunch(): { isFreshLaunch: boolean; consume: () => void 
 
   return { isFreshLaunch, consume };
 }
+
+// A deliberate sign-out is a real re-entry into the business, even though
+// the browser tab itself never closes — Sean's explicit call after
+// watching a real logout/login cycle not replay the ritual. Plain
+// function (not part of the hook) so it can be called directly from a
+// sign-out button's onClick, outside of any component's render/effect
+// lifecycle — the sign-out form itself navigates away immediately after,
+// so there's no state to manage here, just clearing the flag before that
+// happens.
+export function resetFreshLaunch(): void {
+  try {
+    window.sessionStorage.removeItem(FLAG_KEY);
+  } catch {
+    // Same non-blocking tolerance as useFreshLaunch above.
+  }
+}
