@@ -13,6 +13,7 @@ import { GenesisAssistant } from "./GenesisAssistant";
 import { GenesisDomicile } from "./GenesisDomicile";
 import { LiveIntelligence } from "./LiveIntelligence";
 import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
+import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 
@@ -355,7 +356,7 @@ export function DashboardShell({
   // exact rather than measured at runtime.
   const secondaryNav = isInYourBusiness && (
     <nav
-      className="fixed inset-x-0 top-16 z-30 flex h-10 items-center gap-1 overflow-x-auto border-b border-black/[.06] bg-white px-4 dark:border-white/[.1] dark:bg-zinc-950 md:top-14 lg:static lg:inset-auto lg:w-full lg:shrink-0 lg:px-4"
+      className="fixed inset-x-0 top-[140px] z-30 flex h-10 items-center gap-1 overflow-x-auto border-b border-black/[.06] bg-white px-4 dark:border-white/[.1] dark:bg-zinc-950 md:top-14 lg:static lg:inset-auto lg:w-full lg:shrink-0 lg:px-4"
       aria-label="Your Business"
     >
       {secondarySections.map((section) => {
@@ -434,9 +435,26 @@ export function DashboardShell({
         {primaryNavRow}
       </header>
 
+      {/* Mobile's own persistent Genesis presence — true mobile only, above
+          the existing mobile header. Genesis speaks (this bar); the page
+          identifies where you are (the header below it, and each page's
+          own content) — two different layers, never merged into one. */}
+      <MobileGenesisPresence
+        hasUrgentIssue={hasUrgentIssue}
+        hasPendingDecision={hasPendingDecision}
+        hasOpportunity={hasOpportunity}
+        hasCuriosity={hasCuriosity}
+        focusableApprovals={focusableApprovals}
+        liveObservations={liveObservations}
+        curiosityItems={curiosityItems}
+        userName={userName}
+      />
+
       {/* Mobile top bar — explicit h-16 (not padding-driven) so the
-          secondary nav below can stack under it at a known, exact offset. */}
-      <header className="fixed inset-x-0 top-0 z-40 flex h-16 items-center justify-between border-b border-black/[.08] bg-white/90 px-4 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/90 md:hidden">
+          secondary nav below can stack under it at a known, exact offset.
+          Offset by the new MobileGenesisPresence bar's own height (76px)
+          above it. */}
+      <header className="fixed inset-x-0 top-[76px] z-40 flex h-16 items-center justify-between border-b border-black/[.08] bg-white/90 px-4 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/90 md:hidden">
         {/* Business identity is the primary visual element here, not the
             View Store button — icon and store name both sized up from
             the shared desktop treatment so they read with real
@@ -526,7 +544,7 @@ export function DashboardShell({
 
             <main
               className={`pb-20 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
-                isInYourBusiness ? "pt-[104px] md:pt-24 lg:pt-0" : "pt-16 md:pt-14 lg:pt-0"
+                isInYourBusiness ? "pt-[180px] md:pt-24 lg:pt-0" : "pt-[140px] md:pt-14 lg:pt-0"
               }`}
             >
               {children}

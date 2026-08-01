@@ -83,6 +83,15 @@ export const GENESIS_STATE_META: Record<
   },
 };
 
+// A "stable attention" state (a real decision, opportunity, curiosity, or
+// urgent issue) is categorically equal weight to the other three, just a
+// different hue — used wherever a glow/wash needs full intensity for any
+// non-idle state (GenesisDomicile's atmospheric orb, MobileGenesisPresence's
+// icon halo) so the two can never silently diverge on which states count.
+export function isStableAttentionState(state: GenesisState): boolean {
+  return state === "needs_decision" || state === "opportunity" || state === "urgent" || state === "curiosity";
+}
+
 // GenesisObservation rows are only ever "urgent" or "opportunity" (see
 // lib/dashboard/genesisObservations.ts) — this is the one shared ordering
 // for that subset, reused everywhere a list of observations needs urgent

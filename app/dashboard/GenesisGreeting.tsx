@@ -19,7 +19,16 @@ function greetingForHour(hour: number): string {
 // the one moment Sean specifically called out as the strongest reference
 // for how entering the environment should feel — sized and weighted as
 // the clear visual lead of Live Intelligence, not a small header line.
-export function GenesisGreeting({ name }: { name: string | null }) {
+export function GenesisGreeting({
+  name,
+  sizeClassName = "text-2xl font-semibold",
+}: {
+  name: string | null;
+  // MobileGenesisPresence reuses this same greeting logic at a smaller
+  // size for its compact bar — the salutation/time-of-day/name logic below
+  // is the reusable part; only the type scale differs by context.
+  sizeClassName?: string;
+}) {
   const [greeting, setGreeting] = useState("Welcome back");
 
   useEffect(() => {
@@ -31,7 +40,7 @@ export function GenesisGreeting({ name }: { name: string | null }) {
 
   return (
     <p
-      className="font-[var(--font-heading,inherit)] text-2xl font-semibold"
+      className={`font-[var(--font-heading,inherit)] ${sizeClassName}`}
       style={{ color: GENESIS_ATMOSPHERE.text }}
     >
       {greeting}

@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
+import { deriveAssessmentState, GENESIS_STATE_META, isStableAttentionState } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 
 // Genesis's persistent visual presence in the left rail — lg:+ only (see
@@ -54,8 +54,7 @@ export function GenesisDomicile({
   // Only idle (Peace) gets the calmer, thinner base-ring treatment.
   // Working is a separate, additive pulse layered on top of whichever of
   // these is currently true — it never dims or replaces the real glow.
-  const isStableAttention =
-    state === "needs_decision" || state === "opportunity" || state === "urgent" || state === "curiosity";
+  const isStableAttention = isStableAttentionState(state);
 
   return (
     <div className="flex w-full flex-col items-center pt-2 text-center">
