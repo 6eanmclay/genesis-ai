@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -14,8 +14,12 @@ import { GenesisDomicile } from "./GenesisDomicile";
 import { LiveIntelligence } from "./LiveIntelligence";
 import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
 import { MobileGenesisPresence } from "./MobileGenesisPresence";
+import { MobileArrivalOverlay } from "./MobileArrivalOverlay";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
+import { buildBriefing } from "@/lib/dashboard/genesisBriefing";
+import { useFreshLaunch } from "@/lib/dashboard/useFreshLaunch";
+import { useBeatSequence, type Beat } from "@/lib/dashboard/arrivalBeats";
 
 type GenesisMessage = { id: string; role: string; content: string; changes: unknown };
 
@@ -71,6 +75,7 @@ export function DashboardShell({
   storeId,
   storeName,
   storefrontUrl,
+  logoUrl,
   sectionBadgeCounts,
   sectionNavState,
   focusableItems,
@@ -95,6 +100,12 @@ export function DashboardShell({
   storeId: string;
   storeName: string;
   storefrontUrl: string | null;
+  // Business Identity Generation (Arrival Experience milestone) — real
+  // Store.logoUrl, honestly null until a business icon has been generated
+  // (pre-milestone stores, or a forced generation failure). No stock-photo
+  // placeholder: absence just means genesisIcon (Genesis's own mark) is the
+  // only identity shown, same as before this milestone existed.
+  logoUrl: string | null;
   sectionBadgeCounts: Record<string, number>;
   sectionNavState: Record<string, SectionNavState>;
   focusableItems: FocusableItem[];
@@ -118,6 +129,65 @@ export function DashboardShell({
   const searchParams = useSearchParams();
   const [moreOpen, setMoreOpen] = useState(false); // mobile bottom sheet
   const [desktopMoreOpen, setDesktopMoreOpen] = useState(false); // top-bar dropdown
+
+  // Arrival Experience V1 — returning-user "wake the office" (see memory
+  // project_arrival_experience_milestone.md). isFreshLaunch starts false
+  // (matching the server-rendered pass — see useFreshLaunch's own comment)
+  // and flips true in an effect shortly after mount, at most once per real
+  // fresh launch. dormant/returningActive below both start false too (for
+  // the same hydration-safety reason) and pick up that flip using React's
+  // documented "adjusting state when a value changes" pattern — the same
+  // fix arrivalBeats.ts's useBeatSequence needed for its own autoStart
+  // prop, and for the same reason: a plain mount-only effect keyed on
+  // isFreshLaunch would only ever see its initial (always-false) value.
+  const { isFreshLaunch, consume } = useFreshLaunch();
+
+  // Desktop — a brief, independent wake (see GenesisDomicile/
+  // LiveIntelligence's own dormant prop): starts dim, fades to full
+  // opacity shortly after becoming true. Deliberately not tied to the
+  // mobile beat sequence below — "briefly wake up," not the fuller mobile
+  // ritual.
+  const [dormant, setDormant] = useState(false);
+  useEffect(() => {
+    if (!dormant) return;
+    const timer = setTimeout(() => setDormant(false), 1200);
+    return () => clearTimeout(timer);
+  }, [dormant]);
+
+  // Mobile — the fuller "wake the office" ritual: a full-screen overlay
+  // (shared with CreateBusinessArrival) playing a short, real beat
+  // sequence, then fading out into MobileGenesisPresence's real position.
+  const [returningActive, setReturningActive] = useState(false);
+  const [returningLeaving, setReturningLeaving] = useState(false);
+
+  const [prevIsFreshLaunch, setPrevIsFreshLaunch] = useState(isFreshLaunch);
+  if (isFreshLaunch !== prevIsFreshLaunch) {
+    setPrevIsFreshLaunch(isFreshLaunch);
+    if (isFreshLaunch) {
+      setDormant(true);
+      setReturningActive(true);
+    }
+  }
+  const returningBriefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
+  const returningBeats: Beat[] = useMemo(
+    () => [
+      { text: userName ? `Welcome back, ${userName}.` : "Welcome back.", pauseBeforeMs: 300, holdMs: 1400 },
+      { text: "Genesis has been watching over your business.", holdMs: 1400 },
+      { text: returningBriefing ? returningBriefing.lead : "Everything's running smoothly today.", holdMs: 1600 },
+      { text: `Let's open ${storeName}…`, holdMs: 1200 },
+    ],
+    [userName, returningBriefing, storeName]
+  );
+  const { activeBeat: returningBeat } = useBeatSequence(returningBeats, {
+    autoStart: returningActive,
+    onComplete: () => {
+      setReturningLeaving(true);
+      setTimeout(() => {
+        setReturningActive(false);
+        consume();
+      }, 700);
+    },
+  });
 
   const isActive = (href: string) =>
     href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
@@ -273,6 +343,23 @@ export function DashboardShell({
     <>
       {genesisIcon}
       <p className="shrink-0 truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
+      {logoUrl && (
+        // The business's own generated identity, distinct from Genesis's
+        // (see the frozen design record's "Genesis and business have
+        // separate visual identities" principle) — a small circular mark
+        // beside the name, never replacing genesisIcon above. Plain <img>,
+        // not next/image: real generated images live on Vercel Blob, an
+        // arbitrary-per-deployment host next/image can't optimize without
+        // remotePatterns config — the existing product-image gallery
+        // (app/dashboard/products/page.tsx) already made this same call
+        // for the same reason.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={logoUrl}
+          alt={`${storeName} icon`}
+          className="h-5 w-5 shrink-0 rounded-full object-cover"
+        />
+      )}
 
       <nav className="flex flex-1 items-center gap-1 overflow-hidden">
         {tabSections.map(desktopTabLink)}
@@ -425,6 +512,15 @@ export function DashboardShell({
         }}
       />
 
+      {/* Arrival Experience V1 — returning-user mobile ritual (see memory
+          project_arrival_experience_milestone.md, "wake the office"). Fixed
+          full-screen, so its position in the tree doesn't matter beyond
+          being mounted; only renders on a real fresh launch, and only ever
+          once per real sign-in (isFreshLaunch/consume above). */}
+      {returningActive && (
+        <MobileArrivalOverlay text={returningBeat?.text ?? ""} leaving={returningLeaving} />
+      )}
+
       {/* Desktop top workspace bar — exactly the primary set (tabSections)
           plus one permanent "More". Below lg: this is the only nav
           chrome, exactly as already verified. At lg:+ it's hidden
@@ -502,6 +598,7 @@ export function DashboardShell({
             hasPendingDecision={hasPendingDecision}
             hasOpportunity={hasOpportunity}
             hasCuriosity={hasCuriosity}
+            dormant={dormant}
           />
         </aside>
 
@@ -516,6 +613,7 @@ export function DashboardShell({
               orderCount={orderCount}
               revenueTrend={revenueTrend}
               newCustomerCount={newCustomerCount}
+              dormant={dormant}
             />
           </div>
 

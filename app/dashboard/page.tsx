@@ -513,6 +513,7 @@ export default async function DashboardPage() {
           initialStoreName={draft?.inputStoreName ?? ""}
           initialProductType={draft?.inputProductType ?? ""}
           initialVision={draft?.inputVision ?? ""}
+          userName={session.user.name ?? null}
         />
       </div>
     );

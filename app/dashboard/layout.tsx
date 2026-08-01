@@ -276,6 +276,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       storeId={store.id}
       storeName={store.name}
       storefrontUrl={storefrontUrl}
+      logoUrl={store.logoUrl}
       sectionBadgeCounts={sectionBadgeCounts}
       sectionNavState={sectionNavState}
       focusableItems={focusableItems}

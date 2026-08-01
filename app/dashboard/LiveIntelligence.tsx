@@ -34,6 +34,7 @@ export function LiveIntelligence({
   orderCount,
   revenueTrend,
   newCustomerCount,
+  dormant = false,
 }: {
   focusableApprovals: FocusableApproval[];
   liveObservations: LiveObservation[];
@@ -43,11 +44,18 @@ export function LiveIntelligence({
   orderCount: number | null;
   revenueTrend: number[] | null;
   newCustomerCount: number | null;
+  // Arrival Experience V1 — see GenesisDomicile's own comment. Same plain
+  // opacity-transition treatment, kept in sync so the rail and the
+  // greeting always wake together.
+  dormant?: boolean;
 }) {
   const briefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
 
   return (
-    <div className="border-b py-4" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+    <div
+      className={`border-b py-4 transition-opacity duration-1000 ${dormant ? "opacity-40" : "opacity-100"}`}
+      style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p

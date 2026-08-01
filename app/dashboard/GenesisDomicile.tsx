@@ -33,12 +33,22 @@ export function GenesisDomicile({
   hasOpportunity,
   hasCuriosity,
   isWorking = false,
+  dormant = false,
 }: {
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
   hasOpportunity: boolean;
   hasCuriosity: boolean;
   isWorking?: boolean;
+  // Arrival Experience V1, returning-user desktop "wake the office" (see
+  // memory project_arrival_experience_milestone.md). True only for the
+  // brief moment right after a real fresh launch, before DashboardShell
+  // flips it back to false — a plain opacity transition on the whole
+  // presence, quieter than even idle Peace, so "waking" reads as a real
+  // transition rather than being indistinguishable from an ordinary page
+  // load. Never blocks anything — the real page is already rendered
+  // underneath this the whole time.
+  dormant?: boolean;
 }) {
   const state = deriveAssessmentState({
     hasUrgentIssue,
@@ -57,7 +67,11 @@ export function GenesisDomicile({
   const isStableAttention = isStableAttentionState(state);
 
   return (
-    <div className="flex w-full flex-col items-center pt-2 text-center">
+    <div
+      className={`flex w-full flex-col items-center pt-2 text-center transition-opacity duration-1000 ${
+        dormant ? "opacity-40" : "opacity-100"
+      }`}
+    >
       <div className="relative flex w-full items-center justify-center">
         {/* Outer atmospheric wash — large, soft, heavily blurred; brighter
             for a stable attention state, dimmer (but never absent) at idle.

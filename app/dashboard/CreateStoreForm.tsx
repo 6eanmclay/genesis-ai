@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CreateBusinessArrival } from "./CreateBusinessArrival";
 
 // Generation-progress UX (Phase 1 Beta Excellence checklist #2 follow-up).
 // A real, measured end-to-end test confirmed the ~110s wait here is
@@ -57,6 +58,7 @@ export function CreateStoreForm({
   initialProductType,
   initialVision,
   submitLabel,
+  userName = null,
 }: {
   resuming: boolean;
   initialStoreName: string;
@@ -67,12 +69,26 @@ export function CreateStoreForm({
   // which needs its own copy but the identical rich progress panel below
   // (same ~110s operation CreateStoreForm already built this for).
   submitLabel?: string;
+  // Arrival Experience V1 — only the plain first-time call site (no
+  // submitLabel override) ever renders CreateBusinessArrival below, so
+  // "Start over from scratch" doesn't need to pass this at all.
+  userName?: string | null;
 }) {
   const router = useRouter();
   const [isGenerating, setIsGenerating] = useState(false);
   const [phase, setPhase] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Arrival Experience V1 — set once the real fetch resolves for a
+  // genuine first-time creation; CreateBusinessArrival owns the
+  // completion beat and calls back via onFinished when it's done, only
+  // then does navigation actually happen.
+  const [arrivalResult, setArrivalResult] = useState<{ storeName: string } | null>(null);
+  // isFirstTimeArrival matches the one real call site distinction (see
+  // app/dashboard/page.tsx): the plain "Create your store" form never
+  // passes submitLabel; "Start over from scratch" always does. Only the
+  // former is eligible for the new collapsed-gate arrival treatment.
+  const isFirstTimeArrival = !submitLabel;
 
   useEffect(() => {
     if (!isGenerating) return;
@@ -109,6 +125,7 @@ export function CreateStoreForm({
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     setError(null);
+    setArrivalResult(null);
     setIsGenerating(true);
 
     try {
@@ -122,6 +139,15 @@ export function CreateStoreForm({
         setIsGenerating(false);
         return;
       }
+      if (isFirstTimeArrival) {
+        // Real generation (and, when storeConfirmed, real confirmation) has
+        // already finished server-side — CreateBusinessArrival plays the
+        // completion beat and navigates itself via onFinished, so the
+        // owner sees the milestone transition rather than an instant cut.
+        const data = (await res.json()) as { storeName: string };
+        setArrivalResult({ storeName: data.storeName });
+        return;
+      }
       router.push("/dashboard");
       router.refresh();
     } catch {
@@ -131,6 +157,20 @@ export function CreateStoreForm({
   };
 
   if (isGenerating) {
+    if (isFirstTimeArrival) {
+      return (
+        <CreateBusinessArrival
+          userName={userName}
+          phase={phase}
+          complete={arrivalResult !== null}
+          storeName={arrivalResult?.storeName ?? null}
+          onFinished={() => {
+            router.push("/dashboard");
+            router.refresh();
+          }}
+        />
+      );
+    }
     const message = phase ? (PHASE_MESSAGES[phase] ?? "Working on it…") : "Getting started…";
     return (
       <div className="mt-6 flex max-w-md flex-col items-start gap-2 rounded-2xl border border-black/[.08] p-6 dark:border-white/[.145]">

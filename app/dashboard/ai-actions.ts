@@ -13,6 +13,7 @@ import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/slugify";
 import { sourceHeroImageCandidate } from "@/lib/productImagery";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
+import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -401,7 +402,7 @@ async function generateStoreDraftCore(
   userId: string,
   sessionInstanceId: string,
   formData: FormData
-): Promise<void> {
+): Promise<{ storeName: string; storeConfirmed: boolean }> {
   // Family-beta instrumentation (v20) — the "Welcome to Genesis" creation
   // journey's own real duration; see the creation.* events below.
   const creationStartedAt = Date.now();
@@ -778,6 +779,31 @@ async function generateStoreDraftCore(
     outcome: "success",
     durationMs: Date.now() - creationStartedAt,
   });
+
+  // Arrival Experience V1 — collapsing the draft -> review -> confirm gate
+  // (Sean's explicit call, see memory project_arrival_experience_milestone.md):
+  // a genuinely first-time creation goes straight from real generation into
+  // a real, live Store, no human "Confirm & Create Store" click in between.
+  // Scoped to !existingDraft only — "Regenerate"/"Start over" (the
+  // existingDraft branch) is completely untouched and still lands on the
+  // real draft-review page exactly as it always has.
+  if (!existingDraft) {
+    // A real, honest new phase — picked up by the exact same
+    // /api/draft-status polling CreateBusinessArrival.tsx uses for
+    // generating_primary/generating_secondary above.
+    await prisma.storeDraft.update({
+      where: { userId },
+      data: { status: "generating_icon" },
+    });
+    const logoUrl = await generateBusinessIcon({
+      businessName: primary.storeName,
+      vision: inputVision,
+      brandPersonality: primary.brandIdentity.brandPersonality,
+    });
+    await confirmStoreDraftCore(userId, { logoUrl, sessionInstanceId });
+  }
+
+  return { storeName: primary.storeName, storeConfirmed: !existingDraft };
 }
 
 // Server Action wrapper — progressive-enhancement fallback only (a plain
@@ -811,17 +837,24 @@ export async function generateStoreDraft(formData: FormData) {
 // applies to *client* code invoking a Server Action, never to this.
 export async function generateStoreDraftForApi(
   formData: FormData
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; storeName: string; storeConfirmed: boolean } | { ok: false; error: string }
+> {
   const session = await auth();
   if (!session?.user) {
     return { ok: false, error: "Not signed in" };
   }
 
   try {
-    await generateStoreDraftCore(session.user.id, session.user.sessionInstanceId, formData);
-    return { ok: true };
+    const result = await generateStoreDraftCore(session.user.id, session.user.sessionInstanceId, formData);
+    return { ok: true, ...result };
   } catch (error) {
-    return toActionState(error);
+    const state = toActionState(error);
+    // toActionState's own return type (ActionState) is generic across every
+    // caller in this file — always the {ok:false} branch in practice here,
+    // since it's only ever called with a real caught error, but narrowed
+    // explicitly so this function's own richer success shape stays honest.
+    return state.ok ? { ok: true, storeName: "", storeConfirmed: false } : state;
   }
 }
 
@@ -3234,17 +3267,29 @@ export async function restoreStoreDraftVersion(generationId: string) {
   redirect("/dashboard");
 }
 
-export async function confirmStoreDraft() {
-  const session = await auth();
-  if (!session?.user) {
-    redirect("/login");
-  }
-
+// Extracted so it's callable two ways: the existing human-driven
+// confirmStoreDraft Server Action below (unchanged behavior — the
+// draft-review page's "Confirm & Create Store" button and "Start over"
+// flow), and the new Arrival Experience V1's auto-chained first-time
+// creation path (generateStoreDraftCore's !existingDraft branch), which
+// calls this immediately after real generation completes, with no human
+// click in between. `opts.logoUrl` is only ever populated by that second
+// caller — the human-driven path doesn't generate a business icon in V1.
+//
+// Deliberately never calls redirect() itself — the auto-chain caller runs
+// inside generateStoreDraftCore's own call graph, which (via
+// generateStoreDraftForApi) is reached from a plain Route Handler, not a
+// Server Action/Component. redirect()'s special throw is only meaningful
+// in the latter; each caller below handles "what happens next" itself.
+async function confirmStoreDraftCore(
+  userId: string,
+  opts: { logoUrl?: string | null; sessionInstanceId?: string } = {}
+): Promise<{ store: Awaited<ReturnType<typeof prisma.store.create>> }> {
   const draft = await prisma.storeDraft.findUnique({
-    where: { userId: session.user.id },
+    where: { userId },
   });
   if (!draft) {
-    redirect("/dashboard");
+    throw new Error("confirmStoreDraftCore: no StoreDraft found for this user");
   }
 
   const theme = draft.theme as ThemeWithComposition;
@@ -3304,11 +3349,12 @@ export async function confirmStoreDraft() {
 
   const store = await prisma.store.create({
     data: {
-      userId: session.user.id,
+      userId,
       name: draft.name,
       slug,
       description: draft.description,
       tagline: draft.tagline,
+      logoUrl: opts.logoUrl ?? null,
       theme,
       blueprint: (blueprintWithHero as object | null) ?? Prisma.DbNull,
       version: draft.version,
@@ -3358,10 +3404,10 @@ export async function confirmStoreDraft() {
   // for this one journey together. draft.version doubles as a free "how
   // many refinement rounds happened before confirming" signal.
   await logProductEvent({
-    userId: session.user.id,
+    userId,
     storeId: store.id,
     storeDraftId: draft.id,
-    sessionInstanceId: session.user.sessionInstanceId,
+    sessionInstanceId: opts.sessionInstanceId ?? "",
     name: "creation.confirmed",
     category: "creation",
     attemptKey: draft.id,
@@ -3369,6 +3415,29 @@ export async function confirmStoreDraft() {
     metadata: { versionsBeforeConfirm: draft.version },
   });
 
+  return { store };
+}
+
+// Server Action wrapper — the draft-review page's "Confirm & Create Store"
+// button and "Start over" flow both still go through this exact path,
+// unchanged. The Arrival Experience V1's first-time-creation path never
+// calls this — it calls confirmStoreDraftCore directly, auto-chained, with
+// no human click in between (see generateStoreDraftCore).
+export async function confirmStoreDraft() {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const existingDraft = await prisma.storeDraft.findUnique({
+    where: { userId: session.user.id },
+    select: { id: true },
+  });
+  if (!existingDraft) {
+    redirect("/dashboard");
+  }
+
+  await confirmStoreDraftCore(session.user.id, { sessionInstanceId: session.user.sessionInstanceId });
   redirect("/dashboard");
 }
 
