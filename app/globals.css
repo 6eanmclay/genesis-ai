@@ -171,15 +171,112 @@ body {
 .genesis-avatar-dormant .genesis-ribbon,
 .genesis-avatar-dormant .genesis-particle,
 .genesis-avatar-dormant .genesis-shimmer,
-.genesis-avatar-dormant .genesis-haze {
+.genesis-avatar-dormant .genesis-haze,
+.genesis-avatar-dormant .genesis-shooting-star,
+.genesis-avatar-dormant .genesis-spark,
+.genesis-avatar-dormant .genesis-flicker {
   animation-play-state: paused;
+}
+
+/* Shooting stars — canonical-identity polish pass. Reuse the exact same
+   two invisible orbit paths as the ribbons/comets above (see
+   SHOOTING_STARS in GenesisAvatar.tsx — the orbital system itself is
+   frozen, this only adds a transient way of riding it): motionless and
+   fully invisible for most of the cycle, then a short, eased dash along
+   a small fraction of the orbit, fading out before completing a
+   revolution. ease-out (not linear, unlike the ribbons/comets) so the
+   burst itself reads as a quick dart that settles, not a mechanical
+   sweep — "these form the foundation" (ribbons/comets) vs. "spontaneous
+   bursts" (this) is a deliberate motion-language split, not just a
+   frequency difference. */
+@keyframes genesis-shooting-star {
+  0%,
+  78% {
+    opacity: 0;
+    stroke-dashoffset: 0;
+  }
+  84% {
+    opacity: 1;
+  }
+  96% {
+    opacity: 0.7;
+    stroke-dashoffset: -0.17;
+  }
+  100% {
+    opacity: 0;
+    stroke-dashoffset: -0.19;
+  }
+}
+.genesis-shooting-star {
+  animation-name: genesis-shooting-star;
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+}
+
+/* Ambient sparks — a tiny point of light that appears, glows briefly,
+   and disappears in place (no orbit motion at all) — infrequent and
+   subtle, placed at fixed angles the two ribbon lanes don't already
+   cover (see AMBIENT_SPARKS in GenesisAvatar.tsx) so quieter regions of
+   the field still read as inhabited without adding permanent density. */
+@keyframes genesis-spark {
+  0%,
+  90%,
+  100% {
+    opacity: 0;
+  }
+  94% {
+    opacity: 0.9;
+  }
+  97% {
+    opacity: 0.45;
+  }
+}
+.genesis-spark {
+  animation-name: genesis-spark;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* A very subtle, slow, irregular brightness flicker at the core — one of
+   the small details ("tiny brightness fluctuations") keeping the field
+   from ever reading as an exact repeating loop. Its own independent
+   layer (a separate div in GenesisAvatar.tsx, not .genesis-haze itself)
+   so it can never interfere with haze's already-verified drift/exhale/
+   dormant behavior. Deliberately uneven keyframe spacing — a clean sine
+   wave reads as mechanical pulsing, which is exactly what this is meant
+   to avoid; low, narrow opacity range (0.04-0.11) keeps it well below
+   the threshold of reading as "the orb pulsing," which stays off-limits
+   by explicit instruction. */
+@keyframes genesis-flicker {
+  0%,
+  100% {
+    opacity: 0.05;
+  }
+  22% {
+    opacity: 0.09;
+  }
+  41% {
+    opacity: 0.04;
+  }
+  63% {
+    opacity: 0.11;
+  }
+  85% {
+    opacity: 0.06;
+  }
+}
+.genesis-flicker {
+  animation: genesis-flicker 37s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .genesis-ribbon,
   .genesis-particle,
   .genesis-haze,
-  .genesis-shimmer {
+  .genesis-shimmer,
+  .genesis-shooting-star,
+  .genesis-spark,
+  .genesis-flicker {
     animation: none !important;
   }
 }
