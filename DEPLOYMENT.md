@@ -1,8 +1,18 @@
 # Deployment & production migrations
 
-How code and schema changes actually reach production, and the one step that is deliberately **not** automatic. Edited in place, like `ARCHITECTURE.md` — should describe today's process, not a past one.
+How code and schema changes actually reach production, and the one step that is deliberately **not** automatic. Edited in place, like `ARCHITECTURE.md` — should describe today's process, not a past one. This is also the living operational reference for deployment safety and infrastructure verification generally — the product/feature roadmap lives elsewhere (see `reference_engineering_roadmap` memory) and stays focused on product and platform evolution, not operational hardening.
 
 **Last updated:** 2026-08-01, after removing automatic `prisma migrate deploy` from the build pipeline (see *Why this changed* below).
+
+## Track 0 checklist — Operational Foundations
+
+Cheap, high-blast-radius operational risks, tracked separately from feature work. Check an item off once it's been verified against the real environment, not just implemented.
+
+- [x] **Remove automatic production schema migrations** — done 2026-08-01, see below.
+  - [ ] **Verify Preview deployment database branching** — open. Need to confirm in the Vercel dashboard (Project → Storage → the Neon integration → connection settings) whether Preview deployments get an isolated Neon branch or share the production database. See *Two things worth knowing but not yet resolved* below for why this couldn't be confirmed via CLI. Not blocking anything today (migrations no longer auto-run in either environment), but worth closing out and documenting the answer here.
+- [ ] **Per-store AI usage ceilings / proactive cost governance** — not started. `lib/genesisModel.ts` only reacts to Anthropic's own rate-limit/billing errors after the fact; no pre-call budget or ceiling exists.
+- [ ] **Production error monitoring (Sentry or equivalent)** — not started. `app/dashboard/error.tsx` only does `console.error`; nothing reports externally.
+- [ ] **Structural tenant-isolation enforcement** — not started. Store-scoped queries are correctly filtered everywhere sampled so far, but only by convention (`requireStorePermission`/`resolveUserStore`), not by anything at the Prisma/DB layer that would catch an omission.
 
 ## Code deploys — unchanged, still automatic
 
