@@ -161,65 +161,88 @@ export function GenesisAvatar({
         style={{ overflow: "visible", color, mixBlendMode: "screen" }}
         aria-hidden="true"
       >
-        <path
-          d="M 14,146 C 46,58 154,58 186,104"
+        {/* Two orbits, tightly matched to the rings already visible in the
+            photo (rx/ry well inside the mask's fade radius, never near the
+            frame edge) — a ribbon and a comet share each orbit so they
+            read as one energy system per lane, not unrelated effects.
+            Ellipses support pathLength/dasharray the same as <path> in
+            every modern browser, so no bezier approximation is needed. */}
+        <ellipse
+          cx="100"
+          cy="100"
+          rx="76"
+          ry="26"
+          transform="rotate(-18 100 100)"
           fill="none"
           stroke="currentColor"
-          strokeOpacity="0.32"
-          strokeWidth="1.6"
+          strokeOpacity="0.26"
+          strokeWidth="1.3"
           strokeLinecap="round"
           pathLength="1"
-          strokeDasharray="0.22 0.78"
+          strokeDasharray="0.15 0.85"
           className="genesis-ribbon"
         />
-        <path
-          d="M 12,62 C 66,166 134,166 188,86"
+        <ellipse
+          cx="100"
+          cy="100"
+          rx="68"
+          ry="23"
+          transform="rotate(58 100 100)"
           fill="none"
           stroke="currentColor"
-          strokeOpacity="0.24"
-          strokeWidth="1.4"
+          strokeOpacity="0.2"
+          strokeWidth="1.2"
           strokeLinecap="round"
           pathLength="1"
-          strokeDasharray="0.18 0.82"
+          strokeDasharray="0.13 0.87"
           className="genesis-ribbon"
           style={{ animationDelay: "-9s", animationDirection: "reverse" }}
         />
 
-        <path
-          d="M 24,100 C 24,46 176,46 176,100 C 176,154 24,154 24,100 Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.02 0.98"
-          className="genesis-particle"
-          opacity="0.6"
-        />
-        <path
-          d="M 24,100 C 24,46 176,46 176,100 C 176,154 24,154 24,100 Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.015 0.985"
-          className="genesis-particle"
-          opacity="0.45"
-          style={{ animationDelay: "-6s", animationDirection: "reverse" }}
-        />
-        <path
-          d="M 100,8 C 172,26 192,100 172,174 C 100,192 28,174 8,100 C 28,26 100,8 100,8 Z"
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          pathLength="1"
-          strokeDasharray="0.015 0.985"
-          className="genesis-particle"
-          opacity="0.5"
-          style={{ animationDelay: "-11s" }}
-        />
+        {/* Comets — a tiny bright lead point plus two shrinking, fading
+            points close behind it on the same orbit, all moving together
+            (one shared animation, staggered only by a small negative
+            delay) so they read as a single streaking spark with a trail,
+            never a scattered dash. Deliberately small and few — "less is
+            more." */}
+        {[0, 1, 2].map((i) => (
+          <ellipse
+            key={`comet-a-${i}`}
+            cx="100"
+            cy="100"
+            rx="76"
+            ry="26"
+            transform="rotate(-18 100 100)"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.1 - i * 0.2}
+            strokeLinecap="round"
+            pathLength="1"
+            strokeDasharray="0.006 0.994"
+            className="genesis-particle"
+            opacity={0.85 - i * 0.32}
+            style={i > 0 ? { animationDelay: `-${i * 0.35}s` } : undefined}
+          />
+        ))}
+        {[0, 1, 2].map((i) => (
+          <ellipse
+            key={`comet-b-${i}`}
+            cx="100"
+            cy="100"
+            rx="68"
+            ry="23"
+            transform="rotate(58 100 100)"
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth={1 - i * 0.18}
+            strokeLinecap="round"
+            pathLength="1"
+            strokeDasharray="0.006 0.994"
+            className="genesis-particle"
+            opacity={0.7 - i * 0.26}
+            style={{ animationDelay: `-${6 + i * 0.35}s`, animationDirection: "reverse" }}
+          />
+        ))}
 
         {/* Edge shimmer — the one motion element right at the photo's own
             orb boundary, deliberately the slowest and subtlest here. */}

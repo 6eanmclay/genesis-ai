@@ -52,14 +52,17 @@ body {
    matching this file's own established convention (compare the retired
    .genesis-orbit-motion precedent this replaced).
 
-   Ribbons and particles are both a "flow" animation — a moving
-   stroke-dasharray segment along an invisible curved SVG <path>
-   (pathLength="1" normalizes the dash math regardless of actual path
-   geometry, set where each is drawn in GenesisAvatar.tsx), just a longer
-   dash for ribbons and a short round-capped dot-length dash for
-   particles. Deliberately not SMIL <animateMotion>: its dur attribute
-   can't be retuned per activity state through the CSS cascade the way a
-   plain animation-duration override can. */
+   Ribbons and particles (the latter drawn in threes — a lead point plus
+   two shrinking/fading followers on the same orbit, forming a comet
+   trail) are both a "flow" animation — a moving stroke-dasharray segment
+   along an invisible curved SVG shape (pathLength="1" normalizes the dash
+   math regardless of actual path geometry, set where each is drawn in
+   GenesisAvatar.tsx), just a longer dash for ribbons and a tiny
+   round-capped dot for each particle point. Deliberately not SMIL
+   <animateMotion>: its dur attribute can't be retuned per activity state
+   through the CSS cascade the way a plain animation-duration override
+   can. Particles run noticeably faster than ribbons on purpose — "shooting
+   star," not a slow ambient drift. */
 @keyframes genesis-flow {
   to {
     stroke-dashoffset: -1;
@@ -75,7 +78,7 @@ body {
   animation-duration: 26s;
 }
 .genesis-particle {
-  animation-duration: 17s;
+  animation-duration: 13s;
 }
 
 /* Volumetric haze — large, heavily blurred, plain CSS divs (percentage-
@@ -118,7 +121,7 @@ body {
   animation-duration: 20s;
 }
 .genesis-activity-listening .genesis-particle {
-  animation-duration: 13s;
+  animation-duration: 10s;
 }
 
 .genesis-activity-thinking .genesis-haze {
