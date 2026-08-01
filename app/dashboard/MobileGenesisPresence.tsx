@@ -1,5 +1,4 @@
-import Image from "next/image";
-import { deriveAssessmentState, GENESIS_STATE_META, isStableAttentionState } from "@/lib/dashboard/genesisState";
+import { deriveAssessmentState } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import {
   buildBriefing,
@@ -8,6 +7,7 @@ import {
   type CuriosityBrief,
 } from "@/lib/dashboard/genesisBriefing";
 import { GenesisGreeting } from "./GenesisGreeting";
+import { GenesisAvatar } from "./GenesisAvatar";
 
 // Mobile's own persistent Genesis presence — true mobile (<768px) only, see
 // DashboardShell.tsx. Below lg:, GenesisDomicile/LiveIntelligence (the
@@ -49,8 +49,6 @@ export function MobileGenesisPresence({
   justArrived?: boolean;
 }) {
   const state = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
-  const meta = GENESIS_STATE_META[state];
-  const stable = isStableAttentionState(state);
   const briefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
   const briefingText = briefing
     ? justArrived
@@ -66,22 +64,10 @@ export function MobileGenesisPresence({
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg, borderBottom: `1px solid ${GENESIS_ATMOSPHERE.border}` }}
     >
       {/* 44px — up from the old 36px mobile icon (~22% larger, inside the
-          20-30% range asked for) — with a blurred halo behind it colored
-          and sized by the real current assessment state, never a separate
-          invented color. */}
-      <div className="relative flex h-11 w-11 shrink-0 items-center justify-center">
-        <div
-          aria-hidden="true"
-          className="absolute inset-[-8px] rounded-full blur-md transition-colors duration-700"
-          style={{ backgroundColor: meta.glowColor, opacity: stable ? 0.5 : 0.22 }}
-        />
-        <Image
-          src="/brand/genesis-j4-avatar.png"
-          alt="Genesis"
-          width={44}
-          height={44}
-          className="relative rounded-[10px]"
-        />
+          20-30% range asked for). GenesisAvatar owns its own glow/activity
+          animation now — see that file's own comment. */}
+      <div className="relative h-11 w-11 shrink-0">
+        <GenesisAvatar state={state} className="h-11 w-11" />
       </div>
       <div className="min-w-0">
         <GenesisGreeting name={userName} sizeClassName="text-lg font-semibold" />

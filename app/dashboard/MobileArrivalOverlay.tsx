@@ -1,8 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
-import { GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
+import { type GenesisState } from "@/lib/dashboard/genesisState";
+import { GenesisAvatar } from "./GenesisAvatar";
 
 // Mobile's own arrival mechanism (see memory
 // project_arrival_experience_milestone.md — "mobile: full-screen, because
@@ -34,8 +34,6 @@ export function MobileArrivalOverlay({
   // real work happening and nothing honest to skip to yet.
   onSkip?: () => void;
 }) {
-  const meta = GENESIS_STATE_META[state];
-
   return (
     <div
       className={`fixed inset-0 z-[100] flex flex-col items-center justify-center gap-6 px-8 text-center transition-opacity duration-700 md:hidden ${
@@ -43,21 +41,7 @@ export function MobileArrivalOverlay({
       }`}
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
     >
-      <div className="relative flex h-24 w-24 items-center justify-center">
-        <div
-          aria-hidden="true"
-          className="absolute inset-[-16px] rounded-full blur-xl transition-colors duration-700"
-          style={{ backgroundColor: meta.glowColor, opacity: 0.55 }}
-        />
-        <Image
-          src="/brand/genesis-j4-avatar.png"
-          alt="Genesis"
-          width={96}
-          height={96}
-          className="relative rounded-2xl"
-          priority
-        />
-      </div>
+      <GenesisAvatar state={state} className="h-24 w-24" />
       <p
         className="max-w-xs text-lg font-medium"
         style={{ color: GENESIS_ATMOSPHERE.text }}

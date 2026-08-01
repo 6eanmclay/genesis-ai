@@ -43,99 +43,123 @@ body {
   }
 }
 
-/* Genesis Domicile orbit — always-on presence, never "off". Breathing
-   reads as calm/idle (on the planet, in GenesisOrbitRing.tsx). The ring's
-   own tilt stays fixed (a rigid spin would drag its front/back Saturn
-   split around with it and break the illusion); genesis-orbit-travel is
-   what moves instead — a highlight circulating *along* the fixed ring, an
-   honest real-time "alive" signal, not discrete named phases (see
-   GenesisOrbitRing.tsx's own comment for the fuller reasoning). */
-@keyframes genesis-breathe {
+/* GenesisAvatar (app/dashboard/GenesisAvatar.tsx) V2 — the orb itself
+   (drawn directly in that file's SVG) is static artwork with zero
+   animation applied to it anywhere in this file, by explicit instruction.
+   Every rule below animates only the *atmosphere* around it — the
+   breathing quality comes entirely from the environment, never the orb.
+   Plain custom classes (not Tailwind's animate-[] arbitrary syntax),
+   matching this file's own established convention (compare the retired
+   .genesis-orbit-motion precedent this replaced).
+
+   Ribbons and particles are both a "flow" animation — a moving
+   stroke-dasharray segment along an invisible curved SVG <path>
+   (pathLength="1" normalizes the dash math regardless of actual path
+   geometry, set where each is drawn in GenesisAvatar.tsx), just a longer
+   dash for ribbons and a short round-capped dot-length dash for
+   particles. Deliberately not SMIL <animateMotion>: its dur attribute
+   can't be retuned per activity state through the CSS cascade the way a
+   plain animation-duration override can. */
+@keyframes genesis-flow {
+  to {
+    stroke-dashoffset: -1;
+  }
+}
+.genesis-ribbon,
+.genesis-particle {
+  animation-name: genesis-flow;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.genesis-ribbon {
+  animation-duration: 26s;
+}
+.genesis-particle {
+  animation-duration: 17s;
+}
+
+/* Volumetric haze — large, heavily blurred, plain CSS divs (percentage-
+   positioned so they scale correctly at every call site's own size,
+   unlike a path defined in fixed units) — the primary "inhale/exhale"
+   carrier. */
+@keyframes genesis-haze-drift {
   0%,
   100% {
-    transform: scale(1);
+    transform: translate(0, 0) scale(1);
   }
   50% {
-    transform: scale(1.045);
+    transform: translate(3%, -2%) scale(1.05);
   }
 }
-@keyframes genesis-orbit-travel {
+.genesis-haze {
+  animation: genesis-haze-drift 26s ease-in-out infinite;
+}
+
+/* Edge shimmer — a thin partial ring right at the orb's own boundary, the
+   subtlest and slowest of all the motion here ("slight refraction/shimmer
+   near the orb's edge," not a beacon). */
+@keyframes genesis-shimmer-sweep {
   to {
-    stroke-dashoffset: -1000;
+    stroke-dashoffset: -1;
   }
 }
+.genesis-shimmer {
+  animation: genesis-shimmer-sweep 48s linear infinite;
+}
 
-/* "Working" gains energy over real time, never fake phase markers — the
-   leading arc starts modest and organically grows thicker, brighter, and
-   longer, then holds at that peak for however long the real request takes
-   (forwards fill; a request lasting 10s or 100s both just sustain at
-   maximum once reached — neither implies a false "percent done"). The
-   trailing arc mirrors this at lower opacity/higher width for a soft
-   comet-tail quality behind the bright leading edge. 540 is comfortably
-   larger than the ring's real circumference, so the dash-array's gap (the
-   second number) never wraps around twice — only the "on" segment (the
-   first number) visibly grows. */
-@keyframes genesis-energy-build-lead {
+/* Activity tempo — speed and presence only, never hue, never the orb.
+   Listening: barely different from idle ("softer, more attentive").
+   Thinking: the one state allowed to be genuinely noticeable — still
+   calm, never flashy. */
+.genesis-activity-listening .genesis-haze {
+  animation-duration: 20s;
+}
+.genesis-activity-listening .genesis-ribbon {
+  animation-duration: 20s;
+}
+.genesis-activity-listening .genesis-particle {
+  animation-duration: 13s;
+}
+
+.genesis-activity-thinking .genesis-haze {
+  animation-duration: 10s;
+}
+.genesis-activity-thinking .genesis-ribbon {
+  animation-duration: 8s;
+  opacity: 0.85;
+}
+.genesis-activity-thinking .genesis-particle {
+  animation-duration: 6s;
+  opacity: 0.9;
+}
+
+/* Response — one real, non-repeating "exhale" through the atmosphere
+   right as a real answer lands, then a return to idle tempo.
+   animation-iteration-count: 1 (not infinite) — a genuine once-per-answer
+   moment, never a persistent new loop the orb has to carry. */
+@keyframes genesis-exhale {
   0% {
-    stroke-width: 4;
+    opacity: 1;
+    transform: scale(1);
+  }
+  45% {
     opacity: 0.55;
-    stroke-dasharray: 30 540;
+    transform: scale(1.09);
   }
   100% {
-    stroke-width: 8;
     opacity: 1;
-    stroke-dasharray: 165 540;
+    transform: scale(1);
   }
 }
-@keyframes genesis-energy-build-trail {
-  0% {
-    stroke-width: 9;
-    opacity: 0.12;
-    stroke-dasharray: 50 540;
-  }
-  100% {
-    stroke-width: 14;
-    opacity: 0.3;
-    stroke-dasharray: 210 540;
-  }
-}
-
-/* "Living plasma, not a uniform light ribbon" — a small, irregular (not a
-   smooth sine wave) opacity fluctuation applied to the ring's bright
-   layers. Deliberately uneven step sizes/timing between stops, the way
-   real energy/light never holds perfectly steady, rather than a clean
-   pulse. Each layer that uses this picks its own duration/delay (see
-   GenesisOrbitRing.tsx) so multiple layers never flicker in lockstep. */
-@keyframes genesis-plasma-flicker {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  8% {
-    opacity: 0.86;
-  }
-  23% {
-    opacity: 1;
-  }
-  34% {
-    opacity: 0.79;
-  }
-  51% {
-    opacity: 0.96;
-  }
-  63% {
-    opacity: 0.83;
-  }
-  79% {
-    opacity: 1;
-  }
-  90% {
-    opacity: 0.88;
-  }
+.genesis-activity-response .genesis-haze {
+  animation: genesis-exhale 1.4s ease-out 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .genesis-orbit-motion {
+  .genesis-ribbon,
+  .genesis-particle,
+  .genesis-haze,
+  .genesis-shimmer {
     animation: none !important;
   }
 }

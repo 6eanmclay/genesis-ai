@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { deriveAssessmentState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
+import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { SubmitButton } from "./SubmitButton";
 
 // Hydration-safe read of the same lg: breakpoint (1024px) this codebase
@@ -86,6 +87,21 @@ function GenesisStatusDot({ hasUrgentIssue, hasPendingDecision, hasOpportunity, 
   const { pending } = useFormStatus();
   const state = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
   return <StateDot state={state} isWorking={pending} />;
+}
+
+// Relays this same real pending value out to lib/dashboard/genesisActivity.ts
+// — the only way any GenesisAvatar instance outside this form (the desktop
+// rail, the mobile presence bar) can know a request is genuinely in flight,
+// since useFormStatus only works for descendants of this specific <form>.
+// Renders nothing; exists purely to sync. Same descendant-of-<form>
+// requirement as GenesisStatusDot above, which is why it's mounted right
+// beside it rather than computed once at a higher level.
+function GenesisWorkingPublisher() {
+  const { pending } = useFormStatus();
+  useEffect(() => {
+    setGenesisWorking(pending);
+  }, [pending]);
+  return null;
 }
 
 // The contextual-review connection layer's ephemeral "why you're here"
@@ -253,6 +269,7 @@ export function GenesisAssistant({
               hasOpportunity={hasOpportunity}
               hasCuriosity={hasCuriosity}
             />
+            <GenesisWorkingPublisher />
           </div>
           <p className="mt-1 text-xs text-zinc-500 lg:text-[rgba(244,242,251,0.62)]">
             Your business partner for {storeName}
@@ -342,6 +359,12 @@ export function GenesisAssistant({
           placeholder="Ask Genesis anything about your business…"
           rows={2}
           required
+          // Real "the owner is actively composing" signal for
+          // GenesisAvatar's Listening state (see genesisActivity.ts) — the
+          // one new instrumentation this milestone added; stays otherwise
+          // uncontrolled (no value/onChange), just relaying focus.
+          onFocus={() => setGenesisComposing(true)}
+          onBlur={() => setGenesisComposing(false)}
           className="rounded-lg border border-black/[.08] px-3 py-2 text-sm dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#07060d] lg:text-[#f4f2fb] lg:placeholder:text-[rgba(244,242,251,0.62)]"
         />
         <SubmitButton
