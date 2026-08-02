@@ -2,7 +2,7 @@
 
 **Status:** Frozen — V1. Approved by Sean 2026-08-02 as a foundational design document, alongside `ARCHITECTURE.md` and the J4 Foundation documents — not onboarding documentation. Naming (see below) is the one deliberate open decision inside an otherwise-frozen document; visual design (color, layout, motion, screen-by-screen interaction) begins now, against these principles. `ONBOARDING_V2_DESIGN.md`/`ONBOARDING_V2_IMPLEMENTATION.md` remain the technical/architectural record of the ecommerce mechanics this experience is built on; this document is what that architecture is *for*.
 
-**The bar for changing this document, going forward**: not wording improvements. A change earns its way in only by something real learned from building or observing actual users — the same discipline this codebase already holds every other frozen document to. Version 2 gets written by evidence, not by continued polishing.
+**The bar for changing this document, going forward**: not wording improvements. A change earns its way in only by something real learned from building or observing actual users — the same discipline this codebase already holds every other frozen document to. Version 2 gets written by evidence, not by continued polishing. (Principle 12 and *The reference screen* were added the same day, immediately after the first real screen built to this document was reviewed — an amendment earned by exactly that bar, not an exception to it.)
 
 ## Why this document exists
 
@@ -48,6 +48,21 @@ This is where the idea stops being hypothetical. Not "your store will sell great
 This is not a graduation earned by performance. It is the moment the owner decides Genesis is going to help them build this business, and it can happen the instant Business ends — first sale or not. Everything before this point costs nothing and risks nothing; this is where that changes, on purpose, because a real threshold is what makes the moment mean something.
 
 Partnership should be the same kind of arrival ritual this product has already built for returning users (`GenesisAvatar`, the arrival-beat sequence) — scaled to be the largest one yet, because it's the first, and it's the one that matters most. And because the preview URL never changes (see below), the payoff can be literal, not just narrated: *the exact link you already showed someone is now really open.*
+
+## The reference screen
+
+The Idea act's opening screen — arrival, before any business exists — is the first screen actually designed against this document. Sean's confirmation locks it in as more than one good screen: it's the standard every later screen in the Genesis Experience is measured against.
+
+**What it contains, and nothing more:** Genesis's presence, in its existing `curiosity` state — the one moment "Genesis is genuinely curious about your idea" is literally true. One spoken line, written to assume the idea already exists: *"What's the business you've been meaning to start?"* One reassurance line: *"Tell me the idea — I'll take it from here."* One input. No logo, no explanation of what Genesis is, no step indicator, no links, no feature list.
+
+**Two standing tests this locks in, for this screen and every one after it:**
+
+1. **Protect the simplicity, always.** Before adding anything — to this screen, or to any screen held to this standard — ask whether it makes the moment feel *more magical* or *more like software*. If the honest answer is "more like software," it doesn't belong, regardless of how useful it seems in isolation.
+2. **Five seconds, no documentation.** Someone opening Genesis for the first time should know what to do within five seconds, without reading anything or watching a tutorial. A real, testable bar, not an aspiration — check it against real people, not assumption.
+
+Every later screen inherits the same measure: does it preserve this feeling of calm confidence, curiosity, and momentum, or does it start to feel like a different product wearing Genesis's colors.
+
+**The reference screen does not accumulate features.** The burden of proof sits on the addition, not on the objection to it. "This would be nice to have" is not sufficient — the bar is "the experience is measurably better because of this." Absent that, the default is to protect the simplicity as-is.
 
 ### Growth
 *The relationship continues*
@@ -119,6 +134,7 @@ Frozen alongside the existing Genesis Experience Principles (`project_genesis_ex
 9. **Engineer for the moment someone wants to show someone else.** Every major beat is evaluated against one question: would this make someone stop, smile, and want to show another person what Genesis just did? See *Moments engineered for sharing* above for the current best answers.
 10. **Optimize for belief, not just progress.** Every major interaction should leave the owner more confident than before — not just further along a checklist. See *The confidence checkpoints* above.
 11. **Show, don't tell.** Demonstrate value before explaining it. Don't say Genesis understands the business — prove it (the Idea-act insight moment). Don't say Genesis can build a store — show the store. Don't say Genesis can help someone make money — show a real product, a real cost, a real price, a real business they could launch today. This principle's scope is deliberately larger than this document — it should govern marketing, demos, the landing page, feature launches, and every major product moment, not just this journey. Worth surfacing in whatever future brand/marketing documentation exists, not just here.
+12. **Protect the simplicity, always.** Confirmed against the first real screen built to this document (see *The reference screen*): every proposed addition is checked against whether it makes the moment more magical or more like software, and every screen should be reachable in five seconds without documentation. This is the standing guardrail against feature creep for the rest of this experience's life.
 
 ## Naming: an open decision, carried deliberately
 
