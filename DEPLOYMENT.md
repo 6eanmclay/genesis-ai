@@ -33,10 +33,12 @@ Pushing to `master` triggers a normal Vercel build (`next build`) and deploy. No
    ```
    npm run migrate:deploy
    ```
-   run locally against the real production `DATABASE_URL` (pull it via `vercel env pull .env.production.local --environment=production`, or run through `vercel exec` — either way, this is a conscious action a person takes, not something that fires on every push).
+   run locally against the real production `DATABASE_URL`. **Correction, found while actually doing this for the first time:** `vercel env pull` redacts sensitive values (shows `[SENSITIVE]`) whenever it detects a non-interactive/agent context — confirmed via the CLI's own `--non-interactive` flag description ("default when agent detected"), not assumed — and `vercel exec` (previously listed here as an alternative) doesn't exist as a real subcommand in this CLI version. So this step is agent-blocked by design, not just by convention: **only a real, interactive human session can pull the real value.** Run `vercel env pull .env.production.local --environment=production` yourself, in your own terminal, or copy `DATABASE_URL` directly from the Vercel dashboard's environment variables page.
 4. Only then push/merge the code that depends on the new schema.
 
 Running migration-then-code (not the reverse) matters because they're no longer coupled to the same build — code that assumes a column exists should never deploy ahead of the column itself.
+
+**A real consequence of this discovery**: this means an agent (me) can never fully complete step 3 unassisted — the production migration step now has two sub-parts: I can write, review, and stage the migration, but *applying* it to production genuinely requires you to run one command yourself. Not a gap to work around; this is Track 0's own migration-gate goal working as intended, one layer deeper than originally designed.
 
 ## Sentry — code-complete, one manual step remains
 
