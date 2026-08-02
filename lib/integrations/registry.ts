@@ -5,6 +5,7 @@ import { paypalConnector } from "./paypal";
 import { googleCalendarConnector } from "./googleCalendar";
 import { quickbooksConnector } from "./quickbooks";
 import { mailchimpConnector } from "./mailchimp";
+import { printfulConnector } from "./printful";
 
 // Adding a new integration means writing a connector module and adding one
 // line here — nothing else in the framework needs to know it exists. The 3
@@ -16,6 +17,10 @@ const CONNECTORS: Partial<Record<IntegrationProvider, IntegrationConnector>> = {
   GOOGLE_CALENDAR: googleCalendarConnector,
   QUICKBOOKS: quickbooksConnector,
   MAILCHIMP: mailchimpConnector,
+  // Onboarding v2 — this is only the OAuth auth backbone; what it's used
+  // FOR (fulfillment catalog browsing/pricing/ordering) goes through
+  // lib/fulfillment/registry.ts instead, never through this file.
+  PRINTFUL: printfulConnector,
 };
 
 export function getConnector(provider: IntegrationProvider): IntegrationConnector {

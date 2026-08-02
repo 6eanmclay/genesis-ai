@@ -48,6 +48,11 @@ import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
 import { communicateFinding } from "@/lib/execution/genesisAutonomy";
+import { recordExecution } from "@/lib/execution/log";
+import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
+import { decryptCredentials } from "@/lib/integrations/credentials";
+import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
+import type { OnboardingState } from "@/lib/onboarding/types";
 
 const PROMPT_VERSION = "v2";
 
@@ -3304,6 +3309,20 @@ async function confirmStoreDraftCore(
   const theme = draft.theme as ThemeWithComposition;
   const products = (draft.productsDraft as ProductContent[] | null) ?? [];
 
+  // Onboarding v2 — a completed guided discovery flow (lib/onboarding/
+  // discoveryFlow.ts) supersedes productsDraft's AI-imagined placeholder
+  // entirely: the real, fulfillment-backed candidate the owner actually
+  // chose and priced becomes the store's one real product instead.
+  // productsDraft itself still generated unconditionally (unchanged, out of
+  // scope to suppress at generation time) — its output is simply not used
+  // here when this branch is taken. See ONBOARDING_V2_DESIGN.md section 7.
+  const onboardingState = draft.onboardingState as OnboardingState | null;
+  const fulfillmentSelection =
+    onboardingState?.step === "ready_to_publish" && onboardingState.selectedCandidate && onboardingState.pricing
+      ? { candidate: onboardingState.selectedCandidate, pricing: onboardingState.pricing }
+      : null;
+  const fulfillmentCredentialsEntry = Object.entries(onboardingState?.fulfillmentCredentials ?? {})[0];
+
   const baseSlug = slugify(draft.name);
   let slug = baseSlug;
   let suffix = 1;
@@ -3313,17 +3332,22 @@ async function confirmStoreDraftCore(
   }
 
   // Resolved once here, not on every storefront page load — see lib/unsplash.ts.
-  const productImages = await Promise.all(
-    products.map((p) =>
-      resolveProductImage({
-        prompt: p.imagePrompt || p.description || p.name,
-        name: p.name,
-        description: p.description,
-        excludeUrls: [],
-        scope: { userId },
-      }).then((sourced) => sourced?.url ?? null)
-    )
-  );
+  // Skipped entirely on the fulfillment-selection branch below — the
+  // candidate already carries a real image from its connector, no AI
+  // sourcing needed or wanted.
+  const productImages = fulfillmentSelection
+    ? []
+    : await Promise.all(
+        products.map((p) =>
+          resolveProductImage({
+            prompt: p.imagePrompt || p.description || p.name,
+            name: p.name,
+            description: p.description,
+            excludeUrls: [],
+            scope: { userId },
+          }).then((sourced) => sourced?.url ?? null)
+        )
+      );
 
   // Hero-image architecture fix (Priority 4) — only the "split" hero layout
   // ever renders an image at all (confirmed in app/store/[slug]/page.tsx —
@@ -3373,23 +3397,112 @@ async function confirmStoreDraftCore(
       version: draft.version,
       businessCategories: draft.businessCategories,
       revenueStreams: draft.revenueStreams,
-      products: {
-        create: products.map((p, index) => ({
-          name: p.name,
-          description: p.description || null,
-          priceInCents: Math.round(p.price * 100),
-          position: index,
-          imageUrl: productImages[index],
-          richContent: {
-            keyFeatures: p.keyFeatures ?? [],
-            benefits: p.benefits ?? [],
-            specifications: p.specifications ?? [],
-            imagePrompt: p.imagePrompt ?? "",
+      brandPositioning: draft.brandPositioning,
+      products: fulfillmentSelection
+        ? {
+            // The guided flow's one real, priced, fulfillment-backed
+            // product — externalProductId is filled in just below, once
+            // this real Store (and therefore a real storeId to register
+            // the product under) exists.
+            create: [
+              {
+                name: fulfillmentSelection.candidate.name,
+                description: fulfillmentSelection.candidate.description,
+                priceInCents: fulfillmentSelection.pricing.retailPriceInCents,
+                position: 0,
+                imageUrl: fulfillmentSelection.candidate.imageUrl,
+                costInCents:
+                  fulfillmentSelection.pricing.retailPriceInCents - fulfillmentSelection.pricing.profitInCents,
+                fulfillmentProvider: fulfillmentSelection.candidate.provider,
+                externalVariantId: fulfillmentSelection.candidate.variant.externalVariantId,
+              },
+            ],
+          }
+        : {
+            create: products.map((p, index) => ({
+              name: p.name,
+              description: p.description || null,
+              priceInCents: Math.round(p.price * 100),
+              position: index,
+              imageUrl: productImages[index],
+              richContent: {
+                keyFeatures: p.keyFeatures ?? [],
+                benefits: p.benefits ?? [],
+                specifications: p.specifications ?? [],
+                imagePrompt: p.imagePrompt ?? "",
+              },
+            })),
           },
-        })),
-      },
+      // Onboarding v2 — materializes the real StoreIntegration row in the
+      // same nested-create call as the Store and its Product, atomically,
+      // mirroring the existing productsDraft -> Product pattern. The
+      // credentials were already encrypted when written into
+      // StoreDraft.onboardingState by the draft-phase OAuth callback (see
+      // app/api/onboarding/fulfillment/callback/route.ts) — reused as-is,
+      // never decrypted-then-re-encrypted here.
+      integrations: fulfillmentCredentialsEntry
+        ? {
+            create: [
+              {
+                provider: fulfillmentCredentialsEntry[0] as Prisma.StoreIntegrationCreateWithoutStoreInput["provider"],
+                status: "CONNECTED",
+                externalAccountId: String(
+                  decryptCredentials<{ printfulStoreId?: number }>(fulfillmentCredentialsEntry[1]).printfulStoreId ?? ""
+                ),
+                credentials: fulfillmentCredentialsEntry[1] as Prisma.InputJsonValue,
+                connectedByUserId: userId,
+                connectedAt: new Date(),
+                lastVerifiedAt: new Date(),
+              },
+            ],
+          }
+        : undefined,
     },
   });
+
+  // Onboarding v2 — register the confirmed product with the fulfillment
+  // connector for real, now that a real storeId exists to attach it to
+  // (browsing/costing/draft-ordering during discovery all used storeDraftId
+  // instead — see lib/fulfillment/printful.ts). Deliberately non-fatal: an
+  // external API call can't be inside the store.create() transaction above,
+  // and a failure here shouldn't undo an otherwise-successful store launch
+  // — logged honestly as FAILED/retryable instead, same "graceful
+  // degradation over a secondary concern" posture as AI cost governance's
+  // own fail-open usage check (lib/genesisModel.ts).
+  if (fulfillmentSelection) {
+    const product = await prisma.product.findFirst({ where: { storeId: store.id } });
+    const connector = getFulfillmentConnectors().find((c) => c.provider === fulfillmentSelection.candidate.provider);
+    try {
+      if (!connector || !product) throw new Error("Fulfillment connector or product row not found after store creation.");
+      const registered = await connector.createProduct({
+        storeId: store.id,
+        storeDraftId: null,
+        candidate: fulfillmentSelection.candidate,
+        imageUrl: fulfillmentSelection.candidate.imageUrl ?? "",
+        retailPriceInCents: fulfillmentSelection.pricing.retailPriceInCents,
+      });
+      await prisma.product.update({
+        where: { id: product.id, storeId: store.id },
+        data: { externalProductId: registered.externalProductId },
+      });
+    } catch (error) {
+      await recordExecution({
+        executionId: randomUUID(),
+        action: EXECUTION_ACTIONS.ONBOARDING_FULFILLMENT_PRODUCT_REGISTER,
+        status: "FAILED",
+        verified: false,
+        message: error instanceof Error ? error.message : "Fulfillment product registration failed",
+        retryable: true,
+        actorType: "SYSTEM",
+        actorId: null,
+        storeId: store.id,
+        storeDraftId: null,
+        schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
+        timestamp: new Date(),
+        metadata: { provider: fulfillmentSelection.candidate.provider },
+      });
+    }
+  }
 
   // Promote every generation from the draft to the new store so its
   // history survives the draft being deleted below — this is what makes

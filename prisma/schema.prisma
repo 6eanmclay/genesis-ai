@@ -92,6 +92,16 @@ model Store {
   // money (product_sales/service_fees/subscriptions/...), not *what
   // industry* it's in. See lib/businessTaxonomy.ts's REVENUE_STREAM_TYPES.
   revenueStreams String[] @default([])
+  // Onboarding v2 — the owner's stated brand positioning (luxury/
+  // streetwear/minimalist/budget/family/professional/other — see
+  // lib/businessTaxonomy.ts's BRAND_POSITIONING_TYPES), a third,
+  // independent classification axis: not *what* the business sells
+  // (businessCategories) or *how* it makes money (revenueStreams), but
+  // *what kind of brand* it is. Drives lib/fulfillment/strategy.ts's
+  // selectFulfillmentStrategy() and lib/onboarding/pricing.ts's
+  // recommendPrice() — a real branching input, not narrative flavor text
+  // like blueprint.brandIdentity.brandPersonality.
+  brandPositioning String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -160,6 +170,12 @@ enum IntegrationProvider {
   GOOGLE_CALENDAR
   QUICKBOOKS
   MAILCHIMP
+  // Onboarding v2 — the first fulfillment-strategy connector (lib/fulfillment/).
+  // Not the only one architecturally possible: lib/fulfillment/strategy.ts's
+  // selectFulfillmentStrategy() evaluates whichever connectors are
+  // registered, of which this is the first. See ONBOARDING_V2_DESIGN.md
+  // section 6.
+  PRINTFUL
 }
 
 enum IntegrationStatus {
@@ -225,6 +241,20 @@ model StoreDraft {
   // Phase 3 Milestone 5 — see Store.revenueStreams's own comment; same
   // draft-stage-copy pattern as businessCategories above.
   revenueStreams String[] @default([])
+  // Onboarding v2 — see Store.brandPositioning's own comment; same
+  // draft-stage-copy pattern as businessCategories/revenueStreams above.
+  brandPositioning String?
+  // Onboarding v2 — the guided discovery flow's own state machine progress
+  // (current step, classifications made so far, the chosen fulfillment
+  // candidate/variant) and, while no real Store/StoreIntegration exists yet
+  // to hold them, encrypted fulfillment OAuth credentials (see
+  // ONBOARDING_V2_IMPLEMENTATION.md section 4 — confirmStoreDraftCore
+  // materializes the real StoreIntegration row atomically at confirm,
+  // mirroring how productsDraft -> Product already works). Deliberately
+  // separate from pendingChange — that's one AI-authored diff awaiting
+  // confirm; this is "where the guided conversation currently is," a
+  // different kind of state that persists across many turns.
+  onboardingState Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -280,6 +310,20 @@ model Product {
   imageUrl     String?
   active       Boolean  @default(true)
   position     Int      @default(0)
+  // Onboarding v2 — present only for a product sourced through a
+  // fulfillment strategy (see lib/fulfillment/), null for a manually
+  // entered product with no known cost. fulfillmentProvider/
+  // externalProductId/externalVariantId together record *that* a product
+  // is fulfilled externally and by which connector's catalog entry,
+  // without yet building the "route the order to the supplier
+  // automatically" execution logic (a real, separate, later capability —
+  // see ONBOARDING_V2_DESIGN.md's non-goals). No variant model exists on
+  // Product — externalVariantId records the one representative catalog
+  // variant Genesis selected, not a full variant system.
+  costInCents         Int?
+  fulfillmentProvider IntegrationProvider?
+  externalProductId   String?
+  externalVariantId   String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

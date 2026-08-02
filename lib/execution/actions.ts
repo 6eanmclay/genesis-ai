@@ -48,6 +48,15 @@ export const EXECUTION_ACTIONS = {
   // category action: Reason surfacing a finding to the owner, routed
   // through execute() like every other mechanic instead of a raw write.
   GENESIS_COMMUNICATE_FINDING: "genesis.communicate_finding",
+  // Onboarding v2 — registering the confirmed Store's product with the
+  // fulfillment connector (see lib/fulfillment/). Failure here is
+  // non-fatal to store confirmation (logged FAILED/retryable, not thrown)
+  // — see confirmStoreDraftCore's own comment for why.
+  ONBOARDING_FULFILLMENT_PRODUCT_REGISTER: "onboarding.fulfillment.product_register",
+  // Onboarding v2 — the draft-phase fulfillment OAuth connect (see
+  // app/api/onboarding/fulfillment/callback/route.ts). storeDraftId-only,
+  // never storeId, unlike every INTEGRATION_*_CONNECT action above.
+  ONBOARDING_FULFILLMENT_CONNECT: "onboarding.fulfillment.connect",
 } as const;
 
 export type ExecutionAction = (typeof EXECUTION_ACTIONS)[keyof typeof EXECUTION_ACTIONS];

@@ -145,6 +145,13 @@ export interface RevenueStreamType {
 
 export const REVENUE_STREAM_TYPES: RevenueStreamType[] = [
   { slug: "product_sales", label: "Product Sales" },
+  // Onboarding v2 — split out from product_sales: a physical product has a
+  // real fulfillment/shipping cost and routes through lib/fulfillment/; a
+  // digital product doesn't and needs a different (not yet built) delivery
+  // path. Conflating the two under one slug would have made the
+  // ecommerce-path gate in ONBOARDING_V2_DESIGN.md section 4 ambiguous
+  // about which businesses actually need a fulfillment strategy.
+  { slug: "digital_products", label: "Digital Products" },
   { slug: "service_fees", label: "Service Fees" },
   { slug: "subscriptions", label: "Subscriptions" },
   { slug: "bookings_appointments", label: "Bookings / Appointments" },
@@ -172,4 +179,51 @@ const REVENUE_STREAM_LABEL_BY_SLUG = new Map(
 
 export function revenueStreamLabel(slug: string): string {
   return REVENUE_STREAM_LABEL_BY_SLUG.get(slug) ?? slug;
+}
+
+// Onboarding v2 — a third, independent classification axis: not *what* the
+// business sells (BUSINESS_CATEGORY_GROUPS above) or *how* it makes money
+// (REVENUE_STREAM_TYPES above), but *what kind of brand* it is. Same shape
+// as both — small, open, purely additive, `other` as an honest fallback —
+// deliberately not folded into either existing taxonomy, since a business's
+// category and revenue stream don't determine its brand positioning (two
+// product_sales apparel businesses can be luxury or budget). Real gap this
+// closes: blueprint.brandIdentity.brandPersonality (see
+// lib/execution/genesisActions.ts) is free-text AI prose, generated after
+// the fact — never a closed slug an owner explicitly picks or downstream
+// code (lib/fulfillment/strategy.ts's selectFulfillmentStrategy,
+// lib/onboarding/pricing.ts's recommendPrice) can branch on. See
+// ONBOARDING_V2_DESIGN.md section 5.
+
+export interface BrandPositioningType {
+  slug: string;
+  label: string;
+}
+
+export const BRAND_POSITIONING_TYPES: BrandPositioningType[] = [
+  { slug: "luxury", label: "Luxury" },
+  { slug: "streetwear", label: "Streetwear" },
+  { slug: "minimalist", label: "Minimalist" },
+  { slug: "budget", label: "Budget" },
+  { slug: "family", label: "Family" },
+  { slug: "professional", label: "Professional" },
+  { slug: "other", label: "Other" },
+];
+
+export const BRAND_POSITIONING_SLUGS: string[] = BRAND_POSITIONING_TYPES.map(
+  (t) => t.slug
+);
+
+const BRAND_POSITIONING_SLUG_SET = new Set(BRAND_POSITIONING_SLUGS);
+
+export function isKnownBrandPositioning(slug: string): boolean {
+  return BRAND_POSITIONING_SLUG_SET.has(slug);
+}
+
+const BRAND_POSITIONING_LABEL_BY_SLUG = new Map(
+  BRAND_POSITIONING_TYPES.map((t) => [t.slug, t.label] as const)
+);
+
+export function brandPositioningLabel(slug: string): string {
+  return BRAND_POSITIONING_LABEL_BY_SLUG.get(slug) ?? slug;
 }
