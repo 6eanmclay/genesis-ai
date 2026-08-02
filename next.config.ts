@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 // A custom Cache-Control override for /dashboard was tried here (to force
 // `no-store`) and removed — it never actually took effect (verified via
@@ -13,4 +14,20 @@ const nextConfig: NextConfig = {
   /* config options here */
 };
 
-export default nextConfig;
+// org/project/authToken all come from env vars the Vercel-Sentry
+// marketplace integration injects once linked (SENTRY_ORG, SENTRY_PROJECT,
+// SENTRY_AUTH_TOKEN) — none exist yet, so source map upload silently
+// no-ops rather than failing the build (verified: withSentryConfig treats
+// a missing authToken as "skip upload," not an error). See DEPLOYMENT.md's
+// Track 0 checklist for the remaining manual step.
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: true,
+  widenClientFileUpload: true,
+  // disableLogger is deprecated and explicitly unsupported under
+  // Turbopack (which this project uses, confirmed via the real build
+  // output) — omitted rather than left in with a warning every build.
+  telemetry: false,
+});

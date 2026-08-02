@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import * as Sentry from "@sentry/nextjs";
 
 // Reliability architecture (v21, Phase 1 checklist item #1) — catches
 // errors in the root marketing/auth pages (/, /login, /signup) without
@@ -20,6 +21,7 @@ export default function RootError({
 }) {
   useEffect(() => {
     console.error("[root-error-boundary]", error);
+    Sentry.captureException(error);
   }, [error]);
 
   return (

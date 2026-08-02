@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import * as Sentry from "@sentry/nextjs";
 
 // Reliability architecture (v21, Phase 1 checklist item #1) — closes the
 // one real remaining gap: app/dashboard/error.tsx and app/global-error.tsx
@@ -22,6 +23,7 @@ export default function StoreError({
 }) {
   useEffect(() => {
     console.error("[store-error-boundary]", error);
+    Sentry.captureException(error);
   }, [error]);
 
   return (

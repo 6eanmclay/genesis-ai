@@ -1,6 +1,7 @@
 "use client"; // Error boundaries must be Client Components
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 // Reliability architecture (v21, Phase 1) — the ultimate fallback, for an
 // error thrown inside the root layout itself (app/layout.tsx), which
@@ -19,6 +20,7 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error("[global-error-boundary]", error);
+    Sentry.captureException(error);
   }, [error]);
 
   return (

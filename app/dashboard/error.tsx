@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import * as Sentry from "@sentry/nextjs";
 
 // Reliability architecture (v21, Phase 1) — the safety net for the
 // dashboard route tree, not the primary handler: every known Anthropic
@@ -25,6 +26,7 @@ export default function DashboardError({
 }) {
   useEffect(() => {
     console.error("[dashboard-error-boundary]", error);
+    Sentry.captureException(error);
   }, [error]);
 
   return (
