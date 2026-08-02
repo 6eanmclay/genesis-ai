@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
 import { queryRecords } from "@/lib/businessModel/reasoning";
 import type { EntityDataFor, EntityType } from "@/lib/businessModel/entities";
+import { writeBusinessEvents } from "./businessEvents";
 
 // Phase 3 Milestone 3 (Business Intelligence Engine) — Part 2, Change
 // Detection. Two genuinely different kinds of detection, both producing
@@ -204,17 +204,14 @@ export async function recordBusinessEvents(
 ): Promise<void> {
   const rows = entries.flatMap(({ recordId, entityType, candidates }) =>
     candidates.map((candidate) => ({
-      storeId,
+      recordId,
       entityType,
       eventType: candidate.eventType,
-      recordId,
-      sourceProvider,
       summary: candidate.summary,
-      data: (candidate.data ?? undefined) as Prisma.InputJsonValue | undefined,
+      data: candidate.data,
     }))
   );
-  if (rows.length === 0) return;
-  await prisma.businessEvent.createMany({ data: rows });
+  await writeBusinessEvents(prisma, storeId, sourceProvider, rows);
 }
 
 // The full Change Detection pass for one store's sync cycle — record-level

@@ -58,6 +58,7 @@ const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
   genesisObservation: ["storeId"],
   businessRecord: ["storeId"],
   businessEvent: ["storeId"],
+  businessEventCursor: ["storeId"],
   belief: ["storeId"],
   // Dual-phase (draft vs. live) — see ARCHITECTURE.md's Database model
   // section for the storeDraftId/storeId re-pointing pattern.

@@ -112,6 +112,7 @@ model Store {
   productEvents             ProductEvent[]
   businessRecords           BusinessRecord[]
   businessEvents            BusinessEvent[]
+  businessEventCursors      BusinessEventCursor[]
   cognitiveOutputs          CognitiveOutput[]
   beliefs                   Belief[]
   aiUsageEvents             AiUsageEvent[]
@@ -703,11 +704,39 @@ model BusinessEvent {
   data           Json?
   occurredAt     DateTime  @default(now())
   processedAt    DateTime? // set once the Insight Engine has considered it — null means new/unprocessed
+  // Phase 1 (Business Event Pipeline) — a strictly-increasing, gap-tolerant
+  // per-database sequence, distinct from occurredAt: two events created in
+  // the same batch or millisecond are still totally ordered, which a
+  // per-consumer cursor (BusinessEventCursor below) needs to resume from
+  // exactly where it left off without re-processing or skipping. Existing
+  // rows get a Postgres-assigned default on migration — see PHASE1_DESIGN.md
+  // section 7, item 3 for why their relative order among themselves doesn't
+  // matter in practice.
+  sequence       BigInt    @default(autoincrement())
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   @@index([storeId, occurredAt])
   @@index([storeId, processedAt])
+  @@index([storeId, sequence])
+}
+
+// Phase 1 (Business Event Pipeline) — one row per (storeId, consumerName),
+// tracking that consumer's own independent progress through the
+// BusinessEvent log via `sequence`. Multiple consumers (the Insight Engine,
+// a future Genesis interpreter, a future J4 write-action trigger) each walk
+// the same append-only log at their own pace with no shared state, so none
+// can starve or race another — see PHASE1_DESIGN.md section 6.
+model BusinessEventCursor {
+  id                    String   @id @default(cuid())
+  storeId               String
+  consumerName          String
+  lastProcessedSequence BigInt   @default(0)
+  updatedAt             DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, consumerName])
 }
 
 // J4 Foundation Phase 2 — the Learn cognitive subsystem's durable store.

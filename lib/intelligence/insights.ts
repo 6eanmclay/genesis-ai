@@ -1,6 +1,8 @@
+import * as Sentry from "@sentry/nextjs";
 import { prisma } from "@/lib/prisma";
 import { queryRecords, getRevenue, getAverageOpenRate } from "@/lib/businessModel/reasoning";
 import { communicateFinding } from "@/lib/execution/genesisAutonomy";
+import { getNewEventsForConsumer, advanceConsumerCursor } from "./businessEvents";
 
 // Phase 3 Milestone 3 (Business Intelligence Engine) — Part 3, the Insight
 // Engine. Deliberately 100% deterministic — no AI call anywhere in this
@@ -145,12 +147,51 @@ async function detectCancellationTrend(storeId: string): Promise<Insight | null>
   };
 }
 
+// Phase 1 (Business Event Pipeline) — this consumer's identity in
+// BusinessEventCursor, and the parallel-run comparison below. See
+// PHASE1_DESIGN.md section 7 item 2: proving the cursor mechanism against
+// real production data before it's trusted to replace processedAt.
+const INSIGHT_ENGINE_CONSUMER = "insight-engine";
+
+// Purely observational — never feeds computeInsights' real logic. Reads the
+// same "new since last pass" event set two ways (the existing processedAt
+// flag vs. the new sequence-based cursor) and reports a mismatch through
+// Sentry rather than silently trusting either. Must be called only after
+// the real processedAt-based logic has already run to completion — see the
+// independence invariant in PHASE1_DESIGN.md section 7 item 2: a bug here
+// must never be able to change what computeInsights treats as real.
+async function runParallelCursorCheck(storeId: string, processedAtEventIds: string[]): Promise<void> {
+  const cursorEvents = await getNewEventsForConsumer(storeId, INSIGHT_ENGINE_CONSUMER);
+
+  const processedSet = new Set(processedAtEventIds);
+  const cursorSet = new Set(cursorEvents.map((event) => event.id));
+  const matches =
+    processedSet.size === cursorSet.size && [...processedSet].every((id) => cursorSet.has(id));
+
+  if (!matches) {
+    Sentry.captureMessage(
+      `[business-event-pipeline] insight-engine cursor set diverged from processedAt set for store ${storeId} ` +
+        `(processedAt=${processedSet.size}, cursor=${cursorSet.size})`,
+      "warning"
+    );
+  }
+
+  if (cursorEvents.length > 0) {
+    await advanceConsumerCursor(storeId, INSIGHT_ENGINE_CONSUMER, cursorEvents[cursorEvents.length - 1].sequence);
+  }
+}
+
 // The full Insight Engine pass for one store — called by the scheduler
 // once per store's sync cycle, after Change Detection. Marks all
 // currently-unprocessed BusinessEvent rows as considered regardless of
 // whether they individually produced an insight, so the next pass only
 // looks at genuinely new activity.
 export async function computeInsights(storeId: string): Promise<Insight[]> {
+  const pendingEvents = await prisma.businessEvent.findMany({
+    where: { storeId, processedAt: null },
+    select: { id: true },
+  });
+
   const [revenue, engagement, overdue, lowStock, cancellations] = await Promise.all([
     detectRevenueTrend(storeId),
     detectEngagementTrend(storeId),
@@ -198,6 +239,14 @@ export async function computeInsights(storeId: string): Promise<Insight[]> {
       topicKey: insight.type,
     });
   }
+
+  // Phase 1 (Business Event Pipeline) — parallel run only, after the real
+  // processedAt-based logic above has already run to completion. See the
+  // independence invariant in PHASE1_DESIGN.md section 7 item 2.
+  await runParallelCursorCheck(
+    storeId,
+    pendingEvents.map((event) => event.id)
+  );
 
   return computed;
 }

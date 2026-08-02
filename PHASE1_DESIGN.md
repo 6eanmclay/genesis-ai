@@ -1,6 +1,6 @@
 # Phase 1 design: completing the Business Event Pipeline
 
-**Status:** Frozen — approved by Sean 2026-08-01 (see *Decisions made* below). Implementation begins once Track 0 (Operational Foundations) is complete.
+**Status:** Implemented 2026-08-02 — schema migration applied locally and reviewed (additive-only, see section 3), `lib/intelligence/businessEvents.ts` built, Stripe/PayPal handlers wrapped in the transactional existence-check pattern from section 4, `computeInsights()` running the parallel cursor comparison from section 7 item 2. Verified via a disposable functional smoke test (transactional order+event write, retry no-op, cursor read/advance) plus a clean `tsc`/`eslint`/`next build`. See `ARCHITECTURE.md`'s *Business Intelligence Engine* section for the permanent summary. Not yet exercised against a real Stripe/PayPal payment or real scheduler cron run — see *Open follow-ups* at the bottom.
 **Scope:** Wire commerce (starting with order/payment creation) into the existing `BusinessEvent` infrastructure. This is deliberately *not* a new architecture — see `ARCHITECTURE.md`'s Database model section and the audit that preceded this doc. Everything below either reuses an existing component as-is, or extends one additively.
 
 ## 1. Existing components we reuse, unchanged
@@ -110,4 +110,10 @@ The Insight Engine gets a `consumerName: "insight-engine"` cursor — during the
 
 ## Design frozen
 
-Approved by Sean 2026-08-01. No further changes pending — implementation begins once Track 0 (Operational Foundations) is complete.
+Approved by Sean 2026-08-01. Implemented 2026-08-02 — see *Status* at the top.
+
+## Open follow-ups (not blocking; noted for the next real payment/scheduler exercise)
+
+- **Production migration not yet applied.** Same deliberate, human-gated process as every other Track 0 migration (see `DEPLOYMENT.md`) — reviewed and applied locally only so far.
+- **Not yet exercised against a real Stripe/PayPal payment.** The transactional existence-check pattern was verified with a disposable direct-DB smoke test (order+event commit together, retry is a no-op, cursor read/advance is correct), not a real webhook delivery. Worth a real low-value test purchase once this deploys.
+- **The parallel cursor comparison hasn't run against a real scheduler pass yet** — `computeInsights()`'s `runParallelCursorCheck` only fires from `lib/intelligence/scheduler.ts`'s real per-store sync cycle, which needs a connected integration and due sync to actually invoke. First real data point on whether the two sets ever diverge will come from that.

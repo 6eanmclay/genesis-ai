@@ -6,6 +6,8 @@ import { decryptCredentials } from "@/lib/integrations/credentials";
 import { recordExecution } from "@/lib/execution/log";
 import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
+import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
+import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessModel/internalMapper";
 
 // The buyer lands here after approving on PayPal's site. No webhook for
 // PH-06's MVP (see ARCHITECTURE.md) — capture happens synchronously right
@@ -131,19 +133,41 @@ export async function GET(request: NextRequest) {
   try {
     const product = await prisma.product.findUnique({ where: { id: productId } });
 
-    const order = await prisma.order.upsert({
-      where: { paymentProvider_externalOrderId: { paymentProvider: "PAYPAL", externalOrderId: token } },
-      create: {
-        storeId: store.id,
-        productId,
-        productName: product?.name ?? "Unknown product",
-        amountInCents,
-        buyerEmail,
-        status: "paid",
-        paymentProvider: "PAYPAL",
-        externalOrderId: token,
-      },
-      update: {},
+    // Same existence-check-inside-a-transaction pattern as the Stripe
+    // webhook handler — see PHASE1_DESIGN.md section 4-5. A double-hit on
+    // this route (already handled above for the capture call itself) would
+    // otherwise risk a duplicate transaction.created event for one real sale.
+    const order = await prisma.$transaction(async (tx) => {
+      const existing = await tx.order.findUnique({
+        where: { paymentProvider_externalOrderId: { paymentProvider: "PAYPAL", externalOrderId: token } },
+      });
+      if (existing) return existing;
+
+      const created = await tx.order.create({
+        data: {
+          storeId: store.id,
+          productId,
+          productName: product?.name ?? "Unknown product",
+          amountInCents,
+          buyerEmail,
+          status: "paid",
+          paymentProvider: "PAYPAL",
+          externalOrderId: token,
+        },
+      });
+
+      const transaction = mapOrdersToTransactions([created])[0];
+      await writeBusinessEvents(tx, store.id, "internal", [
+        {
+          recordId: internalTransactionId(created.id),
+          entityType: "transaction",
+          eventType: "transaction.created",
+          summary: `Sale: ${created.productName} ($${(created.amountInCents / 100).toFixed(2)})`,
+          data: transaction.data,
+        },
+      ]);
+
+      return created;
     });
 
     return NextResponse.redirect(new URL(`/store/${slug}/success?order_id=${order.id}`, request.url));

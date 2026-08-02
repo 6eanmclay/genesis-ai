@@ -3,6 +3,8 @@ import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
+import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
+import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessModel/internalMapper";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -52,22 +54,41 @@ export async function POST(request: Request) {
         where: { id: productId },
       });
 
-      // Idempotent: Stripe can redeliver the same event more than once, so
-      // upsert on the (provider, external id) composite key rather than
-      // always creating.
-      await prisma.order.upsert({
-        where: { paymentProvider_externalOrderId: { paymentProvider: "STRIPE", externalOrderId: session.id } },
-        create: {
-          storeId,
-          productId,
-          productName: product?.name ?? "Unknown product",
-          amountInCents: session.amount_total ?? 0,
-          buyerEmail: session.customer_details?.email ?? "unknown",
-          status: "paid",
-          paymentProvider: "STRIPE",
-          externalOrderId: session.id,
-        },
-        update: {},
+      // Idempotent: Stripe can redeliver the same event more than once. An
+      // existence check (rather than inferring "was this new" from upsert's
+      // return value) inside the same transaction as the Order write means
+      // the Order and its BusinessEvent commit together or not at all — see
+      // PHASE1_DESIGN.md section 4. A retry that finds an existing Order is
+      // a genuine no-op, exactly like the upsert this replaced.
+      await prisma.$transaction(async (tx) => {
+        const existing = await tx.order.findUnique({
+          where: { paymentProvider_externalOrderId: { paymentProvider: "STRIPE", externalOrderId: session.id } },
+        });
+        if (existing) return;
+
+        const order = await tx.order.create({
+          data: {
+            storeId,
+            productId,
+            productName: product?.name ?? "Unknown product",
+            amountInCents: session.amount_total ?? 0,
+            buyerEmail: session.customer_details?.email ?? "unknown",
+            status: "paid",
+            paymentProvider: "STRIPE",
+            externalOrderId: session.id,
+          },
+        });
+
+        const transaction = mapOrdersToTransactions([order])[0];
+        await writeBusinessEvents(tx, storeId, "internal", [
+          {
+            recordId: internalTransactionId(order.id),
+            entityType: "transaction",
+            eventType: "transaction.created",
+            summary: `Sale: ${order.productName} ($${(order.amountInCents / 100).toFixed(2)})`,
+            data: transaction.data,
+          },
+        ]);
       });
 
       // Phase 4 — a completed order is exactly a "business state may have
