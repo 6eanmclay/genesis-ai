@@ -3281,21 +3281,26 @@ export async function restoreStoreDraftVersion(generationId: string) {
   redirect("/dashboard");
 }
 
-// Extracted so it's callable two ways: the existing human-driven
-// confirmStoreDraft Server Action below (unchanged behavior — the
-// draft-review page's "Confirm & Create Store" button and "Start over"
-// flow), and the new Arrival Experience V1's auto-chained first-time
-// creation path (generateStoreDraftCore's !existingDraft branch), which
-// calls this immediately after real generation completes, with no human
-// click in between. `opts.logoUrl` is only ever populated by that second
-// caller — the human-driven path doesn't generate a business icon in V1.
+// Extracted (and exported) so it's callable multiple ways: the existing
+// human-driven confirmStoreDraft Server Action below (unchanged behavior —
+// the draft-review page's "Confirm & Create Store" button and "Start over"
+// flow), the Arrival Experience V1's auto-chained first-time creation path
+// (generateStoreDraftCore's !existingDraft branch), which calls this
+// immediately after real generation completes, with no human click in
+// between, and Onboarding v2 Milestone 2's launchConfirmStore
+// (app/onboarding/launch/actions.ts), the guided-discovery flow's own real
+// commitment moment. `opts.logoUrl` is only ever populated by the second
+// caller — neither the human-driven nor the guided-discovery path
+// generates a business icon here.
 //
 // Deliberately never calls redirect() itself — the auto-chain caller runs
 // inside generateStoreDraftCore's own call graph, which (via
 // generateStoreDraftForApi) is reached from a plain Route Handler, not a
-// Server Action/Component. redirect()'s special throw is only meaningful
-// in the latter; each caller below handles "what happens next" itself.
-async function confirmStoreDraftCore(
+// Server Action/Component, and launchConfirmStore needs the real store back
+// (its slug) rather than a forced navigation. redirect()'s special throw is
+// only meaningful in a true Server Action; each caller handles "what
+// happens next" itself.
+export async function confirmStoreDraftCore(
   userId: string,
   opts: { logoUrl?: string | null; sessionInstanceId?: string } = {}
 ): Promise<{ store: Awaited<ReturnType<typeof prisma.store.create>> }> {

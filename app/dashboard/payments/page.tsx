@@ -27,6 +27,18 @@ export default async function PaymentsPage({
   const { store } = await requireStorePageAccess(PERMISSIONS.PAYMENTS_MANAGE);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
+  // Onboarding v2 Milestone 2 — Stripe's OAuth redirect_uri is fixed to this
+  // app's one real, real-money-tested callback route (see app/api/
+  // integrations/[provider]/callback), which always lands here regardless
+  // of where the connect flow started. A store returning here mid-Launch
+  // (never published, never sold anything) gets a way back to that screen;
+  // an established store the owner has deliberately taken offline (real
+  // past orders exist) never sees this — that's a different, unrelated
+  // state this banner shouldn't speak to.
+  const showContinueToLaunch =
+    !store.published &&
+    (await prisma.order.count({ where: { storeId: store.id } })) === 0;
+
   const stripeIntegration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId: store.id, provider: "STRIPE" } },
     include: { connectedBy: { select: { name: true, email: true } } },
@@ -144,6 +156,18 @@ export default async function PaymentsPage({
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Payments</h1>
+
+      {showContinueToLaunch && (
+        <div className="mt-4 max-w-md rounded-lg border border-violet-200 bg-violet-50 p-4 text-sm dark:border-violet-900/40 dark:bg-violet-950/30">
+          <p className="font-medium text-violet-900 dark:text-violet-200">Your store isn&apos;t live yet.</p>
+          <p className="mt-1 text-violet-700 dark:text-violet-400">
+            Pick up right where you left off.{" "}
+            <a href="/onboarding/launch" className="font-semibold underline">
+              Continue to launch
+            </a>
+          </p>
+        </div>
+      )}
 
       {integrationError && flashLabel && (
         <div className="mt-4 max-w-md rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/30">

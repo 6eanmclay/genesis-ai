@@ -369,10 +369,10 @@ export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) 
         <>
           <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
-            This is a real business now. The next part — actually launching it — hasn&rsquo;t been designed yet.
+            This is a real business now.
           </p>
           <button
-            onClick={() => router.push("/dashboard")}
+            onClick={() => router.push("/onboarding/launch")}
             className="rounded-full px-7 py-3 text-sm font-semibold transition-transform hover:scale-[1.02] active:scale-[0.98]"
             style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
           >
