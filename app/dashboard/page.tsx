@@ -487,6 +487,16 @@ export default async function DashboardPage() {
       );
     }
 
+    // Launch-readiness fix — a genuinely brand-new user (no store, no draft
+    // of any kind, not even an interrupted classic attempt) belongs in the
+    // real Genesis Experience (the Idea act), not the classic form below.
+    // Scoped to draft === null specifically: anyone already mid-classic-flow
+    // (an interrupted "draft"-status attempt) keeps resuming exactly where
+    // they were — never stranded or surprise-redirected by this flag.
+    if (draft === null && process.env.ONBOARDING_V2_ENABLED === "true") {
+      redirect("/onboarding");
+    }
+
     // A draft in any non-"ready" status (today, only "draft") means a
     // first-generation attempt started and was interrupted before
     // finishing — resume with a friendly note and their own words already

@@ -19,9 +19,28 @@ export default async function CheckoutSuccessPage({
 
   if (sessionId) {
     try {
-      const session = await stripe.checkout.sessions.retrieve(sessionId, {
-        expand: ["line_items"],
-      });
+      // Launch-readiness fix — a checkout session for a store using its own
+      // connected Stripe account lives in that account's own context, not
+      // the platform's. Retrieving it with only the platform key returns a
+      // real 404 ("No such checkout.session"), confirmed live — silently
+      // caught below, which is why this previously fell back to a generic
+      // thank-you instead of the real product/amount for any connected-
+      // account store. Same store-scoped Stripe client pattern already used
+      // in app/store/[slug]/actions.ts's getStripeClientForStore.
+      const store = await prisma.store.findUnique({ where: { slug } });
+      const integration = store
+        ? await prisma.storeIntegration.findUnique({
+            where: { storeId_provider: { storeId: store.id, provider: "STRIPE" } },
+          })
+        : null;
+      const stripeAccount =
+        integration?.status === "CONNECTED" ? (integration.externalAccountId ?? undefined) : undefined;
+
+      const session = await stripe.checkout.sessions.retrieve(
+        sessionId,
+        { expand: ["line_items"] },
+        stripeAccount ? { stripeAccount } : undefined
+      );
       amountInCents = session.amount_total;
       productName = session.line_items?.data[0]?.description ?? null;
     } catch {
