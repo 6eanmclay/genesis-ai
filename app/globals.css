@@ -280,3 +280,38 @@ body {
     animation: none !important;
   }
 }
+
+/* The Genesis Experience — the reference screen (app/onboarding/
+   IdeaScreen.tsx, see GENESIS_EXPERIENCE.md's "The reference screen").
+   Real motion on elements that already exist and are already about to be
+   shown, not a fake loading state — mirrors GenesisAvatar's own
+   wakeOnMount ramp philosophy (dim/still, then a real ramp), staggered via
+   plain animation-delay the same way SHOOTING_STARS/AMBIENT_SPARKS already
+   do in GenesisAvatar.tsx. */
+@keyframes genesis-onboarding-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.genesis-onboarding-rise {
+  opacity: 0;
+  animation: genesis-onboarding-rise 900ms ease-out both;
+}
+
+.genesis-onboarding-input-wrap:focus-within {
+  border-color: rgba(139, 124, 246, 0.35); /* GENESIS_ATMOSPHERE.violetSoft */
+  background-color: rgba(244, 242, 251, 0.06) !important;
+  box-shadow: 0 0 0 5px rgba(139, 124, 246, 0.14); /* GENESIS_ATMOSPHERE.violetGlow */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .genesis-onboarding-rise {
+    animation: none !important;
+    opacity: 1;
+  }
+}
