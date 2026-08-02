@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usePathname } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { deriveAssessmentState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
+import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { SubmitButton } from "./SubmitButton";
 
 // Hydration-safe read of the same lg: breakpoint (1024px) this codebase
@@ -104,6 +105,50 @@ function GenesisWorkingPublisher() {
   return null;
 }
 
+// Track 0 — AI cost governance's confirm-and-continue affordance. Rendered
+// only when the last message in the real chat history is exactly Genesis's
+// usage_ceiling failure text (see genesisModelMessages.ts's own comment for
+// why that's a shared string constant, not a duplicated literal) — every
+// place that ever writes this exact message into StoreMessage/
+// StoreDraftMessage is an owner-initiated call (bailOnProviderFailure,
+// only ever reached from applyGenesisMessage/applyGenesisMessageToStore),
+// so there's no need to separately check a "confirmable" flag here; a
+// background/autonomous ceiling block never produces a chat message at all.
+//
+// Can't be a real nested <form> — the whole panel is already one <form>,
+// and HTML forbids nested forms. sendMessage is still the same real Server
+// Action, just invoked directly (React 19 supports calling one outside a
+// form submission) inside startTransition so this button gets its own
+// local pending state, rather than trying to fight useFormStatus (which
+// only ever tracks the *parent* form's own native submission).
+function ConfirmCeilingOverride({
+  sendMessage,
+  previousUserMessage,
+  currentPath,
+}: {
+  sendMessage: (formData: FormData) => void;
+  previousUserMessage: string;
+  currentPath: string;
+}) {
+  const [isPending, startTransition] = useTransition();
+  return (
+    <button
+      type="button"
+      disabled={isPending}
+      onClick={() => {
+        const formData = new FormData();
+        formData.set("message", previousUserMessage);
+        formData.set("confirmedOverride", "true");
+        formData.set("currentPath", currentPath);
+        startTransition(() => sendMessage(formData));
+      }}
+      className="self-start rounded-full border border-[var(--brand-accent,var(--foreground))] px-4 py-1.5 text-sm text-[var(--brand-accent,var(--foreground))] transition-opacity hover:opacity-80 disabled:opacity-50 lg:border-[#8b7cf6] lg:text-[#8b7cf6]"
+    >
+      {isPending ? "Continuing…" : "Continue anyway"}
+    </button>
+  );
+}
+
 // The contextual-review connection layer's ephemeral "why you're here"
 // framing — never persisted as a StoreMessage, just constructed from data
 // DashboardShell already resolved (see layout.tsx/DashboardShell.tsx).
@@ -169,6 +214,14 @@ export function GenesisAssistant({
   const open = userOverride ?? (defaultOpen || !!focusedContext || (isDesktop && messages.length > 0));
   const setOpen = setUserOverride;
   const pathname = usePathname();
+
+  // Track 0 — see ConfirmCeilingOverride's own comment for why a plain
+  // string match against the last message is correct here, not a gap.
+  const lastMessage = messages[messages.length - 1];
+  const showConfirmCeiling = lastMessage?.role === "assistant" && lastMessage.content === USAGE_CEILING_MESSAGE;
+  const previousUserMessage = showConfirmCeiling
+    ? [...messages].reverse().find((m) => m.role === "user")?.content
+    : undefined;
 
   // Keep the newest turn in view — on first open, and whenever a new
   // message genuinely arrives (messages.length only ever grows; there's no
@@ -352,6 +405,16 @@ export function GenesisAssistant({
           })
         )}
       </div>
+
+      {showConfirmCeiling && previousUserMessage && (
+        <div className="shrink-0 border-t border-black/[.08] px-4 pt-3 dark:border-white/[.145] lg:border-[rgba(139,124,246,0.18)]">
+          <ConfirmCeilingOverride
+            sendMessage={sendMessage}
+            previousUserMessage={previousUserMessage}
+            currentPath={pathname}
+          />
+        </div>
+      )}
 
       <div className="flex shrink-0 flex-col gap-2 border-t border-black/[.08] p-4 dark:border-white/[.145] lg:border-[rgba(139,124,246,0.18)]">
         <textarea

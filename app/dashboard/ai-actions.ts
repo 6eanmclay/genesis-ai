@@ -497,7 +497,7 @@ async function generateStoreDraftCore(
         effort: "high",
         format: zodOutputFormat(PrimaryBlueprintSchema),
       },
-    }),
+    }, { userId }),
     callGenesisModel({
       model: "claude-opus-4-8",
       max_tokens: 300,
@@ -508,7 +508,7 @@ async function generateStoreDraftCore(
         effort: "low",
         format: zodOutputFormat(BusinessCategorySchema),
       },
-    }),
+    }, { userId }),
   ]);
   const businessCategories = filterKnownBusinessCategories(
     businessCategoryOutcome.ok
@@ -609,7 +609,7 @@ async function generateStoreDraftCore(
         effort: "high",
         format: zodOutputFormat(SecondaryBlueprintSchema),
       },
-    }),
+    }, { userId }),
     callGenesisModel({
       model: "claude-opus-4-8",
       max_tokens: 16000,
@@ -633,7 +633,7 @@ async function generateStoreDraftCore(
         effort: "high",
         format: zodOutputFormat(CompositionSchema),
       },
-    }),
+    }, { userId }),
   ]);
   // Checked independently (not via a shared "whichever failed" variable) so
   // TypeScript actually narrows each of secondaryOutcome/compositionOutcome
@@ -799,6 +799,7 @@ async function generateStoreDraftCore(
       businessName: primary.storeName,
       vision: inputVision,
       brandPersonality: primary.brandIdentity.brandPersonality,
+      scope: { userId },
     });
     await confirmStoreDraftCore(userId, { logoUrl, sessionInstanceId });
   }
@@ -1508,7 +1509,7 @@ async function bailOnProviderFailure(params: {
   redirect(params.returnTo);
 }
 
-async function applyGenesisMessage(userId: string, userMessage: string) {
+async function applyGenesisMessage(userId: string, userMessage: string, confirmedOverride = false) {
   // Family-beta instrumentation (v20) — real server-side duration (distinct
   // from "the page was open"), and a likely-rephrase flag computed against
   // the conversation's own prior user turns, already fetched below.
@@ -1591,7 +1592,7 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
       effort: "high",
       format: zodOutputFormat(ChatControlSchema),
     },
-  });
+  }, { userId, confirmedOverride });
   if (!controlOutcome.ok) {
     return bailOnProviderFailure({
       kind: controlOutcome.kind,
@@ -1694,7 +1695,7 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
         effort: "high",
         format: zodOutputFormat(PrimaryBlueprintSchema),
       },
-    });
+    }, { userId, confirmedOverride });
     if (!contentOutcome.ok) {
       return bailOnProviderFailure({
         kind: contentOutcome.kind,
@@ -1779,7 +1780,7 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
             effort: "high",
             format: zodOutputFormat(SecondaryChatSchema),
           },
-        })
+        }, { userId, confirmedOverride })
       : Promise.resolve(null);
 
     // Composition is a separate call for the same reason CONTENT is split
@@ -1809,7 +1810,7 @@ async function applyGenesisMessage(userId: string, userMessage: string) {
             effort: "high",
             format: zodOutputFormat(CompositionSchema),
           },
-        })
+        }, { userId, confirmedOverride })
       : Promise.resolve(null);
 
     const [secondaryOutcome, compositionOutcome] = await Promise.all([secondaryPromise, compositionPromise]);
@@ -1985,8 +1986,13 @@ export async function sendDraftMessage(formData: FormData) {
   if (!userMessage) {
     throw new Error("Please enter a message");
   }
+  // Track 0 — set only by GenesisAssistant.tsx's "Continue anyway" button,
+  // itself only ever rendered after a real usage_ceiling block on this
+  // exact store/session — never a default a normal message submission
+  // could accidentally trigger.
+  const confirmedOverride = formData.get("confirmedOverride") === "true";
 
-  await applyGenesisMessage(session.user.id, userMessage);
+  await applyGenesisMessage(session.user.id, userMessage, confirmedOverride);
 }
 
 type StoreState = {
@@ -2060,7 +2066,7 @@ function diffStoreChanges(before: StoreState, after: StoreState): string[] {
   return changes;
 }
 
-async function applyGenesisMessageToStore(userId: string, userMessage: string, returnTo: string) {
+async function applyGenesisMessageToStore(userId: string, userMessage: string, returnTo: string, confirmedOverride = false) {
   // Family-beta instrumentation (v20) — see logChatTurnEvent's own comment.
   const turnStartedAt = Date.now();
 
@@ -2203,7 +2209,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       effort: "low",
       format: zodOutputFormat(DataQuestionSchema),
     },
-  });
+  }, { storeId: store.id, confirmedOverride });
   const dataQuestionResult = dataQuestionOutcome.ok
     ? dataQuestionOutcome.message.parsed_output
     : null;
@@ -2234,7 +2240,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         effort: "medium",
         format: zodOutputFormat(StoreChatDataAnswerSchema),
       },
-    });
+    }, { storeId: store.id, confirmedOverride });
 
     if (!answerOutcome.ok) {
       return bailOnProviderFailure({
@@ -2314,7 +2320,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       effort: "low",
       format: zodOutputFormat(BusinessFactSchema),
     },
-  });
+  }, { storeId: store.id, confirmedOverride });
   const businessFactResult = businessFactOutcome.ok
     ? businessFactOutcome.message.parsed_output
     : null;
@@ -2457,7 +2463,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       effort: "low",
       format: zodOutputFormat(ProductImageRequestSchema),
     },
-  });
+  }, { storeId: store.id, confirmedOverride });
   // A provider failure here falls through to the normal chat flow below,
   // same as the pre-existing "detection failure" comment already intended
   // for a parse miss — this classifier was, before this pass, the one call
@@ -2525,6 +2531,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         name: product.name,
         description: product.description,
         excludeUrls: product.imageUrl ? [product.imageUrl] : [],
+        scope: { storeId: store.id },
       });
       const candidate = sourced?.url ?? null;
       if (candidate) {
@@ -2635,7 +2642,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       effort: "high",
       format: zodOutputFormat(StoreChatPrimarySchema),
     },
-  });
+  }, { storeId: store.id, confirmedOverride });
   if (!primaryOutcome.ok) {
     return bailOnProviderFailure({
       kind: primaryOutcome.kind,
@@ -2755,7 +2762,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
             effort: "high",
             format: zodOutputFormat(SecondaryChatSchema),
           },
-        })
+        }, { storeId: store.id, confirmedOverride })
       : Promise.resolve(null);
 
     // Composition is a separate call, same reasoning as draft chat — adding
@@ -2786,7 +2793,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
             effort: "high",
             format: zodOutputFormat(CompositionSchema),
           },
-        })
+        }, { storeId: store.id, confirmedOverride })
       : Promise.resolve(null);
 
     const [secondaryOutcome, compositionOutcome] = await Promise.all([secondaryPromise, compositionPromise]);
@@ -3179,8 +3186,10 @@ export async function sendStoreMessage(formData: FormData) {
   // unrecognized or missing value still falls back safely to Home.
   const currentPath = (formData.get("currentPath") as string) || "/dashboard";
   const returnTo = currentPath.startsWith("/dashboard") ? currentPath : "/dashboard";
+  // Track 0 — see sendDraftMessage's identical comment.
+  const confirmedOverride = formData.get("confirmedOverride") === "true";
 
-  await applyGenesisMessageToStore(session.user.id, userMessage, returnTo);
+  await applyGenesisMessageToStore(session.user.id, userMessage, returnTo, confirmedOverride);
 }
 
 const PERSONALITY_PROMPTS: Record<string, string> = {
@@ -3311,6 +3320,7 @@ async function confirmStoreDraftCore(
         name: p.name,
         description: p.description,
         excludeUrls: [],
+        scope: { userId },
       }).then((sourced) => sourced?.url ?? null)
     )
   );
@@ -3324,10 +3334,13 @@ async function confirmStoreDraftCore(
   // photo that would never render.
   const heroImageUrl =
     theme.composition?.heroLayout === "split"
-      ? await sourceHeroImageCandidate({
-          productType: draft.inputProductType,
-          vision: draft.inputVision ?? draft.description ?? draft.name,
-        })
+      ? await sourceHeroImageCandidate(
+          {
+            productType: draft.inputProductType,
+            vision: draft.inputVision ?? draft.description ?? draft.name,
+          },
+          { userId }
+        )
       : null;
 
   // Merges into the existing blueprint JSON rather than a schema field —
@@ -3471,7 +3484,7 @@ export async function explainRecommendation(
 // freshly-persisted CognitiveOutput rows — no inline result needed.
 export async function reviewBusinessWithGenesis() {
   const { userId, storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  await runCognitiveReview({ storeId, userId });
+  await runCognitiveReview({ storeId, userId, background: false });
   redirect("/dashboard");
 }
 
@@ -3867,6 +3880,7 @@ export async function regenerateApprovalImage(approvalRequestId: string) {
     name: product.name,
     description: product.description,
     excludeUrls,
+    scope: { storeId },
   });
   const candidate = sourced?.url ?? null;
 

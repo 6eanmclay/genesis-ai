@@ -184,8 +184,18 @@ export async function runCognitiveReview(params: {
   storeId: string;
   // Nullable so the scheduler's unattended review pass (no human session)
   // can call this too; see recordGenesisExecution's own comment for why
-  // actorType stays "GENESIS" regardless.
+  // actorType stays "GENESIS" regardless. Not the same signal as
+  // `background` below — page.tsx's opportunistic trigger passes a real
+  // session userId even though nobody explicitly asked for this call.
   userId: string | null;
+  // Track 0 — AI cost governance. True (the default) for both real callers
+  // of this function today: the scheduler's cron pass and the opportunistic
+  // after() on dashboard page loads (lib/dashboard/genesisObservations.ts's
+  // runOpportunisticAiReviewIfStale) — neither is a direct response to the
+  // owner asking for AI work, even though the opportunistic path can have a
+  // real session attached. Only reviewBusinessWithGenesis (the actual "Ask
+  // Genesis to Review My Business" button, ai-actions.ts) passes false.
+  background?: boolean;
   // Pre-computed by the scheduler when this call is part of a sync cycle
   // (computeInsights has a real side effect, marking BusinessEvent rows
   // processed, so it must not run twice in one pass); the human-triggered
@@ -193,7 +203,7 @@ export async function runCognitiveReview(params: {
   // it computes fresh here instead.
   recentInsights?: Insight[];
 }): Promise<CognitiveReviewSummary[]> {
-  const { storeId, userId } = params;
+  const { storeId, userId, background = true } = params;
 
   const store = await prisma.store.findUnique({ where: { id: storeId } });
   if (!store) {
@@ -371,7 +381,7 @@ export async function runCognitiveReview(params: {
       effort: "medium",
       format: zodOutputFormat(CognitiveReviewOutputSchema),
     },
-  });
+  }, { storeId, background });
 
   if (!outcome.ok) {
     await recordGenesisExecution({

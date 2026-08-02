@@ -2,7 +2,7 @@
 
 How code and schema changes actually reach production, and the one step that is deliberately **not** automatic. Edited in place, like `ARCHITECTURE.md` — should describe today's process, not a past one. This is also the living operational reference for deployment safety and infrastructure verification generally — the product/feature roadmap lives elsewhere (see `reference_engineering_roadmap` memory) and stays focused on product and platform evolution, not operational hardening.
 
-**Last updated:** 2026-08-01, after removing automatic `prisma migrate deploy` from the build pipeline (see *Why this changed* below).
+**Last updated:** 2026-08-02, after AI cost governance (code-complete and functionally verified end-to-end — see below).
 
 ## Track 0 checklist — Operational Foundations
 
@@ -10,8 +10,8 @@ Cheap, high-blast-radius operational risks, tracked separately from feature work
 
 - [x] **Remove automatic production schema migrations** — done 2026-08-01, see below.
   - [ ] **Verify Preview deployment database branching** — open. Need to confirm in the Vercel dashboard (Project → Storage → the Neon integration → connection settings) whether Preview deployments get an isolated Neon branch or share the production database. See *Two things worth knowing but not yet resolved* below for why this couldn't be confirmed via CLI. Not blocking anything today (migrations no longer auto-run in either environment), but worth closing out and documenting the answer here.
-- [ ] **Per-store AI usage ceilings / proactive cost governance** — not started. `lib/genesisModel.ts` only reacts to Anthropic's own rate-limit/billing errors after the fact; no pre-call budget or ceiling exists.
-- [ ] **Production error monitoring (Sentry or equivalent)** — not started. `app/dashboard/error.tsx` only does `console.error`; nothing reports externally.
+- [~] **Production error monitoring (Sentry)** — code-complete 2026-08-01, **not yet live**. See *Sentry — code-complete, one manual step remains* below for exactly what's left and why I couldn't finish it myself.
+- [x] **Per-store AI usage ceilings / proactive cost governance** — done 2026-08-02. A real circuit breaker (Sean's framing, not a billing system): daily per-store/per-user token ceiling, computed from an append-only `AiUsageEvent` log (real usage from the provider's own response, never estimated). Background/autonomous AI work (the one real call site — `cognitiveLayer.ts`'s scheduled/opportunistic business review) stops immediately with no confirmation possible; owner-initiated chat gets a real "Continue anyway" button in `GenesisAssistant.tsx` that re-issues the exact same request with the ceiling bypassed for that one turn. Every breach reports through Sentry. Verified functionally end-to-end against a real account with a real Claude call: real usage recorded correctly, a temporarily-lowered ceiling produced the real block + confirm button, and clicking it produced a real, successful, grounded Genesis response.
 - [ ] **Structural tenant-isolation enforcement** — not started. Store-scoped queries are correctly filtered everywhere sampled so far, but only by convention (`requireStorePermission`/`resolveUserStore`), not by anything at the Prisma/DB layer that would catch an omission.
 
 ## Code deploys — unchanged, still automatic
@@ -37,6 +37,24 @@ Pushing to `master` triggers a normal Vercel build (`next build`) and deploy. No
 4. Only then push/merge the code that depends on the new schema.
 
 Running migration-then-code (not the reverse) matters because they're no longer coupled to the same build — code that assumes a column exists should never deploy ahead of the column itself.
+
+## Sentry — code-complete, one manual step remains
+
+`@sentry/nextjs` is installed and wired into every real error boundary (`app/error.tsx`, `app/global-error.tsx`, `app/dashboard/error.tsx`, `app/store/[slug]/error.tsx` — all four now call `Sentry.captureException(error)` alongside their existing `console.error`), plus `instrumentation.ts`/`instrumentation-client.ts`/`sentry.server.config.ts`/`sentry.edge.config.ts` and a `withSentryConfig`-wrapped `next.config.ts`. Verified: `tsc`/`eslint`/`npm run build` all clean, and a real browser check against the running dev server confirmed the SDK initializes (`window.__SENTRY__` present) with zero console errors and zero network calls — the documented no-op behavior for a missing DSN, confirmed live, not assumed.
+
+**What's not done, and why I can't finish it:** there's no Sentry project to send errors to yet. Sentry is available as a Vercel marketplace integration (confirmed via `vercel integration discover sentry`), but installing it requires accepting Sentry's terms in a browser — a legal agreement tied to your account, not something I can or should do on your behalf. Running `vercel integration add sentry` returned:
+
+```
+"reason": "integration_terms_acceptance_required"
+"verification_uri": "https://vercel.com/genesis-a1/~/integrations/accept-terms/sentry?source=cli"
+```
+
+**To finish activating it:**
+1. Open that URL, accept the terms.
+2. The same flow will ask you to link (or create) a Sentry project — the integration doesn't auto-create one.
+3. Once linked, Vercel auto-injects `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` (exact names confirmed against Sentry's own docs) — the code above already reads exactly those names, so nothing else needs to change.
+4. Redeploy (or just push anything) to pick up the new env vars.
+5. I can then trigger a real test error and confirm it lands in Sentry, and check this item off.
 
 ## Two things worth knowing but not yet resolved
 

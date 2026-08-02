@@ -28,6 +28,7 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
       name: input.name,
       description: input.description,
       excludeUrls: [],
+      scope: { storeId: ctx.storeId },
     });
     const imageUrl = sourced?.url ?? null;
     const product = await prisma.product.create({

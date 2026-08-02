@@ -33,6 +33,14 @@ export async function getRecommendationExplanation(params: {
   if (!message) {
     throw new Error(`Unknown recommendation id: ${params.recommendationId}`);
   }
+  // storeId is typed optional on this reusable service, but its one real
+  // caller (ai-actions.ts's explainRecommendation) always has one via
+  // requireStorePermission — Track 0's per-store usage accounting needs a
+  // real scope, so this fails loudly rather than silently skipping cost
+  // governance for a call that, in practice, is never actually missing it.
+  if (!params.storeId) {
+    throw new Error("getRecommendationExplanation requires a storeId for usage accounting.");
+  }
 
   const outcome = await callGenesisModel({
     model: "claude-opus-4-8",
@@ -49,7 +57,7 @@ export async function getRecommendationExplanation(params: {
       effort: "low",
       format: zodOutputFormat(ExplanationSchema),
     },
-  });
+  }, { storeId: params.storeId });
 
   if (!outcome.ok) {
     throw new Error(genesisModelFailureMessage(outcome.kind));

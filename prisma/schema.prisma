@@ -27,6 +27,7 @@ model User {
   connectedIntegrations StoreIntegration[]
   executionLogs         ExecutionLog[]
   productEvents         ProductEvent[]
+  aiUsageEvents         AiUsageEvent[]
 }
 
 model Account {
@@ -113,6 +114,7 @@ model Store {
   businessEvents            BusinessEvent[]
   cognitiveOutputs          CognitiveOutput[]
   beliefs                   Belief[]
+  aiUsageEvents             AiUsageEvent[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -760,4 +762,35 @@ model Belief {
 
   @@unique([storeId, topicKey])
   @@index([storeId, status])
+}
+
+// Track 0 (Operational Foundations) — AI cost governance. An emergency
+// circuit breaker, not a billing/metering system: real per-call token
+// usage (from the Anthropic response's own usage.input_tokens/
+// output_tokens, never estimated) recorded as an append-only log rather
+// than a single running counter, specifically so enforcement (currently a
+// daily sum) can evolve into rolling windows, analytics, or customer usage
+// reports later without changing this model — only the query logic that
+// reads it. See lib/genesisModel.ts for the actual enforcement.
+//
+// storeId/userId are both nullable, exactly one is ever set — not every
+// AI call has a real Store yet. Store-draft generation and draft-phase
+// chat (generateStoreDraftCore/applyGenesisMessage in ai-actions.ts) run
+// before a Store row exists, with only a userId available; every other
+// call site has a real storeId. Each identifier gets its own independent
+// daily ceiling bucket — a real, accepted simplification for a Track 0
+// item, not a unified per-owner total across the draft-to-live boundary.
+model AiUsageEvent {
+  id           String   @id @default(cuid())
+  storeId      String?
+  userId       String?
+  inputTokens  Int
+  outputTokens Int
+  occurredAt   DateTime @default(now())
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, occurredAt])
+  @@index([userId, occurredAt])
 }

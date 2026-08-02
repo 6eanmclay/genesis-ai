@@ -1,7 +1,7 @@
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { searchPhotoCandidates } from "./unsplash";
-import { callGenesisModel } from "@/lib/genesisModel";
+import { callGenesisModel, type GenesisModelScope } from "@/lib/genesisModel";
 
 // Per-product sourcing (formerly sourceProductImageCandidate, defined here)
 // now lives in lib/imageProviders/stockSearchProvider.ts, behind the
@@ -32,10 +32,13 @@ Example: a dark luxury fitness brand -> "gym equipment dark", "weightlifting sil
 
 Order from most to least likely to return a striking, on-brand photo.`;
 
-export async function sourceHeroImageCandidate(brief: {
-  productType: string | null;
-  vision: string;
-}): Promise<string | null> {
+export async function sourceHeroImageCandidate(
+  brief: {
+    productType: string | null;
+    vision: string;
+  },
+  scope: GenesisModelScope
+): Promise<string | null> {
   // Same "degrade to no image, never to an error" reasoning as
   // reformulateQueries above — a hero photo is a nice-to-have, not
   // something worth surfacing a provider failure to the merchant for.
@@ -54,7 +57,7 @@ export async function sourceHeroImageCandidate(brief: {
       effort: "low",
       format: zodOutputFormat(HeroQuerySchema),
     },
-  });
+  }, scope);
   if (!outcome.ok) return null;
   const queries = outcome.message.parsed_output?.queries ?? [];
 

@@ -1,3 +1,5 @@
+import type { GenesisModelScope } from "@/lib/genesisModel";
+
 // The common interface every image source conforms to — generated,
 // stock-searched, or uploaded — so the rest of the app (approval flow,
 // Product.imageUrl writes, the "couldn't find/generate" messaging) never
@@ -17,6 +19,11 @@ export interface ImageSourceRequest {
   name: string;
   description: string | null;
   excludeUrls: string[];
+  // Track 0 — AI cost governance. Only StockSearchProvider's query
+  // reformulation step actually calls callGenesisModel today
+  // (GeneratedImageProvider calls OpenAI directly), but this lives on the
+  // shared request shape so every caller supplies it once, not per-provider.
+  scope: GenesisModelScope;
 }
 
 export type ImageProviderKind = "generated" | "stock" | "upload";

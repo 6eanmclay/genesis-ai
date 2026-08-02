@@ -1,4 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
+import * as Sentry from "@sentry/nextjs";
+import { prisma } from "@/lib/prisma";
+import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 
 // Reliability architecture (v21, Phase 1) — the one Anthropic client and the
 // one call path every AI-calling function in this codebase goes through.
@@ -13,6 +16,39 @@ import Anthropic from "@anthropic-ai/sdk";
 // values rather than exceptions.
 export const anthropic = new Anthropic();
 
+// Track 0 (Operational Foundations) — AI cost governance, an emergency
+// circuit breaker, not a billing system (Sean's explicit framing). One
+// starting number, deliberately generous and clearly adjustable, not a
+// researched figure: high enough that no real, even heavily-active owner
+// should ever see it, tight enough to stop a genuine runaway loop within an
+// hour or two rather than letting it run all day.
+const DAILY_TOKEN_CEILING = 2_000_000;
+
+// Not every AI call has a real Store yet — store-draft generation and
+// draft-phase chat (generateStoreDraftCore/applyGenesisMessage in
+// ai-actions.ts) run before a Store row exists, with only a userId
+// available. Exactly one of these is ever set; AiUsageEvent.storeId/userId
+// are both nullable for the same reason (see that model's own comment in
+// schema.prisma). Each identifier gets its own independent daily ceiling
+// bucket — a real, accepted simplification for a Track 0 item, not a
+// unified per-owner total across the draft-to-live boundary.
+export type GenesisModelScope = { storeId: string; userId?: never } | { userId: string; storeId?: never };
+
+// Real usage for the current UTC day, summed from AiUsageEvent — a query
+// over an append-only log, not a separately-maintained counter, so it
+// can't drift out of sync and the same table can grow into rolling
+// windows/analytics later without a schema change (see the model's own
+// comment in schema.prisma).
+async function getTodayTokenUsage(scope: GenesisModelScope): Promise<number> {
+  const todayStartUtc = new Date();
+  todayStartUtc.setUTCHours(0, 0, 0, 0);
+  const result = await prisma.aiUsageEvent.aggregate({
+    where: { ...scope, occurredAt: { gte: todayStartUtc } },
+    _sum: { inputTokens: true, outputTokens: true },
+  });
+  return (result._sum.inputTokens ?? 0) + (result._sum.outputTokens ?? 0);
+}
+
 export type GenesisModelErrorKind =
   | "billing"
   | "auth"
@@ -21,7 +57,8 @@ export type GenesisModelErrorKind =
   | "overloaded"
   | "invalid_request"
   | "network"
-  | "unknown";
+  | "unknown"
+  | "usage_ceiling";
 
 export interface GenesisModelFailure {
   ok: false;
@@ -30,6 +67,14 @@ export interface GenesisModelFailure {
   message: string;
   retryable: boolean;
   durationMs: number;
+  // True only for kind: "usage_ceiling" on an owner-initiated call — the
+  // one case where a caller can retry with confirmedOverride: true instead
+  // of just waiting. Every other failure (including a background-work
+  // usage_ceiling block, which has no human to confirm anything) leaves
+  // this false, so every existing call site's generic failure handling
+  // keeps working unchanged — only a caller that wants to build a
+  // confirm-and-continue UI needs to look at this field at all.
+  confirmable: boolean;
 }
 
 export interface GenesisModelSuccess<T> {
@@ -49,7 +94,10 @@ export type GenesisModelResult<T> = GenesisModelSuccess<T> | GenesisModelFailure
 // message content instead of a typed field; everywhere else it's a clean
 // instanceof chain, most-specific first, per the SDK's own documented
 // pattern.
-function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | "durationMs"> {
+// confirmable is deliberately not this function's concern — it's set
+// explicitly to false wherever this result is used, since a real provider
+// error is never something a caller can "confirm past."
+function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | "durationMs" | "confirmable"> {
   if (err instanceof Anthropic.APIConnectionError) {
     return { kind: "network", status: null, message: err.message, retryable: true };
   }
@@ -88,6 +136,40 @@ function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | 
   };
 }
 
+export type GenesisModelContext = GenesisModelScope & {
+  // Set only by the one genuinely autonomous call site today
+  // (lib/intelligence/cognitiveLayer.ts's runCognitiveReview, invoked from
+  // both an opportunistic after() on dashboard page loads and the daily
+  // cron scheduler — confirmed by tracing every real call site, not
+  // assumed). A ceiling breach on background work stops immediately, no
+  // confirmation possible — there's no human present to confirm anything.
+  background?: boolean;
+  // Set only by a caller re-issuing a call the owner has explicitly
+  // confirmed past a "usage_ceiling" block (see GenesisModelFailure's
+  // confirmable field). Skips the ceiling check entirely for this one
+  // call. Never set automatically.
+  confirmedOverride?: boolean;
+};
+
+// Track 0 — records real per-call usage from the provider's own response,
+// never estimated. Awaited (not fire-and-forget) so the row is reliably
+// written before the request completes, since a serverless function can
+// exit immediately after responding — but its own failure is caught here
+// and never allowed to turn a real successful AI response into a reported
+// failure.
+async function recordUsage(
+  scope: GenesisModelScope,
+  usage: { input_tokens: number; output_tokens: number }
+): Promise<void> {
+  try {
+    await prisma.aiUsageEvent.create({
+      data: { ...scope, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens },
+    });
+  } catch (err) {
+    Sentry.captureException(err);
+  }
+}
+
 // Retry behavior — a deliberate decision, not an omission: the Anthropic
 // SDK already retries 429/5xx/connection errors internally before ever
 // throwing to this wrapper (default max_retries: 2, with backoff — confirmed
@@ -101,13 +183,50 @@ function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | 
 // terminal outcome; let the human decide to retry, same as any other
 // consciously-taken action in this app.
 export async function callGenesisModel<Params extends Parameters<typeof anthropic.messages.stream>[0]>(
-  params: Params
+  params: Params,
+  context: GenesisModelContext
 ): Promise<
   GenesisModelResult<Awaited<ReturnType<ReturnType<typeof anthropic.messages.stream<Params>>["finalMessage"]>>>
 > {
   const startedAt = Date.now();
+  const { background = false, confirmedOverride = false, ...scope } = context;
+  const scopeLabel = "storeId" in scope ? `storeId=${scope.storeId}` : `userId=${scope.userId}`;
+
+  // Track 0 — AI cost governance. Checked before spending anything on a
+  // real provider call. Fails open on its own error (an outage in this
+  // check must never become a second, unrelated way for Genesis to stop
+  // working) — that failure is itself reported, since a broken usage query
+  // is a real bug worth knowing about, just not one that should block a
+  // real request.
+  if (!confirmedOverride) {
+    let usedTokensToday: number;
+    try {
+      usedTokensToday = await getTodayTokenUsage(scope);
+    } catch (err) {
+      Sentry.captureException(err);
+      usedTokensToday = 0;
+    }
+
+    if (usedTokensToday >= DAILY_TOKEN_CEILING) {
+      const durationMs = Date.now() - startedAt;
+      const summary = `[ai-usage-ceiling] ${scopeLabel} background=${background} usedTokensToday=${usedTokensToday} ceiling=${DAILY_TOKEN_CEILING}`;
+      console.error(summary);
+      Sentry.captureMessage(summary, "warning");
+      return {
+        ok: false,
+        kind: "usage_ceiling",
+        status: null,
+        message: `Daily AI usage ceiling reached (${usedTokensToday.toLocaleString()}/${DAILY_TOKEN_CEILING.toLocaleString()} tokens).`,
+        retryable: !background,
+        confirmable: !background,
+        durationMs,
+      };
+    }
+  }
+
   try {
     const message = await anthropic.messages.stream(params).finalMessage();
+    await recordUsage(scope, message.usage);
     return { ok: true, message, durationMs: Date.now() - startedAt };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
@@ -122,7 +241,7 @@ export async function callGenesisModel<Params extends Parameters<typeof anthropi
       `[genesis-ai-error] kind=${classified.kind} status=${classified.status ?? "n/a"} durationMs=${durationMs} retryable=${classified.retryable}`,
       classified.message
     );
-    return { ok: false, ...classified, durationMs };
+    return { ok: false, ...classified, confirmable: false, durationMs };
   }
 }
 
@@ -145,6 +264,14 @@ export function genesisModelFailureMessage(kind: GenesisModelErrorKind): string 
       return "Genesis's AI provider is temporarily overloaded. Your message has been saved — please try again shortly.";
     case "network":
       return "Genesis couldn't reach its AI provider just now. Your message has been saved — please try again.";
+    case "usage_ceiling":
+      // Deliberately doesn't mention "confirm" — this generic string is
+      // what most call sites show as-is; only GenesisAssistant.tsx builds
+      // the richer confirm-and-continue UI, matching on this exact string
+      // (imported from the same shared constant, not duplicated) since
+      // StoreMessage/StoreDraftMessage have no field to carry structured
+      // metadata about which failure produced a given assistant message.
+      return USAGE_CEILING_MESSAGE;
     case "permission":
     case "invalid_request":
     case "unknown":

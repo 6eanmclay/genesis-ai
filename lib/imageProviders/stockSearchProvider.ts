@@ -50,7 +50,7 @@ async function reformulateQueries(request: ImageSourceRequest): Promise<string[]
       effort: "low",
       format: zodOutputFormat(QueryReformulationSchema),
     },
-  });
+  }, request.scope);
   if (!outcome.ok) return [];
   return outcome.message.parsed_output?.queries ?? [];
 }
