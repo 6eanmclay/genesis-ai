@@ -40,7 +40,7 @@ export async function getPendingApprovals(storeId: string): Promise<PendingAppro
     .filter((id): id is string => id !== null);
   const failureLogs = failedExecutionIds.length
     ? await prisma.executionLog.findMany({
-        where: { executionId: { in: failedExecutionIds }, status: "FAILED" },
+        where: { storeId, executionId: { in: failedExecutionIds }, status: "FAILED" },
         select: { executionId: true, message: true },
       })
     : [];

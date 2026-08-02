@@ -35,7 +35,7 @@ export const updateGoalStatusExecutable: Executable<UpdateGoalStatusInput, Recor
     const data = record.data as Goal;
     const updated: Goal = { ...data, status: input.status };
     await prisma.businessRecord.update({
-      where: { id: record.id },
+      where: { id: record.id, storeId: ctx.storeId },
       data: { data: updated as object, syncedAt: new Date() },
     });
     return { message: `Marked goal "${data.description}" as ${input.status}` };

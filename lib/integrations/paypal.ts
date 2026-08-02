@@ -134,14 +134,14 @@ export const paypalConnector: IntegrationConnector = {
     try {
       await getPaypalAccessToken(credentials.clientId, credentials.clientSecret, credentials.environment);
       await prisma.storeIntegration.update({
-        where: { id: integration!.id },
+        where: { id: integration!.id, storeId },
         data: { status: "CONNECTED", lastVerifiedAt: new Date(), lastError: null },
       });
       return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Verification failed";
       await prisma.storeIntegration.update({
-        where: { id: integration!.id },
+        where: { id: integration!.id, storeId },
         data: { status: "FAILED", lastVerifiedAt: new Date(), lastError: message },
       });
       return { ok: false, error: message };
@@ -158,7 +158,7 @@ export const paypalConnector: IntegrationConnector = {
     // on PayPal's side from our end. Regenerating the Secret in the PayPal
     // dashboard is how a merchant would fully cut access.
     await prisma.storeIntegration.update({
-      where: { id: integration.id },
+      where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },
     });
   },

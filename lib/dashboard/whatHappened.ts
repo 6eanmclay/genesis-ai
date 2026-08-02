@@ -133,7 +133,7 @@ export async function getRecentActivity(
   const executionIds = rows.map((row) => row.executionId);
   const approvals = executionIds.length
     ? await prisma.approvalRequest.findMany({
-        where: { executionId: { in: executionIds } },
+        where: { storeId, executionId: { in: executionIds } },
         select: { executionId: true, decisionMode: true },
       })
     : [];
@@ -161,7 +161,7 @@ export async function getRecentActivity(
     .filter((id): id is string => typeof id === "string");
   const cognitiveOutputs = findingRowIds.length
     ? await prisma.cognitiveOutput.findMany({
-        where: { id: { in: findingRowIds } },
+        where: { storeId, id: { in: findingRowIds } },
         select: { id: true, summary: true, kind: true },
       })
     : [];

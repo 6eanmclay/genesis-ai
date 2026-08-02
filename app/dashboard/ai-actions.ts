@@ -3579,7 +3579,7 @@ export async function approveGenesisActionGroup(groupId: string) {
       // status) with executionId recorded so the card surfaces "couldn't
       // apply this last time" and stays individually retryable.
       await prisma.approvalRequest.update({
-        where: { id: approval.id },
+        where: { id: approval.id, storeId },
         data: { executionId: result.executionId },
       });
       await logApprovalDecisionEvent({
@@ -3594,7 +3594,7 @@ export async function approveGenesisActionGroup(groupId: string) {
     }
 
     await prisma.approvalRequest.update({
-      where: { id: approval.id },
+      where: { id: approval.id, storeId },
       data: {
         status: "EXECUTED",
         executionId: result.executionId,
@@ -3603,7 +3603,7 @@ export async function approveGenesisActionGroup(groupId: string) {
       },
     });
     if (approval.recommendationId) {
-      await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId } });
+      await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId, storeId } });
     }
     await logApprovalDecisionEvent({
       userId,
@@ -3670,7 +3670,7 @@ export async function approveGenesisAction(approvalRequestId: string) {
   // unset since nothing was actually decided yet.
   if (result.status === "FAILED") {
     await prisma.approvalRequest.update({
-      where: { id: approval.id },
+      where: { id: approval.id, storeId },
       data: { executionId: result.executionId },
     });
     await logApprovalDecisionEvent({
@@ -3684,7 +3684,7 @@ export async function approveGenesisAction(approvalRequestId: string) {
   }
 
   await prisma.approvalRequest.update({
-    where: { id: approval.id },
+    where: { id: approval.id, storeId },
     data: {
       status: "EXECUTED",
       executionId: result.executionId,
@@ -3695,7 +3695,7 @@ export async function approveGenesisAction(approvalRequestId: string) {
 
   // Approved-and-executed advice is stale the moment it's applied.
   if (approval.recommendationId) {
-    await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId } });
+    await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId, storeId } });
   }
 
   await logApprovalDecisionEvent({
@@ -3720,13 +3720,13 @@ export async function rejectGenesisAction(approvalRequestId: string) {
   }
 
   await prisma.approvalRequest.update({
-    where: { id: approval.id },
+    where: { id: approval.id, storeId },
     data: { status: "REJECTED", decidedByUserId: userId, decidedAt: new Date() },
   });
 
   // A rejected suggestion shouldn't keep nagging until the next full refresh.
   if (approval.recommendationId) {
-    await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId } });
+    await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId, storeId } });
   }
 
   await logApprovalDecisionEvent({
@@ -3886,7 +3886,7 @@ export async function regenerateApprovalImage(approvalRequestId: string) {
 
   if (candidate) {
     await prisma.approvalRequest.update({
-      where: { id: approval.id },
+      where: { id: approval.id, storeId },
       data: {
         input: {
           productId: input.productId,
@@ -3902,7 +3902,7 @@ export async function regenerateApprovalImage(approvalRequestId: string) {
     });
   } else {
     await prisma.approvalRequest.update({
-      where: { id: approval.id },
+      where: { id: approval.id, storeId },
       data: {
         summary: `Replace image for "${product.name}" (no different photo found — the current proposal is unchanged)`,
       },

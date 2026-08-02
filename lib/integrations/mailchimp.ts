@@ -105,14 +105,14 @@ export const mailchimpConnector: IntegrationConnector = {
     try {
       await pingMailchimp(credentials.apiKey);
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId },
         data: { status: "CONNECTED", lastVerifiedAt: new Date(), lastError: null },
       });
       return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Verification failed";
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId },
         data: { status: "FAILED", lastVerifiedAt: new Date(), lastError: message },
       });
       return { ok: false, error: message };
@@ -128,7 +128,7 @@ export const mailchimpConnector: IntegrationConnector = {
     // Mailchimp dashboard is how a merchant would fully cut access, same
     // limitation PayPal's own disconnect() already documents.
     await prisma.storeIntegration.update({
-      where: { id: integration.id },
+      where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },
     });
   },

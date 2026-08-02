@@ -157,7 +157,7 @@ export async function tryExecuteAutonomousAction(
     // can see and decide on, executionId set so it reads as "Genesis tried
     // this and it failed," not "never acted on."
     await prisma.approvalRequest.update({
-      where: { id: approval.id },
+      where: { id: approval.id, storeId },
       data: { executionId: result.executionId },
     });
     // Phase 3 Milestone 6 — either way an ApprovalRequest now exists for
@@ -167,7 +167,7 @@ export async function tryExecuteAutonomousAction(
     // with a live approval), just applied on the write side here.
     if (cognitiveOutputId) {
       await prisma.cognitiveOutput.update({
-        where: { id: cognitiveOutputId },
+        where: { id: cognitiveOutputId, storeId },
         data: { status: "SUPERSEDED", approvalRequestId: approval.id },
       });
     }
@@ -175,7 +175,7 @@ export async function tryExecuteAutonomousAction(
   }
 
   await prisma.approvalRequest.update({
-    where: { id: approval.id },
+    where: { id: approval.id, storeId },
     data: {
       status: "EXECUTED",
       executionId: result.executionId,
@@ -188,7 +188,7 @@ export async function tryExecuteAutonomousAction(
     // replaces — CognitiveOutput is meant to be queryable history (see
     // getEntityHistory), so a resolved output is marked, never deleted.
     await prisma.cognitiveOutput.update({
-      where: { id: cognitiveOutputId },
+      where: { id: cognitiveOutputId, storeId },
       data: { status: "RESOLVED", approvalRequestId: approval.id, resolvedAt: new Date() },
     });
   }

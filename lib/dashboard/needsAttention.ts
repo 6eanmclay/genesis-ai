@@ -38,7 +38,7 @@ export async function getStaleExecutions(storeId: string): Promise<AttentionItem
 
   const executionIds = [...new Set(pendingRows.map((r) => r.executionId))];
   const allRowsForIds = await prisma.executionLog.findMany({
-    where: { executionId: { in: executionIds } },
+    where: { storeId, executionId: { in: executionIds } },
     orderBy: { createdAt: "desc" },
   });
   const latestIdByExecutionId = new Map<string, string>();

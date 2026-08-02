@@ -539,7 +539,7 @@ export async function runCognitiveReview(params: {
       },
     });
     await prisma.cognitiveOutput.update({
-      where: { id: cognitiveOutputId },
+      where: { id: cognitiveOutputId, storeId },
       data: { status: "SUPERSEDED", approvalRequestId: approval.id },
     });
     approvalRequestsCreated++;

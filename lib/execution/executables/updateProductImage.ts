@@ -26,7 +26,7 @@ interface ProductMetadata {
 export const updateProductImageExecutable: Executable<UpdateProductImageInput, ProductMetadata> = {
   action: EXECUTION_ACTIONS.PRODUCT_UPDATE_IMAGE,
   requiredPermission: PERMISSIONS.PRODUCTS_MANAGE,
-  async run(input) {
+  async run(input, ctx) {
     let richContent: object | undefined;
     if (input.generationPrompt) {
       const existing = await prisma.product.findUnique({
@@ -39,7 +39,7 @@ export const updateProductImageExecutable: Executable<UpdateProductImageInput, P
     }
 
     const product = await prisma.product.update({
-      where: { id: input.productId },
+      where: { id: input.productId, storeId: ctx.storeId },
       data: { imageUrl: input.imageUrl, ...(richContent ? { richContent } : {}) },
     });
     return {

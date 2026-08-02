@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { prisma, prismaSystem } from "@/lib/prisma";
 import { getConnector } from "@/lib/integrations/registry";
 import { execute } from "@/lib/execution/engine";
 import { syncExecutable, type SyncMetadata } from "@/lib/execution/adapters/integrationExecutable";
@@ -28,9 +28,14 @@ const DEFAULT_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h — the seam for
 // yet for every connector to sync on a different schedule.
 const MAX_BACKOFF_MS = 24 * 60 * 60 * 1000; // 24h cap on retry backoff
 
+// Deliberately cross-tenant — due connectors across the whole platform,
+// not one store's. Only ever reached via runDueSyncs() below, itself only
+// called from the CRON_SECRET-gated /api/cron/sync route — see
+// lib/prisma.ts's own comment on prismaSystem for why this is the one
+// query in this file that doesn't use the guarded client.
 export async function getDueSyncs(limit: number) {
   const now = new Date();
-  return prisma.storeIntegration.findMany({
+  return prismaSystem.storeIntegration.findMany({
     where: {
       status: "CONNECTED",
       OR: [{ nextSyncDueAt: null }, { nextSyncDueAt: { lte: now } }],
@@ -69,7 +74,7 @@ export async function runDueSyncs(limit = 50): Promise<SyncRunSummary[]> {
 
     if (result.status === "SUCCESS") {
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId: integration.storeId },
         data: {
           lastSyncedAt: new Date(),
           nextSyncDueAt: new Date(Date.now() + DEFAULT_SYNC_INTERVAL_MS),
@@ -103,7 +108,7 @@ export async function runDueSyncs(limit = 50): Promise<SyncRunSummary[]> {
         MAX_BACKOFF_MS
       );
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId: integration.storeId },
         data: {
           syncFailureCount: nextFailureCount,
           nextSyncDueAt: new Date(Date.now() + backoffMs),

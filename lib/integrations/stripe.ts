@@ -101,7 +101,7 @@ export const stripeConnector: IntegrationConnector = {
       const account = await stripe.accounts.retrieve(integration.externalAccountId);
       const ok = account.charges_enabled === true;
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId },
         data: {
           status: ok ? "CONNECTED" : "NEEDS_ATTENTION",
           lastVerifiedAt: new Date(),
@@ -112,7 +112,7 @@ export const stripeConnector: IntegrationConnector = {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Verification failed";
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId },
         data: { status: "FAILED", lastVerifiedAt: new Date(), lastError: message },
       });
       return { ok: false, error: message };
@@ -142,7 +142,7 @@ export const stripeConnector: IntegrationConnector = {
     // historical record of the last connection; only the now-invalid
     // credentials are cleared.
     await prisma.storeIntegration.update({
-      where: { id: integration.id },
+      where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },
     });
   },

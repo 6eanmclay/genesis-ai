@@ -42,6 +42,16 @@ Three conceptual roles: **Owner**, **Employee**, **Customer** — but only two a
 
 `StoreDraft` (the pre-launch flow) is explicitly outside this system — a draft belongs to exactly one user and isn't a `Store` yet, so there's nothing to have employees on.
 
+**Structural tenant isolation (Track 0)** — `lib/tenantIsolation.ts` is a Prisma Client Extension (`$extends`, wired in once at `lib/prisma.ts`, reaching every call site that imports `prisma` from there) that requires a store-scoping filter in the `where` clause of `update`/`delete`/`updateMany`/`deleteMany` and `findMany`/`count`/`aggregate` on the ~19 tenant-scoped models. It accepts either a flat scope key (`storeId`, or a model-specific dual key like `storeGeneration`'s `storeId`/`storeDraftId` for draft-vs-live, or `productEvent`'s `storeId`/`userId` for pre/post-store-creation) or a nested `store: { ... }` relation filter — both are legitimate patterns already used across the codebase (see `app/store/[slug]/products/[productId]/page.tsx` for a real example of each). Missing scoping throws immediately rather than executing.
+
+This is **defense-in-depth, not the primary authorization mechanism.** The real gate is `requireStorePermission` above, which independently re-verifies the actual authenticated session user against a target storeId. That's already correct on its own — confirmed by tracing it, not assumed.
+
+Deliberately **not** guarded, by design:
+- **`findFirst`/`findUnique` (single-record lookups) are never guarded.** A real, intentional, widespread pattern exists across the codebase — e.g. `app/dashboard/actions.ts`'s `editProduct`/`toggleProductActive`/`deleteProduct` — of fetching a record by bare `id` with no storeId filter, then calling `execute()` → `requireStorePermission(permission, record.storeId)`, which independently re-verifies the real session user against whatever store that record actually belongs to. This is safe today and must stay that way: **do not "fix" a single-record lookup by adding a storeId filter to it** — a future contributor might see an unscoped `findUnique` and assume it's a gap, but adding scoping there wouldn't close anything the authorization call after it doesn't already close, and misreads the pattern as a bug. If you're auditing a call site and it's a `findFirst`/`findUnique` followed by a `requireStorePermission(...)` check, that's the correct shape — leave it.
+- `create`/`createMany`/`upsert`/`groupBy` are out of scope for this pass (no `where` clause to scope, or not a realistic tenant-leak vector).
+
+**`prismaSystem`** (also exported from `lib/prisma.ts`) is the raw, unwrapped Prisma client, for the small number of genuine cross-tenant SYSTEM queries that legitimately span every store at once — e.g. the sync scheduler's `getDueSyncs()` and the `/api/cron/status` endpoint, both reachable only via a `CRON_SECRET`-gated route, never from a request carrying a specific user's session. `$extends()` shares the base client's connection pool, so exporting both costs nothing extra. Use `prismaSystem` only at a call site gated the same way, with a comment saying so — everywhere else, use `prisma`.
+
 ---
 
 ## Integration Framework

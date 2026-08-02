@@ -173,7 +173,7 @@ export const quickbooksConnector: IntegrationConnector = {
       );
       const ok = res.ok;
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId },
         data: {
           status: ok ? "CONNECTED" : "NEEDS_ATTENTION",
           lastVerifiedAt: new Date(),
@@ -184,7 +184,7 @@ export const quickbooksConnector: IntegrationConnector = {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Verification failed";
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId },
         data: { status: "FAILED", lastVerifiedAt: new Date(), lastError: message },
       });
       return { ok: false, error: message };
@@ -197,7 +197,7 @@ export const quickbooksConnector: IntegrationConnector = {
     });
     if (!integration) return;
     await prisma.storeIntegration.update({
-      where: { id: integration.id },
+      where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },
     });
   },

@@ -61,9 +61,9 @@ interface EditProductInput {
 export const editProductExecutable: Executable<EditProductInput, ProductMetadata> = {
   action: EXECUTION_ACTIONS.PRODUCT_EDIT,
   requiredPermission: PERMISSIONS.PRODUCTS_MANAGE,
-  async run(input) {
+  async run(input, ctx) {
     const product = await prisma.product.update({
-      where: { id: input.productId },
+      where: { id: input.productId, storeId: ctx.storeId },
       data: { name: input.name, description: input.description, priceInCents: input.priceInCents },
     });
     return {
@@ -84,9 +84,9 @@ interface ToggleActiveInput {
 export const toggleProductActiveExecutable: Executable<ToggleActiveInput, ProductMetadata> = {
   action: EXECUTION_ACTIONS.PRODUCT_TOGGLE_ACTIVE,
   requiredPermission: PERMISSIONS.PRODUCTS_MANAGE,
-  async run(input) {
+  async run(input, ctx) {
     const product = await prisma.product.update({
-      where: { id: input.productId },
+      where: { id: input.productId, storeId: ctx.storeId },
       data: { active: !input.currentActive },
     });
     return {
@@ -106,8 +106,8 @@ interface DeleteProductInput {
 export const deleteProductExecutable: Executable<DeleteProductInput, ProductMetadata> = {
   action: EXECUTION_ACTIONS.PRODUCT_DELETE,
   requiredPermission: PERMISSIONS.PRODUCTS_MANAGE,
-  async run(input) {
-    await prisma.product.delete({ where: { id: input.productId } });
+  async run(input, ctx) {
+    await prisma.product.delete({ where: { id: input.productId, storeId: ctx.storeId } });
     return {
       message: `Deleted product "${input.name}"`,
       metadata: { productId: input.productId, name: input.name },

@@ -154,7 +154,7 @@ export const googleCalendarConnector: IntegrationConnector = {
       );
       const ok = res.ok;
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId },
         data: {
           status: ok ? "CONNECTED" : "NEEDS_ATTENTION",
           lastVerifiedAt: new Date(),
@@ -165,7 +165,7 @@ export const googleCalendarConnector: IntegrationConnector = {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Verification failed";
       await prisma.storeIntegration.update({
-        where: { id: integration.id },
+        where: { id: integration.id, storeId },
         data: { status: "FAILED", lastVerifiedAt: new Date(), lastError: message },
       });
       return { ok: false, error: message };
@@ -181,7 +181,7 @@ export const googleCalendarConnector: IntegrationConnector = {
     // later; the merchant can also revoke access directly from their
     // Google Account's own connected-apps settings.
     await prisma.storeIntegration.update({
-      where: { id: integration.id },
+      where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },
     });
   },

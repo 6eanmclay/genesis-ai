@@ -30,7 +30,7 @@ export const resolveChallengeExecutable: Executable<ResolveChallengeInput, Recor
       resolvedAt: new Date().toISOString(),
     };
     await prisma.businessRecord.update({
-      where: { id: record.id },
+      where: { id: record.id, storeId: ctx.storeId },
       data: { data: updated as object, syncedAt: new Date() },
     });
     await resolveMissingObservations(ctx.storeId, [], "urgent", `challenge:${record.id}`);
