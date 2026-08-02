@@ -10,6 +10,7 @@ export const EXECUTION_ACTIONS = {
   PRODUCT_DELETE: "product.delete",
   PRODUCT_TOGGLE_ACTIVE: "product.toggle_active",
   PRODUCT_UPDATE_IMAGE: "product.update_image",
+  ORDER_TOGGLE_FULFILLED: "order.toggle_fulfilled",
   INTEGRATION_STRIPE_CONNECT: "integration.stripe.connect",
   INTEGRATION_STRIPE_VERIFY: "integration.stripe.verify",
   INTEGRATION_PAYPAL_CONNECT: "integration.paypal.connect",

@@ -2,23 +2,21 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import { getOrderSummary } from "@/lib/dashboard/whatHappened";
 import { OrderSummaryCard } from "../OrderSummaryCard";
+import { OrdersList, type OrderRow } from "../OrdersList";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
+import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
 
-const STATUS_LABEL: Record<string, string> = {
-  paid: "Paid",
-  refunded: "Refunded",
-};
-
-// List view only for beta — per-order detail/refund actions are a later
-// pass (see the nav plan's explicit out-of-scope note). Amount is only
-// selected from the DB at all when the viewer has REVENUE_VIEW, matching
-// how getOrderSummary/getCustomerSummaries already gate revenue — not just
-// hidden in the UI.
+// Owner-experience milestone — real shipping address + a manual fulfillment
+// workflow, both now real (see lib/execution/executables/orders.ts). Amount
+// is only selected from the DB at all when the viewer has REVENUE_VIEW,
+// matching how getOrderSummary/getCustomerSummaries already gate revenue —
+// not just hidden in the UI.
 export default async function OrdersPage() {
   const { store, role } = await requireStorePageAccess(PERMISSIONS.ORDERS_VIEW);
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
+  const canManage = hasPermission(role, PERMISSIONS.ORDERS_MANAGE);
 
-  const [summary, orders] = await Promise.all([
+  const [summary, rawOrders] = await Promise.all([
     getOrderSummary(store.id, { includeRevenue: canViewRevenue }),
     prisma.order.findMany({
       where: { storeId: store.id },
@@ -32,9 +30,22 @@ export default async function OrdersPage() {
         paymentProvider: true,
         createdAt: true,
         amountInCents: canViewRevenue,
+        fulfillmentStatus: true,
+        shippingAddress: true,
       },
     }),
   ]);
+  const orders: OrderRow[] = rawOrders.map((order) => ({
+    id: order.id,
+    productName: order.productName,
+    buyerEmail: order.buyerEmail,
+    amountInCents: canViewRevenue ? ((order.amountInCents as number | null) ?? 0) : null,
+    status: order.status,
+    paymentProvider: order.paymentProvider,
+    createdAt: order.createdAt,
+    fulfillmentStatus: order.fulfillmentStatus,
+    shippingAddress: order.shippingAddress as OrderShippingAddress | null,
+  }));
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   return (
@@ -48,51 +59,7 @@ export default async function OrdersPage() {
       <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
         All orders
       </h2>
-      {orders.length === 0 ? (
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          No orders yet.
-        </p>
-      ) : (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full max-w-3xl border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-black/[.08] text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-white/[.145]">
-                <th className="py-2 pr-4">Product</th>
-                <th className="py-2 pr-4">Buyer</th>
-                {canViewRevenue && <th className="py-2 pr-4">Amount</th>}
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4">Provider</th>
-                <th className="py-2 pr-4">Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => (
-                <tr
-                  key={order.id}
-                  className="border-b border-black/[.05] dark:border-white/[.08]"
-                >
-                  <td className="py-2 pr-4 text-black dark:text-zinc-50">{order.productName}</td>
-                  <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-400">{order.buyerEmail}</td>
-                  {canViewRevenue && (
-                    <td className="py-2 pr-4 text-black dark:text-zinc-50">
-                      ${((order.amountInCents ?? 0) / 100).toFixed(2)}
-                    </td>
-                  )}
-                  <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-400">
-                    {STATUS_LABEL[order.status] ?? order.status}
-                  </td>
-                  <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-400">
-                    {order.paymentProvider}
-                  </td>
-                  <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-400">
-                    {order.createdAt.toLocaleDateString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <OrdersList orders={orders} canViewRevenue={canViewRevenue} canManage={canManage} />
     </div>
   );
 }

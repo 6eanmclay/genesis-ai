@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { CustomerSummary } from "./types";
+import type { CustomerSummary, RecentOrder } from "./types";
 
 // Derived from Order.buyerEmail — no Customer model exists (or is being
 // invented here); a raw buyer email is the only identity signal that
@@ -45,6 +45,45 @@ export async function getCustomerSummaries(
     totalSpentInCents: null,
     lastOrderAt: row._max.createdAt!,
   }));
+}
+
+// Owner-experience milestone — real per-customer purchase history for the
+// Customers page. A store's real order volume at this stage is small (same
+// assumption getRevenueTrend already makes), so fetching every order once
+// and grouping in JS is simpler and just as correct as a per-customer
+// query loop. Capped at `limit` total orders (not per-customer) — a
+// generous cap for beta-stage volume, revisit only if that stops holding.
+export async function getOrdersByEmail(
+  storeId: string,
+  opts: { includeRevenue: boolean; limit?: number }
+): Promise<Map<string, RecentOrder[]>> {
+  const rows = await prisma.order.findMany({
+    where: { storeId },
+    orderBy: { createdAt: "desc" },
+    take: opts.limit ?? 300,
+    select: {
+      id: true,
+      productName: true,
+      buyerEmail: true,
+      createdAt: true,
+      amountInCents: opts.includeRevenue,
+    },
+  });
+
+  const byEmail = new Map<string, RecentOrder[]>();
+  for (const row of rows) {
+    const order: RecentOrder = {
+      id: row.id,
+      productName: row.productName,
+      buyerEmail: row.buyerEmail,
+      amountInCents: opts.includeRevenue ? (row.amountInCents as number) : null,
+      createdAt: row.createdAt,
+    };
+    const existing = byEmail.get(row.buyerEmail) ?? [];
+    existing.push(order);
+    byEmail.set(row.buyerEmail, existing);
+  }
+  return byEmail;
 }
 
 // Real first-time-buyer count for Live Intelligence's Business Pulse widget

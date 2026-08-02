@@ -16,6 +16,7 @@ import {
   toggleProductActiveExecutable,
   deleteProductExecutable,
 } from "@/lib/execution/executables/products";
+import { toggleOrderFulfilledExecutable } from "@/lib/execution/executables/orders";
 import { updateProductImageExecutable } from "@/lib/execution/executables/updateProductImage";
 import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
 import { connectExecutable, verifyExecutable } from "@/lib/execution/adapters/integrationExecutable";
@@ -213,6 +214,21 @@ export async function deleteProduct(productId: string) {
   );
 
   redirect("/dashboard/products");
+}
+
+export async function toggleOrderFulfilled(orderId: string) {
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order) {
+    throw new Error("Order not found");
+  }
+
+  await execute(
+    toggleOrderFulfilledExecutable,
+    { orderId, currentlyFulfilled: order.fulfillmentStatus === "fulfilled" },
+    { storeId: order.storeId }
+  );
+
+  redirect("/dashboard/orders");
 }
 
 export async function connectStripe() {

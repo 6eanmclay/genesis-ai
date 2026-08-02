@@ -67,18 +67,18 @@ model VerificationToken {
 }
 
 model Store {
-  id            String   @id @default(cuid())
-  userId        String
-  name          String
-  slug          String   @unique
-  description   String?
-  tagline       String?
-  logoUrl       String?
-  theme         Json?
-  blueprint     Json?
-  pendingChange Json?
-  published     Boolean  @default(false)
-  version       Int      @default(1)
+  id                 String   @id @default(cuid())
+  userId             String
+  name               String
+  slug               String   @unique
+  description        String?
+  tagline            String?
+  logoUrl            String?
+  theme              Json?
+  blueprint          Json?
+  pendingChange      Json?
+  published          Boolean  @default(false)
+  version            Int      @default(1)
   // Phase 3 Milestone 2 — code-level taxonomy slugs (lib/businessTaxonomy.ts),
   // never a Prisma enum: a String[] so a new category/subcategory is a
   // purely additive code change, matching ApprovalRequest.status's own
@@ -91,7 +91,7 @@ model Store {
   // a second, independent classification axis: *how* the business makes
   // money (product_sales/service_fees/subscriptions/...), not *what
   // industry* it's in. See lib/businessTaxonomy.ts's REVENUE_STREAM_TYPES.
-  revenueStreams String[] @default([])
+  revenueStreams     String[] @default([])
   // Onboarding v2 — the owner's stated brand positioning (luxury/
   // streetwear/minimalist/budget/family/professional/other — see
   // lib/businessTaxonomy.ts's BRAND_POSITIONING_TYPES), a third,
@@ -101,22 +101,22 @@ model Store {
   // selectFulfillmentStrategy() and lib/onboarding/pricing.ts's
   // recommendPrice() — a real branching input, not narrative flavor text
   // like blueprint.brandIdentity.brandPersonality.
-  brandPositioning String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  brandPositioning   String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  user                     User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  products                 Product[]
-  visions                  StoreGeneration[]
-  orders                   Order[]
-  messages                 StoreMessage[]
-  subscribers              NewsletterSignup[]
-  members                  StoreMember[]
-  integrations             StoreIntegration[]
-  executionLogs            ExecutionLog[]
-  generatedRecommendations GeneratedRecommendation[]
-  approvalRequests         ApprovalRequest[]
-  observations             GenesisObservation[]
+  user                      User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products                  Product[]
+  visions                   StoreGeneration[]
+  orders                    Order[]
+  messages                  StoreMessage[]
+  subscribers               NewsletterSignup[]
+  members                   StoreMember[]
+  integrations              StoreIntegration[]
+  executionLogs             ExecutionLog[]
+  generatedRecommendations  GeneratedRecommendation[]
+  approvalRequests          ApprovalRequest[]
+  observations              GenesisObservation[]
   postExecutionMeasurements PostExecutionMeasurement[]
   delegatedAuthorities      DelegatedAuthority[]
   productEvents             ProductEvent[]
@@ -221,29 +221,29 @@ model StoreIntegration {
 }
 
 model StoreDraft {
-  id               String   @id @default(cuid())
-  userId           String   @unique
-  inputStoreName   String?
-  inputProductType String?
-  inputVision      String?
-  name             String
-  description      String?
-  tagline          String?
-  theme            Json?
-  productsDraft    Json?
-  blueprint        Json?
-  pendingChange    Json?
-  status           String   @default("draft")
-  version          Int      @default(1)
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  inputStoreName     String?
+  inputProductType   String?
+  inputVision        String?
+  name               String
+  description        String?
+  tagline            String?
+  theme              Json?
+  productsDraft      Json?
+  blueprint          Json?
+  pendingChange      Json?
+  status             String   @default("draft")
+  version            Int      @default(1)
   // Phase 3 Milestone 2 — see Store.businessCategories's own comment; this
   // is the draft-stage copy, carried over to Store at confirmStoreDraft.
   businessCategories String[] @default([])
   // Phase 3 Milestone 5 — see Store.revenueStreams's own comment; same
   // draft-stage-copy pattern as businessCategories above.
-  revenueStreams String[] @default([])
+  revenueStreams     String[] @default([])
   // Onboarding v2 — see Store.brandPositioning's own comment; same
   // draft-stage-copy pattern as businessCategories/revenueStreams above.
-  brandPositioning String?
+  brandPositioning   String?
   // Onboarding v2 — the guided discovery flow's own state machine progress
   // (current step, classifications made so far, the chosen fulfillment
   // candidate/variant) and, while no real Store/StoreIntegration exists yet
@@ -254,9 +254,9 @@ model StoreDraft {
   // separate from pendingChange — that's one AI-authored diff awaiting
   // confirm; this is "where the guided conversation currently is," a
   // different kind of state that persists across many turns.
-  onboardingState Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  onboardingState    Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   generations   StoreGeneration[]
@@ -301,15 +301,15 @@ model StoreGeneration {
 }
 
 model Product {
-  id           String   @id @default(cuid())
-  storeId      String
-  name         String
-  description  String?
-  richContent  Json?
-  priceInCents Int
-  imageUrl     String?
-  active       Boolean  @default(true)
-  position     Int      @default(0)
+  id                  String               @id @default(cuid())
+  storeId             String
+  name                String
+  description         String?
+  richContent         Json?
+  priceInCents        Int
+  imageUrl            String?
+  active              Boolean              @default(true)
+  position            Int                  @default(0)
   // Onboarding v2 — present only for a product sourced through a
   // fulfillment strategy (see lib/fulfillment/), null for a manually
   // entered product with no known cost. fulfillmentProvider/
@@ -324,8 +324,8 @@ model Product {
   fulfillmentProvider IntegrationProvider?
   externalProductId   String?
   externalVariantId   String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   store  Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
   orders Order[]
@@ -348,15 +348,15 @@ model NewsletterSignup {
 // one. Composite-unique rather than a bare unique on externalOrderId, so
 // two providers' ids can never collide.
 model Order {
-  id              String              @id @default(cuid())
-  storeId         String
-  productId       String?
-  productName     String
-  amountInCents   Int
-  buyerEmail      String
-  status          String              @default("paid")
-  paymentProvider IntegrationProvider
-  externalOrderId String
+  id                String              @id @default(cuid())
+  storeId           String
+  productId         String?
+  productName       String
+  amountInCents     Int
+  buyerEmail        String
+  status            String              @default("paid")
+  paymentProvider   IntegrationProvider
+  externalOrderId   String
   // Implementation roadmap Milestone 1 — a real, fulfillable business needs
   // a real shipping address; neither checkout path collected or stored one
   // before this. Normalized to one common shape regardless of provider
@@ -364,8 +364,17 @@ model Order {
   // (Milestone 4) never has to branch on paymentProvider to read it.
   // Nullable: a digital-goods order (no such path exists yet, but the
   // field shouldn't assume every future Order is physical) has none.
-  shippingAddress Json?
-  createdAt       DateTime            @default(now())
+  shippingAddress   Json?
+  // Owner-experience milestone — the owner's own manual acknowledgment that
+  // an order has been fulfilled (shipped through Printful's own dashboard,
+  // self-fulfilled, or otherwise). Deliberately separate from `status`
+  // above, which tracks payment/refund state, a different axis entirely.
+  // V1 is manual-only by Sean's explicit choice: no automatic real-money
+  // order placement with a fulfillment connector yet — that's an explicit,
+  // later Phase 2 capability, not an oversight.
+  fulfillmentStatus String              @default("unfulfilled")
+  fulfilledAt       DateTime?
+  createdAt         DateTime            @default(now())
 
   store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -464,30 +473,30 @@ model GeneratedRecommendation {
 // the Explanation it's grounded in). Not merged into findRelated(), which
 // only ever walks BusinessRecord space — these are two distinct graphs.
 model CognitiveOutput {
-  id          String    @id @default(cuid())
-  storeId     String
-  kind        String    // insight | prediction | explanation | recommendation | opportunity
-  summary     String    // self-contained — matches every existing "message must be self-contained" convention
-  data        Json?     // structured supporting detail specific to kind (e.g. an insight's own real metrics)
-  priority    String?   // high | medium | low — recommendation/opportunity/prediction; null for insight/explanation
+  id                String    @id @default(cuid())
+  storeId           String
+  kind              String // insight | prediction | explanation | recommendation | opportunity
+  summary           String // self-contained — matches every existing "message must be self-contained" convention
+  data              Json? // structured supporting detail specific to kind (e.g. an insight's own real metrics)
+  priority          String? // high | medium | low — recommendation/opportunity/prediction; null for insight/explanation
   // Real columns, not buried in `data` — matches GeneratedRecommendation's
   // own precedent, since these are directly queried/displayed (Home's
   // "From Genesis" panel), not just supporting detail. Null for kinds that
   // never carry a direct action (insight, explanation).
-  actionLabel String?
-  actionHref  String?
-  recordId    String?   // which BusinessRecord this is about, if any — same honest-null convention as BusinessEvent.recordId
-  entityType  String?
-  relatedOutputIds String[] @default([])
+  actionLabel       String?
+  actionHref        String?
+  recordId          String? // which BusinessRecord this is about, if any — same honest-null convention as BusinessEvent.recordId
+  entityType        String?
+  relatedOutputIds  String[]  @default([])
   // Same stable-issue-identity concept as ApprovalRequest.topicKey, used the
   // same way: dedup/supersede across review runs for the same underlying
   // finding, honest null when no such stable identity exists.
-  topicKey    String?
-  proposedAction   Json?   // {actionType, input} — same shape as ProposedActionSchema
+  topicKey          String?
+  proposedAction    Json? // {actionType, input} — same shape as ProposedActionSchema
   approvalRequestId String?
-  status      String    @default("ACTIVE") // ACTIVE | RESOLVED | SUPERSEDED
-  generatedAt DateTime  @default(now())
-  resolvedAt  DateTime?
+  status            String    @default("ACTIVE") // ACTIVE | RESOLVED | SUPERSEDED
+  generatedAt       DateTime  @default(now())
+  resolvedAt        DateTime?
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
@@ -507,22 +516,22 @@ model CognitiveOutput {
 // here. No ExecutionLog row is written at proposal or rejection time —
 // ExecutionLog represents things that were actually executed.
 model ApprovalRequest {
-  id               String    @id @default(cuid())
-  storeId          String
-  recommendationId String?
+  id                   String    @id @default(cuid())
+  storeId              String
+  recommendationId     String?
   // Phase 3 Milestone 6 (J4 Cognitive Layer) — parallel to
   // recommendationId above, not a replacement: set when this approval
   // originates from the Cognitive Layer's own CognitiveOutput rows instead
   // of the legacy GeneratedRecommendation model. Both stay nullable and
   // independently optional — an approval only ever has at most one set.
-  cognitiveOutputId String?
-  actionType       String
-  input            Json
-  previousValues   Json
-  summary          String
-  status           String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | EXECUTED | REJECTED
-  authorizationTier String   @default("always_ask") // always_ask | auto_below_limit | auto — frozen snapshot of the tier that governed this request at creation time, see lib/execution/genesisActions.ts
-  groupId          String?   // shared across every ApprovalRequest created from one Genesis "thought" (one chat turn, or one recommendation-review run) — Phase 4 — presentational grouping only; never merges the underlying decision or execution
+  cognitiveOutputId    String?
+  actionType           String
+  input                Json
+  previousValues       Json
+  summary              String
+  status               String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | EXECUTED | REJECTED
+  authorizationTier    String    @default("always_ask") // always_ask | auto_below_limit | auto — frozen snapshot of the tier that governed this request at creation time, see lib/execution/genesisActions.ts
+  groupId              String? // shared across every ApprovalRequest created from one Genesis "thought" (one chat turn, or one recommendation-review run) — Phase 4 — presentational grouping only; never merges the underlying decision or execution
   // Phase 5 — stable identity of the underlying BUSINESS ISSUE/OPPORTUNITY
   // this action addresses (same concept as GenesisObservation.dedupeKey for
   // AI-detected opportunities) — deliberately NOT an identity of this one
@@ -532,7 +541,7 @@ model ApprovalRequest {
   // a fabricated/generic slug when no such identity genuinely exists (e.g.
   // most chat-driven, owner-directed requests like "make my website blue"
   // — see the Phase 5 plan for why that's an honest null, not a gap).
-  topicKey         String?
+  topicKey             String?
   // Phase 6 — frozen snapshot of HOW this request was decided, never
   // recomputed. "human" = a real owner/employee click (approveGenesisAction/
   // rejectGenesisAction/revertApprovalRequest). "autonomous" = Genesis
@@ -540,18 +549,18 @@ model ApprovalRequest {
   // (delegatedAuthorityId below) — never the model's own judgment about
   // whether it's allowed, only a deterministic grant lookup performed in
   // code before execution. See lib/execution/genesisAutonomy.ts.
-  decisionMode        String  @default("human") // human | autonomous
+  decisionMode         String    @default("human") // human | autonomous
   // The specific grant that authorized an autonomous decision, snapshotted
   // at decision time so "why was Genesis allowed to do this" is answerable
   // forever, even after the grant is later revoked. Null for "human" rows.
   // Loose reference (no FK), same convention as recommendationId.
   delegatedAuthorityId String?
-  executionId      String?
-  decidedByUserId  String?
-  decidedAt        DateTime?
-  createdAt        DateTime  @default(now())
+  executionId          String?
+  decidedByUserId      String?
+  decidedAt            DateTime?
+  createdAt            DateTime  @default(now())
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store                    Store                     @relation(fields: [storeId], references: [id], onDelete: Cascade)
   postExecutionMeasurement PostExecutionMeasurement?
 
   @@index([storeId, status])
@@ -596,21 +605,21 @@ model DelegatedAuthority {
 // given window is; it is never used to net out or weight anyone's
 // contribution — this system does not and should not calculate attribution.
 model PostExecutionMeasurement {
-  id                 String   @id @default(cuid())
-  approvalRequestId  String   @unique
-  storeId            String
-  actionType         String   // denormalized from ApprovalRequest — cheap grouping without a join
-  topicKey           String?  // denormalized from ApprovalRequest at measurement time — see topicKey's own comment above
-  scope              String   // "store" | "product"
-  productId          String?  // set only when scope is "product" (today: only update_product_image)
-  windowDays         Int      // fixed constant (see lib/dashboard/postExecutionMeasurement.ts), not owner-configurable
-  orderCountBefore   Int
-  orderCountAfter    Int
-  revenueBeforeCents Int?
-  revenueAfterCents  Int?
+  id                    String   @id @default(cuid())
+  approvalRequestId     String   @unique
+  storeId               String
+  actionType            String // denormalized from ApprovalRequest — cheap grouping without a join
+  topicKey              String? // denormalized from ApprovalRequest at measurement time — see topicKey's own comment above
+  scope                 String // "store" | "product"
+  productId             String? // set only when scope is "product" (today: only update_product_image)
+  windowDays            Int // fixed constant (see lib/dashboard/postExecutionMeasurement.ts), not owner-configurable
+  orderCountBefore      Int
+  orderCountAfter       Int
+  revenueBeforeCents    Int?
+  revenueAfterCents     Int?
   concurrentActionTypes String[] // other Genesis actionTypes EXECUTED for this store inside the same before/after window
-  summary            String   // deterministic, template-generated — the confounding caveat is baked into the sentence itself whenever concurrentActionTypes is non-empty, never a separate field someone could quote without it
-  measuredAt         DateTime @default(now())
+  summary               String // deterministic, template-generated — the confounding caveat is baked into the sentence itself whenever concurrentActionTypes is non-empty, never a separate field someone could quote without it
+  measuredAt            DateTime @default(now())
 
   store           Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
   approvalRequest ApprovalRequest @relation(fields: [approvalRequestId], references: [id], onDelete: Cascade)
@@ -671,7 +680,7 @@ model GenesisObservation {
 // never raw chat/form content, which stays in its own real row and is joined
 // at reconstruction time.
 model ProductEvent {
-  id                String    @id @default(cuid())
+  id                String   @id @default(cuid())
   userId            String?
   storeId           String?
   // Deliberately NOT a real relation (unlike storeId/userId below) — a
@@ -690,7 +699,7 @@ model ProductEvent {
   outcome           String? // success | failure | abandoned | null (in progress / not applicable)
   durationMs        Int?
   metadata          Json?
-  createdAt         DateTime  @default(now())
+  createdAt         DateTime @default(now())
 
   user  User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
   store Store? @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -818,7 +827,7 @@ model Belief {
   claim    String // a real, self-contained sentence Reason can use directly
   category String // open vocabulary: "insight_recurrence" | "outcome_pattern" | "owner_preference" | "event_recurrence" | ...
 
-  confidence Float // 0-1 — current strength of evidential support, see computeConfidence in lib/intelligence/learn.ts
+  confidence    Float // 0-1 — current strength of evidential support, see computeConfidence in lib/intelligence/learn.ts
   evidenceCount Int // breadth — how many independent instances support this, distinct from confidence on purpose
 
   firstObservedAt    DateTime // when the earliest contributing evidence occurred, not when this row was created

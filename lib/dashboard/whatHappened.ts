@@ -79,6 +79,55 @@ export async function getRevenueTrend(storeId: string, days: number = 30): Promi
   return buckets;
 }
 
+// Owner-experience milestone — real profit, not just revenue. Only
+// Product.costInCents-backed orders (products sourced through a
+// fulfillment strategy, see lib/fulfillment/) have a known cost; a
+// manually-entered product from the older AI-imagined flow has none.
+// Honest about the gap rather than assuming zero cost for those — the
+// caller shows "profit (tracked for N of M orders)" using both counts,
+// never a silently-inflated total. Gated by REVENUE_VIEW, same tier as
+// getOrderSummary's revenueInCents — profit is a dollar figure.
+export async function getProfitSummary(storeId: string): Promise<{
+  profitInCents: number;
+  ordersWithKnownCost: number;
+  ordersWithUnknownCost: number;
+}> {
+  const orders = await prisma.order.findMany({
+    where: { storeId },
+    select: { amountInCents: true, product: { select: { costInCents: true } } },
+  });
+
+  let profitInCents = 0;
+  let ordersWithKnownCost = 0;
+  let ordersWithUnknownCost = 0;
+  for (const order of orders) {
+    const costInCents = order.product?.costInCents;
+    if (costInCents === null || costInCents === undefined) {
+      ordersWithUnknownCost++;
+      continue;
+    }
+    profitInCents += order.amountInCents - costInCents;
+    ordersWithKnownCost++;
+  }
+  return { profitInCents, ordersWithKnownCost, ordersWithUnknownCost };
+}
+
+// Owner-experience milestone — real fulfillment-status counts for the
+// dashboard's "order status" figure. Not revenue-gated (a count, not a
+// dollar amount) — same tier as getOrderSummary's orderCount.
+export async function getFulfillmentBreakdown(
+  storeId: string
+): Promise<{ unfulfilledCount: number; fulfilledCount: number }> {
+  const rows = await prisma.order.groupBy({
+    by: ["fulfillmentStatus"],
+    where: { storeId },
+    _count: true,
+  });
+  const unfulfilledCount = rows.find((r) => r.fulfillmentStatus === "unfulfilled")?._count ?? 0;
+  const fulfilledCount = rows.find((r) => r.fulfillmentStatus === "fulfilled")?._count ?? 0;
+  return { unfulfilledCount, fulfilledCount };
+}
+
 // Individual recent orders, not just the aggregate getOrderSummary() above —
 // used for Home's positively-framed "recent orders" section. Same
 // includeRevenue gating pattern as getOrderSummary/getCustomerSummaries:

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
-import { getOrderSummary, getRecentActivity } from "@/lib/dashboard/whatHappened";
+import { getOrderSummary, getRecentActivity, getProfitSummary, getFulfillmentBreakdown } from "@/lib/dashboard/whatHappened";
 import { getAttentionItems } from "@/lib/dashboard/needsAttention";
 import { getRecommendations } from "@/lib/dashboard/recommendations";
 import { getLastDiscoveryRunAt } from "@/lib/dashboard/discovery";
@@ -48,7 +48,7 @@ export default async function AnalyticsPage() {
     }),
   ]);
 
-  const [orderSummary, customerSummaries, activityItems, attention, lastDiscoveryRunAt] =
+  const [orderSummary, customerSummaries, activityItems, attention, lastDiscoveryRunAt, profitSummary, fulfillmentBreakdown] =
     await Promise.all([
       getOrderSummary(store.id, { includeRevenue: canViewRevenue }),
       getCustomerSummaries(store.id, { includeRevenue: canViewRevenue }),
@@ -60,6 +60,8 @@ export default async function AnalyticsPage() {
         paypalIntegration,
       }),
       getLastDiscoveryRunAt(store.id),
+      canViewRevenue ? getProfitSummary(store.id) : Promise.resolve(null),
+      getFulfillmentBreakdown(store.id),
     ]);
 
   const inventorySnapshot = getInventorySnapshot(products);
@@ -123,6 +125,34 @@ export default async function AnalyticsPage() {
             <p className="text-sm text-zinc-500">customer{customerSummaries.length === 1 ? "" : "s"}</p>
           </div>
           <p className="mt-1 text-xs text-zinc-500">Derived from order history.</p>
+        </div>
+        {profitSummary && (
+          <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+            <div className="flex items-baseline gap-2">
+              <p className="text-2xl font-semibold text-black dark:text-zinc-50">
+                ${(profitSummary.profitInCents / 100).toFixed(2)}
+              </p>
+              <p className="text-sm text-zinc-500">profit</p>
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              {profitSummary.ordersWithUnknownCost > 0
+                ? `Tracked for ${profitSummary.ordersWithKnownCost} of ${
+                    profitSummary.ordersWithKnownCost + profitSummary.ordersWithUnknownCost
+                  } orders — cost isn't known for the rest.`
+                : "Revenue minus product cost, all orders."}
+            </p>
+          </div>
+        )}
+        <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+          <div className="flex items-baseline gap-2">
+            <p className="text-2xl font-semibold text-black dark:text-zinc-50">
+              {fulfillmentBreakdown.unfulfilledCount}
+            </p>
+            <p className="text-sm text-zinc-500">
+              order{fulfillmentBreakdown.unfulfilledCount === 1 ? "" : "s"} need fulfillment
+            </p>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">{fulfillmentBreakdown.fulfilledCount} already fulfilled.</p>
         </div>
       </div>
 

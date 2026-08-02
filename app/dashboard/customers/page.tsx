@@ -1,5 +1,5 @@
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
-import { getCustomerSummaries } from "@/lib/dashboard/customers";
+import { getCustomerSummaries, getOrdersByEmail } from "@/lib/dashboard/customers";
 import {
   getCustomerSegments,
   getCustomerSegmentTrend,
@@ -58,10 +58,11 @@ export default async function CustomersPage() {
   const { store, role } = await requireStorePageAccess(PERMISSIONS.ORDERS_VIEW);
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
 
-  const [customers, segments, segmentTrend] = await Promise.all([
+  const [customers, segments, segmentTrend, ordersByEmail] = await Promise.all([
     getCustomerSummaries(store.id, { includeRevenue: canViewRevenue, limit: 100 }),
     getCustomerSegments(store.id),
     getCustomerSegmentTrend(store.id),
+    getOrdersByEmail(store.id, { includeRevenue: canViewRevenue }),
   ]);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const segmentsByEmail = buildSegmentsByEmail(segments);
@@ -72,7 +73,7 @@ export default async function CustomersPage() {
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Customers</h1>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{healthSentence}</p>
       <div className="mt-4 max-w-md">
-        <CustomersList customers={customers} segmentsByEmail={segmentsByEmail} />
+        <CustomersList customers={customers} segmentsByEmail={segmentsByEmail} ordersByEmail={ordersByEmail} />
       </div>
     </div>
   );

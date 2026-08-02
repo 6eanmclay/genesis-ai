@@ -9,6 +9,10 @@ export const PERMISSIONS = {
   STORE_MANAGE: "store:manage",
   PRODUCTS_MANAGE: "products:manage",
   ORDERS_VIEW: "orders:view",
+  // Owner-experience milestone — processing an order (marking it fulfilled)
+  // is an operational task, same tier as PRODUCTS_MANAGE, so it's granted to
+  // EMPLOYEE below too, unlike PAYMENTS_MANAGE's owner-only financial scope.
+  ORDERS_MANAGE: "orders:manage",
   REVENUE_VIEW: "revenue:view",
   // Reserved for future use — nothing reads these yet, but the vocabulary
   // exists so later phases only need to wire a permission into a new
@@ -40,6 +44,7 @@ const ROLE_PERMISSIONS: Record<StoreRole, Permission[]> = {
   EMPLOYEE: [
     PERMISSIONS.PRODUCTS_MANAGE,
     PERMISSIONS.ORDERS_VIEW,
+    PERMISSIONS.ORDERS_MANAGE,
     PERMISSIONS.GENESIS_CHAT,
   ],
 };
