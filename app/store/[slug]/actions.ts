@@ -50,6 +50,14 @@ async function createStripeCheckoutSession(
         quantity: 1,
       },
     ],
+    // Implementation roadmap Milestone 1 — every product sold through this
+    // storefront is currently a physical good (no digital-product path
+    // exists yet), so shipping collection is unconditional rather than
+    // branching on a product type this schema doesn't represent yet.
+    // allowed_countries scoped to where the built fulfillment path
+    // (Printful) actually ships today — a real, easy-to-widen decision,
+    // not an architectural limit.
+    shipping_address_collection: { allowed_countries: ["US"] },
     success_url: `${baseUrl}/store/${slug}/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/store/${slug}`,
     metadata: {
@@ -112,6 +120,11 @@ async function createPaypalCheckoutSession(
       application_context: {
         return_url: `${baseUrl}/api/checkout/paypal/return?slug=${slug}`,
         cancel_url: `${baseUrl}/store/${slug}`,
+        // Implementation roadmap Milestone 1 — GET_FROM_FILE collects a
+        // real shipping address from the buyer's own PayPal profile and
+        // returns it in the order/capture response; the default
+        // (unset) preference doesn't reliably guarantee one.
+        shipping_preference: "GET_FROM_FILE",
       },
     }),
   });

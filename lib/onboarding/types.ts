@@ -21,9 +21,19 @@ export type DiscoveryStep =
 export interface DiscoveryState {
   step: DiscoveryStep;
   businessModelSlug: string | null;
+  // The owner's own words, not just the classified slug — needed so
+  // Genesis's later reasoning ("you said clean and minimalist...") can
+  // reference what they actually said instead of a generic template. See
+  // GENESIS_EXPERIENCE.md's "Genesis understands the idea, out loud."
+  ideaText: string | null;
   brandPositioning: string | null;
+  brandPositioningText: string | null;
   productSource: "existing" | "discover" | null;
   selectedCandidate: FulfillmentCandidate | null;
+  // Real, Claude-generated reasoning for why this specific candidate was
+  // chosen, grounded in ideaText/brandPositioningText — never a canned
+  // per-category template. Set alongside selectedCandidate.
+  candidateReasoning: string | null;
   fulfillmentConnected: boolean;
   pricing: PriceRecommendation | null;
 }

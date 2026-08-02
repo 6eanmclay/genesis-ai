@@ -22,13 +22,35 @@ import type {
 // real page of the catalog; genuine "does this fit a streetwear brand"
 // judgment belongs to the caller (Genesis, via the discovery flow), which
 // has an LLM and this function doesn't.
-function matchesKeywords(product: { title: string; type_name: string; description: string }, keywords?: string): boolean {
-  if (!keywords) return true;
-  const haystack = `${product.title} ${product.type_name} ${product.description}`.toLowerCase();
-  return keywords
+//
+// A real bug found via live testing: an earlier version matched on ANY
+// word longer than 2 characters, which let common function words ("the",
+// "want", "sell", "always") match nearly every product's description —
+// the filter was close to a no-op, so a genuinely fitting product (e.g. a
+// tote bag, for an idea literally about tote bags) could lose out to
+// whatever happened to iterate first. Stopwords are excluded, and
+// candidates are ranked by how many *meaningful* words actually matched,
+// not just "matched at all" — so the closest real fits surface first.
+const STOPWORDS = new Set([
+  "the", "and", "for", "are", "but", "not", "you", "all", "can", "her", "was", "one", "our", "out",
+  "day", "get", "has", "him", "his", "how", "man", "new", "now", "old", "see", "two", "who", "boy",
+  "did", "its", "let", "put", "say", "she", "too", "use", "want", "sell", "with", "that", "this",
+  "have", "from", "they", "will", "would", "there", "their", "what", "about", "which", "when",
+  "make", "like", "time", "just", "into", "than", "then", "them", "these", "some", "could", "people",
+  "always", "never", "theirs", "store", "online", "business", "shop", "something", "sells", "selling",
+]);
+
+function meaningfulWords(text: string): string[] {
+  return text
     .toLowerCase()
-    .split(/\s+/)
-    .some((word) => word.length > 2 && haystack.includes(word));
+    .split(/\W+/)
+    .filter((word) => word.length > 2 && !STOPWORDS.has(word));
+}
+
+function keywordMatchCount(product: { title: string; type_name: string; description: string }, keywords: string): number {
+  const haystack = `${product.title} ${product.type_name} ${product.description}`.toLowerCase();
+  const words = meaningfulWords(keywords);
+  return words.filter((word) => haystack.includes(word)).length;
 }
 
 interface PrintfulCatalogProduct {
@@ -121,14 +143,33 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
 
   async browseCandidates({ storeId, storeDraftId, keywords }) {
     const credentials = await resolveCredentials({ storeId, storeDraftId });
-    const res = await fetch(`${PRINTFUL_API_BASE}/products?limit=20`, {
+    // limit=100 — confirmed live that Printful's real catalog is ~98
+    // items total (offset paging past that returned the same count, not
+    // further pages), so this captures the whole real catalog in one
+    // call. A real bug found via live testing: the previous limit=20
+    // meant keyword matching only ever searched a fifth of the catalog,
+    // so a genuinely fitting product (e.g. a tote bag) could be missed
+    // entirely even though it exists — Genesis would then reason
+    // (honestly, but avoidably) about the closest thing in an
+    // artificially narrow set instead of the real best fit.
+    const res = await fetch(`${PRINTFUL_API_BASE}/products?limit=100`, {
       headers: authHeaders(credentials, false),
     });
     if (!res.ok) throw new Error(`Printful catalog browse failed (${res.status})`);
     const body = (await res.json()) as { result: PrintfulCatalogProduct[] };
 
-    const matched = body.result.filter((p) => matchesKeywords(p, keywords)).slice(0, 8);
-    const source = matched.length > 0 ? matched : body.result.slice(0, 8);
+    // Ranked by real keyword relevance, not "first N that matched at all"
+    // — the closest fits surface first, and only fall back to an
+    // unranked slice if literally nothing in the catalog shares a
+    // meaningful word with what the owner said.
+    const ranked = keywords
+      ? body.result
+          .map((p) => ({ product: p, score: keywordMatchCount(p, keywords) }))
+          .filter((r) => r.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .map((r) => r.product)
+      : [];
+    const source = ranked.length > 0 ? ranked.slice(0, 8) : body.result.slice(0, 8);
 
     const candidates: FulfillmentCandidate[] = [];
     for (const product of source) {

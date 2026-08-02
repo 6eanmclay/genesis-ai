@@ -44,14 +44,15 @@ export function IdeaScreen() {
 
     startTransition(async () => {
       try {
-        await submitBusinessModelAnswer(trimmed);
+        const { state } = await submitBusinessModelAnswer(trimmed);
         setGenesisWorking(false);
-        // The Business act's own screen isn't designed yet
-        // (GENESIS_EXPERIENCE.md scopes only the Idea act's opening screen
-        // as confirmed) — this deliberately doesn't fabricate one. The
-        // real "response" pulse plays first (GenesisAvatar's own
-        // RESPONSE_DURATION_MS), then a real, existing destination.
-        setTimeout(() => router.push("/dashboard"), 1400);
+        // The real "response" pulse plays first (GenesisAvatar's own
+        // RESPONSE_DURATION_MS), then the real next destination — the
+        // Business act if this classified as ecommerce, otherwise the
+        // honest fallback (GENESIS_EXPERIENCE.md section 4's scope
+        // boundary: every other business model isn't designed yet).
+        const destination = state.step === "not_ecommerce" ? "/dashboard" : "/onboarding/business";
+        setTimeout(() => router.push(destination), 1400);
       } catch {
         setGenesisWorking(false);
         submittedRef.current = false;

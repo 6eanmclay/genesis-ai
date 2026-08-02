@@ -357,6 +357,14 @@ model Order {
   status          String              @default("paid")
   paymentProvider IntegrationProvider
   externalOrderId String
+  // Implementation roadmap Milestone 1 — a real, fulfillable business needs
+  // a real shipping address; neither checkout path collected or stored one
+  // before this. Normalized to one common shape regardless of provider
+  // (see lib/orders/shippingAddress.ts) so the owner-facing order view
+  // (Milestone 4) never has to branch on paymentProvider to read it.
+  // Nullable: a digital-goods order (no such path exists yet, but the
+  // field shouldn't assume every future Order is physical) has none.
+  shippingAddress Json?
   createdAt       DateTime            @default(now())
 
   store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)

@@ -5,6 +5,7 @@ import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObserva
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
 import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessModel/internalMapper";
+import { fromStripeShippingDetails } from "@/lib/orders/shippingAddress";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -76,6 +77,12 @@ export async function POST(request: Request) {
             status: "paid",
             paymentProvider: "STRIPE",
             externalOrderId: session.id,
+            // Real, verified against the installed Stripe SDK's own types
+            // before writing this — this API version nests it under
+            // collected_information, not directly on the session (an
+            // older-version shape this codebase's training data would
+            // have assumed instead — see AGENTS.md's warning about that).
+            shippingAddress: fromStripeShippingDetails(session.collected_information?.shipping_details) ?? undefined,
           },
         });
 

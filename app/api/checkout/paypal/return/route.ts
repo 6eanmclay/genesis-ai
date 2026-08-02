@@ -8,6 +8,7 @@ import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
 import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessModel/internalMapper";
+import { fromPaypalShipping } from "@/lib/orders/shippingAddress";
 
 // The buyer lands here after approving on PayPal's site. No webhook for
 // PH-06's MVP (see ARCHITECTURE.md) — capture happens synchronously right
@@ -56,6 +57,17 @@ export async function GET(request: NextRequest) {
       custom_id?: string;
       amount?: { value?: string };
       payments?: { captures?: { custom_id?: string; amount?: { value?: string } }[] };
+      shipping?: {
+        name?: { full_name?: string | null } | null;
+        address?: {
+          address_line_1?: string | null;
+          address_line_2?: string | null;
+          admin_area_2?: string | null;
+          admin_area_1?: string | null;
+          postal_code?: string | null;
+          country_code?: string | null;
+        } | null;
+      };
     }[];
     payer?: { email_address?: string };
   };
@@ -153,6 +165,7 @@ export async function GET(request: NextRequest) {
           status: "paid",
           paymentProvider: "PAYPAL",
           externalOrderId: token,
+          shippingAddress: fromPaypalShipping(purchaseUnit?.shipping) ?? undefined,
         },
       });
 

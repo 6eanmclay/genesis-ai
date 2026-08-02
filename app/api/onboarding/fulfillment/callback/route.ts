@@ -7,6 +7,7 @@ import { encryptCredentials } from "@/lib/integrations/credentials";
 import { recordExecution } from "@/lib/execution/log";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
+import { initialDiscoveryState, applyFulfillmentConnected } from "@/lib/onboarding/discoveryFlow";
 import type { OnboardingState } from "@/lib/onboarding/types";
 
 // Onboarding v2 — the draft-phase OAuth callback for fulfillment connectors.
@@ -30,7 +31,9 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get("code");
   const oauthError = searchParams.get("error");
 
-  const redirectUrl = new URL("/dashboard", request.url);
+  // Redirects back into the guided flow, not /dashboard — the owner
+  // resumes exactly where they left off (see app/onboarding/business/).
+  const redirectUrl = new URL("/onboarding/business", request.url);
 
   const [storeDraftId, provider] = state?.split(":") ?? [];
 
@@ -74,17 +77,15 @@ export async function GET(request: NextRequest) {
 
   try {
     const credentials = await exchangePrintfulCode(code, `${request.nextUrl.origin}/api/onboarding/fulfillment/callback`);
-    const existingState = (draft.onboardingState as OnboardingState | null) ?? null;
+    const existingState: OnboardingState = (draft.onboardingState as OnboardingState | null) ?? {
+      ...initialDiscoveryState(),
+      fulfillmentCredentials: {},
+    };
+    const advanced = applyFulfillmentConnected(existingState);
     const nextState: OnboardingState = {
-      step: existingState?.step ?? "fulfillment_connect",
-      businessModelSlug: existingState?.businessModelSlug ?? null,
-      brandPositioning: existingState?.brandPositioning ?? null,
-      productSource: existingState?.productSource ?? null,
-      selectedCandidate: existingState?.selectedCandidate ?? null,
-      fulfillmentConnected: true,
-      pricing: existingState?.pricing ?? null,
+      ...advanced,
       fulfillmentCredentials: {
-        ...(existingState?.fulfillmentCredentials ?? {}),
+        ...(existingState.fulfillmentCredentials ?? {}),
         PRINTFUL: encryptCredentials(credentials),
       },
     };

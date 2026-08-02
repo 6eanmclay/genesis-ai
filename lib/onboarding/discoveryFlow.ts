@@ -27,9 +27,12 @@ export function initialDiscoveryState(): DiscoveryState {
   return {
     step: "business_model",
     businessModelSlug: null,
+    ideaText: null,
     brandPositioning: null,
+    brandPositioningText: null,
     productSource: null,
     selectedCandidate: null,
+    candidateReasoning: null,
     fulfillmentConnected: false,
     pricing: null,
   };
@@ -40,15 +43,25 @@ export function initialDiscoveryState(): DiscoveryState {
 // (including "other") falls back to today's existing flow.
 const ECOMMERCE_SLUGS = new Set(["product_sales", "digital_products"]);
 
-export function applyBusinessModelAnswer(state: DiscoveryState, businessModelSlug: string): DiscoveryState {
+export function applyBusinessModelAnswer(state: DiscoveryState, businessModelSlug: string, ideaText: string): DiscoveryState {
   if (!ECOMMERCE_SLUGS.has(businessModelSlug)) {
-    return { ...state, businessModelSlug, step: "not_ecommerce" };
+    return { ...state, businessModelSlug, ideaText, step: "not_ecommerce" };
   }
-  return { ...state, businessModelSlug, step: "brand_positioning" };
+  return { ...state, businessModelSlug, ideaText, step: "brand_positioning" };
 }
 
-export function applyBrandPositioningAnswer(state: DiscoveryState, brandPositioning: string): DiscoveryState {
-  return { ...state, brandPositioning, step: "product_source" };
+// Goes straight to fulfillment_connect, skipping product_source — Sean's
+// explicit scope for this build pass is the single "help me find something
+// to sell" path, "one polished path" rather than multiple partial ones
+// (ONBOARDING_V2_DESIGN.md's "I have products" branch stays deferred).
+// applyProductSourceAnswer below still exists, ready for when that branch
+// is actually built — it's just not reached from the real UI yet.
+export function applyBrandPositioningAnswer(
+  state: DiscoveryState,
+  brandPositioning: string,
+  brandPositioningText: string
+): DiscoveryState {
+  return { ...state, brandPositioning, brandPositioningText, productSource: "discover", step: "fulfillment_connect" };
 }
 
 export function applyProductSourceAnswer(
@@ -67,8 +80,12 @@ export function applyFulfillmentConnected(state: DiscoveryState): DiscoveryState
   return { ...state, fulfillmentConnected: true, step: "product_discovery" };
 }
 
-export function applyCandidateSelected(state: DiscoveryState, candidate: FulfillmentCandidate): DiscoveryState {
-  return { ...state, selectedCandidate: candidate, step: "pricing" };
+export function applyCandidateSelected(
+  state: DiscoveryState,
+  candidate: FulfillmentCandidate,
+  reasoning: string
+): DiscoveryState {
+  return { ...state, selectedCandidate: candidate, candidateReasoning: reasoning, step: "pricing" };
 }
 
 export function applyPricingConfirmed(state: DiscoveryState, pricing: PriceRecommendation): DiscoveryState {

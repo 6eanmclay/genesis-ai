@@ -94,7 +94,7 @@ export async function submitBusinessModelAnswer(freeText: string): Promise<{ sta
   );
   const slug = outcome.ok ? (filterKnownRevenueStreams([outcome.message.parsed_output?.slug ?? "other"])[0] ?? "other") : "other";
 
-  const nextState = applyBusinessModelAnswer(readState(draft.onboardingState), slug);
+  const nextState = applyBusinessModelAnswer(readState(draft.onboardingState), slug, freeText);
   await persistState(draft.id, nextState);
   return { state: nextState };
 }
@@ -119,7 +119,7 @@ export async function submitBrandPositioningAnswer(freeText: string): Promise<{ 
   const rawSlug = outcome.ok ? outcome.message.parsed_output?.slug : undefined;
   const slug = rawSlug && isKnownBrandPositioning(rawSlug) ? rawSlug : "other";
 
-  const nextState = applyBrandPositioningAnswer(readState(draft.onboardingState), slug);
+  const nextState = applyBrandPositioningAnswer(readState(draft.onboardingState), slug, freeText);
   await persistState(draft.id, nextState, { brandPositioning: slug });
   return { state: nextState };
 }
@@ -151,38 +151,107 @@ export async function startFulfillmentConnect(): Promise<{ authorizeUrl: string;
   return { authorizeUrl, rationale };
 }
 
-export async function browseFulfillmentCandidates(keywords?: string): Promise<{ candidates: FulfillmentCandidate[]; rationale: string }> {
+const HeroSelectionSchema = z.object({
+  chosenIndex: z.number().int(),
+  reasoning: z.string(),
+});
+
+// The "considering" beat's real work, and the reveal beat's data source —
+// see GENESIS_EXPERIENCE.md's Business act mockup. Genesis picks ONE
+// product from the real catalog and explains why in its own voice,
+// grounded in the owner's actual words (ideaText/brandPositioningText),
+// never a generic per-category template — the single most important
+// moment in this act per Sean's own framing. No candidate list is
+// returned to the caller; "one hero product, no catalog" is enforced
+// here, not just in the UI.
+export async function discoverHeroProduct(): Promise<{ state: DiscoveryState }> {
   const userId = await requireUserId();
   const draft = await getOrCreateDraft(userId);
   const state = readState(draft.onboardingState);
-  if (!state.brandPositioning) throw new Error("Brand positioning must be answered first.");
+  if (!state.brandPositioning || !state.ideaText || !state.brandPositioningText) {
+    throw new Error("Idea and brand positioning must be answered first.");
+  }
 
-  const { connector, rationale } = selectFulfillmentStrategy(state.brandPositioning, getFulfillmentConnectors());
-  const candidates = await connector.browseCandidates({
+  const { connector } = selectFulfillmentStrategy(state.brandPositioning, getFulfillmentConnectors());
+  const candidates: FulfillmentCandidate[] = await connector.browseCandidates({
     storeId: null,
     storeDraftId: draft.id,
     brandPositioning: state.brandPositioning,
-    keywords,
+    // Real gap found via live testing: this was omitted, so the catalog
+    // wasn't filtered toward the idea at all before Claude ever saw it —
+    // whatever the first 8 catalog items happened to be, regardless of
+    // fit. The idea text is what the owner actually said, so it's the
+    // right signal to narrow the candidate list with.
+    keywords: state.ideaText,
   });
-  return { candidates, rationale };
+  if (candidates.length === 0) {
+    throw new Error("No fulfillable products were found for this catalog right now.");
+  }
+
+  const catalogSummary = candidates.map((c, i) => `${i}. ${c.name} — ${c.description.slice(0, 220)}`).join("\n");
+
+  const outcome = await callGenesisModel(
+    {
+      model: "claude-opus-4-8",
+      // Real bug found via live testing: 500 wasn't enough headroom for
+      // adaptive thinking plus the structured JSON output at "high" effort
+      // — the model spent its whole budget thinking and hit max_tokens
+      // before writing any output (parsed_output came back null, silently
+      // triggering the fallback path below). This is the one call in this
+      // flow where the reasoning quality is the entire point, so it gets
+      // real headroom rather than being trimmed to the bare minimum.
+      max_tokens: 2000,
+      thinking: { type: "adaptive" },
+      system:
+        `You are Genesis, helping someone turn a business idea into a real, sellable product.\n` +
+        `They said: "${state.ideaText}"\n` +
+        `The kind of brand they want: "${state.brandPositioningText}"\n\n` +
+        `Choose exactly one product from the numbered catalog below that genuinely fits both what they said and the brand they described — not just a safe, generic pick. ` +
+        `Then write one or two warm, specific sentences explaining why, speaking directly to the owner (e.g. "you said..."). ` +
+        `Never mention a supplier, platform, or fulfillment provider by name. Never use generic marketing language like "great choice" or "perfect for your business" — be specific about what makes this one right.`,
+      messages: [{ role: "user", content: catalogSummary }],
+      output_config: { effort: "high", format: zodOutputFormat(HeroSelectionSchema) },
+    },
+    { userId }
+  );
+
+  if (!outcome.ok) {
+    console.error("[discoverHeroProduct] callGenesisModel failed:", JSON.stringify(outcome));
+  } else if (!outcome.message.parsed_output) {
+    console.error("[discoverHeroProduct] no parsed_output, stop_reason:", outcome.message.stop_reason);
+  }
+
+  const chosenIndex = outcome.ok ? outcome.message.parsed_output?.chosenIndex : undefined;
+  const candidate =
+    chosenIndex !== undefined && chosenIndex >= 0 && chosenIndex < candidates.length ? candidates[chosenIndex] : candidates[0];
+  const reasoning =
+    (outcome.ok ? outcome.message.parsed_output?.reasoning : undefined) || "This looked like a strong fit for what you're building.";
+
+  const nextState = applyCandidateSelected(state, candidate, reasoning);
+  await persistState(draft.id, nextState);
+  return { state: nextState };
 }
 
-export async function selectFulfillmentCandidate(
-  candidate: FulfillmentCandidate
-): Promise<{ state: DiscoveryState; recommendation: ReturnType<typeof recommendPrice> }> {
+// A read-only preview of the real cost/price/profit for the already-
+// selected candidate — called when the pricing beat mounts, before the
+// owner has confirmed anything. Does not persist or advance state; see
+// confirmPricing below for the real, state-advancing write.
+export async function getPricingPreview(): Promise<{
+  costInCents: number;
+  shippingInCents: number;
+  recommendation: ReturnType<typeof recommendPrice>;
+}> {
   const userId = await requireUserId();
   const draft = await getOrCreateDraft(userId);
   const state = readState(draft.onboardingState);
-  if (!state.brandPositioning) throw new Error("Brand positioning must be answered first.");
-
-  const connector = getFulfillmentConnectors().find((c) => c.provider === candidate.provider);
-  if (!connector) throw new Error(`No connector registered for ${candidate.provider}.`);
-  const cost = await connector.getCost({ storeId: null, storeDraftId: draft.id, candidate });
+  if (!state.selectedCandidate || !state.brandPositioning) {
+    throw new Error("A product must be selected before pricing it.");
+  }
+  const connector = getFulfillmentConnectors().find((c) => c.provider === state.selectedCandidate!.provider);
+  if (!connector) throw new Error(`No connector registered for ${state.selectedCandidate.provider}.`);
+  const cost = await connector.getCost({ storeId: null, storeDraftId: draft.id, candidate: state.selectedCandidate });
   const recommendation = recommendPrice(cost.costInCents, cost.shippingInCents, state.brandPositioning);
-
-  const nextState = applyCandidateSelected(state, candidate);
-  await persistState(draft.id, nextState);
-  return { state: nextState, recommendation };
+  return { costInCents: cost.costInCents, shippingInCents: cost.shippingInCents, recommendation };
 }
 
 // `retailPriceInCents` present => the owner's own explicit override (fixed
