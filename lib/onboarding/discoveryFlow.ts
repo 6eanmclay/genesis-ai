@@ -69,14 +69,18 @@ export function applyBrandPositioningAnswer(
   return { ...state, brandPositioning, brandPositioningText, step: "creative_approach" };
 }
 
-// custom -> generate three creative directions; resell -> today's existing
+// custom -> generate three creative directions; upload -> the owner
+// supplies their own real artwork; resell -> today's existing
 // catalog-browse-and-pick flow, completely unchanged from here on.
 export function applyCreativeApproachAnswer(
   state: DiscoveryState,
-  creativeApproach: "custom" | "resell"
+  creativeApproach: "custom" | "upload" | "resell"
 ): DiscoveryState {
   if (creativeApproach === "resell") {
     return { ...state, creativeApproach, productSource: "discover", step: "fulfillment_connect" };
+  }
+  if (creativeApproach === "upload") {
+    return { ...state, creativeApproach, step: "artwork_upload" };
   }
   return { ...state, creativeApproach, step: "creative_direction_generating" };
 }
@@ -95,6 +99,16 @@ export function applyCreativeDirectionSelected(
   return { ...state, creativeDirection: chosen, creativeDirectionOptions: null, step: "fulfillment_connect" };
 }
 
+// The upload path skips "review 3 options" entirely — one real upload
+// produces one real direction, so it lands on the exact same destination
+// applyCreativeDirectionSelected already uses.
+export function applyArtworkUploaded(
+  state: DiscoveryState,
+  direction: CreativeDirectionOption
+): DiscoveryState {
+  return { ...state, creativeDirection: direction, step: "fulfillment_connect" };
+}
+
 export function applyProductSourceAnswer(
   state: DiscoveryState,
   productSource: "existing" | "discover"
@@ -110,8 +124,13 @@ export function applyProductSourceAnswer(
 export function applyFulfillmentConnected(state: DiscoveryState): DiscoveryState {
   // Backward-compatible by construction: any in-flight draft with
   // creativeApproach still null/undefined (created before this fork
-  // existed) falls through to today's exact existing behavior.
-  const step = state.creativeApproach === "custom" ? "creative_product_building" : "product_discovery";
+  // existed) falls through to today's exact existing behavior
+  // (product_discovery) — same as "resell". Both "custom" and "upload"
+  // need the same next step: a real blank still has to be picked and a
+  // real theme structure still has to be generated, regardless of whether
+  // the artwork itself was Genesis-generated or the owner's own upload.
+  const needsCreativeProduct = state.creativeApproach === "custom" || state.creativeApproach === "upload";
+  const step = needsCreativeProduct ? "creative_product_building" : "product_discovery";
   return { ...state, fulfillmentConnected: true, step };
 }
 
@@ -124,9 +143,12 @@ export function applyCandidateSelected(
 }
 
 export function applyPricingConfirmed(state: DiscoveryState, pricing: PriceRecommendation): DiscoveryState {
-  // Custom path lands on storefront_reveal instead of handing off to
-  // Launch directly — see confirmPricing in app/onboarding/actions.ts,
-  // which materializes the real Store right after this transition.
-  const step = state.creativeApproach === "custom" ? "storefront_reveal" : "ready_to_publish";
+  // Custom and upload both land on storefront_reveal instead of handing
+  // off to Launch directly — see confirmPricing in app/onboarding/
+  // actions.ts, which materializes the real Store right after this
+  // transition for either path. Resell (and any pre-Creative-Direction
+  // in-flight draft) keeps today's exact existing behavior.
+  const hasCreativeDirection = state.creativeApproach === "custom" || state.creativeApproach === "upload";
+  const step = hasCreativeDirection ? "storefront_reveal" : "ready_to_publish";
   return { ...state, pricing, step };
 }

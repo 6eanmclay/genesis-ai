@@ -11,6 +11,7 @@ import {
   submitCreativeApproachAnswer,
   generateCreativeDirections,
   selectCreativeDirection,
+  submitUploadedArtwork,
   startFulfillmentConnect,
   buildCreativeProduct,
   discoverHeroProduct,
@@ -51,6 +52,7 @@ type Beat =
   | "approach"
   | "generating_directions"
   | "direction_review"
+  | "artwork_upload"
   | "connecting"
   | "building_product"
   | "considering"
@@ -69,6 +71,8 @@ function mapStepToBeat(step: DiscoveryStep): Beat {
       return "generating_directions";
     case "creative_direction_review":
       return "direction_review";
+    case "artwork_upload":
+      return "artwork_upload";
     case "fulfillment_connect":
       return "connecting";
     case "creative_product_building":
@@ -248,7 +252,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
     });
   }
 
-  function handleApproachChoice(approach: "custom" | "resell") {
+  function handleApproachChoice(approach: "custom" | "upload" | "resell") {
     setError(null);
     startTransition(async () => {
       try {
@@ -278,6 +282,26 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
     setError(null);
     setDirectionOptions(null);
     setBeat("generating_directions");
+  }
+
+  function handleArtworkSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setGenesisWorking(true);
+    const formData = new FormData();
+    formData.set("artwork", file);
+    startTransition(async () => {
+      try {
+        const { state } = await submitUploadedArtwork(formData);
+        setChosenDirection(state.creativeDirection);
+        setGenesisWorking(false);
+        setBeat(mapStepToBeat(state.step));
+      } catch (err) {
+        setGenesisWorking(false);
+        setError(err instanceof Error ? err.message : "Something went wrong — try again.");
+      }
+    });
   }
 
   function handleConnect() {
@@ -378,27 +402,64 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
         <>
           <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
-            Are you designing your own products, or picking from what&rsquo;s already out there?
+            How would you like to create your first product?
           </p>
-          <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-            Either way, I&rsquo;ll help you make it real.
-          </p>
-          <div className="flex w-full max-w-md gap-3">
+          <div className="flex w-full max-w-md flex-col gap-3">
             <button
               onClick={() => handleApproachChoice("custom")}
-              className="flex flex-1 flex-col items-center gap-2 rounded-xl border px-4 py-4 text-sm font-semibold transition-transform hover:-translate-y-0.5"
+              className="flex flex-col items-start gap-1 rounded-xl border px-5 py-4 text-left transition-transform hover:-translate-y-0.5"
               style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
             >
-              I&rsquo;m designing something of my own
+              <span className="text-sm font-semibold">Let J4 create it for me</span>
+              <span className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                I describe the idea and J4 generates three creative directions for me to choose from.
+              </span>
+            </button>
+            <button
+              onClick={() => handleApproachChoice("upload")}
+              className="flex flex-col items-start gap-1 rounded-xl border px-5 py-4 text-left transition-transform hover:-translate-y-0.5"
+              style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
+            >
+              <span className="text-sm font-semibold">I already have artwork</span>
+              <span className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                Upload my logo, illustration, or design and Genesis builds the product around it.
+              </span>
             </button>
             <button
               onClick={() => handleApproachChoice("resell")}
-              className="flex flex-1 flex-col items-center gap-2 rounded-xl border px-4 py-4 text-sm font-semibold transition-transform hover:-translate-y-0.5"
+              className="flex flex-col items-start gap-1 rounded-xl border px-5 py-4 text-left transition-transform hover:-translate-y-0.5"
               style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
             >
-              I&rsquo;ll pick from what&rsquo;s already out there
+              <span className="text-sm font-semibold">I&rsquo;m reselling an existing product</span>
+              <span className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                Browse the catalog — I&rsquo;ll help you pick something that fits.
+              </span>
             </button>
           </div>
+        </>
+      )}
+
+      {beat === "artwork_upload" && (
+        <>
+          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            Show me what you&rsquo;ve got — I&rsquo;ll build the product around it.
+          </p>
+          <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+            PNG, JPEG, or WebP — under 8MB.
+          </p>
+          <label
+            className="cursor-pointer rounded-full px-7 py-3 text-sm font-semibold transition-transform hover:scale-[1.02] active:scale-[0.98]"
+            style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
+          >
+            Choose a file
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={handleArtworkSelected}
+              className="hidden"
+            />
+          </label>
         </>
       )}
 

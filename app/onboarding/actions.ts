@@ -12,6 +12,7 @@ import { buildPrintfulAuthorizeUrl } from "@/lib/integrations/printful";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { recommendPrice, applyOwnerPrice } from "@/lib/onboarding/pricing";
 import { GeneratedImageProvider } from "@/lib/imageProviders/generatedImageProvider";
+import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
 import { confirmStoreDraftCore } from "@/app/dashboard/ai-actions";
 import {
   initialDiscoveryState,
@@ -20,6 +21,7 @@ import {
   applyCreativeApproachAnswer,
   applyCreativeDirectionsGenerated,
   applyCreativeDirectionSelected,
+  applyArtworkUploaded,
   applyProductSourceAnswer,
   applyCandidateSelected,
   applyPricingConfirmed,
@@ -139,7 +141,7 @@ export async function submitBrandPositioningAnswer(freeText: string): Promise<{ 
 // Custom-design vs. reselling/curating a blank as-is — a lightweight,
 // no-AI-call binary choice, same shape as submitProductSourceAnswer below.
 export async function submitCreativeApproachAnswer(
-  approach: "custom" | "resell"
+  approach: "custom" | "upload" | "resell"
 ): Promise<{ state: DiscoveryState }> {
   const userId = await requireUserId();
   const draft = await getOrCreateDraft(userId);
@@ -296,6 +298,88 @@ export async function selectCreativeDirection(index: number): Promise<{ state: D
 
   const nextState = applyCreativeDirectionSelected(state, chosen);
   await persistState(draft.id, nextState, { creativeDirection: chosen });
+  return { state: nextState };
+}
+
+// The "I already have artwork" path — deliberately a smaller schema than
+// CreativeDirectionTextSchema, which carries productImagePrompt/
+// logoImagePrompt fields this path never needs (the owner supplies the
+// artwork directly, nothing to generate an image from). No lens either —
+// there's only ever one real direction here, not three to diverge across.
+const UploadedArtworkIdentitySchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  brandVoice: z.string(),
+  photographyStyle: z.string(),
+  colors: z.object({
+    primary: z.string(),
+    secondary: z.string(),
+    accent: z.string(),
+    background: z.string(),
+    surface: z.string(),
+    text: z.string(),
+    textSecondary: z.string(),
+  }),
+  typography: z.object({ headingFont: z.string(), bodyFont: z.string() }),
+});
+
+export async function submitUploadedArtwork(formData: FormData): Promise<{ state: DiscoveryState }> {
+  const userId = await requireUserId();
+  const draft = await getOrCreateDraft(userId);
+  const state = readState(draft.onboardingState);
+  if (!state.ideaText || !state.brandPositioningText) {
+    throw new Error("Idea and brand positioning must be answered first.");
+  }
+
+  const file = formData.get("artwork");
+  if (!(file instanceof File) || file.size === 0) {
+    throw new Error("Please choose an image to upload.");
+  }
+  // Real, already-proven upload path — same validation (PNG/JPEG/WebP,
+  // 8MB max) and same Vercel Blob upload app/dashboard/actions.ts's
+  // uploadProductImage already uses for a live store's own product photos.
+  const sourced = await uploadProductImageFile(file);
+
+  const outcome = await callGenesisModel(
+    {
+      model: "claude-opus-4-8",
+      max_tokens: 1500,
+      thinking: { type: "adaptive" },
+      system:
+        `You are Genesis, naming and describing a business whose owner already has their own product artwork — ` +
+        `you are not designing anything visual, just the identity: a name, a short description, a color palette ` +
+        `and typography pairing, and brand voice/photography style guidance for Genesis's own future use. ` +
+        `Ground this in what they actually said, not a generic template.`,
+      messages: [
+        {
+          role: "user",
+          content: `They said: "${state.ideaText}"\nThe brand they want: "${state.brandPositioningText}"`,
+        },
+      ],
+      output_config: { effort: "medium", format: zodOutputFormat(UploadedArtworkIdentitySchema) },
+    },
+    { userId }
+  );
+  if (!outcome.ok || !outcome.message.parsed_output) {
+    throw new Error("Genesis couldn't put this together right now — try again in a moment.");
+  }
+  const identity = outcome.message.parsed_output;
+
+  // Same uploaded image for both — a deliberate v1 simplification (one
+  // upload, not two) rather than asking for a separate logo file.
+  const direction: CreativeDirectionOption = {
+    name: identity.name,
+    description: identity.description,
+    brandVoice: identity.brandVoice,
+    photographyStyle: identity.photographyStyle,
+    colors: identity.colors as ThemeColors,
+    typography: identity.typography,
+    logoUrl: sourced.url,
+    productImageUrl: sourced.url,
+  };
+
+  const nextState = applyArtworkUploaded(state, direction);
+  await persistState(draft.id, nextState, { creativeDirection: direction });
   return { state: nextState };
 }
 
@@ -576,7 +660,7 @@ export async function confirmPricing(
   // no changes needed there. Order matters: persistState above must land
   // before this call, since confirmStoreDraftCore deletes the StoreDraft
   // row as its last internal step.
-  if (nextState.creativeApproach === "custom") {
+  if (nextState.creativeApproach === "custom" || nextState.creativeApproach === "upload") {
     const session = await auth();
     const { store } = await confirmStoreDraftCore(userId, { sessionInstanceId: session?.user?.sessionInstanceId });
     const baseUrl = await getBaseUrl();

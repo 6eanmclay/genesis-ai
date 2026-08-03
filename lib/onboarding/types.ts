@@ -15,6 +15,7 @@ export type DiscoveryStep =
   | "creative_approach"
   | "creative_direction_generating"
   | "creative_direction_review"
+  | "artwork_upload"
   | "product_source"
   | "fulfillment_connect"
   | "creative_product_building"
@@ -56,10 +57,12 @@ export interface DiscoveryState {
   ideaText: string | null;
   brandPositioning: string | null;
   brandPositioningText: string | null;
-  // Custom-design vs. reselling/curating a blank as-is — NOT the same fork
-  // as productSource below (that one is "I already have products entirely
-  // outside Printful," a different, still-deferred concept).
-  creativeApproach: "custom" | "resell" | null;
+  // Which of the three real creation workflows — NOT the same fork as
+  // productSource below (that one is "I already have products entirely
+  // outside Printful," a different, still-deferred concept). "custom" =
+  // J4 generates; "upload" = the owner supplies their own real artwork;
+  // "resell" = browse the existing catalog as-is.
+  creativeApproach: "custom" | "upload" | "resell" | null;
   // Ephemeral — up to 3 freshly generated options, cleared the moment one
   // is chosen. Never persisted once creativeDirection is set.
   creativeDirectionOptions: CreativeDirectionOption[] | null;
