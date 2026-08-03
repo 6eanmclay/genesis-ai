@@ -11,13 +11,13 @@ import { canStoreAcceptPayments, CHECKOUT_UNAVAILABLE_MESSAGE } from "./shared";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import type { Product, Store } from "@prisma/client";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-
 // Standard Connect accounts: the OAuth access_token functions as that
 // account's own secret key, so a per-store checkout is just "use a
-// different Stripe client." Stores that haven't connected their own
-// account yet fall back to the platform-wide key (today's behavior) so
-// nothing already live breaks on rollout — see PH-02 in the roadmap.
+// different Stripe client." No platform-wide fallback exists — payment
+// routing is explicit and deterministic by design. A store reaching
+// checkout without its own connected Stripe account is a real
+// misconfiguration (canStoreAcceptPayments and publishStoreExecutable both
+// independently guard against this before a customer ever gets here).
 async function getStripeClientForStore(storeId: string): Promise<Stripe> {
   const integration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId, provider: "STRIPE" } },
@@ -27,7 +27,10 @@ async function getStripeClientForStore(storeId: string): Promise<Stripe> {
       ? decryptCredentials<{ accessToken?: string }>(integration.credentials)
       : null;
 
-  return credentials?.accessToken ? new Stripe(credentials.accessToken) : stripe;
+  if (!credentials?.accessToken) {
+    throw new Error(`Store ${storeId} has no connected Stripe account — cannot create a checkout session.`);
+  }
+  return new Stripe(credentials.accessToken);
 }
 
 async function createStripeCheckoutSession(
