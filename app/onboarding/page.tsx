@@ -8,12 +8,6 @@ import { IdeaScreen } from "./IdeaScreen";
 // a simple env var, not a database flag, since nothing here is per-store —
 // it's whether this new guided flow exists yet at all. Flip it off and
 // this route simply isn't reachable.
-//
-// Renders only the reference screen (GENESIS_EXPERIENCE.md's "The
-// reference screen") — the rest of the guided flow's UI (brand
-// positioning, product discovery, pricing, Partnership) isn't designed
-// yet, so this page deliberately doesn't attempt to route further along
-// the state machine than this one confirmed screen.
 export default async function OnboardingPage() {
   if (process.env.ONBOARDING_V2_ENABLED !== "true") {
     redirect("/dashboard");
@@ -24,10 +18,17 @@ export default async function OnboardingPage() {
     redirect("/login");
   }
 
-  // Real side effect worth keeping even though the result isn't branched
-  // on yet: ensures a StoreDraft exists for this user before the form
-  // renders, so the first real submit has something to persist against.
-  await getOnboardingState();
+  // Launch-readiness fix — a real bug found via a live audit: this page
+  // used to always render the Idea act, even for a returning user who had
+  // already answered it and progressed into the Business act. Business
+  // act's own page (app/onboarding/business/page.tsx) already resumes at
+  // the right beat from real persisted state — this page just needs to
+  // hand off to it once the Idea act is genuinely done, the same way
+  // app/dashboard/page.tsx now hands off here in the first place.
+  const { state } = await getOnboardingState();
+  if (state.step !== "business_model") {
+    redirect("/onboarding/business");
+  }
 
   return <IdeaScreen />;
 }

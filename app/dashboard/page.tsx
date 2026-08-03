@@ -487,13 +487,20 @@ export default async function DashboardPage() {
       );
     }
 
-    // Launch-readiness fix — a genuinely brand-new user (no store, no draft
-    // of any kind, not even an interrupted classic attempt) belongs in the
-    // real Genesis Experience (the Idea act), not the classic form below.
-    // Scoped to draft === null specifically: anyone already mid-classic-flow
-    // (an interrupted "draft"-status attempt) keeps resuming exactly where
-    // they were — never stranded or surprise-redirected by this flag.
-    if (draft === null && process.env.ONBOARDING_V2_ENABLED === "true") {
+    // Launch-readiness fix — belongs in the real Genesis Experience (the
+    // Idea act, which itself now resumes at the right beat — see
+    // app/onboarding/page.tsx), not the classic form below, in either of
+    // two real cases: a genuinely brand-new user (no draft at all), or a
+    // real, confirmed live bug found via a live audit — a user who already
+    // made progress through the guided flow (a real onboardingState exists)
+    // but left before finishing landed back on this classic "your last
+    // attempt didn't finish" form instead, with no trace of their real
+    // answers, and clicking through it would have silently dropped them
+    // into the old AI-generation flow entirely. Anyone mid-*classic*-flow
+    // (an interrupted "draft"-status attempt with no onboardingState) still
+    // keeps resuming exactly where they were, untouched.
+    const isOnboardingV2Draft = draft !== null && draft.onboardingState !== null;
+    if ((draft === null || isOnboardingV2Draft) && process.env.ONBOARDING_V2_ENABLED === "true") {
       redirect("/onboarding");
     }
 
