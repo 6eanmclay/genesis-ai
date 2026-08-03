@@ -499,7 +499,18 @@ export default async function DashboardPage() {
     // into the old AI-generation flow entirely. Anyone mid-*classic*-flow
     // (an interrupted "draft"-status attempt with no onboardingState) still
     // keeps resuming exactly where they were, untouched.
-    const isOnboardingV2Draft = draft !== null && draft.onboardingState !== null;
+    // Real race found via live testing: getOrCreateDraft (app/onboarding/
+    // actions.ts) creates this row the instant /onboarding first renders,
+    // status "onboarding_discovery", but onboardingState stays null until
+    // the Idea act's first answer actually persists. A user bounced back to
+    // /dashboard in that narrow window (e.g. signup's router.push+refresh
+    // racing the redirect) previously read as onboardingState===null here,
+    // got misclassified as a legacy classic-flow draft, and had no way back
+    // into v2 — nothing on the classic form ever writes onboardingState.
+    // status is set atomically at creation and is unique to this flow
+    // (classic drafts default to "draft" per the schema), so it's the
+    // reliable discriminator instead.
+    const isOnboardingV2Draft = draft !== null && draft.status === "onboarding_discovery";
     if ((draft === null || isOnboardingV2Draft) && process.env.ONBOARDING_V2_ENABLED === "true") {
       redirect("/onboarding");
     }
