@@ -994,6 +994,35 @@ const DEFAULT_THEME_COMPOSITION: ThemeWithComposition["composition"] = {
   ctaEmphasis: "button",
 };
 
+// Launch-readiness fix — a real, previously-undiscovered crash found live:
+// confirmStoreDraftCore assumed draft.theme always exists, which is true
+// for the classic AI-generation flow (generateStoreDraftCore always sets
+// one) but false for Onboarding v2's guided flow — its own getOrCreateDraft
+// (app/onboarding/actions.ts) deliberately never runs full brand
+// generation, so a v2 draft's theme stays null all the way to confirm.
+// Every real Onboarding v2 launch attempt hit "Cannot read properties of
+// null (reading 'composition')" here until this was found and fixed.
+// Same colors as lib/theme.ts's own DEFAULT_THEME (kept as a local literal,
+// not a cross-import, since that file's Theme type predates and doesn't
+// structurally match this file's own Zod-inferred one) — the storefront
+// renders identically to a brand-new store that simply hasn't been
+// customized yet, which is an honest description of a v2-confirmed store.
+const FALLBACK_THEME: ThemeWithComposition = {
+  colors: {
+    primary: "#18181b",
+    secondary: "#3f3f46",
+    accent: "#18181b",
+    background: "#fafafa",
+    surface: "#ffffff",
+    text: "#18181b",
+    textSecondary: "#71717a",
+  },
+  typography: { headingFont: "", bodyFont: "" },
+  layout: "grid",
+  presentation: DEFAULT_THEME_PRESENTATION,
+  composition: DEFAULT_THEME_COMPOSITION,
+};
+
 // Live Product.richContent is untyped JSON ({keyFeatures, benefits,
 // specifications, imagePrompt}, written at confirmStoreDraft time) — unlike
 // the draft-stage ProductContent below, imagePrompt is nested here rather
@@ -3311,7 +3340,7 @@ export async function confirmStoreDraftCore(
     throw new Error("confirmStoreDraftCore: no StoreDraft found for this user");
   }
 
-  const theme = draft.theme as ThemeWithComposition;
+  const theme = (draft.theme as ThemeWithComposition | null) ?? FALLBACK_THEME;
   const products = (draft.productsDraft as ProductContent[] | null) ?? [];
 
   // Onboarding v2 — a completed guided discovery flow (lib/onboarding/
