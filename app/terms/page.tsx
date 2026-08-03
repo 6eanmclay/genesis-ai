@@ -67,11 +67,10 @@ export default function TermsPage() {
           <section>
             <h2 className="text-base font-semibold text-black dark:text-zinc-50">4. Payments and Fulfillment</h2>
             <p className="mt-2">
-              Genesis does not hold or process your customers&rsquo; funds directly. When you connect your own
-              Stripe or PayPal account, payments go straight to that account, subject to that provider&rsquo;s own
-              terms. Until you connect your own account, checkout may run through a shared account Genesis
-              provides so you can test the experience — real funds from real customers should only ever be
-              collected through your own connected account. Fulfillment (production and shipping of physical
+              Genesis does not hold or process your customers&rsquo; funds directly. Payments go straight to your
+              own connected Stripe or PayPal account, subject to that provider&rsquo;s own terms. You must connect
+              Stripe or PayPal before your store can publish or accept payments — Genesis never routes real funds
+              through any account other than the one you connect. Fulfillment (production and shipping of physical
               goods) is handled by third-party providers you connect; Genesis facilitates the connection but is not
               the merchant of record for those goods.
             </p>

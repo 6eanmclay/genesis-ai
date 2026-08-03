@@ -190,7 +190,7 @@ export default async function PaymentsPage({
         <>
           <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
             Connect your own Stripe account to receive payments directly.
-            Until then, checkout uses Genesis&apos;s shared test account.
+            You&apos;ll need this or PayPal connected before you can publish your store.
           </p>
           {latestStripeLog?.status === "FAILED" && (
             <p className="mt-1 text-xs text-red-600 dark:text-red-400">

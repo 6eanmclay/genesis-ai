@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { getPendingApprovals, type PendingApproval } from "@/lib/dashboard/pendingApprovals";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
@@ -43,9 +44,20 @@ function formatOrder(order: SectionKey[], customSectionTitle: string | null | un
 export default async function WebsitePage({
   searchParams,
 }: {
-  searchParams: Promise<{ focus?: string }>;
+  searchParams: Promise<{ focus?: string; publish_error?: string }>;
 }) {
   const { store } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
+  const { publish_error: publishError } = await searchParams;
+
+  // A one-time flash from toggleStorePublished's own redirect — same
+  // real-log-message pattern as the Payments page's Stripe/PayPal flash,
+  // rather than round-tripping the message through the URL itself.
+  const latestPublishLog = publishError
+    ? await prisma.executionLog.findFirst({
+        where: { storeId: store.id, action: EXECUTION_ACTIONS.STORE_PUBLISH, status: "FAILED" },
+        orderBy: { createdAt: "desc" },
+      })
+    : null;
 
   const [visions, pendingApprovals, firstProduct, rawObservations] = await Promise.all([
     prisma.storeGeneration.findMany({
@@ -325,6 +337,13 @@ export default async function WebsitePage({
           className="h-[640px] w-full bg-white"
         />
       </div>
+
+      {publishError && latestPublishLog && (
+        <div className="mt-3 max-w-md rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/30">
+          <p className="font-medium text-red-800 dark:text-red-300">Couldn&apos;t publish your store.</p>
+          <p className="mt-1 text-red-700 dark:text-red-400">{latestPublishLog.message}</p>
+        </div>
+      )}
 
       {/* Publish/Unpublish — secondary to actually seeing the site above,
           so just the action, not a repeated status readout. */}

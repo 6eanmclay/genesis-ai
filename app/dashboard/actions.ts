@@ -145,9 +145,9 @@ export async function editStore(
 }
 
 export async function toggleStorePublished() {
-  await execute(publishStoreExecutable, undefined);
+  const result = await execute(publishStoreExecutable, undefined);
 
-  redirect("/dashboard/website");
+  redirect(result.status === "FAILED" ? "/dashboard/website?publish_error=1" : "/dashboard/website");
 }
 
 export async function editProduct(
