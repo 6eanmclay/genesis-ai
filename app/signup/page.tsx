@@ -111,6 +111,18 @@ export default function SignUpPage() {
             Log in
           </Link>
         </p>
+
+        <p className="mt-4 text-center text-xs text-zinc-500">
+          By signing up, you agree to Genesis&rsquo;s{" "}
+          <Link href="/terms" className="underline">
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="underline">
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </div>
     </div>
   );

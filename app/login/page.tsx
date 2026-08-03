@@ -102,6 +102,16 @@ export default function LoginPage() {
             Sign up
           </Link>
         </p>
+
+        <p className="mt-4 text-center text-xs text-zinc-500">
+          <Link href="/terms" className="underline">
+            Terms of Service
+          </Link>{" "}
+          &middot;{" "}
+          <Link href="/privacy" className="underline">
+            Privacy Policy
+          </Link>
+        </p>
       </div>
     </div>
   );
