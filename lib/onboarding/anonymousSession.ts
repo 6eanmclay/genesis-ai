@@ -71,14 +71,30 @@ async function readAnonymousSessionId(): Promise<string | null> {
   }
 }
 
-// The one entry point real callers use — reads an existing valid identity
-// if present, mints a fresh one (and sets its cookie) otherwise. Never
-// returns null, matching getOrCreateDraft's own "always get something back"
-// shape for the real-user path.
+// The one entry point real Server Actions/Route Handlers use — reads an
+// existing valid identity if present, mints a fresh one (and sets its
+// cookie) otherwise. Never returns null, matching getOrCreateDraft's own
+// "always get something back" shape for the real-user path.
+//
+// NOT safe to call from a Server Component's render path — Next.js forbids
+// setting cookies there (confirmed the hard way: "Cookies can only be
+// modified in a Server Action or Route Handler" at real runtime). Server
+// Components that only need to read an already-existing session must use
+// peekAnonymousSessionId below instead.
 export async function getOrCreateAnonymousSessionId(): Promise<string> {
   const existing = await readAnonymousSessionId();
   if (existing) return existing;
   return mintAnonymousSessionId();
+}
+
+// The read-only counterpart, safe to call during a Server Component's
+// render (getExperienceState in app/onboarding/actions.ts, called from
+// app/page.tsx). Returns null for a genuinely new visitor rather than
+// minting — a visitor who has typed nothing yet gets no cookie and no
+// StoreDraft row at all; both are created for real only once they submit
+// something, via submitExperienceMessage, a real Server Action.
+export async function peekAnonymousSessionId(): Promise<string | null> {
+  return readAnonymousSessionId();
 }
 
 // Called once a draft has been claimed by a real account (see the claim

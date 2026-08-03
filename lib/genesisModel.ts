@@ -32,7 +32,17 @@ const DAILY_TOKEN_CEILING = 2_000_000;
 // schema.prisma). Each identifier gets its own independent daily ceiling
 // bucket — a real, accepted simplification for a Track 0 item, not a
 // unified per-owner total across the draft-to-live boundary.
-export type GenesisModelScope = { storeId: string; userId?: never } | { userId: string; storeId?: never };
+//
+// Experience-First Onboarding — a third scope, anonymousSessionToken, for
+// AI calls made before any real account exists (lib/onboarding/
+// anonymousSession.ts). Same "exactly one of the three is ever set"
+// convention. The anonymous case still runs through this same daily
+// ceiling today; a real, deliberately tighter anonymous-specific limit is
+// EXPERIENCE_FIRST_ONBOARDING.md's own scoped fast-follow, not yet built.
+export type GenesisModelScope =
+  | { storeId: string; userId?: never; anonymousSessionToken?: never }
+  | { userId: string; storeId?: never; anonymousSessionToken?: never }
+  | { anonymousSessionToken: string; storeId?: never; userId?: never };
 
 // Real usage for the current UTC day, summed from AiUsageEvent — a query
 // over an append-only log, not a separately-maintained counter, so it
@@ -190,7 +200,12 @@ export async function callGenesisModel<Params extends Parameters<typeof anthropi
 > {
   const startedAt = Date.now();
   const { background = false, confirmedOverride = false, ...scope } = context;
-  const scopeLabel = "storeId" in scope ? `storeId=${scope.storeId}` : `userId=${scope.userId}`;
+  const scopeLabel =
+    "storeId" in scope
+      ? `storeId=${scope.storeId}`
+      : "userId" in scope
+        ? `userId=${scope.userId}`
+        : `anonymousSessionToken=${scope.anonymousSessionToken}`;
 
   // Track 0 — AI cost governance. Checked before spending anything on a
   // real provider call. Fails open on its own error (an outage in this

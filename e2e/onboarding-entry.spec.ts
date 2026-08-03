@@ -1,39 +1,31 @@
 import { test, expect } from "@playwright/test";
 
-// Regression coverage for the primary entry path: a fresh visitor to "/"
-// should be able to reach the real guided onboarding experience (the Idea
-// act, "What's the business you've been meaning to start?") via Get
-// Started -> account creation, with nothing silently reverting them to an
-// older flow along the way.
+// Regression coverage for the primary entry path — updated for
+// Experience-First Onboarding (EXPERIENCE_FIRST_ONBOARDING.md, Milestone
+// 2): a fresh, logged-out visitor to "/" now enters the real experience
+// flow directly, with no signup wall in front of it. This test covers the
+// identity of the entry point itself, so a stale deployment or an
+// accidental revert to the old signup-first landing page is caught
+// automatically. The full generation round trip (both the "ask" and
+// "generate" branches of decideExperienceNextStep, real AI calls) is
+// inherently non-deterministic and costs a real provider call per run —
+// covered end-to-end in Milestone 6, not here.
 //
-// Written after investigating a false-alarm regression report (2026-08-03)
-// that traced to a real account never actually being created, not a code
-// or deployment issue — see J4_APP_ROADMAP.md-adjacent history in
-// CHANGELOG.md for context. This test exists so an ACTUAL future
-// regression in this path (a stale deployment, a flipped feature flag, a
-// broken redirect) is caught automatically instead of only being found by
-// a confused real user.
-test("a fresh visitor can create an account and reach the real onboarding entry point", async ({ page }) => {
+// Superseded coverage: this test previously verified the OLD marketing
+// landing page's "Get started" -> /signup -> /onboarding path, written
+// after investigating a false-alarm regression report (2026-08-03) that
+// traced to a real account never actually being created, not a code or
+// deployment issue. That path itself still exists (returning users can
+// still log in, and account creation still happens — just later, at
+// claim), but it is no longer the first thing a new visitor sees.
+test("a fresh visitor lands directly in the real experience flow, no signup wall", async ({ page }) => {
   await page.goto("/");
 
-  // The landing page itself — deliberately minimal, not a marketing site.
-  await expect(page.getByRole("heading", { name: "Your AI business partner" })).toBeVisible();
-  const getStarted = page.getByRole("link", { name: "Get started" });
-  await expect(getStarted).toBeVisible();
+  await expect(page.getByText("What's the business you've been meaning to start?")).toBeVisible();
+  await expect(page.getByPlaceholder(/candle shop/i)).toBeVisible();
 
-  await getStarted.click();
-  await expect(page).toHaveURL(/\/signup$/);
-
-  const email = `e2e-onboarding-entry-${Date.now()}-${test.info().project.name}@example.test`;
-  await page.getByPlaceholder("Email").fill(email);
-  await page.getByPlaceholder("Password").fill("E2e-test-password-2026!");
-  await page.getByRole("button", { name: /sign up/i }).click();
-
-  // Real account created, real session established, landed on the real
-  // guided-onboarding entry point — not the classic form, not stuck on
-  // signup, not bounced back to the landing page.
-  await expect(page).toHaveURL(/\/onboarding$/, { timeout: 15000 });
-  await expect(
-    page.getByText("What's the business you've been meaning to start?")
-  ).toBeVisible();
+  // Returning users can still simply log in — the one other real
+  // affordance on this screen, per EXPERIENCE_FIRST_ONBOARDING.md's
+  // platform principle ("returning users sign in").
+  await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
 });

@@ -281,6 +281,15 @@ model StoreDraft {
   // confirm; this is "where the guided conversation currently is," a
   // different kind of state that persists across many turns.
   onboardingState    Json?
+  // Experience-First Onboarding — the anonymous experience flow's own state
+  // (transcript so far, and the generated concept once confident), entirely
+  // separate from onboardingState above: that field belongs to the
+  // activation flow's guided-discovery state machine and is untouched by
+  // this phase. See lib/onboarding/types.ts's ExperienceState for the real
+  // shape. Cleared conceptually once claimed, though the field itself is
+  // simply never read again after that point (see the claim step in
+  // app/onboarding/actions.ts).
+  experienceState    Json?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -900,6 +909,11 @@ model AiUsageEvent {
   id           String   @id @default(cuid())
   storeId      String?
   userId       String?
+  // Experience-First Onboarding — the anonymous-scope counterpart to
+  // storeId/userId above. No relation (an anonymous session is never a real
+  // row anywhere), same "exactly one of these three is ever set" convention
+  // — see GenesisModelScope in lib/genesisModel.ts.
+  anonymousSessionToken String?
   inputTokens  Int
   outputTokens Int
   occurredAt   DateTime @default(now())
@@ -909,4 +923,5 @@ model AiUsageEvent {
 
   @@index([storeId, occurredAt])
   @@index([userId, occurredAt])
+  @@index([anonymousSessionToken, occurredAt])
 }

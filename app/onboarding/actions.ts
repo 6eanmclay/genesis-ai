@@ -5,6 +5,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { callGenesisModel } from "@/lib/genesisModel";
+import type { GenesisModelScope } from "@/lib/genesisModel";
 import { filterKnownRevenueStreams, REVENUE_STREAM_SLUGS, BRAND_POSITIONING_SLUGS, isKnownBrandPositioning } from "@/lib/businessTaxonomy";
 import { selectFulfillmentStrategy } from "@/lib/fulfillment/strategy";
 import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
@@ -14,7 +15,7 @@ import { recommendPrice, applyOwnerPrice } from "@/lib/onboarding/pricing";
 import { GeneratedImageProvider } from "@/lib/imageProviders/generatedImageProvider";
 import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
 import { confirmStoreDraftCore } from "@/app/dashboard/ai-actions";
-import { getOrCreateAnonymousSessionId } from "@/lib/onboarding/anonymousSession";
+import { getOrCreateAnonymousSessionId, peekAnonymousSessionId } from "@/lib/onboarding/anonymousSession";
 import {
   initialDiscoveryState,
   applyBusinessModelAnswer,
@@ -27,7 +28,16 @@ import {
   applyCandidateSelected,
   applyPricingConfirmed,
 } from "@/lib/onboarding/discoveryFlow";
-import type { CreativeDirectionOption, DiscoveryState, OnboardingState } from "@/lib/onboarding/types";
+import type {
+  CreativeDirectionOption,
+  DiscoveryState,
+  OnboardingState,
+  ExperienceConcept,
+  ExperienceDecision,
+  ExperienceState,
+  ExperienceTranscriptEntry,
+} from "@/lib/onboarding/types";
+import { initialExperienceState, MAX_VISITOR_TURNS_BEFORE_FORCED_GENERATION } from "@/lib/onboarding/experienceFlow";
 import type { FulfillmentCandidate } from "@/lib/fulfillment/types";
 import { DEFAULT_THEME } from "@/lib/theme";
 import type { Theme, ThemeColors } from "@/lib/theme";
@@ -98,12 +108,187 @@ export async function getOnboardingState(): Promise<{ storeDraftId: string; stat
   return { storeDraftId: draft.id, state: readState(draft.onboardingState) };
 }
 
-// Experience-First Onboarding — the anonymous entry point's first call: no
-// auth required, mints/reads the anonymous session cookie and returns (or
-// creates) the matching draft. Mirrors getOnboardingState exactly.
-export async function getAnonymousOnboardingState(): Promise<{ storeDraftId: string; state: DiscoveryState }> {
+function readExperienceState(experienceState: unknown): ExperienceState {
+  return (experienceState as ExperienceState | null) ?? initialExperienceState();
+}
+
+// Experience-First Onboarding — the anonymous entry point's first read, called
+// from app/page.tsx's Server Component render. Deliberately read-only (see
+// peekAnonymousSessionId's own comment): a brand-new visitor with no cookie
+// yet gets the honest empty state, no draft row and no cookie minted just
+// from loading the page. A returning-mid-conversation visitor (real cookie
+// already set by a prior submitExperienceMessage call) resumes exactly
+// where they left off.
+export async function getExperienceState(): Promise<ExperienceState> {
+  const anonymousSessionToken = await peekAnonymousSessionId();
+  if (!anonymousSessionToken) return initialExperienceState();
+  const draft = await prisma.storeDraft.findUnique({ where: { anonymousSessionToken } });
+  return readExperienceState(draft?.experienceState);
+}
+
+const ExperienceDecisionSchema = z.object({
+  confident: z.boolean(),
+  clarifyingQuestion: z.string().nullable(),
+  concept: z
+    .object({
+      businessModelSlug: z.enum(REVENUE_STREAM_SLUGS as [string, ...string[]]),
+      brandPositioning: z.enum(BRAND_POSITIONING_SLUGS as [string, ...string[]]),
+      name: z.string(),
+      description: z.string(),
+      brandVoice: z.string(),
+      photographyStyle: z.string(),
+      colors: z.object({
+        primary: z.string(),
+        secondary: z.string(),
+        accent: z.string(),
+        background: z.string(),
+        surface: z.string(),
+        text: z.string(),
+        textSecondary: z.string(),
+      }),
+      typography: z.object({ headingFont: z.string(), bodyFont: z.string() }),
+      logoImagePrompt: z.string(),
+      productImagePrompt: z.string(),
+      productName: z.string(),
+      productDescription: z.string(),
+      estimatedCostInCents: z.number(),
+      estimatedShippingInCents: z.number(),
+    })
+    .nullable(),
+});
+
+// The reasoning boundary described on ExperienceDecision in lib/onboarding/
+// types.ts — everything a future J4 reasoning engine would need to replace
+// is contained in this one function. Today: one structured-output call,
+// given the full transcript so far, that both decides whether to ask or
+// generate AND produces the generation content in the same pass (no second
+// round trip once confident). Text-only, same split generateCreativeDirections
+// already uses below — image generation happens in the caller.
+async function decideExperienceNextStep(
+  transcript: ExperienceTranscriptEntry[],
+  scope: GenesisModelScope
+): Promise<ExperienceDecision> {
+  const visitorTurns = transcript.filter((entry) => entry.role === "visitor").length;
+  const mustDecideNow = visitorTurns >= MAX_VISITOR_TURNS_BEFORE_FORCED_GENERATION;
+  const transcriptText = transcript.map((entry) => `${entry.role === "visitor" ? "Visitor" : "Genesis"}: ${entry.text}`).join("\n");
+
+  const outcome = await callGenesisModel(
+    {
+      model: "claude-opus-4-8",
+      max_tokens: 3000,
+      thinking: { type: "adaptive" },
+      system:
+        `You are Genesis, meeting a brand-new visitor for the first time. They're describing a business idea, one ` +
+        `message at a time. Decide: do you already understand enough to create something real and exciting, or do ` +
+        `you genuinely need one more concrete detail first?\n\n` +
+        `Bias strongly toward creating immediately — the goal is momentum, not information. Only set confident=false ` +
+        `if the idea is so open-ended you'd otherwise have to invent something they might not want (no hint of ` +
+        `audience, style, or product), or if what they've described isn't a sellable product business yet (only ` +
+        `"product_sales" and "digital_products" have a guided path today) — in that second case, your one question ` +
+        `should warmly redirect them toward a product idea, never reject them outright.\n\n` +
+        (mustDecideNow
+          ? `This is the last turn before you must commit — set confident=true no matter what, and make your best ` +
+            `creative judgment on anything still unclear.`
+          : `If you ask, ask exactly ONE concise, specific question — never generic, never an interview. It should ` +
+            `feel like you're refining a vision you're already excited about, not making them fill out a form.`) +
+        `\n\nWhen confident: invent a complete creative concept — a business name, description, brand voice, ` +
+        `photography style, a full color palette and typography pairing, one specific first product to sell, and ` +
+        `real image-generation prompts for a logo (a clean, simple mark, not a full scene) and a product photo. ` +
+        `Also give an honest, typical print-on-demand cost estimate in cents for producing and shipping that one ` +
+        `product — a real range for its category, not padded or invented to hit a target price.`,
+      messages: [{ role: "user", content: transcriptText }],
+      output_config: { effort: "medium", format: zodOutputFormat(ExperienceDecisionSchema) },
+    },
+    scope
+  );
+
+  const parsed = outcome.ok ? outcome.message.parsed_output : null;
+  const malformed = !parsed || (!parsed.confident && !parsed.clarifyingQuestion) || (parsed.confident && !parsed.concept);
+  if (malformed) {
+    // Degrades to one honest follow-up rather than a crashed turn or an
+    // invented concept — there's no safe default business identity here.
+    return { action: "ask", question: "Tell me a bit more about what you're picturing — I want to get this right." };
+  }
+  if (!parsed.confident) {
+    return { action: "ask", question: parsed.clarifyingQuestion! };
+  }
+  const concept = parsed.concept!;
+  return {
+    action: "generate",
+    concept: { ...concept, colors: concept.colors as ThemeColors },
+  };
+}
+
+// Experience-First Onboarding — the real entry point every message from the
+// new landing experience calls. No auth, rate-limited only by the same
+// daily ceiling every other AI call already goes through (a tighter
+// anonymous-specific limit is a scoped fast-follow, not yet built).
+export async function submitExperienceMessage(
+  text: string
+): Promise<{ status: "collecting"; question: string } | { status: "generated"; concept: ExperienceConcept }> {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error("Tell Genesis a little about the business first.");
+
   const draft = await getOrCreateAnonymousDraft();
-  return { storeDraftId: draft.id, state: readState(draft.onboardingState) };
+  const anonymousSessionToken = draft.anonymousSessionToken;
+  if (!anonymousSessionToken) throw new Error("Anonymous session is missing — try reloading the page.");
+  const scope: GenesisModelScope = { anonymousSessionToken };
+
+  const state = readExperienceState(draft.experienceState);
+  const transcript: ExperienceTranscriptEntry[] = [...state.transcript, { role: "visitor", text: trimmed }];
+
+  const decision = await decideExperienceNextStep(transcript, scope);
+
+  if (decision.action === "ask") {
+    const nextTranscript: ExperienceTranscriptEntry[] = [...transcript, { role: "genesis", text: decision.question }];
+    const nextState: ExperienceState = { transcript: nextTranscript, status: "collecting", concept: null };
+    await prisma.storeDraft.update({ where: { id: draft.id }, data: { experienceState: nextState as unknown as object } });
+    return { status: "collecting", question: decision.question };
+  }
+
+  const raw = decision.concept;
+  const [productImage, logoImage] = await Promise.all([
+    GeneratedImageProvider.source({
+      prompt: raw.productImagePrompt,
+      name: raw.productName,
+      description: raw.description,
+      excludeUrls: [],
+      scope,
+    }),
+    GeneratedImageProvider.source({
+      prompt: raw.logoImagePrompt,
+      name: `${raw.name} logo`,
+      description: raw.description,
+      excludeUrls: [],
+      scope,
+    }),
+  ]);
+  if (!productImage || !logoImage) {
+    throw new Error("Genesis couldn't finish generating artwork just now — try again in a moment.");
+  }
+
+  const pricing = recommendPrice(raw.estimatedCostInCents, raw.estimatedShippingInCents, raw.brandPositioning);
+  const concept: ExperienceConcept = {
+    businessModelSlug: raw.businessModelSlug,
+    brandPositioning: raw.brandPositioning,
+    creativeDirection: {
+      name: raw.name,
+      description: raw.description,
+      brandVoice: raw.brandVoice,
+      photographyStyle: raw.photographyStyle,
+      colors: raw.colors,
+      typography: raw.typography,
+      logoUrl: logoImage.url,
+      productImageUrl: productImage.url,
+    },
+    productName: raw.productName,
+    productDescription: raw.productDescription,
+    pricing,
+  };
+
+  const nextState: ExperienceState = { transcript, status: "generated", concept };
+  await prisma.storeDraft.update({ where: { id: draft.id }, data: { experienceState: nextState as unknown as object } });
+  return { status: "generated", concept };
 }
 
 const BusinessModelClassificationSchema = z.object({ slug: z.enum(REVENUE_STREAM_SLUGS as [string, ...string[]]) });

@@ -90,3 +90,73 @@ export interface DiscoveryState {
 export interface OnboardingState extends DiscoveryState {
   fulfillmentCredentials?: Record<string, unknown>;
 }
+
+// Experience-First Onboarding — the anonymous experience flow's own state.
+// Deliberately NOT an extension of DiscoveryState/OnboardingState above:
+// those belong to the activation flow's guided, multi-question wizard,
+// which stays completely unmodified. The experience flow is a different
+// shape on purpose — a short, conversational exchange rather than a
+// sequence of fixed steps — reflecting EXPERIENCE_FIRST_ONBOARDING.md's
+// "conversational, not wizard-like" principle.
+//
+// At claim time (the "let's make this real" step in app/onboarding/
+// actions.ts), concept.creativeDirection/businessModelSlug/brandPositioning
+// are copied directly into a real OnboardingState so the activation flow
+// picks up exactly where this leaves off, at fulfillment_connect — see
+// EXPERIENCE_FIRST_ONBOARDING.md's "activation flow" section.
+export interface ExperienceTranscriptEntry {
+  role: "visitor" | "genesis";
+  text: string;
+}
+
+// The generated business concept — reuses CreativeDirectionOption verbatim
+// (not a lookalike shape) so claiming can hand it to
+// applyCreativeDirectionSelected completely unchanged. productName/
+// productDescription and the cost estimate are the pieces the activation
+// flow's own creative-direction step doesn't need to carry (it always has
+// a real Printful-priced candidate by that point), so they live alongside
+// rather than inside creativeDirection.
+export interface ExperienceConcept {
+  businessModelSlug: string;
+  brandPositioning: string;
+  creativeDirection: CreativeDirectionOption;
+  productName: string;
+  productDescription: string;
+  pricing: PriceRecommendation;
+}
+
+export interface ExperienceState {
+  transcript: ExperienceTranscriptEntry[];
+  status: "collecting" | "generated";
+  concept: ExperienceConcept | null;
+}
+
+// The reasoning boundary Sean asked to keep stable: every caller only ever
+// sees "given the conversation so far, either ask one thing or generate a
+// concept" — never the mechanics behind that decision. Today's
+// implementation (decideExperienceNextStep in app/onboarding/actions.ts) is
+// one structured-output model call; a future J4 reasoning engine can
+// replace what's behind this boundary without changing anything that calls
+// it, per Sean's explicit instruction not to hardcode onboarding logic
+// we'd have to immediately tear out.
+export type ExperienceDecision =
+  | { action: "ask"; question: string }
+  | {
+      action: "generate";
+      concept: {
+        businessModelSlug: string;
+        brandPositioning: string;
+        name: string;
+        description: string;
+        brandVoice: string;
+        photographyStyle: string;
+        colors: ThemeColors;
+        typography: { headingFont: string; bodyFont: string };
+        logoImagePrompt: string;
+        productImagePrompt: string;
+        productName: string;
+        productDescription: string;
+        estimatedCostInCents: number;
+        estimatedShippingInCents: number;
+      };
+    };
