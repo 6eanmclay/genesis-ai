@@ -155,8 +155,14 @@ export async function createCheckoutSession(
   let redirectUrl: string;
 
   try {
+    // Real bug found via a live beta user (an owner previewing their own
+    // unpublished store — an anonymous visitor can never reach this at all,
+    // see app/store/[slug]/page.tsx's own notFound() gate): !store.published
+    // used to throw the same "Store not found" a genuinely missing store
+    // does, confusing an owner just trying their own real checkout before
+    // going live. Only a real 404 (no store) should say that.
     const store = await prisma.store.findUnique({ where: { slug } });
-    if (!store || !store.published) {
+    if (!store) {
       throw new RecoverableError("Store not found");
     }
 
@@ -192,8 +198,13 @@ export async function createCheckoutSession(
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function subscribeToNewsletter(slug: string, formData: FormData) {
+  // Same real fix as createCheckoutSession above — only a genuine 404
+  // should say "Store not found." The newsletter section renders
+  // unconditionally on the storefront, so an owner naturally trying it
+  // while previewing their own real, unpublished store hit this exact
+  // crash live (Sentry-confirmed, first real beta user).
   const store = await prisma.store.findUnique({ where: { slug } });
-  if (!store || !store.published) {
+  if (!store) {
     throw new Error("Store not found");
   }
 
