@@ -3373,8 +3373,19 @@ export async function confirmStoreDraftCore(
   // candidate's own imageUrl is not a valid Printful print-file URL, so
   // this is a real fix for this path, not just a preference).
   const creativeDirection = draft.creativeDirection as CreativeDirectionOption | null;
+  // The direction's name/description are the real business identity the
+  // owner chose — draft.name is still whatever placeholder getOrCreateDraft
+  // wrote ("New store") since nothing in the custom-design path ever
+  // renames the draft itself. Real bug found via live testing: an earlier
+  // version of this function only used creativeDirection for images/logo,
+  // leaving the store and its one product both named/described from the
+  // placeholder draft or the Printful blank's own generic catalog text
+  // (e.g. "All-Over Print Minimalist Backpack") — completely disconnected
+  // from the identity the owner actually picked.
+  const storeName = creativeDirection?.name ?? draft.name;
+  const storeDescription = creativeDirection?.description ?? draft.description;
 
-  const baseSlug = slugify(draft.name);
+  const baseSlug = slugify(storeName);
   let slug = baseSlug;
   let suffix = 1;
   while (await prisma.store.findUnique({ where: { slug } })) {
@@ -3438,9 +3449,9 @@ export async function confirmStoreDraftCore(
   const store = await prisma.store.create({
     data: {
       userId,
-      name: draft.name,
+      name: storeName,
       slug,
-      description: draft.description,
+      description: storeDescription,
       tagline: draft.tagline,
       logoUrl: opts.logoUrl ?? creativeDirection?.logoUrl ?? null,
       theme,
@@ -3458,8 +3469,8 @@ export async function confirmStoreDraftCore(
             // the product under) exists.
             create: [
               {
-                name: fulfillmentSelection.candidate.name,
-                description: fulfillmentSelection.candidate.description,
+                name: creativeDirection?.name ?? fulfillmentSelection.candidate.name,
+                description: creativeDirection?.description ?? fulfillmentSelection.candidate.description,
                 priceInCents: fulfillmentSelection.pricing.retailPriceInCents,
                 position: 0,
                 imageUrl: creativeDirection?.productImageUrl ?? fulfillmentSelection.candidate.imageUrl,
