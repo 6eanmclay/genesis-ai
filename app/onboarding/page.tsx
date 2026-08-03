@@ -26,6 +26,15 @@ export default async function OnboardingPage() {
   // hand off to it once the Idea act is genuinely done, the same way
   // app/dashboard/page.tsx now hands off here in the first place.
   const { state } = await getOnboardingState();
+  // Real infinite-redirect bug found via live testing: "not_ecommerce" is a
+  // genuine terminal state (v2 has no guided path for non-ecommerce ideas
+  // yet — IdeaScreen.tsx's own client-side handling already sends it to
+  // /dashboard, never here), but reaching this page directly for one
+  // (bookmark, back button) used to redirect to /onboarding/business,
+  // which redirects straight back here for the same reason — forever.
+  if (state.step === "not_ecommerce") {
+    redirect("/dashboard");
+  }
   if (state.step !== "business_model") {
     redirect("/onboarding/business");
   }

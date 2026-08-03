@@ -16,6 +16,7 @@ import {
   reviewBusinessWithGenesis,
 } from "./ai-actions";
 import { DEFAULT_THEME, googleFontsUrl, themeCssVars, type Theme } from "@/lib/theme";
+import type { OnboardingState } from "@/lib/onboarding/types";
 import { PERMISSIONS, hasPermission, resolveUserStore, type Permission } from "@/lib/permissions";
 import { getOrderSummary, getRecentActivity, getRecentOrders } from "@/lib/dashboard/whatHappened";
 import { getAttentionItems } from "@/lib/dashboard/needsAttention";
@@ -510,7 +511,20 @@ export default async function DashboardPage() {
     // status is set atomically at creation and is unique to this flow
     // (classic drafts default to "draft" per the schema), so it's the
     // reliable discriminator instead.
-    const isOnboardingV2Draft = draft !== null && draft.status === "onboarding_discovery";
+    //
+    // Real infinite-redirect bug found via live testing: "not_ecommerce" is
+    // itself a genuine terminal state of the v2 flow (IdeaScreen.tsx sends
+    // it straight to /dashboard on the client, since v2 has no guided path
+    // for non-ecommerce ideas yet) — but status stays "onboarding_discovery"
+    // forever once set, so without this exclusion, isOnboardingV2Draft
+    // stayed true for it too: /dashboard -> redirect /onboarding -> (step
+    // isn't business_model) redirect /onboarding/business -> (step IS
+    // not_ecommerce) redirect back to /onboarding, forever. Any real idea
+    // classified outside product_sales/digital_products (e.g. wording that
+    // reads as a subscription/service) hit this immediately.
+    const onboardingState = draft?.onboardingState as OnboardingState | null;
+    const isOnboardingV2Draft =
+      draft !== null && draft.status === "onboarding_discovery" && onboardingState?.step !== "not_ecommerce";
     if ((draft === null || isOnboardingV2Draft) && process.env.ONBOARDING_V2_ENABLED === "true") {
       redirect("/onboarding");
     }
