@@ -14,6 +14,7 @@ import { recommendPrice, applyOwnerPrice } from "@/lib/onboarding/pricing";
 import { GeneratedImageProvider } from "@/lib/imageProviders/generatedImageProvider";
 import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
 import { confirmStoreDraftCore } from "@/app/dashboard/ai-actions";
+import { getOrCreateAnonymousSessionId } from "@/lib/onboarding/anonymousSession";
 import {
   initialDiscoveryState,
   applyBusinessModelAnswer,
@@ -54,6 +55,20 @@ async function getOrCreateDraft(userId: string) {
   });
 }
 
+// Experience-First Onboarding — the anonymous-visitor counterpart to
+// getOrCreateDraft above. Same shape, keyed by the signed session identity
+// from lib/onboarding/anonymousSession.ts instead of a real userId. No User
+// row involved at any point — see EXPERIENCE_FIRST_ONBOARDING.md's
+// confirmed "no shadow users" decision.
+async function getOrCreateAnonymousDraft() {
+  const anonymousSessionToken = await getOrCreateAnonymousSessionId();
+  const existing = await prisma.storeDraft.findUnique({ where: { anonymousSessionToken } });
+  if (existing) return existing;
+  return prisma.storeDraft.create({
+    data: { anonymousSessionToken, name: "New store", status: "onboarding_discovery" },
+  });
+}
+
 function readState(onboardingState: unknown): DiscoveryState {
   return (onboardingState as OnboardingState | null) ?? initialDiscoveryState();
 }
@@ -80,6 +95,14 @@ async function persistState(
 export async function getOnboardingState(): Promise<{ storeDraftId: string; state: DiscoveryState }> {
   const userId = await requireUserId();
   const draft = await getOrCreateDraft(userId);
+  return { storeDraftId: draft.id, state: readState(draft.onboardingState) };
+}
+
+// Experience-First Onboarding — the anonymous entry point's first call: no
+// auth required, mints/reads the anonymous session cookie and returns (or
+// creates) the matching draft. Mirrors getOnboardingState exactly.
+export async function getAnonymousOnboardingState(): Promise<{ storeDraftId: string; state: DiscoveryState }> {
+  const draft = await getOrCreateAnonymousDraft();
   return { storeDraftId: draft.id, state: readState(draft.onboardingState) };
 }
 

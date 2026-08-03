@@ -232,7 +232,19 @@ model StoreIntegration {
 
 model StoreDraft {
   id                 String   @id @default(cuid())
-  userId             String   @unique
+  // Experience-First Onboarding — nullable now. A draft is owned by EITHER
+  // a real userId (the activation flow, today's exact existing behavior)
+  // OR an anonymousSessionToken below, never neither, briefly both during
+  // claim (see the claim step in app/onboarding/actions.ts, which sets
+  // userId and clears anonymousSessionToken as one atomic update — the row
+  // itself is never recreated). Postgres treats multiple NULLs as distinct
+  // under a unique constraint, so many anonymous drafts can coexist.
+  userId             String?  @unique
+  // Experience-First Onboarding — the signed, anonymous-session identity
+  // (lib/onboarding/anonymousSession.ts) that owns this draft before a
+  // real account exists. Null once claimed. Never set alongside a real
+  // userId for longer than the single claim update.
+  anonymousSessionToken String? @unique
   inputStoreName     String?
   inputProductType   String?
   inputVision        String?
@@ -272,7 +284,7 @@ model StoreDraft {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
   generations   StoreGeneration[]
   messages      StoreDraftMessage[]
   executionLogs ExecutionLog[]
