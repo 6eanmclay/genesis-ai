@@ -1,4 +1,5 @@
 import type { FulfillmentCandidate } from "@/lib/fulfillment/types";
+import type { ThemeColors } from "@/lib/theme";
 import type { PriceRecommendation } from "./pricing";
 
 // Onboarding v2 — shared types between the pure discoveryFlow.ts state
@@ -11,12 +12,39 @@ import type { PriceRecommendation } from "./pricing";
 export type DiscoveryStep =
   | "business_model"
   | "brand_positioning"
+  | "creative_approach"
+  | "creative_direction_generating"
+  | "creative_direction_review"
   | "product_source"
   | "fulfillment_connect"
+  | "creative_product_building"
   | "product_discovery"
   | "pricing"
+  | "storefront_reveal"
   | "ready_to_publish"
   | "not_ecommerce";
+
+// Creative Direction — the durable creative identity an owner chooses from
+// Genesis's three generated directions (custom-design path only). Matches
+// exactly the shape persisted to Store.creativeDirection/
+// StoreDraft.creativeDirection — see that field's own schema comment.
+// `colors`/`typography` reuse lib/theme.ts's own shapes so no drift is
+// possible between "what a direction generates" and "what Theme accepts."
+export interface CreativeDirectionOption {
+  name: string;
+  description: string;
+  // Guidance text for future copy generation — not rendered as body copy
+  // itself. Not consumed anywhere yet (a later phase's job); stored now so
+  // it exists once that phase is built.
+  brandVoice: string;
+  // Guidance text for future image generation — same "stored now, consumed
+  // later" status as brandVoice.
+  photographyStyle: string;
+  colors: ThemeColors;
+  typography: { headingFont: string; bodyFont: string };
+  logoUrl: string;
+  productImageUrl: string;
+}
 
 export interface DiscoveryState {
   step: DiscoveryStep;
@@ -28,11 +56,24 @@ export interface DiscoveryState {
   ideaText: string | null;
   brandPositioning: string | null;
   brandPositioningText: string | null;
+  // Custom-design vs. reselling/curating a blank as-is — NOT the same fork
+  // as productSource below (that one is "I already have products entirely
+  // outside Printful," a different, still-deferred concept).
+  creativeApproach: "custom" | "resell" | null;
+  // Ephemeral — up to 3 freshly generated options, cleared the moment one
+  // is chosen. Never persisted once creativeDirection is set.
+  creativeDirectionOptions: CreativeDirectionOption[] | null;
+  // Durable — the owner's actual choice. Mirrors Store/StoreDraft's own
+  // creativeDirection column once persisted.
+  creativeDirection: CreativeDirectionOption | null;
   productSource: "existing" | "discover" | null;
   selectedCandidate: FulfillmentCandidate | null;
   // Real, Claude-generated reasoning for why this specific candidate was
   // chosen, grounded in ideaText/brandPositioningText — never a canned
-  // per-category template. Set alongside selectedCandidate.
+  // per-category template. Set alongside selectedCandidate. For the custom
+  // path this describes why this blank was picked to print the design on,
+  // not a product-fit judgment (that already happened at direction
+  // selection) — see buildCreativeProduct in app/onboarding/actions.ts.
   candidateReasoning: string | null;
   fulfillmentConnected: boolean;
   pricing: PriceRecommendation | null;

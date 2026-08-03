@@ -23,5 +23,9 @@ export default async function BusinessPage() {
     redirect("/onboarding");
   }
 
-  return <BusinessScreen initialStep={state.step} />;
+  // Full state, not just state.step — a reload mid-flow needs to rehydrate
+  // creativeDirection/creativeDirectionOptions/selectedCandidate too (a
+  // real gap that existed for selectedCandidate/candidateReasoning before
+  // this change too, just harmless since nothing rendered them on reload).
+  return <BusinessScreen initialState={state} />;
 }

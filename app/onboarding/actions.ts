@@ -11,16 +11,23 @@ import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
 import { buildPrintfulAuthorizeUrl } from "@/lib/integrations/printful";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { recommendPrice, applyOwnerPrice } from "@/lib/onboarding/pricing";
+import { GeneratedImageProvider } from "@/lib/imageProviders/generatedImageProvider";
+import { confirmStoreDraftCore } from "@/app/dashboard/ai-actions";
 import {
   initialDiscoveryState,
   applyBusinessModelAnswer,
   applyBrandPositioningAnswer,
+  applyCreativeApproachAnswer,
+  applyCreativeDirectionsGenerated,
+  applyCreativeDirectionSelected,
   applyProductSourceAnswer,
   applyCandidateSelected,
   applyPricingConfirmed,
 } from "@/lib/onboarding/discoveryFlow";
-import type { DiscoveryState, OnboardingState } from "@/lib/onboarding/types";
+import type { CreativeDirectionOption, DiscoveryState, OnboardingState } from "@/lib/onboarding/types";
 import type { FulfillmentCandidate } from "@/lib/fulfillment/types";
+import { DEFAULT_THEME } from "@/lib/theme";
+import type { Theme, ThemeColors } from "@/lib/theme";
 
 // Onboarding v2 — the server actions driving the guided discovery flow
 // (lib/onboarding/discoveryFlow.ts's pure state machine, called here with
@@ -49,7 +56,11 @@ function readState(onboardingState: unknown): DiscoveryState {
   return (onboardingState as OnboardingState | null) ?? initialDiscoveryState();
 }
 
-async function persistState(storeDraftId: string, state: DiscoveryState, extra?: { brandPositioning?: string }) {
+async function persistState(
+  storeDraftId: string,
+  state: DiscoveryState,
+  extra?: { brandPositioning?: string; creativeDirection?: CreativeDirectionOption }
+) {
   const draft = await prisma.storeDraft.findUnique({ where: { id: storeDraftId } });
   const existing = (draft?.onboardingState as OnboardingState | null) ?? null;
   const next: OnboardingState = { ...state, fulfillmentCredentials: existing?.fulfillmentCredentials };
@@ -58,6 +69,7 @@ async function persistState(storeDraftId: string, state: DiscoveryState, extra?:
     data: {
       onboardingState: next as unknown as object,
       ...(extra?.brandPositioning ? { brandPositioning: extra.brandPositioning } : {}),
+      ...(extra?.creativeDirection ? { creativeDirection: extra.creativeDirection as unknown as object } : {}),
     },
   });
   return next;
@@ -124,6 +136,169 @@ export async function submitBrandPositioningAnswer(freeText: string): Promise<{ 
   return { state: nextState };
 }
 
+// Custom-design vs. reselling/curating a blank as-is — a lightweight,
+// no-AI-call binary choice, same shape as submitProductSourceAnswer below.
+export async function submitCreativeApproachAnswer(
+  approach: "custom" | "resell"
+): Promise<{ state: DiscoveryState }> {
+  const userId = await requireUserId();
+  const draft = await getOrCreateDraft(userId);
+  const nextState = applyCreativeApproachAnswer(readState(draft.onboardingState), approach);
+  await persistState(draft.id, nextState);
+  return { state: nextState };
+}
+
+const CreativeDirectionTextSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  brandVoice: z.string(),
+  photographyStyle: z.string(),
+  colors: z.object({
+    primary: z.string(),
+    secondary: z.string(),
+    accent: z.string(),
+    background: z.string(),
+    surface: z.string(),
+    text: z.string(),
+    textSecondary: z.string(),
+  }),
+  typography: z.object({ headingFont: z.string(), bodyFont: z.string() }),
+  productImagePrompt: z.string(),
+  logoImagePrompt: z.string(),
+});
+
+// Three fixed creative-angle anchors, not left to chance — three identical-
+// context calls to the same model with no differentiating signal could
+// plausibly converge on similar answers. Anchored on Sean's own
+// illustration (clean/minimal, bold/energetic, premium/elevated), phrased
+// generally enough to apply across business types — the real idea/brand-
+// positioning text still grounds each direction, the anchor only nudges
+// the angle, never overrides what the owner actually said.
+const CREATIVE_LENSES = [
+  {
+    id: "minimal",
+    instruction: "Lean clean, modern, and minimal — restrained palette, quiet confidence, more whitespace than color.",
+  },
+  {
+    id: "bold",
+    instruction: "Lean bold and energetic — strong contrast, a statement color, unafraid to be loud where it fits the brand.",
+  },
+  {
+    id: "premium",
+    instruction: "Lean premium and elevated — a luxury-lifestyle feel, refined materials and language, nothing discount-feeling.",
+  },
+] as const;
+
+async function generateOneCreativeDirection(
+  lens: (typeof CREATIVE_LENSES)[number],
+  ideaText: string,
+  brandPositioningText: string,
+  userId: string
+): Promise<z.infer<typeof CreativeDirectionTextSchema> | null> {
+  const outcome = await callGenesisModel(
+    {
+      model: "claude-opus-4-8",
+      max_tokens: 2500,
+      thinking: { type: "adaptive" },
+      system:
+        `You are Genesis, generating ONE of three genuinely different creative directions for a new business's ` +
+        `product design, logo, color palette, typography, brand voice, and photography style. ${lens.instruction}\n` +
+        `Write productImagePrompt and logoImagePrompt as real, specific image-generation prompts (not descriptions ` +
+        `of a prompt) — they'll be sent directly to an image model. logoImagePrompt should describe a clean, simple ` +
+        `mark or icon suitable as a small logo, not a full scene. brandVoice and photographyStyle are short guidance ` +
+        `text for Genesis's own future use, not customer-facing copy.`,
+      messages: [
+        { role: "user", content: `They said: "${ideaText}"\nThe brand they want: "${brandPositioningText}"` },
+      ],
+      output_config: { effort: "medium", format: zodOutputFormat(CreativeDirectionTextSchema) },
+    },
+    { userId }
+  );
+  return outcome.ok ? (outcome.message.parsed_output ?? null) : null;
+}
+
+// The Business act's creative climax, custom-design path — three parallel,
+// genuinely different directions, not one generic pick with variations.
+// Deliberately three separate calls, not one array call: app/dashboard/
+// ai-actions.ts already hit a real "compiled grammar is too large" ceiling
+// once (why theme.composition is generated as its own call there) — this
+// stays well clear of that risk, and gives free per-direction failure
+// isolation, which the required behavior needs anyway (a direction that
+// fails to generate is simply unavailable, never patched with a fallback).
+export async function generateCreativeDirections(): Promise<{ state: DiscoveryState }> {
+  const userId = await requireUserId();
+  const draft = await getOrCreateDraft(userId);
+  const state = readState(draft.onboardingState);
+  if (!state.ideaText || !state.brandPositioningText) {
+    throw new Error("Idea and brand positioning must be answered first.");
+  }
+  const ideaText = state.ideaText;
+  const brandPositioningText = state.brandPositioningText;
+
+  const textResults = await Promise.all(
+    CREATIVE_LENSES.map((lens) => generateOneCreativeDirection(lens, ideaText, brandPositioningText, userId))
+  );
+
+  // Image generation direct via GeneratedImageProvider — deliberately NOT
+  // resolveProductImage(), whose stock-photo fallback would defeat the
+  // entire point (a random stock photo is not "your custom design"). A
+  // direction missing either image is unavailable, not stock-patched.
+  const withImages = await Promise.all(
+    textResults.map(async (direction) => {
+      if (!direction) return null;
+      const [productImage, logoImage] = await Promise.all([
+        GeneratedImageProvider.source({
+          prompt: direction.productImagePrompt,
+          name: direction.name,
+          description: direction.description,
+          excludeUrls: [],
+          scope: { userId },
+        }),
+        GeneratedImageProvider.source({
+          prompt: direction.logoImagePrompt,
+          name: `${direction.name} logo`,
+          description: direction.description,
+          excludeUrls: [],
+          scope: { userId },
+        }),
+      ]);
+      if (!productImage || !logoImage) return null;
+      const option: CreativeDirectionOption = {
+        name: direction.name,
+        description: direction.description,
+        brandVoice: direction.brandVoice,
+        photographyStyle: direction.photographyStyle,
+        colors: direction.colors as ThemeColors,
+        typography: direction.typography,
+        logoUrl: logoImage.url,
+        productImageUrl: productImage.url,
+      };
+      return option;
+    })
+  );
+
+  const directions = withImages.filter((d): d is CreativeDirectionOption => d !== null);
+  if (directions.length === 0) {
+    throw new Error("Genesis couldn't put together any creative directions right now — try again in a moment.");
+  }
+
+  const nextState = applyCreativeDirectionsGenerated(readState(draft.onboardingState), directions);
+  await persistState(draft.id, nextState);
+  return { state: nextState };
+}
+
+export async function selectCreativeDirection(index: number): Promise<{ state: DiscoveryState }> {
+  const userId = await requireUserId();
+  const draft = await getOrCreateDraft(userId);
+  const state = readState(draft.onboardingState);
+  const chosen = state.creativeDirectionOptions?.[index];
+  if (!chosen) throw new Error("That direction isn't available anymore — try generating again.");
+
+  const nextState = applyCreativeDirectionSelected(state, chosen);
+  await persistState(draft.id, nextState, { creativeDirection: chosen });
+  return { state: nextState };
+}
+
 export async function submitProductSourceAnswer(source: "existing" | "discover"): Promise<{ state: DiscoveryState }> {
   const userId = await requireUserId();
   const draft = await getOrCreateDraft(userId);
@@ -149,6 +324,111 @@ export async function startFulfillmentConnect(): Promise<{ authorizeUrl: string;
   const redirectUrl = `${baseUrl}/api/onboarding/fulfillment/callback`;
   const authorizeUrl = buildPrintfulAuthorizeUrl(redirectUrl, `${draft.id}:PRINTFUL`);
   return { authorizeUrl, rationale };
+}
+
+// Same enum vocabulary as app/dashboard/ai-actions.ts's ThemeSchema/
+// CompositionSchema presentation+composition fields — required so this
+// codebase's existing cardRadiusClass()/heroLayoutOf()/etc. resolvers work
+// unchanged for these stores too. Kept as a local, condensed duplicate
+// rather than an import: ai-actions.ts is itself a "use server" file, which
+// can only export async functions, so its consts aren't importable here.
+const CreativeThemeStructureSchema = z.object({
+  presentation: z.object({
+    cardStyle: z.enum(["sharp", "rounded", "soft"]),
+    buttonStyle: z.enum(["sharp", "pill", "soft"]),
+    shadowStyle: z.enum(["none", "subtle", "bold"]),
+    spacing: z.enum(["compact", "comfortable", "spacious"]),
+  }),
+  composition: z.object({
+    heroLayout: z.enum(["centered", "split", "fullBleed", "minimal"]),
+    typeScale: z.enum(["compact", "standard", "display"]),
+    sectionLayout: z.enum(["centered", "split", "boxed"]),
+    backgroundTreatment: z.enum(["flat", "tintBands", "bordered"]),
+    imageTreatment: z.enum(["contained", "fullBleed", "framed"]),
+    ctaEmphasis: z.enum(["button", "banner", "minimal"]),
+  }),
+});
+
+const CREATIVE_THEME_STRUCTURE_SYSTEM_PROMPT =
+  `Choose theme.presentation and theme.composition deliberately to match this specific creative direction — ` +
+  `these ten choices control the real structural shape of the storefront (card/button radius, shadow, spacing, ` +
+  `hero layout, heading scale, section layout, backgrounds, image framing, and CTA emphasis), not just color. ` +
+  `Sharp/flat/minimal choices suit clean or premium/luxury directions; soft/rounded/spacious choices suit playful ` +
+  `or approachable ones; bold shadows and display type scale suit bold or statement directions. Make all ten ` +
+  `choices feel like one coherent, deliberate aesthetic for this direction, not an arbitrary mix.`;
+
+// Runs once fulfillment is connected (custom-design path). Picks a real
+// Printful blank to print the chosen direction's artwork on — the blank is
+// invisible infrastructure, not a second creative judgment (that already
+// happened at direction selection), so this reuses browseCandidates'
+// existing keyword ranking with no separate AI reasoning call. In
+// parallel, generates the deferred presentation/composition half of the
+// theme for this one chosen direction only, mirroring the exact PRIMARY/
+// COMPOSITION split already proven in app/dashboard/ai-actions.ts.
+export async function buildCreativeProduct(): Promise<{ state: DiscoveryState }> {
+  const userId = await requireUserId();
+  const draft = await getOrCreateDraft(userId);
+  const state = readState(draft.onboardingState);
+  if (!state.creativeDirection || !state.brandPositioning || !state.ideaText) {
+    throw new Error("A creative direction must be chosen first.");
+  }
+  const direction = state.creativeDirection;
+
+  const { connector } = selectFulfillmentStrategy(state.brandPositioning, getFulfillmentConnectors());
+
+  const [candidates, structureOutcome] = await Promise.all([
+    connector.browseCandidates({
+      storeId: null,
+      storeDraftId: draft.id,
+      brandPositioning: state.brandPositioning,
+      keywords: state.ideaText,
+    }),
+    callGenesisModel(
+      {
+        model: "claude-opus-4-8",
+        max_tokens: 2000,
+        thinking: { type: "adaptive" },
+        system: CREATIVE_THEME_STRUCTURE_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: JSON.stringify({
+              name: direction.name,
+              description: direction.description,
+              brandVoice: direction.brandVoice,
+              colors: direction.colors,
+            }),
+          },
+        ],
+        output_config: { effort: "medium", format: zodOutputFormat(CreativeThemeStructureSchema) },
+      },
+      { userId }
+    ),
+  ]);
+
+  if (candidates.length === 0) {
+    throw new Error("No fulfillable products were found for this catalog right now.");
+  }
+  const candidate = candidates[0];
+
+  const structure = structureOutcome.ok ? structureOutcome.message.parsed_output : null;
+  const existingTheme = (draft.theme as Theme | null) ?? DEFAULT_THEME;
+  const nextTheme: Theme = {
+    colors: direction.colors,
+    typography: direction.typography,
+    layout: existingTheme.layout,
+    presentation: structure?.presentation ?? existingTheme.presentation ?? DEFAULT_THEME.presentation,
+    composition: structure?.composition ?? existingTheme.composition ?? DEFAULT_THEME.composition,
+  };
+  await prisma.storeDraft.update({ where: { id: draft.id }, data: { theme: nextTheme as unknown as object } });
+
+  const nextState = applyCandidateSelected(
+    state,
+    candidate,
+    "Selected as the physical product this design will be printed on."
+  );
+  await persistState(draft.id, nextState);
+  return { state: nextState };
 }
 
 const HeroSelectionSchema = z.object({
@@ -257,7 +537,9 @@ export async function getPricingPreview(): Promise<{
 // `retailPriceInCents` present => the owner's own explicit override (fixed
 // amount, percentage, or fully custom all reduce to this by the time the
 // UI calls here); absent => accept Genesis's recommendation as-is.
-export async function confirmPricing(retailPriceInCents?: number): Promise<{ state: DiscoveryState }> {
+export async function confirmPricing(
+  retailPriceInCents?: number
+): Promise<{ state: DiscoveryState; storeUrl?: string; storeName?: string }> {
   const userId = await requireUserId();
   const draft = await getOrCreateDraft(userId);
   const state = readState(draft.onboardingState);
@@ -283,5 +565,23 @@ export async function confirmPricing(retailPriceInCents?: number): Promise<{ sta
   // — at actual product creation in confirmStoreDraftCore.
   const nextState = applyPricingConfirmed(state, pricing);
   await persistState(draft.id, nextState);
+
+  // Custom-design path: materialize the real Store/Product right now,
+  // instead of waiting for Launch's "building" beat — this is what lets
+  // storefront_reveal show the owner's actual live storefront (real
+  // product, real branding, real price) rather than a summary. Once this
+  // runs, app/onboarding/launch/page.tsx's own phase logic (resolveUserStore
+  // finding a real Store) will automatically skip straight past the
+  // commitment/building beats — verified by reading that logic directly,
+  // no changes needed there. Order matters: persistState above must land
+  // before this call, since confirmStoreDraftCore deletes the StoreDraft
+  // row as its last internal step.
+  if (nextState.creativeApproach === "custom") {
+    const session = await auth();
+    const { store } = await confirmStoreDraftCore(userId, { sessionInstanceId: session?.user?.sessionInstanceId });
+    const baseUrl = await getBaseUrl();
+    return { state: nextState, storeUrl: `${baseUrl}/store/${store.slug}`, storeName: store.name };
+  }
+
   return { state: nextState };
 }

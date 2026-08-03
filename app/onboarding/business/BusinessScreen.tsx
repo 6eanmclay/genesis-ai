@@ -8,12 +8,16 @@ import { setGenesisWorking, setGenesisComposing } from "@/lib/dashboard/genesisA
 import { applyOwnerPrice } from "@/lib/onboarding/pricing";
 import {
   submitBrandPositioningAnswer,
+  submitCreativeApproachAnswer,
+  generateCreativeDirections,
+  selectCreativeDirection,
   startFulfillmentConnect,
+  buildCreativeProduct,
   discoverHeroProduct,
   getPricingPreview,
   confirmPricing,
 } from "../actions";
-import type { DiscoveryStep } from "@/lib/onboarding/types";
+import type { CreativeDirectionOption, DiscoveryState, DiscoveryStep } from "@/lib/onboarding/types";
 import type { FulfillmentCandidate } from "@/lib/fulfillment/types";
 import type { PriceRecommendation } from "@/lib/onboarding/pricing";
 
@@ -26,23 +30,55 @@ import type { PriceRecommendation } from "@/lib/onboarding/pricing";
 // real "thinking"/"response" activity tempo carrying the aliveness during
 // real async work.
 //
+// Creative Direction (added after the technical MVP froze) — Sean's own
+// framing: the owner shouldn't see a random placeholder product; they
+// should choose the visual and creative DNA of their business from three
+// genuinely different directions Genesis generates, then see their actual
+// live storefront before Launch even starts. See the plan this was built
+// from for the full reasoning — the short version: the real Store/Product
+// gets materialized right after pricing is confirmed (not at Launch's
+// "building" beat), so storefront_reveal can embed the real, live
+// (unpublished, owner-preview) storefront route instead of a mockup.
+//
 // Scope, per Sean's explicit instruction: only the "help me find something
-// to sell" path — the "I already have products" branch stays deferred, so
-// the brand-positioning beat goes straight to fulfillment_connect, never
-// asking a product-source question that has nowhere real to go yet.
+// to sell" path (resell) plus the new custom-design fork — the "I already
+// have products" branch stays deferred, so the brand-positioning beat goes
+// to creative_approach, never asking a product-source question that has
+// nowhere real to go yet.
 
-type Beat = "positioning" | "connecting" | "considering" | "reveal" | "pricing" | "handoff";
+type Beat =
+  | "positioning"
+  | "approach"
+  | "generating_directions"
+  | "direction_review"
+  | "connecting"
+  | "building_product"
+  | "considering"
+  | "reveal"
+  | "pricing"
+  | "storefront_reveal"
+  | "handoff";
 
 function mapStepToBeat(step: DiscoveryStep): Beat {
   switch (step) {
     case "brand_positioning":
       return "positioning";
+    case "creative_approach":
+      return "approach";
+    case "creative_direction_generating":
+      return "generating_directions";
+    case "creative_direction_review":
+      return "direction_review";
     case "fulfillment_connect":
       return "connecting";
+    case "creative_product_building":
+      return "building_product";
     case "product_discovery":
       return "considering";
     case "pricing":
       return "pricing";
+    case "storefront_reveal":
+      return "storefront_reveal";
     case "ready_to_publish":
       return "handoff";
     default:
@@ -52,16 +88,41 @@ function mapStepToBeat(step: DiscoveryStep): Beat {
 
 const shell = "fixed inset-0 z-[100] flex flex-col items-center justify-center gap-6 px-8 text-center overflow-y-auto py-12";
 
-export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) {
+const primaryButton =
+  "rounded-full px-7 py-3 text-sm font-semibold transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100";
+const ghostButton = "rounded-full border px-6 py-2.5 text-sm transition-colors";
+
+// Small, reused inline swatch row — a quick palette hint, not a full color
+// picker. Renders the five colors most likely to actually distinguish one
+// direction from another at a glance.
+function PaletteDots({ colors }: { colors: CreativeDirectionOption["colors"] }) {
+  const swatches = [colors.primary, colors.accent, colors.secondary, colors.background, colors.surface];
+  return (
+    <div className="flex items-center justify-center gap-1.5">
+      {swatches.map((c, i) => (
+        <span key={i} className="h-3 w-3 rounded-full border border-white/10" style={{ backgroundColor: c }} />
+      ))}
+    </div>
+  );
+}
+
+export function BusinessScreen({ initialState }: { initialState: DiscoveryState }) {
   const router = useRouter();
-  const [beat, setBeat] = useState<Beat>(() => mapStepToBeat(initialStep));
+  const [beat, setBeat] = useState<Beat>(() => mapStepToBeat(initialState.step));
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const [positioningText, setPositioningText] = useState("");
 
-  const [candidate, setCandidate] = useState<FulfillmentCandidate | null>(null);
-  const [reasoning, setReasoning] = useState<string | null>(null);
+  const [directionOptions, setDirectionOptions] = useState<CreativeDirectionOption[] | null>(
+    initialState.creativeDirectionOptions
+  );
+  const [chosenDirection, setChosenDirection] = useState<CreativeDirectionOption | null>(initialState.creativeDirection);
+  const [storeUrl, setStoreUrl] = useState<string | null>(null);
+  const [storeName, setStoreName] = useState<string | null>(null);
+
+  const [candidate, setCandidate] = useState<FulfillmentCandidate | null>(initialState.selectedCandidate);
+  const [reasoning, setReasoning] = useState<string | null>(initialState.candidateReasoning);
 
   const [costInCents, setCostInCents] = useState<number | null>(null);
   const [shippingInCents, setShippingInCents] = useState<number | null>(null);
@@ -69,8 +130,60 @@ export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) 
   const [markupChoice, setMarkupChoice] = useState<"recommended" | "more" | "custom">("recommended");
   const [customPriceInput, setCustomPriceInput] = useState("");
 
+  // "Generating directions" — real async work (a Claude call per direction
+  // plus real image generation), auto-advancing once it genuinely resolves.
+  // Never a fixed timer.
+  useEffect(() => {
+    if (beat !== "generating_directions") return;
+    let cancelled = false;
+    setGenesisWorking(true);
+    (async () => {
+      setError(null);
+      try {
+        const { state } = await generateCreativeDirections();
+        if (cancelled) return;
+        setDirectionOptions(state.creativeDirectionOptions);
+        setGenesisWorking(false);
+        setBeat("direction_review");
+      } catch {
+        if (cancelled) return;
+        setGenesisWorking(false);
+        setError("Genesis couldn't put together any directions just now — try again in a moment.");
+        setBeat("approach");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [beat]);
+
+  // "Building product" — real async work (picks a real blank to print on,
+  // generates the chosen direction's theme structure). Never a fixed timer.
+  useEffect(() => {
+    if (beat !== "building_product") return;
+    let cancelled = false;
+    setGenesisWorking(true);
+    (async () => {
+      setError(null);
+      try {
+        await buildCreativeProduct();
+        if (cancelled) return;
+        setGenesisWorking(false);
+        setBeat("pricing");
+      } catch {
+        if (cancelled) return;
+        setGenesisWorking(false);
+        setError("Something went wrong — try again.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [beat]);
+
   // "Considering" — real async work (a real catalog browse + a real Claude
   // call), auto-advancing once it genuinely resolves. Never a fixed timer.
+  // Resell path only.
   useEffect(() => {
     if (beat !== "considering") return;
     let cancelled = false;
@@ -127,12 +240,44 @@ export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) 
       try {
         await submitBrandPositioningAnswer(trimmed);
         setGenesisWorking(false);
-        setBeat("connecting");
+        setBeat("approach");
       } catch {
         setGenesisWorking(false);
         setError("Something went wrong — try again.");
       }
     });
+  }
+
+  function handleApproachChoice(approach: "custom" | "resell") {
+    setError(null);
+    startTransition(async () => {
+      try {
+        const { state } = await submitCreativeApproachAnswer(approach);
+        setBeat(mapStepToBeat(state.step));
+      } catch {
+        setError("Something went wrong — try again.");
+      }
+    });
+  }
+
+  function handleSelectDirection(index: number) {
+    setError(null);
+    startTransition(async () => {
+      try {
+        const { state } = await selectCreativeDirection(index);
+        setChosenDirection(state.creativeDirection);
+        setDirectionOptions(null);
+        setBeat(mapStepToBeat(state.step));
+      } catch {
+        setError("That direction isn't available anymore — try generating again.");
+      }
+    });
+  }
+
+  function handleGenerateAgain() {
+    setError(null);
+    setDirectionOptions(null);
+    setBeat("generating_directions");
   }
 
   function handleConnect() {
@@ -174,8 +319,10 @@ export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) 
     setError(null);
     startTransition(async () => {
       try {
-        await confirmPricing(finalRetailPriceInCents());
-        setBeat("handoff");
+        const { state, storeUrl: url, storeName: name } = await confirmPricing(finalRetailPriceInCents());
+        if (url) setStoreUrl(url);
+        if (name) setStoreName(name);
+        setBeat(mapStepToBeat(state.step));
       } catch {
         setError("Something went wrong — try again.");
       }
@@ -227,6 +374,92 @@ export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) 
         </>
       )}
 
+      {beat === "approach" && (
+        <>
+          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            Are you designing your own products, or picking from what&rsquo;s already out there?
+          </p>
+          <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+            Either way, I&rsquo;ll help you make it real.
+          </p>
+          <div className="flex w-full max-w-md gap-3">
+            <button
+              onClick={() => handleApproachChoice("custom")}
+              className="flex flex-1 flex-col items-center gap-2 rounded-xl border px-4 py-4 text-sm font-semibold transition-transform hover:-translate-y-0.5"
+              style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
+            >
+              I&rsquo;m designing something of my own
+            </button>
+            <button
+              onClick={() => handleApproachChoice("resell")}
+              className="flex flex-1 flex-col items-center gap-2 rounded-xl border px-4 py-4 text-sm font-semibold transition-transform hover:-translate-y-0.5"
+              style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
+            >
+              I&rsquo;ll pick from what&rsquo;s already out there
+            </button>
+          </div>
+        </>
+      )}
+
+      {beat === "generating_directions" && (
+        <>
+          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            Let me put together a few different directions&hellip;
+          </p>
+        </>
+      )}
+
+      {beat === "direction_review" && directionOptions && directionOptions.length > 0 && (
+        <>
+          <GenesisAvatar state="idle" className="aspect-square w-[min(24vw,100px)]" />
+          <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            Which one feels like you?
+          </p>
+          <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+            Pick the one you connect with — I&rsquo;ll build everything else around it.
+          </p>
+          <div className="flex w-full max-w-3xl flex-wrap justify-center gap-4">
+            {directionOptions.map((direction, index) => (
+              <button
+                key={index}
+                onClick={() => handleSelectDirection(index)}
+                className="flex w-[min(80vw,220px)] flex-col items-center gap-3 rounded-xl border px-4 py-4 text-center transition-transform hover:-translate-y-0.5"
+                style={{ borderColor: GENESIS_ATMOSPHERE.border, backgroundColor: "rgba(244,242,251,0.04)" }}
+              >
+                <div className="relative">
+                  <div
+                    className="w-[min(26vw,170px)] aspect-square rounded-[20px] overflow-hidden"
+                    style={{ boxShadow: "0 20px 50px rgba(0,0,0,.5), 0 0 0 1px " + GENESIS_ATMOSPHERE.border }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
+                    <img src={direction.productImageUrl} alt={direction.name} className="h-full w-full object-cover" />
+                  </div>
+                  <div
+                    className="absolute -bottom-2 -right-2 h-9 w-9 overflow-hidden rounded-full border-2"
+                    style={{ borderColor: GENESIS_ATMOSPHERE.bg, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
+                    <img src={direction.logoUrl} alt={`${direction.name} logo`} className="h-full w-full object-cover" />
+                  </div>
+                </div>
+                <p className="text-sm font-semibold" style={{ color: GENESIS_ATMOSPHERE.text }}>
+                  {direction.name}
+                </p>
+                <p className="line-clamp-2 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                  {direction.description}
+                </p>
+                <PaletteDots colors={direction.colors} />
+              </button>
+            ))}
+          </div>
+          <button onClick={handleGenerateAgain} className={ghostButton} style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.textSecondary }}>
+            Generate again
+          </button>
+        </>
+      )}
+
       {beat === "connecting" && (
         <>
           <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
@@ -243,6 +476,15 @@ export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) 
           >
             Continue
           </button>
+        </>
+      )}
+
+      {beat === "building_product" && (
+        <>
+          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            Bringing it to life&hellip;
+          </p>
         </>
       )}
 
@@ -288,6 +530,21 @@ export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) 
       {beat === "pricing" && (
         <>
           <GenesisAvatar state="idle" className="aspect-square w-[min(24vw,100px)]" />
+          {chosenDirection && (
+            <div className="flex flex-col items-center gap-2">
+              <div
+                className="w-[min(40vw,150px)] aspect-square rounded-[16px] overflow-hidden"
+                style={{ boxShadow: "0 20px 50px rgba(0,0,0,.5), 0 0 0 1px " + GENESIS_ATMOSPHERE.border }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
+                <img src={chosenDirection.productImageUrl} alt={chosenDirection.name} className="h-full w-full object-cover" />
+              </div>
+              <p className="text-sm font-semibold" style={{ color: GENESIS_ATMOSPHERE.text }}>
+                {chosenDirection.name}
+              </p>
+              <PaletteDots colors={chosenDirection.colors} />
+            </div>
+          )}
           <p className="text-lg font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Here&rsquo;s the real math.
           </p>
@@ -362,6 +619,31 @@ export function BusinessScreen({ initialStep }: { initialStep: DiscoveryStep }) 
               Getting the real numbers&hellip;
             </p>
           )}
+        </>
+      )}
+
+      {beat === "storefront_reveal" && storeUrl && (
+        <>
+          <GenesisAvatar state="idle" className="aspect-square w-[min(20vw,84px)]" />
+          <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            {storeName ? `${storeName} is real.` : "This is real."}
+          </p>
+          <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+            Your actual storefront — send it to anyone, right now, even before it&rsquo;s live.
+          </p>
+          <div
+            className="w-full max-w-2xl overflow-hidden rounded-2xl border"
+            style={{ borderColor: GENESIS_ATMOSPHERE.border, boxShadow: "0 30px 80px rgba(0,0,0,.55)" }}
+          >
+            <iframe src={storeUrl} title="Your real storefront" className="h-[60vh] w-full bg-white" />
+          </div>
+          <button
+            onClick={() => router.push("/onboarding/launch")}
+            className={primaryButton}
+            style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
+          >
+            Continue
+          </button>
         </>
       )}
 

@@ -1,8 +1,8 @@
 import type { FulfillmentCandidate } from "@/lib/fulfillment/types";
 import type { PriceRecommendation } from "./pricing";
-import type { DiscoveryState, DiscoveryStep } from "./types";
+import type { CreativeDirectionOption, DiscoveryState, DiscoveryStep } from "./types";
 
-export type { DiscoveryState, DiscoveryStep };
+export type { CreativeDirectionOption, DiscoveryState, DiscoveryStep };
 
 // Onboarding v2 — the guided discovery flow's own pure state machine.
 // Given the current state and an already-classified/already-fetched
@@ -30,6 +30,9 @@ export function initialDiscoveryState(): DiscoveryState {
     ideaText: null,
     brandPositioning: null,
     brandPositioningText: null,
+    creativeApproach: null,
+    creativeDirectionOptions: null,
+    creativeDirection: null,
     productSource: null,
     selectedCandidate: null,
     candidateReasoning: null,
@@ -50,18 +53,46 @@ export function applyBusinessModelAnswer(state: DiscoveryState, businessModelSlu
   return { ...state, businessModelSlug, ideaText, step: "brand_positioning" };
 }
 
-// Goes straight to fulfillment_connect, skipping product_source — Sean's
-// explicit scope for this build pass is the single "help me find something
-// to sell" path, "one polished path" rather than multiple partial ones
-// (ONBOARDING_V2_DESIGN.md's "I have products" branch stays deferred).
-// applyProductSourceAnswer below still exists, ready for when that branch
-// is actually built — it's just not reached from the real UI yet.
+// Goes to creative_approach — Sean's explicit scope for this build pass is
+// the single "help me find something to sell" path plus the new custom-
+// design fork, "one polished path (times two)" rather than multiple
+// partial ones (ONBOARDING_V2_DESIGN.md's "I have products" branch, a
+// DIFFERENT fork from creativeApproach below, stays deferred).
+// applyProductSourceAnswer further below still exists, ready for when that
+// separate branch is actually built — it's just not reached from the real
+// UI yet.
 export function applyBrandPositioningAnswer(
   state: DiscoveryState,
   brandPositioning: string,
   brandPositioningText: string
 ): DiscoveryState {
-  return { ...state, brandPositioning, brandPositioningText, productSource: "discover", step: "fulfillment_connect" };
+  return { ...state, brandPositioning, brandPositioningText, step: "creative_approach" };
+}
+
+// custom -> generate three creative directions; resell -> today's existing
+// catalog-browse-and-pick flow, completely unchanged from here on.
+export function applyCreativeApproachAnswer(
+  state: DiscoveryState,
+  creativeApproach: "custom" | "resell"
+): DiscoveryState {
+  if (creativeApproach === "resell") {
+    return { ...state, creativeApproach, productSource: "discover", step: "fulfillment_connect" };
+  }
+  return { ...state, creativeApproach, step: "creative_direction_generating" };
+}
+
+export function applyCreativeDirectionsGenerated(
+  state: DiscoveryState,
+  directions: CreativeDirectionOption[]
+): DiscoveryState {
+  return { ...state, creativeDirectionOptions: directions, step: "creative_direction_review" };
+}
+
+export function applyCreativeDirectionSelected(
+  state: DiscoveryState,
+  chosen: CreativeDirectionOption
+): DiscoveryState {
+  return { ...state, creativeDirection: chosen, creativeDirectionOptions: null, step: "fulfillment_connect" };
 }
 
 export function applyProductSourceAnswer(
@@ -77,7 +108,11 @@ export function applyProductSourceAnswer(
 }
 
 export function applyFulfillmentConnected(state: DiscoveryState): DiscoveryState {
-  return { ...state, fulfillmentConnected: true, step: "product_discovery" };
+  // Backward-compatible by construction: any in-flight draft with
+  // creativeApproach still null/undefined (created before this fork
+  // existed) falls through to today's exact existing behavior.
+  const step = state.creativeApproach === "custom" ? "creative_product_building" : "product_discovery";
+  return { ...state, fulfillmentConnected: true, step };
 }
 
 export function applyCandidateSelected(
@@ -89,5 +124,9 @@ export function applyCandidateSelected(
 }
 
 export function applyPricingConfirmed(state: DiscoveryState, pricing: PriceRecommendation): DiscoveryState {
-  return { ...state, pricing, step: "ready_to_publish" };
+  // Custom path lands on storefront_reveal instead of handing off to
+  // Launch directly — see confirmPricing in app/onboarding/actions.ts,
+  // which materializes the real Store right after this transition.
+  const step = state.creativeApproach === "custom" ? "storefront_reveal" : "ready_to_publish";
+  return { ...state, pricing, step };
 }

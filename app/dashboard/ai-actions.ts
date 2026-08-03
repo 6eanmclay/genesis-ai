@@ -52,7 +52,7 @@ import { recordExecution } from "@/lib/execution/log";
 import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
-import type { OnboardingState } from "@/lib/onboarding/types";
+import type { CreativeDirectionOption, OnboardingState } from "@/lib/onboarding/types";
 
 const PROMPT_VERSION = "v2";
 
@@ -3351,11 +3351,28 @@ export async function confirmStoreDraftCore(
   // scope to suppress at generation time) — its output is simply not used
   // here when this branch is taken. See ONBOARDING_V2_DESIGN.md section 7.
   const onboardingState = draft.onboardingState as OnboardingState | null;
+  // Real bug found via live testing: this used to also require
+  // step === "ready_to_publish", true for every guided-discovery draft
+  // before the custom-design path existed. That path now confirms from
+  // "storefront_reveal" instead (see confirmPricing in app/onboarding/
+  // actions.ts), so the old check silently fell through to the
+  // productsDraft branch below and created zero products. selectedCandidate
+  // and pricing are only ever set together (applyCandidateSelected, then
+  // applyPricingConfirmed requires a candidate to already exist) — by the
+  // time both are present, the real fulfillment-selection+pricing flow has
+  // genuinely completed, regardless of which step follows it.
   const fulfillmentSelection =
-    onboardingState?.step === "ready_to_publish" && onboardingState.selectedCandidate && onboardingState.pricing
+    onboardingState?.selectedCandidate && onboardingState.pricing
       ? { candidate: onboardingState.selectedCandidate, pricing: onboardingState.pricing }
       : null;
   const fulfillmentCredentialsEntry = Object.entries(onboardingState?.fulfillmentCredentials ?? {})[0];
+  // Creative Direction (custom-design path only) — the durable creative
+  // identity the owner chose. When present, its real generated artwork
+  // supersedes the fulfillment candidate's own stock catalog photo (a
+  // confirmed-live constraint elsewhere in this codebase: a catalog
+  // candidate's own imageUrl is not a valid Printful print-file URL, so
+  // this is a real fix for this path, not just a preference).
+  const creativeDirection = draft.creativeDirection as CreativeDirectionOption | null;
 
   const baseSlug = slugify(draft.name);
   let slug = baseSlug;
@@ -3425,13 +3442,14 @@ export async function confirmStoreDraftCore(
       slug,
       description: draft.description,
       tagline: draft.tagline,
-      logoUrl: opts.logoUrl ?? null,
+      logoUrl: opts.logoUrl ?? creativeDirection?.logoUrl ?? null,
       theme,
       blueprint: (blueprintWithHero as object | null) ?? Prisma.DbNull,
       version: draft.version,
       businessCategories: draft.businessCategories,
       revenueStreams: draft.revenueStreams,
       brandPositioning: draft.brandPositioning,
+      creativeDirection: (creativeDirection as object | null) ?? Prisma.DbNull,
       products: fulfillmentSelection
         ? {
             // The guided flow's one real, priced, fulfillment-backed
@@ -3444,7 +3462,7 @@ export async function confirmStoreDraftCore(
                 description: fulfillmentSelection.candidate.description,
                 priceInCents: fulfillmentSelection.pricing.retailPriceInCents,
                 position: 0,
-                imageUrl: fulfillmentSelection.candidate.imageUrl,
+                imageUrl: creativeDirection?.productImageUrl ?? fulfillmentSelection.candidate.imageUrl,
                 costInCents:
                   fulfillmentSelection.pricing.retailPriceInCents - fulfillmentSelection.pricing.profitInCents,
                 fulfillmentProvider: fulfillmentSelection.candidate.provider,
@@ -3512,7 +3530,7 @@ export async function confirmStoreDraftCore(
         storeId: store.id,
         storeDraftId: null,
         candidate: fulfillmentSelection.candidate,
-        imageUrl: fulfillmentSelection.candidate.imageUrl ?? "",
+        imageUrl: creativeDirection?.productImageUrl ?? fulfillmentSelection.candidate.imageUrl ?? "",
         retailPriceInCents: fulfillmentSelection.pricing.retailPriceInCents,
       });
       await prisma.product.update({

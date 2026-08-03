@@ -102,6 +102,16 @@ model Store {
   // recommendPrice() — a real branching input, not narrative flavor text
   // like blueprint.brandIdentity.brandPersonality.
   brandPositioning   String?
+  // Onboarding v2, Creative Direction — the durable creative identity the
+  // owner chose from Genesis's three generated directions: {name,
+  // description, brandVoice, photographyStyle, colors, typography,
+  // logoUrl, productImageUrl}. Deliberately separate from `theme` (which
+  // stays the live-editable, chat-mutable rendering config) — this is the
+  // less-frequently-changed "DNA" record a later phase will read from for
+  // future creative work (marketing, social, packaging, future logos).
+  // Null for the reselling/curating path and every store created before
+  // this field existed.
+  creativeDirection  Json?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -244,6 +254,10 @@ model StoreDraft {
   // Onboarding v2 — see Store.brandPositioning's own comment; same
   // draft-stage-copy pattern as businessCategories/revenueStreams above.
   brandPositioning   String?
+  // Onboarding v2, Creative Direction — see Store.creativeDirection's own
+  // comment; same draft-stage-copy pattern, carried over verbatim at
+  // confirmStoreDraftCore.
+  creativeDirection  Json?
   // Onboarding v2 — the guided discovery flow's own state machine progress
   // (current step, classifications made so far, the chosen fulfillment
   // candidate/variant) and, while no real Store/StoreIntegration exists yet
