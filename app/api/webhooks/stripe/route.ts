@@ -39,15 +39,49 @@ export async function POST(request: Request) {
     // so for connected events it's the source of truth for which store
     // this belongs to; metadata is only trusted for platform-key events
     // (no event.account), which we control end-to-end ourselves.
+    //
+    // Real bug found via live testing: externalAccountId has no unique
+    // constraint (nothing stops two different stores from connecting the
+    // same underlying Stripe account — an owner running more than one
+    // store is a real, non-adversarial case), so findFirst-by-
+    // externalAccountId-alone could resolve to the wrong store, or Stripe's
+    // return order could differ from creation order. metadata.storeId is
+    // now used to disambiguate, but only after confirming — via that
+    // store's OWN stored externalAccountId, not the merchant's say-so —
+    // that it really matches this event.account. That keeps the original
+    // trust boundary intact (a forged metadata.storeId still can't claim
+    // an event for an account it isn't genuinely connected to) while fixing
+    // the ambiguity for stores that legitimately share one Stripe account.
     let storeId: string | undefined;
     if (event.account) {
-      const integration = await prisma.storeIntegration.findFirst({
-        where: { provider: "STRIPE", externalAccountId: event.account },
-        select: { storeId: true },
-      });
-      storeId = integration?.storeId;
+      const metadataStoreId = session.metadata?.storeId;
+      if (metadataStoreId) {
+        const claimed = await prisma.storeIntegration.findUnique({
+          where: { storeId_provider: { storeId: metadataStoreId, provider: "STRIPE" } },
+          select: { storeId: true, externalAccountId: true },
+        });
+        if (claimed?.externalAccountId === event.account) {
+          storeId = claimed.storeId;
+        }
+      }
+      if (!storeId) {
+        const integration = await prisma.storeIntegration.findFirst({
+          where: { provider: "STRIPE", externalAccountId: event.account },
+          select: { storeId: true },
+        });
+        storeId = integration?.storeId;
+      }
     } else {
       storeId = session.metadata?.storeId;
+    }
+
+    if (!storeId || !productId) {
+      console.error("[stripe webhook] could not resolve order target", {
+        sessionId: session.id,
+        account: event.account ?? null,
+        metadataStoreId: session.metadata?.storeId ?? null,
+        productId: productId ?? null,
+      });
     }
 
     if (storeId && productId) {
