@@ -13,7 +13,11 @@ import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/ge
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
-import { predictGoalTrajectory, type GoalTrajectory } from "@/lib/businessModel/reasoning";
+import {
+  predictGoalTrajectory,
+  getActionTypeTrackRecord,
+  type GoalTrajectory,
+} from "@/lib/businessModel/reasoning";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
 // Used in the SYSTEM_PROMPT string below to spell out the real, current
 // section keys in prose — ProposedActionSchema itself no longer types
@@ -209,6 +213,8 @@ Every business's own stated goals and challenges are shown with their real ids. 
 
 Each belief you're shown includes its own real topicKey. When an output is genuinely built on one specific belief, set relatedBeliefTopicKey to that belief's exact topicKey as shown; leave it null when no specific belief was actually used as grounding, which is most outputs.
 
+actionTypeTrackRecord shows this store's own real history for a given action type — how often a proposal of that type has actually been approved (approvalRate), and, when there's enough real measured history, how often the result actually looked positive afterward (positiveOutcomeRate, null when there isn't enough real history yet — never treat a null here as a bad sign, it just means too little data exists so far). This is a different, complementary signal from beliefs: a belief only ever applies once the exact same finding has recurred, while a track record can inform a brand-new finding of a familiar action type. If you're about to attach a proposedAction and its actionType has a real track record here, let it genuinely inform your confidence — a type this store has consistently approved and that has measured well deserves higher confidence than the summary text alone would suggest; a type this store has often rejected, or that measured poorly, deserves real caution even if the current finding looks compelling in isolation. An actionType absent from this list simply has no real history yet on this store — reason from the evidence you do have, same as always.
+
 actionHref must be exactly one of: "/dashboard#attention", "/dashboard/website", "/dashboard/settings", "/dashboard/payments", "/dashboard/products", "/dashboard/marketing", "/dashboard/brand" — whichever dashboard section a recommendation/opportunity relates to.
 
 If, and only if, a recommendation or opportunity maps directly onto one of these actions the merchant (or, if delegated, Genesis itself) could apply exactly as proposed, attach a proposedAction with the precise, ready-to-apply values:
@@ -283,10 +289,11 @@ export async function runCognitiveReview(params: {
     select: { name: true, description: true, priceInCents: true, active: true },
   });
 
-  const [orderSummary, customerSummaries, recentActivity] = await Promise.all([
+  const [orderSummary, customerSummaries, recentActivity, actionTypeTrackRecord] = await Promise.all([
     getOrderSummary(storeId, { includeRevenue: true }),
     getCustomerSummaries(storeId, { includeRevenue: true, limit: 10 }),
     getRecentActivity(storeId, 10),
+    getActionTypeTrackRecord(storeId),
   ]);
   const recentInsights = params.recentInsights ?? (await computeInsights(storeId));
   // J4 Foundation Phase 2 (Learn) — a separate call, deliberately not folded
@@ -426,6 +433,13 @@ export async function runCognitiveReview(params: {
     // fixed object, not a variable list, so a null entry here just means
     // "no real baseline for this segment," not something worth filtering.
     customerSegmentTrends: businessProfile.customers.segmentTrends,
+    // Growth Engine M2 — real historical performance by actionType (not
+    // exact-topicKey, unlike the rejection_pattern:/outcome_pattern:
+    // beliefs above — this helps calibrate confidence for a genuinely NEW
+    // finding of a familiar kind, not just a repeat of an old one). Only
+    // actionTypes with real, sufficient history appear at all — see
+    // SYSTEM_PROMPT for how to weigh this against everything else.
+    actionTypeTrackRecord,
   };
 
   const outcome = await callGenesisModel({

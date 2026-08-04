@@ -319,6 +319,107 @@ export async function getRecentDecisionOutcomes(
   }));
 }
 
+// Growth Engine M2 — "learn from decisions, execution, and results so
+// recommendations become better" (VISION.md Chapter 1). Genuinely
+// different from, not a duplicate of, the belief-shaped learning
+// detectDecisionOutcomePattern already produces (lib/intelligence/learn.ts):
+// that groups by exact topicKey, so it only ever helps once the SAME real
+// finding has recurred. This groups by actionType instead — a real
+// track record ("update_seo proposals have historically been approved
+// and measured well") that's useful the first time a genuinely NEW
+// finding of a familiar kind comes up, not just a repeat of an old one.
+// Same honest-threshold discipline as every other Understand function
+// (getRevenueTrend's zero-baseline null, etc.) — this is a young product;
+// most action types won't have enough real decided/measured occurrences
+// yet, and a track record from 1 data point is worse than no track
+// record at all.
+const TRACK_RECORD_MIN_OCCURRENCES = 2;
+
+export interface ActionTypeTrackRecord {
+  actionType: string;
+  decidedCount: number; // real EXECUTED + REJECTED decisions, all time
+  approvalRate: number; // 0-1, executed / decided
+  measuredCount: number; // real PostExecutionMeasurement rows for this actionType
+  // null when there's too little real measured history, or every real
+  // measurement was neutral — never a fabricated rate from thin evidence.
+  positiveOutcomeRate: number | null;
+}
+
+// Mirrors lib/intelligence/learn.ts's own private measurementDirection —
+// duplicated deliberately rather than imported, since Understand
+// (this file) sits below Learn in the real dependency direction
+// (Understand -> Learn -> Reason) and shouldn't import from it.
+function measurementOutcomeDirection(m: {
+  revenueBeforeCents: number | null;
+  revenueAfterCents: number | null;
+  orderCountBefore: number;
+  orderCountAfter: number;
+}): "positive" | "negative" | "neutral" {
+  if (m.revenueBeforeCents !== null && m.revenueAfterCents !== null) {
+    if (m.revenueAfterCents > m.revenueBeforeCents) return "positive";
+    if (m.revenueAfterCents < m.revenueBeforeCents) return "negative";
+    return "neutral";
+  }
+  if (m.orderCountAfter > m.orderCountBefore) return "positive";
+  if (m.orderCountAfter < m.orderCountBefore) return "negative";
+  return "neutral";
+}
+
+export async function getActionTypeTrackRecord(storeId: string): Promise<ActionTypeTrackRecord[]> {
+  const [decided, measured] = await Promise.all([
+    prisma.approvalRequest.findMany({
+      where: { storeId, status: { in: ["EXECUTED", "REJECTED"] } },
+      select: { actionType: true, status: true },
+    }),
+    prisma.postExecutionMeasurement.findMany({
+      where: { storeId },
+      select: {
+        actionType: true,
+        revenueBeforeCents: true,
+        revenueAfterCents: true,
+        orderCountBefore: true,
+        orderCountAfter: true,
+      },
+    }),
+  ]);
+
+  const decidedByType = new Map<string, { executed: number; total: number }>();
+  for (const row of decided) {
+    const entry = decidedByType.get(row.actionType) ?? { executed: 0, total: 0 };
+    entry.total += 1;
+    if (row.status === "EXECUTED") entry.executed += 1;
+    decidedByType.set(row.actionType, entry);
+  }
+
+  const measuredByType = new Map<string, { positive: number; negative: number; total: number }>();
+  for (const row of measured) {
+    const entry = measuredByType.get(row.actionType) ?? { positive: 0, negative: 0, total: 0 };
+    entry.total += 1;
+    const direction = measurementOutcomeDirection(row);
+    if (direction === "positive") entry.positive += 1;
+    if (direction === "negative") entry.negative += 1;
+    measuredByType.set(row.actionType, entry);
+  }
+
+  const actionTypes = new Set([...decidedByType.keys(), ...measuredByType.keys()]);
+  const results: ActionTypeTrackRecord[] = [];
+  for (const actionType of actionTypes) {
+    const d = decidedByType.get(actionType);
+    const m = measuredByType.get(actionType);
+    if (!d || d.total < TRACK_RECORD_MIN_OCCURRENCES) continue; // honest omission, not a fabricated 0%/100%
+
+    const nonNeutral = m ? m.positive + m.negative : 0;
+    results.push({
+      actionType,
+      decidedCount: d.total,
+      approvalRate: d.executed / d.total,
+      measuredCount: m?.total ?? 0,
+      positiveOutcomeRate: nonNeutral >= TRACK_RECORD_MIN_OCCURRENCES ? m!.positive / nonNeutral : null,
+    });
+  }
+  return results;
+}
+
 export function aggregate(
   records: CanonicalRecord[],
   opts: { field: string; op: "sum" | "count" | "avg" }
