@@ -381,7 +381,7 @@ export async function runCognitiveReview(params: {
       effort: "medium",
       format: zodOutputFormat(CognitiveReviewOutputSchema),
     },
-  }, { storeId, background });
+  }, { storeId, background, feature: "cognitive_review" });
 
   if (!outcome.ok) {
     await recordGenesisExecution({

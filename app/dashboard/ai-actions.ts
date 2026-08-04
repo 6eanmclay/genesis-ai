@@ -502,7 +502,7 @@ async function generateStoreDraftCore(
         effort: "high",
         format: zodOutputFormat(PrimaryBlueprintSchema),
       },
-    }, { userId }),
+    }, { userId, feature: "store_draft_primary_blueprint" }),
     callGenesisModel({
       model: "claude-opus-4-8",
       max_tokens: 300,
@@ -513,7 +513,7 @@ async function generateStoreDraftCore(
         effort: "low",
         format: zodOutputFormat(BusinessCategorySchema),
       },
-    }, { userId }),
+    }, { userId, feature: "store_draft_business_category" }),
   ]);
   const businessCategories = filterKnownBusinessCategories(
     businessCategoryOutcome.ok
@@ -614,7 +614,7 @@ async function generateStoreDraftCore(
         effort: "high",
         format: zodOutputFormat(SecondaryBlueprintSchema),
       },
-    }, { userId }),
+    }, { userId, feature: "store_draft_secondary_blueprint" }),
     callGenesisModel({
       model: "claude-opus-4-8",
       max_tokens: 16000,
@@ -638,7 +638,7 @@ async function generateStoreDraftCore(
         effort: "high",
         format: zodOutputFormat(CompositionSchema),
       },
-    }, { userId }),
+    }, { userId, feature: "store_draft_composition" }),
   ]);
   // Checked independently (not via a shared "whichever failed" variable) so
   // TypeScript actually narrows each of secondaryOutcome/compositionOutcome
@@ -1626,7 +1626,7 @@ async function applyGenesisMessage(userId: string, userMessage: string, confirme
       effort: "high",
       format: zodOutputFormat(ChatControlSchema),
     },
-  }, { userId, confirmedOverride });
+  }, { userId, confirmedOverride, feature: "draft_chat_control" });
   if (!controlOutcome.ok) {
     return bailOnProviderFailure({
       kind: controlOutcome.kind,
@@ -1729,7 +1729,7 @@ async function applyGenesisMessage(userId: string, userMessage: string, confirme
         effort: "high",
         format: zodOutputFormat(PrimaryBlueprintSchema),
       },
-    }, { userId, confirmedOverride });
+    }, { userId, confirmedOverride, feature: "draft_chat_content_primary" });
     if (!contentOutcome.ok) {
       return bailOnProviderFailure({
         kind: contentOutcome.kind,
@@ -1814,7 +1814,7 @@ async function applyGenesisMessage(userId: string, userMessage: string, confirme
             effort: "high",
             format: zodOutputFormat(SecondaryChatSchema),
           },
-        }, { userId, confirmedOverride })
+        }, { userId, confirmedOverride, feature: "draft_chat_content_secondary" })
       : Promise.resolve(null);
 
     // Composition is a separate call for the same reason CONTENT is split
@@ -1844,7 +1844,7 @@ async function applyGenesisMessage(userId: string, userMessage: string, confirme
             effort: "high",
             format: zodOutputFormat(CompositionSchema),
           },
-        }, { userId, confirmedOverride })
+        }, { userId, confirmedOverride, feature: "draft_chat_composition" })
       : Promise.resolve(null);
 
     const [secondaryOutcome, compositionOutcome] = await Promise.all([secondaryPromise, compositionPromise]);
@@ -2243,7 +2243,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       effort: "low",
       format: zodOutputFormat(DataQuestionSchema),
     },
-  }, { storeId: store.id, confirmedOverride });
+  }, { storeId: store.id, confirmedOverride, feature: "store_chat_data_question" });
   const dataQuestionResult = dataQuestionOutcome.ok
     ? dataQuestionOutcome.message.parsed_output
     : null;
@@ -2274,7 +2274,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         effort: "medium",
         format: zodOutputFormat(StoreChatDataAnswerSchema),
       },
-    }, { storeId: store.id, confirmedOverride });
+    }, { storeId: store.id, confirmedOverride, feature: "store_chat_data_answer" });
 
     if (!answerOutcome.ok) {
       return bailOnProviderFailure({
@@ -2354,7 +2354,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       effort: "low",
       format: zodOutputFormat(BusinessFactSchema),
     },
-  }, { storeId: store.id, confirmedOverride });
+  }, { storeId: store.id, confirmedOverride, feature: "store_chat_business_fact" });
   const businessFactResult = businessFactOutcome.ok
     ? businessFactOutcome.message.parsed_output
     : null;
@@ -2497,7 +2497,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       effort: "low",
       format: zodOutputFormat(ProductImageRequestSchema),
     },
-  }, { storeId: store.id, confirmedOverride });
+  }, { storeId: store.id, confirmedOverride, feature: "store_chat_image_request_detection" });
   // A provider failure here falls through to the normal chat flow below,
   // same as the pre-existing "detection failure" comment already intended
   // for a parse miss — this classifier was, before this pass, the one call
@@ -2676,7 +2676,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       effort: "high",
       format: zodOutputFormat(StoreChatPrimarySchema),
     },
-  }, { storeId: store.id, confirmedOverride });
+  }, { storeId: store.id, confirmedOverride, feature: "store_chat_content_primary" });
   if (!primaryOutcome.ok) {
     return bailOnProviderFailure({
       kind: primaryOutcome.kind,
@@ -2796,7 +2796,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
             effort: "high",
             format: zodOutputFormat(SecondaryChatSchema),
           },
-        }, { storeId: store.id, confirmedOverride })
+        }, { storeId: store.id, confirmedOverride, feature: "store_chat_content_secondary" })
       : Promise.resolve(null);
 
     // Composition is a separate call, same reasoning as draft chat — adding
@@ -2827,7 +2827,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
             effort: "high",
             format: zodOutputFormat(CompositionSchema),
           },
-        }, { storeId: store.id, confirmedOverride })
+        }, { storeId: store.id, confirmedOverride, feature: "store_chat_composition" })
       : Promise.resolve(null);
 
     const [secondaryOutcome, compositionOutcome] = await Promise.all([secondaryPromise, compositionPromise]);

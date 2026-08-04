@@ -200,7 +200,7 @@ async function decideExperienceNextStep(
       messages: [{ role: "user", content: transcriptText }],
       output_config: { effort: "medium", format: zodOutputFormat(ExperienceDecisionSchema) },
     },
-    scope
+    { ...scope, feature: "onboarding_experience_decision" }
   );
 
   // A real provider-level failure (usage ceiling, billing, rate limit,
@@ -325,7 +325,7 @@ export async function submitBusinessModelAnswer(freeText: string): Promise<{ sta
       messages: [{ role: "user", content: freeText }],
       output_config: { effort: "low", format: zodOutputFormat(BusinessModelClassificationSchema) },
     },
-    { userId }
+    { userId, feature: "onboarding_business_model_classification" }
   );
   const slug = outcome.ok ? (filterKnownRevenueStreams([outcome.message.parsed_output?.slug ?? "other"])[0] ?? "other") : "other";
 
@@ -349,7 +349,7 @@ export async function submitBrandPositioningAnswer(freeText: string): Promise<{ 
       messages: [{ role: "user", content: freeText }],
       output_config: { effort: "low", format: zodOutputFormat(BrandPositioningClassificationSchema) },
     },
-    { userId }
+    { userId, feature: "onboarding_brand_positioning_classification" }
   );
   const rawSlug = outcome.ok ? outcome.message.parsed_output?.slug : undefined;
   const slug = rawSlug && isKnownBrandPositioning(rawSlug) ? rawSlug : "other";
@@ -435,7 +435,7 @@ async function generateOneCreativeDirection(
       ],
       output_config: { effort: "medium", format: zodOutputFormat(CreativeDirectionTextSchema) },
     },
-    { userId }
+    { userId, feature: "onboarding_creative_direction_generation" }
   );
   return outcome.ok ? (outcome.message.parsed_output ?? null) : null;
 }
@@ -579,7 +579,7 @@ export async function submitUploadedArtwork(formData: FormData): Promise<{ state
       ],
       output_config: { effort: "medium", format: zodOutputFormat(UploadedArtworkIdentitySchema) },
     },
-    { userId }
+    { userId, feature: "onboarding_uploaded_artwork_identity" }
   );
   if (!outcome.ok || !outcome.message.parsed_output) {
     throw new Error("Genesis couldn't put this together right now — try again in a moment.");
@@ -707,7 +707,7 @@ export async function buildCreativeProduct(): Promise<{ state: DiscoveryState }>
         ],
         output_config: { effort: "medium", format: zodOutputFormat(CreativeThemeStructureSchema) },
       },
-      { userId }
+      { userId, feature: "onboarding_creative_theme_structure" }
     ),
   ]);
 
@@ -797,7 +797,7 @@ export async function discoverHeroProduct(): Promise<{ state: DiscoveryState }> 
       messages: [{ role: "user", content: catalogSummary }],
       output_config: { effort: "high", format: zodOutputFormat(HeroSelectionSchema) },
     },
-    { userId }
+    { userId, feature: "onboarding_hero_selection" }
   );
 
   if (!outcome.ok) {

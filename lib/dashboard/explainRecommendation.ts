@@ -57,7 +57,7 @@ export async function getRecommendationExplanation(params: {
       effort: "low",
       format: zodOutputFormat(ExplanationSchema),
     },
-  }, { storeId: params.storeId });
+  }, { storeId: params.storeId, feature: "recommendation_explanation" });
 
   if (!outcome.ok) {
     throw new Error(genesisModelFailureMessage(outcome.kind));

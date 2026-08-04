@@ -2,6 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import * as Sentry from "@sentry/nextjs";
 import { prisma } from "@/lib/prisma";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
+import type { AiFeature } from "@/lib/aiFeatures";
+import { computeAnthropicCost } from "@/lib/aiPricing";
+import { businessIntentFor } from "@/lib/businessIntent";
+import { growthCreditValueFor } from "@/lib/growthCreditCatalog";
 
 // Reliability architecture (v21, Phase 1) — the one Anthropic client and the
 // one call path every AI-calling function in this codebase goes through.
@@ -175,21 +179,47 @@ export type GenesisModelContext = GenesisModelScope & {
   // confirmable field). Skips the ceiling check entirely for this one
   // call. Never set automatically.
   confirmedOverride?: boolean;
+  // AI Cost & Usage Infrastructure — what this call is actually for (see
+  // lib/aiFeatures.ts). Required, not optional: a call site with no
+  // feature tag is exactly the silent gap this system exists to close,
+  // so it's a compile error rather than an easy thing to forget.
+  feature: AiFeature;
 };
 
-// Track 0 — records real per-call usage from the provider's own response,
-// never estimated. Awaited (not fire-and-forget) so the row is reliably
-// written before the request completes, since a serverless function can
-// exit immediately after responding — but its own failure is caught here
-// and never allowed to turn a real successful AI response into a reported
-// failure.
+// AI Cost & Usage Infrastructure — records real per-call usage from the
+// provider's own response, never estimated, same discipline this function
+// already had before this pass just extended what it captures. Awaited
+// (not fire-and-forget) so the row is reliably written before the request
+// completes, since a serverless function can exit immediately after
+// responding — but its own failure is caught here and never allowed to
+// turn a real successful AI response into a reported failure.
+//
+// businessIntent/growthCreditValue are derived from `feature`, not passed
+// in separately — a call site only ever specifies one identifier, and
+// everything else about "what kind of business activity is this" and
+// "what should it cost in Growth Credits" follows automatically from that
+// single source of truth (lib/businessIntent.ts, lib/growthCreditCatalog.ts).
 async function recordUsage(
   scope: GenesisModelScope,
+  feature: AiFeature,
+  model: string,
+  durationMs: number,
   usage: { input_tokens: number; output_tokens: number }
 ): Promise<void> {
   try {
     await prisma.aiUsageEvent.create({
-      data: { ...scope, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens },
+      data: {
+        ...scope,
+        inputTokens: usage.input_tokens,
+        outputTokens: usage.output_tokens,
+        feature,
+        provider: "anthropic",
+        model,
+        durationMs,
+        costUsd: computeAnthropicCost({ model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }),
+        businessIntent: businessIntentFor(feature),
+        growthCreditValue: growthCreditValueFor(feature),
+      },
     });
   } catch (err) {
     Sentry.captureException(err);
@@ -215,7 +245,7 @@ export async function callGenesisModel<Params extends Parameters<typeof anthropi
   GenesisModelResult<Awaited<ReturnType<ReturnType<typeof anthropic.messages.stream<Params>>["finalMessage"]>>>
 > {
   const startedAt = Date.now();
-  const { background = false, confirmedOverride = false, ...scope } = context;
+  const { background = false, confirmedOverride = false, feature, ...scope } = context;
   const scopeLabel =
     "storeId" in scope
       ? `storeId=${scope.storeId}`
@@ -258,8 +288,9 @@ export async function callGenesisModel<Params extends Parameters<typeof anthropi
 
   try {
     const message = await anthropic.messages.stream(params).finalMessage();
-    await recordUsage(scope, message.usage);
-    return { ok: true, message, durationMs: Date.now() - startedAt };
+    const durationMs = Date.now() - startedAt;
+    await recordUsage(scope, feature, params.model, durationMs, message.usage);
+    return { ok: true, message, durationMs };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const classified = classifyAnthropicError(err);

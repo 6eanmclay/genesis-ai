@@ -57,7 +57,7 @@ export async function sourceHeroImageCandidate(
       effort: "low",
       format: zodOutputFormat(HeroQuerySchema),
     },
-  }, scope);
+  }, { ...scope, feature: "hero_image_query" });
   if (!outcome.ok) return null;
   const queries = outcome.message.parsed_output?.queries ?? [];
 
