@@ -5,15 +5,20 @@ import { useRouter } from "next/navigation";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisComposing } from "@/lib/dashboard/genesisActivity";
-import { submitMeetingVision } from "./actions";
+import { submitMeetingTurn } from "./actions";
+import type { FollowUpTurn } from "./ask";
 
 // The First Meeting with J4 — MEETING_WITH_J4.md, frozen v1. Same visual
 // treatment as LaunchScreen.tsx (the Partnership ceremony this meeting
 // directly continues): idle avatar throughout, real async work, no
-// fabricated progress. M4 builds Reflect + Listen — the "listen" beat's
-// submit is real, not a placeholder, but what happens after it will change
-// under M5-M7 as Ask/Recommend/Execute get added before completion.
-type Beat = "reflect" | "listen" | "completing";
+// fabricated progress. M5 builds Reflect + Listen + Ask — the "converse"
+// beat below loops for as many real turns as decideNextMeetingStep
+// actually warrants (zero, one, or up to the safety ceiling), then
+// completes. What happens after the loop ends will change under M6-M7 as
+// Recommend/Execute get added before completion.
+type Beat = "reflect" | "converse" | "completing";
+
+const OPENING_QUESTION = "What do you want this to become?";
 
 const shell =
   "fixed inset-0 z-[100] flex flex-col items-center justify-center gap-6 px-8 text-center overflow-y-auto py-12";
@@ -24,8 +29,25 @@ const primaryButton =
 export function MeetingScreen({ reflection }: { reflection: string }) {
   const router = useRouter();
   const [beat, setBeat] = useState<Beat>("reflect");
-  const [vision, setVision] = useState("");
+  const [transcript, setTranscript] = useState<FollowUpTurn[]>([]);
+  const [question, setQuestion] = useState(OPENING_QUESTION);
+  const [answer, setAnswer] = useState("");
   const [, startTransition] = useTransition();
+
+  const submitTurn = () => {
+    setBeat("completing");
+    startTransition(async () => {
+      const result = await submitMeetingTurn(transcript, question, answer);
+      if (result.action === "ask") {
+        setTranscript((prev) => [...prev, { question, answer: answer.trim() }]);
+        setQuestion(result.question);
+        setAnswer("");
+        setBeat("converse");
+        return;
+      }
+      router.push("/dashboard");
+    });
+  };
 
   return (
     <div className={shell} style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}>
@@ -37,7 +59,7 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
             {reflection}
           </p>
           <button
-            onClick={() => setBeat("listen")}
+            onClick={() => setBeat("converse")}
             className={primaryButton}
             style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
           >
@@ -46,17 +68,19 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
         </>
       )}
 
-      {(beat === "listen" || beat === "completing") && (
+      {(beat === "converse" || beat === "completing") && (
         <>
           <p className="max-w-md text-lg font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
-            What do you want this to become?
+            {question}
           </p>
-          <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-            Tell me the vision — as much or as little as you want.
-          </p>
+          {question === OPENING_QUESTION && (
+            <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+              Tell me the vision — as much or as little as you want.
+            </p>
+          )}
           <textarea
-            value={vision}
-            onChange={(e) => setVision(e.target.value)}
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
             onFocus={() => setGenesisComposing(true)}
             onBlur={() => setGenesisComposing(false)}
             disabled={beat === "completing"}
@@ -70,13 +94,7 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
             }}
           />
           <button
-            onClick={() => {
-              setBeat("completing");
-              startTransition(async () => {
-                await submitMeetingVision(vision);
-                router.push("/dashboard");
-              });
-            }}
+            onClick={submitTurn}
             disabled={beat === "completing"}
             className={primaryButton}
             style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}

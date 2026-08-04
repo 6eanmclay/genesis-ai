@@ -52,6 +52,7 @@ export const AI_FEATURES = [
   // Meeting with J4 (app/onboarding/meeting/)
   "j4_meeting_reflect",
   "j4_meeting_listen_extraction",
+  "j4_meeting_ask",
 ] as const;
 
 export type AiFeature = (typeof AI_FEATURES)[number];

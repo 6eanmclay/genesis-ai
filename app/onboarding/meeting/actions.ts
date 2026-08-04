@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveUserStore } from "@/lib/permissions";
 import { extractAndPersistVisionFacts } from "./listen";
+import { decideNextMeetingStep, type FollowUpTurn } from "./ask";
 
 async function requireOwnStore() {
   const session = await auth();
@@ -13,26 +14,44 @@ async function requireOwnStore() {
   return resolved.store;
 }
 
-// Meeting with J4 M4 — Listen's own real submission. Extracts and persists
-// whatever real goals/challenges the owner's open answer actually
-// contained (zero is a valid, honest outcome), then — temporarily, until
-// M5 adds Ask — completes the meeting the same way Reflect's Continue used
-// to. M5 replaces this chain with a real "ask only if genuinely needed"
-// decision in between; this function's own extraction logic doesn't change.
-export async function submitMeetingVision(visionText: string): Promise<void> {
+export type MeetingTurnResult = { action: "ask"; question: string } | { action: "proceed" };
+
+// Meeting with J4 M5 — one real turn of Listen/Ask, shared by both the
+// initial "what do you want this to become" answer and any follow-up
+// (there's no structural difference between them — each answer gets
+// extracted for real facts the same way, then the same real judgment call
+// decides whether one more question is genuinely warranted). Extracts and
+// persists whatever real goals/challenges the answer actually contained
+// (zero is a valid, honest outcome for either), appends the turn to the
+// transcript, then asks decideNextMeetingStep whether to continue.
+// Temporarily — until M6 adds Recommend — "proceed" completes the meeting
+// directly; M6-M7 move that further still, this function's own logic
+// doesn't change.
+export async function submitMeetingTurn(
+  transcript: FollowUpTurn[],
+  question: string,
+  answer: string
+): Promise<MeetingTurnResult> {
   const store = await requireOwnStore();
-  const trimmed = visionText.trim();
+  const trimmed = answer.trim();
   if (trimmed) {
     await extractAndPersistVisionFacts(store.id, trimmed);
   }
+
+  const updatedTranscript = [...transcript, { question, answer: trimmed }];
+  const decision = await decideNextMeetingStep(store.id, updatedTranscript);
+  if (decision.action === "ask") {
+    return { action: "ask", question: decision.question };
+  }
   await completeFirstMeeting();
+  return { action: "proceed" };
 }
 
 // The meeting's own real completion moment. Set once, checked once on the
 // meeting route's own load (page.tsx), never re-triggered. Called from
-// submitMeetingVision above as of M4 — M5-M7 move the call further still
-// (Ask, then Recommend/Execute) as each real stage gets built; this
-// function itself doesn't change.
+// submitMeetingTurn above as of M5 — M6-M7 move the call further still
+// (Recommend/Execute) as each real stage gets built; this function itself
+// doesn't change.
 export async function completeFirstMeeting(): Promise<void> {
   const store = await requireOwnStore();
   await prisma.store.update({
