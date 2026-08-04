@@ -14,6 +14,11 @@ import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { predictGoalTrajectory, type GoalTrajectory } from "@/lib/businessModel/reasoning";
+import { SECTION_KEYS } from "@/lib/storefrontSections";
+// Used in the SYSTEM_PROMPT string below to spell out the real, current
+// section keys in prose — ProposedActionSchema itself no longer types
+// sectionOrder against this (see that schema's own comment on why), so
+// this prompt string is now the only place enforcing which keys are real.
 
 // Phase 3 Milestone 6 — the J4 Cognitive Layer's own reasoning pipeline.
 // Was generateGenesisRecommendations.ts (lib/dashboard/), relocated here
@@ -43,12 +48,50 @@ const GENESIS_ACTION_HREFS = [
   "/dashboard/products",
   "/dashboard/payments",
   "/dashboard#attention",
+  // Business Intelligence Engine M1 — real blocker found while widening
+  // ProposedActionSchema below: update_store_identity and
+  // update_marketing_assets had no valid actionHref to point to.
+  "/dashboard/marketing",
+  "/dashboard/brand",
 ] as const;
 
 // A recommendation/opportunity may optionally propose a concrete,
-// ready-to-apply action from the GENESIS_ACTIONS registry — same
-// discriminated-union discipline as before, now including the two new
-// record-scoped operations actions (Milestone 6).
+// ready-to-apply action from the GENESIS_ACTIONS registry.
+//
+// Business Intelligence Engine M1 — real, live-tested ceiling found while
+// widening this from 5 to 9 real action types, worth recording precisely
+// since it constrains this milestone's actual scope:
+//   1. A discriminated union of all 9 full per-type input shapes hit a
+//      real 400 ("The compiled grammar is too large") — fast (694ms),
+//      like a pre-flight rejection.
+//   2. Replacing it with one generic z.record() for `input` "fixed" the
+//      400, but broke the actual capability: with zero per-field type
+//      pressure, the model satisfied the schema with `input: {}` on
+//      every proposal, confirmed live by reading the raw CognitiveOutput
+//      rows — every new type was reachable in name only.
+//   3. Replacing THAT with one flat object covering every real field
+//      across all 9 types (collision-safe field names, real per-field
+//      types) hit a different real 400 ("Schema is too complex") — slow
+//      (181s), meaning the API genuinely tried and failed to compile it,
+//      not a cheap pre-flight check. Widening this schema's total
+//      complexity, not just its shape, is the real ceiling.
+// Given two consecutive genuine API rejections, this widens deliberately
+// less than originally scoped: two of the four planned new types
+// (update_store_identity, update_section_order — the two structurally
+// smallest additions) via the same discriminated-union shape that already
+// works at 5 variants. update_store_content and update_marketing_assets
+// are NOT added here — real, same-shaped work, left for a real follow-up
+// that changes the underlying call shape (e.g. a second, focused
+// structured-output call scoped to just the chosen actionType, once one's
+// picked) rather than one call trying to hold everything at once.
+//
+// update_seo/update_hero/update_goal_status/resolve_challenge/
+// create_product were already reachable before this milestone.
+// update_theme, update_brand_identity, update_homepage_content,
+// update_design_direction, and update_product_image are deliberately
+// excluded regardless of the complexity ceiling — see the system prompt
+// below for why (holistic creative rewrites, or a structurally different
+// mechanism entirely).
 const ProposedActionSchema = z.discriminatedUnion("actionType", [
   z.object({
     actionType: z.literal("update_seo"),
@@ -69,16 +112,17 @@ const ProposedActionSchema = z.discriminatedUnion("actionType", [
     actionType: z.literal("resolve_challenge"),
     input: z.object({ challengeRecordId: z.string() }),
   }),
-  // Meeting with J4 M6/M7 — a real bug found live: create_product was
-  // registered in GENESIS_ACTIONS (M2) but never added here, meaning
-  // Reason had no way to actually propose one — the meeting's own
-  // highest-confidence-first selection could never reach a real
-  // create_product candidate no matter how strong the underlying finding
-  // was. Same discipline as every other entry: precise, ready-to-apply
-  // values only, never a vague "add more products" intent.
   z.object({
     actionType: z.literal("create_product"),
     input: z.object({ name: z.string(), description: z.string().nullable(), priceInCents: z.number().int() }),
+  }),
+  z.object({
+    actionType: z.literal("update_store_identity"),
+    input: z.object({ name: z.string(), tagline: z.string(), description: z.string() }),
+  }),
+  z.object({
+    actionType: z.literal("update_section_order"),
+    input: z.object({ sectionOrder: z.array(z.string()) }),
   }),
 ]);
 
@@ -165,7 +209,7 @@ Every business's own stated goals and challenges are shown with their real ids. 
 
 Each belief you're shown includes its own real topicKey. When an output is genuinely built on one specific belief, set relatedBeliefTopicKey to that belief's exact topicKey as shown; leave it null when no specific belief was actually used as grounding, which is most outputs.
 
-actionHref must be exactly one of: "/dashboard#attention", "/dashboard/website", "/dashboard/settings", "/dashboard/payments", "/dashboard/products" — whichever dashboard section a recommendation/opportunity relates to.
+actionHref must be exactly one of: "/dashboard#attention", "/dashboard/website", "/dashboard/settings", "/dashboard/payments", "/dashboard/products", "/dashboard/marketing", "/dashboard/brand" — whichever dashboard section a recommendation/opportunity relates to.
 
 If, and only if, a recommendation or opportunity maps directly onto one of these actions the merchant (or, if delegated, Genesis itself) could apply exactly as proposed, attach a proposedAction with the precise, ready-to-apply values:
 - "update_seo": input: { seoTitle: string, seoMetaDescription: string }.
@@ -173,7 +217,12 @@ If, and only if, a recommendation or opportunity maps directly onto one of these
 - "update_goal_status": input: { goalRecordId: string, status: "achieved" | "abandoned" } — only when a goal's real data (its own trajectory, or something else in context) clearly shows it's been achieved or is no longer viable. Use the goal's own real id.
 - "resolve_challenge": input: { challengeRecordId: string } — only when the data clearly shows the challenge is no longer a real problem. Use the challenge's own real id.
 - "create_product": input: { name: string, description: string | null, priceInCents: number } — only when a genuinely specific, sellable new product idea follows directly from the real business data (e.g. a natural size/variant of an existing product, or a clear gap in an otherwise-thin catalog) — never a vague "add more products." name and description must be concrete and real, never placeholders; priceInCents must be a real, reasonable price for this kind of business, not a guess disconnected from the store's existing pricing.
-Most recommendations/opportunities should NOT include a proposedAction — only attach one when you can specify the exact values, never a vague intent. Leave proposedAction null otherwise.`;
+- "update_store_identity": input: { name: string, tagline: string, description: string } — only when the store's own name/tagline/description is genuinely missing or actively misleading, not to rephrase something that already reads fine.
+- "update_section_order": input: { sectionOrder: an array containing every one of these real section keys exactly once, in the proposed order: ${SECTION_KEYS.join(", ")} } — only when the current order is a genuine, nameable problem (e.g. a section that should come earlier is buried below less important ones), never a reorder for its own sake.
+
+Never propose update_theme, update_brand_identity, update_homepage_content, update_design_direction, update_store_content, or update_marketing_assets — the first four are holistic creative rewrites requiring every field of a large, subjective object at once, never a genuinely precise single fix; the last two are real, deliberately deferred (a genuine schema-complexity limit, not a judgment call) rather than excluded on principle. All six stay a deliberate decision for the owner (or a future pass), not something you propose quietly.
+
+Every recommendation and opportunity should read as a real answer to one question: if this owner does only one thing today, what has the highest real probability of improving their business? Never attach a proposedAction, and never produce a recommendation or opportunity at all, just because something is technically possible to fix — "there's honestly nothing significant to flag right now" is a completely valid, expected outcome of a review, not a shortfall to cover for. Most recommendations/opportunities should NOT include a proposedAction — only attach one when you can specify the exact values, never a vague intent. Leave proposedAction null otherwise.`;
 
 // Home Redesign (v30) — Goal progress becomes a real, standalone Discovery
 // item: a deterministic "prediction" CognitiveOutput row, built in code
