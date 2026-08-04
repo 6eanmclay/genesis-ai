@@ -3,9 +3,10 @@ import { unstable_rethrow } from "next/navigation";
 import { requireStorePermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import type { Executable, ExecutionContext } from "./executable";
-import { GENESIS_ACTIONS } from "./genesisActions";
+import { GENESIS_ACTIONS, type GenesisActionType } from "./genesisActions";
 import { CURRENT_EXECUTION_SCHEMA_VERSION, type ActorType, type ExecutionResult, type ExecutionStatus } from "./types";
 import { recordExecution } from "./log";
+import { checkGrowthPointBalance, deductGrowthPoints } from "@/lib/growthPoints/ledger";
 
 interface ExecuteOptions {
   storeId?: string;
@@ -58,6 +59,16 @@ interface ExecuteOptions {
   // job). The only legitimate caller is communicateFinding() in
   // lib/execution/genesisAutonomy.ts.
   authorityExemptAction?: { storeId: string; actionType: string };
+  // Growth Points Economy (Chapter 2) — set only by callers dispatching a
+  // real GENESIS_ACTIONS entry (the approval path, batch approval,
+  // autonomous delegated-authority execution): the real catalog key
+  // (lib/growthPoints/catalog.ts) execute() checks a cost against and, on
+  // success, debits. Deliberately NOT set by direct executable.run() paths
+  // that never go through the registry (the scheduler's own syncs,
+  // communicateFinding's purely-additive findings, a manual owner revert) —
+  // those stay free, exactly matching "thinking is free, only real
+  // GENESIS_ACTIONS work Genesis performs for the business is invested."
+  actionType?: GenesisActionType;
 }
 
 function buildResult<TMetadata>(
@@ -155,6 +166,35 @@ export async function execute<TInput, TMetadata>(
     return result;
   }
 
+  // Growth Points Economy (Chapter 2) — a read-only gate, checked before any
+  // real work happens. Only engages when the caller passed a real
+  // GenesisActionType (see ExecuteOptions.actionType's own doc comment);
+  // growthPointCost stays null (free, matching every "honest null" catalog
+  // in this codebase) for every unpriced action, which today is all of
+  // them — the catalog is deliberately empty until Sean assigns real values.
+  let growthPointCost: number | null = null;
+  if (opts.actionType) {
+    const gate = await checkGrowthPointBalance(ctx.storeId, opts.actionType);
+    growthPointCost = gate.cost;
+    if (!gate.ok) {
+      const result = buildResult<TMetadata>({
+        executionId,
+        action: executable.action,
+        status: "FAILED",
+        verified: false,
+        message: "Not enough Growth Points to complete this action.",
+        retryable: false,
+        actorType: ctx.actorType,
+        actorId: ctx.userId,
+        storeId: ctx.storeId,
+        storeDraftId: null,
+        metadata: {} as TMetadata,
+      });
+      await recordExecution(result);
+      return result;
+    }
+  }
+
   try {
     const outcome = await executable.run(input, ctx);
     let verified = false;
@@ -184,7 +224,18 @@ export async function execute<TInput, TMetadata>(
       storeDraftId: null,
       metadata: (outcome.metadata ?? {}) as TMetadata,
     });
-    await recordExecution(result);
+    const logRow = await recordExecution(result);
+    // Only reachable here on a real (non-FAILED) outcome — a thrown error
+    // is caught below instead, so a failed attempt never costs the owner
+    // real points.
+    if (growthPointCost !== null && opts.actionType) {
+      await deductGrowthPoints({
+        storeId: ctx.storeId,
+        actionType: opts.actionType,
+        cost: growthPointCost,
+        executionLogId: logRow.id,
+      });
+    }
     return result;
   } catch (error) {
     unstable_rethrow(error);

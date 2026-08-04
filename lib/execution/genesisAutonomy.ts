@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { getStoreRole, hasPermission } from "@/lib/permissions";
 import { execute } from "./engine";
-import { GENESIS_ACTIONS, type GenesisActionContext, type BlueprintContextSubset } from "./genesisActions";
+import { GENESIS_ACTIONS, type GenesisActionContext, type BlueprintContextSubset, type GenesisActionType } from "./genesisActions";
 import type { CommunicateFindingInput } from "./executables/communicateFinding";
 import type { Theme } from "@/lib/theme";
 
@@ -155,6 +155,9 @@ export async function tryExecuteAutonomousAction(
     storeId,
     actorType: "GENESIS",
     preAuthorizedGrantId: grant.id,
+    // Safe — `definition` above already confirms actionType is a real
+    // GENESIS_ACTIONS key.
+    actionType: actionType as GenesisActionType,
   });
 
   if (result.status === "FAILED") {

@@ -25,7 +25,7 @@ import {
 import { runCognitiveReview } from "@/lib/intelligence/cognitiveLayer";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
-import { GENESIS_ACTIONS, type GenesisActionContext } from "@/lib/execution/genesisActions";
+import { GENESIS_ACTIONS, type GenesisActionContext, type GenesisActionType } from "@/lib/execution/genesisActions";
 import { supersedePendingApproval } from "@/lib/dashboard/pendingApprovals";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
 import {
@@ -3739,7 +3739,7 @@ export async function approveGenesisActionGroup(groupId: string) {
       // Dynamic dispatch by actionType, same as approveGenesisAction below.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       approval.input as any,
-      { storeId, actorType: "GENESIS" }
+      { storeId, actorType: "GENESIS", actionType: approval.actionType as GenesisActionType }
     );
 
     if (result.status === "FAILED") {
@@ -3839,7 +3839,7 @@ export async function performApproveGenesisAction(approvalRequestId: string): Pr
     // known at the specific registry entry, not at this generic call site.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     approval.input as any,
-    { storeId, actorType: "GENESIS" }
+    { storeId, actorType: "GENESIS", actionType: approval.actionType as GenesisActionType }
   );
 
   // A failed execution must never read back as EXECUTED — that would show

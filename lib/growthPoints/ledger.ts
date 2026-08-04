@@ -1,0 +1,62 @@
+import { prisma } from "@/lib/prisma";
+import type { GenesisActionType } from "@/lib/execution/genesisActions";
+import { growthPointCostFor } from "./catalog";
+
+export interface GrowthPointGate {
+  ok: boolean;
+  // null means the action has no catalog entry yet — free, the real
+  // production state today (every action is unpriced until Sean assigns
+  // real values). Non-null is the real cost this gate checked against.
+  cost: number | null;
+}
+
+// A read-only pre-check, run by lib/execution/engine.ts before an
+// executable's run() — rejects up front rather than letting Genesis
+// attempt real work the store can't afford. Deliberately separate from the
+// actual debit (deductGrowthPoints below): the debit only happens once the
+// action has genuinely succeeded, so a failed execution never costs the
+// owner real points for nothing.
+export async function checkGrowthPointBalance(
+  storeId: string,
+  actionType: GenesisActionType
+): Promise<GrowthPointGate> {
+  const cost = growthPointCostFor(actionType);
+  if (cost === null) return { ok: true, cost: null };
+
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { growthPointBalance: true },
+  });
+  return { ok: (store?.growthPointBalance ?? 0) >= cost, cost };
+}
+
+// Debits the store's real balance and writes exactly one GrowthPointTransaction
+// row, atomically — called only from lib/execution/engine.ts, only after an
+// action has genuinely succeeded (never on a FAILED execution). Mirrors
+// ExecutionLog's own append-only convention: this only ever creates a row,
+// never updates one.
+export async function deductGrowthPoints(params: {
+  storeId: string;
+  actionType: GenesisActionType;
+  cost: number;
+  executionLogId: string;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const store = await tx.store.update({
+      where: { id: params.storeId },
+      data: { growthPointBalance: { decrement: params.cost } },
+      select: { growthPointBalance: true },
+    });
+    await tx.growthPointTransaction.create({
+      data: {
+        storeId: params.storeId,
+        type: "DEDUCTION",
+        amount: -params.cost,
+        balanceAfter: store.growthPointBalance,
+        actionType: params.actionType,
+        executionLogId: params.executionLogId,
+        description: `Executed "${params.actionType}"`,
+      },
+    });
+  });
+}
