@@ -14,6 +14,13 @@ export interface DiscoveryItem {
   kind: "recommendation" | "opportunity" | "explanation" | "prediction";
   summary: string;
   priority: "high" | "medium" | "low" | null;
+  // Business Intelligence Engine M2 — "first-class, queryable" per Sean's
+  // own framing (2026-08-04): real, populated on recommendation/
+  // opportunity kinds (null for explanation/prediction, and for any row
+  // written before the column existed). Data-only for now — DiscoveryFeed.tsx
+  // is deliberately untouched; a future design pass can read this without
+  // another query change or migration.
+  confidence: number | null;
   actionLabel: string | null;
   actionHref: string | null;
   generatedAt: Date;
@@ -34,6 +41,7 @@ export async function getDiscoveryFeed(storeId: string, limit = 10): Promise<Dis
     kind: r.kind as DiscoveryItem["kind"],
     summary: r.summary,
     priority: r.priority as DiscoveryItem["priority"],
+    confidence: r.confidence,
     actionLabel: r.actionLabel,
     actionHref: r.actionHref,
     generatedAt: r.generatedAt,
