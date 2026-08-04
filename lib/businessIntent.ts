@@ -61,6 +61,10 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   onboarding_hero_selection: "create_product",
   onboarding_experience_decision: "build_business",
   j4_meeting_reflect: "customer_communication",
+  // Matches store_chat_business_fact's own mapping — the same kind of work
+  // (turning real owner statements into durable business facts), just a
+  // different real conversation context.
+  j4_meeting_listen_extraction: "research",
 };
 
 export function businessIntentFor(feature: AiFeature): BusinessIntentCategory {

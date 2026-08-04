@@ -46,6 +46,7 @@ import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
+import { BusinessFactSchema, toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
 import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { recordExecution } from "@/lib/execution/log";
@@ -1387,46 +1388,9 @@ Rules, non-negotiable:
 // relatedGoalIds/relatedChallengeIds reference arrays are derived in code
 // at the write site below, never asked of the model (it has no way to know
 // a real prior goal/challenge id from one isolated message).
-const GoalCaptureSchema = z.object({
-  description: z.string(),
-  category: z.enum(["revenue", "growth", "efficiency", "expansion", "customer_experience", "product", "hiring", "other"]).nullable(),
-  priority: z.enum(["high", "medium", "low"]).nullable(),
-  targetDate: z.string().nullable(),
-  // Phase 3 Milestone 6 — a real dollar figure in cents, only when the
-  // merchant actually stated one (e.g. "$10k in monthly revenue" -> 1000000
-  // cents) — never inferred or estimated. Powers a real, computed
-  // prediction later; a goal with no number simply never gets one.
-  targetValueInCents: z.number().int().nullable(),
-});
-const ChallengeCaptureSchema = z.object({
-  description: z.string(),
-  category: z.enum(["cash_flow", "staffing", "competition", "operations", "marketing", "supply_chain", "other"]).nullable(),
-  severity: z.enum(["high", "medium", "low"]).nullable(),
-});
-const EmployeeCaptureSchema = z.object({
-  name: z.string(),
-  title: z.string().nullable(),
-  roles: z.array(z.string()),
-  email: z.string().nullable(),
-  startedAt: z.string().nullable(),
-});
-const LocationCaptureSchema = z.object({
-  name: z.string(),
-  type: z.enum(["storefront", "warehouse", "office", "service_area"]).nullable(),
-  address: z.string().nullable(),
-  city: z.string().nullable(),
-  state: z.string().nullable(),
-  postalCode: z.string().nullable(),
-  country: z.string().nullable(),
-});
-
-const BusinessFactSchema = z.discriminatedUnion("entityType", [
-  z.object({ entityType: z.literal("goal"), data: GoalCaptureSchema, confirmationReply: z.string() }),
-  z.object({ entityType: z.literal("challenge"), data: ChallengeCaptureSchema, confirmationReply: z.string() }),
-  z.object({ entityType: z.literal("employee"), data: EmployeeCaptureSchema, confirmationReply: z.string() }),
-  z.object({ entityType: z.literal("location"), data: LocationCaptureSchema, confirmationReply: z.string() }),
-  z.object({ entityType: z.literal("none"), data: z.null(), confirmationReply: z.null() }),
-]);
+// Meeting with J4 M4 — these Capture schemas now live in
+// lib/businessModel/factCapture.ts, shared with the meeting's own Listen
+// stage rather than redefined here.
 
 const STORE_CHAT_BUSINESS_FACT_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live business, before anything else runs. Decide whether the merchant is stating a durable fact about their business that you should remember — a goal they have, a challenge they're currently facing, a new employee who works there, or a location/property the business operates from — as opposed to asking a question, requesting a content change, or just making ordinary conversation.
 
@@ -2382,9 +2346,9 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     // way to know a real prior goal/challenge id from one message alone.
     const fullData =
       entityType === "goal"
-        ? { ...businessFactResult.data, status: "active", identifiedAt: todayIso, relatedChallengeIds: [] }
+        ? toGoalRecordData(businessFactResult.data, todayIso)
         : entityType === "challenge"
-          ? { ...businessFactResult.data, status: "active", identifiedAt: todayIso, resolvedAt: null, relatedGoalIds: [] }
+          ? toChallengeRecordData(businessFactResult.data, todayIso)
           : entityType === "employee"
             ? { ...businessFactResult.data, status: "active", locationId: null }
             : businessFactResult.data; // location — Capture shape already matches LocationSchema exactly
