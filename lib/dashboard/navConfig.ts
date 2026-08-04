@@ -47,6 +47,10 @@ export const NAV_SECTIONS: NavSection[] = [
   // already shipped and stable; Connections covers everything else
   // (calendars, accounting, marketing, CRM, ...).
   { key: "connections", label: "Connections", href: "/dashboard/connections", permission: "connections:manage" },
+  // Growth Points Economy (Chapter 2) — the owner's own balance/history/
+  // usage/referral view. analytics:view, matching what kind of information
+  // this is (read-mostly, financial-ish), same permission as Analytics.
+  { key: "growth-points", label: "Growth Points", href: "/dashboard/growth-points", permission: "analytics:view" },
   { key: "settings", label: "Settings", href: "/dashboard/settings", permission: "store:manage" },
 ];
 

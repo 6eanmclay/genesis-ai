@@ -290,6 +290,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       newCustomerCount={newCustomerCount}
       genesisMessages={storeMessages}
       sendGenesisMessage={sendStoreMessage}
+      growthPointBalance={store.growthPointBalance}
       // The real Genesis Language signals — Yellow reuses the same grouped
       // count computed above; Purple/Red are real, deduplicated
       // GenesisObservation rows (Phase 4), never faked.

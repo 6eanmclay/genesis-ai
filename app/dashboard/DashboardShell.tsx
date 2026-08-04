@@ -90,6 +90,7 @@ export function DashboardShell({
   newCustomerCount,
   genesisMessages,
   sendGenesisMessage,
+  growthPointBalance,
   hasUrgentIssue,
   hasPendingDecision,
   hasOpportunity,
@@ -120,6 +121,7 @@ export function DashboardShell({
   newCustomerCount: number | null;
   genesisMessages: GenesisMessage[];
   sendGenesisMessage: (formData: FormData) => void;
+  growthPointBalance: number;
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
   hasOpportunity: boolean;
@@ -426,6 +428,19 @@ export function DashboardShell({
       </nav>
 
       <div className="flex shrink-0 items-center gap-2">
+        {/* Growth Points Economy (Chapter 2) — a small, already-ambient
+            balance indicator, living beside View Store rather than a new
+            chrome region of its own. Real Store.growthPointBalance, always
+            visible regardless of value (including 0 — never hidden just
+            because there's nothing to show yet). */}
+        <Link
+          href="/dashboard/growth-points"
+          className="hidden items-center gap-1.5 rounded-full border border-black/[.08] px-3 py-2 text-sm text-zinc-600 transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05] sm:flex"
+          title="Growth Points"
+        >
+          <span aria-hidden="true">✦</span>
+          <span className="tabular-nums">{growthPointBalance}</span>
+        </Link>
         {viewStoreLink}
         <form action={signOutOfGenesis}>
           <button
