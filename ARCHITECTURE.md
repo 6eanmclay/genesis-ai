@@ -195,6 +195,16 @@ This isn't a new rule bolted onto the architecture — it's an existing invarian
 
 ---
 
+## Recommend only the highest real probability, never merely the possible
+
+**Standing product principle, frozen by Sean, 2026-08-04**, given while approving the Business Intelligence Engine's own first milestone, specifically because it governs the milestone's most consequential single change (widening how many real actions Reason can propose): *J4 must never recommend something simply because it's technically possible.*
+
+Every recommendation and opportunity must answer one real question: ***if this owner only does one thing today, what has the highest probability of improving their business?*** — grounded in J4's complete understanding of the business (Understand's facts, Learn's beliefs), never a category, a schedule, or "this action type happens to exist in the registry." **"Nothing" is a fully honest, valid answer** — a review that finds nothing worth flagging is not a shortfall to cover for by padding the list; it's exactly what a real business partner continuously reassessing priorities should sometimes say. This is what keeps the relationship feeling like ongoing judgment, not a checklist being worked through.
+
+This is the direct, load-bearing companion to widening `ProposedActionSchema` (see the Business Intelligence Engine's own Tier notes below): more real actions Reason *can* propose is only safe because this principle governs *whether* it should, every time, independent of what's newly available. Concretely enforced in `SYSTEM_PROMPT` (`lib/intelligence/cognitiveLayer.ts`) — every widening of what Reason can propose must be paired with reinforcing this discipline in the same prompt, not assumed to hold on its own. It's also why several real, executable actions (`update_theme`, `update_brand_identity`, `update_homepage_content`, `update_design_direction`) are deliberately excluded from `ProposedActionSchema` entirely: each is a holistic, all-or-nothing creative rewrite, never a genuinely precise single answer to the one-thing-today question — being *technically* proposable was never sufficient reason to make them *actually* proposable.
+
+---
+
 ## Business Intelligence Engine
 
 Not a fifth cognitive subsystem — a capability *distributed across* Understand and Learn, deepening how richly J4 understands real business performance so Reason gets better material at its two existing inputs (facts, beliefs), never a new pipeline of its own. Full empirical validation of this design bet — including what the evidence does and doesn't prove — is recorded separately in `J4_REASON_VALIDATION.md` and should be read alongside this section, not duplicated here.
