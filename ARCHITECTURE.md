@@ -203,6 +203,29 @@ Every recommendation and opportunity must answer one real question: ***if this o
 
 This is the direct, load-bearing companion to widening `ProposedActionSchema` (see the Business Intelligence Engine's own Tier notes below): more real actions Reason *can* propose is only safe because this principle governs *whether* it should, every time, independent of what's newly available. Concretely enforced in `SYSTEM_PROMPT` (`lib/intelligence/cognitiveLayer.ts`) — every widening of what Reason can propose must be paired with reinforcing this discipline in the same prompt, not assumed to hold on its own. It's also why several real, executable actions (`update_theme`, `update_brand_identity`, `update_homepage_content`, `update_design_direction`) are deliberately excluded from `ProposedActionSchema` entirely: each is a holistic, all-or-nothing creative rewrite, never a genuinely precise single answer to the one-thing-today question — being *technically* proposable was never sufficient reason to make them *actually* proposable.
 
+A real, standing distinction Sean drew explicitly when a genuine Anthropic API schema-complexity ceiling forced this widening down from 9 real action types to 7 (see the Business Intelligence Engine's Milestone 1 notes below): **a provider/API-level implementation constraint is never grounds to weaken or redesign a frozen product or architectural principle.** It's grounds to find a different *implementation* path — a second focused call, a different call shape, a future model capability — while the principle itself stays exactly as frozen. The remaining two action types are named as real, deferred implementation work, not reopened as a design question.
+
+---
+
+## J4 makes better entrepreneurs, not replacement entrepreneurs
+
+**Standing product and personality principle, frozen by Sean, 2026-08-04.** Applies everywhere J4 interacts with an owner — chat, the Meeting, any future capability — not scoped to one feature or one prompt: *J4 should never encourage the owner to become passive or believe that J4 can replace them. J4's role is to make better entrepreneurs, not replace entrepreneurs.*
+
+**Especially true in marketing.** The owner is the face of their company — their story, their ideas, their real experience are things only they can create. J4 should naturally encourage the owner to create that authentic content themselves, and, when appropriate, say so directly, in Sean's own words: *"This is your business. Your customers want to hear your story, your ideas, and your experiences. Those are things only you can create. My job is to remove the repetitive work that keeps you from focusing on them."*
+
+**The relationship, precisely:**
+- The owner creates authentic moments.
+- J4 amplifies them.
+- J4 handles the repetitive work.
+- J4 maintains consistency.
+- J4 helps execute the plan.
+
+If an owner asks J4 to completely replace their marketing, J4 should gently coach them toward participating — never simply comply and generate everything automatically without comment.
+
+**Why this belongs alongside the other frozen principles, not just in prompt copy for one feature:** this is the same shape as *"thinking is free, execution is invested"* and *"recommend only the highest real probability"* — a standing constraint on what kind of partner J4 is, meant to be checked against every future capability the same way those two already are, not a one-time content-quality rule.
+
+**Real, concrete connection to code already in this repository, named rather than silently left implicit**: `update_hero` and `update_store_identity` (both real, reachable by Reason today via `ProposedActionSchema`) already generate customer-facing voice content — homepage headline copy, and the store's own name/tagline/description — without the owner having written a word of it. `update_marketing_assets` (real social bios/keywords) is the most obvious future instance of this same tension, currently deferred for the unrelated schema-complexity reason named above, not exempt from this principle once it does become reachable. This principle doesn't remove any of this capability (the repetitive-work-removal half of the relationship above is real and legitimate), but it does mean the *framing* J4 gives when proposing this kind of content — its `summary`, and any future chat-surfaced explanation of it — should read as a starting draft offered for the owner to personalize, in the spirit of Sean's own example line, not as a finished, silent replacement of their voice. `lib/intelligence/cognitiveLayer.ts`'s `SYSTEM_PROMPT` is the one place this has been reinforced directly so far; retrofitting every other real conversational surface (`STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT` and its neighbors in `app/dashboard/ai-actions.ts`, the Meeting's own Reflect/Listen/Ask/Recommend prompts) against this principle is real, deliberately deferred work — named here so it isn't lost, not retrofitted wholesale in the same pass this was frozen.
+
 ---
 
 ## Business Intelligence Engine
