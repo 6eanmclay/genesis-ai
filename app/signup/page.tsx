@@ -1,13 +1,28 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { claimExperienceDraft } from "@/app/onboarding/actions";
 
+// useSearchParams() requires a Suspense boundary during static prerendering
+// — the form itself is the only part that needs the real ?ref= value, so
+// that's the part wrapped, not the whole page.
 export default function SignUpPage() {
+  return (
+    <Suspense>
+      <SignUpForm />
+    </Suspense>
+  );
+}
+
+function SignUpForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Growth Points Economy (Chapter 2) — a referral link is just
+  // /signup?ref=CODE; forwarded once at registration, never touched again.
+  const referralCode = searchParams.get("ref");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,7 +38,7 @@ export default function SignUpPage() {
       const res = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, ref: referralCode }),
       });
 
       const data = await res.json();

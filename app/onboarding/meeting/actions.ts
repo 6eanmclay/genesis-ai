@@ -3,6 +3,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveUserStore } from "@/lib/permissions";
+import { rewardReferralIfEligible } from "@/lib/growthPoints/referral";
 import { extractAndPersistVisionFacts } from "./listen";
 import { decideNextMeetingStep, type FollowUpTurn } from "./ask";
 import { selectMeetingRecommendation, type MeetingRecommendation } from "./recommend";
@@ -87,9 +88,14 @@ export async function declineMeetingRecommendation(approvalRequestId: string): P
 // The meeting's own real completion moment. Set once, checked once on the
 // meeting route's own load (page.tsx), never re-triggered.
 export async function completeFirstMeeting(): Promise<void> {
-  const { store } = await requireOwnStore();
+  const { store, userId } = await requireOwnStore();
   await prisma.store.update({
     where: { id: store.id },
     data: { firstMeetingCompletedAt: new Date() },
   });
+  // Growth Points Economy (Chapter 2) — this is the real "onboarding
+  // genuinely finished" signal a referral reward waits for, not bare
+  // signup. A no-op for the overwhelming majority who arrived without a
+  // referral code.
+  await rewardReferralIfEligible(userId);
 }

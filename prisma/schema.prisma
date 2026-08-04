@@ -16,6 +16,14 @@ model User {
   password      String?
   emailVerified DateTime?
   image         String?
+  // Growth Points Economy (Chapter 2) — the user's own durable, shareable
+  // referral code. Generated lazily on first access (most users never share
+  // one), not at signup — see lib/growthPoints/referral.ts. Deliberately a
+  // separate field from Referral.code: this is a stable per-user identity
+  // that can be shared before any referral exists; Referral.code is a
+  // per-relationship snapshot of which code was used for one specific
+  // referred signup, written once redeemed.
+  referralCode  String?   @unique
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

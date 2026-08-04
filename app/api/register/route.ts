@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { recordReferralSignup } from "@/lib/growthPoints/referral";
 
 export async function POST(request: Request) {
   try {
-    const { name, email, password } = await request.json();
+    const { name, email, password, ref } = await request.json();
 
     if (!email || !password) {
       return NextResponse.json(
@@ -33,6 +34,14 @@ export async function POST(request: Request) {
         password: hashedPassword,
       },
     });
+
+    // Growth Points Economy (Chapter 2) — records the relationship only;
+    // the actual reward waits for a real completion signal (see
+    // rewardReferralIfEligible). Never blocks or fails signup over an
+    // invalid/missing code.
+    if (typeof ref === "string" && ref.trim()) {
+      await recordReferralSignup(ref.trim(), user.id).catch(() => {});
+    }
 
     return NextResponse.json(
       { id: user.id, email: user.email, name: user.name },
