@@ -28,6 +28,8 @@ model User {
   executionLogs         ExecutionLog[]
   productEvents         ProductEvent[]
   aiUsageEvents         AiUsageEvent[]
+  referralsSent         Referral[] @relation("ReferralsSent")
+  referralsReceived     Referral[] @relation("ReferralsReceived")
 }
 
 model Account {
@@ -119,10 +121,30 @@ model Store {
   // re-triggered. Deliberately distinct from createdAt/updatedAt (neither
   // means "has this store ever met J4").
   firstMeetingCompletedAt DateTime?
+  // Growth Points Economy (Chapter 2) — the store's real, spendable balance.
+  // Debited by execute() when an approved GENESIS_ACTIONS action has a real
+  // catalog cost (lib/growthPoints/catalog.ts), credited by the monthly
+  // refresh sweep and referral rewards. Every change also writes one
+  // GrowthPointTransaction row — this column is the current total, that
+  // model is the append-only ledger explaining how it got there.
+  growthPointBalance Int @default(0)
+  // Nullable — no owner is assigned a real Plan yet (the catalog and every
+  // Plan's allowance are still deliberately unpopulated, Sean's own
+  // decision to make in a dedicated design session). A null planId means
+  // "not on a plan," not "on a free plan with zero points" — the monthly
+  // refresh sweep skips these stores entirely rather than pretending a
+  // zero-value plan exists.
+  planId             String?
+  // Set alongside planId once real plans exist; advanced by exactly one
+  // calendar month each time the refresh sweep grants that plan's
+  // allowance. Same "due timestamp stamped on the row" idiom as
+  // StoreIntegration.nextSyncDueAt, not a new cadence mechanism.
+  growthPointNextRefreshAt DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   user                      User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                      Plan?                      @relation(fields: [planId], references: [id], onDelete: SetNull)
   products                  Product[]
   visions                   StoreGeneration[]
   orders                    Order[]
@@ -143,6 +165,9 @@ model Store {
   cognitiveOutputs          CognitiveOutput[]
   beliefs                   Belief[]
   aiUsageEvents             AiUsageEvent[]
+  growthPointTransactions   GrowthPointTransaction[]
+
+  @@index([planId])
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -453,6 +478,7 @@ model ExecutionLog {
   store      Store?      @relation(fields: [storeId], references: [id], onDelete: Cascade)
   storeDraft StoreDraft? @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
   actor      User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  growthPointTransactions GrowthPointTransaction[]
 
   @@index([storeId, createdAt])
   @@index([storeId, action])
@@ -1029,4 +1055,89 @@ model AiUsageEvent {
   @@index([userId, occurredAt])
   @@index([anonymousSessionToken, occurredAt])
   @@index([feature, occurredAt])
+}
+
+// Growth Points Economy (Chapter 2, VISION.md). A real, structural billing
+// tier: what a store's monthly Growth Point allowance is, and (later) what
+// a referral is worth on that tier. Deliberately shipped with zero real
+// rows — assigning real allowances is Sean's own product-strategy decision
+// for a dedicated design session, not something to invent during
+// implementation (same discipline as lib/growthCreditCatalog.ts). Global,
+// not tenant-scoped — a Plan is platform config, not a store's own data.
+model Plan {
+  id                        String   @id @default(cuid())
+  name                      String   @unique
+  // Null until a real plan design exists — the monthly refresh sweep
+  // (lib/growthPoints/refresh.ts) honestly no-ops for a store on a plan
+  // whose allowance isn't set yet, rather than crediting zero and calling
+  // it done.
+  monthlyGrowthPointAllowance Int?
+  // Null until Sean sets it — see Referral below for the same "wired but
+  // inert" reasoning as growthCreditCatalog.ts.
+  referralRewardPoints      Int?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  stores Store[]
+}
+
+// The append-only ledger behind Store.growthPointBalance — every balance
+// change (DEDUCTION on an approved execution, REFRESH on the monthly
+// grant, REFERRAL_REWARD, future PURCHASE once Chapter 5 wires a real
+// payment rail, or a manual ADJUSTMENT) writes exactly one row here,
+// mirroring ExecutionLog's own append-only convention. A separate model
+// from ExecutionLog rather than nested under it — REFRESH/REFERRAL_REWARD
+// entries have no execution to attach to, so ExecutionLog alone can't
+// honestly represent this ledger. executionLogId is nullable and only set
+// on DEDUCTION rows, for traceability back to the real execution that
+// spent the points.
+model GrowthPointTransaction {
+  id            String   @id @default(cuid())
+  storeId       String
+  // DEDUCTION | REFRESH | REFERRAL_REWARD | PURCHASE | ADJUSTMENT — a plain
+  // String, not a Prisma enum, matching ExecutionLog.status/actorType's own
+  // "avoid enum-migration friction" convention in this schema.
+  type          String
+  // Signed — negative for DEDUCTION, positive for every credit type.
+  amount        Int
+  // The real balance immediately after this transaction, so history can be
+  // read back without replaying every prior row.
+  balanceAfter  Int
+  // Set only on DEDUCTION rows — the GENESIS_ACTIONS actionType this
+  // transaction paid for (lib/execution/genesisActions.ts's keys, the same
+  // vocabulary lib/growthPoints/catalog.ts is keyed by).
+  actionType    String?
+  executionLogId String?
+  description   String
+  createdAt     DateTime @default(now())
+
+  store       Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  executionLog ExecutionLog? @relation(fields: [executionLogId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, createdAt])
+}
+
+// A real shareable referral relationship: referrerUserId invited
+// referredUserId via `code`. Reward fires on a real completion signal
+// (Store.firstMeetingCompletedAt being set on the referred store — the
+// same "onboarding genuinely finished" signal Meeting with J4 already
+// established), not bare signup, to avoid trivially-gamed rewards. Reward
+// amount comes from Plan.referralRewardPoints, which is null (honest
+// no-op) until Sean sets it.
+model Referral {
+  id              String    @id @default(cuid())
+  referrerUserId  String
+  referredUserId  String    @unique
+  code            String    @unique
+  // PENDING | REWARDED — flips once, never reverts; the reward grant is
+  // guarded to be idempotent against this status, not against re-running
+  // the sweep that checks it.
+  status          String    @default("PENDING")
+  rewardedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  referrer User @relation("ReferralsSent", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  referred User @relation("ReferralsReceived", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@index([referrerUserId])
 }

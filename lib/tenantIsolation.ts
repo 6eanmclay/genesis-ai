@@ -82,6 +82,10 @@ const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
   // combined into a real, silent gap; caught only by making it actually
   // fire in a real run.
   aiUsageEvent: ["storeId", "userId", "anonymousSessionToken"],
+  // Growth Points Economy (Chapter 2) — the balance ledger. Plan is
+  // deliberately excluded: it's global platform config, not a store's own
+  // data, so no store-scoping requirement applies to it.
+  growthPointTransaction: ["storeId"],
 };
 
 function isRealFilterObject(value: unknown): value is Record<string, unknown> {

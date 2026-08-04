@@ -267,19 +267,14 @@ const ThemeInputSchema = z.object({
   }),
 });
 
-// AI Cost & Usage Infrastructure — a real, flagged taxonomy question for
-// whenever the Growth Credit economy itself gets designed (explicitly not
-// this milestone): this registry's actionType strings (e.g.
-// "update_product_image") and lib/aiFeatures.ts's AiFeature strings (e.g.
-// "product_image_generation") are two different, not-yet-reconciled
-// vocabularies — the former is "what Genesis can execute," the latter is
-// "what triggered an AI call." Sean's own Growth Credit examples ("Create
-// a New Product" staying 2 credits) read more naturally as actionType
-// values than AiFeature values. lib/growthCreditCatalog.ts is keyed by
-// AiFeature today (matching where costUsd/businessIntent already live on
-// AiUsageEvent) — worth revisiting which taxonomy Growth Credit values
-// should actually key off before real numbers get assigned, not decided
-// unilaterally here.
+// Growth Points Economy (Chapter 2, VISION.md) — this registry's actionType
+// strings are the real customer-facing catalog key (lib/growthPoints/
+// catalog.ts), resolved in Sean's favor over lib/aiFeatures.ts's AiFeature
+// strings: Growth Points represent business outcomes ("Create a Product,"
+// "Improve SEO"), never internal AI-call mechanics. AiFeature/
+// lib/growthCreditCatalog.ts remain the separate, internal AI-cost-
+// observability axis (AiUsageEvent.growthCreditValue) — an owner never
+// sees it.
 export const GENESIS_ACTIONS: Record<
   string,
   GenesisActionDefinition<
