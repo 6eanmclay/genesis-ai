@@ -14,7 +14,11 @@ import {
   restoreStoreDraftVersion,
   confirmStoreDraft,
   reviewBusinessWithGenesis,
+  approveGenesisAction,
+  rejectGenesisAction,
 } from "./ai-actions";
+import { getNextBestAction } from "@/lib/intelligence/nextBestAction";
+import { NextRecommendation } from "./NextRecommendation";
 import { DEFAULT_THEME, googleFontsUrl, themeCssVars, type Theme } from "@/lib/theme";
 import type { OnboardingState } from "@/lib/onboarding/types";
 import { PERMISSIONS, hasPermission, resolveUserStore, type Permission } from "@/lib/permissions";
@@ -638,9 +642,19 @@ export default async function DashboardPage() {
       }).catch(() => {})
     );
   }
-  const [discoveryItems, lastDiscoveryRunAt, pendingApprovals] = canViewAnalytics
-    ? await Promise.all([getDiscoveryFeed(store.id), getLastDiscoveryRunAt(store.id), getPendingApprovals(store.id)])
-    : [[], null, []];
+  const [discoveryItems, lastDiscoveryRunAt, pendingApprovals, nextRecommendation] = canViewAnalytics
+    ? await Promise.all([
+        getDiscoveryFeed(store.id),
+        getLastDiscoveryRunAt(store.id),
+        getPendingApprovals(store.id),
+        // Growth Engine M3 — refresh: false, zero new AI calls on every
+        // Home load. Freshness comes from M1 (Learn now runs on every
+        // scheduler pass, not gated behind the 24h review) and M2 (real
+        // track-record-informed confidence) already keeping the
+        // underlying state genuinely current.
+        getNextBestAction(store.id, session.user.id, { refresh: false }),
+      ])
+    : [[], null, [], null];
 
   const storeTheme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const fontsUrl = googleFontsUrl([storeTheme.typography.headingFont]);
@@ -649,6 +663,22 @@ export default async function DashboardPage() {
   return (
     <div style={themeCssVars(storeTheme)} className="min-h-screen p-8 lg:min-h-0">
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
+
+      {/* Growth Engine M3 (VISION.md Chapter 1) — the real center of Home,
+          rendered before anything else on the page: "Here's what I
+          noticed," not "what would you like to do today." Everything
+          below this is real, supporting context for why J4 made this
+          call, not a redesign of any of it. */}
+      {canViewAnalytics && (
+        <div className="mb-8">
+          <NextRecommendation
+            storeName={store.name}
+            recommendation={nextRecommendation}
+            approveAction={approveGenesisAction}
+            rejectAction={rejectGenesisAction}
+          />
+        </div>
+      )}
 
       {/* Today, at a glance — the workspace now begins directly with real
           business state; the greeting moved to Live Intelligence (see
