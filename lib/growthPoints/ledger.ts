@@ -55,7 +55,7 @@ export async function deductGrowthPoints(params: {
         balanceAfter: store.growthPointBalance,
         actionType: params.actionType,
         executionLogId: params.executionLogId,
-        description: `Executed "${params.actionType}"`,
+        description: `Invested in "${params.actionType}"`,
       },
     });
   });

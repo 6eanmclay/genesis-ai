@@ -12,7 +12,7 @@ import { getOrCreateReferralCode } from "@/lib/growthPoints/referral";
 // NotAvailable component/copy convention for the honest gap.
 
 const TYPE_LABEL: Record<string, string> = {
-  DEDUCTION: "Spent",
+  DEDUCTION: "Invested",
   REFRESH: "Monthly refresh",
   REFERRAL_REWARD: "Referral reward",
   PURCHASE: "Purchase",
@@ -59,14 +59,14 @@ export default async function GrowthPointsPage() {
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Growth Points</h1>
       <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
         An investment in {store.name}&rsquo;s growth, not a fee to use Genesis — thinking, planning, and asking
-        questions are always free. Points are only ever spent when you choose to have Genesis execute real
+        questions are always free. Points are only ever invested when you choose to have Genesis execute real
         work on the business.
       </p>
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card label="Current balance" value={`${store.growthPointBalance}`} sub="Growth Points available" />
         <Card
-          label="Total spent"
+          label="Total invested"
           value={`${usage.reduce((sum, u) => sum + u.totalSpent, 0)}`}
           sub={`across ${usage.reduce((sum, u) => sum + u.count, 0)} action${usage.reduce((sum, u) => sum + u.count, 0) === 1 ? "" : "s"}`}
         />
@@ -85,8 +85,8 @@ export default async function GrowthPointsPage() {
           <thead>
             <tr className="border-b border-black/[.08] text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-white/[.1] dark:text-zinc-400">
               <th className="px-4 py-2.5 font-medium">Action</th>
-              <th className="px-4 py-2.5 text-right font-medium">Times used</th>
-              <th className="px-4 py-2.5 text-right font-medium">Points spent</th>
+              <th className="px-4 py-2.5 text-right font-medium">Times invested in</th>
+              <th className="px-4 py-2.5 text-right font-medium">Points invested</th>
             </tr>
           </thead>
           <tbody>
@@ -100,7 +100,7 @@ export default async function GrowthPointsPage() {
             {usage.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-zinc-500 dark:text-zinc-400">
-                  Nothing spent yet — every executed action will show up here.
+                  Nothing invested yet — every executed action will show up here.
                 </td>
               </tr>
             )}

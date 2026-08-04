@@ -182,7 +182,7 @@ export async function execute<TInput, TMetadata>(
         action: executable.action,
         status: "FAILED",
         verified: false,
-        message: "Not enough Growth Points to complete this action.",
+        message: "This would need more Growth Points than you currently have to invest.",
         retryable: false,
         actorType: ctx.actorType,
         actorId: ctx.userId,
