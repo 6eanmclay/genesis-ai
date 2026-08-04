@@ -4,8 +4,9 @@ import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { callGenesisModel } from "@/lib/genesisModel";
+import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import type { GenesisModelScope } from "@/lib/genesisModel";
+import { ANONYMOUS_USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { filterKnownRevenueStreams, REVENUE_STREAM_SLUGS, BRAND_POSITIONING_SLUGS, isKnownBrandPositioning } from "@/lib/businessTaxonomy";
 import { selectFulfillmentStrategy } from "@/lib/fulfillment/strategy";
 import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
@@ -202,7 +203,18 @@ async function decideExperienceNextStep(
     scope
   );
 
-  const parsed = outcome.ok ? outcome.message.parsed_output : null;
+  // A real provider-level failure (usage ceiling, billing, rate limit,
+  // network) gets its own honest message — never masked as a generic
+  // clarifying question, which would tell an anonymous visitor who just
+  // hit today's limit that Genesis simply needs more information. Every
+  // other failure kind reuses the app's one shared error vocabulary
+  // (genesisModelFailureMessage) rather than inventing new copy here.
+  if (!outcome.ok) {
+    const message = outcome.kind === "usage_ceiling" ? ANONYMOUS_USAGE_CEILING_MESSAGE : genesisModelFailureMessage(outcome.kind);
+    throw new Error(message);
+  }
+
+  const parsed = outcome.message.parsed_output;
   const malformed = !parsed || (!parsed.confident && !parsed.clarifyingQuestion) || (parsed.confident && !parsed.concept);
   if (malformed) {
     // Degrades to one honest follow-up rather than a crashed turn or an
@@ -220,9 +232,10 @@ async function decideExperienceNextStep(
 }
 
 // Experience-First Onboarding — the real entry point every message from the
-// new landing experience calls. No auth, rate-limited only by the same
-// daily ceiling every other AI call already goes through (a tighter
-// anonymous-specific limit is a scoped fast-follow, not yet built).
+// new landing experience calls. No auth — rate-limited by
+// ANONYMOUS_DAILY_TOKEN_CEILING (lib/genesisModel.ts, Milestone 5), a
+// deliberately tighter ceiling than the real per-account budget, through
+// the same callGenesisModel governance path every other AI call uses.
 export async function submitExperienceMessage(
   text: string
 ): Promise<{ status: "collecting"; question: string } | { status: "generated"; concept: ExperienceConcept }> {

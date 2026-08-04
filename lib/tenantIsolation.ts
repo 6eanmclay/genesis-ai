@@ -70,7 +70,18 @@ const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
   // comment marks it "not a real relation... loose, unconstrained," so it
   // isn't treated as a reliable scoping key.
   productEvent: ["storeId", "userId"],
-  aiUsageEvent: ["storeId", "userId"],
+  // Experience-First Onboarding — a third real scope key, anonymousSessionToken
+  // (lib/genesisModel.ts's GenesisModelScope), for AI usage recorded before
+  // any account exists. Found via real testing, not by inspection: without
+  // this, callGenesisModel's anonymous-scoped usage-ceiling *read*
+  // (aggregate) was rejected by this guard, and that rejection was silently
+  // absorbed by callGenesisModel's own "fail open on an infrastructure
+  // error" catch — which meant anonymous usage was recorded correctly
+  // (create isn't a guarded operation) but never actually checked against
+  // a ceiling. Two independently-reasonable pieces of defensive code
+  // combined into a real, silent gap; caught only by making it actually
+  // fire in a real run.
+  aiUsageEvent: ["storeId", "userId", "anonymousSessionToken"],
 };
 
 function isRealFilterObject(value: unknown): value is Record<string, unknown> {

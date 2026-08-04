@@ -24,6 +24,22 @@ export const anthropic = new Anthropic();
 // hour or two rather than letting it run all day.
 const DAILY_TOKEN_CEILING = 2_000_000;
 
+// Experience-First Onboarding, Milestone 5 — anonymous sessions have no
+// account to attribute real usage to, so they get their own, deliberately
+// tighter ceiling instead of sharing the real per-account budget above.
+// Same "starting number, deliberately generous within its own tier, not a
+// researched figure" status as DAILY_TOKEN_CEILING — sized to comfortably
+// cover a real visitor trying a handful of ideas (one confident-generation
+// call is ~2,500-3,000 tokens; the bounded clarifying-question cap in
+// lib/onboarding/experienceFlow.ts means a single session is at most two
+// such calls), while stopping a scripted/automated loop within minutes
+// instead of running all day on one anonymous identity.
+const ANONYMOUS_DAILY_TOKEN_CEILING = 50_000;
+
+function ceilingFor(scope: GenesisModelScope): number {
+  return "anonymousSessionToken" in scope ? ANONYMOUS_DAILY_TOKEN_CEILING : DAILY_TOKEN_CEILING;
+}
+
 // Not every AI call has a real Store yet — store-draft generation and
 // draft-phase chat (generateStoreDraftCore/applyGenesisMessage in
 // ai-actions.ts) run before a Store row exists, with only a userId
@@ -222,16 +238,17 @@ export async function callGenesisModel<Params extends Parameters<typeof anthropi
       usedTokensToday = 0;
     }
 
-    if (usedTokensToday >= DAILY_TOKEN_CEILING) {
+    const ceiling = ceilingFor(scope);
+    if (usedTokensToday >= ceiling) {
       const durationMs = Date.now() - startedAt;
-      const summary = `[ai-usage-ceiling] ${scopeLabel} background=${background} usedTokensToday=${usedTokensToday} ceiling=${DAILY_TOKEN_CEILING}`;
+      const summary = `[ai-usage-ceiling] ${scopeLabel} background=${background} usedTokensToday=${usedTokensToday} ceiling=${ceiling}`;
       console.error(summary);
       Sentry.captureMessage(summary, "warning");
       return {
         ok: false,
         kind: "usage_ceiling",
         status: null,
-        message: `Daily AI usage ceiling reached (${usedTokensToday.toLocaleString()}/${DAILY_TOKEN_CEILING.toLocaleString()} tokens).`,
+        message: `Daily AI usage ceiling reached (${usedTokensToday.toLocaleString()}/${ceiling.toLocaleString()} tokens).`,
         retryable: !background,
         confirmable: !background,
         durationMs,

@@ -80,10 +80,14 @@ export function ExperienceScreen({ initialState }: { initialState: ExperienceSta
           }
           submittedRef.current = false;
         }, 1400);
-      } catch {
+      } catch (err) {
         setGenesisWorking(false);
         submittedRef.current = false;
-        setError("Something went wrong — try again.");
+        // A real usage-ceiling/provider failure carries its own honest
+        // message (see decideExperienceNextStep in app/onboarding/
+        // actions.ts) — surfaced as-is rather than a generic fallback,
+        // same convention BusinessScreen.tsx already uses.
+        setError(err instanceof Error ? err.message : "Something went wrong — try again.");
       }
     });
   }
