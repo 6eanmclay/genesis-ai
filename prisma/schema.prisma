@@ -905,6 +905,13 @@ model Belief {
 // call site has a real storeId. Each identifier gets its own independent
 // daily ceiling bucket — a real, accepted simplification for a Track 0
 // item, not a unified per-owner total across the draft-to-live boundary.
+//
+// AI Cost & Usage Infrastructure — this model's scope grew from "usage
+// governance" to "the canonical AI action ledger" (2026-08-04). Every new
+// column below is nullable so every existing row, and every existing
+// reader (getTodayTokenUsage's ceiling check, byte-for-byte unchanged),
+// keeps working exactly as before. See lib/aiFeatures.ts/lib/aiPricing.ts
+// for what populates feature/provider/model/costUsd going forward.
 model AiUsageEvent {
   id           String   @id @default(cuid())
   storeId      String?
@@ -916,6 +923,52 @@ model AiUsageEvent {
   anonymousSessionToken String?
   inputTokens  Int
   outputTokens Int
+  // What triggered this call — one of lib/aiFeatures.ts's AiFeature
+  // catalog. Nullable only because it predates this column; every new
+  // write from Milestone 2 onward sets it (a required param at the
+  // call-site level, not just a schema nicety).
+  feature      String?
+  // "anthropic" | "openai" today; the provider that actually served the
+  // request, not which SDK/helper was used internally.
+  provider     String?
+  // The literal model string sent to the provider (e.g.
+  // "claude-opus-4-8", "gpt-image-1") — not a version-agnostic label, so a
+  // future model swap is visible in the data, not silently blended in.
+  model        String?
+  // Locked in at record-time from lib/aiPricing.ts's rate table in effect
+  // when this call happened — never recomputed later, so editing pricing
+  // going forward can't silently rewrite historical cost data. Decimal,
+  // not Float, for the same reason Product.priceInCents avoids float
+  // rounding — though this is a real dollar amount, not integer cents,
+  // since per-call costs are routinely sub-cent.
+  costUsd      Decimal? @db.Decimal(10, 6)
+  // Real image count for a provider that has no token concept (OpenAI
+  // image generation) — 0, not null, once a row is written for one, so
+  // "0 images" and "not an image call" stay distinguishable from "unknown."
+  imageCount   Int?
+  durationMs   Int?
+  // "accepted" | "rejected" | null. Deliberately bounded — see
+  // ApprovalRequest's own accept/reject flow and claimExperienceDraft in
+  // app/onboarding/actions.ts for the only two places this gets written.
+  // Null means "no decision point exists for this call yet," not
+  // "ignored" — there is no eager "ignored" write; see this model's
+  // design note in the AI Cost & Usage Infrastructure plan for why.
+  outcome      String?
+  // Inert today — always null. A future Growth Credit economy's per-call
+  // cost, once that system exists (see lib/execution/genesisActions.ts's
+  // own comment for where its action-type -> credit-cost catalog would
+  // live). Reserved now specifically so adding it later never requires
+  // backfilling or migrating this table again.
+  growthCreditCost Int?
+  // Populated only where a real session identity already exists today —
+  // concretely, anonymousSessionToken copied in directly by the
+  // onboarding flow. Left null everywhere else rather than inventing a
+  // conversation/thread id that doesn't exist anywhere in this schema yet.
+  sessionId    String?
+  // Loose correlation to the ApprovalRequest this call's output became,
+  // if any — no FK, matching this codebase's existing convention for
+  // recommendationId/delegatedAuthorityId on ApprovalRequest itself.
+  approvalRequestId String?
   occurredAt   DateTime @default(now())
 
   store Store? @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -924,4 +977,6 @@ model AiUsageEvent {
   @@index([storeId, occurredAt])
   @@index([userId, occurredAt])
   @@index([anonymousSessionToken, occurredAt])
+  @@index([feature, occurredAt])
+  @@index([approvalRequestId])
 }

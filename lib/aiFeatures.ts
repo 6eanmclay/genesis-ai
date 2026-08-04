@@ -1,0 +1,54 @@
+// AI Cost & Usage Infrastructure, Milestone 1 — the single source of truth
+// for "what triggered this AI call." Every real call site (lib/genesisModel.ts's
+// callGenesisModel, and lib/imageProviders/generatedImageProvider.ts's
+// GeneratedImageProvider) tags itself with exactly one of these when it
+// records an AiUsageEvent row.
+//
+// Deliberately a plain string union, not a Prisma enum — matches this
+// codebase's existing "open, additive taxonomy, never a schema migration to
+// add a value" convention (see lib/businessTaxonomy.ts's own comment on
+// REVENUE_STREAM_TYPES for the same reasoning applied to a different axis).
+//
+// This is also the identifier set a future Growth Credit catalog keys off
+// of (see lib/execution/genesisActions.ts's own comment) — naming these
+// around real product actions, not internal implementation details, is
+// what makes that possible later without renaming everything.
+export const AI_FEATURES = [
+  // Store draft generation (app/dashboard/ai-actions.ts, generateStoreDraftCore)
+  "store_draft_primary_blueprint",
+  "store_draft_secondary_blueprint",
+  "store_draft_composition",
+  "store_draft_business_category",
+  // Draft-phase chat (applyGenesisMessage)
+  "draft_chat_control",
+  "draft_chat_content_primary",
+  "draft_chat_content_secondary",
+  "draft_chat_composition",
+  // Live-store chat (applyGenesisMessageToStore)
+  "store_chat_data_question",
+  "store_chat_data_answer",
+  "store_chat_business_fact",
+  "store_chat_image_request_detection",
+  "store_chat_content_primary",
+  "store_chat_content_secondary",
+  "store_chat_composition",
+  // Recommendations / Business Intelligence
+  "recommendation_explanation",
+  "cognitive_review",
+  // Product imagery
+  "hero_image_query",
+  "stock_image_query_reformulation",
+  "product_image_generation",
+  "business_icon_generation",
+  // Onboarding v2 / activation flow (app/onboarding/actions.ts)
+  "onboarding_business_model_classification",
+  "onboarding_brand_positioning_classification",
+  "onboarding_creative_direction_generation",
+  "onboarding_uploaded_artwork_identity",
+  "onboarding_creative_theme_structure",
+  "onboarding_hero_selection",
+  // Experience-First Onboarding (anonymous, app/onboarding/actions.ts)
+  "onboarding_experience_decision",
+] as const;
+
+export type AiFeature = (typeof AI_FEATURES)[number];
