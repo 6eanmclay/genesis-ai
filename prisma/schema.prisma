@@ -954,12 +954,30 @@ model AiUsageEvent {
   // "ignored" — there is no eager "ignored" write; see this model's
   // design note in the AI Cost & Usage Infrastructure plan for why.
   outcome      String?
-  // Inert today — always null. A future Growth Credit economy's per-call
-  // cost, once that system exists (see lib/execution/genesisActions.ts's
-  // own comment for where its action-type -> credit-cost catalog would
-  // live). Reserved now specifically so adding it later never requires
-  // backfilling or migrating this table again.
-  growthCreditCost Int?
+  // The business-intent category this action serves — see
+  // lib/businessIntent.ts's fixed 9-category list (Build Business, Create
+  // Product, Improve Store, Create Marketing, Analyze Business, Research,
+  // Financial Insight, Customer Communication, Growth Recommendation).
+  // Derived automatically from `feature` (one feature always maps to
+  // exactly one category) and locked in at record-time, same reasoning as
+  // costUsd — a future recategorization of a feature must never silently
+  // rewrite what a historical event is understood to have been. This is
+  // what makes the ledger answer "how do businesses grow inside Genesis,"
+  // not just "what did this cost."
+  businessIntent String?
+  // Deliberately NOT derived from costUsd, and deliberately NOT named
+  // "cost" — Sean's explicit product principle (2026-08-04): operational
+  // cost (what a call actually costs a provider) and business value (how
+  // many Growth Credits an action SHOULD require) are two independent
+  // numbers. If image generation gets cheaper next year, that must never
+  // silently change what an owner pays in Growth Credits for a product —
+  // the customer experience shouldn't move every time a provider's
+  // pricing does. Looked up from lib/growthCreditCatalog.ts (keyed by
+  // `feature`, currently empty — no real values assigned yet, Growth
+  // Credits aren't live) and locked in at record-time for the same
+  // "never silently rewrite history" reason as businessIntent above.
+  // Inert today — every row is null until the catalog has real entries.
+  growthCreditValue Int?
   // Populated only where a real session identity already exists today —
   // concretely, anonymousSessionToken copied in directly by the
   // onboarding flow. Left null everywhere else rather than inventing a
