@@ -11,7 +11,7 @@ import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset, type GenesisActionType } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
-import { growthPointCostFor } from "@/lib/growthPoints/catalog";
+import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import {
@@ -134,8 +134,11 @@ const ProposedActionSchema = z.discriminatedUnion("actionType", [
 // The real, literal actionType values ProposedActionSchema above can ever
 // produce — kept as its own list (rather than derived from the schema at
 // runtime) purely so growthPointCosts below can build a real cost lookup
-// for exactly the actions Reason might actually propose, no more.
-const PROPOSABLE_ACTION_TYPES = [
+// for exactly the actions Reason might actually propose, no more. Exported
+// so chat's own data-answer context (app/dashboard/ai-actions.ts) can build
+// the identical real cost lookup rather than a second, potentially
+// drifting list.
+export const PROPOSABLE_ACTION_TYPES = [
   "update_seo",
   "update_hero",
   "update_goal_status",
@@ -470,11 +473,7 @@ export async function runCognitiveReview(params: {
     // Today the catalog is deliberately empty, so this is an honest {}; the
     // moment real values exist, budget-aware framing has real numbers to
     // reason from with zero further code changes.
-    growthPointCosts: Object.fromEntries(
-      PROPOSABLE_ACTION_TYPES.map(
-        (actionType): [GenesisActionType, number | null] => [actionType, growthPointCostFor(actionType)]
-      ).filter((entry): entry is [GenesisActionType, number] => entry[1] !== null)
-    ),
+    growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),
   };
 
   const outcome = await callGenesisModel({

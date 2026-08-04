@@ -26,3 +26,18 @@ const GROWTH_POINT_CATALOG: Partial<Record<GenesisActionType, number>> = {};
 export function growthPointCostFor(actionType: GenesisActionType): number | null {
   return GROWTH_POINT_CATALOG[actionType] ?? null;
 }
+
+// Shared by both real reasoning surfaces that need to show J4 a real cost
+// table — lib/intelligence/cognitiveLayer.ts's Reason pass and chat's own
+// data-answer context (app/dashboard/ai-actions.ts) — so both build the
+// identical honest lookup (only actionTypes with a real, non-null price
+// appear at all) rather than two independently-maintained copies.
+export function growthPointCostsFor(
+  actionTypes: readonly GenesisActionType[]
+): Partial<Record<GenesisActionType, number>> {
+  return Object.fromEntries(
+    actionTypes
+      .map((actionType): [GenesisActionType, number | null] => [actionType, growthPointCostFor(actionType)])
+      .filter((entry): entry is [GenesisActionType, number] => entry[1] !== null)
+  );
+}

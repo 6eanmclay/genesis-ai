@@ -22,7 +22,8 @@ import {
   getRecommendationExplanation,
   type RecommendationExplanation,
 } from "@/lib/dashboard/explainRecommendation";
-import { runCognitiveReview } from "@/lib/intelligence/cognitiveLayer";
+import { runCognitiveReview, PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
+import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { GENESIS_ACTIONS, type GenesisActionContext, type GenesisActionType } from "@/lib/execution/genesisActions";
@@ -1335,13 +1336,26 @@ If it IS an image request, resolve scope — clarify ambiguity, not complexity:
 // entity type regardless (see buildChatDataContext), which is simpler and
 // safer than trusting a classifier to correctly predict which data a
 // question needs.
+//
+// Budget-Aware J4 — widened (field name kept as isDataQuestion, not
+// renamed, to avoid rippling the schema) to also cover genuine planning/
+// strategy questions ("what should I do next," "build me a 90-day plan"),
+// not just literal record lookups. Both kinds route to the same real
+// answer call below, grounded in the same real business understanding —
+// "thinking is free" (ARCHITECTURE.md) means a planning question deserves
+// exactly the same real, grounded answer a data question already gets,
+// never a fallback into the content-editing prompt further down.
 const DataQuestionSchema = z.object({
   isDataQuestion: z.boolean(),
 });
 
-const STORE_CHAT_DATA_QUESTION_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is this message a pure informational question about the business itself — its own data (revenue, orders, customers, upcoming appointments, campaign performance, and similar) or its own understanding (what business this is, how it makes money, what it sells, who its customers/segments are, who works there, its suppliers/vendors, its locations, what systems are connected, its stated goals, its current challenges, or how any of these relate to each other) — something answerable by looking up real records, not a request to change anything?
+const STORE_CHAT_DATA_QUESTION_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is this message something that should be ANSWERED, in words, using the business's own real data and understanding — as opposed to a request to actually change something in the store?
 
-Most messages are NOT this — a request to change identity, theme, branding, copy, policy, or product images is handled elsewhere and should get isDataQuestion: false. A vague or conversational message that isn't really asking for specific business data should also get isDataQuestion: false. Only set isDataQuestion: true when the merchant is genuinely asking to be told something about their business's own numbers, records, or understanding.`;
+Set isDataQuestion: true for both of these real kinds of message:
+- An informational question about the business itself — its own data (revenue, orders, customers, upcoming appointments, campaign performance, and similar) or its own understanding (what business this is, how it makes money, what it sells, who its customers/segments are, who works there, its suppliers/vendors, its locations, what systems are connected, its stated goals, its current challenges, or how any of these relate to each other) — something answerable by looking up real records.
+- A genuine planning or strategy question — asking Genesis to think, analyze, forecast, or recommend in words, without asking it to actually apply any change. Real examples: "What should I do next?", "Build me a 90-day growth plan.", "How would you spend 20 Growth Points?", "What's the fastest path to $10,000/month?" These deserve a real, grounded answer exactly like a data question does — Genesis must always be free to think and plan out loud, regardless of anything else about the store.
+
+Most messages are NOT either of these — a request to actually change identity, theme, branding, copy, policy, or product images is handled elsewhere and should get isDataQuestion: false. A vague or conversational message that isn't really asking to be told or explained anything should also get isDataQuestion: false. Only set isDataQuestion: true when the merchant is genuinely asking to be told or explained something — a fact, an analysis, or a plan — never when they're asking for an actual change to be made.`;
 
 // The actual answer, once isDataQuestion is true — a separate, focused call
 // (not folded into the classifier above) so the classifier's job stays
@@ -1356,17 +1370,21 @@ const StoreChatDataAnswerSchema = z.object({
 
 const STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT = `You are Genesis (J4), a merchant's business partner, answering a real question about their own business using only the data given to you below. This data comes from the business's own records — some of it computed live (always current), some of it may eventually come from connected third-party systems and carry its own "as of" recency.
 
+The question you're answering may be a straightforward lookup ("what was my revenue last week") or a genuine planning/strategy request ("what should I do next," "build me a 90-day growth plan," "what's the fastest path to $10,000/month," "how would you spend N Growth Points") — both deserve a real, complete answer, grounded entirely in the data you're given below, never in anything you weren't given. A planning answer is real synthesis and judgment, not a database lookup — reasoning from goals, beliefs, trends, and recent decisions to a concrete recommendation is exactly the job, not something to decline or hedge away from.
+
 Under businessProfile, you're given the business's actual understanding of itself: identity (brand story, mission, values, target audience, USP), industry and revenue-model classification, its offerings, revenue, customers and real computed customer segments (repeat/high-value/lapsed/new), its owner/team/employees, suppliers/vendors, connected systems, stated goals, current challenges, and locations — this is the real source for "what business is this," "how does it make money," "who works here," "what are my goals/challenges," and similar business-understanding questions, not just transactional numbers. Any of these lists may be genuinely empty (e.g. no goals stated yet) — an honest "you haven't told me that yet" is correct, never a fabricated answer.
 
 You're also given the same understanding Genesis's own recommendation engine reasons from — there is only one J4, not a shallower one for conversation. recentDecisions lists real, objective facts about the last 14 days: specific proposals the owner executed or rejected. beliefs lists patterns already generalized from real, repeated evidence — each with a confidence score and a maturity label ("early signal"/"an emerging pattern" are real but thin, mention cautiously if at all; "well-established" is a premise you can build a confident answer on; "being reconsidered" means something you've relied on may be breaking down right now). activeThoughts lists what you've already told this owner and haven't resolved yet — if a question touches one of these, acknowledge it rather than repeating it as if for the first time.
 
+growthPointBalance is this store's real current Growth Points balance, and growthPointCosts gives the real point cost of each actionType priced so far (absent means no real price exists yet — never invent one). Both are context, not a gate — a planning question gets a complete, real answer regardless of balance, always. Only weave affordability into your answer when it's genuinely relevant to what's being asked (e.g. the merchant literally asks "how would you spend N Growth Points," or a plan you're proposing involves a real, priced action): name what fits the current balance, and separately name what a higher-impact plan would need — informing the trade-off, never pressuring a purchase. Whenever you refer to Growth Points being used, say "invest"/"investment," never "spend"/"cost" — Growth Points represent an owner investing in their own business, not a fee for AI usage.
+
 Rules, non-negotiable:
-- Never state a number, name, or fact that isn't present in the data provided. If the data needed to answer isn't there, say so plainly and warmly — never guess or estimate.
+- Never state a number, name, or fact that isn't present in the data provided. If the data needed to answer isn't there, say so plainly and warmly — never guess or estimate. This includes Growth Point costs: never state a specific point cost for an actionType that isn't actually in growthPointCosts.
 - The revenue figures, top-contacts list, and customer segments are already correctly computed for you — relay them, don't recompute or "correct" them.
 - If a question needs something you don't have any relevant data for at all (e.g. they're asking about a system that isn't connected), say so honestly, without listing every unrelated field you do have.
 - Translate any specialized or technical language into plain, everyday terms a small-business owner would understand — never make them decode jargon.
 - Keep the tone warm, direct, and conversational, like a knowledgeable partner giving a real answer — not a report or a bulleted dump of every field.
-- This is a read-only answer. Never propose, imply, or claim you're making any change to the store — you're only reporting on what already exists.`;
+- This is a read-only answer: you may recommend, plan, and advise freely in words, but never claim or imply you've actually applied a change to the store — you're reporting and advising, never executing.`;
 
 // Phase 3 Milestone 5 — another cheap, separate classifier, same pattern as
 // DataQuestionSchema/ProductImageRequestSchema above: recognizes when the
@@ -2136,7 +2154,11 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     redirect(returnTo);
   }
 
-  const currentTheme = store.theme as ThemeWithComposition;
+  // Same real gap FALLBACK_THEME's own comment already documents for the v2
+  // draft-confirm path (a store whose theme was never generated crashing
+  // "Cannot read properties of null") — found live here too, in chat's own
+  // diffStoreChanges, via a store with a null theme. Same fix.
+  const currentTheme = (store.theme as ThemeWithComposition | null) ?? FALLBACK_THEME;
   const currentBlueprint = store.blueprint as Blueprint | null;
   const currentProducts = await prisma.product.findMany({
     where: { storeId: store.id, active: true },
@@ -2241,6 +2263,11 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
               beliefs: understanding.beliefs,
               recentDecisions: understanding.recentDecisions,
               activeThoughts: understanding.activeThoughts,
+              // Growth Points Economy — same real signal, same "context
+              // only, never a gate" semantics as cognitiveLayer.ts's own
+              // Reason pass (lib/intelligence/cognitiveLayer.ts).
+              growthPointBalance: store.growthPointBalance,
+              growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),
             },
             null,
             2
