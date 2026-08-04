@@ -43,7 +43,7 @@ import {
 } from "@/lib/genesisModel";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
-import { getBusinessProfile } from "@/lib/businessModel/profile";
+import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
@@ -1357,6 +1357,8 @@ const STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT = `You are Genesis (J4), a merchant's
 
 Under businessProfile, you're given the business's actual understanding of itself: identity (brand story, mission, values, target audience, USP), industry and revenue-model classification, its offerings, revenue, customers and real computed customer segments (repeat/high-value/lapsed/new), its owner/team/employees, suppliers/vendors, connected systems, stated goals, current challenges, and locations — this is the real source for "what business is this," "how does it make money," "who works here," "what are my goals/challenges," and similar business-understanding questions, not just transactional numbers. Any of these lists may be genuinely empty (e.g. no goals stated yet) — an honest "you haven't told me that yet" is correct, never a fabricated answer.
 
+You're also given the same understanding Genesis's own recommendation engine reasons from — there is only one J4, not a shallower one for conversation. recentDecisions lists real, objective facts about the last 14 days: specific proposals the owner executed or rejected. beliefs lists patterns already generalized from real, repeated evidence — each with a confidence score and a maturity label ("early signal"/"an emerging pattern" are real but thin, mention cautiously if at all; "well-established" is a premise you can build a confident answer on; "being reconsidered" means something you've relied on may be breaking down right now). activeThoughts lists what you've already told this owner and haven't resolved yet — if a question touches one of these, acknowledge it rather than repeating it as if for the first time.
+
 Rules, non-negotiable:
 - Never state a number, name, or fact that isn't present in the data provided. If the data needed to answer isn't there, say so plainly and warmly — never guess or estimate.
 - The revenue figures, top-contacts list, and customer segments are already correctly computed for you — relay them, don't recompute or "correct" them.
@@ -2249,15 +2251,16 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     : null;
 
   if (dataQuestionResult?.isDataQuestion) {
-    // Phase 3 Milestone 5 — businessProfile is fetched alongside
-    // buildChatDataContext (not folded into that function itself, which
-    // lives in lib/businessModel/reasoning.ts and would create a circular
-    // import if it depended on profile.ts, which itself depends on
-    // reasoning.ts's own primitives) and merged into one JSON payload —
-    // Claude sees a single combined context either way.
-    const [dataContext, businessProfile] = await Promise.all([
+    // J4 Foundation (2026-08-04) — buildChatDataContext stays separate
+    // (real, unique value: upcoming appointments, recent raw records across
+    // every entity type — not carried by understanding.profile), but
+    // businessProfile is no longer fetched on its own. getBusinessUnderstanding
+    // closes Gap B from J4_FOUNDATION.md: chat now sees the same beliefs,
+    // recent decisions, and active thoughts the recommendation engine
+    // already reasoned from — one J4, not a shallower one for conversation.
+    const [dataContext, understanding] = await Promise.all([
       buildChatDataContext(store.id),
-      getBusinessProfile(store.id),
+      getBusinessUnderstanding(store.id),
     ]);
     const answerOutcome = await callGenesisModel({
       model: "claude-opus-4-8",
@@ -2267,7 +2270,17 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       messages: [
         {
           role: "user",
-          content: `Business data (JSON):\n${JSON.stringify({ ...dataContext, businessProfile }, null, 2)}\n\nMerchant's question: ${userMessage}`,
+          content: `Business data (JSON):\n${JSON.stringify(
+            {
+              ...dataContext,
+              businessProfile: understanding.profile,
+              beliefs: understanding.beliefs,
+              recentDecisions: understanding.recentDecisions,
+              activeThoughts: understanding.activeThoughts,
+            },
+            null,
+            2
+          )}\n\nMerchant's question: ${userMessage}`,
         },
       ],
       output_config: {

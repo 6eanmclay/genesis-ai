@@ -6,18 +6,14 @@ import { getOrderSummary, getRecentActivity } from "@/lib/dashboard/whatHappened
 import { getCustomerSummaries } from "@/lib/dashboard/customers";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
 import { computeInsights, type Insight } from "./insights";
-import { distillBeliefs, getBeliefs } from "./learn";
+import { distillBeliefs } from "./learn";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
-import { getBusinessProfile } from "@/lib/businessModel/profile";
-import {
-  predictGoalTrajectory,
-  getRecentDecisionOutcomes,
-  type GoalTrajectory,
-} from "@/lib/businessModel/reasoning";
+import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { predictGoalTrajectory, type GoalTrajectory } from "@/lib/businessModel/reasoning";
 
 // Phase 3 Milestone 6 — the J4 Cognitive Layer's own reasoning pipeline.
 // Was generateGenesisRecommendations.ts (lib/dashboard/), relocated here
@@ -216,21 +212,11 @@ export async function runCognitiveReview(params: {
     select: { name: true, description: true, priceInCents: true, active: true },
   });
 
-  const [orderSummary, customerSummaries, recentActivity, recentDecisionOutcomes, businessProfile] =
-    await Promise.all([
-      getOrderSummary(storeId, { includeRevenue: true }),
-      getCustomerSummaries(storeId, { includeRevenue: true, limit: 10 }),
-      getRecentActivity(storeId, 10),
-      // J4 Foundation Phase 3 (Reason) — replaces getRecentGenesisHistory's
-      // 60-day/5-item capped proxy. A single recent decision is an
-      // objective, current-state fact (Understand's own read layer), never
-      // a Learn belief — see this milestone's own plan for why that
-      // distinction matters (a proposal declined exactly once must stay
-      // visible to Reason, even though it's below Learn's own 2-occurrence
-      // threshold for generalizing it into a real pattern).
-      getRecentDecisionOutcomes(storeId),
-      getBusinessProfile(storeId),
-    ]);
+  const [orderSummary, customerSummaries, recentActivity] = await Promise.all([
+    getOrderSummary(storeId, { includeRevenue: true }),
+    getCustomerSummaries(storeId, { includeRevenue: true, limit: 10 }),
+    getRecentActivity(storeId, 10),
+  ]);
   const recentInsights = params.recentInsights ?? (await computeInsights(storeId));
   // J4 Foundation Phase 2 (Learn) — a separate call, deliberately not folded
   // into the reasoning below: distillBeliefs reads its own persisted
@@ -238,11 +224,16 @@ export async function runCognitiveReview(params: {
   // window), so it runs unconditionally here rather than depending on
   // whether computeInsights happened to run fresh this call.
   await distillBeliefs(storeId);
-  // J4 Foundation Phase 3 (Reason) — read AFTER distillation, so this same
-  // pass's own fresh beliefs are what Reason sees, never a stale snapshot
-  // from before this call's own Learn pass ran. A fresh read every call,
-  // nothing cached — Reason stays exactly as stateless as before.
-  const beliefs = await getBeliefs(storeId);
+  // J4 Foundation (2026-08-04) — the shared canonical understanding
+  // (J4_FOUNDATION.md, closing Gap A: one real object combining facts,
+  // beliefs, and recent decisions, reused by chat's data-answer path too —
+  // see app/dashboard/ai-actions.ts). Read AFTER distillBeliefs above, so
+  // this same pass's own fresh beliefs are what Reason sees, never a stale
+  // snapshot from before this call's own Learn pass ran — the exact
+  // ordering guarantee this file already held before this function existed
+  // to share the read with other callers, unchanged.
+  const understanding = await getBusinessUnderstanding(storeId);
+  const { profile: businessProfile, beliefs, recentDecisions: recentDecisionOutcomes } = understanding;
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
 
