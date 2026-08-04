@@ -9,8 +9,9 @@ import { computeInsights, type Insight } from "./insights";
 import { distillBeliefs } from "./learn";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
-import { GENESIS_ACTIONS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
+import { GENESIS_ACTIONS, type BlueprintContextSubset, type GenesisActionType } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
+import { growthPointCostFor } from "@/lib/growthPoints/catalog";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import {
@@ -130,6 +131,20 @@ const ProposedActionSchema = z.discriminatedUnion("actionType", [
   }),
 ]);
 
+// The real, literal actionType values ProposedActionSchema above can ever
+// produce — kept as its own list (rather than derived from the schema at
+// runtime) purely so growthPointCosts below can build a real cost lookup
+// for exactly the actions Reason might actually propose, no more.
+const PROPOSABLE_ACTION_TYPES = [
+  "update_seo",
+  "update_hero",
+  "update_goal_status",
+  "resolve_challenge",
+  "create_product",
+  "update_store_identity",
+  "update_section_order",
+] as const satisfies readonly GenesisActionType[];
+
 // Per-kind item shapes — a discriminated union, not a generic bag, the same
 // fix M5's business-fact classifier proved live against the real API: a
 // loose schema lets the model skip fields; per-kind required fields make
@@ -214,6 +229,8 @@ Every business's own stated goals and challenges are shown with their real ids. 
 Each belief you're shown includes its own real topicKey. When an output is genuinely built on one specific belief, set relatedBeliefTopicKey to that belief's exact topicKey as shown; leave it null when no specific belief was actually used as grounding, which is most outputs.
 
 actionTypeTrackRecord shows this store's own real history for a given action type — how often a proposal of that type has actually been approved (approvalRate), and, when there's enough real measured history, how often the result actually looked positive afterward (positiveOutcomeRate, null when there isn't enough real history yet — never treat a null here as a bad sign, it just means too little data exists so far). This is a different, complementary signal from beliefs: a belief only ever applies once the exact same finding has recurred, while a track record can inform a brand-new finding of a familiar action type. If you're about to attach a proposedAction and its actionType has a real track record here, let it genuinely inform your confidence — a type this store has consistently approved and that has measured well deserves higher confidence than the summary text alone would suggest; a type this store has often rejected, or that measured poorly, deserves real caution even if the current finding looks compelling in isolation. An actionType absent from this list simply has no real history yet on this store — reason from the evidence you do have, same as always.
+
+growthPointBalance is this store's real current Growth Points balance, and growthPointCosts gives the real point cost of each actionType that has one assigned so far (an actionType absent from growthPointCosts has no real price yet — never invent one). Both are context only, never a gate. You must always generate every finding, opportunity, and recommendation exactly as you otherwise would, completely independent of these numbers; a store at zero balance deserves the exact same quality of thinking as one with a large balance. The only thing they ever affect is how you frame a recommendation's own summary, and only when doing so is genuinely relevant: if the highest-confidence recommendation's own actionType has a real cost in growthPointCosts that exceeds the current balance, or if multiple real candidates exist at meaningfully different real costs, name the trade-off plainly — propose the option that fits the current balance, and separately name what a higher-impact option would need, in one honest sentence. Never manufacture a comparison using a cost that isn't actually in growthPointCosts, and never let this read as pressure to buy more — you are informing a decision, not selling one. Whenever you refer to Growth Points being used, use "invest"/"investment" language ("this would invest 2 Growth Points into a new product"), never "spend"/"cost" language — Growth Points represent an owner investing in their own business, not a fee for AI usage.
 
 actionHref must be exactly one of: "/dashboard#attention", "/dashboard/website", "/dashboard/settings", "/dashboard/payments", "/dashboard/products", "/dashboard/marketing", "/dashboard/brand" — whichever dashboard section a recommendation/opportunity relates to.
 
@@ -440,6 +457,24 @@ export async function runCognitiveReview(params: {
     // actionTypes with real, sufficient history appear at all — see
     // SYSTEM_PROMPT for how to weigh this against everything else.
     actionTypeTrackRecord,
+    // Growth Points Economy — the store's real current balance (already on
+    // the `store` row fetched above, no new query). Context only, never a
+    // gate: see SYSTEM_PROMPT's own guidance on this — every finding,
+    // opportunity, and recommendation still gets generated regardless of
+    // balance; this only ever informs how a recommendation's own summary
+    // is framed, when framing it that way is genuinely relevant.
+    growthPointBalance: store.growthPointBalance,
+    // Real per-action costs for exactly the actionTypes Reason can actually
+    // propose (PROPOSABLE_ACTION_TYPES above) — only entries with a real,
+    // non-null catalog value (lib/growthPoints/catalog.ts) appear at all.
+    // Today the catalog is deliberately empty, so this is an honest {}; the
+    // moment real values exist, budget-aware framing has real numbers to
+    // reason from with zero further code changes.
+    growthPointCosts: Object.fromEntries(
+      PROPOSABLE_ACTION_TYPES.map(
+        (actionType): [GenesisActionType, number | null] => [actionType, growthPointCostFor(actionType)]
+      ).filter((entry): entry is [GenesisActionType, number] => entry[1] !== null)
+    ),
   };
 
   const outcome = await callGenesisModel({
