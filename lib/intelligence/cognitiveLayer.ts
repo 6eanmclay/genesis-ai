@@ -496,6 +496,7 @@ export async function runCognitiveReview(params: {
       recordId,
       entityType,
       groupId,
+      aiUsageEventId: outcome.ok ? outcome.aiUsageEventId : null,
     });
     if (executedAutonomously) {
       autonomouslyHandledCount++;
@@ -536,6 +537,7 @@ export async function runCognitiveReview(params: {
         authorizationTier: definition.authorizationTier,
         groupId,
         topicKey: item.topicKey,
+        aiUsageEventId: outcome.ok ? outcome.aiUsageEventId : null,
       },
     });
     await prisma.cognitiveOutput.update({

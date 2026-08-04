@@ -593,12 +593,26 @@ model ApprovalRequest {
   executionId          String?
   decidedByUserId      String?
   decidedAt            DateTime?
+  // AI Cost & Usage Infrastructure — the AiUsageEvent this proposal
+  // actually came from, if any. Deliberately pointing this direction
+  // (request -> event), not the reverse: one review call
+  // (lib/intelligence/cognitiveLayer.ts's runCognitiveReview) can produce
+  // several ApprovalRequest rows from a single AiUsageEvent, so only this
+  // direction is a valid many-to-one. Read (not written) when computing
+  // "which recommendations get accepted" — AiUsageEvent.outcome itself is
+  // reserved for the genuinely one-to-one cases (see that field's own
+  // comment), never mutated from here, so a shared originating call is
+  // never forced into a single accepted/rejected verdict it can't
+  // honestly have. No FK, same loose-reference convention as
+  // recommendationId/delegatedAuthorityId above.
+  aiUsageEventId       String?
   createdAt            DateTime  @default(now())
 
   store                    Store                     @relation(fields: [storeId], references: [id], onDelete: Cascade)
   postExecutionMeasurement PostExecutionMeasurement?
 
   @@index([storeId, status])
+  @@index([aiUsageEventId])
 }
 
 // Phase 6 — the smallest durable representation of "the owner has authorized
@@ -947,8 +961,17 @@ model AiUsageEvent {
   // "0 images" and "not an image call" stay distinguishable from "unknown."
   imageCount   Int?
   durationMs   Int?
-  // "accepted" | "rejected" | null. Deliberately bounded — see
-  // ApprovalRequest's own accept/reject flow and claimExperienceDraft in
+  // "accepted" | "rejected" | null. Deliberately reserved for the
+  // genuinely one-to-one case — claimExperienceDraft in
+  // app/onboarding/actions.ts, the only real "was this call's real-world
+  // output ultimately kept" signal that always maps cleanly to one
+  // originating event. NOT written from ApprovalRequest's own
+  // accept/reject flow — one review call can produce several
+  // ApprovalRequest rows (lib/intelligence/cognitiveLayer.ts), so forcing
+  // a single verdict here would misrepresent a genuinely one-to-many
+  // relationship; see ApprovalRequest.aiUsageEventId instead, read (not
+  // written) to answer "which recommendations get accepted" via a join.
+  // See claimExperienceDraft in
   // app/onboarding/actions.ts for the only two places this gets written.
   // Null means "no decision point exists for this call yet," not
   // "ignored" — there is no eager "ignored" write; see this model's
@@ -983,10 +1006,6 @@ model AiUsageEvent {
   // onboarding flow. Left null everywhere else rather than inventing a
   // conversation/thread id that doesn't exist anywhere in this schema yet.
   sessionId    String?
-  // Loose correlation to the ApprovalRequest this call's output became,
-  // if any — no FK, matching this codebase's existing convention for
-  // recommendationId/delegatedAuthorityId on ApprovalRequest itself.
-  approvalRequestId String?
   occurredAt   DateTime @default(now())
 
   store Store? @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -996,5 +1015,4 @@ model AiUsageEvent {
   @@index([userId, occurredAt])
   @@index([anonymousSessionToken, occurredAt])
   @@index([feature, occurredAt])
-  @@index([approvalRequestId])
 }

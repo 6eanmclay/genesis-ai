@@ -52,6 +52,13 @@ export interface ImageSourceResult {
   // imagePrompt, so a generated image's provenance survives past the
   // initial call rather than being discarded once the URL is in hand.
   generationPrompt?: string;
+  // AI Cost & Usage Infrastructure, Milestone 4 — the real AiUsageEvent
+  // row this generation wrote, set only by GeneratedImageProvider (stock/
+  // upload sources have no per-call cost to correlate against). A caller
+  // that turns this image into an ApprovalRequest passes it straight
+  // through as ApprovalRequest.aiUsageEventId — same correlation pattern
+  // callGenesisModel's own aiUsageEventId already establishes for text.
+  aiUsageEventId?: string | null;
 }
 
 export interface ImageProvider {

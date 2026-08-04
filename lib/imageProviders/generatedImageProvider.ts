@@ -38,9 +38,9 @@ interface OpenAiImagesResponse {
 // written before a serverless function can exit, its own failure caught
 // and never allowed to turn a real successful generation into a reported
 // failure.
-async function recordImageUsage(request: ImageSourceRequest, durationMs: number): Promise<void> {
+async function recordImageUsage(request: ImageSourceRequest, durationMs: number): Promise<string | null> {
   try {
-    await prisma.aiUsageEvent.create({
+    const event = await prisma.aiUsageEvent.create({
       data: {
         ...request.scope,
         inputTokens: 0,
@@ -55,8 +55,10 @@ async function recordImageUsage(request: ImageSourceRequest, durationMs: number)
         growthCreditValue: growthCreditValueFor(request.feature),
       },
     });
+    return event.id;
   } catch (err) {
     Sentry.captureException(err);
+    return null;
   }
 }
 
@@ -100,7 +102,7 @@ export const GeneratedImageProvider: ImageProvider = {
     // to the next provider, same as any other failure), but the real
     // dollar spend already happened and must not go unrecorded because of
     // an unrelated storage error.
-    await recordImageUsage(request, Date.now() - startedAt);
+    const aiUsageEventId = await recordImageUsage(request, Date.now() - startedAt);
 
     try {
       const { url } = await put(`products/${randomUUID()}.png`, Buffer.from(b64, "base64"), {
@@ -108,7 +110,7 @@ export const GeneratedImageProvider: ImageProvider = {
         contentType: "image/png",
         addRandomSuffix: false,
       });
-      return { url, provider: "generated", generationPrompt: request.prompt };
+      return { url, provider: "generated", generationPrompt: request.prompt, aiUsageEventId };
     } catch {
       return null;
     }

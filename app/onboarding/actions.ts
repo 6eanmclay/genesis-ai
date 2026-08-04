@@ -952,6 +952,19 @@ export async function claimExperienceDraft(): Promise<{ storeDraftId: string } |
       onboardingState: claimedState as unknown as object,
     },
   });
+
+  // AI Cost & Usage Infrastructure, Milestone 4 — the one genuinely
+  // one-to-one "was this real-world output ultimately kept" signal: every
+  // real AI cost incurred during this anonymous session led to a business
+  // the owner decided to keep. Only touches rows still unset (outcome:
+  // null) — never overwrites a real prior value — and this is the one
+  // place sessionId gets populated, per the AI Cost & Usage
+  // Infrastructure plan's own scoped decision.
+  await prisma.aiUsageEvent.updateMany({
+    where: { anonymousSessionToken, outcome: null },
+    data: { outcome: "accepted", sessionId: anonymousSessionToken },
+  });
+
   await clearAnonymousSessionCookie();
   return { storeDraftId: anonymousDraft.id };
 }

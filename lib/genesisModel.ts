@@ -111,6 +111,13 @@ export interface GenesisModelSuccess<T> {
   ok: true;
   message: T;
   durationMs: number;
+  // AI Cost & Usage Infrastructure, Milestone 4 — the real AiUsageEvent
+  // row id this call just wrote, so a caller that turns this call's
+  // output into an ApprovalRequest can correlate the two
+  // (ApprovalRequest.aiUsageEventId). Null only if recordUsage's own
+  // write failed (already reported to Sentry there) — a real call still
+  // succeeded, there's just nothing to correlate against.
+  aiUsageEventId: string | null;
 }
 
 export type GenesisModelResult<T> = GenesisModelSuccess<T> | GenesisModelFailure;
@@ -205,9 +212,9 @@ async function recordUsage(
   model: string,
   durationMs: number,
   usage: { input_tokens: number; output_tokens: number }
-): Promise<void> {
+): Promise<string | null> {
   try {
-    await prisma.aiUsageEvent.create({
+    const event = await prisma.aiUsageEvent.create({
       data: {
         ...scope,
         inputTokens: usage.input_tokens,
@@ -221,8 +228,10 @@ async function recordUsage(
         growthCreditValue: growthCreditValueFor(feature),
       },
     });
+    return event.id;
   } catch (err) {
     Sentry.captureException(err);
+    return null;
   }
 }
 
@@ -289,8 +298,8 @@ export async function callGenesisModel<Params extends Parameters<typeof anthropi
   try {
     const message = await anthropic.messages.stream(params).finalMessage();
     const durationMs = Date.now() - startedAt;
-    await recordUsage(scope, feature, params.model, durationMs, message.usage);
-    return { ok: true, message, durationMs };
+    const aiUsageEventId = await recordUsage(scope, feature, params.model, durationMs, message.usage);
+    return { ok: true, message, durationMs, aiUsageEventId };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const classified = classifyAnthropicError(err);

@@ -78,6 +78,10 @@ interface TryExecuteAutonomousActionParams {
   recordId?: string | null;
   entityType?: string | null;
   groupId: string;
+  // AI Cost & Usage Infrastructure — the AiUsageEvent this proposal
+  // originated from (the review call's own callGenesisModel result),
+  // correlated onto the ApprovalRequest this function creates below.
+  aiUsageEventId: string | null;
 }
 
 // Self-contained and safe to call speculatively for every proposedAction a
@@ -88,7 +92,8 @@ interface TryExecuteAutonomousActionParams {
 export async function tryExecuteAutonomousAction(
   params: TryExecuteAutonomousActionParams
 ): Promise<boolean> {
-  const { storeId, actionType, input, summary, topicKey, cognitiveOutputId, recordId, entityType, groupId } = params;
+  const { storeId, actionType, input, summary, topicKey, cognitiveOutputId, recordId, entityType, groupId, aiUsageEventId } =
+    params;
 
   const definition = GENESIS_ACTIONS[actionType];
   if (!definition || definition.maxAuthorityTier === "always_ask") {
@@ -142,6 +147,7 @@ export async function tryExecuteAutonomousAction(
       topicKey,
       decisionMode: "autonomous",
       delegatedAuthorityId: grant.id,
+      aiUsageEventId,
     },
   });
 
