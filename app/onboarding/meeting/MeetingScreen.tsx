@@ -5,18 +5,25 @@ import { useRouter } from "next/navigation";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisComposing } from "@/lib/dashboard/genesisActivity";
-import { submitMeetingTurn } from "./actions";
+import { ActionDiffRows } from "@/lib/execution/ActionDiff";
+import { submitMeetingTurn, approveMeetingRecommendation, declineMeetingRecommendation } from "./actions";
 import type { FollowUpTurn } from "./ask";
+import type { MeetingRecommendation } from "./recommend";
 
-// The First Meeting with J4 — MEETING_WITH_J4.md, frozen v1. Same visual
-// treatment as LaunchScreen.tsx (the Partnership ceremony this meeting
-// directly continues): idle avatar throughout, real async work, no
-// fabricated progress. M5 builds Reflect + Listen + Ask — the "converse"
-// beat below loops for as many real turns as decideNextMeetingStep
-// actually warrants (zero, one, or up to the safety ceiling), then
-// completes. What happens after the loop ends will change under M6-M7 as
-// Recommend/Execute get added before completion.
-type Beat = "reflect" | "converse" | "completing";
+// The First Meeting with J4 — MEETING_WITH_J4.md, frozen v1, now complete
+// end to end (M3-M7). Same visual treatment as LaunchScreen.tsx (the
+// Partnership ceremony this meeting directly continues): idle avatar
+// throughout, real async work, no fabricated progress. Reflect -> Listen
+// -> Ask (looped for as many real turns as decideNextMeetingStep actually
+// warrants) -> Recommend, exactly one thing -> Explain/Approve/Execute,
+// immediately, in the same conversation.
+type Beat =
+  | "reflect"
+  | "converse"
+  | "converse_submitting"
+  | "recommend"
+  | "recommend_submitting"
+  | "result";
 
 const OPENING_QUESTION = "What do you want this to become?";
 
@@ -26,16 +33,20 @@ const shell =
 const primaryButton =
   "rounded-full px-7 py-3 text-sm font-semibold transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100";
 
+const ghostButton = "rounded-full border px-6 py-2.5 text-sm transition-colors";
+
 export function MeetingScreen({ reflection }: { reflection: string }) {
   const router = useRouter();
   const [beat, setBeat] = useState<Beat>("reflect");
   const [transcript, setTranscript] = useState<FollowUpTurn[]>([]);
   const [question, setQuestion] = useState(OPENING_QUESTION);
   const [answer, setAnswer] = useState("");
+  const [recommendation, setRecommendation] = useState<MeetingRecommendation | null>(null);
+  const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const submitTurn = () => {
-    setBeat("completing");
+    setBeat("converse_submitting");
     startTransition(async () => {
       const result = await submitMeetingTurn(transcript, question, answer);
       if (result.action === "ask") {
@@ -45,7 +56,24 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
         setBeat("converse");
         return;
       }
+      if (result.action === "recommend") {
+        setRecommendation(result.recommendation);
+        setBeat("recommend");
+        return;
+      }
       router.push("/dashboard");
+    });
+  };
+
+  const decide = (approve: boolean) => {
+    if (!recommendation) return;
+    setBeat("recommend_submitting");
+    startTransition(async () => {
+      const result = approve
+        ? await approveMeetingRecommendation(recommendation.approvalRequestId)
+        : await declineMeetingRecommendation(recommendation.approvalRequestId);
+      setResultMessage(result.message);
+      setBeat("result");
     });
   };
 
@@ -68,7 +96,7 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
         </>
       )}
 
-      {(beat === "converse" || beat === "completing") && (
+      {(beat === "converse" || beat === "converse_submitting") && (
         <>
           <p className="max-w-md text-lg font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             {question}
@@ -83,7 +111,7 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
             onChange={(e) => setAnswer(e.target.value)}
             onFocus={() => setGenesisComposing(true)}
             onBlur={() => setGenesisComposing(false)}
-            disabled={beat === "completing"}
+            disabled={beat === "converse_submitting"}
             rows={4}
             placeholder="Where do you see this a year from now…"
             className="w-full max-w-md rounded-2xl border px-5 py-4 text-sm"
@@ -95,11 +123,58 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
           />
           <button
             onClick={submitTurn}
-            disabled={beat === "completing"}
+            disabled={beat === "converse_submitting"}
             className={primaryButton}
             style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
           >
-            {beat === "completing" ? "One moment..." : "Continue"}
+            {beat === "converse_submitting" ? "One moment..." : "Continue"}
+          </button>
+        </>
+      )}
+
+      {(beat === "recommend" || beat === "recommend_submitting") && recommendation && (
+        <>
+          <p className="max-w-md text-lg font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            {recommendation.summary}
+          </p>
+          <div
+            className="w-full max-w-md rounded-2xl border p-4 text-left"
+            style={{ borderColor: GENESIS_ATMOSPHERE.border, backgroundColor: "rgba(244,242,251,0.04)" }}
+          >
+            <ActionDiffRows input={recommendation.input} previousValues={recommendation.previousValues} />
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => decide(true)}
+              disabled={beat === "recommend_submitting"}
+              className={primaryButton}
+              style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
+            >
+              {beat === "recommend_submitting" ? "One moment..." : "Yes, let's do it"}
+            </button>
+            <button
+              onClick={() => decide(false)}
+              disabled={beat === "recommend_submitting"}
+              className={ghostButton}
+              style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.textSecondary }}
+            >
+              Not right now
+            </button>
+          </div>
+        </>
+      )}
+
+      {beat === "result" && resultMessage && (
+        <>
+          <p className="max-w-md text-lg font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            {resultMessage}
+          </p>
+          <button
+            onClick={() => router.push("/dashboard")}
+            className={primaryButton}
+            style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
+          >
+            Go to dashboard
           </button>
         </>
       )}

@@ -180,7 +180,16 @@ export function GenesisAvatar({
 
   return (
     <div
-      className={`relative ${waking ? "genesis-avatar-dormant" : ""} ${ACTIVITY_CLASS[visualState]} ${className}`}
+      // Meeting with J4 M7 — real bug found live: .genesis-haze's own
+      // inset-[-45%] deliberately extends its soft glow well past this
+      // component's own box (see that layer's comment), and this root has
+      // no overflow clip, so on a tightly-stacked screen (MeetingScreen's
+      // avatar directly above its own Continue/decision buttons) the haze
+      // genuinely overlapped and intercepted clicks meant for a real button
+      // below it. Every layer inside this component is purely decorative
+      // (aria-hidden, no handlers anywhere in this file) — pointer-events-
+      // none here is correct for all of them, not a narrow patch on one.
+      className={`relative pointer-events-none ${waking ? "genesis-avatar-dormant" : ""} ${ACTIVITY_CLASS[visualState]} ${className}`}
     >
       {/* A dark backdrop wash, always rendered regardless of the host
           page's own background — mix-blend-mode: screen below only

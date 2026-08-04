@@ -69,6 +69,17 @@ const ProposedActionSchema = z.discriminatedUnion("actionType", [
     actionType: z.literal("resolve_challenge"),
     input: z.object({ challengeRecordId: z.string() }),
   }),
+  // Meeting with J4 M6/M7 — a real bug found live: create_product was
+  // registered in GENESIS_ACTIONS (M2) but never added here, meaning
+  // Reason had no way to actually propose one — the meeting's own
+  // highest-confidence-first selection could never reach a real
+  // create_product candidate no matter how strong the underlying finding
+  // was. Same discipline as every other entry: precise, ready-to-apply
+  // values only, never a vague "add more products" intent.
+  z.object({
+    actionType: z.literal("create_product"),
+    input: z.object({ name: z.string(), description: z.string().nullable(), priceInCents: z.number().int() }),
+  }),
 ]);
 
 // Per-kind item shapes — a discriminated union, not a generic bag, the same
@@ -161,6 +172,7 @@ If, and only if, a recommendation or opportunity maps directly onto one of these
 - "update_hero": input: { heroHeadline: string, heroSubheadline: string }.
 - "update_goal_status": input: { goalRecordId: string, status: "achieved" | "abandoned" } — only when a goal's real data (its own trajectory, or something else in context) clearly shows it's been achieved or is no longer viable. Use the goal's own real id.
 - "resolve_challenge": input: { challengeRecordId: string } — only when the data clearly shows the challenge is no longer a real problem. Use the challenge's own real id.
+- "create_product": input: { name: string, description: string | null, priceInCents: number } — only when a genuinely specific, sellable new product idea follows directly from the real business data (e.g. a natural size/variant of an existing product, or a clear gap in an otherwise-thin catalog) — never a vague "add more products." name and description must be concrete and real, never placeholders; priceInCents must be a real, reasonable price for this kind of business, not a guess disconnected from the store's existing pricing.
 Most recommendations/opportunities should NOT include a proposedAction — only attach one when you can specify the exact values, never a vague intent. Leave proposedAction null otherwise.`;
 
 // Home Redesign (v30) — Goal progress becomes a real, standalone Discovery

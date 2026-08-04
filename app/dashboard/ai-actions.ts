@@ -3807,13 +3807,16 @@ export async function approveGenesisActionGroup(groupId: string) {
 // Returns a result instead of redirecting; every existing exported action
 // below wraps one of these and then redirects exactly as before — zero
 // behavior change for any current caller.
-type GenesisActionDecisionResult =
+export type GenesisActionDecisionResult =
   | { outcome: "not_found" }
   | { outcome: "execution_failed"; message: string }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   | { outcome: "executed"; message: string; metadata: any };
 
-async function performApproveGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
+// Meeting with J4 M7 — the real non-redirecting caller this was built for
+// in M2 finally exists: the meeting's own inline explain/approve/execute
+// UI (app/onboarding/meeting/actions.ts) calls these two directly.
+export async function performApproveGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
   const approval = await prisma.approvalRequest.findFirst({
     where: { id: approvalRequestId, storeId, status: "PENDING_APPROVAL" },
@@ -3896,7 +3899,7 @@ export async function approveGenesisAction(approvalRequestId: string) {
   redirect("/dashboard");
 }
 
-async function performRejectGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
+export async function performRejectGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
   const approval = await prisma.approvalRequest.findFirst({
     where: { id: approvalRequestId, storeId, status: "PENDING_APPROVAL" },

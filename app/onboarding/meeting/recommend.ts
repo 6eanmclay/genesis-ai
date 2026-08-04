@@ -25,14 +25,23 @@ export interface MeetingRecommendation {
   actionType: string;
   summary: string;
   confidence: number;
+  // Meeting with J4 M7 — the real diff, so the meeting's own inline
+  // explain/approve/execute UI can render it through the exact same
+  // generic ActionDiffRows (lib/execution/ActionDiff.tsx) the dashboard's
+  // ApprovalRequestsPanel already uses — never a bespoke card.
+  input: Record<string, unknown>;
+  previousValues: Record<string, unknown>;
 }
 
 // The pure decision — highest confidence, then the deterministic
 // visible-impact tie-break — separated from the DB/AI-call plumbing around
 // it so it's directly testable against engineered candidate sets, not only
 // observable indirectly through whatever a real model run happens to
-// produce.
-export function pickMeetingRecommendation(candidates: MeetingRecommendation[]): MeetingRecommendation | null {
+// produce. Generic so a test can pass minimal candidates (just actionType/
+// confidence) without needing to fabricate a real input/previousValues.
+export function pickMeetingRecommendation<T extends { actionType: string; confidence: number }>(
+  candidates: T[]
+): T | null {
   if (candidates.length === 0) {
     return null;
   }
@@ -55,7 +64,7 @@ export async function selectMeetingRecommendation(
   // reliable boundary since runCognitiveReview always creates fresh rows.
   const candidates = await prisma.approvalRequest.findMany({
     where: { storeId, status: "PENDING_APPROVAL", createdAt: { gte: reviewStartedAt } },
-    select: { id: true, actionType: true, summary: true, cognitiveOutputId: true },
+    select: { id: true, actionType: true, summary: true, cognitiveOutputId: true, input: true, previousValues: true },
   });
   if (candidates.length === 0) {
     return null;
@@ -78,6 +87,8 @@ export async function selectMeetingRecommendation(
       // which M1 made required — 0 is an honest, conservative fallback for
       // an older row written before that column existed, never a crash.
       confidence: (c.cognitiveOutputId ? confidenceByOutputId.get(c.cognitiveOutputId) : null) ?? 0,
+      input: c.input as Record<string, unknown>,
+      previousValues: c.previousValues as Record<string, unknown>,
     }))
   );
 }

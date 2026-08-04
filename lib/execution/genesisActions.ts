@@ -617,55 +617,10 @@ for (const [actionType, definition] of Object.entries(GENESIS_ACTIONS)) {
 
 export type GenesisActionType = keyof typeof GENESIS_ACTIONS;
 
-// Display names for the generic Current -> Proposed diff renderer in
-// ApprovalRequestsPanel.tsx — driven by field key, not per-action JSX.
-export const FIELD_LABELS: Record<string, string> = {
-  seoTitle: "SEO Title",
-  seoMetaDescription: "Meta Description",
-  heroHeadline: "Hero Headline",
-  heroSubheadline: "Hero Subheadline",
-  imageUrl: "Product Image",
-  brandStory: "Brand Story",
-  missionStatement: "Mission Statement",
-  visionStatement: "Vision Statement",
-  brandPromise: "Brand Promise",
-  coreValues: "Core Values",
-  brandPersonality: "Brand Personality",
-  brandVoiceAndTone: "Brand Voice & Tone",
-  targetAudience: "Target Audience",
-  uniqueSellingProposition: "Unique Selling Proposition",
-  // Shared by update_store_identity (the business's own name) and
-  // create_product (a proposed product's name) — kept generic rather than
-  // "Business Name" so it reads correctly for both, since FIELD_LABELS is a
-  // flat, action-agnostic map by design (see the generic diff renderer).
-  name: "Name",
-  tagline: "Tagline",
-  description: "Description",
-  primaryCallToAction: "Primary Call to Action",
-  secondaryCallToAction: "Secondary Call to Action",
-  aboutUs: "About Us",
-  whyChooseUs: "Why Choose Us",
-  featuredCollections: "Featured Collections",
-  faq: "FAQ",
-  newsletterSection: "Newsletter",
-  footerContent: "Footer",
-  customSectionTitle: "Custom Section Title",
-  customSectionBody: "Custom Section Body",
-  shippingPolicy: "Shipping Policy",
-  returnPolicy: "Return Policy",
-  privacyPolicy: "Privacy Policy",
-  termsAndConditions: "Terms & Conditions",
-  contactPageCopy: "Contact Page",
-  visualStyle: "Visual Style",
-  brandMood: "Brand Mood",
-  photographyStyle: "Photography Style",
-  iconStyle: "Icon Style",
-  brandKeywords: "Brand Keywords",
-  instagramBio: "Instagram Bio",
-  facebookDescription: "Facebook Description",
-  xBio: "X (Twitter) Bio",
-  priceInCents: "Price",
-};
+// Meeting with J4 M7 — moved to lib/execution/fieldLabels.ts (a small,
+// client-safe module with no server-only imports), re-exported here for
+// every existing importer. See that file's own comment for why.
+export { FIELD_LABELS } from "./fieldLabels";
 
 // Which dashboard section actually owns the Approve/Reject/Regenerate
 // controls for each action type — Home only ever shows a deep-linking

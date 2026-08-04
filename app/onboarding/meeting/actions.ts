@@ -5,34 +5,39 @@ import { prisma } from "@/lib/prisma";
 import { resolveUserStore } from "@/lib/permissions";
 import { extractAndPersistVisionFacts } from "./listen";
 import { decideNextMeetingStep, type FollowUpTurn } from "./ask";
+import { selectMeetingRecommendation, type MeetingRecommendation } from "./recommend";
+import { performApproveGenesisAction, performRejectGenesisAction } from "@/app/dashboard/ai-actions";
 
 async function requireOwnStore() {
   const session = await auth();
   if (!session?.user) throw new Error("Not signed in");
   const resolved = await resolveUserStore(session.user.id);
   if (!resolved) throw new Error("No store to meet about yet");
-  return resolved.store;
+  return { store: resolved.store, userId: session.user.id };
 }
 
-export type MeetingTurnResult = { action: "ask"; question: string } | { action: "proceed" };
+export type MeetingTurnResult =
+  | { action: "ask"; question: string }
+  | { action: "recommend"; recommendation: MeetingRecommendation }
+  // No real, actionable candidate existed — handled honestly, the meeting
+  // completes without fabricating something to recommend.
+  | { action: "done" };
 
-// Meeting with J4 M5 — one real turn of Listen/Ask, shared by both the
-// initial "what do you want this to become" answer and any follow-up
-// (there's no structural difference between them — each answer gets
-// extracted for real facts the same way, then the same real judgment call
-// decides whether one more question is genuinely warranted). Extracts and
-// persists whatever real goals/challenges the answer actually contained
-// (zero is a valid, honest outcome for either), appends the turn to the
-// transcript, then asks decideNextMeetingStep whether to continue.
-// Temporarily — until M6 adds Recommend — "proceed" completes the meeting
-// directly; M6-M7 move that further still, this function's own logic
-// doesn't change.
+// Meeting with J4 M5-M7 — one real turn of Listen/Ask, shared by both the
+// initial "what do you want this to become" answer and any follow-up.
+// Extracts and persists whatever real goals/challenges the answer actually
+// contained (zero is a valid, honest outcome), then asks decideNextMeetingStep
+// whether one more question is genuinely warranted. Once the conversation
+// is done, M6's selectMeetingRecommendation reasons over this store's own
+// now-enriched understanding for the single highest-confidence real
+// recommendation — the meeting only ever completes directly (no
+// recommendation stage) when there's honestly nothing real to propose.
 export async function submitMeetingTurn(
   transcript: FollowUpTurn[],
   question: string,
   answer: string
 ): Promise<MeetingTurnResult> {
-  const store = await requireOwnStore();
+  const { store, userId } = await requireOwnStore();
   const trimmed = answer.trim();
   if (trimmed) {
     await extractAndPersistVisionFacts(store.id, trimmed);
@@ -43,17 +48,46 @@ export async function submitMeetingTurn(
   if (decision.action === "ask") {
     return { action: "ask", question: decision.question };
   }
+
+  const recommendation = await selectMeetingRecommendation(store.id, userId);
+  if (!recommendation) {
+    await completeFirstMeeting();
+    return { action: "done" };
+  }
+  return { action: "recommend", recommendation };
+}
+
+export type MeetingDecisionResult = { message: string; executed: boolean };
+
+// Meeting with J4 M7 — Explain, approve, execute, immediately, in the same
+// conversation. Reuses ai-actions.ts's own real approve/reject logic (the
+// exact same path the dashboard's ApprovalRequestsPanel uses) rather than
+// a parallel meeting-only implementation — the general framework Sean
+// asked for, proven end to end back in M2. Completes the meeting either
+// way: approving or declining are both a real, respected decision, not a
+// prerequisite to finishing.
+export async function approveMeetingRecommendation(approvalRequestId: string): Promise<MeetingDecisionResult> {
+  const result = await performApproveGenesisAction(approvalRequestId);
   await completeFirstMeeting();
-  return { action: "proceed" };
+  if (result.outcome === "execution_failed") {
+    return { message: result.message, executed: false };
+  }
+  if (result.outcome === "executed") {
+    return { message: result.message, executed: true };
+  }
+  return { message: "That's already been decided.", executed: false };
+}
+
+export async function declineMeetingRecommendation(approvalRequestId: string): Promise<MeetingDecisionResult> {
+  const result = await performRejectGenesisAction(approvalRequestId);
+  await completeFirstMeeting();
+  return { message: "No problem — I'll leave it as is.", executed: result.outcome !== "not_found" };
 }
 
 // The meeting's own real completion moment. Set once, checked once on the
-// meeting route's own load (page.tsx), never re-triggered. Called from
-// submitMeetingTurn above as of M5 — M6-M7 move the call further still
-// (Recommend/Execute) as each real stage gets built; this function itself
-// doesn't change.
+// meeting route's own load (page.tsx), never re-triggered.
 export async function completeFirstMeeting(): Promise<void> {
-  const store = await requireOwnStore();
+  const { store } = await requireOwnStore();
   await prisma.store.update({
     where: { id: store.id },
     data: { firstMeetingCompletedAt: new Date() },

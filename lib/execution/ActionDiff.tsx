@@ -1,4 +1,4 @@
-import { FIELD_LABELS } from "@/lib/execution/genesisActions";
+import { FIELD_LABELS } from "@/lib/execution/fieldLabels";
 
 // Meeting with J4 M2 — extracted from ApprovalRequestsPanel.tsx so any
 // future caller (the meeting's inline explain/approve/execute UI) renders
