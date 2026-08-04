@@ -1,12 +1,13 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisWorking, setGenesisComposing } from "@/lib/dashboard/genesisActivity";
 import { submitExperienceMessage } from "@/app/onboarding/actions";
-import type { CreativeDirectionOption, ExperienceConcept, ExperienceState } from "@/lib/onboarding/types";
+import { StorefrontPreview } from "./StorefrontPreview";
+import type { ExperienceConcept, ExperienceState } from "@/lib/onboarding/types";
 
 // Experience-First Onboarding, Milestone 2 — the new root landing
 // experience (EXPERIENCE_FIRST_ONBOARDING.md), replacing the old marketing
@@ -26,24 +27,17 @@ import type { CreativeDirectionOption, ExperienceConcept, ExperienceState } from
 
 const shell = "fixed inset-0 z-[100] flex flex-col items-center justify-center gap-6 px-8 text-center overflow-y-auto py-12";
 
-function PaletteDots({ colors }: { colors: CreativeDirectionOption["colors"] }) {
-  const swatches = [colors.primary, colors.accent, colors.secondary, colors.background, colors.surface];
-  return (
-    <div className="flex items-center justify-center gap-1.5">
-      {swatches.map((c, i) => (
-        <span key={i} className="h-3 w-3 rounded-full border border-white/10" style={{ backgroundColor: c }} />
-      ))}
-    </div>
-  );
-}
-
 type ViewState =
   | { phase: "prompting"; question: string; isFirst: boolean }
-  | { phase: "revealed"; concept: ExperienceConcept };
+  | { phase: "revealed"; concept: ExperienceConcept; justGenerated: boolean };
 
 function initialViewState(state: ExperienceState): ViewState {
   if (state.status === "generated" && state.concept) {
-    return { phase: "revealed", concept: state.concept };
+    // A page reload resuming an already-generated concept — not a fresh
+    // reveal, so it skips straight to the real storefront rather than
+    // replaying the "just built this" insight beat for something that
+    // happened turns ago.
+    return { phase: "revealed", concept: state.concept, justGenerated: false };
   }
   const lastGenesisTurn = [...state.transcript].reverse().find((entry) => entry.role === "genesis");
   return {
@@ -80,7 +74,7 @@ export function ExperienceScreen({ initialState }: { initialState: ExperienceSta
         // that one genuine animation.
         setTimeout(() => {
           if (result.status === "generated") {
-            setView({ phase: "revealed", concept: result.concept });
+            setView({ phase: "revealed", concept: result.concept, justGenerated: true });
           } else {
             setView({ phase: "prompting", question: result.question, isFirst: false });
           }
@@ -95,7 +89,7 @@ export function ExperienceScreen({ initialState }: { initialState: ExperienceSta
   }
 
   if (view.phase === "revealed") {
-    return <RevealPanel concept={view.concept} />;
+    return view.justGenerated ? <RevealSequence concept={view.concept} /> : <StorefrontPreview concept={view.concept} />;
   }
 
   return (
@@ -171,66 +165,38 @@ export function ExperienceScreen({ initialState }: { initialState: ExperienceSta
   );
 }
 
-// The reveal moment — EXPERIENCE_FIRST_ONBOARDING.md step 4: "the owner
-// sees the real result." Deliberately not yet the full storefront-styled
-// preview (that's Milestone 3, built next against the generated theme via
-// lib/theme.ts) — this is Genesis's own reveal of what it just built, same
-// visual vocabulary BusinessScreen.tsx's "reveal"/"pricing" beats already
-// use (product-image card, logo badge, palette dots), staying in Genesis's
-// own atmosphere rather than the business's brand colors.
-//
-// The description below IS the "Genesis understands the idea, out loud"
-// moment (GENESIS_EXPERIENCE.md) — decideExperienceNextStep is prompted to
-// write it as a reflected insight, not a generic tagline, so this same
-// field does double duty as both brand copy and that felt moment.
-function RevealPanel({ concept }: { concept: ExperienceConcept }) {
-  const direction = concept.creativeDirection;
-  const price = (concept.pricing.retailPriceInCents / 100).toFixed(2);
-  const profit = (concept.pricing.profitInCents / 100).toFixed(2);
+// The reveal moment now runs in two beats, per Sean's own framing of the
+// two distinct checkpoints it needs to hit (GENESIS_EXPERIENCE.md's
+// confidence checkpoints): first "I understand my idea" (this brief,
+// Genesis-voice insight — the same reflected-insight description from
+// decideExperienceNextStep, doing double duty as brand copy and this felt
+// moment), then "this looks like a real business" (the full, themed
+// StorefrontPreview — Milestone 3, styled in the business's own generated
+// colors and fonts via lib/theme.ts, not Genesis's violet). Kept as two
+// beats rather than one because they're emotionally different moments —
+// Genesis reacting personally, then the real, concrete thing appearing —
+// not two chances to reconsider.
+const INSIGHT_BEAT_MS = 2600;
 
+function InsightBeat({ concept }: { concept: ExperienceConcept }) {
   return (
     <div className={shell} style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}>
-      <GenesisAvatar state="idle" className="aspect-square w-[min(24vw,110px)]" />
-
+      <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,150px)]" />
       <p className="genesis-onboarding-rise max-w-md text-lg font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
-        {direction.description}
+        {concept.creativeDirection.description}
       </p>
-
-      <div className="genesis-onboarding-rise flex flex-col items-center gap-3" style={{ animationDelay: "500ms" }}>
-        <h1 className="text-3xl font-bold tracking-tight" style={{ color: GENESIS_ATMOSPHERE.text }}>
-          {direction.name}
-        </h1>
-
-        <div className="relative">
-          <div
-            className="w-[min(64vw,260px)] aspect-square rounded-[20px] overflow-hidden"
-            style={{ boxShadow: "0 30px 80px rgba(0,0,0,.55), 0 0 0 1px " + GENESIS_ATMOSPHERE.border }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
-            <img src={direction.productImageUrl} alt={concept.productName} className="h-full w-full object-cover" />
-          </div>
-          <div
-            className="absolute -bottom-2 -right-2 h-12 w-12 overflow-hidden rounded-full border-2"
-            style={{ borderColor: GENESIS_ATMOSPHERE.bg, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
-            <img src={direction.logoUrl} alt={`${direction.name} logo`} className="h-full w-full object-cover" />
-          </div>
-        </div>
-
-        <PaletteDots colors={direction.colors} />
-
-        <p className="text-base font-semibold" style={{ color: GENESIS_ATMOSPHERE.text }}>
-          {concept.productName}
-        </p>
-
-        <p className="text-2xl font-semibold" style={{ color: GENESIS_ATMOSPHERE.violet }}>
-          ${price}
-        </p>
-        <p className="max-w-xs text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-          {`Estimated for now — you'd keep about $${profit} of every sale.`}
-        </p>
-      </div>
     </div>
   );
+}
+
+function RevealSequence({ concept }: { concept: ExperienceConcept }) {
+  const [showStorefront, setShowStorefront] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowStorefront(true), INSIGHT_BEAT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (showStorefront) return <StorefrontPreview concept={concept} />;
+  return <InsightBeat concept={concept} />;
 }

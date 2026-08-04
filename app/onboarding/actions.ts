@@ -15,7 +15,7 @@ import { recommendPrice, applyOwnerPrice } from "@/lib/onboarding/pricing";
 import { GeneratedImageProvider } from "@/lib/imageProviders/generatedImageProvider";
 import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
 import { confirmStoreDraftCore } from "@/app/dashboard/ai-actions";
-import { getOrCreateAnonymousSessionId, peekAnonymousSessionId } from "@/lib/onboarding/anonymousSession";
+import { getOrCreateAnonymousSessionId, peekAnonymousSessionId, clearAnonymousSessionCookie } from "@/lib/onboarding/anonymousSession";
 import {
   initialDiscoveryState,
   applyBusinessModelAnswer,
@@ -876,4 +876,65 @@ export async function confirmPricing(
   }
 
   return { state: nextState };
+}
+
+// Experience-First Onboarding, Milestone 4 — "Let's make this real." Called
+// once, right after a brand-new account is created (app/signup/page.tsx),
+// while the anonymous session cookie from before signup is still present.
+// Claims the matching anonymous draft for the new real user and seeds a
+// real OnboardingState from the already-generated concept, landing exactly
+// on fulfillment_connect — the same state applyCreativeDirectionSelected
+// already produces for the activation flow's own custom-design path, so
+// everything downstream (startFulfillmentConnect, buildCreativeProduct,
+// confirmPricing, confirmStoreDraftCore) runs completely unchanged. No data
+// migration, no re-generation — the exact same StoreDraft row just gains a
+// real owner and a real onboardingState.
+//
+// A harmless no-op (returns null) for the ordinary "no anonymous draft"
+// case — a returning visitor going straight to /signup, or anyone who
+// somehow reaches signup without going through the experience flow first.
+export async function claimExperienceDraft(): Promise<{ storeDraftId: string } | null> {
+  const userId = await requireUserId();
+  const anonymousSessionToken = await peekAnonymousSessionId();
+  if (!anonymousSessionToken) return null;
+
+  const anonymousDraft = await prisma.storeDraft.findUnique({ where: { anonymousSessionToken } });
+  if (!anonymousDraft) {
+    await clearAnonymousSessionCookie();
+    return null;
+  }
+
+  const experienceState = readExperienceState(anonymousDraft.experienceState);
+  if (experienceState.status !== "generated" || !experienceState.concept) {
+    await clearAnonymousSessionCookie();
+    return null;
+  }
+  const concept = experienceState.concept;
+  const ideaText = experienceState.transcript.find((entry) => entry.role === "visitor")?.text ?? concept.productDescription;
+
+  const claimedState: OnboardingState = {
+    ...initialDiscoveryState(),
+    step: "fulfillment_connect",
+    businessModelSlug: concept.businessModelSlug,
+    ideaText,
+    brandPositioning: concept.brandPositioning,
+    brandPositioningText: ideaText,
+    creativeApproach: "custom",
+    creativeDirection: concept.creativeDirection,
+  };
+
+  await prisma.storeDraft.update({
+    where: { id: anonymousDraft.id },
+    data: {
+      userId,
+      anonymousSessionToken: null,
+      name: concept.creativeDirection.name,
+      description: concept.creativeDirection.description,
+      brandPositioning: concept.brandPositioning,
+      creativeDirection: concept.creativeDirection as unknown as object,
+      onboardingState: claimedState as unknown as object,
+    },
+  });
+  await clearAnonymousSessionCookie();
+  return { storeDraftId: anonymousDraft.id };
 }

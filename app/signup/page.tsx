@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
+import { claimExperienceDraft } from "@/app/onboarding/actions";
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -51,7 +52,12 @@ export default function SignUpPage() {
         return;
       }
 
-      router.push("/dashboard");
+      // Experience-First Onboarding — if this signup followed "Let's make
+      // this real" on a generated concept, claim it now while the
+      // anonymous session cookie is still present. A no-op (returns null)
+      // for an ordinary direct signup with nothing to claim.
+      const claimed = await claimExperienceDraft().catch(() => null);
+      router.push(claimed ? "/onboarding/business" : "/dashboard");
       router.refresh();
     } catch {
       setError("Something went wrong. Please try again.");

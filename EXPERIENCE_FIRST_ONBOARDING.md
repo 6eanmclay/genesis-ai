@@ -68,6 +68,17 @@ Not an open-ended interview, and not fully agentic either — a bounded extensio
 
 **Genuinely new**: the experience flow itself — anonymous session tokens and draft-claiming; the platform-level Printful catalog credential; anonymous-scoped rate limiting; the confidence/one-question generation extension; the storefront preview's access-check extension; a new landing experience replacing today's marketing page entirely.
 
+## Forward-compatible: an optional personalization step (not yet built)
+
+Noted here so the architecture built for Milestones 2–3 doesn't foreclose it, per Sean's explicit instruction (2026-08-03) — **not built in this pass**, and not authorized until its own milestone.
+
+Once Genesis has produced a confident concept but before the reveal, a real future step: three choices — *create my branding for me* (today's exact behavior), *upload my own logo or artwork*, or *skip and keep going*. On upload, Genesis should classify what the file actually is (logo, artwork, mascot, product photo, document) and, at most once, recommend how it could strengthen the brand — never repeating the recommendation once declined.
+
+This is not a new concept — it's the activation flow's own `creativeApproach: "custom" | "upload" | "resell"` fork (`lib/onboarding/discoveryFlow.ts`) and its already-proven upload path (`submitUploadedArtwork`/`UploadedArtworkIdentitySchema` in `app/onboarding/actions.ts`), applied one step earlier, before the reveal instead of after it. Two real reasons this already fits without a rewrite:
+
+- **The data shape already generalizes.** `ExperienceConcept.creativeDirection` is `CreativeDirectionOption` — the identical shape the activation flow's upload path already produces from a real file (name, colors, typography, `logoUrl`, `productImageUrl`). A future "uploaded" branch just needs to populate the same fields via a different real path, exactly like `applyArtworkUploaded` already does for the activation flow's parallel case — no new type, no claim-time special-casing.
+- **The file-understanding piece is additive, not new architecture.** Classifying an uploaded file's kind and forming one respectful recommendation is another structured-output call in the same shape `decideExperienceNextStep` already establishes (context in, a typed decision out) — a second, small instance of the same reasoning boundary, not a different mechanism.
+
 ## What comes next (not this document's scope)
 
 Once this ships and is verified with real users, the next milestone is deliberately not more onboarding surface — it's validating that J4 can actually reason about a real, already-operating business (explain its own branding decisions, answer questions about products/storefronts, make grounded recommendations, remember context appropriately) using the Cognitive Architecture already built. Intelligence, not interface. Its own document when that begins.
