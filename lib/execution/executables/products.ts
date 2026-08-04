@@ -10,7 +10,7 @@ interface ProductMetadata {
   priceInCents?: number;
 }
 
-interface CreateProductInput {
+export interface CreateProductInput {
   name: string;
   description: string | null;
   priceInCents: number;

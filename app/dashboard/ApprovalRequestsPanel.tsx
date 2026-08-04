@@ -1,25 +1,11 @@
 import type { PendingApproval } from "@/lib/dashboard/pendingApprovals";
-import { FIELD_LABELS } from "@/lib/execution/genesisActions";
+import { ActionDiffRows } from "@/lib/execution/ActionDiff";
 
 // Plain Server Component — Approve/Reject/Regenerate are simple
 // redirect-based forms, same as every dashboard action before Layer 2, no
-// client-side state needed. The Current -> Proposed diff is rendered
-// generically from the data shape (one row per key in `input`), not
-// per-action JSX, so a third registered action type needs no changes here
-// — except `productId`, a raw internal id with no user-facing meaning,
-// which is deliberately excluded from the generic loop below.
-const HIDDEN_DIFF_KEYS = new Set(["productId"]);
-
-// A plain string array (e.g. coreValues, brandKeywords) formatted for one
-// diff row — Array.prototype.toString() joins with a bare comma, no space,
-// which reads as a bug rather than a list. Everything else still falls
-// through to String() unchanged.
-function formatDiffValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.length > 0 ? value.join(", ") : "(empty)";
-  }
-  return String(value ?? "(empty)");
-}
+// client-side state needed. The Current -> Proposed diff itself (generic,
+// one row per key in `input`) is shared with any future caller — see
+// ActionDiffRows (lib/execution/ActionDiff.tsx), Meeting with J4 M2.
 
 export function ApprovalRequestsPanel({
   approvals,
@@ -65,7 +51,6 @@ export function ApprovalRequestsPanel({
 
   const renderRow = (approval: PendingApproval) => {
     const isImageAction = approval.actionType === "update_product_image";
-    const diffKeys = Object.keys(approval.input).filter((key) => !HIDDEN_DIFF_KEYS.has(key));
     const isHighlighted = approval.id === highlightId;
 
     return (
@@ -94,64 +79,7 @@ export function ApprovalRequestsPanel({
               <summary className="cursor-pointer text-xs text-zinc-500 underline">
                 Review changes
               </summary>
-              <dl className="mt-2 flex flex-col gap-2">
-                {diffKeys.map((key) => {
-                  const previous = approval.previousValues[key];
-                  const proposed = approval.input[key];
-
-                  if (key === "imageUrl") {
-                    return (
-                      <div key={key} className="text-xs">
-                        <dt className="font-medium text-zinc-500">{FIELD_LABELS[key] ?? key}</dt>
-                        <div className="mt-1 flex gap-2">
-                          <div className="flex-1">
-                            <p className="mb-1 text-zinc-400">Current</p>
-                            {previous && typeof previous === "string" ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={previous}
-                                alt="Current product"
-                                className="aspect-square w-full rounded-md object-cover"
-                              />
-                            ) : (
-                              <div className="flex aspect-square w-full items-center justify-center rounded-md bg-black/[.03] text-zinc-400 dark:bg-white/[.05]">
-                                No image
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex-1">
-                            <p className="mb-1 text-black dark:text-zinc-50">Proposed</p>
-                            {proposed && typeof proposed === "string" ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={proposed}
-                                alt="Proposed product"
-                                className="aspect-square w-full rounded-md object-cover"
-                              />
-                            ) : (
-                              <div className="flex aspect-square w-full items-center justify-center rounded-md bg-black/[.03] text-zinc-400 dark:bg-white/[.05]">
-                                No image
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div key={key} className="text-xs">
-                      <dt className="font-medium text-zinc-500">{FIELD_LABELS[key] ?? key}</dt>
-                      <dd className="mt-0.5 text-zinc-400 line-through">
-                        {formatDiffValue(previous)}
-                      </dd>
-                      <dd className="mt-0.5 text-black dark:text-zinc-50">
-                        {formatDiffValue(proposed)}
-                      </dd>
-                    </div>
-                  );
-                })}
-              </dl>
+              <ActionDiffRows input={approval.input} previousValues={approval.previousValues} />
             </details>
 
             <div className="mt-2 flex gap-2">

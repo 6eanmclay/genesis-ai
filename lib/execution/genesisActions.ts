@@ -49,6 +49,7 @@ import {
   communicateFindingExecutable,
   type CommunicateFindingInput,
 } from "./executables/communicateFinding";
+import { createProductExecutable, type CreateProductInput } from "./executables/products";
 
 // The minimal subset of Store.blueprint relevant to the actions registered
 // below — shared between generateGenesisRecommendations.ts (which fetches
@@ -296,6 +297,7 @@ export const GENESIS_ACTIONS: Record<
     | UpdateGoalStatusInput
     | ResolveChallengeInput
     | CommunicateFindingInput
+    | CreateProductInput
   >
 > = {
   update_seo: {
@@ -338,6 +340,26 @@ export const GENESIS_ACTIONS: Record<
       productId: product?.id ?? "",
       imageUrl: product?.imageUrl ?? "",
     }),
+    category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  // Meeting with J4 M2 — the first CREATE-shaped action in this registry;
+  // every entry above only ever edits something that already exists.
+  // createProductExecutable (executables/products.ts) already existed,
+  // wired only to the owner's own manual "Add product" form — this just
+  // makes it something Genesis can propose too. getCurrentValues has no
+  // real "current" product to diff against for a create, so it returns an
+  // honest empty baseline; the existing generic diff rendering already
+  // handles that per field, no special-casing needed.
+  create_product: {
+    executable: createProductExecutable,
+    inputSchema: z.object({
+      name: z.string(),
+      description: z.string().nullable(),
+      priceInCents: z.number().int(),
+    }),
+    getCurrentValues: () => ({ name: "", description: null, priceInCents: 0 }),
     category: "content",
     authorizationTier: "always_ask",
     maxAuthorityTier: "always_ask",
@@ -612,7 +634,11 @@ export const FIELD_LABELS: Record<string, string> = {
   brandVoiceAndTone: "Brand Voice & Tone",
   targetAudience: "Target Audience",
   uniqueSellingProposition: "Unique Selling Proposition",
-  name: "Business Name",
+  // Shared by update_store_identity (the business's own name) and
+  // create_product (a proposed product's name) — kept generic rather than
+  // "Business Name" so it reads correctly for both, since FIELD_LABELS is a
+  // flat, action-agnostic map by design (see the generic diff renderer).
+  name: "Name",
   tagline: "Tagline",
   description: "Description",
   primaryCallToAction: "Primary Call to Action",
@@ -638,6 +664,7 @@ export const FIELD_LABELS: Record<string, string> = {
   instagramBio: "Instagram Bio",
   facebookDescription: "Facebook Description",
   xBio: "X (Twitter) Bio",
+  priceInCents: "Price",
 };
 
 // Which dashboard section actually owns the Approve/Reject/Regenerate
@@ -658,6 +685,7 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_hero: { key: "website", label: "Website", href: "/dashboard/website" },
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },
+  create_product: { key: "products", label: "Products", href: "/dashboard/products" },
   update_theme: { key: "website", label: "Website", href: "/dashboard/website" },
   update_homepage_content: { key: "website", label: "Website", href: "/dashboard/website" },
   update_brand_identity: { key: "brand", label: "Identity", href: "/dashboard/brand" },

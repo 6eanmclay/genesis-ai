@@ -3836,16 +3836,29 @@ export async function approveGenesisActionGroup(groupId: string) {
   redirect("/dashboard");
 }
 
-export async function approveGenesisAction(approvalRequestId: string) {
+// Meeting with J4 M2 — the real decision logic, extracted so both the
+// existing (redirect-based) dashboard callers and a future non-redirecting
+// caller (the meeting's inline explain/approve/execute UI, M7) share one
+// real implementation rather than two independently-drifting copies.
+// Returns a result instead of redirecting; every existing exported action
+// below wraps one of these and then redirects exactly as before — zero
+// behavior change for any current caller.
+type GenesisActionDecisionResult =
+  | { outcome: "not_found" }
+  | { outcome: "execution_failed"; message: string }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | { outcome: "executed"; message: string; metadata: any };
+
+async function performApproveGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
   const approval = await prisma.approvalRequest.findFirst({
     where: { id: approvalRequestId, storeId, status: "PENDING_APPROVAL" },
   });
 
   // Already decided/reverted elsewhere (a real race, not a bug) — nothing
-  // left to do, so this is a no-op redirect, never a thrown error.
+  // left to do.
   if (!approval) {
-    redirect("/dashboard");
+    return { outcome: "not_found" };
   }
 
   const definition = GENESIS_ACTIONS[approval.actionType];
@@ -3885,7 +3898,7 @@ export async function approveGenesisAction(approvalRequestId: string) {
       name: "approval.approve_failed",
       outcome: "failure",
     });
-    redirect("/dashboard");
+    return { outcome: "execution_failed", message: result.message };
   }
 
   await prisma.approvalRequest.update({
@@ -3911,17 +3924,22 @@ export async function approveGenesisAction(approvalRequestId: string) {
     outcome: "success",
   });
 
+  return { outcome: "executed", message: result.message, metadata: result.metadata };
+}
+
+export async function approveGenesisAction(approvalRequestId: string) {
+  await performApproveGenesisAction(approvalRequestId);
   redirect("/dashboard");
 }
 
-export async function rejectGenesisAction(approvalRequestId: string) {
+async function performRejectGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
   const approval = await prisma.approvalRequest.findFirst({
     where: { id: approvalRequestId, storeId, status: "PENDING_APPROVAL" },
   });
 
   if (!approval) {
-    redirect("/dashboard");
+    return { outcome: "not_found" };
   }
 
   await prisma.approvalRequest.update({
@@ -3942,6 +3960,11 @@ export async function rejectGenesisAction(approvalRequestId: string) {
     outcome: "success",
   });
 
+  return { outcome: "executed", message: "Rejected", metadata: null };
+}
+
+export async function rejectGenesisAction(approvalRequestId: string) {
+  await performRejectGenesisAction(approvalRequestId);
   redirect("/dashboard");
 }
 

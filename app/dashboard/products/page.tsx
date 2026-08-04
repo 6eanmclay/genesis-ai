@@ -46,12 +46,19 @@ export default async function ProductsPage({
     }),
   ]);
   const productObservations = [...rawObservations].sort(compareObservationPriority);
-  const imageApprovals = pendingApprovals.filter((a) => a.actionType === "update_product_image");
+  // Meeting with J4 M2 — create_product is this page's second real action
+  // type (ACTION_SECTIONS routes it here too), the first CREATE-shaped one
+  // ever proposable by Genesis. Renders through the exact same generic
+  // ApprovalRequestsPanel/ActionDiffRows as update_product_image, no new
+  // UI needed.
+  const productApprovals = pendingApprovals.filter(
+    (a) => a.actionType === "update_product_image" || a.actionType === "create_product"
+  );
   // Contextual deep-linking: see brand/page.tsx for why a match here is
   // already fully validated (store/section/status-scoped) by construction.
   // Same reasoning for productObservations, already scoped to this page.
   const { focus } = await searchParams;
-  const highlightId = focus && imageApprovals.some((a) => a.id === focus) ? focus : undefined;
+  const highlightId = focus && productApprovals.some((a) => a.id === focus) ? focus : undefined;
   const highlightObservationId =
     focus && productObservations.some((o) => o.dedupeKey === focus) ? focus : undefined;
 
@@ -71,13 +78,13 @@ export default async function ProductsPage({
         </>
       )}
 
-      {imageApprovals.length > 0 && (
+      {productApprovals.length > 0 && (
         <>
           <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
-            Awaiting Your Approval ({imageApprovals.length})
+            Awaiting Your Approval ({productApprovals.length})
           </h2>
           <ApprovalRequestsPanel
-            approvals={imageApprovals}
+            approvals={productApprovals}
             approveAction={approveGenesisAction}
             rejectAction={rejectGenesisAction}
             regenerateAction={regenerateApprovalImage}
