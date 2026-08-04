@@ -183,6 +183,18 @@ Perception, Actuation, and Expression are everything specific to Genesis as J4's
 
 ---
 
+## Growth Credits — thinking is free, execution is invested
+
+**Standing product principle, frozen by Sean, 2026-08-04**, before Business Intelligence Engine work began specifically because it governs everything that follows: *J4 never charges the owner for thinking. Growth Credits are only ever consumed when the owner approves J4 to actually perform work that changes or grows the business.*
+
+Concretely: every real Understand computation, every Learn detector, every Reason judgment — planning, analysis, comparing strategies, forecasting, building a roadmap, explaining trade-offs, answering "what's the best plan" or "what would you do next" or "show me three strategies" — is free and unlimited, no matter how many times the owner asks. The only moment a Growth Credit is ever spent is the owner's own "let's do it" — a real execution through `execute()`.
+
+This isn't a new rule bolted onto the architecture — it's an existing invariant, read as an economic policy rather than a purely architectural one. Understand/Learn/Reason are pure cognition, with no effect outside the Cognitive Architecture by construction; Execute is already the sole gateway through which anything real happens. "Thinking is free, execution is invested" is that same boundary. A direct consequence worth naming explicitly: the Business Intelligence Engine below — being entirely Understand/Learn work by its own frozen definition — can never cost Growth Points on its own, no matter how sophisticated it becomes. Only a future BI-Engine-informed recommendation's own *approved execution* ever does.
+
+**Real, unresolved scope, named rather than guessed at**: exactly which real `AiFeature`/`AiUsageEvent` rows count as "execution" isn't fully decided by this principle alone. Most reasoning calls (`cognitive_review`, `store_chat_data_answer`, `recommendation_explanation`, every onboarding classification call) map cleanly to "thinking"; every call inside a registered `Executable`'s own `run()` maps cleanly to "execution." A few real calls sit genuinely in between — e.g. the store-generation calls that produce a real deliverable directly, without a separate owner-approval step today — and haven't been individually classified yet. `lib/growthCreditCatalog.ts` stays deliberately empty until that classification, and real per-action values, are Sean's own deliberate decision (unchanged from the AI Cost & Usage Infrastructure's original design) — this principle governs the *shape* of that catalog going forward (a pure-thinking feature must never be assigned a nonzero cost), without pre-assigning any of it.
+
+---
+
 ## Business Intelligence Engine
 
 Not a fifth cognitive subsystem — a capability *distributed across* Understand and Learn, deepening how richly J4 understands real business performance so Reason gets better material at its two existing inputs (facts, beliefs), never a new pipeline of its own. Full empirical validation of this design bet — including what the evidence does and doesn't prove — is recorded separately in `J4_REASON_VALIDATION.md` and should be read alongside this section, not duplicated here.

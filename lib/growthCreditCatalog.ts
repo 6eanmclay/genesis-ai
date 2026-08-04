@@ -17,6 +17,20 @@ import type { AiFeature } from "./aiFeatures";
 // already reads from here, wired all the way through to
 // AiUsageEvent.growthCreditValue, and will simply start returning real
 // numbers the moment entries are added.
+//
+// "Thinking is free, execution is invested" (Sean, 2026-08-04, frozen as a
+// standing product principle — see ARCHITECTURE.md's own section) governs
+// the SHAPE of every future entry here: a feature that only ever informs,
+// explains, plans, or reasons — never assigned a nonzero value here,
+// regardless of its real operational cost in lib/aiPricing.ts. Only a
+// feature whose call site sits inside a registered Executable's own run()
+// (something that actually changes or grows the business, gated behind a
+// real owner approval) may ever get a real Growth Credit price. Which
+// exact AiFeature values fall on which side of that line is still real,
+// unresolved classification work — most are obvious, a few (e.g. the
+// store-generation calls that produce a real deliverable directly, with no
+// separate approval step today) genuinely aren't yet — left undecided here
+// on purpose, not defaulted either way.
 const GROWTH_CREDIT_CATALOG: Partial<Record<AiFeature, number>> = {};
 
 export function growthCreditValueFor(feature: AiFeature): number | null {
