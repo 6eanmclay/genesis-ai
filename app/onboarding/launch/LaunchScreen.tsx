@@ -366,8 +366,13 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          <button onClick={() => router.push("/dashboard")} className={`mt-2 ${primaryButton}`} style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}>
-            Go to dashboard
+          {/* Meeting with J4 M3 — the real handoff from Partnership into
+              Growth (MEETING_WITH_J4.md): the first real conversation with
+              J4, not the dashboard directly. The "ready" beat's earlier
+              "Not yet" bailout above is untouched — the store isn't live
+              yet there, so there's nothing to hold a meeting about. */}
+          <button onClick={() => router.push("/onboarding/meeting")} className={`mt-2 ${primaryButton}`} style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}>
+            Meet J4
           </button>
         </>
       )}

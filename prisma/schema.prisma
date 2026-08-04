@@ -112,6 +112,13 @@ model Store {
   // Null for the reselling/curating path and every store created before
   // this field existed.
   creativeDirection  Json?
+  // Meeting with J4 M3 — set once, the moment the first real conversation
+  // with J4 (after the Partnership launch ceremony, before the owner ever
+  // sees the regular dashboard) completes. Checked once on load to decide
+  // whether to show the meeting or redirect straight to /dashboard — never
+  // re-triggered. Deliberately distinct from createdAt/updatedAt (neither
+  // means "has this store ever met J4").
+  firstMeetingCompletedAt DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 

@@ -60,6 +60,7 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   onboarding_creative_theme_structure: "build_business",
   onboarding_hero_selection: "create_product",
   onboarding_experience_decision: "build_business",
+  j4_meeting_reflect: "customer_communication",
 };
 
 export function businessIntentFor(feature: AiFeature): BusinessIntentCategory {

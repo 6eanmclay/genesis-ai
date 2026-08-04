@@ -49,6 +49,8 @@ export const AI_FEATURES = [
   "onboarding_hero_selection",
   // Experience-First Onboarding (anonymous, app/onboarding/actions.ts)
   "onboarding_experience_decision",
+  // Meeting with J4 (app/onboarding/meeting/)
+  "j4_meeting_reflect",
 ] as const;
 
 export type AiFeature = (typeof AI_FEATURES)[number];
