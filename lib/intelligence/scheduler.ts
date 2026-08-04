@@ -4,6 +4,7 @@ import { execute } from "@/lib/execution/engine";
 import { syncExecutable, type SyncMetadata } from "@/lib/execution/adapters/integrationExecutable";
 import { runChangeDetection } from "./changeDetection";
 import { computeInsights } from "./insights";
+import { distillBeliefs } from "./learn";
 import { notifyFromInsights } from "./notify";
 import { runOpportunisticAiReviewIfStale } from "@/lib/dashboard/genesisObservations";
 
@@ -133,6 +134,20 @@ export async function runDueSyncs(limit = 50): Promise<SyncRunSummary[]> {
   for (const storeId of touchedStoreIds) {
     const insights = await computeInsights(storeId);
     await notifyFromInsights(storeId, insights);
+
+    // Growth Engine M1 — a real bug found live: ARCHITECTURE.md has always
+    // claimed distillBeliefs() "runs alongside computeInsights()... Learn
+    // stays continuous/ambient," but the only real call site was inside
+    // runCognitiveReview, itself gated behind the same 24h staleness check
+    // as the full AI review below — Learn was collapsed into Reason's own
+    // cadence, not independent. Genuinely unconditional here, matching
+    // computeInsights' own real cadence, not the review's. Cheap and safe
+    // to also still run inside runCognitiveReview when that fires (a
+    // deterministic function, no AI call) — that call's own real ordering
+    // guarantee (fresh beliefs read in the same pass) stays intact for its
+    // other real callers (the Meeting, the manual review button), this is
+    // purely additive.
+    await distillBeliefs(storeId);
 
     const store = await prisma.store.findUnique({
       where: { id: storeId },
