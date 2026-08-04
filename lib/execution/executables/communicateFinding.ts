@@ -26,6 +26,10 @@ export interface CommunicateFindingInput {
   summary: string;
   data?: object | null;
   priority?: "high" | "medium" | "low" | null;
+  // The confidence signal (2026-08-04) — evidential certainty, distinct
+  // from priority (business importance). recommendation/opportunity only;
+  // null for every other kind.
+  confidence?: number | null;
   actionLabel?: string | null;
   actionHref?: string | null;
   recordId?: string | null;
@@ -53,6 +57,7 @@ export const communicateFindingExecutable: Executable<
         summary: input.summary,
         data: input.data ? (input.data as Prisma.InputJsonValue) : Prisma.DbNull,
         priority: input.priority ?? null,
+        confidence: input.confidence ?? null,
         actionLabel: input.actionLabel ?? null,
         actionHref: input.actionHref ?? null,
         recordId: input.recordId ?? null,

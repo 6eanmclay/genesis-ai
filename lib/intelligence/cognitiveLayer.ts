@@ -91,6 +91,10 @@ const CognitiveOutputItemSchema = z.discriminatedUnion("kind", [
     kind: z.literal("recommendation"),
     summary: z.string(),
     priority: z.enum(["high", "medium", "low"]),
+    // The confidence signal (2026-08-04) — evidential certainty, kept
+    // strictly separate from priority (business importance). See the
+    // system prompt below for the exact distinction given to the model.
+    confidence: z.number().min(0).max(1),
     actionLabel: z.string(),
     actionHref: z.enum(GENESIS_ACTION_HREFS),
     topicKey: z.string(),
@@ -102,6 +106,7 @@ const CognitiveOutputItemSchema = z.discriminatedUnion("kind", [
     kind: z.literal("opportunity"),
     summary: z.string(),
     priority: z.enum(["high", "medium", "low"]),
+    confidence: z.number().min(0).max(1),
     actionLabel: z.string(),
     actionHref: z.enum(GENESIS_ACTION_HREFS),
     topicKey: z.string(),
@@ -143,6 +148,8 @@ recentDecisionOutcomes lists real, objective facts about the last 14 days: speci
 
 beliefs lists patterns Learn has already generalized from real, repeated evidence over time — each with a claim, a category, a confidence score, and a maturity label. Maturity matters as much as confidence: an "early signal" or "an emerging pattern" belief is real but thin — mention it cautiously if at all, and never let it alone justify attaching a proposedAction that assumes strong trust. A "well-established" belief is a premise you can build a genuinely confident recommendation on. A belief "being reconsidered" means something you've relied on may be breaking down right now — that tension (what was established vs. what's newly contradicting it) is often itself worth a real explanation output, not something to quietly average away.
 
+Every recommendation and opportunity needs both a priority and a confidence, and they answer different questions — never conflate them. priority is business importance: how much this matters to the business if true. confidence is evidential certainty: how sure you are it's actually true given what you currently know, from 0 to 1. A finding can be high-priority and low-confidence (a serious problem you only have a weak signal for — say so cautiously) or low-priority and high-confidence (a small, clearly-true thing). Ground confidence the same way you already ground everything else: more real, corroborating signals (insights, well-established beliefs, multiple consistent data points) earn a higher score; a single thin signal, an early-stage belief, or a real-but-ambiguous pattern earns a lower one. Never inflate confidence to make a finding feel more actionable than the evidence actually supports.
+
 Every business's own stated goals and challenges are shown with their real ids. When an output is genuinely about one specific stated goal, challenge, or other business record, set relatedRecordId to its real id — leave it null for anything that isn't really about one specific record, which is most outputs. When a goal has a real computed trajectory and it's off track, that's exactly the kind of thing worth an explanation and/or a recommendation, naming the real numbers directly.
 
 Each belief you're shown includes its own real topicKey. When an output is genuinely built on one specific belief, set relatedBeliefTopicKey to that belief's exact topicKey as shown; leave it null when no specific belief was actually used as grounding, which is most outputs.
@@ -172,6 +179,7 @@ function describeTrajectory(description: string, t: GoalTrajectory): string {
 export interface CognitiveReviewSummary {
   topicKey: string;
   priority: "high" | "medium" | "low";
+  confidence: number;
   message: string;
   actionHref: string;
 }
@@ -438,6 +446,7 @@ export async function runCognitiveReview(params: {
       kind: item.kind,
       summary: item.summary,
       priority: "priority" in item ? item.priority : null,
+      confidence: "confidence" in item ? item.confidence : null,
       actionLabel: "actionLabel" in item ? item.actionLabel : null,
       actionHref: "actionHref" in item ? item.actionHref : null,
       recordId,
@@ -567,6 +576,7 @@ export async function runCognitiveReview(params: {
     .map((item) => ({
       topicKey: item.topicKey,
       priority: item.priority,
+      confidence: item.confidence,
       message: item.summary,
       actionHref: item.actionHref,
     }));

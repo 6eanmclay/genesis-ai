@@ -549,6 +549,7 @@ export const GENESIS_ACTIONS: Record<
       summary: z.string(),
       data: z.record(z.string(), z.unknown()).nullable().optional(),
       priority: z.enum(["high", "medium", "low"]).nullable().optional(),
+      confidence: z.number().min(0).max(1).nullable().optional(),
       actionLabel: z.string().nullable().optional(),
       actionHref: z.string().nullable().optional(),
       recordId: z.string().nullable().optional(),

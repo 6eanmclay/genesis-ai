@@ -514,6 +514,13 @@ model CognitiveOutput {
   summary           String // self-contained — matches every existing "message must be self-contained" convention
   data              Json? // structured supporting detail specific to kind (e.g. an insight's own real metrics)
   priority          String? // high | medium | low — recommendation/opportunity/prediction; null for insight/explanation
+  // Deliberately separate from priority: priority is business importance,
+  // confidence is how certain J4 is the finding is correct given current
+  // evidence — the same distinction Belief.confidence already draws
+  // elsewhere in this architecture, applied here to Reason's own output for
+  // the first time. Recommendation/opportunity only; null for every other
+  // kind, and null for older rows written before this column existed.
+  confidence        Float? // 0-1, recommendation/opportunity only
   // Real columns, not buried in `data` — matches GeneratedRecommendation's
   // own precedent, since these are directly queried/displayed (Home's
   // "From Genesis" panel), not just supporting detail. Null for kinds that

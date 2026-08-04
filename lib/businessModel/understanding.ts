@@ -29,6 +29,11 @@ export interface ActiveThought {
   kind: string;
   summary: string;
   priority: string | null;
+  // The confidence signal (2026-08-04) — evidential certainty, distinct
+  // from priority (business importance). recommendation/opportunity only;
+  // null for every other kind, and null for rows written before this
+  // column existed.
+  confidence: number | null;
   generatedAt: string;
 }
 
@@ -56,7 +61,7 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
       where: { storeId, status: "ACTIVE" },
       orderBy: { generatedAt: "desc" },
       take: 20,
-      select: { id: true, kind: true, summary: true, priority: true, generatedAt: true },
+      select: { id: true, kind: true, summary: true, priority: true, confidence: true, generatedAt: true },
     }),
   ]);
 
@@ -69,6 +74,7 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
       kind: o.kind,
       summary: o.summary,
       priority: o.priority,
+      confidence: o.confidence,
       generatedAt: o.generatedAt.toISOString(),
     })),
     asOf: new Date().toISOString(),
