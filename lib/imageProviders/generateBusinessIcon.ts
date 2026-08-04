@@ -15,11 +15,10 @@ export async function generateBusinessIcon(opts: {
   businessName: string;
   vision: string;
   brandPersonality?: string | null;
-  // Unused today — GeneratedImageProvider calls OpenAI, not
-  // callGenesisModel — but ImageSourceRequest carries it on every request
-  // as the one shared shape every provider conforms to (see that
-  // interface's own comment), so this stays required for consistency
-  // rather than special-cased away.
+  // AI Cost & Usage Infrastructure — GeneratedImageProvider now records a
+  // real AiUsageEvent from this (see that file's recordImageUsage), so
+  // this identifies who/what this generation belongs to for real, not
+  // just for shape-consistency with providers that call callGenesisModel.
   scope: GenesisModelScope;
 }): Promise<string | null> {
   const prompt = [
@@ -37,6 +36,7 @@ export async function generateBusinessIcon(opts: {
     description: opts.vision,
     excludeUrls: [],
     scope: opts.scope,
+    feature: "business_icon_generation",
   });
 
   return result?.url ?? null;

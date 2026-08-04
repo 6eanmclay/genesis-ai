@@ -267,6 +267,7 @@ export async function submitExperienceMessage(
       description: raw.description,
       excludeUrls: [],
       scope,
+      feature: "product_image_generation",
     }),
     GeneratedImageProvider.source({
       prompt: raw.logoImagePrompt,
@@ -274,6 +275,7 @@ export async function submitExperienceMessage(
       description: raw.description,
       excludeUrls: [],
       scope,
+      feature: "onboarding_creative_direction_generation",
     }),
   ]);
   if (!productImage || !logoImage) {
@@ -476,6 +478,7 @@ export async function generateCreativeDirections(): Promise<{ state: DiscoverySt
           description: direction.description,
           excludeUrls: [],
           scope: { userId },
+          feature: "product_image_generation",
         }),
         GeneratedImageProvider.source({
           prompt: direction.logoImagePrompt,
@@ -483,6 +486,7 @@ export async function generateCreativeDirections(): Promise<{ state: DiscoverySt
           description: direction.description,
           excludeUrls: [],
           scope: { userId },
+          feature: "onboarding_creative_direction_generation",
         }),
       ]);
       if (!productImage || !logoImage) return null;

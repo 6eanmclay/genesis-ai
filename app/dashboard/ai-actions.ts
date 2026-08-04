@@ -2566,6 +2566,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         description: product.description,
         excludeUrls: product.imageUrl ? [product.imageUrl] : [],
         scope: { storeId: store.id },
+        feature: "product_image_generation",
       });
       const candidate = sourced?.url ?? null;
       if (candidate) {
@@ -3407,6 +3408,7 @@ export async function confirmStoreDraftCore(
             description: p.description,
             excludeUrls: [],
             scope: { userId },
+            feature: "product_image_generation",
           }).then((sourced) => sourced?.url ?? null)
         )
       );
@@ -4057,6 +4059,7 @@ export async function regenerateApprovalImage(approvalRequestId: string) {
     description: product.description,
     excludeUrls,
     scope: { storeId },
+    feature: "product_image_generation",
   });
   const candidate = sourced?.url ?? null;
 

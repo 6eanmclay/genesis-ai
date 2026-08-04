@@ -1,4 +1,5 @@
 import type { GenesisModelScope } from "@/lib/genesisModel";
+import type { AiFeature } from "@/lib/aiFeatures";
 
 // The common interface every image source conforms to — generated,
 // stock-searched, or uploaded — so the rest of the app (approval flow,
@@ -24,6 +25,14 @@ export interface ImageSourceRequest {
   // (GeneratedImageProvider calls OpenAI directly), but this lives on the
   // shared request shape so every caller supplies it once, not per-provider.
   scope: GenesisModelScope;
+  // AI Cost & Usage Infrastructure, Milestone 3 — what this image is
+  // actually for (see lib/aiFeatures.ts), so GeneratedImageProvider can
+  // record a real, correctly-tagged AiUsageEvent row for the one AI
+  // provider cost in this app that had zero cost tracking before this
+  // milestone. Required for the same reason GenesisModelContext.feature
+  // is required — a missing tag here is exactly the gap this system exists
+  // to close.
+  feature: AiFeature;
 }
 
 export type ImageProviderKind = "generated" | "stock" | "upload";
