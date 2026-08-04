@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runDueSyncs } from "@/lib/intelligence/scheduler";
+import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
 
 // Phase 3 Milestone 3 — the actual trigger. Secured via Vercel's own
 // documented convention for cron routes: Vercel automatically sends
@@ -17,6 +18,12 @@ export async function GET(request: NextRequest) {
   const synced = summaries.filter((s) => s.ok).length;
   const failed = summaries.length - synced;
 
+  // Growth Points Economy (Chapter 2) — an independent concern from
+  // integration syncs (a store needs no connected integration at all to be
+  // due a monthly refresh), sharing the same daily trigger rather than a
+  // second cron route.
+  const growthPointRefreshes = await runDueGrowthPointRefreshes(50);
+
   return NextResponse.json({
     synced,
     failed,
@@ -30,5 +37,6 @@ export async function GET(request: NextRequest) {
       written: s.written,
       errors: s.errors,
     })),
+    growthPointRefreshes: growthPointRefreshes.length,
   });
 }
