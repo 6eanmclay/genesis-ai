@@ -205,6 +205,37 @@ This isn't a new rule bolted onto the architecture — it's an existing invarian
 
 ---
 
+## J4 is a trusted advisor, never a salesperson
+
+**Standing product principle, frozen by Sean, 2026-08-05**, while locking Growth Points Economy's initial real pricing (Subscription Plans + à la carte packs, below) — governs every future place J4 reasons about a store's own subscription/Growth Point spending, not just the pricing UI: *J4 should continuously understand how an owner is actually using Genesis and recommend the plan that genuinely fits their behavior — not the one that generates the most revenue.*
+
+Concretely, in Sean's own words: *"J4 recommends what's best for the business. J4 recommends what's best for the owner. J4 is never rewarded for selling a more expensive plan. Every recommendation should be based on observed usage and genuine value, not maximizing revenue."* This must hold in both directions — J4 must be just as willing to recommend a plan *downgrade* as an upgrade:
+
+> "I've noticed most of your Growth Point investments are going toward routine day-to-day improvements. Based on how you use Genesis, I think the Business Partner plan would fit your workflow better because it includes unlimited access to those everyday improvements. You can absolutely continue purchasing top-ups if you prefer, but I believe the subscription would simplify your experience and likely provide better long-term value."
+
+> "Based on your activity over the past few months, I don't think you're currently receiving the full value of your subscription. You could comfortably move to the Growth plan and upgrade again whenever your business needs increase."
+
+**Why this belongs alongside the other frozen principles, not just as pricing-page copy**: it's the same shape as *"thinking is free, execution is invested"* and *"recommend only the highest real probability"* — a standing constraint on what kind of partner J4 is, checked against every future capability the same way those already are. Sean's own framing for why: *"If we earn more revenue because J4 gives honest advice and customers trust those recommendations, that's exactly the kind of company I want us to build."*
+
+**Deliberately deferred as its own future milestone, named so it isn't lost**: the real mechanism this principle governs — J4 actually analyzing a store's own purchase/usage history and proactively surfacing a plan-fit recommendation — is genuinely unbuilt. It depends on Chapter 5 (Payments)'s now-real pricing model existing first (a plan/package to recommend *into*), and on real usage data accumulating against real prices before any recommendation could be honest rather than guessed. Scoped as its own research-first milestone once there's real usage to reason from, not bundled into making the pricing itself real.
+
+---
+
+## Growth Points Economy — initial real pricing (Chapter 5)
+
+**Frozen by Sean, 2026-08-05**, after every prior chapter's pricing proposal was deliberately left unset pending this exact decision (see *Growth Credits* above: "real per-action prices remain Sean's own deliberate decision, from real usage data, not implementation guesses"). These are real, initial values — subject to change with real usage data, but no longer placeholders.
+
+**Subscription Plans** (`Plan.stripePriceId`, `Plan.monthlyGrowthPointAllowance`):
+- **Builder** — $29.99/month, 12 Growth Points/month, plus a one-time onboarding allocation (exact amount deliberately not yet set — Sean's own words: "we'll finalize the exact number separately").
+- **Growth** — $49.99/month, 25 Growth Points/month, plus a larger one-time onboarding allocation (amount also not yet set).
+- **Business Partner** — $99.99/month, unlimited execution of every real `GENESIS_ACTIONS` entry priced at exactly 1 Growth Point in `lib/growthPoints/catalog.ts` — 2/3/5-point actions continue drawing from the normal balance/ledger unchanged. Sean's own framing for *why*: "The purpose of the Business Partner plan is not to remove the Growth Point economy. It's to eliminate friction from the routine, day-to-day improvements... while preserving intentional investment for larger business decisions." This is real, currently-unbuilt ledger logic — `lib/growthPoints/ledger.ts`'s `checkGrowthPointBalance`/`deductGrowthPoints` have no concept of a plan-level unlimited tier today.
+
+**À la carte Growth Point packages** (`lib/growthPoints/purchaseCatalog.ts`): $9.99 → 4 points, $19.99 → 8 points, $49.99 → 20 points, $99.99 → 45 points. Deliberately priced so the effective per-point cost stays above every subscription tier's own effective rate — Sean's own reasoning: "That keeps subscriptions as the best long-term value while giving owners a convenient way to continue investing... when they need additional Growth Points."
+
+**Explicitly not decided by this freeze**: which specific `GENESIS_ACTIONS` entries actually cost 1 vs. 2 vs. 3 vs. 5 Growth Points — `lib/growthPoints/catalog.ts` itself remains real, wired, and still empty. This freeze locks the *tier structure* (four real cost tiers now implied: 1/2/3/5) and the *subscription/package* pricing around it, not the per-action catalog assignment — that real mapping is still a separate, undecided product decision, not to be invented alongside this one.
+
+---
+
 ## Recommend only the highest real probability, never merely the possible
 
 **Standing product principle, frozen by Sean, 2026-08-04**, given while approving the Business Intelligence Engine's own first milestone, specifically because it governs the milestone's most consequential single change (widening how many real actions Reason can propose): *J4 must never recommend something simply because it's technically possible.*
