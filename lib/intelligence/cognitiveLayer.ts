@@ -13,6 +13,7 @@ import { GENESIS_ACTIONS, type BlueprintContextSubset, type GenesisActionType } 
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { checkAndProposeMarketingAssetsUpdate } from "@/lib/marketing/assets";
+import { proposeConnectionGaps } from "@/lib/integrations/gaps";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import {
@@ -395,6 +396,12 @@ export async function runCognitiveReview(params: {
       });
     }
   }
+
+  // Integrations (Chapter 4) — same real, deterministic, zero-AI-call
+  // pattern as the goal-trajectory block above: getConnectionGaps is pure
+  // computation, proposeConnectionGaps supersedes prior ACTIVE rows and
+  // writes fresh ones. Unconditional, cheap, runs every real review pass.
+  await proposeConnectionGaps(storeId);
 
   const contextForPrompt = {
     storeName: store.name,

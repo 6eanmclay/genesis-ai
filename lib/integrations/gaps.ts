@@ -1,5 +1,7 @@
+import { prisma } from "@/lib/prisma";
 import { getBusinessProfile } from "@/lib/businessModel/profile";
 import { getUpcomingAppointments } from "@/lib/businessModel/reasoning";
+import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { CONNECTOR_CATALOG, type ConnectionCategory } from "./catalog";
 
 // Integrations (Chapter 4) — real, business-state-grounded connection
@@ -70,4 +72,32 @@ export async function getConnectionGaps(storeId: string): Promise<ConnectionGap[
   }
 
   return gaps;
+}
+
+// Called unconditionally inside runCognitiveReview, right alongside the
+// existing goal-trajectory "prediction" block — same real pattern: a
+// fully deterministic per-item write (getConnectionGaps above makes zero
+// AI call), superseding prior ACTIVE rows first, one communicateFinding()
+// call per real gap. topicKey is scoped to "connection_gap:" specifically
+// so this only ever supersedes its own prior rows, never another real
+// opportunity-kind CognitiveOutput unrelated to connections.
+export async function proposeConnectionGaps(storeId: string): Promise<void> {
+  const gaps = await getConnectionGaps(storeId);
+
+  await prisma.cognitiveOutput.updateMany({
+    where: { storeId, status: "ACTIVE", topicKey: { startsWith: "connection_gap:" } },
+    data: { status: "SUPERSEDED" },
+  });
+
+  for (const gap of gaps) {
+    await communicateFinding(storeId, {
+      kind: "opportunity",
+      summary: `Genesis noticed ${gap.reason}`,
+      priority: "medium",
+      confidence: 0.8,
+      actionLabel: `Connect ${gap.name}`,
+      actionHref: "/dashboard/connections",
+      topicKey: `connection_gap:${gap.provider}`,
+    });
+  }
 }
