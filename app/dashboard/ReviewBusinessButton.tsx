@@ -25,7 +25,11 @@ export function ReviewBusinessButton({ className }: { className: string }) {
   return (
     <>
       <form action={handleReview}>
-        <SubmitButton pendingText="Reviewing..." className={className}>
+        <SubmitButton
+          pendingText="Reviewing..."
+          laterPendingText="Still reviewing — a full business review can take a little longer..."
+          className={className}
+        >
           ✨ Ask Genesis to Review My Business
         </SubmitButton>
       </form>

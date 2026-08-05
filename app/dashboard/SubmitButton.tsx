@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { logClientEvent } from "./telemetry-actions";
 
@@ -21,9 +21,20 @@ export interface SubmitButtonPerfTracking {
 
 const FELT_SLOW_MS = 3000;
 
+// Reliability hardening — real evidence (last night's incident) that
+// "Genesis is thinking..." sitting static and unreadable for a long real
+// wait reads as frozen, prompting a retry-tap rather than patience. This
+// never cuts a genuine wait short; it only ever changes the label once one
+// has genuinely gone on a while, so the owner knows Genesis is still
+// working, not stuck.
+const STILL_WORKING_THRESHOLD_MS = 8000;
+
 export function SubmitButton({
   children,
   pendingText,
+  // Optional — every existing call site that doesn't pass this renders
+  // exactly as before, no staged behavior.
+  laterPendingText,
   className,
   name,
   value,
@@ -31,6 +42,7 @@ export function SubmitButton({
 }: {
   children: React.ReactNode;
   pendingText: string;
+  laterPendingText?: string;
   className?: string;
   name?: string;
   value?: string;
@@ -38,6 +50,7 @@ export function SubmitButton({
 }) {
   const { pending, data } = useFormStatus();
   const startedAtRef = useRef<number | null>(null);
+  const [showLaterText, setShowLaterText] = useState(false);
 
   // When several same-named submit buttons share one form (e.g. the brand
   // personality picker), a native form submission only includes the
@@ -73,6 +86,21 @@ export function SubmitButton({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending]);
 
+  useEffect(() => {
+    if (!laterPendingText || !isThisButtonPending) return;
+    const timer = setTimeout(() => setShowLaterText(true), STILL_WORKING_THRESHOLD_MS);
+    return () => {
+      clearTimeout(timer);
+      setShowLaterText(false);
+    };
+  }, [isThisButtonPending, laterPendingText]);
+
+  const label = isThisButtonPending
+    ? showLaterText && laterPendingText
+      ? laterPendingText
+      : pendingText
+    : children;
+
   return (
     <button
       type="submit"
@@ -81,7 +109,7 @@ export function SubmitButton({
       disabled={pending}
       className={className}
     >
-      {isThisButtonPending ? pendingText : children}
+      {label}
     </button>
   );
 }

@@ -456,6 +456,7 @@ export function GenesisAssistant({
         />
         <SubmitButton
           pendingText="Genesis is thinking..."
+          laterPendingText="Still working on it — detailed answers can take a little longer..."
           className="self-start rounded-full bg-[var(--brand-accent,var(--foreground))] px-4 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50 lg:bg-[#8b7cf6]"
         >
           Ask Genesis
