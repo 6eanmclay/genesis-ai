@@ -236,6 +236,23 @@ Concretely, in Sean's own words: *"J4 recommends what's best for the business. J
 
 ---
 
+## Business Partner Preview — a real, once-per-store 7-day trial
+
+**Frozen by Sean, 2026-08-05.** Every new store experiences the Business Partner plan's unlimited-1-point-action tier for a real 7-day window — not a feature tour, a lived week of not thinking about spending a point on routine day-to-day work. Sean's own framing for *why*: "I want people to experience a real business cadence, not just test features. The goal is for them to stop thinking about spending a point every time they ask J4 to help with everyday business work. At the end of the week they should naturally understand the value of Business Partner because they've experienced it — not because we sold it to them."
+
+**When it ends**: the store returns to its normal plan. This must never read as something being taken away — it's simply the end of a different way of working the owner already experienced firsthand. If J4 ever surfaces the plan afterward, it observes real usage and advises, exactly like every other case under *"J4 is a trusted advisor, never a salesperson"* above — e.g. *"I've noticed you're using a lot of day-to-day optimization actions. You can absolutely continue on your current plan, but I think Business Partner would remove a lot of unnecessary friction for the way you work."* This is the same real, currently-unbuilt "J4 recommends a plan from observed usage" capability already named as its own deferred future milestone above — the trial doesn't need a second version of it.
+
+**Grant trigger**: `Store.firstMeetingCompletedAt` — the same "onboarding genuinely finished" signal `Referral` rewards already wait for (never bare store creation; a real meaningful setup milestone, Sean's own words).
+
+**Scope: once per store, not once per account** — Sean's explicit call, since a real account can legitimately run more than one real business (his own dogfooding plan: Tensor King plus a new Genesis/J4 store). Per-store scope alone would be trivially farmable (create empty stores, collect trials), so it's paired with three real technical guards, all Sean's own explicit requirements:
+1. **Only one active trial per account at a time** — a new store's trial isn't granted while any of that owner's other stores has a live, unexpired trial window.
+2. **Granted only at a meaningful milestone** (`firstMeetingCompletedAt`), never at bare store creation — raises the real cost of farming above "click create repeatedly."
+3. **A deleted store must not erase that its trial was ever granted** — the grant record lives in its own table, independent of the `Store` row's lifecycle, so both guard #1 and any future fraud review stay correct even after a farmed store is deleted.
+
+**Explicitly named, not solved by this freeze**: a numeric cap on total trials an account may ever farm (Sean's own words: "add internal fraud checks if someone creates dozens of stores solely to farm trials") is a real future decision once real abuse patterns (if any) are observed — this freeze makes that decision *possible* (the grant history survives deletion and is queryable per account) without guessing the actual threshold today. True cross-account abuse (the same person operating multiple real logins) remains an open, unsolved vector common to every trial-based product — not addressed by store- or account-scoped guards, named here rather than silently left out.
+
+---
+
 ## Recommend only the highest real probability, never merely the possible
 
 **Standing product principle, frozen by Sean, 2026-08-04**, given while approving the Business Intelligence Engine's own first milestone, specifically because it governs the milestone's most consequential single change (widening how many real actions Reason can propose): *J4 must never recommend something simply because it's technically possible.*
