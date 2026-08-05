@@ -94,7 +94,14 @@ export async function getOrdersByEmail(
 // miscounted as new. Gated by ORDERS_VIEW (a count, not a dollar figure),
 // independent of REVENUE_VIEW — same tier as getOrderSummary's orderCount.
 export async function getNewCustomerCount(storeId: string, days: number = 30): Promise<number> {
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  return getNewCustomerCountSince(storeId, new Date(Date.now() - days * 24 * 60 * 60 * 1000));
+}
+
+// Daily Operating Rhythm — the same real "true first-ever order" logic
+// above, parameterized by an arbitrary anchor date rather than a rolling
+// day-count, for the briefing composer's "since you were last here" window
+// (which isn't a round number of days).
+export async function getNewCustomerCountSince(storeId: string, since: Date): Promise<number> {
   const rows = await prisma.order.groupBy({
     by: ["buyerEmail"],
     where: { storeId },
