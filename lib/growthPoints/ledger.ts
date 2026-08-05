@@ -10,6 +10,15 @@ export interface GrowthPointGate {
   cost: number | null;
 }
 
+// Growth Points pricing (Chapter 5) — the Business Partner "unlimited
+// 1-point actions" mechanic. A plan's unlimitedActionCostCeiling of null
+// means no free tier (Builder, Growth); a real number means any action
+// costing at or below it never touches the store's own balance. Kept as
+// a pure function so both call sites below apply the identical rule.
+function isUnlimitedViaPlan(ceiling: number | null | undefined, cost: number): boolean {
+  return ceiling !== null && ceiling !== undefined && cost <= ceiling;
+}
+
 // A read-only pre-check, run by lib/execution/engine.ts before an
 // executable's run() — rejects up front rather than letting Genesis
 // attempt real work the store can't afford. Deliberately separate from the
@@ -25,8 +34,11 @@ export async function checkGrowthPointBalance(
 
   const store = await prisma.store.findUnique({
     where: { id: storeId },
-    select: { growthPointBalance: true },
+    select: { growthPointBalance: true, plan: { select: { unlimitedActionCostCeiling: true } } },
   });
+  if (isUnlimitedViaPlan(store?.plan?.unlimitedActionCostCeiling, cost)) {
+    return { ok: true, cost };
+  }
   return { ok: (store?.growthPointBalance ?? 0) >= cost, cost };
 }
 
@@ -42,6 +54,29 @@ export async function deductGrowthPoints(params: {
   executionLogId: string;
 }): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    const current = await tx.store.findUnique({
+      where: { id: params.storeId },
+      select: { growthPointBalance: true, plan: { select: { unlimitedActionCostCeiling: true } } },
+    });
+
+    // Business Partner's unlimited-tier — covered actions still write a
+    // real transaction (so the owner's history stays honest about what
+    // happened) but never decrement balance.
+    if (isUnlimitedViaPlan(current?.plan?.unlimitedActionCostCeiling, params.cost)) {
+      await tx.growthPointTransaction.create({
+        data: {
+          storeId: params.storeId,
+          type: "DEDUCTION",
+          amount: 0,
+          balanceAfter: current?.growthPointBalance ?? 0,
+          actionType: params.actionType,
+          executionLogId: params.executionLogId,
+          description: "Included with your plan",
+        },
+      });
+      return;
+    }
+
     const store = await tx.store.update({
       where: { id: params.storeId },
       data: { growthPointBalance: { decrement: params.cost } },
