@@ -88,6 +88,14 @@ export interface BusinessProfile {
     displayName: string;
     status: string;
     lastSyncedAt: Date | null;
+    // Integrations (Chapter 4, continued) — a real, deterministic freshness
+    // read, not left to the model's own date arithmetic. null means never
+    // synced. isStale means the real sync cadence (see
+    // SYNC_INTERVAL_FOR_STALENESS_MS below) has been exceeded — this is
+    // what tells a prompt when a "as of your last sync" qualifier is
+    // actually warranted versus just noise on data that's genuinely fresh.
+    syncedAgoLabel: string | null;
+    isStale: boolean;
   }[];
   goals: CanonicalRecord<"goal">[];
   challenges: CanonicalRecord<"challenge">[];
@@ -100,6 +108,28 @@ const CATALOG_NAME_BY_PROVIDER = new Map(
     (entry) => [entry.provider as string, entry.name] as const
   )
 );
+
+// Mirrors lib/intelligence/scheduler.ts's own DEFAULT_SYNC_INTERVAL_MS (6h)
+// — that constant isn't exported (scheduler.ts owns *when* a sync runs,
+// this only judges staleness for prompt framing), so this is a deliberate,
+// small, independent copy of the same real cadence rather than a shared
+// import across an otherwise unrelated module boundary.
+const SYNC_INTERVAL_FOR_STALENESS_MS = 6 * 60 * 60 * 1000;
+
+function describeSyncAge(lastSyncedAt: Date | null): { syncedAgoLabel: string | null; isStale: boolean } {
+  if (!lastSyncedAt) return { syncedAgoLabel: null, isStale: false };
+  const ageMs = Date.now() - lastSyncedAt.getTime();
+  const ageMinutes = Math.round(ageMs / 60_000);
+  const ageHours = Math.round(ageMs / 3_600_000);
+  const ageDays = Math.round(ageMs / 86_400_000);
+  const syncedAgoLabel =
+    ageMinutes < 60
+      ? `${Math.max(ageMinutes, 0)} minute${ageMinutes === 1 ? "" : "s"} ago`
+      : ageHours < 48
+        ? `${ageHours} hour${ageHours === 1 ? "" : "s"} ago`
+        : `${ageDays} day${ageDays === 1 ? "" : "s"} ago`;
+  return { syncedAgoLabel, isStale: ageMs > SYNC_INTERVAL_FOR_STALENESS_MS };
+}
 
 export async function getBusinessProfile(
   storeId: string
@@ -208,6 +238,7 @@ export async function getBusinessProfile(
       displayName: CATALOG_NAME_BY_PROVIDER.get(integration.provider) ?? integration.provider,
       status: integration.status,
       lastSyncedAt: integration.lastSyncedAt,
+      ...describeSyncAge(integration.lastSyncedAt),
     })),
     goals,
     challenges,
