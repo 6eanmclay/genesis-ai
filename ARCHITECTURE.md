@@ -270,6 +270,8 @@ Concretely, in Sean's own words: *"J4 recommends what's best for the business. J
 
 **Explicitly named, not solved by this freeze**: a numeric cap on total trials an account may ever farm (Sean's own words: "add internal fraud checks if someone creates dozens of stores solely to farm trials") is a real future decision once real abuse patterns (if any) are observed — this freeze makes that decision *possible* (the grant history survives deletion and is queryable per account) without guessing the actual threshold today. True cross-account abuse (the same person operating multiple real logins) remains an open, unsolved vector common to every trial-based product — not addressed by store- or account-scoped guards, named here rather than silently left out.
 
+**Business Partner's value proposition, frozen 2026-08-05, Sean's own words**: *"Business Partner is not about giving owners 'more AI.' It's about removing friction from running their business. The value is that routine business improvements become effortless, allowing owners to stay focused on growing their business instead of constantly deciding whether a small improvement is worth spending Growth Points on."* This is the real reason the trial works as a conversion mechanism at all: it isn't demonstrating a feature, it's letting an owner live the difference between constantly weighing a small decision and not having to. Governs how J4 itself talks about the plan whenever the deferred "recommend from observed usage" capability above gets built — friction removed, never AI volume, is the only correct framing.
+
 ---
 
 ## Recommend only the highest real probability, never merely the possible
