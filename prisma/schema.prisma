@@ -148,6 +148,22 @@ model Store {
   // allowance. Same "due timestamp stamped on the row" idiom as
   // StoreIntegration.nextSyncDueAt, not a new cadence mechanism.
   growthPointNextRefreshAt DateTime?
+  // Chapter 5 (Payments) — the platform's own Stripe Customer for this
+  // store (Genesis billing the owner directly), entirely distinct from
+  // StoreIntegration's STRIPE/PAYPAL rows (the merchant's own Connect
+  // account for accepting THEIR customers' payments). Null until the
+  // owner's first real billing interaction (a Growth Point purchase or a
+  // plan subscription) — created lazily, not at store creation.
+  stripeCustomerId     String? @unique
+  // Null until a real Stripe Subscription exists. Mirrors Stripe's own
+  // status vocabulary verbatim (active/past_due/canceled/incomplete/
+  // trialing/unpaid) as a plain String, not a Prisma enum — same
+  // "avoid enum-migration friction" convention as ExecutionLog.status.
+  stripeSubscriptionId String? @unique
+  subscriptionStatus   String?
+  // Kept in sync from Stripe's own customer.subscription.updated events —
+  // never computed locally.
+  subscriptionCurrentPeriodEnd DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -1083,6 +1099,11 @@ model Plan {
   // Null until Sean sets it — see Referral below for the same "wired but
   // inert" reasoning as growthCreditCatalog.ts.
   referralRewardPoints      Int?
+  // Chapter 5 (Payments) — the real Stripe recurring Price this plan
+  // subscribes an owner to. Null until Sean creates a real Plan row with a
+  // real price — same "ships empty, populated later, never guessed"
+  // discipline as the two fields above.
+  stripePriceId             String?  @unique
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 
@@ -1117,6 +1138,13 @@ model GrowthPointTransaction {
   actionType    String?
   executionLogId String?
   description   String
+  // Chapter 5 (Payments) — the idempotency key for a real PURCHASE row: the
+  // originating Stripe object id (a Checkout Session id today). Guards
+  // against double-crediting on a redelivered webhook event, mirroring
+  // Order's own @@unique([paymentProvider, externalOrderId]) pattern —
+  // there's no Order row to piggyback that guard on here, so this is its
+  // own unique constraint instead. Null for every non-PURCHASE type.
+  externalRef   String?  @unique
   createdAt     DateTime @default(now())
 
   store       Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
