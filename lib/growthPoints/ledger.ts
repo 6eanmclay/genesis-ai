@@ -19,6 +19,21 @@ function isUnlimitedViaPlan(ceiling: number | null | undefined, cost: number): b
   return ceiling !== null && ceiling !== undefined && cost <= ceiling;
 }
 
+// Business Partner Preview — an active trial (Store.businessPartnerTrialEndsAt
+// in the future) grants exactly the real Business Partner plan's own
+// unlimitedActionCostCeiling, looked up live rather than duplicating "1" as
+// a second source of truth, so the trial can never drift from Business
+// Partner's real, current ceiling. Only queried when a trial is actually
+// active, so the common non-trialing case pays no extra query.
+async function isUnlimitedViaTrial(trialEndsAt: Date | null | undefined, cost: number): Promise<boolean> {
+  if (!trialEndsAt || trialEndsAt.getTime() <= Date.now()) return false;
+  const businessPartner = await prisma.plan.findUnique({
+    where: { name: "Business Partner" },
+    select: { unlimitedActionCostCeiling: true },
+  });
+  return isUnlimitedViaPlan(businessPartner?.unlimitedActionCostCeiling, cost);
+}
+
 // A read-only pre-check, run by lib/execution/engine.ts before an
 // executable's run() — rejects up front rather than letting Genesis
 // attempt real work the store can't afford. Deliberately separate from the
@@ -34,9 +49,16 @@ export async function checkGrowthPointBalance(
 
   const store = await prisma.store.findUnique({
     where: { id: storeId },
-    select: { growthPointBalance: true, plan: { select: { unlimitedActionCostCeiling: true } } },
+    select: {
+      growthPointBalance: true,
+      businessPartnerTrialEndsAt: true,
+      plan: { select: { unlimitedActionCostCeiling: true } },
+    },
   });
   if (isUnlimitedViaPlan(store?.plan?.unlimitedActionCostCeiling, cost)) {
+    return { ok: true, cost };
+  }
+  if (await isUnlimitedViaTrial(store?.businessPartnerTrialEndsAt, cost)) {
     return { ok: true, cost };
   }
   return { ok: (store?.growthPointBalance ?? 0) >= cost, cost };
@@ -56,13 +78,25 @@ export async function deductGrowthPoints(params: {
   await prisma.$transaction(async (tx) => {
     const current = await tx.store.findUnique({
       where: { id: params.storeId },
-      select: { growthPointBalance: true, plan: { select: { unlimitedActionCostCeiling: true } } },
+      select: {
+        growthPointBalance: true,
+        businessPartnerTrialEndsAt: true,
+        plan: { select: { unlimitedActionCostCeiling: true } },
+      },
     });
 
-    // Business Partner's unlimited-tier — covered actions still write a
-    // real transaction (so the owner's history stays honest about what
-    // happened) but never decrement balance.
-    if (isUnlimitedViaPlan(current?.plan?.unlimitedActionCostCeiling, params.cost)) {
+    // Business Partner's unlimited-tier (real subscription or an active
+    // Preview trial) — covered actions still write a real transaction (so
+    // the owner's history stays honest about what happened) but never
+    // decrement balance. The description names which mechanism actually
+    // covered it rather than a generic merged label.
+    const unlimitedSource = isUnlimitedViaPlan(current?.plan?.unlimitedActionCostCeiling, params.cost)
+      ? "plan"
+      : (await isUnlimitedViaTrial(current?.businessPartnerTrialEndsAt, params.cost))
+        ? "trial"
+        : null;
+
+    if (unlimitedSource) {
       await tx.growthPointTransaction.create({
         data: {
           storeId: params.storeId,
@@ -71,7 +105,8 @@ export async function deductGrowthPoints(params: {
           balanceAfter: current?.growthPointBalance ?? 0,
           actionType: params.actionType,
           executionLogId: params.executionLogId,
-          description: "Included with your plan",
+          description:
+            unlimitedSource === "plan" ? "Included with your plan" : "Included with your Business Partner Preview",
         },
       });
       return;
