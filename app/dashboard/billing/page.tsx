@@ -63,6 +63,16 @@ export default async function BillingPage() {
         )}
       </div>
 
+      {store.businessPartnerTrialEndsAt && store.businessPartnerTrialEndsAt > new Date() && (
+        <div className="mt-3 rounded-xl border border-black/[.08] bg-white p-5 dark:border-white/[.1] dark:bg-zinc-950">
+          <p className="text-sm font-medium text-black dark:text-zinc-50">Business Partner Preview active</p>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Unlimited everyday improvements through {formatDate(store.businessPartnerTrialEndsAt)} — no need to
+            think about spending a point on routine work this week.
+          </p>
+        </div>
+      )}
+
       {!currentPlan && (
         <>
           <h2 className="mt-10 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
