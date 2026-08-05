@@ -1029,6 +1029,15 @@ export interface ChatDataContext {
   topContacts: { email: string | null; name: string | null; totalSpentInCents: number }[];
   upcomingAppointments: CanonicalRecord<"appointment">["data"][];
   recent: Record<EntityType, CanonicalRecord["data"][]>;
+  // Integrations (Chapter 4, continued) — the same real standing summaries
+  // threaded into Reason's own contextForPrompt (cognitiveLayer.ts), reused
+  // here so chat can answer with a real figure ("3 invoices overdue,
+  // totaling $420") instead of re-deriving one from `recent` every time.
+  // Null means honestly nothing synced yet — see SYSTEM_PROMPT for how to
+  // use these.
+  invoiceSummary: InvoiceSummary | null;
+  campaignPerformanceSummary: CampaignPerformanceSummary | null;
+  appointmentSummary: AppointmentSummary | null;
 }
 
 export async function buildChatDataContext(
@@ -1036,14 +1045,25 @@ export async function buildChatDataContext(
 ): Promise<ChatDataContext> {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  const [revenue30d, revenueAllTime, topContacts, upcoming, ...recentByType] =
-    await Promise.all([
-      getRevenue(storeId, { since: thirtyDaysAgo }),
-      getRevenue(storeId),
-      getTopContacts(storeId),
-      getUpcomingAppointments(storeId),
-      ...ENTITY_TYPES.map((entityType) => recentRecords(storeId, entityType)),
-    ]);
+  const [
+    revenue30d,
+    revenueAllTime,
+    topContacts,
+    upcoming,
+    invoiceSummary,
+    campaignPerformanceSummary,
+    appointmentSummary,
+    ...recentByType
+  ] = await Promise.all([
+    getRevenue(storeId, { since: thirtyDaysAgo }),
+    getRevenue(storeId),
+    getTopContacts(storeId),
+    getUpcomingAppointments(storeId),
+    getInvoiceSummary(storeId),
+    getCampaignPerformanceSummary(storeId),
+    getAppointmentSummary(storeId),
+    ...ENTITY_TYPES.map((entityType) => recentRecords(storeId, entityType)),
+  ]);
 
   const recent = ENTITY_TYPES.reduce(
     (acc, entityType, index) => {
@@ -1063,5 +1083,8 @@ export async function buildChatDataContext(
     })),
     upcomingAppointments: upcoming.map((a) => a.data),
     recent,
+    invoiceSummary,
+    campaignPerformanceSummary,
+    appointmentSummary,
   };
 }
