@@ -18,12 +18,26 @@ import { DashboardShell } from "./DashboardShell";
 // segment config), never per-action. Set here so it covers every Server
 // Action used anywhere under /dashboard/* — chat send, "Review My
 // Business" (runCognitiveReview, measured 15-40+ seconds live), and
-// image regeneration (measured 30-56+ seconds live) — with real headroom
-// above the slowest of those. Genuinely inert on Vercel's Hobby plan
-// (hard-capped at 10s regardless of this value, ignored rather than
-// erroring) — takes effect automatically the moment the plan is upgraded,
-// no other change needed then.
-export const maxDuration = 90;
+// image regeneration (measured 30-56+ seconds live).
+//
+// Corrected 2026-08-05, real production evidence — the earlier comment
+// here ("genuinely inert on Hobby, hard-capped at 10s") was wrong. Vercel's
+// current docs (vercel.com/docs/functions/configuring-functions/duration,
+// checked directly, not assumed) and the real "Fluid Active CPU" usage
+// metric on this project's own dashboard both confirm Fluid Compute is
+// enabled by default on every plan, including Hobby — real duration
+// ceiling is 300s (5 minutes), not 10s. Empirically confirmed live: a real
+// production call to /api/generate-store-draft ran 189.9s and succeeded.
+//
+// This setting was NEVER inert, and is genuinely load-bearing: a real
+// content-changing chat turn (applyGenesisMessageToStore) runs a
+// sequential CONTROL call followed by a CONTENT call, each individually
+// the same class of call measured elsewhere in this codebase at 30-110+
+// seconds — two of those in sequence can genuinely exceed 90s. Raised to
+// match the real Vercel Hobby ceiling exactly (300s) rather than guessing
+// a smaller number — there's no cost to using the full budget the plan
+// already allows.
+export const maxDuration = 300;
 
 // Two entirely different chrome states share this one layout: a user with
 // no live store yet (still in the draft/onboarding wizard, page.tsx's own

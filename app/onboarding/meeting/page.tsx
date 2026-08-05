@@ -4,12 +4,14 @@ import { resolveUserStore } from "@/lib/permissions";
 import { generateMeetingReflection } from "./reflection";
 import { MeetingScreen } from "./MeetingScreen";
 
-// Reliability hardening — see app/dashboard/layout.tsx's own comment on
-// why this lives at the page level (Next's own maxDuration route segment
-// config, Server-Action-scoped) and why 90s is genuinely inert on Hobby.
-// submitMeetingTurn/approveMeetingRecommendation/declineMeetingRecommendation
-// all call real AI, same durations class as the dashboard's own calls.
-export const maxDuration = 90;
+// Reliability hardening — see app/dashboard/layout.tsx's own comment for
+// the full real evidence (Vercel's Hobby plan, with Fluid Compute enabled
+// by default, has a real 300s ceiling, not the old assumed 10s — confirmed
+// both via Vercel's current docs and a real 189.9s production call
+// succeeding). submitMeetingTurn/approveMeetingRecommendation/
+// declineMeetingRecommendation all call real AI, same durations class as
+// the dashboard's own calls — raised to match for the same reason.
+export const maxDuration = 300;
 
 // The First Meeting with J4 (MEETING_WITH_J4.md, frozen v1) — the missing
 // act between Partnership (LaunchScreen's "live" beat, which now routes
