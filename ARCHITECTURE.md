@@ -283,6 +283,22 @@ Still deliberately deferred as its own future milestone — real storage, proces
 
 ---
 
+## Payments (Chapter 5)
+
+Completes the economic layer — the platform's own billing of store owners (subscription plans, Growth Point purchases, billing/account management, card payments), integrated into the Growth Points economy so it never feels like a second, separate system. Crypto payments explicitly deferred to their own future milestone (Sean's own call, 2026-08-05: zero existing infrastructure, no provider account chosen — never invent that ahead of a real decision).
+
+**Genesis IS the merchant of record here — the opposite direction from every other Stripe integration in this codebase.** `lib/integrations/stripe.ts` is Connect OAuth for a *merchant's* own connected account (accepting *their* customers' payments); `lib/billing/` is a direct, platform-key Stripe client billing the *store owner* directly. Same underlying Stripe account, same `STRIPE_SECRET_KEY`, deliberately separate modules so the two directions never tangle. A second, genuinely separate webhook endpoint (`app/api/webhooks/stripe-platform/route.ts`, its own `STRIPE_PLATFORM_WEBHOOK_SECRET`) follows the same reasoning — the existing merchant webhook's Connect-vs-platform disambiguation is dead weight for events that are always platform-key.
+
+**Almost everything this chapter needed already existed, unpriced and unwired, from Chapter 2.** `Plan` (a real model, real rows created by Sean only when real pricing exists), `GrowthPointTransaction`'s own schema comment already reserved a `PURCHASE` type "once Chapter 5 wires a real payment rail," and `lib/growthPoints/refresh.ts`'s monthly-cadence sweep already granted `Plan.monthlyGrowthPointAllowance` to any store with a `planId` — Chapter 5's real job was narrower than it first sounded: get a real Stripe subscription to assign a real `planId`, and let the existing sweep do what it already did. `checkout.session.completed` (subscription mode) deliberately leaves `growthPointNextRefreshAt` untouched so that exact sweep picks the store up on its own next run — the clearest proof this integrates into Chapter 2 rather than reimplementing it.
+
+**The recurring pricing tension, resolved the same way every prior chapter resolved it.** `Plan.stripePriceId` and `lib/growthPoints/purchaseCatalog.ts` (Growth Point purchase packages, mirroring `lib/growthPoints/catalog.ts`'s own "deliberately empty" discipline) both ship real and wired, with zero real rows/entries until Sean sets real prices. An unpriced plan or package is a real, honest error at checkout time, never a fabricated one.
+
+**Billing and account management leans on Stripe's own hosted Billing Portal**, not custom payment-method/invoice UI — `/dashboard/billing` is a thin status summary plus one redirect button. Named "Billing," deliberately not "Payments" — `/dashboard/payments` already exists for the merchant's own outbound payment-provider connections; two different concerns sharing one name would have been a real, avoidable confusion.
+
+**A real correctness gap closed, not just built alongside**: once `planId` meant "has a real Stripe subscription" rather than a hand-assigned label, the monthly refresh sweep's own due-query needed to stop granting free points to a canceled/unhealthy subscription — `getDueGrowthPointRefreshes` (`lib/growthPoints/refresh.ts`) now also requires `subscriptionStatus` to be `null` (never touched by real billing — a legitimate hand-assigned/comped case) or a real healthy Stripe status (`active`/`trialing`). `customer.subscription.deleted` deliberately never clears `planId` itself (keeps historical/display coherence, same "keep the past, gate future behavior separately" idiom `ExecutionLog` already uses) — this query is what actually stops further grants.
+
+---
+
 ## Owner Dashboard
 
 `app/dashboard/page.tsx` (Owner/Employee view of a live store) is a **decision dashboard, not a reporting dashboard** — every section answers one of three questions: **What happened? What needs attention? What should I do next?** Reframed from an earlier "reporting" conception at the user's explicit direction, with `ExecutionLog` as the structural backbone rather than one widget among several.

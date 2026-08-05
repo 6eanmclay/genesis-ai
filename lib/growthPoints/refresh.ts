@@ -16,12 +16,32 @@ function addOneCalendarMonth(date: Date): Date {
   return next;
 }
 
+// Chapter 5 (Payments) correctness closeout — a real gap once planId means
+// "has a real Stripe subscription" (it didn't before Chapter 5; every
+// planId was previously assigned by hand, with no lifecycle behind it at
+// all). Without this, a canceled/past-due subscription would keep
+// receiving free monthly grants forever, since nothing else in this sweep
+// ever stops. subscriptionStatus: null still qualifies — a store whose
+// plan was assigned without going through real Stripe billing (comped,
+// hand-assigned) is a legitimate case, not a lapsed one; only a real,
+// unhealthy Stripe status (canceled/past_due/unpaid/incomplete/paused)
+// excludes a store.
+const HEALTHY_SUBSCRIPTION_STATUSES = ["active", "trialing"];
+
 export async function getDueGrowthPointRefreshes(limit: number) {
   const now = new Date();
   return prismaSystem.store.findMany({
     where: {
       planId: { not: null },
-      OR: [{ growthPointNextRefreshAt: null }, { growthPointNextRefreshAt: { lte: now } }],
+      AND: [
+        {
+          OR: [
+            { subscriptionStatus: null },
+            { subscriptionStatus: { in: HEALTHY_SUBSCRIPTION_STATUSES } },
+          ],
+        },
+        { OR: [{ growthPointNextRefreshAt: null }, { growthPointNextRefreshAt: { lte: now } }] },
+      ],
     },
     orderBy: { growthPointNextRefreshAt: "asc" },
     take: limit,
