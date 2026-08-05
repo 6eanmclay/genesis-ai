@@ -904,6 +904,101 @@ export async function getUpcomingAppointments(
   );
 }
 
+// Integrations (Chapter 4, connected-data understanding) — three real
+// standing summaries for connector-sourced data, the same shape as every
+// other Understand-layer function: deterministic, honest-null when there's
+// nothing real to summarize (never a fabricated zero), reused by both
+// Reason's own contextForPrompt (lib/intelligence/cognitiveLayer.ts) and
+// chat's buildChatDataContext below, so a real number is computed once and
+// explained consistently everywhere, rather than each surface re-deriving
+// it from raw records independently.
+
+export interface InvoiceSummary {
+  outstandingCount: number;
+  outstandingTotalInCents: number;
+  overdueCount: number;
+  overdueTotalInCents: number;
+}
+
+// Reuses the exact same real "overdue" test detectOverdueInvoiceCluster
+// (lib/intelligence/insights.ts) already proves correct — type, status,
+// and a real dueAt in the past — so the standing summary and the
+// threshold-triggered insight can never quietly disagree on what
+// "overdue" means.
+export async function getInvoiceSummary(storeId: string): Promise<InvoiceSummary | null> {
+  const documents = await queryRecords(storeId, "document");
+  const invoices = documents.filter((d) => d.data.type === "invoice");
+  if (invoices.length === 0) return null;
+
+  const now = Date.now();
+  const outstanding = invoices.filter((d) => d.data.status !== "paid");
+  const overdue = outstanding.filter((d) => d.data.dueAt !== null && new Date(d.data.dueAt).getTime() < now);
+
+  return {
+    outstandingCount: outstanding.length,
+    outstandingTotalInCents: outstanding.reduce((sum, d) => sum + (d.data.amountInCents ?? 0), 0),
+    overdueCount: overdue.length,
+    overdueTotalInCents: overdue.reduce((sum, d) => sum + (d.data.amountInCents ?? 0), 0),
+  };
+}
+
+export interface CampaignPerformanceSummary {
+  campaignCount: number;
+  averageOpenRate: number | null;
+  mostRecentSentAt: string | null;
+}
+
+export async function getCampaignPerformanceSummary(storeId: string): Promise<CampaignPerformanceSummary | null> {
+  const campaigns = await queryRecords(storeId, "campaign");
+  if (campaigns.length === 0) return null;
+
+  const sentDates = campaigns.map((c) => c.data.sentAt).filter((d): d is string => d !== null);
+  const mostRecentSentAt =
+    sentDates.length > 0
+      ? sentDates.reduce((latest, d) => (new Date(d) > new Date(latest) ? d : latest))
+      : null;
+
+  return {
+    campaignCount: campaigns.length,
+    averageOpenRate: await getAverageOpenRate(storeId),
+    mostRecentSentAt,
+  };
+}
+
+export interface AppointmentSummary {
+  upcomingCount: number;
+  createdLast30Days: number;
+  cancelledLast30Days: number;
+  // cancelledLast30Days / createdLast30Days — an honest, real approximation
+  // (a cancelled appointment may have been created before the 30-day
+  // window), not a precise cohort rate. Null when there's no real
+  // denominator, never a fabricated 0%.
+  cancellationRate: number | null;
+}
+
+export async function getAppointmentSummary(storeId: string): Promise<AppointmentSummary | null> {
+  const allAppointments = await queryRecords(storeId, "appointment");
+  if (allAppointments.length === 0) return null;
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [upcoming, createdLast30Days, cancelledLast30Days] = await Promise.all([
+    getUpcomingAppointments(storeId),
+    prisma.businessEvent.count({
+      where: { storeId, eventType: "appointment.created", occurredAt: { gte: thirtyDaysAgo } },
+    }),
+    prisma.businessEvent.count({
+      where: { storeId, eventType: "appointment.cancelled", occurredAt: { gte: thirtyDaysAgo } },
+    }),
+  ]);
+
+  return {
+    upcomingCount: upcoming.length,
+    createdLast30Days,
+    cancelledLast30Days,
+    cancellationRate: createdLast30Days > 0 ? cancelledLast30Days / createdLast30Days : null,
+  };
+}
+
 // A recent-record list, newest first, capped small — bounds prompt size for
 // chat's Q&A context (see below) without needing per-question entity-type
 // selection; real small-business record volumes make this cheap regardless.

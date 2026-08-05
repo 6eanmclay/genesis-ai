@@ -19,6 +19,9 @@ import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import {
   predictGoalTrajectory,
   getActionTypeTrackRecord,
+  getInvoiceSummary,
+  getCampaignPerformanceSummary,
+  getAppointmentSummary,
   type GoalTrajectory,
 } from "@/lib/businessModel/reasoning";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
@@ -250,6 +253,8 @@ actionTypeTrackRecord shows this store's own real history for a given action typ
 
 growthPointBalance is this store's real current Growth Points balance, and growthPointCosts gives the real point cost of each actionType that has one assigned so far (an actionType absent from growthPointCosts has no real price yet — never invent one). Both are context only, never a gate. You must always generate every finding, opportunity, and recommendation exactly as you otherwise would, completely independent of these numbers; a store at zero balance deserves the exact same quality of thinking as one with a large balance. The only thing they ever affect is how you frame a recommendation's own summary, and only when doing so is genuinely relevant: if the highest-confidence recommendation's own actionType has a real cost in growthPointCosts that exceeds the current balance, or if multiple real candidates exist at meaningfully different real costs, name the trade-off plainly — propose the option that fits the current balance, and separately name what a higher-impact option would need, in one honest sentence. Never manufacture a comparison using a cost that isn't actually in growthPointCosts, and never let this read as pressure to buy more — you are informing a decision, not selling one. Whenever you refer to Growth Points being used, use "invest"/"investment" language ("this would invest 2 Growth Points into a new product"), never "spend"/"cost" language — Growth Points represent an owner investing in their own business, not a fee for AI usage.
 
+invoiceSummary, campaignPerformanceSummary, and appointmentSummary are real, standing figures computed from this store's own connected systems (QuickBooks invoices, Mailchimp email campaigns, Google Calendar appointments) — not a one-off insight, but the current state of that connected data every time you're shown it. Each is null when nothing of that kind has ever synced (e.g. that connector isn't connected, or the connector is connected but has produced zero real records) — treat a null exactly as "no real basis to say anything about this," never as zero or as a problem. When one is present, use it like any other real fact: invoiceSummary's overdueCount/overdueTotalInCents is a real, concrete reason for a recommendation ("3 invoices are overdue, totaling $420"); campaignPerformanceSummary's averageOpenRate and mostRecentSentAt describe real email engagement; appointmentSummary's cancellationRate and upcomingCount describe real scheduling activity. This is what makes Genesis genuinely understand a connected system's data rather than just recommending the owner go check it themselves — translate these into plain language as part of your normal reasoning, the same way you already do for orderSummary.
+
 actionHref must be exactly one of: "/dashboard#attention", "/dashboard/website", "/dashboard/settings", "/dashboard/payments", "/dashboard/products", "/dashboard/marketing", "/dashboard/brand" — whichever dashboard section a recommendation/opportunity relates to.
 
 If, and only if, a recommendation or opportunity maps directly onto one of these actions the merchant (or, if delegated, Genesis itself) could apply exactly as proposed, attach a proposedAction with the precise, ready-to-apply values:
@@ -324,11 +329,22 @@ export async function runCognitiveReview(params: {
     select: { name: true, description: true, priceInCents: true, active: true },
   });
 
-  const [orderSummary, customerSummaries, recentActivity, actionTypeTrackRecord] = await Promise.all([
+  const [
+    orderSummary,
+    customerSummaries,
+    recentActivity,
+    actionTypeTrackRecord,
+    invoiceSummary,
+    campaignPerformanceSummary,
+    appointmentSummary,
+  ] = await Promise.all([
     getOrderSummary(storeId, { includeRevenue: true }),
     getCustomerSummaries(storeId, { includeRevenue: true, limit: 10 }),
     getRecentActivity(storeId, 10),
     getActionTypeTrackRecord(storeId),
+    getInvoiceSummary(storeId),
+    getCampaignPerformanceSummary(storeId),
+    getAppointmentSummary(storeId),
   ]);
   const recentInsights = params.recentInsights ?? (await computeInsights(storeId));
   // J4 Foundation Phase 2 (Learn) — a separate call, deliberately not folded
@@ -500,6 +516,14 @@ export async function runCognitiveReview(params: {
     // moment real values exist, budget-aware framing has real numbers to
     // reason from with zero further code changes.
     growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),
+    // Integrations (Chapter 4, continued) — real standing summaries of
+    // connected-system data (QuickBooks invoices, Mailchimp campaigns,
+    // Calendar appointments), not just an occasional threshold-triggered
+    // insight. Null means honestly nothing synced yet, never a fabricated
+    // zero — see SYSTEM_PROMPT for how to use these.
+    invoiceSummary,
+    campaignPerformanceSummary,
+    appointmentSummary,
   };
 
   const outcome = await callGenesisModel({

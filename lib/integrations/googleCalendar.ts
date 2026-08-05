@@ -5,6 +5,7 @@ import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types"
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import type { Appointment } from "@/lib/businessModel/entities";
+import { internalContactId } from "@/lib/businessModel/internalMapper";
 
 // Phase 3 Milestone 2 — proof integration #1: OAuth-redirect (same shape as
 // Stripe), read-only scope (calendar.readonly — this phase never writes
@@ -225,15 +226,27 @@ export const googleCalendarConnector: IntegrationConnector = {
         start?: { dateTime?: string; date?: string };
         end?: { dateTime?: string; date?: string };
         status?: string;
+        attendees?: { email?: string }[];
       }[];
     };
 
     return (data.items ?? []).map((event): SyncedRecord => {
+      // Integrations (Chapter 4, connected-data understanding) — real
+      // attendee emails, already returned by the Events API, mapped to a
+      // real contact identity via the exact same internalContactId(email)
+      // convention Order-derived contacts already use. When an attendee's
+      // email matches a real customer Genesis already knows, this
+      // appointment genuinely links to them — not a new contact scheme,
+      // reusing the one that already exists.
+      const contactIds = (event.attendees ?? [])
+        .map((a) => a.email)
+        .filter((email): email is string => Boolean(email))
+        .map((email) => internalContactId(email));
       const appointment: Appointment = {
         title: event.summary ?? "(untitled event)",
         startAt: event.start?.dateTime ?? event.start?.date ?? new Date().toISOString(),
         endAt: event.end?.dateTime ?? event.end?.date ?? null,
-        contactIds: [],
+        contactIds,
         locationId: null,
         status: event.status ?? null,
       };
