@@ -1104,6 +1104,27 @@ model Plan {
   // real price — same "ships empty, populated later, never guessed"
   // discipline as the two fields above.
   stripePriceId             String?  @unique
+  // Growth Points Economy — real initial pricing, frozen 2026-08-05.
+  // Display only: the real charge always comes from Stripe's own Price
+  // object (stripePriceId) at checkout time, this is a cached snapshot so
+  // the billing/growth-points pages can show a real "$X/month" without an
+  // extra Stripe API round-trip on every page load.
+  priceInCents              Int?
+  // Null means no plan-level free tier (Builder, Growth). A real number
+  // means any GENESIS_ACTIONS entry whose lib/growthPoints/catalog.ts cost
+  // is at or below this ceiling never touches the store's own balance —
+  // Business Partner's own "unlimited 1-point actions" (see
+  // lib/growthPoints/ledger.ts's checkGrowthPointBalance/
+  // deductGrowthPoints). Deliberately a ceiling, not a boolean or a fixed
+  // "1" — generalizes to a future plan wanting its own real threshold.
+  unlimitedActionCostCeiling Int?
+  // The one-time bonus granted on a store's real first-ever subscription
+  // to this plan (lib/growthPoints/ledger.ts's creditOnboardingAllocation,
+  // triggered from the platform billing webhook). Null until Sean sets a
+  // real number — same "wired but inert" discipline as every other
+  // deferred value in this economy; the mechanism is real, this amount
+  // just isn't decided yet.
+  onboardingAllocation      Int?
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 
