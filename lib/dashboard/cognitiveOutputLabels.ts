@@ -13,4 +13,10 @@ export const COGNITIVE_OUTPUT_KIND_LABEL: Record<string, string> = {
   opportunity: "Opportunity",
   explanation: "Worth understanding",
   prediction: "Goal progress",
+  // Daily Operating Rhythm — never actually shown via this map in practice
+  // (Discovery's own query excludes kind: "briefing" by design; it has its
+  // own dedicated presentation slot), present only so ActivityFeed's
+  // fallback never renders the raw string "briefing" if a row is ever
+  // surfaced through that generic path.
+  briefing: "Daily briefing",
 };

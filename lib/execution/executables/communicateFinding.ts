@@ -22,7 +22,12 @@ import { EXECUTION_ACTIONS } from "../actions";
 // it must go through the normal DelegatedAuthority grant path like every
 // other real mechanic.
 export interface CommunicateFindingInput {
-  kind: "insight" | "prediction" | "explanation" | "recommendation" | "opportunity";
+  // Daily Operating Rhythm — "briefing" added for the composed, first-person
+  // "since you were last here" narrative (see lib/dashboard/
+  // genesisBriefingComposer.ts), written the same supersede-then-write way
+  // as every other kind here, deliberately excluded from Discovery's own
+  // query (kind is a plain String column, not a Prisma enum — additive).
+  kind: "insight" | "prediction" | "explanation" | "recommendation" | "opportunity" | "briefing";
   summary: string;
   data?: object | null;
   priority?: "high" | "medium" | "low" | null;

@@ -562,7 +562,7 @@ export const GENESIS_ACTIONS: Record<
   communicate_finding: {
     executable: communicateFindingExecutable,
     inputSchema: z.object({
-      kind: z.enum(["insight", "prediction", "explanation", "recommendation", "opportunity"]),
+      kind: z.enum(["insight", "prediction", "explanation", "recommendation", "opportunity", "briefing"]),
       summary: z.string(),
       data: z.record(z.string(), z.unknown()).nullable().optional(),
       priority: z.enum(["high", "medium", "low"]).nullable().optional(),

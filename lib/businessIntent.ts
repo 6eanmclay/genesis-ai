@@ -69,6 +69,9 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   store_chat_campaign_request_detection: "create_marketing",
   marketing_campaign_planning: "create_marketing",
   marketing_assets_draft: "create_marketing",
+  // Same real synthesis pipeline as cognitive_review, just composed into a
+  // narrative rather than structured findings.
+  owner_briefing_composer: "growth_recommendation",
 };
 
 export function businessIntentFor(feature: AiFeature): BusinessIntentCategory {

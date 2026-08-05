@@ -551,7 +551,7 @@ model GeneratedRecommendation {
 model CognitiveOutput {
   id                String    @id @default(cuid())
   storeId           String
-  kind              String // insight | prediction | explanation | recommendation | opportunity
+  kind              String // insight | prediction | explanation | recommendation | opportunity | briefing
   summary           String // self-contained — matches every existing "message must be self-contained" convention
   data              Json? // structured supporting detail specific to kind (e.g. an insight's own real metrics)
   priority          String? // high | medium | low — recommendation/opportunity/prediction; null for insight/explanation

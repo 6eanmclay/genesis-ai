@@ -57,6 +57,8 @@ export const AI_FEATURES = [
   "store_chat_campaign_request_detection",
   "marketing_campaign_planning",
   "marketing_assets_draft",
+  // Daily Operating Rhythm (lib/dashboard/genesisBriefingComposer.ts)
+  "owner_briefing_composer",
 ] as const;
 
 export type AiFeature = (typeof AI_FEATURES)[number];
