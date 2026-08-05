@@ -86,7 +86,7 @@ Not "long-term trust" — **relationship continuity**. *"Trust isn't something J
 
 **J4 evolves with the owner.** A brand-new entrepreneur needs more guidance and explanation; an owner with a year of shared history gets more concise, higher-level conversation, because J4 already knows how they think and what they understand — the direct modulation of the teaching levels above, by demonstrated track record, not just moment significance.
 
-This is the product-experience expression of what J4's `Learn`/`Understand` architecture already does technically (`Belief` rows, the append-only `BusinessEvent` log, confidence and maturity as separate dimensions) — *"we ruled this out six months ago because…"* is a real, existing fact this system can already answer, not a new capability to build.
+This is the product-experience expression of what J4's `Learn`/`Understand` architecture already does technically — with one real correction, found auditing `J4_FOUNDATION.md` (its own Gap D): long-term *pattern* memory (`Belief`, genuinely unbounded — a pattern that solidified six months ago is still real today) is real and already answerable; long-term *specific decision* recall by topic is not — `getRecentDecisionOutcomes` defaults to a 14-day window, and nothing today searches further back by topic. *"We ruled this out six months ago because…"* is true today only if that reasoning already rose to a real `Belief`; as a general "recall any past decision, however old" capability, it's a real future direction (`J4_FOUNDATION.md`'s Gap D), not something to claim as already built.
 
 ## J4 makes better entrepreneurs, not replacement entrepreneurs
 
