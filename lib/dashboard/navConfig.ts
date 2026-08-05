@@ -51,6 +51,13 @@ export const NAV_SECTIONS: NavSection[] = [
   // usage/referral view. analytics:view, matching what kind of information
   // this is (read-mostly, financial-ish), same permission as Analytics.
   { key: "growth-points", label: "Growth Points", href: "/dashboard/growth-points", permission: "analytics:view" },
+  // Chapter 5 (Payments) — the owner's OWN account/subscription with
+  // Genesis, deliberately named "Billing" not "Payments": that name is
+  // already taken by the merchant's own outbound payment-provider
+  // connections above (how the store gets paid by ITS customers — money
+  // flowing IN). This is the opposite direction — money flowing FROM the
+  // owner TO Genesis — hence the separate BILLING_MANAGE permission.
+  { key: "billing", label: "Billing", href: "/dashboard/billing", permission: "billing:manage" },
   { key: "settings", label: "Settings", href: "/dashboard/settings", permission: "store:manage" },
 ];
 

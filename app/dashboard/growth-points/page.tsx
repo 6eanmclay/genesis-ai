@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
 import { getGrowthPointHistory, getGrowthPointUsageByAction, getReferralsSent } from "@/lib/growthPoints/ownerQueries";
 import { getOrCreateReferralCode } from "@/lib/growthPoints/referral";
@@ -196,6 +197,15 @@ export default async function GrowthPointsPage() {
               </form>
             ))}
           </div>
+        )}
+        {role === "OWNER" && (
+          <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+            Subscribing to a plan, and managing your payment method, live in{" "}
+            <Link href="/dashboard/billing" className="underline decoration-current/30 hover:decoration-current">
+              Billing
+            </Link>
+            .
+          </p>
         )}
       </div>
     </div>
