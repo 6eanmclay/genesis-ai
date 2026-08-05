@@ -236,6 +236,25 @@ Concretely, in Sean's own words: *"J4 recommends what's best for the business. J
 
 ---
 
+## Growth Points measure business significance, not technical difficulty
+
+**Frozen by Sean, 2026-08-05**, while reviewing the first real per-action catalog proposal. His own correction, worth preserving verbatim: *"The catalog shouldn't only measure difficulty. It should measure business significance."* His example: changing one product photo isn't the same as launching a seasonal campaign — the second touches revenue, branding, inventory, marketing, and social/email all at once, and *"those shouldn't cost the same simply because both are 'updates.'"*
+
+**What this governs today**: every tier assignment in `lib/growthPoints/catalog.ts` is a judgment about how much of the business a real action actually moves, not how much engineering or AI work it took to build — the two happen to correlate for some actions (`create_product`'s real `$0.17` image-generation cost) and deliberately don't for others (`update_theme` costs nothing in AI/compute to execute, but touches every page — priced at the top tier anyway). Real observed AI cost (`AiUsageEvent`) is a floor to sanity-check against, never the basis for a price.
+
+**What this governs long-term, named as a real, deliberately unbuilt future capability**: today's catalog is one fixed point-cost per `GenesisActionType` — a static lookup table. Sean's own framing for where this eventually needs to go: *"J4 should eventually understand scope... instead of hardcoding every action forever, it should ask itself: 'how much of the business am I about to change?'"* A future "launch a seasonal campaign" isn't one `GENESIS_ACTIONS` entry today and may never cleanly be one — it's several real actions (theme, marketing assets, product imagery, homepage content) dispatched together, and the real open question this principle leaves for later is whether the *combined* investment those add up to already captures "business significance" correctly, or whether J4 itself needs to reason about a request's scope before mapping it to a cost at all. Not designed yet — named so it isn't lost, the same discipline as every other deferred capability in this document.
+
+**Marketing specifically**: `update_marketing_assets` is priced at the "campaign creation" tier (3pt) today because that's the one real thing it currently does — draft real, brand-voice campaign content. Sean's own expectation, once Marketing Engine deepens (video analysis, captions, email, ad copy, repurposing, scheduling, cadence, platform adaptation — see the Marketing Engine section below): this single action will need to fork into several real, separately-priced actions (a minor update, a full campaign, a complete marketing/brand overhaul) rather than staying one fixed-cost action forever. Not built now — `update_marketing_assets` stays one action until Marketing Engine M3+ gives it real reasons to split.
+
+**The real, locked catalog** (`lib/growthPoints/catalog.ts`, all 15 real `GENESIS_ACTIONS` entries):
+- **Free** — `update_goal_status`, `resolve_challenge`, `communicate_finding`: bookkeeping and communication, not a change to the business itself. Deliberately absent from the catalog object (not a `0` entry) — matches the existing "no catalog entry = free" convention exactly, and avoids writing a real `$0` "Invested in..." transaction row for what should read as effortless.
+- **1pt** (Business Partner's unlimited tier) — `update_seo`, `update_product_image`, `update_section_order`: narrow, single-concern, routine maintenance.
+- **2pt** — `create_product`, `update_hero`, `update_homepage_content`, `update_store_content`: real creation or moderate content change.
+- **3pt** — `update_store_identity`, `update_design_direction`, `update_marketing_assets`: strategic moves.
+- **5pt** — `update_theme`, `update_brand_identity`: whole-brand transformation.
+
+---
+
 ## Business Partner Preview — a real, once-per-store 7-day trial
 
 **Frozen by Sean, 2026-08-05.** Every new store experiences the Business Partner plan's unlimited-1-point-action tier for a real 7-day window — not a feature tour, a lived week of not thinking about spending a point on routine day-to-day work. Sean's own framing for *why*: "I want people to experience a real business cadence, not just test features. The goal is for them to stop thinking about spending a point every time they ask J4 to help with everyday business work. At the end of the week they should naturally understand the value of Business Partner because they've experienced it — not because we sold it to them."

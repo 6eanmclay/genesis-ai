@@ -12,16 +12,48 @@ import type { GenesisActionType } from "@/lib/execution/genesisActions";
 // taxonomy question flagged in genesisActions.ts: GENESIS_ACTIONS is the
 // vocabulary the customer-facing catalog uses.
 //
-// Deliberately empty today, same discipline as growthCreditCatalog.ts:
-// real point costs are Sean's own product-strategy decision for a
-// dedicated design session (business value, economy psychology, real usage
-// data — never AI cost alone), not something to invent during
-// implementation. The full mechanism (lib/execution/engine.ts's balance
-// check and deduction, the monthly refresh, referral rewards) is real and
-// live; only the numbers are missing on purpose. An action with no entry
-// here costs nothing to execute — the same "honest null" behavior every
-// other catalog in this codebase already has.
-const GROWTH_POINT_CATALOG: Partial<Record<GenesisActionType, number>> = {};
+// Real, locked catalog — frozen by Sean 2026-08-05 (ARCHITECTURE.md's
+// "Growth Points measure business significance, not technical difficulty").
+// Every tier here is a judgment about how much of the business a real
+// action moves, never how much engineering/AI work it took to build —
+// create_product's real $0.17 gpt-image-1 cost happens to correlate with
+// its tier; update_theme's zero direct cost deliberately doesn't stop it
+// from being priced at the top. Real AiUsageEvent cost is a sanity-check
+// floor, never the basis for a price.
+//
+// update_goal_status, resolve_challenge, and communicate_finding are
+// deliberately ABSENT, not priced at 0 — they're bookkeeping/communication,
+// not a change to the business, and lib/execution/engine.ts only calls
+// deductGrowthPoints when growthPointCostFor returns non-null. An explicit
+// 0 would still write a real "Invested in..." transaction row on every one
+// of these (frequent, low-stakes) actions — absence is what keeps them
+// genuinely free and silent, exactly like every other unpriced action.
+//
+// update_marketing_assets sits at the "campaign creation" tier because
+// that's the one real thing it currently does (draft real brand-voice
+// content). Sean's own expectation: this forks into several real, more
+// specifically priced actions once Marketing Engine M3+ builds the
+// broader capability (video analysis, scheduling, platform adaptation) —
+// not built now, staying one action until there's a real reason to split.
+const GROWTH_POINT_CATALOG: Partial<Record<GenesisActionType, number>> = {
+  // 1pt — narrow, single-concern, routine maintenance (Business Partner's
+  // unlimited tier).
+  update_seo: 1,
+  update_product_image: 1,
+  update_section_order: 1,
+  // 2pt — real creation or a moderate content change.
+  create_product: 2,
+  update_hero: 2,
+  update_homepage_content: 2,
+  update_store_content: 2,
+  // 3pt — strategic moves.
+  update_store_identity: 3,
+  update_design_direction: 3,
+  update_marketing_assets: 3,
+  // 5pt — whole-brand transformation.
+  update_theme: 5,
+  update_brand_identity: 5,
+};
 
 export function growthPointCostFor(actionType: GenesisActionType): number | null {
   return GROWTH_POINT_CATALOG[actionType] ?? null;
