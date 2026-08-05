@@ -66,6 +66,9 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   // different real conversation context.
   j4_meeting_listen_extraction: "research",
   j4_meeting_ask: "customer_communication",
+  store_chat_campaign_request_detection: "create_marketing",
+  marketing_campaign_planning: "create_marketing",
+  marketing_assets_draft: "create_marketing",
 };
 
 export function businessIntentFor(feature: AiFeature): BusinessIntentCategory {

@@ -70,10 +70,34 @@ export const AppointmentSchema = z.object({
 });
 export type Appointment = z.infer<typeof AppointmentSchema>;
 
+// Marketing Engine (Chapter 3) — extended additively so Mailchimp's real
+// existing sync path (lib/integrations/mailchimp.ts) needs zero changes:
+// every new field is nullable, and a synced-only historical campaign
+// simply never populates them. This is what makes a J4-planned campaign
+// and a Mailchimp-synced one the same real entity type rather than two
+// parallel concepts — planning writes the new fields, sync writes the
+// original ones, both are genuinely "a campaign" to J4's own understanding.
 export const CampaignSchema = z.object({
   name: z.string(),
   // "email" | "social" | "ad" | ...
   channel: z.string(),
+  // Optional + nullable (not just nullable) — so Mailchimp's real existing
+  // sync code (lib/integrations/mailchimp.ts) can go on building a
+  // Campaign literal that never mentions these fields at all, zero changes
+  // required. Null/absent for every pre-existing/synced-only row (a synced
+  // campaign has already happened — there's no real "draft" or "scheduled"
+  // state to report for it). Set only on records J4/the owner planned.
+  status: z.enum(["draft", "scheduled", "published"]).nullable().optional(),
+  // The real per-channel copy J4 or the owner authored for this campaign.
+  // Null/absent for synced-only rows — Genesis never wrote Mailchimp's own
+  // past campaign content, only its performance.
+  content: z.string().nullable().optional(),
+  scheduledAt: z.string().nullable().optional(), // ISO datetime
+  // Shared across every channel-record that's really one campaign idea —
+  // mirrors ApprovalRequest.groupId's own proven "one idea, several
+  // related rows" pattern, not a new concept. Null/absent for a
+  // single-channel campaign or a synced row with no real group.
+  groupId: z.string().nullable().optional(),
   sentAt: z.string().nullable(),
   audienceSize: z.number().int().nullable(),
   // Open bag: opens, clicks, conversions, ... — shape varies by channel.

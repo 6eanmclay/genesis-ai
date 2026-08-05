@@ -53,6 +53,10 @@ export const AI_FEATURES = [
   "j4_meeting_reflect",
   "j4_meeting_listen_extraction",
   "j4_meeting_ask",
+  // Marketing Engine (lib/marketing/, app/dashboard/ai-actions.ts)
+  "store_chat_campaign_request_detection",
+  "marketing_campaign_planning",
+  "marketing_assets_draft",
 ] as const;
 
 export type AiFeature = (typeof AI_FEATURES)[number];

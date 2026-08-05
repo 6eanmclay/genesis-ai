@@ -12,6 +12,7 @@ import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset, type GenesisActionType } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
+import { checkAndProposeMarketingAssetsUpdate } from "@/lib/marketing/assets";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import {
@@ -84,11 +85,24 @@ const GENESIS_ACTION_HREFS = [
 // less than originally scoped: two of the four planned new types
 // (update_store_identity, update_section_order — the two structurally
 // smallest additions) via the same discriminated-union shape that already
-// works at 5 variants. update_store_content and update_marketing_assets
-// are NOT added here — real, same-shaped work, left for a real follow-up
-// that changes the underlying call shape (e.g. a second, focused
-// structured-output call scoped to just the chosen actionType, once one's
-// picked) rather than one call trying to hold everything at once.
+// works at 5 variants. update_store_content is NOT added here — real,
+// same-shaped work, left for a real follow-up.
+//
+// Marketing Engine (Chapter 3) — a real, live attempt to add
+// update_marketing_assets here even with a fully EMPTY input
+// (z.object({})) still hit the same real "compiled grammar is too large"
+// 400 this comment already documents — confirming the ceiling is on total
+// variant count/shape, not just per-field complexity. Per the standing
+// rule this constraint already established ("a provider/API-level
+// implementation constraint is never grounds to redesign a frozen
+// principle — find a different implementation path instead"),
+// update_marketing_assets stays OUT of this union entirely. Its real fix
+// is genuinely separate from Reason's own structured-output call:
+// checkAndProposeMarketingAssetsUpdate (lib/marketing/assets.ts) is a
+// deterministic Understand-layer check (are the real bios missing/stale?)
+// called unconditionally inside runCognitiveReview, below — zero added
+// complexity to this schema, a real focused generative call only when the
+// deterministic check is actually true.
 //
 // update_seo/update_hero/update_goal_status/resolve_challenge/
 // create_product were already reachable before this milestone.
@@ -246,9 +260,9 @@ If, and only if, a recommendation or opportunity maps directly onto one of these
 - "update_store_identity": input: { name: string, tagline: string, description: string } — only when the store's own name/tagline/description is genuinely missing or actively misleading, not to rephrase something that already reads fine.
 - "update_section_order": input: { sectionOrder: an array containing every one of these real section keys exactly once, in the proposed order: ${SECTION_KEYS.join(", ")} } — only when the current order is a genuine, nameable problem (e.g. a section that should come earlier is buried below less important ones), never a reorder for its own sake.
 
-Never propose update_theme, update_brand_identity, update_homepage_content, update_design_direction, update_store_content, or update_marketing_assets — the first four are holistic creative rewrites requiring every field of a large, subjective object at once, never a genuinely precise single fix; the last two are real, deliberately deferred (a genuine schema-complexity limit, not a judgment call) rather than excluded on principle. All six stay a deliberate decision for the owner (or a future pass), not something you propose quietly.
+Never propose update_theme, update_brand_identity, update_homepage_content, update_design_direction, update_store_content, or update_marketing_assets — the first four are holistic creative rewrites requiring every field of a large, subjective object at once, never a genuinely precise single fix; update_marketing_assets is reachable, just through a genuinely separate, deterministic path (a real schema-complexity ceiling, not a judgment call — see this file's own comment above ProposedActionSchema), never through a proposedAction here. All stay a deliberate decision for the owner (or a separate real mechanism), not something you propose quietly through this schema.
 
-When a proposedAction fills in the owner's own customer-facing voice — update_hero's headline, update_store_identity's name/tagline/description, or (once reachable) update_marketing_assets' bios — your summary should read as a starting draft offered for the owner to personalize, never as their voice quietly replaced. You are not the face of this business; the owner is. Your job is removing the repetitive work that keeps them from telling their own story, not telling it for them. Say so plainly when it's genuinely relevant, in your own words, close to this spirit: "this is a starting point — your customers want to hear this in your own words." Never suggest, here or in any conversation, that the owner should step back and let you run their business or their marketing for them; if an owner asks you to fully take over, gently invite them back into it rather than simply complying.
+When a proposedAction fills in the owner's own customer-facing voice — update_hero's headline, or update_store_identity's name/tagline/description — your summary should read as a starting draft offered for the owner to personalize, never as their voice quietly replaced. You are not the face of this business; the owner is. Your job is removing the repetitive work that keeps them from telling their own story, not telling it for them. Say so plainly when it's genuinely relevant, in your own words, close to this spirit: "this is a starting point — your customers want to hear this in your own words." Never suggest, here or in any conversation, that the owner should step back and let you run their business or their marketing for them; if an owner asks you to fully take over, gently invite them back into it rather than simply complying.
 
 Every recommendation and opportunity should read as a real answer to one question: if this owner does only one thing today, what has the highest real probability of improving their business? Never attach a proposedAction, and never produce a recommendation or opportunity at all, just because something is technically possible to fix — "there's honestly nothing significant to flag right now" is a completely valid, expected outcome of a review, not a shortfall to cover for. Most recommendations/opportunities should NOT include a proposedAction — only attach one when you can specify the exact values, never a vague intent. Leave proposedAction null otherwise.`;
 
@@ -322,6 +336,11 @@ export async function runCognitiveReview(params: {
   // window), so it runs unconditionally here rather than depending on
   // whether computeInsights happened to run fresh this call.
   await distillBeliefs(storeId);
+  // Marketing Engine (Chapter 3) — same "runs unconditionally, cheap
+  // deterministic check first" discipline as distillBeliefs above. See
+  // lib/marketing/assets.ts's own comment for why this lives outside
+  // Reason's own structured-output call entirely.
+  await checkAndProposeMarketingAssetsUpdate(storeId);
   // J4 Foundation (2026-08-04) — the shared canonical understanding
   // (J4_FOUNDATION.md, closing Gap A: one real object combining facts,
   // beliefs, and recent decisions, reused by chat's data-answer path too —

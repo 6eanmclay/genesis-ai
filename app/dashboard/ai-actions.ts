@@ -24,6 +24,7 @@ import {
 } from "@/lib/dashboard/explainRecommendation";
 import { runCognitiveReview, PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
+import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { GENESIS_ACTIONS, type GenesisActionContext, type GenesisActionType } from "@/lib/execution/genesisActions";
@@ -1420,6 +1421,22 @@ Most messages are NOT this — set entityType: "none" for anything else. Only pi
 
 For every field beyond the required one(s) above, fill it in only when you can confidently infer it from the actual message — leave it null (or, for the array fields, empty) rather than guessing. Write a short, warm confirmationReply that states back exactly what you're recording, e.g. "Got it — I'll remember that your Q3 goal is $10k in monthly revenue." so the merchant can see and correct it. For entityType: "none", leave data and confirmationReply null.`;
 
+// Marketing Engine (Chapter 3) — a cheap, separate classifier, same shape
+// as every other triage classifier in this file: distinguishes a genuine
+// "plan/create a marketing campaign" request from everything else,
+// including a plain planning/strategy QUESTION about marketing (handled
+// already by the data-question path above) — this one is specifically for
+// "do it," not "tell me about it." On true, planMarketingCampaign
+// (lib/marketing/campaigns.ts) does the real work and persists real
+// Campaign BusinessRecords; this classifier's only job is routing.
+const CampaignRequestSchema = z.object({
+  isCampaignRequest: z.boolean(),
+});
+
+const STORE_CHAT_CAMPAIGN_REQUEST_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is the merchant asking you to actually plan or create a marketing campaign — real content to promote something, across one or more channels (email, social, or similar)?
+
+Set isCampaignRequest: true for a real request like "plan a campaign for our new product," "write me a launch campaign," "create a promotion for the summer sale," or "draft some marketing content for X." Set isCampaignRequest: false for everything else, including a question ABOUT marketing strategy without asking you to actually draft anything ("how should I think about marketing this?" — that's a planning question, handled elsewhere), a request to edit an existing field like a bio or SEO title (handled elsewhere), or ordinary conversation.`;
+
 // Family-beta instrumentation (v20) — shared by both applyGenesisMessage
 // (draft chat) and applyGenesisMessageToStore (live chat) so a real chat
 // turn's server-side duration (Claude call + DB writes, distinct from "the
@@ -2479,6 +2496,53 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       revalidatePath(returnTo);
       redirect(returnTo);
     }
+  }
+
+  // Marketing Engine (Chapter 3) — a real "plan a campaign" request,
+  // detected before the image-request/content-edit checks below. Planning
+  // and content generation are pure Understand/Reason work (see
+  // lib/marketing/campaigns.ts's own comment) — never touches execute() or
+  // Growth Points, matching the frozen "connecting/planning is free,
+  // executing a real cadence commitment is invested" principle.
+  const campaignRequestOutcome = await callGenesisModel({
+    model: "claude-opus-4-8",
+    max_tokens: 500,
+    thinking: { type: "adaptive" },
+    system: STORE_CHAT_CAMPAIGN_REQUEST_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: userMessage }],
+    output_config: { effort: "low", format: zodOutputFormat(CampaignRequestSchema) },
+  }, { storeId: store.id, confirmedOverride, feature: "store_chat_campaign_request_detection" });
+  const campaignRequestResult = campaignRequestOutcome.ok
+    ? campaignRequestOutcome.message.parsed_output
+    : null;
+
+  if (campaignRequestResult?.isCampaignRequest) {
+    const planned = await planMarketingCampaign(store.id, userMessage);
+    const reply = planned
+      ? `I've planned "${planned.name}" — ${planned.channels.length} channel${planned.channels.length === 1 ? "" : "s"}: ${planned.channels.map((c) => c.channel).join(", ")}. Take a look and let me know what you'd like to adjust before we schedule it.`
+      : "I wasn't able to put a real campaign plan together from that — tell me a bit more about what you're promoting and I'll try again.";
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: reply },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "SUCCESS",
+      verified: false,
+      message: reply,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: { kind: "campaign_request", groupId: planned?.groupId ?? null },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
+      likelyRephraseOf,
+    });
+    revalidatePath(returnTo);
+    redirect(returnTo);
   }
 
   // Detect "replace this product's image" requests first, via a separate
