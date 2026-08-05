@@ -1,6 +1,8 @@
 import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
 import { getGrowthPointHistory, getGrowthPointUsageByAction, getReferralsSent } from "@/lib/growthPoints/ownerQueries";
 import { getOrCreateReferralCode } from "@/lib/growthPoints/referral";
+import { growthPointPackages } from "@/lib/growthPoints/purchaseCatalog";
+import { purchaseGrowthPoints } from "./actions";
 
 // Growth Points Economy (Chapter 2) — the owner's own real economy view:
 // current balance, real point history, real usage by action, their own
@@ -42,7 +44,7 @@ function NotAvailable({ reason }: { reason: string }) {
 }
 
 export default async function GrowthPointsPage() {
-  const { userId, store } = await requireStorePageAccess(PERMISSIONS.ANALYTICS_VIEW);
+  const { userId, store, role } = await requireStorePageAccess(PERMISSIONS.ANALYTICS_VIEW);
 
   const [history, usage, referrals, referralCode] = await Promise.all([
     getGrowthPointHistory(store.id, 20),
@@ -53,6 +55,7 @@ export default async function GrowthPointsPage() {
 
   const referralLink = `${process.env.NEXTAUTH_URL ?? ""}/signup?ref=${referralCode}`;
   const rewardedReferrals = referrals.filter((r) => r.status === "REWARDED").length;
+  const packages = growthPointPackages();
 
   return (
     <div className="min-h-screen p-8 lg:min-h-0">
@@ -165,7 +168,35 @@ export default async function GrowthPointsPage() {
         Buy more Growth Points
       </h2>
       <div className="mt-3">
-        <NotAvailable reason="real payment processing arrives with the Payments chapter — this will let you buy Growth Points directly once it does." />
+        {role !== "OWNER" ? (
+          <NotAvailable reason="only the store owner can buy Growth Points." />
+        ) : packages.length === 0 ? (
+          <NotAvailable reason="no Growth Point packages are available to buy yet." />
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {packages.map(([key, pkg]) => (
+              <form
+                key={key}
+                action={purchaseGrowthPoints.bind(null, key)}
+                className="flex flex-col justify-between rounded-xl border border-black/[.08] bg-white p-5 dark:border-white/[.1] dark:bg-zinc-950"
+              >
+                <div>
+                  <p className="text-sm font-medium text-black dark:text-zinc-50">{pkg.label}</p>
+                  <p className="mt-1 text-2xl font-semibold tabular-nums text-black dark:text-zinc-50">
+                    +{pkg.pointAmount}
+                  </p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">Growth Points</p>
+                </div>
+                <button
+                  type="submit"
+                  className="mt-4 rounded-full bg-foreground px-4 py-2 text-sm text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+                >
+                  Invest
+                </button>
+              </form>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

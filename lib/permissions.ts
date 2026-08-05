@@ -35,6 +35,13 @@ export const PERMISSIONS = {
   // this codebase's permission model is deliberately coarse everywhere
   // else too; revisit only if a real need for finer grain shows up).
   CONNECTIONS_MANAGE: "connections:manage",
+  // Chapter 5 (Payments) — the owner's own real money moving TO Genesis
+  // (Growth Point purchases, plan subscriptions, billing/account
+  // management), distinct from PAYMENTS_MANAGE (the store's own outbound
+  // payment-provider connections, money flowing FROM the store's
+  // customers). OWNER-only by omission from ROLE_PERMISSIONS.EMPLOYEE
+  // below, same precedent as PAYMENTS_MANAGE/CONNECTIONS_MANAGE.
+  BILLING_MANAGE: "billing:manage",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

@@ -60,3 +60,42 @@ export async function deductGrowthPoints(params: {
     });
   });
 }
+
+// Chapter 5 (Payments) — the credit-side counterpart to deductGrowthPoints,
+// called only from the platform billing webhook once a real Stripe payment
+// has genuinely completed. externalRef (the originating Checkout Session
+// id) is the idempotency guard: Stripe can redeliver the same event more
+// than once, and a pre-check inside the same transaction as the write means
+// a retry that finds an existing row is a genuine no-op — same "existence
+// check, not upsert-return inference" discipline as the merchant order
+// webhook (app/api/webhooks/stripe/route.ts) already uses.
+export async function creditGrowthPointsFromPurchase(params: {
+  storeId: string;
+  amount: number;
+  externalRef: string;
+  description: string;
+}): Promise<{ credited: boolean }> {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.growthPointTransaction.findUnique({
+      where: { externalRef: params.externalRef },
+    });
+    if (existing) return { credited: false };
+
+    const store = await tx.store.update({
+      where: { id: params.storeId },
+      data: { growthPointBalance: { increment: params.amount } },
+      select: { growthPointBalance: true },
+    });
+    await tx.growthPointTransaction.create({
+      data: {
+        storeId: params.storeId,
+        type: "PURCHASE",
+        amount: params.amount,
+        balanceAfter: store.growthPointBalance,
+        externalRef: params.externalRef,
+        description: params.description,
+      },
+    });
+    return { credited: true };
+  });
+}
