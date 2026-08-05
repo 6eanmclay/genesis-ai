@@ -34,6 +34,7 @@ export function ConnectorCard({
   lastAttemptFailedMessage,
   connectedByLabel,
   connectedAt,
+  recommendationReason,
 }: {
   entry: CatalogEntry;
   storeId: string;
@@ -43,6 +44,12 @@ export function ConnectorCard({
   lastAttemptFailedMessage: string | null;
   connectedByLabel: string | null;
   connectedAt: Date | null;
+  // Integrations (Chapter 4) — the real, evidence-based reason
+  // lib/integrations/gaps.ts's getConnectionGaps computed for THIS store,
+  // when this card is rendered in the real "Recommended for your
+  // business" section. Undefined/null everywhere else — never a generic
+  // "recommended" label with nothing real behind it.
+  recommendationReason?: string | null;
 }) {
   if (!entry.connector || !entry.provider) {
     return (
@@ -139,6 +146,11 @@ export function ConnectorCard({
     <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
       <p className="font-medium text-black dark:text-zinc-50">{entry.name}</p>
       <p className="mt-1 text-xs text-zinc-500">{entry.description}</p>
+      {recommendationReason && (
+        <p className="mt-2 rounded-md bg-[var(--brand-accent)]/[0.06] px-2.5 py-2 text-xs text-zinc-700 dark:bg-[var(--brand-accent)]/[0.1] dark:text-zinc-300">
+          <span className="font-medium">Genesis noticed:</span> {recommendationReason}
+        </p>
+      )}
       {lastAttemptFailedMessage && (
         <p className="mt-1 text-xs text-red-600 dark:text-red-400">
           Last attempt failed: {lastAttemptFailedMessage}

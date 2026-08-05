@@ -6,6 +6,7 @@ import {
   CONNECTION_CATEGORY_LABELS,
   type CatalogEntry,
 } from "@/lib/integrations/catalog";
+import { getConnectionGaps } from "@/lib/integrations/gaps";
 import {
   connectExecutable,
   verifyExecutable,
@@ -132,9 +133,10 @@ export default async function ConnectionsPage({
   const { store } = await requireStorePageAccess(PERMISSIONS.CONNECTIONS_MANAGE);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
-  const resolved = await Promise.all(
-    CONNECTOR_CATALOG.map((entry) => resolveEntry(store.id, entry))
-  );
+  const [resolved, gaps] = await Promise.all([
+    Promise.all(CONNECTOR_CATALOG.map((entry) => resolveEntry(store.id, entry))),
+    getConnectionGaps(store.id),
+  ]);
   const resolvedById = new Map(resolved.map((r) => [r.entry.id, r]));
 
   const flashEntry = resolved.find(
@@ -143,13 +145,14 @@ export default async function ConnectionsPage({
       r.entry.provider?.toLowerCase() === integrationConnected
   );
 
-  const businessCategories = store.businessCategories;
-  const recommended =
-    businessCategories.length > 0
-      ? CONNECTOR_CATALOG.filter((e) =>
-          e.recommendedFor.some((slug) => businessCategories.includes(slug))
-        )
-      : [];
+  // Integrations (Chapter 4) — real, evidence-based recommendations
+  // (lib/integrations/gaps.ts), replacing the old static
+  // recommendedFor-only filter. reasonByEntryId threads each gap's real
+  // reason into its ConnectorCard; recommended is just the matching
+  // catalog entries, in the same real order getConnectionGaps produced
+  // them (already filtered to real, working, not-yet-connected connectors).
+  const reasonByEntryId = new Map(gaps.map((g) => [g.catalogId, g.reason]));
+  const recommended = CONNECTOR_CATALOG.filter((e) => reasonByEntryId.has(e.id));
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
@@ -195,6 +198,7 @@ export default async function ConnectionsPage({
                   lastAttemptFailedMessage={r.lastAttemptFailedMessage}
                   connectedByLabel={r.connectedByLabel}
                   connectedAt={r.connectedAt}
+                  recommendationReason={reasonByEntryId.get(entry.id)}
                 />
               );
             })}
