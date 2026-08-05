@@ -14,6 +14,11 @@ import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { checkAndProposeMarketingAssetsUpdate } from "@/lib/marketing/assets";
 import { proposeConnectionGaps } from "@/lib/integrations/gaps";
+import {
+  getPreviousBriefingAnchor,
+  getChangeSetSince,
+  composeOwnerBriefing,
+} from "@/lib/dashboard/genesisBriefingComposer";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import {
@@ -317,8 +322,17 @@ export async function runCognitiveReview(params: {
   // "Ask Genesis to Review My Business" path has no pre-computed batch, so
   // it computes fresh here instead.
   recentInsights?: Insight[];
+  // Daily Operating Rhythm — undefined for every existing caller (the
+  // scheduler's cron pass, the manual "Ask Genesis to Review My Business"
+  // button), so nothing about this function's existing behavior changes
+  // for them. Only page.tsx's real owner-visit trigger ever sets this, to
+  // the real session userId — the composed "briefing" CognitiveOutput is
+  // deliberately never produced from an unattended pass, since its own
+  // "since you were last here" framing only makes sense as something said
+  // to a real person who just arrived.
+  composeBriefingForUserId?: string | null;
 }): Promise<CognitiveReviewSummary[]> {
-  const { storeId, userId, background = true } = params;
+  const { storeId, userId, background = true, composeBriefingForUserId } = params;
 
   const store = await prisma.store.findUnique({ where: { id: storeId } });
   if (!store) {
@@ -731,6 +745,56 @@ export async function runCognitiveReview(params: {
     storeId,
     metadata: { outputs: result.outputs },
   });
+
+  // Daily Operating Rhythm — composed last, after everything else this pass
+  // produced is already durable, so it can genuinely draw on this run's own
+  // fresh findings. Never blocks or fails the rest of the review: a
+  // composer failure (network, provider error) is swallowed here, same as
+  // draftMarketingAssets' own "return null on failure" convention — the
+  // owner simply sees no fresh briefing this pass, never a broken review.
+  if (composeBriefingForUserId) {
+    const anchor = await getPreviousBriefingAnchor(storeId);
+    const changeSet = await getChangeSetSince(storeId, anchor);
+    const descriptionByGoalId = new Map(
+      businessProfile.goals.map((g) => [g.id, g.data.description] as const)
+    );
+    const briefingGoalTrajectories = goalTrajectories.map((t) => ({
+      description: descriptionByGoalId.get(t.goalId) ?? "Goal",
+      onTrack: t.onTrack,
+      actualSoFarInCents: t.actualSoFarInCents,
+      targetValueInCents: t.targetValueInCents,
+      paceRatio: t.paceRatio,
+    }));
+    const freshOutputs = result.outputs
+      .filter(
+        (item): item is Extract<typeof item, { kind: "explanation" | "recommendation" | "opportunity" }> =>
+          item.kind === "explanation" || item.kind === "recommendation" || item.kind === "opportunity"
+      )
+      .map((item) => ({
+        kind: item.kind,
+        summary: item.summary,
+        priority: "priority" in item ? item.priority : null,
+      }));
+
+    const reply = await composeOwnerBriefing(storeId, {
+      storeName: store.name,
+      changeSet,
+      freshOutputs,
+      goalTrajectories: briefingGoalTrajectories,
+    });
+
+    if (reply) {
+      await prisma.cognitiveOutput.updateMany({
+        where: { storeId, kind: "briefing", status: "ACTIVE" },
+        data: { status: "SUPERSEDED" },
+      });
+      await communicateFinding(storeId, {
+        kind: "briefing",
+        summary: reply,
+        priority: null,
+      });
+    }
+  }
 
   return result.outputs
     .filter((item): item is Extract<typeof item, { kind: "recommendation" | "opportunity" }> =>

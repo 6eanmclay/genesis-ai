@@ -180,7 +180,12 @@ export async function runOpportunisticAiReviewIfStale(
   // Pre-computed by the scheduler (see runCognitiveReview's own comment for
   // why computeInsights must not run twice) — undefined for the existing
   // after()-driven human path, which has none to pass.
-  recentInsights?: Insight[]
+  recentInsights?: Insight[],
+  // Daily Operating Rhythm — threaded straight through to runCognitiveReview
+  // unchanged; see that function's own comment. undefined for the
+  // scheduler's cron call site, so a cron-triggered review never composes
+  // a briefing.
+  composeBriefingForUserId?: string | null
 ): Promise<void> {
   // Staleness reads the latest matching ExecutionLog row, not a
   // CognitiveOutput/GeneratedRecommendation timestamp — a genuine
@@ -222,7 +227,12 @@ export async function runOpportunisticAiReviewIfStale(
     metadata: {},
   });
 
-  const recommendations = await runCognitiveReview({ storeId, userId, recentInsights });
+  const recommendations = await runCognitiveReview({
+    storeId,
+    userId,
+    recentInsights,
+    composeBriefingForUserId,
+  });
 
   // Only "high" priority becomes a Purple ambient signal — keeps it as
   // narrow/high-signal as Red, never "a recommendation row happens to
