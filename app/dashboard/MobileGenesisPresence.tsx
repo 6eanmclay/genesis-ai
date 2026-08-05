@@ -31,6 +31,7 @@ export function MobileGenesisPresence({
   curiosityItems,
   userName,
   justArrived = false,
+  ownerBriefingSummary = null,
 }: {
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
@@ -47,16 +48,23 @@ export function MobileGenesisPresence({
   // correction: the briefing is only ever spoken once the owner is
   // genuinely inside, never during the ritual itself.
   justArrived?: boolean;
+  // Daily Operating Rhythm — see LiveIntelligence.tsx's own comment on this
+  // same prop. Still rendered inside the compact single-line `truncate`
+  // treatment below — mobile keeps its existing compact format, just fed
+  // by the real composed narrative when one exists.
+  ownerBriefingSummary?: string | null;
 }) {
   const state = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
   const briefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
-  const briefingText = briefing
-    ? justArrived
-      ? `While you were away — ${briefing.lead}.`
-      : briefing.lead
-    : justArrived
-      ? "While you were away, everything ran smoothly."
-      : "Everything's running smoothly today.";
+  const briefingText = ownerBriefingSummary
+    ? ownerBriefingSummary
+    : briefing
+      ? justArrived
+        ? `While you were away — ${briefing.lead}.`
+        : briefing.lead
+      : justArrived
+        ? "While you were away, everything ran smoothly."
+        : "Everything's running smoothly today.";
 
   return (
     <div

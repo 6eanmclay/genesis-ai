@@ -71,6 +71,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     orderSummary,
     revenueTrend,
     newCustomerCount,
+    activeOwnerBriefing,
   ] = await Promise.all([
     prisma.storeMessage.findMany({ where: { storeId: store.id }, orderBy: { createdAt: "asc" } }),
     hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
@@ -97,7 +98,18 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     // for why each is gated the way it is).
     canViewRevenue ? getRevenueTrend(store.id, 30) : Promise.resolve(null),
     canViewOrders ? getNewCustomerCount(store.id, 30) : Promise.resolve(null),
+    // Daily Operating Rhythm — owner-only, matches page.tsx's own gating on
+    // who the composer ever runs for. A non-owner (or a store before the
+    // first composition ever runs) simply gets null, and LiveIntelligence/
+    // MobileGenesisPresence already fall back to their existing behavior.
+    role === "OWNER"
+      ? prisma.cognitiveOutput.findFirst({
+          where: { storeId: store.id, kind: "briefing", status: "ACTIVE" },
+          select: { summary: true },
+        })
+      : Promise.resolve(null),
   ]);
+  const ownerBriefingSummary = activeOwnerBriefing?.summary ?? null;
   const hasUrgentIssue = activeObservations.some((o) => o.genesisState === "urgent");
   const hasOpportunity = activeObservations.some((o) => o.genesisState === "opportunity");
   const hasCuriosity = activeExplanations.length > 0;
@@ -283,6 +295,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       focusableApprovals={focusableApprovals}
       liveObservations={liveObservations}
       curiosityItems={curiosityItems}
+      ownerBriefingSummary={ownerBriefingSummary}
       userName={session.user.name ?? null}
       revenueInCents={orderSummary?.revenueInCents ?? null}
       orderCount={orderSummary?.orderCount ?? null}

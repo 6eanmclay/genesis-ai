@@ -83,6 +83,7 @@ export function DashboardShell({
   focusableApprovals,
   liveObservations,
   curiosityItems,
+  ownerBriefingSummary,
   userName,
   revenueInCents,
   orderCount,
@@ -114,6 +115,11 @@ export function DashboardShell({
   focusableApprovals: FocusableApproval[];
   liveObservations: LiveObservation[];
   curiosityItems: { id: string; summary: string }[];
+  // Daily Operating Rhythm — see LiveIntelligence.tsx's own comment on this
+  // prop. Owner-only, already resolved to null by layout.tsx for anyone
+  // else; forwarded unchanged to both LiveIntelligence and
+  // MobileGenesisPresence below.
+  ownerBriefingSummary: string | null;
   userName: string | null;
   revenueInCents: number | null;
   orderCount: number | null;
@@ -569,6 +575,7 @@ export function DashboardShell({
         focusableApprovals={focusableApprovals}
         liveObservations={liveObservations}
         curiosityItems={curiosityItems}
+        ownerBriefingSummary={ownerBriefingSummary}
         userName={userName}
         justArrived={justArrived}
       />
@@ -628,6 +635,7 @@ export function DashboardShell({
               focusableApprovals={focusableApprovals}
               liveObservations={liveObservations}
               curiosityItems={curiosityItems}
+              ownerBriefingSummary={ownerBriefingSummary}
               userName={userName}
               revenueInCents={revenueInCents}
               orderCount={orderCount}

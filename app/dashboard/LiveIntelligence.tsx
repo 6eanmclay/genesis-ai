@@ -35,6 +35,7 @@ export function LiveIntelligence({
   revenueTrend,
   newCustomerCount,
   justArrived = false,
+  ownerBriefingSummary = null,
 }: {
   focusableApprovals: FocusableApproval[];
   liveObservations: LiveObservation[];
@@ -50,6 +51,13 @@ export function LiveIntelligence({
   // permanent, ambient framing — the briefing is only ever spoken once the
   // owner is genuinely inside, per Sean's explicit sequencing correction.
   justArrived?: boolean;
+  // Daily Operating Rhythm — the real composed "since you were last here"
+  // narrative (owner-only, null until the first composition ever runs for
+  // this store). Takes over this whole slot when present; the count-based
+  // buildBriefing() line below stays the fallback for every other case
+  // (non-owner viewers, or before the first composition), so nothing here
+  // regresses.
+  ownerBriefingSummary?: string | null;
 }) {
   const briefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
 
@@ -81,7 +89,11 @@ export function LiveIntelligence({
             <GenesisGreeting name={userName} />
           </div>
 
-          {briefing ? (
+          {ownerBriefingSummary ? (
+            <p className="mt-2 text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+              {ownerBriefingSummary}
+            </p>
+          ) : briefing ? (
             <p className="mt-2 text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
               {awayPrefix}
               {briefing.lead}
