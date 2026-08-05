@@ -12,6 +12,23 @@ import * as Sentry from "@sentry/nextjs";
 // inside it, so this sits at the root without touching app/layout.tsx.
 // `unstable_retry` (not `reset`) is this Next version's real API — added
 // in v16.2.0, confirmed against the bundled docs.
+//
+// A real, confirmed second role (found investigating a 2026-08-05
+// production incident): this is ALSO the boundary that catches an
+// uncaught failure from anything rendered inside app/dashboard/layout.tsx
+// itself — including GenesisAssistant/DashboardShell, since the whole
+// dashboard chrome is rendered by that layout, not by any individual
+// page.tsx. Confirmed against Next's own docs (node_modules/next/dist/docs/
+// .../file-conventions/error.md: "error.js... does not wrap the layout.js
+// ... above it in the same segment") — app/dashboard/error.tsx structurally
+// cannot catch this class of failure; there's no boundary-placement fix,
+// only a custom component-level boundary (next/error's unstable_catchError)
+// wrapped specifically around DashboardShell's content, not attempted here.
+// The real incident this surfaced (a network/timeout failure on the chat
+// send action) is now caught much earlier — see lib/dashboard/
+// submitGenesisAction.ts — so this file is back to being the rare
+// catch-all it was designed as, not the primary path for that failure
+// class anymore.
 export default function RootError({
   error,
   unstable_retry,

@@ -17,6 +17,18 @@ import * as Sentry from "@sentry/nextjs";
 //
 // `unstable_retry` (not `reset`) is this Next version's real API — added in
 // v16.2.0, confirmed against the bundled docs rather than assumed.
+//
+// A real scope gap, confirmed while investigating a 2026-08-05 production
+// incident (never assumed): this boundary does NOT cover GenesisAssistant/
+// DashboardShell — they're rendered by app/dashboard/layout.tsx itself,
+// and Next's own docs are explicit that a segment's error.tsx never wraps
+// that same segment's layout.tsx, only page.tsx and nested layouts below
+// it. A network/timeout failure on the chat send action used to reach
+// app/error.tsx (the root boundary) instead of here — now caught much
+// earlier at the real client call site (lib/dashboard/
+// submitGenesisAction.ts), so this gap matters far less in practice, but
+// it's a real, structural limit of this file, not a bug fixable by moving
+// it.
 export default function DashboardError({
   error,
   unstable_retry,
