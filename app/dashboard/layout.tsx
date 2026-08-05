@@ -13,6 +13,18 @@ import { sendStoreMessage } from "./ai-actions";
 import { signOutOfGenesis } from "./actions";
 import { DashboardShell } from "./DashboardShell";
 
+// Reliability hardening — Server Actions can only have their execution
+// timeout raised at the PAGE/LAYOUT level (Next.js's own maxDuration route
+// segment config), never per-action. Set here so it covers every Server
+// Action used anywhere under /dashboard/* — chat send, "Review My
+// Business" (runCognitiveReview, measured 15-40+ seconds live), and
+// image regeneration (measured 30-56+ seconds live) — with real headroom
+// above the slowest of those. Genuinely inert on Vercel's Hobby plan
+// (hard-capped at 10s regardless of this value, ignored rather than
+// erroring) — takes effect automatically the moment the plan is upgraded,
+// no other change needed then.
+export const maxDuration = 90;
+
 // Two entirely different chrome states share this one layout: a user with
 // no live store yet (still in the draft/onboarding wizard, page.tsx's own
 // two early-return branches) gets just the minimal sign-out chrome it
