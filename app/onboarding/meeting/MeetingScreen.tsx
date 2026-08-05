@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisComposing } from "@/lib/dashboard/genesisActivity";
+import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
 import { ActionDiffRows } from "@/lib/execution/ActionDiff";
 import { submitMeetingTurn, approveMeetingRecommendation, declineMeetingRecommendation } from "./actions";
 import type { FollowUpTurn } from "./ask";
@@ -43,12 +44,25 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
   const [answer, setAnswer] = useState("");
   const [recommendation, setRecommendation] = useState<MeetingRecommendation | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
+  // Reliability hardening — a real network/timeout failure never produces a
+  // new question/recommendation (the server-side work never completed or
+  // its response never arrived), so this reverts to the prior retryable
+  // beat rather than advancing — nothing the owner already said is lost
+  // (transcript/answer/recommendation state is untouched on failure).
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const submitTurn = () => {
+    setErrorMessage(null);
     setBeat("converse_submitting");
     startTransition(async () => {
-      const result = await submitMeetingTurn(transcript, question, answer);
+      const outcome = await callGenesisAction(() => submitMeetingTurn(transcript, question, answer));
+      if (!outcome.ok) {
+        setErrorMessage(outcome.message);
+        setBeat("converse");
+        return;
+      }
+      const result = outcome.value;
       if (result.action === "ask") {
         setTranscript((prev) => [...prev, { question, answer: answer.trim() }]);
         setQuestion(result.question);
@@ -67,12 +81,20 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
 
   const decide = (approve: boolean) => {
     if (!recommendation) return;
+    setErrorMessage(null);
     setBeat("recommend_submitting");
     startTransition(async () => {
-      const result = approve
-        ? await approveMeetingRecommendation(recommendation.approvalRequestId)
-        : await declineMeetingRecommendation(recommendation.approvalRequestId);
-      setResultMessage(result.message);
+      const outcome = await callGenesisAction(() =>
+        approve
+          ? approveMeetingRecommendation(recommendation.approvalRequestId)
+          : declineMeetingRecommendation(recommendation.approvalRequestId)
+      );
+      if (!outcome.ok) {
+        setErrorMessage(outcome.message);
+        setBeat("recommend");
+        return;
+      }
+      setResultMessage(outcome.value.message);
       setBeat("result");
     });
   };
@@ -80,6 +102,12 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
   return (
     <div className={shell} style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}>
       <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+
+      {errorMessage && (beat === "converse" || beat === "recommend") && (
+        <p className="max-w-md text-sm text-red-500" role="alert">
+          {errorMessage}
+        </p>
+      )}
 
       {beat === "reflect" && (
         <>

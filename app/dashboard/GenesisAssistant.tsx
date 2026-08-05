@@ -6,6 +6,7 @@ import { useFormStatus } from "react-dom";
 import { deriveAssessmentState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
+import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
 import { SubmitButton } from "./SubmitButton";
 
 // Hydration-safe read of the same lg: breakpoint (1024px) this codebase
@@ -125,10 +126,12 @@ function ConfirmCeilingOverride({
   sendMessage,
   previousUserMessage,
   currentPath,
+  onFailure,
 }: {
   sendMessage: (formData: FormData) => void;
   previousUserMessage: string;
   currentPath: string;
+  onFailure: (message: string) => void;
 }) {
   const [isPending, startTransition] = useTransition();
   return (
@@ -140,7 +143,10 @@ function ConfirmCeilingOverride({
         formData.set("message", previousUserMessage);
         formData.set("confirmedOverride", "true");
         formData.set("currentPath", currentPath);
-        startTransition(() => sendMessage(formData));
+        startTransition(async () => {
+          const result = await callGenesisAction(() => Promise.resolve(sendMessage(formData)));
+          if (!result.ok) onFailure(result.message);
+        });
       }}
       className="self-start rounded-full border border-[var(--brand-accent,var(--foreground))] px-4 py-1.5 text-sm text-[var(--brand-accent,var(--foreground))] transition-opacity hover:opacity-80 disabled:opacity-50 lg:border-[#8b7cf6] lg:text-[#8b7cf6]"
     >
@@ -214,6 +220,17 @@ export function GenesisAssistant({
   const open = userOverride ?? (defaultOpen || !!focusedContext || (isDesktop && messages.length > 0));
   const setOpen = setUserOverride;
   const pathname = usePathname();
+
+  // Reliability hardening — a real network/timeout failure on the send
+  // action never produces a new assistant message (the server-side work
+  // never completed), so this is deliberately local, ephemeral UI state,
+  // not a StoreMessage row. Cleared on every new attempt.
+  const [sendError, setSendError] = useState<string | null>(null);
+  async function handleSend(formData: FormData) {
+    setSendError(null);
+    const result = await callGenesisAction(() => Promise.resolve(sendMessage(formData)));
+    if (!result.ok) setSendError(result.message);
+  }
 
   // Track 0 — see ConfirmCeilingOverride's own comment for why a plain
   // string match against the last message is correct here, not a gap.
@@ -301,7 +318,7 @@ export function GenesisAssistant({
   // still a separate, deferred decision).
   return (
     <form
-      action={sendMessage}
+      action={handleSend}
       className={
         dockLeft
           ? "fixed bottom-20 right-6 z-50 flex max-h-[60vh] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-black/[.08] bg-white shadow-xl dark:border-white/[.145] dark:bg-zinc-900 md:bottom-6 lg:right-auto lg:left-6 lg:max-h-none lg:w-80 xl:w-96 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#100d1c] lg:shadow-2xl"
@@ -412,7 +429,14 @@ export function GenesisAssistant({
             sendMessage={sendMessage}
             previousUserMessage={previousUserMessage}
             currentPath={pathname}
+            onFailure={setSendError}
           />
+        </div>
+      )}
+
+      {sendError && (
+        <div className="shrink-0 border-t border-black/[.08] px-4 pt-3 text-sm text-red-600 dark:border-white/[.145] dark:text-red-400 lg:border-[rgba(139,124,246,0.18)]">
+          {sendError}
         </div>
       )}
 
