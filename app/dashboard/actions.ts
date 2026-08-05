@@ -75,10 +75,20 @@ export async function createProduct(
       throw new RecoverableError("Enter a valid price");
     }
 
+    // Beta readiness fix — a real photo field on the creation form itself
+    // (previously only reachable after the fact, on the products list, in
+    // a control small and unlabeled enough that a first-time merchant
+    // reliably missed it — see CreateProductForm.tsx's own comment). An
+    // empty file input still submits a real File of size 0, never
+    // undefined, so size is the real "did they attach one" check.
+    const imageFile = formData.get("image");
+    const uploadedImage = imageFile instanceof File && imageFile.size > 0 ? imageFile : null;
+
     await execute(createProductExecutable, {
       name,
       description: description || null,
       priceInCents,
+      uploadedImage,
     });
   } catch (error) {
     unstable_rethrow(error);

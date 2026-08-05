@@ -105,11 +105,11 @@ export default async function ProductsPage({
               key={product.id}
               className="flex gap-4 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]"
             >
-              <div className="flex w-24 shrink-0 flex-col gap-2">
+              <div className="flex w-32 shrink-0 flex-col gap-2">
                 {/* Real product photo only — no placeholder/fake image when
                     one hasn't been sourced yet, matching the same honest
                     "No image" treatment the public storefront already uses. */}
-                <div className="h-24 w-24 overflow-hidden rounded-lg bg-black/[.03] dark:bg-white/[.05]">
+                <div className="h-32 w-32 overflow-hidden rounded-lg bg-black/[.03] dark:bg-white/[.05]">
                   {product.imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -118,7 +118,7 @@ export default async function ProductsPage({
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center text-center text-[10px] text-zinc-400">
+                    <div className="flex h-full w-full items-center justify-center text-center text-xs text-zinc-400">
                       No image
                     </div>
                   )}
@@ -127,7 +127,10 @@ export default async function ProductsPage({
                 {/* Upload your own photo — a direct write, no approval step
                     (see uploadProductImage's own comment). Distinct from
                     the Genesis-proposed photos above, which still go
-                    through Approve/Reject. */}
+                    through Approve/Reject. Beta readiness fix, 2026-08-05
+                    — previously a 96×23px, unlabeled control that a real
+                    first-time merchant reliably missed (confirmed via a
+                    live test); real label + a real touch-target size now. */}
                 {/* No explicit encType here — React manages it
                     automatically for a function action and errors if it's
                     set manually; file inputs still submit correctly as
@@ -136,16 +139,19 @@ export default async function ProductsPage({
                   action={uploadProductImage.bind(null, product.id)}
                   className="flex flex-col gap-1"
                 >
+                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                    {product.imageUrl ? "Change photo" : "Add photo"}
+                  </span>
                   <input
                     type="file"
                     name="image"
                     accept="image/png,image/jpeg,image/webp"
                     required
-                    className="w-full text-[10px] text-zinc-500 file:mr-1 file:rounded-full file:border-0 file:bg-black/[.05] file:px-2 file:py-1 file:text-[10px] file:text-black hover:file:bg-black/[.08] dark:text-zinc-400 dark:file:bg-white/[.1] dark:file:text-zinc-50 dark:hover:file:bg-white/[.15]"
+                    className="w-full text-xs text-zinc-500 file:mr-1 file:rounded-full file:border-0 file:bg-black/[.05] file:px-3 file:py-2 file:text-xs file:font-medium file:text-black hover:file:bg-black/[.08] dark:text-zinc-400 dark:file:bg-white/[.1] dark:file:text-zinc-50 dark:hover:file:bg-white/[.15]"
                   />
                   <SubmitButton
                     pendingText="Uploading..."
-                    className="w-full rounded-full bg-black/[.05] px-2 py-1 text-[10px] text-black hover:bg-black/[.08] disabled:opacity-50 dark:bg-white/[.1] dark:text-zinc-50 dark:hover:bg-white/[.15]"
+                    className="w-full rounded-full bg-black/[.05] px-3 py-2 text-xs font-medium text-black hover:bg-black/[.08] disabled:opacity-50 dark:bg-white/[.1] dark:text-zinc-50 dark:hover:bg-white/[.15]"
                   >
                     Upload photo
                   </SubmitButton>
