@@ -38,6 +38,7 @@ model User {
   aiUsageEvents         AiUsageEvent[]
   referralsSent         Referral[] @relation("ReferralsSent")
   referralsReceived     Referral[] @relation("ReferralsReceived")
+  businessPartnerTrialGrants BusinessPartnerTrialGrant[]
 }
 
 model Account {
@@ -129,6 +130,14 @@ model Store {
   // re-triggered. Deliberately distinct from createdAt/updatedAt (neither
   // means "has this store ever met J4").
   firstMeetingCompletedAt DateTime?
+  // Business Partner Preview — the real 7-day trial of Business Partner's
+  // unlimited-1-point-action tier, granted once at firstMeetingCompletedAt
+  // (see lib/growthPoints/trial.ts). Null = never granted; a future
+  // timestamp = active (checked by lib/growthPoints/ledger.ts alongside
+  // Plan.unlimitedActionCostCeiling); a past timestamp = expired. The
+  // durable, deletion-proof record of the grant itself lives in
+  // BusinessPartnerTrialGrant below — this field is only the live check.
+  businessPartnerTrialEndsAt DateTime?
   // Growth Points Economy (Chapter 2) — the store's real, spendable balance.
   // Debited by execute() when an approved GENESIS_ACTIONS action has a real
   // catalog cost (lib/growthPoints/catalog.ts), credited by the monthly
@@ -1197,4 +1206,27 @@ model Referral {
   referred User @relation("ReferralsReceived", fields: [referredUserId], references: [id], onDelete: Cascade)
 
   @@index([referrerUserId])
+}
+
+// Business Partner Preview — the real, append-only record of every 7-day
+// trial ever granted (see lib/growthPoints/trial.ts). Deliberately NOT
+// keyed to Store via a real Prisma relation with onDelete: storeId is a
+// plain string snapshot, not a foreign key, so deleting a store can never
+// erase that its trial was granted. This survival is what makes both the
+// "only one active trial per account at a time" guard and any future
+// per-account fraud review stay correct even after a farmed store is
+// deleted — Sean's own explicit requirement. Store.businessPartnerTrialEndsAt
+// is the fast, live "is a trial active right now" check; this table is the
+// durable history behind it.
+model BusinessPartnerTrialGrant {
+  id        String   @id @default(cuid())
+  userId    String
+  storeId   String
+  storeName String
+  grantedAt DateTime @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

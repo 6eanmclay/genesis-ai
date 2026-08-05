@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveUserStore } from "@/lib/permissions";
 import { rewardReferralIfEligible } from "@/lib/growthPoints/referral";
+import { grantBusinessPartnerTrialIfEligible } from "@/lib/growthPoints/trial";
 import { extractAndPersistVisionFacts } from "./listen";
 import { decideNextMeetingStep, type FollowUpTurn } from "./ask";
 import { selectMeetingRecommendation, type MeetingRecommendation } from "./recommend";
@@ -98,4 +99,8 @@ export async function completeFirstMeeting(): Promise<void> {
   // signup. A no-op for the overwhelming majority who arrived without a
   // referral code.
   await rewardReferralIfEligible(userId);
+  // Business Partner Preview — the same real completion signal grants the
+  // store's one-time 7-day trial (a no-op if this account already has an
+  // active trial elsewhere, or if this store already has one).
+  await grantBusinessPartnerTrialIfEligible(userId, { id: store.id, name: store.name });
 }
