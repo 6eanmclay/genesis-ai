@@ -570,7 +570,18 @@ export default async function DashboardPage() {
   // blocks or slows this render — it only runs once the response has
   // already been sent. runOpportunisticAiReviewIfStale does its own
   // staleness/claim check first and is usually a no-op.
-  after(() => runOpportunisticAiReviewIfStale(store.id, session.user.id).catch(() => {}));
+  // Daily Operating Rhythm — the real, only trigger for the composed
+  // "briefing" narrative: owner-only (see genesisBriefingComposer.ts's own
+  // comment on why this isn't personalized per employee yet), and only ever
+  // from this real, attended page load — never the scheduler's cron pass.
+  after(() =>
+    runOpportunisticAiReviewIfStale(
+      store.id,
+      session.user.id,
+      undefined,
+      role === "OWNER" ? session.user.id : undefined
+    ).catch(() => {})
+  );
   // Phase 5 — a separate after() call, deliberately not bundled into the
   // AI-review gate above: measurement is deterministic/zero-AI-cost and
   // should run on every opportunistic trigger, not only when the (unrelated)
