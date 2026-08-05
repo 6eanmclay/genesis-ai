@@ -1,5 +1,6 @@
 import type { PendingApproval } from "@/lib/dashboard/pendingApprovals";
 import { ActionDiffRows } from "@/lib/execution/ActionDiff";
+import { RegenerateImageButton } from "./RegenerateImageButton";
 
 // Plain Server Component — Approve/Reject/Regenerate are simple
 // redirect-based forms, same as every dashboard action before Layer 2, no
@@ -100,14 +101,7 @@ export function ApprovalRequestsPanel({
                 </button>
               </form>
               {isImageAction && (
-                <form action={regenerateAction.bind(null, approval.id)}>
-                  <button
-                    type="submit"
-                    className="rounded-full border border-black/[.08] px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
-                  >
-                    Regenerate
-                  </button>
-                </form>
+                <RegenerateImageButton regenerateAction={regenerateAction} approvalId={approval.id} />
               )}
             </div>
           </li>

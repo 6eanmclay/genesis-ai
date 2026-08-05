@@ -6,9 +6,9 @@ import { getRecommendations } from "@/lib/dashboard/recommendations";
 import { getLastDiscoveryRunAt } from "@/lib/dashboard/discovery";
 import { getCustomerSummaries } from "@/lib/dashboard/customers";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
-import { explainRecommendation, reviewBusinessWithGenesis } from "../ai-actions";
+import { explainRecommendation } from "../ai-actions";
 import { RecommendationsPanel } from "../RecommendationsPanel";
-import { SubmitButton } from "../SubmitButton";
+import { ReviewBusinessButton } from "../ReviewBusinessButton";
 import { OrderSummaryCard } from "../OrderSummaryCard";
 import { InventorySnapshotCard } from "../InventorySnapshotCard";
 import { ActivityFeed } from "../ActivityFeed";
@@ -101,14 +101,7 @@ export default async function AnalyticsPage() {
               ? `Generated ${formatTimeAgo(lastDiscoveryRunAt)}`
               : "Genesis hasn't reviewed this business yet"}
           </span>
-          <form action={reviewBusinessWithGenesis}>
-            <SubmitButton
-              pendingText="Reviewing..."
-              className="rounded-full bg-[var(--brand-accent,var(--foreground))] px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              ✨ Ask Genesis to Review My Business
-            </SubmitButton>
-          </form>
+          <ReviewBusinessButton className="rounded-full bg-[var(--brand-accent,var(--foreground))] px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50" />
         </div>
       </div>
 

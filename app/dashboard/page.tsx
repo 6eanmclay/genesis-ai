@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { SubmitButton } from "./SubmitButton";
 import { GenesisAssistant } from "./GenesisAssistant";
 import { CreateStoreForm } from "./CreateStoreForm";
+import { ReviewBusinessButton } from "./ReviewBusinessButton";
 import {
   updateStoreDraft,
   discardStoreDraft,
@@ -13,7 +14,6 @@ import {
   applyThemePersonality,
   restoreStoreDraftVersion,
   confirmStoreDraft,
-  reviewBusinessWithGenesis,
   approveGenesisAction,
   rejectGenesisAction,
 } from "./ai-actions";
@@ -794,14 +794,7 @@ export default async function DashboardPage() {
                   ? `Reviewed ${formatTimeAgo(lastDiscoveryRunAt)}`
                   : "Genesis hasn't reviewed this business yet"}
               </span>
-              <form action={reviewBusinessWithGenesis}>
-                <SubmitButton
-                  pendingText="Reviewing..."
-                  className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
-                >
-                  ✨ Ask Genesis to Review My Business
-                </SubmitButton>
-              </form>
+              <ReviewBusinessButton className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]" />
             </div>
           </div>
           <DiscoveryFeed items={discoveryItems} />
