@@ -383,7 +383,12 @@ export async function runCognitiveReview(params: {
   // ordering guarantee this file already held before this function existed
   // to share the read with other callers, unchanged.
   const understanding = await getBusinessUnderstanding(storeId);
-  const { profile: businessProfile, beliefs, recentDecisions: recentDecisionOutcomes } = understanding;
+  const {
+    profile: businessProfile,
+    beliefs,
+    recentDecisions: recentDecisionOutcomes,
+    platformRelationship,
+  } = understanding;
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
 
@@ -518,13 +523,14 @@ export async function runCognitiveReview(params: {
     // actionTypes with real, sufficient history appear at all — see
     // SYSTEM_PROMPT for how to weigh this against everything else.
     actionTypeTrackRecord,
-    // Growth Points Economy — the store's real current balance (already on
-    // the `store` row fetched above, no new query). Context only, never a
-    // gate: see SYSTEM_PROMPT's own guidance on this — every finding,
-    // opportunity, and recommendation still gets generated regardless of
-    // balance; this only ever informs how a recommendation's own summary
-    // is framed, when framing it that way is genuinely relevant.
-    growthPointBalance: store.growthPointBalance,
+    // Growth Points Economy — the store's real current balance, read from
+    // the canonical BusinessUnderstanding object (J4_FOUNDATION.md's Gap C,
+    // closed 2026-08-05) rather than a separate ad hoc fetch. Context only,
+    // never a gate: see SYSTEM_PROMPT's own guidance on this — every
+    // finding, opportunity, and recommendation still gets generated
+    // regardless of balance; this only ever informs how a recommendation's
+    // own summary is framed, when framing it that way is genuinely relevant.
+    growthPointBalance: platformRelationship.growthPointBalance,
     // Real per-action costs for exactly the actionTypes Reason can actually
     // propose (PROPOSABLE_ACTION_TYPES above) — only entries with a real,
     // non-null catalog value (lib/growthPoints/catalog.ts) appear at all.

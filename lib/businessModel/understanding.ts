@@ -37,6 +37,22 @@ export interface ActiveThought {
   generatedAt: string;
 }
 
+// J4 Foundation, Gap C (J4_FOUNDATION.md, closed 2026-08-05) — the store's
+// own relationship with the platform itself, a genuinely different axis
+// from the four categories above: not a fact about the owner's business,
+// a fact about the owner's relationship with Genesis. Real as of the
+// Growth Points pricing freeze; previously fetched ad hoc and
+// independently by both cognitiveLayer.ts and ai-actions.ts (the same
+// duplicated-assembly problem Gap A eliminated for facts/beliefs,
+// recurring here until now).
+export interface PlatformRelationship {
+  planId: string | null;
+  planName: string | null;
+  growthPointBalance: number;
+  subscriptionStatus: string | null;
+  businessPartnerTrialEndsAt: string | null;
+}
+
 export interface BusinessUnderstanding {
   profile: BusinessProfile;
   beliefs: Awaited<ReturnType<typeof getBeliefs>>;
@@ -49,11 +65,12 @@ export interface BusinessUnderstanding {
   // most recent so this stays a real, current snapshot, not an
   // ever-growing unbounded history for a long-lived store.
   activeThoughts: ActiveThought[];
+  platformRelationship: PlatformRelationship;
   asOf: string;
 }
 
 export async function getBusinessUnderstanding(storeId: string): Promise<BusinessUnderstanding> {
-  const [profile, beliefs, recentDecisions, activeOutputs] = await Promise.all([
+  const [profile, beliefs, recentDecisions, activeOutputs, store] = await Promise.all([
     getBusinessProfile(storeId),
     getBeliefs(storeId),
     getRecentDecisionOutcomes(storeId),
@@ -62,6 +79,16 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
       orderBy: { generatedAt: "desc" },
       take: 20,
       select: { id: true, kind: true, summary: true, priority: true, confidence: true, generatedAt: true },
+    }),
+    prisma.store.findUnique({
+      where: { id: storeId },
+      select: {
+        planId: true,
+        growthPointBalance: true,
+        subscriptionStatus: true,
+        businessPartnerTrialEndsAt: true,
+        plan: { select: { name: true } },
+      },
     }),
   ]);
 
@@ -77,6 +104,13 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
       confidence: o.confidence,
       generatedAt: o.generatedAt.toISOString(),
     })),
+    platformRelationship: {
+      planId: store?.planId ?? null,
+      planName: store?.plan?.name ?? null,
+      growthPointBalance: store?.growthPointBalance ?? 0,
+      subscriptionStatus: store?.subscriptionStatus ?? null,
+      businessPartnerTrialEndsAt: store?.businessPartnerTrialEndsAt?.toISOString() ?? null,
+    },
     asOf: new Date().toISOString(),
   };
 }

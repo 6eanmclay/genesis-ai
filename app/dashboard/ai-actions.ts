@@ -2286,8 +2286,10 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
               activeThoughts: understanding.activeThoughts,
               // Growth Points Economy — same real signal, same "context
               // only, never a gate" semantics as cognitiveLayer.ts's own
-              // Reason pass (lib/intelligence/cognitiveLayer.ts).
-              growthPointBalance: store.growthPointBalance,
+              // Reason pass (lib/intelligence/cognitiveLayer.ts). Read from
+              // the canonical BusinessUnderstanding object (J4_FOUNDATION.md's
+              // Gap C, closed 2026-08-05) rather than a separate ad hoc fetch.
+              growthPointBalance: understanding.platformRelationship.growthPointBalance,
               growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),
             },
             null,
