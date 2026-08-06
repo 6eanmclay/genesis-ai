@@ -9,7 +9,7 @@ import { getOrderSummary, getRevenueTrend } from "@/lib/dashboard/whatHappened";
 import { getNewCustomerCount } from "@/lib/dashboard/customers";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { getBaseUrl } from "@/lib/integrations/util";
-import { sendStoreMessage } from "./ai-actions";
+import { sendStoreMessage, uploadBusinessAssetFromChat } from "./ai-actions";
 import { signOutOfGenesis } from "./actions";
 import { DashboardShell } from "./DashboardShell";
 
@@ -329,6 +329,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       newCustomerCount={newCustomerCount}
       genesisMessages={storeMessages}
       sendGenesisMessage={sendStoreMessage}
+      uploadGenesisAsset={uploadBusinessAssetFromChat}
       growthPointBalance={store.growthPointBalance}
       // The real Genesis Language signals — Yellow reuses the same grouped
       // count computed above; Purple/Red are real, deduplicated

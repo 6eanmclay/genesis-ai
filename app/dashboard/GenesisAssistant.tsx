@@ -122,6 +122,64 @@ function GenesisWorkingPublisher() {
 // form submission) inside startTransition so this button gets its own
 // local pending state, rather than trying to fight useFormStatus (which
 // only ever tracks the *parent* form's own native submission).
+// Business Assets M2 — "the chat is the place you give Genesis business
+// information," not a separate Products/Settings form. Same non-nested-
+// form pattern as ConfirmCeilingOverride below (the whole panel is already
+// one <form>, so this can't be its own <form>): a hidden file input
+// triggered by a styled button, submitted directly via the Server Action
+// reference rather than native form submission. `uploadAsset` is optional
+// on the parent — the pre-launch draft page (app/dashboard/page.tsx) has
+// no real Store yet for a BusinessRecord to attach to, so it doesn't pass
+// one, and this row simply doesn't render there.
+function UploadAssetButton({
+  label,
+  icon,
+  accept,
+  uploadAsset,
+  currentPath,
+  onFailure,
+}: {
+  label: string;
+  icon: string;
+  accept: string;
+  uploadAsset: (formData: FormData) => void;
+  currentPath: string;
+  onFailure: (message: string) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0] ?? null;
+          event.target.value = "";
+          if (!file) return;
+          const formData = new FormData();
+          formData.set("file", file);
+          formData.set("currentPath", currentPath);
+          startTransition(async () => {
+            const result = await callGenesisAction(() => Promise.resolve(uploadAsset(formData)));
+            if (!result.ok) onFailure(result.message);
+          });
+        }}
+      />
+      <button
+        type="button"
+        disabled={isPending}
+        onClick={() => inputRef.current?.click()}
+        className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.06] lg:border-[rgba(139,124,246,0.18)] lg:text-[rgba(244,242,251,0.62)] lg:hover:bg-white/[.06]"
+      >
+        {isPending ? "Uploading…" : `${icon} ${label}`}
+      </button>
+    </>
+  );
+}
+
 function ConfirmCeilingOverride({
   sendMessage,
   previousUserMessage,
@@ -171,6 +229,7 @@ export function GenesisAssistant({
   storeName,
   messages,
   sendMessage,
+  uploadAsset,
   hasUrgentIssue,
   hasPendingDecision,
   hasOpportunity,
@@ -182,6 +241,9 @@ export function GenesisAssistant({
   storeName: string;
   messages: Message[];
   sendMessage: (formData: FormData) => void;
+  // Business Assets M2 — see UploadAssetButton's own comment for why this
+  // is optional. Undefined anywhere the caller has no real Store yet.
+  uploadAsset?: (formData: FormData) => void;
   focusedContext?: FocusedContext | null;
   // "Welcome to Genesis" (v20) — the pre-launch draft review page wants
   // chat open by default even with zero messages yet, since talking to
@@ -441,6 +503,33 @@ export function GenesisAssistant({
       )}
 
       <div className="flex shrink-0 flex-col gap-2 border-t border-black/[.08] p-4 dark:border-white/[.145] lg:border-[rgba(139,124,246,0.18)]">
+        {uploadAsset && (
+          <div className="flex flex-wrap items-center gap-2">
+            <UploadAssetButton
+              label="Upload Photos"
+              icon="📷"
+              accept="image/png,image/jpeg,image/webp"
+              uploadAsset={uploadAsset}
+              currentPath={pathname}
+              onFailure={setSendError}
+            />
+            <UploadAssetButton
+              label="Upload Documents"
+              icon="📄"
+              accept="application/pdf"
+              uploadAsset={uploadAsset}
+              currentPath={pathname}
+              onFailure={setSendError}
+            />
+            {/* Honest "coming soon" — zero click target, matching
+                ConnectorCard.tsx's own precedent for an unbuilt capability.
+                Plugs into the same asset/ingestBusinessAsset pipeline the
+                moment video gets its own dedicated milestone. */}
+            <span className="cursor-default rounded-full border border-dashed border-black/[.08] px-3 py-1.5 text-xs text-zinc-400 dark:border-white/[.145] dark:text-zinc-500 lg:border-[rgba(244,242,251,0.2)] lg:text-[rgba(244,242,251,0.4)]">
+              🎬 Upload Videos — coming soon
+            </span>
+          </div>
+        )}
         <textarea
           name="message"
           placeholder="Ask Genesis anything about your business…"

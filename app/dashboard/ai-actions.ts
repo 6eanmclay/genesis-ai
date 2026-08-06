@@ -47,6 +47,7 @@ import { RecoverableError, toActionState, type ActionState } from "@/lib/actionS
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
+import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { BusinessFactSchema, toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
@@ -1319,6 +1320,33 @@ const ProductImageRequestSchema = z.object({
   reply: z.string(),
 });
 
+// Business Assets — a real beta tester wrote "I have files I want to
+// upload" and Genesis fell through every other classifier below to the
+// full, expensive content-generation pipeline, which took long enough to
+// risk the client-side network-timeout race (see
+// GENESIS_NETWORK_FAILURE_MESSAGE's own comment — a slow-but-eventually-
+// successful turn can still show the merchant a local error banner) and,
+// worse, confidently told them it "can't open uploaded files directly" —
+// false as of Business Assets M2. This is the cheapest possible check
+// (matches ProductImageRequestSchema/DataQuestionSchema's own pattern) and
+// runs first, before any other classifier, so this exact message class
+// never reaches the slow pipeline at all. The reply is a fixed,
+// deterministic string, not model-generated — this is precisely the kind
+// of claim ("uploads work, here's how") that must never be paraphrased
+// into something inaccurate the way the fallback path already was.
+const UploadIntentSchema = z.object({
+  isUploadIntent: z.boolean(),
+});
+
+const STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is the merchant saying they have files — photos, documents, PDFs, spreadsheets, contracts, logos, invoices, SOPs, or similar — that they want to give Genesis, or asking how to upload/share files with Genesis?
+
+Set isUploadIntent: true for messages like "I have files I want to upload," "can I send you my logo," "I have a PDF of my supplier contract," "how do I upload photos," "I want to give you some documents about my business," or similar — any real expression of wanting to provide files, documents, photos, or videos to Genesis, or asking how to do so.
+
+Set isUploadIntent: false for everything else, including a message that merely mentions a photo or document in passing without expressing intent to provide one right now (e.g. "the photo on my homepage looks bad" is about existing content, not an upload; "can you replace my product photo" is an image-generation request, handled elsewhere).`;
+
+const UPLOAD_INTENT_REPLY =
+  "Great — upload them here and I'll analyze them, organize them, and use them to better understand your business. Use the buttons below to get started: Upload Photos or Upload Documents (Upload Videos is coming soon).";
+
 const STORE_CHAT_IMAGE_REQUEST_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. You are given the store's active product names and the merchant's latest message. Decide only one thing: is this message asking to replace, regenerate, or find a new photo for one or more existing products?
 
 Most messages are not this — identity, theme, branding, policy, and general questions are handled elsewhere and should get isImageRequest: false with an empty reply (it's ignored in that case).
@@ -2131,6 +2159,46 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   await prisma.storeMessage.create({
     data: { storeId: store.id, role: "user", content: userMessage },
   });
+
+  // See UploadIntentSchema's own comment above for why this runs first,
+  // before even the STORE_MANAGE gate below — pointing at the upload
+  // buttons never changes the store, so it's safe for any role with real
+  // chat access, and it's the one message class every branch below would
+  // otherwise mishandle.
+  const uploadIntentOutcome = await callGenesisModel({
+    model: "claude-opus-4-8",
+    max_tokens: 200,
+    thinking: { type: "adaptive" },
+    system: STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: userMessage }],
+    output_config: { effort: "low", format: zodOutputFormat(UploadIntentSchema) },
+  }, { storeId: store.id, confirmedOverride, feature: "store_chat_upload_intent_detection" });
+  const uploadIntentResult = uploadIntentOutcome.ok ? uploadIntentOutcome.message.parsed_output : null;
+
+  if (uploadIntentResult?.isUploadIntent) {
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: UPLOAD_INTENT_REPLY },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "SUCCESS",
+      verified: false,
+      message: UPLOAD_INTENT_REPLY,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: { kind: "upload_intent" },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
+      likelyRephraseOf,
+    });
+    revalidatePath(returnTo);
+    redirect(returnTo);
+  }
 
   // Every current Genesis capability for a live store (identity, theme,
   // brand content, homepage, policies, marketing, design) falls under
@@ -3313,6 +3381,58 @@ export async function sendStoreMessage(formData: FormData) {
   const confirmedOverride = formData.get("confirmedOverride") === "true";
 
   await applyGenesisMessageToStore(session.user.id, userMessage, returnTo, confirmedOverride);
+}
+
+// Business Assets M2 — uploading a photo or document directly inside the
+// Genesis chat, not a separate Products/Settings form. Deliberately a
+// standalone action (not routed through applyGenesisMessageToStore): a
+// file isn't a chat message Genesis needs to reason about turn-by-turn,
+// it's new business data (see ingestBusinessAsset) — the "Uploaded a
+// photo: ..." StoreMessage below exists purely so the upload reads as a
+// real turn in the conversation, matching the product principle this
+// milestone is named for ("the chat is the place you give Genesis
+// business information"). Classification into a real assistant reply
+// (M3/M4) still lands as further StoreMessage rows in the same thread.
+export async function uploadBusinessAssetFromChat(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const file = formData.get("file") as File | null;
+  if (!file || file.size === 0) {
+    throw new Error("Please choose a file to upload.");
+  }
+
+  const currentPath = (formData.get("currentPath") as string) || "/dashboard";
+  const returnTo = currentPath.startsWith("/dashboard") ? currentPath : "/dashboard";
+
+  const resolved = await resolveUserStore(session.user.id);
+  if (!resolved) {
+    redirect(returnTo);
+  }
+  const { store, role } = resolved;
+  if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
+    throw new Error("You don't have permission to do this.");
+  }
+
+  const record = await ingestBusinessAsset(store.id, file);
+  const data = record.data as { fileType: string; originalFilename: string };
+  const label = data.fileType === "document" ? "document" : "photo";
+
+  // Never expose internal storage details (Blob URLs, record ids) in a
+  // message the owner reads — same voice-mechanics rule every other
+  // owner-facing StoreMessage in this file already follows.
+  await prisma.storeMessage.create({
+    data: {
+      storeId: store.id,
+      role: "user",
+      content: `Uploaded a ${label}: ${data.originalFilename}`,
+    },
+  });
+
+  revalidatePath(returnTo);
+  redirect(returnTo);
 }
 
 const PERSONALITY_PROMPTS: Record<string, string> = {

@@ -25,6 +25,7 @@ export const AI_FEATURES = [
   "draft_chat_content_secondary",
   "draft_chat_composition",
   // Live-store chat (applyGenesisMessageToStore)
+  "store_chat_upload_intent_detection",
   "store_chat_data_question",
   "store_chat_data_answer",
   "store_chat_business_fact",

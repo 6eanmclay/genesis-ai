@@ -91,6 +91,7 @@ export function DashboardShell({
   newCustomerCount,
   genesisMessages,
   sendGenesisMessage,
+  uploadGenesisAsset,
   growthPointBalance,
   hasUrgentIssue,
   hasPendingDecision,
@@ -127,6 +128,9 @@ export function DashboardShell({
   newCustomerCount: number | null;
   genesisMessages: GenesisMessage[];
   sendGenesisMessage: (formData: FormData) => void;
+  // Business Assets M2 — see GenesisAssistant's own comment on why this is
+  // optional (this shell always has a real Store, so it always passes one).
+  uploadGenesisAsset?: (formData: FormData) => void;
   growthPointBalance: number;
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
@@ -798,6 +802,7 @@ export function DashboardShell({
         storeName={storeName}
         messages={genesisMessages}
         sendMessage={sendGenesisMessage}
+        uploadAsset={uploadGenesisAsset}
         hasUrgentIssue={hasUrgentIssue}
         hasPendingDecision={hasPendingDecision}
         hasOpportunity={hasOpportunity}

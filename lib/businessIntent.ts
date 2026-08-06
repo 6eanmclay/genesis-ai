@@ -40,6 +40,11 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   draft_chat_content_primary: "build_business",
   draft_chat_content_secondary: "build_business",
   draft_chat_composition: "build_business",
+  // Same reasoning as store_chat_business_fact/j4_meeting_listen_extraction
+  // below — detecting that the owner wants to hand Genesis real business
+  // knowledge is the same kind of work, just routed to the upload flow
+  // instead of a captured fact.
+  store_chat_upload_intent_detection: "research",
   store_chat_data_question: "analyze_business",
   store_chat_data_answer: "analyze_business",
   store_chat_business_fact: "research",
