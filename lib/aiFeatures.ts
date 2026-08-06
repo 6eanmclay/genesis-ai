@@ -24,6 +24,8 @@ export const AI_FEATURES = [
   "draft_chat_content_primary",
   "draft_chat_content_secondary",
   "draft_chat_composition",
+  // Business Assets (lib/businessAssets/)
+  "business_asset_classification",
   // Live-store chat (applyGenesisMessageToStore)
   "store_chat_upload_intent_detection",
   "store_chat_data_question",

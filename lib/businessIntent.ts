@@ -45,6 +45,10 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   // knowledge is the same kind of work, just routed to the upload flow
   // instead of a captured fact.
   store_chat_upload_intent_detection: "research",
+  // Turning an uploaded file into durable business knowledge — the same
+  // real kind of work as store_chat_business_fact, just sourced from a
+  // file's actual content instead of a chat statement.
+  business_asset_classification: "research",
   store_chat_data_question: "analyze_business",
   store_chat_data_answer: "analyze_business",
   store_chat_business_fact: "research",

@@ -48,6 +48,7 @@ import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
+import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { BusinessFactSchema, toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
@@ -3429,6 +3430,37 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
       role: "user",
       content: `Uploaded a ${label}: ${data.originalFilename}`,
     },
+  });
+
+  // Business Assets M3/M4 — real classification runs synchronously in the
+  // same turn (comfortable headroom under this deployment's real,
+  // empirically-confirmed 300s Fluid Compute ceiling — see B5's own
+  // resolution — for one classification call), so the owner sees a real,
+  // specific result immediately rather than a generic "got it."
+  const result = await classifyAndExtractAsset(record, store.id);
+  const assistantReply = !result
+    ? `I've saved your ${label}, but I wasn't able to take a proper look at it just now — I'll use it once I can, or you can tell me what it is in the meantime.`
+    : result.isHighConfidence
+      ? `${result.classification.summary} I've filed this under "${result.classification.category.replace(/_/g, " ")}" and it's now part of what I know about your business.`
+      : `I can see this is a ${label}, but I'm not fully sure what it is — ${result.classification.summary} Can you tell me a bit more about what this is, so I file it correctly?`;
+
+  await prisma.storeMessage.create({
+    data: {
+      storeId: store.id,
+      role: "assistant",
+      content: assistantReply,
+    },
+  });
+
+  await recordGenesisExecution({
+    action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+    status: !result ? "WARNING" : result.isHighConfidence ? "SUCCESS" : "WARNING",
+    verified: false,
+    message: assistantReply,
+    retryable: !result,
+    userId: session.user.id,
+    storeId: store.id,
+    metadata: { kind: "business_asset_upload", recordId: record.id },
   });
 
   revalidatePath(returnTo);
