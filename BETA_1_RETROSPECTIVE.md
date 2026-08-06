@@ -118,6 +118,12 @@ Grouped by area. Each of these was found via direct evidence — a real producti
 
 ---
 
+## Addendum — Upload Reliability (2026-08-06, same day, after publication)
+
+Two independent real users (Sean and a family member) hit a new production bug not covered above: chat photo uploads would start, never complete, and fall back to a generic connection-dropped message. Found and fully resolved the same day, in two passes — a first fix (Next.js Server Actions' silent 1MB body default) that was necessary but not sufficient, and a second, real fix (moving the upload itself client-side, straight to Vercel Blob, bypassing a platform-level payload ceiling that the first fix couldn't reach) found only because re-verification used a real iPhone photo instead of trusting the first fix's smaller synthetic test files. Full detail in `CHANGELOG.md`'s "Beta 1 — Upload Reliability Fix" entry. **Resolved and verified live** — not a remaining blocker.
+
+---
+
 ## Provenance
 
-Written 2026-08-06, at Sean's explicit request, to close out the J4 Foundation arc before moving on to expanding integrations. Reflects the real, verified record of this arc plus the already-established record of earlier Beta 1 work (cited, not re-verified, where noted in §4).
+Written 2026-08-06, at Sean's explicit request, to close out the J4 Foundation arc before moving on to expanding integrations. Reflects the real, verified record of this arc plus the already-established record of earlier Beta 1 work (cited, not re-verified, where noted in §4). Amended same day with an Upload Reliability addendum after a new bug was found and fixed post-publication.
