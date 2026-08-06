@@ -199,6 +199,7 @@ model Store {
   beliefs                   Belief[]
   aiUsageEvents             AiUsageEvent[]
   growthPointTransactions   GrowthPointTransaction[]
+  tasks                     Task[]
 
   @@index([planId])
 }
@@ -779,6 +780,57 @@ model GenesisObservation {
   // (e.g. "no payment connected"), same honest-null convention.
   recordId        String?
   entityType      String?
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, dedupeKey])
+  @@index([storeId, status])
+}
+
+// BUSINESS_ASSETS_ARCHITECTURE.md M1 — the unified representation of "one
+// real thing for the owner (or J4) to do," additive alongside
+// AttentionItem/GenesisObservation/NextBestAction rather than replacing
+// their own detection queries, which keep running unchanged. This is the
+// dual-write target those sources upsert into (see lib/dashboard/tasks.ts),
+// proving the model on real data before any rendering path fully cuts over
+// to it. Same upsert-by-dedupeKey identity pattern as GenesisObservation —
+// re-detecting the same real condition refreshes this row in place rather
+// than creating a duplicate.
+model Task {
+  id        String @id @default(cuid())
+  storeId   String
+  dedupeKey String
+
+  // Source — provenance, never identity. Mirrors GenesisObservation's own
+  // recordId/entityType nullable-pair convention below.
+  source            String // "state_issue" | "brand_gap" | "observation" | "next_best_action" | "manual" | "chat"
+  sourceId          String?
+  relatedRecordId   String?
+  relatedEntityType String?
+  relatedAssetId    String? // BusinessRecord (entityType: "asset") this task references, when there is one
+
+  title   String
+  summary String
+  context Json // structured "why this exists" snapshot, not a restatement
+
+  // Action — how this connects to the real execution engine, when it does.
+  // Deliberately nullable: a task can exist with no automatable action yet.
+  actionType    String?
+  trustLevel    String  @default("recommend") // "inform" | "recommend" | "prepare" | "auto_execute" | "always_approve"
+  requiredInput Json?
+  actionHref    String? // plain navigation fallback, same mechanism every other card in this codebase already uses
+
+  priority String // "FAILED" | "WARNING" | "opportunity" — reuses AttentionItem's existing severity vocabulary
+  status   String @default("OPEN") // OPEN | IN_PROGRESS | AWAITING_INPUT | COMPLETED | DISMISSED
+
+  // Conversation — set once a card is clicked and a real seeded turn exists
+  // (M2 — StoreMessage.taskId doesn't exist yet, so this stays unset today).
+  seedMessageId String?
+
+  completedAt DateTime?
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 

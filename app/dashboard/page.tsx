@@ -29,12 +29,15 @@ import { getInventorySnapshot } from "@/lib/dashboard/inventory";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { runOpportunisticAiReviewIfStale } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
+import { runTaskDetection } from "@/lib/dashboard/taskDetectors";
+import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
 import { AttentionPanel } from "./AttentionPanel";
 import { DiscoveryFeed } from "./DiscoveryFeed";
 import { ApprovalsSummary } from "./ApprovalsSummary";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessJourney } from "./BusinessJourney";
+import { TaskCards } from "./TaskCards";
 import { logJourneyStageIfChanged } from "@/lib/dashboard/journeyStage";
 
 const BRAND_PERSONALITIES = [
@@ -653,6 +656,19 @@ export default async function DashboardPage() {
       }).catch(() => {})
     );
   }
+
+  // BUSINESS_ASSETS_ARCHITECTURE.md M1 — awaited, not after(), unlike the
+  // journey-stage logger above: that call is pure instrumentation that
+  // doesn't affect this render, while task detection has to be visible on
+  // THIS page load for TaskCards below to render real, current data rather
+  // than lagging one view behind.
+  if (isOwnerManager) {
+    await runTaskDetection(store.id, {
+      hasActiveProducts: (inventorySnapshot?.activeCount ?? 0) > 0,
+      logoUrl: store.logoUrl,
+    });
+  }
+  const openTasks = isOwnerManager ? await getOpenTasks(store.id) : [];
   const [discoveryItems, lastDiscoveryRunAt, pendingApprovals, nextRecommendation] = canViewAnalytics
     ? await Promise.all([
         getDiscoveryFeed(store.id),
@@ -809,6 +825,14 @@ export default async function DashboardPage() {
           stripeIntegration={stripeIntegration}
           paypalIntegration={paypalIntegration}
           allTimeOrderCount={orderSummary.allTimeOrderCount}
+        />
+      )}
+
+      {/* Tasks — BUSINESS_ASSETS_ARCHITECTURE.md M1's first real rendering
+          surface for the new unified Task model. */}
+      {isOwnerManager && (
+        <TaskCards
+          tasks={openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary, actionHref: t.actionHref }))}
         />
       )}
 
