@@ -14,6 +14,8 @@ const PATHS: Record<string, string> = {
   "growth-points": "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 5v10M7 12h10",
   settings:
     "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8-3a8 8 0 0 1-.15 1.5l2 1.5-2 3.5-2.3-.9a8 8 0 0 1-2.6 1.5L14.5 22h-5l-.45-2.4a8 8 0 0 1-2.6-1.5l-2.3.9-2-3.5 2-1.5A8 8 0 0 1 4 12a8 8 0 0 1 .15-1.5l-2-1.5 2-3.5 2.3.9a8 8 0 0 1 2.6-1.5L9.5 2h5l.45 2.4a8 8 0 0 1 2.6 1.5l2.3-.9 2 3.5-2 1.5c.1.48.15.98.15 1.5Z",
+  // Beta Readiness P4 — an open book, for the "Understanding" nav entry.
+  understanding: "M3 6c3-1.5 6-1.5 9 0v14c-3-1.5-6-1.5-9 0V6Zm18 0c-3-1.5-6-1.5-9 0v14c3-1.5 6-1.5 9 0V6Z",
 };
 
 export function NavIcon({ section, className }: { section: string; className?: string }) {

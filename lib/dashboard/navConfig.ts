@@ -83,4 +83,10 @@ export const YOUR_BUSINESS_SECTIONS: NavSection[] = [
   { key: "brand", label: "Identity", href: "/dashboard/brand", permission: "store:manage" },
   { key: "website", label: "Website", href: "/dashboard/website", permission: "store:manage" },
   { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
+  // Beta Readiness P4 — the first real, owner-facing view of
+  // getBusinessUnderstanding() (J4_FOUNDATION.md). Read-only by design (see
+  // app/dashboard/understanding/page.tsx's own comment); intentionally not
+  // added to layout.tsx's YOUR_BUSINESS_OWNED_KEYS — it owns no actions or
+  // observations to roll a badge state up from.
+  { key: "understanding", label: "Understanding", href: "/dashboard/understanding", permission: "store:manage" },
 ];
