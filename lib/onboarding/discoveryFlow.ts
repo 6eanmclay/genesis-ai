@@ -34,7 +34,9 @@ export function initialDiscoveryState(): DiscoveryState {
     creativeDirectionOptions: null,
     creativeDirection: null,
     productSource: null,
+    fulfillmentStrategy: null,
     selectedCandidate: null,
+    selfSuppliedCostInCents: null,
     candidateReasoning: null,
     fulfillmentConnected: false,
     pricing: null,
@@ -77,7 +79,7 @@ export function applyCreativeApproachAnswer(
   creativeApproach: "custom" | "upload" | "resell"
 ): DiscoveryState {
   if (creativeApproach === "resell") {
-    return { ...state, creativeApproach, productSource: "discover", step: "fulfillment_connect" };
+    return { ...state, creativeApproach, productSource: "discover", step: "fulfillment_strategy" };
   }
   if (creativeApproach === "upload") {
     return { ...state, creativeApproach, step: "artwork_upload" };
@@ -96,7 +98,7 @@ export function applyCreativeDirectionSelected(
   state: DiscoveryState,
   chosen: CreativeDirectionOption
 ): DiscoveryState {
-  return { ...state, creativeDirection: chosen, creativeDirectionOptions: null, step: "fulfillment_connect" };
+  return { ...state, creativeDirection: chosen, creativeDirectionOptions: null, step: "fulfillment_strategy" };
 }
 
 // The upload path skips "review 3 options" entirely — one real upload
@@ -106,7 +108,45 @@ export function applyArtworkUploaded(
   state: DiscoveryState,
   direction: CreativeDirectionOption
 ): DiscoveryState {
-  return { ...state, creativeDirection: direction, step: "fulfillment_connect" };
+  return { ...state, creativeDirection: direction, step: "fulfillment_strategy" };
+}
+
+// Beta feedback (2026-08-06) — the real, honest branch replacing an
+// unconditional jump to fulfillment_connect. "printful" is the only
+// answer that ever attempts a real provider connection; every other
+// answer means "no outside provider right now."
+//
+// The resell approach is a real, named exception: it means "browse an
+// existing fulfillable catalog," and Printful's is the only one that
+// exists today — there is no self-fulfillment catalog to fall back to.
+// Rather than silently doing something incoherent, a non-Printful choice
+// here stays on this same step; the UI renders the honest "you'll need a
+// connected provider, or go back and describe your own product instead"
+// sub-state (see BusinessScreen.tsx) rather than a fabricated path
+// forward.
+export function applyFulfillmentStrategyChosen(
+  state: DiscoveryState,
+  strategy: "printful" | "self" | "other" | "later"
+): DiscoveryState {
+  if (strategy === "printful") {
+    return { ...state, fulfillmentStrategy: strategy, step: "fulfillment_connect" };
+  }
+  if (state.creativeApproach === "resell") {
+    return { ...state, fulfillmentStrategy: strategy };
+  }
+  return { ...state, fulfillmentStrategy: strategy, step: "self_fulfillment_pricing" };
+}
+
+// Mirrors applyPricingConfirmed's own terminal transition exactly (see
+// below) without ever touching selectedCandidate — reached only from
+// custom/upload, which always has a real creativeDirection by this point,
+// so storefront_reveal is the only real destination.
+export function applySelfFulfillmentPriced(
+  state: DiscoveryState,
+  costInCents: number,
+  pricing: PriceRecommendation
+): DiscoveryState {
+  return { ...state, selfSuppliedCostInCents: costInCents, pricing, step: "storefront_reveal" };
 }
 
 export function applyProductSourceAnswer(

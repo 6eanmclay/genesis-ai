@@ -17,7 +17,13 @@ export type DiscoveryStep =
   | "creative_direction_review"
   | "artwork_upload"
   | "product_source"
+  // Beta feedback (2026-08-06) — fulfillment is a real choice, never a
+  // required prerequisite. Every path that used to land straight on
+  // fulfillment_connect now lands here first — see discoveryFlow.ts's
+  // applyFulfillmentStrategyChosen for where each answer actually goes.
+  | "fulfillment_strategy"
   | "fulfillment_connect"
+  | "self_fulfillment_pricing"
   | "creative_product_building"
   | "product_discovery"
   | "pricing"
@@ -70,7 +76,20 @@ export interface DiscoveryState {
   // creativeDirection column once persisted.
   creativeDirection: CreativeDirectionOption | null;
   productSource: "existing" | "discover" | null;
+  // Beta feedback (2026-08-06) — the real answer to "how do you fulfill
+  // orders?", asked before any provider connection is ever attempted.
+  // "printful" is the only value that ever leads to fulfillment_connect;
+  // the other three all mean "no outside provider," distinguished only
+  // for future Shipping & Fulfillment reporting (ARCHITECTURE.md), never
+  // branched on differently today.
+  fulfillmentStrategy: "printful" | "self" | "other" | "later" | null;
   selectedCandidate: FulfillmentCandidate | null;
+  // Set only on the self-fulfillment path (custom/upload + a non-Printful
+  // fulfillmentStrategy) — one real, owner-entered all-in cost, feeding
+  // the exact same recommendPrice/applyOwnerPrice functions the Printful
+  // path already uses. Mutually exclusive with selectedCandidate; never
+  // both set on the same draft.
+  selfSuppliedCostInCents: number | null;
   // Real, Claude-generated reasoning for why this specific candidate was
   // chosen, grounded in ideaText/brandPositioningText — never a canned
   // per-category template. Set alongside selectedCandidate. For the custom

@@ -3675,6 +3675,18 @@ export async function confirmStoreDraftCore(
   const storeName = creativeDirection?.name ?? draft.name;
   const storeDescription = creativeDirection?.description ?? draft.description;
 
+  // Beta feedback (2026-08-06) — the self-fulfillment counterpart to
+  // fulfillmentSelection above: a real creative direction and real
+  // owner-confirmed pricing (confirmSelfFulfillmentPricing), but no
+  // connected provider — selectedCandidate was never set on this path.
+  // Reuses the direction's own already-generated productImageUrl, which
+  // was produced independently of any fulfillment provider at
+  // direction-generation time, rather than sourcing a new image.
+  const selfFulfilledSelection =
+    !fulfillmentSelection && creativeDirection && onboardingState?.pricing
+      ? { pricing: onboardingState.pricing }
+      : null;
+
   const baseSlug = slugify(storeName);
   let slug = baseSlug;
   let suffix = 1;
@@ -3684,10 +3696,10 @@ export async function confirmStoreDraftCore(
   }
 
   // Resolved once here, not on every storefront page load — see lib/unsplash.ts.
-  // Skipped entirely on the fulfillment-selection branch below — the
-  // candidate already carries a real image from its connector, no AI
-  // sourcing needed or wanted.
-  const productImages = fulfillmentSelection
+  // Skipped entirely on the fulfillment-selection and self-fulfillment
+  // branches below — both already have a real image (the connector's own,
+  // or the creative direction's own), no AI sourcing needed or wanted.
+  const productImages = fulfillmentSelection || selfFulfilledSelection
     ? []
     : await Promise.all(
         products.map((p) =>
@@ -3772,7 +3784,26 @@ export async function confirmStoreDraftCore(
               },
             ],
           }
-        : {
+        : selfFulfilledSelection
+          ? {
+              // Self-fulfillment (2026-08-06) — the owner ships this
+              // themselves, so there's no external provider/variant to
+              // record; fulfillmentProvider/externalVariantId stay null,
+              // the exact same shape a manually-created dashboard product
+              // already has (app/dashboard/actions.ts's createProduct).
+              create: [
+                {
+                  name: creativeDirection!.name,
+                  description: creativeDirection!.description,
+                  priceInCents: selfFulfilledSelection.pricing.retailPriceInCents,
+                  position: 0,
+                  imageUrl: creativeDirection!.productImageUrl,
+                  costInCents:
+                    selfFulfilledSelection.pricing.retailPriceInCents - selfFulfilledSelection.pricing.profitInCents,
+                },
+              ],
+            }
+          : {
             create: products.map((p, index) => ({
               name: p.name,
               description: p.description || null,

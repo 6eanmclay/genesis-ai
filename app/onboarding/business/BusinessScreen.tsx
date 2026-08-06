@@ -17,6 +17,8 @@ import {
   discoverHeroProduct,
   getPricingPreview,
   confirmPricing,
+  submitFulfillmentStrategy,
+  confirmSelfFulfillmentPricing,
 } from "../actions";
 import type { CreativeDirectionOption, DiscoveryState, DiscoveryStep } from "@/lib/onboarding/types";
 import type { FulfillmentCandidate } from "@/lib/fulfillment/types";
@@ -53,7 +55,9 @@ type Beat =
   | "generating_directions"
   | "direction_review"
   | "artwork_upload"
+  | "fulfillment_strategy"
   | "connecting"
+  | "self_fulfillment_pricing"
   | "building_product"
   | "considering"
   | "reveal"
@@ -73,8 +77,12 @@ function mapStepToBeat(step: DiscoveryStep): Beat {
       return "direction_review";
     case "artwork_upload":
       return "artwork_upload";
+    case "fulfillment_strategy":
+      return "fulfillment_strategy";
     case "fulfillment_connect":
       return "connecting";
+    case "self_fulfillment_pricing":
+      return "self_fulfillment_pricing";
     case "creative_product_building":
       return "building_product";
     case "product_discovery":
@@ -124,6 +132,17 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
   const [chosenDirection, setChosenDirection] = useState<CreativeDirectionOption | null>(initialState.creativeDirection);
   const [storeUrl, setStoreUrl] = useState<string | null>(null);
   const [storeName, setStoreName] = useState<string | null>(null);
+
+  // Beta feedback (2026-08-06) — tracked locally so the resell + non-Printful
+  // sub-state (no catalog to browse without a connected provider) can render
+  // in place, without a server round trip just to decide what to show.
+  const [fulfillmentStrategy, setFulfillmentStrategy] = useState<DiscoveryState["fulfillmentStrategy"]>(
+    initialState.fulfillmentStrategy
+  );
+  const [costText, setCostText] = useState("");
+  const [creativeApproach, setCreativeApproach] = useState<DiscoveryState["creativeApproach"]>(
+    initialState.creativeApproach
+  );
 
   const [candidate, setCandidate] = useState<FulfillmentCandidate | null>(initialState.selectedCandidate);
   const [reasoning, setReasoning] = useState<string | null>(initialState.candidateReasoning);
@@ -252,8 +271,49 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
     });
   }
 
+  // Beta feedback (2026-08-06) — the real answer to "how do you fulfill
+  // orders?". Only "printful" ever touches startFulfillmentConnect; every
+  // other answer means no outside provider. See
+  // applyFulfillmentStrategyChosen's own comment for the resell exception
+  // (stays on this same beat, rendering the sub-message below instead of
+  // advancing) — that's why this checks state.step rather than always
+  // advancing the beat the way handleApproachChoice above does.
+  function handleFulfillmentStrategyChoice(strategy: "printful" | "self" | "other" | "later") {
+    setError(null);
+    startTransition(async () => {
+      try {
+        const { state } = await submitFulfillmentStrategy(strategy);
+        setFulfillmentStrategy(state.fulfillmentStrategy);
+        setBeat(mapStepToBeat(state.step));
+      } catch {
+        setError("Something went wrong — try again.");
+      }
+    });
+  }
+
+  function handleSelfFulfillmentPriceSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const dollars = parseFloat(costText);
+    if (isNaN(dollars) || dollars < 0) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        const { state, storeUrl: url, storeName: name } = await confirmSelfFulfillmentPricing(
+          Math.round(dollars * 100)
+        );
+        if (url) setStoreUrl(url);
+        if (name) setStoreName(name);
+        setBeat(mapStepToBeat(state.step));
+      } catch {
+        setError("Something went wrong — try again.");
+      }
+    });
+  }
+
   function handleApproachChoice(approach: "custom" | "upload" | "resell") {
     setError(null);
+    setFulfillmentStrategy(null);
+    setCreativeApproach(approach);
     startTransition(async () => {
       try {
         const { state } = await submitCreativeApproachAnswer(approach);
@@ -463,6 +523,89 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
         </>
       )}
 
+      {beat === "fulfillment_strategy" && (
+        <>
+          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          {creativeApproach === "resell" && fulfillmentStrategy && fulfillmentStrategy !== "printful" ? (
+            <>
+              <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+                Browsing an existing catalog needs a connected provider right now.
+              </p>
+              <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                Connect Printful to browse its catalog, or go back and describe your own product instead — I can set that up without any outside catalog.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  onClick={() => handleFulfillmentStrategyChoice("printful")}
+                  className={primaryButton}
+                  style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
+                >
+                  Connect Printful
+                </button>
+                <button
+                  onClick={() => {
+                    setFulfillmentStrategy(null);
+                    setBeat("approach");
+                  }}
+                  className={ghostButton}
+                  style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.textSecondary }}
+                >
+                  Choose differently
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+                How do you fulfill orders?
+              </p>
+              <div className="flex w-full max-w-md flex-col gap-3">
+                <button
+                  onClick={() => handleFulfillmentStrategyChoice("self")}
+                  className="flex flex-col items-start gap-1 rounded-xl border px-5 py-4 text-left transition-transform hover:-translate-y-0.5"
+                  style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
+                >
+                  <span className="text-sm font-semibold">I ship products myself</span>
+                  <span className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                    You handle making and shipping — I&rsquo;ll price it with you and prepare the business for carrier tools later.
+                  </span>
+                </button>
+                <button
+                  onClick={() => handleFulfillmentStrategyChoice("printful")}
+                  className="flex flex-col items-start gap-1 rounded-xl border px-5 py-4 text-left transition-transform hover:-translate-y-0.5"
+                  style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
+                >
+                  <span className="text-sm font-semibold">I use Printful</span>
+                  <span className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                    Connect Printful and I&rsquo;ll handle printing, cost, and fulfillment automatically.
+                  </span>
+                </button>
+                <button
+                  onClick={() => handleFulfillmentStrategyChoice("other")}
+                  className="flex flex-col items-start gap-1 rounded-xl border px-5 py-4 text-left transition-transform hover:-translate-y-0.5"
+                  style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
+                >
+                  <span className="text-sm font-semibold">I use another fulfillment provider</span>
+                  <span className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                    Not connected yet — you&rsquo;ll price it yourself for now, and I&rsquo;ll let you know when more providers are ready.
+                  </span>
+                </button>
+                <button
+                  onClick={() => handleFulfillmentStrategyChoice("later")}
+                  className="flex flex-col items-start gap-1 rounded-xl border px-5 py-4 text-left transition-transform hover:-translate-y-0.5"
+                  style={{ borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.text }}
+                >
+                  <span className="text-sm font-semibold">I&rsquo;ll set this up later</span>
+                  <span className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                    Let&rsquo;s get your store live first — you can connect a provider anytime from your dashboard.
+                  </span>
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
       {beat === "generating_directions" && (
         <>
           <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
@@ -537,6 +680,51 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
           >
             Continue
           </button>
+        </>
+      )}
+
+      {beat === "self_fulfillment_pricing" && (
+        <>
+          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
+            What does it cost you, all-in, to make and ship one?
+          </p>
+          <p className="text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+            A real number, even a rough one — I&rsquo;ll use it to recommend a fair price.
+          </p>
+          <form onSubmit={handleSelfFulfillmentPriceSubmit} className="w-full max-w-md">
+            <div
+              className="genesis-onboarding-input-wrap flex items-center rounded-full border pl-6 pr-1.5 py-1.5"
+              style={{ backgroundColor: "rgba(244,242,251,0.04)", borderColor: GENESIS_ATMOSPHERE.border }}
+            >
+              <span className="pr-1 text-base" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                $
+              </span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={costText}
+                onChange={(e) => setCostText(e.target.value)}
+                onFocus={() => setGenesisComposing(true)}
+                onBlur={() => setGenesisComposing(false)}
+                placeholder="8.50"
+                autoComplete="off"
+                className="flex-1 bg-transparent py-3.5 px-2 text-base outline-none placeholder:text-white/30"
+                style={{ color: GENESIS_ATMOSPHERE.text }}
+              />
+              <button
+                type="submit"
+                disabled={!costText.trim() || isNaN(parseFloat(costText))}
+                aria-label="Send"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform hover:scale-105 active:scale-95 disabled:opacity-40"
+                style={{ backgroundColor: GENESIS_ATMOSPHERE.violet, color: GENESIS_ATMOSPHERE.bgElevated }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5 12h13M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </form>
         </>
       )}
 

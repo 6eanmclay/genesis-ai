@@ -29,6 +29,8 @@ import {
   applyProductSourceAnswer,
   applyCandidateSelected,
   applyPricingConfirmed,
+  applyFulfillmentStrategyChosen,
+  applySelfFulfillmentPriced,
 } from "@/lib/onboarding/discoveryFlow";
 import type {
   CreativeDirectionOption,
@@ -642,6 +644,49 @@ export async function submitProductSourceAnswer(source: "existing" | "discover")
   return { state: nextState };
 }
 
+// Beta feedback (2026-08-06) — fulfillment is a real choice, never a
+// required step. Pure state transition (applyFulfillmentStrategyChosen)
+// decides where this goes; this action is just the same thin persist
+// wrapper every other submitXAnswer action already is.
+export async function submitFulfillmentStrategy(
+  strategy: "printful" | "self" | "other" | "later"
+): Promise<{ state: DiscoveryState }> {
+  const userId = await requireUserId();
+  const draft = await getOrCreateDraft(userId);
+  const nextState = applyFulfillmentStrategyChosen(readState(draft.onboardingState), strategy);
+  await persistState(draft.id, nextState);
+  return { state: nextState };
+}
+
+// The self-fulfillment counterpart to confirmPricing below — no connector,
+// no getCost() call, just the owner's own real all-in number fed through
+// the identical recommendPrice() every Printful-backed product already
+// prices with. Only ever reached from custom/upload (see
+// applyFulfillmentStrategyChosen), which always has a real creativeDirection
+// and brandPositioning by this point.
+export async function confirmSelfFulfillmentPricing(
+  costInCents: number
+): Promise<{ state: DiscoveryState; storeUrl?: string; storeName?: string }> {
+  const userId = await requireUserId();
+  const draft = await getOrCreateDraft(userId);
+  const state = readState(draft.onboardingState);
+  if (!state.brandPositioning || !state.creativeDirection) {
+    throw new Error("A creative direction must be chosen before pricing.");
+  }
+
+  const recommendation = recommendPrice(costInCents, 0, state.brandPositioning);
+  const nextState = applySelfFulfillmentPriced(state, costInCents, recommendation);
+  await persistState(draft.id, nextState);
+
+  // Mirrors confirmPricing's own early-materialization call exactly — see
+  // that function's own comment for why this must run right after
+  // persistState, and why storefront_reveal needs the real live store.
+  const session = await auth();
+  const { store } = await confirmStoreDraftCore(userId, { sessionInstanceId: session?.user?.sessionInstanceId });
+  const baseUrl = await getBaseUrl();
+  return { state: nextState, storeUrl: `${baseUrl}/store/${store.slug}`, storeName: store.name };
+}
+
 // Returns the URL the client should navigate to — the strategy evaluation
 // (lib/fulfillment/strategy.ts) picks the connector internally; the owner
 // never sees which one.
@@ -926,12 +971,13 @@ export async function confirmPricing(
 // while the anonymous session cookie from before signup is still present.
 // Claims the matching anonymous draft for the new real user and seeds a
 // real OnboardingState from the already-generated concept, landing exactly
-// on fulfillment_connect — the same state applyCreativeDirectionSelected
+// on fulfillment_strategy — the same state applyCreativeDirectionSelected
 // already produces for the activation flow's own custom-design path, so
-// everything downstream (startFulfillmentConnect, buildCreativeProduct,
-// confirmPricing, confirmStoreDraftCore) runs completely unchanged. No data
-// migration, no re-generation — the exact same StoreDraft row just gains a
-// real owner and a real onboardingState.
+// everything downstream (submitFulfillmentStrategy, startFulfillmentConnect,
+// buildCreativeProduct, confirmPricing/confirmSelfFulfillmentPricing,
+// confirmStoreDraftCore) runs completely unchanged. No data migration, no
+// re-generation — the exact same StoreDraft row just gains a real owner
+// and a real onboardingState.
 //
 // A harmless no-op (returns null) for the ordinary "no anonymous draft"
 // case — a returning visitor going straight to /signup, or anyone who
@@ -957,7 +1003,7 @@ export async function claimExperienceDraft(): Promise<{ storeDraftId: string } |
 
   const claimedState: OnboardingState = {
     ...initialDiscoveryState(),
-    step: "fulfillment_connect",
+    step: "fulfillment_strategy",
     businessModelSlug: concept.businessModelSlug,
     ideaText,
     brandPositioning: concept.brandPositioning,
