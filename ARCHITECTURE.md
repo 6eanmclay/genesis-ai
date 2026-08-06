@@ -45,6 +45,24 @@ Treated as one cohesive milestone, not eight unrelated features — every item b
 
 ---
 
+## Shipping & Fulfillment — a future milestone (planned, not started)
+
+**Status: named and scoped 2026-08-06, explicitly not built.** Sean's own framing for why this is high-priority, not just plausible: once Stripe checkout is fully live, the next real question every merchant asks is *"someone bought my product — now how do I ship it?"* Genesis should let them complete that entire workflow without leaving the platform.
+
+**The one real architectural instruction this milestone was scoped under**: build it the same way payments were built — a **Shipping Provider Framework**, not a USPS integration. `lib/integrations/`'s existing `IntegrationConnector` contract (`connect`/`verify`/`disconnect`/`status`, provider-agnostic by design — see *Integration Framework* above) is the real, already-proven shape for this: a common shipping API surface underneath, carrier-specific connector modules on top, so adding UPS or FedEx later is a new connector module, never a redesign. Not starting from zero: `IntegrationProvider`'s own Prisma enum already reserves `USPS` as a future value (`prisma/schema.prisma`), the same "reserved ahead of any real connector" pattern this codebase already uses elsewhere (e.g. `PERMISSIONS.ANALYTICS_VIEW` before anything read it) — this milestone is what finally gives that reservation a real implementation.
+
+Five real phases, in order:
+
+1. **Carrier integration** — USPS and UPS first (both have real, documented APIs suited to the connector pattern above), FedEx next, DHL and international support named as later, not required for the first real version.
+2. **Label purchasing** — buy a real shipping label inside Genesis, generated automatically once an order is marked paid; print labels; generate packing slips.
+3. **Shipping intelligence** — J4 reasons over real package weight, dimensions, shipping class, destination, and each connected carrier's real quoted rate/speed, to recommend concretely: *"USPS Ground Advantage is $6.82"* or *"UPS is only $1.20 more but arrives two days sooner."* This is Understand/Reason work in the same sense every other real recommendation in this app already is (see *J4 Cognitive Architecture* above) — grounded in real quoted rates, never an estimate presented as a quote.
+4. **Order fulfillment** — the real, concrete sequence: order received → payment confirmed → shipping label created → packing slip printed → order marked ready → tracking sent automatically → customer notified. Each step is a real, verifiable state transition, not a single opaque "fulfilled" flag.
+5. **Business intelligence on shipping** — once real shipping data exists, J4 can answer real questions from it: average shipping cost, which products cost the most to ship, which carrier has the fewest delays, monthly postage spend, which destinations cost the most to fulfill. The same Understand-enrichment pattern the Business Intelligence Engine's own 4-tier roadmap already establishes (see above) — new facts feeding Reason's existing inputs, not a new reasoning pipeline.
+
+**Explicitly not decided here**: which carrier ships first in Phase 1 (USPS vs. UPS), the real commercial/API relationship each carrier requires (some, like UPS/FedEx, may need a real business account before their API is usable — a genuine external dependency, the same category of real constraint that paused the Marketing Engine's own Resend integration), and the real schema this needs (`Product` has no weight/dimensions field today, the same kind of honest gap already named for inventory above). Real future scoping work, not implementation defaults.
+
+---
+
 ## Permissions & Roles
 
 Three conceptual roles: **Owner**, **Employee**, **Customer** — but only two are ever stored:
