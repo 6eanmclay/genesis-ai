@@ -34,7 +34,13 @@ export function EditStoreForm({
       </div>
       <div className="flex flex-col gap-1">
         <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">Tagline</label>
-        <p className="text-sm text-black dark:text-zinc-50">{store.tagline || "Not set yet"}</p>
+        <input
+          name="tagline"
+          type="text"
+          defaultValue={!state.ok && state.values?.tagline !== undefined ? state.values.tagline : (store.tagline ?? "")}
+          placeholder="Tagline (optional)"
+          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+        />
       </div>
       <div className="flex flex-col gap-1">
         <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">Description</label>

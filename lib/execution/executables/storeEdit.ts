@@ -5,6 +5,7 @@ import { EXECUTION_ACTIONS } from "../actions";
 
 interface StoreEditInput {
   name: string;
+  tagline: string | null;
   description: string | null;
 }
 
@@ -13,8 +14,11 @@ interface StoreEditMetadata {
   descriptionChanged: boolean;
 }
 
-// Updates Store.name/description — the same logic editStore always had, now
-// reporting through the engine instead of a bare redirect.
+// Updates Store.name/tagline/description — the same logic editStore always
+// had, now reporting through the engine instead of a bare redirect. Tagline
+// added 2026-08-06 (real mobile beta feedback: it rendered display-only
+// while name/description were already editable, with no real reason for
+// the asymmetry).
 export const editStoreExecutable: Executable<StoreEditInput, StoreEditMetadata> = {
   action: EXECUTION_ACTIONS.STORE_EDIT,
   requiredPermission: PERMISSIONS.STORE_MANAGE,
@@ -25,7 +29,7 @@ export const editStoreExecutable: Executable<StoreEditInput, StoreEditMetadata> 
     });
     await prisma.store.update({
       where: { id: ctx.storeId },
-      data: { name: input.name, description: input.description },
+      data: { name: input.name, tagline: input.tagline, description: input.description },
     });
     return {
       message: "Store info updated",

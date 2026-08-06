@@ -139,19 +139,26 @@ export async function editStore(
 ): Promise<ActionState> {
   try {
     const name = (formData.get("name") as string)?.trim();
+    const tagline = (formData.get("tagline") as string)?.trim();
     const description = (formData.get("description") as string)?.trim();
 
     if (!name) {
       throw new RecoverableError("Store name is required");
     }
 
-    await execute(editStoreExecutable, { name, description: description || null });
+    await execute(editStoreExecutable, { name, tagline: tagline || null, description: description || null });
   } catch (error) {
     unstable_rethrow(error);
     return toActionState(error, formData);
   }
 
-  redirect("/dashboard/settings");
+  // Real mobile beta feedback (2026-08-06) — this form only ever renders on
+  // /dashboard/brand (EditStoreForm's only real call site); redirecting to
+  // Settings was a stale target left over from before "Business Identity"
+  // was consolidated onto the Brand page (see brand/page.tsx's own
+  // comment). A first-time owner saving their business name got silently
+  // navigated away from the page they were just looking at.
+  redirect("/dashboard/brand");
 }
 
 export async function toggleStorePublished() {
