@@ -1,14 +1,25 @@
-import { put } from "@vercel/blob";
-import { randomUUID } from "crypto";
-
 // Business Assets M1 — generalizes lib/imageProviders/uploadProvider.ts's
 // uploadProductImageFile for the same real Vercel Blob mechanism, but for
 // any owner-uploaded business file, not just product photos. That function
 // stays untouched — products keep their own path/behavior (direct write to
 // Product.imageUrl, no BusinessRecord involved). This one always produces a
 // BusinessRecord (via ingest.ts), never a Product field.
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB
-const ALLOWED_CONTENT_TYPES: Record<string, string> = {
+//
+// Beta 1 bug #2 (2026-08-06) — a real iPhone photo (5.5MB) still failed
+// after raising Next's Server Actions body limit, because Vercel's own
+// platform-level Serverless Function payload ceiling (~4.5MB, confirmed via
+// production logs showing the request rejected at the routing layer before
+// ever reaching our function) sits in front of Next's own config and isn't
+// something next.config.ts can raise. The real fix moves the byte transfer
+// itself client-side: the browser uploads directly to Vercel Blob via
+// @vercel/blob/client's upload() + app/api/blob/business-asset-upload's
+// handleUpload, and only the resulting small Blob URL ever passes through a
+// Server Action body. This file has no server-only imports left (no `put`,
+// no `crypto`) specifically so GenesisAssistant.tsx (a client component)
+// can safely import MAX_UPLOAD_BYTES/ALLOWED_CONTENT_TYPES from it too —
+// client and server now validate against the exact same constants.
+export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB
+export const ALLOWED_CONTENT_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/webp": "webp",
@@ -21,24 +32,21 @@ export interface UploadedAssetFile {
   fileType: "photo" | "document";
 }
 
-export async function uploadAssetFile(file: File): Promise<UploadedAssetFile> {
-  const extension = ALLOWED_CONTENT_TYPES[file.type];
-  if (!extension) {
+// Called after the browser has already put the real bytes in Blob storage
+// (see the comment above) — this only ever validates and reshapes metadata,
+// the same contentType check this file used to do before writing the blob,
+// kept here rather than trusted blindly from the client.
+export function finalizeUploadedAssetFile(uploaded: {
+  url: string;
+  originalFilename: string;
+  contentType: string;
+}): UploadedAssetFile {
+  if (!ALLOWED_CONTENT_TYPES[uploaded.contentType]) {
     throw new Error("Please upload a PNG, JPEG, WebP, or PDF file.");
   }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    throw new Error("File is too large — please upload something under 8MB.");
-  }
-
-  const { url } = await put(`assets/${randomUUID()}.${extension}`, file, {
-    access: "public",
-    contentType: file.type,
-    addRandomSuffix: false,
-  });
-
   return {
-    url,
-    originalFilename: file.name,
-    fileType: file.type === "application/pdf" ? "document" : "photo",
+    url: uploaded.url,
+    originalFilename: uploaded.originalFilename,
+    fileType: uploaded.contentType === "application/pdf" ? "document" : "photo",
   };
 }

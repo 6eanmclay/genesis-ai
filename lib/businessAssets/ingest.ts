@@ -1,4 +1,4 @@
-import { uploadAssetFile } from "./uploadAssetFile";
+import { finalizeUploadedAssetFile } from "./uploadAssetFile";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { prisma } from "@/lib/prisma";
 import type { Asset } from "@/lib/businessModel/entities";
@@ -11,14 +11,17 @@ import type { Asset } from "@/lib/businessModel/entities";
 // source of real business data, not a special case.
 const SOURCE_PROVIDER = "genesis_upload";
 
-export async function ingestBusinessAsset(storeId: string, file: File) {
-  const uploaded = await uploadAssetFile(file);
+export async function ingestBusinessAsset(
+  storeId: string,
+  uploaded: { url: string; originalFilename: string; contentType: string }
+) {
+  const uploadedFile = finalizeUploadedAssetFile(uploaded);
 
   const data: Asset = {
-    fileType: uploaded.fileType,
+    fileType: uploadedFile.fileType,
     category: "unclassified",
-    storageUrl: uploaded.url,
-    originalFilename: uploaded.originalFilename,
+    storageUrl: uploadedFile.url,
+    originalFilename: uploadedFile.originalFilename,
     summary: null,
     extractionConfidence: null,
     relatedRecordId: null,
@@ -26,7 +29,7 @@ export async function ingestBusinessAsset(storeId: string, file: File) {
   };
 
   const result = await persistSyncedRecords(storeId, SOURCE_PROVIDER, [
-    { entityType: "asset", externalId: uploaded.url, data },
+    { entityType: "asset", externalId: uploadedFile.url, data },
   ]);
 
   if (result.errors.length > 0) {
@@ -39,7 +42,7 @@ export async function ingestBusinessAsset(storeId: string, file: File) {
         storeId,
         entityType: "asset",
         sourceProvider: SOURCE_PROVIDER,
-        externalId: uploaded.url,
+        externalId: uploadedFile.url,
       },
     },
   });

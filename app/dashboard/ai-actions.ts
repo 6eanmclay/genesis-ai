@@ -3402,8 +3402,15 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
     redirect("/login");
   }
 
-  const file = formData.get("file") as File | null;
-  if (!file || file.size === 0) {
+  // Beta 1 bug #2 — the browser has already PUT the real file bytes
+  // directly to Vercel Blob (see app/api/blob/business-asset-upload) by the
+  // time this action runs; this only ever receives the resulting small
+  // metadata, never the file itself, so this Server Action's own body stays
+  // tiny regardless of how large the real photo was.
+  const blobUrl = formData.get("blobUrl") as string | null;
+  const originalFilename = formData.get("originalFilename") as string | null;
+  const contentType = formData.get("contentType") as string | null;
+  if (!blobUrl || !originalFilename || !contentType) {
     throw new Error("Please choose a file to upload.");
   }
 
@@ -3419,7 +3426,7 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
     throw new Error("You don't have permission to do this.");
   }
 
-  const record = await ingestBusinessAsset(store.id, file);
+  const record = await ingestBusinessAsset(store.id, { url: blobUrl, originalFilename, contentType });
   const data = record.data as { fileType: string; originalFilename: string };
   const label = data.fileType === "document" ? "document" : "photo";
 

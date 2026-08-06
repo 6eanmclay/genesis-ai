@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usePathname } from "next/navigation";
 import { useFormStatus } from "react-dom";
+import { upload as blobUpload } from "@vercel/blob/client";
 import { deriveAssessmentState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
+import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
 import { SubmitButton } from "./SubmitButton";
 
 // Hydration-safe read of the same lg: breakpoint (1024px) this codebase
@@ -159,11 +161,34 @@ function UploadAssetButton({
           const file = event.target.files?.[0] ?? null;
           event.target.value = "";
           if (!file) return;
-          const formData = new FormData();
-          formData.set("file", file);
-          formData.set("currentPath", currentPath);
+          const extension = ALLOWED_CONTENT_TYPES[file.type];
+          if (!extension) {
+            onFailure("Please upload a PNG, JPEG, WebP, or PDF file.");
+            return;
+          }
+          if (file.size > MAX_UPLOAD_BYTES) {
+            onFailure("File is too large — please upload something under 8MB.");
+            return;
+          }
           startTransition(async () => {
-            const result = await callGenesisAction(() => Promise.resolve(uploadAsset(formData)));
+            const result = await callGenesisAction(async () => {
+              // Beta 1 bug #2 — the browser PUTs the real bytes straight to
+              // Vercel Blob here, bypassing this app's own Server Action
+              // body entirely (see app/api/blob/business-asset-upload and
+              // lib/businessAssets/uploadAssetFile.ts's own comment on why
+              // that's the real fix, not just a config tweak).
+              const blob = await blobUpload(`assets/${crypto.randomUUID()}.${extension}`, file, {
+                access: "public",
+                handleUploadUrl: "/api/blob/business-asset-upload",
+                contentType: file.type,
+              });
+              const formData = new FormData();
+              formData.set("blobUrl", blob.url);
+              formData.set("originalFilename", file.name);
+              formData.set("contentType", file.type);
+              formData.set("currentPath", currentPath);
+              return uploadAsset(formData);
+            });
             if (!result.ok) onFailure(result.message);
           });
         }}
