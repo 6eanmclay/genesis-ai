@@ -189,6 +189,35 @@ export const LocationSchema = z.object({
 });
 export type Location = z.infer<typeof LocationSchema>;
 
+// Business Assets — the first real proof of the "Asset" entity type this
+// file's own top comment named as future since Milestone 1. Deliberately
+// not a reuse of DocumentSchema: that schema is narrowly shaped for synced
+// financial documents (invoice/estimate/receipt with amount/status) and
+// doesn't fit an uploaded product photo, contract, or flyer. `category` is
+// a free string (not tied to ENTITY_TYPES) precisely because some real
+// uploads — a lease, a marketing flyer — don't map onto any existing
+// entity type ("legal"/"marketing" have none); an asset is still useful
+// on its own, searchable and summarized, without forcing that mapping.
+// `summary`/`extractionConfidence` start null at upload time and are
+// filled in by a later classification pass — never guessed here.
+export const AssetSchema = z.object({
+  fileType: z.enum(["photo", "document", "video"]),
+  // Free string, e.g. "product_photo" | "supplier_invoice" |
+  // "business_license" | "marketing_flyer" | "unclassified" — see the
+  // top-of-file note on why categorical fields here are never z.enum().
+  category: z.string(),
+  storageUrl: z.string(),
+  originalFilename: z.string(),
+  summary: z.string().nullable(),
+  extractionConfidence: z.number().nullable(),
+  // Set only when classification confidently ties this asset to an
+  // existing record (e.g. a supplier invoice -> that Contact) — the same
+  // xxxId/xxxIds convention every other entity already uses.
+  relatedRecordId: z.string().nullable(),
+  relatedEntityType: z.string().nullable(),
+});
+export type Asset = z.infer<typeof AssetSchema>;
+
 export const ENTITY_REGISTRY = {
   contact: { schema: ContactSchema, label: "Contact" },
   transaction: { schema: TransactionSchema, label: "Transaction" },
@@ -200,6 +229,7 @@ export const ENTITY_REGISTRY = {
   challenge: { schema: ChallengeSchema, label: "Challenge" },
   employee: { schema: EmployeeSchema, label: "Employee" },
   location: { schema: LocationSchema, label: "Location" },
+  asset: { schema: AssetSchema, label: "Asset" },
 } as const;
 
 export type EntityType = keyof typeof ENTITY_REGISTRY;
