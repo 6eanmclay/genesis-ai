@@ -39,6 +39,13 @@ export function SubmitButton({
   name,
   value,
   trackPerf,
+  // Beta feedback (real production screenshot, 2026-08-06) — a plain text
+  // swap plus disabled:opacity-50 was reported as "the text just gets
+  // lighter, which makes it even harder to read" right when the owner most
+  // needs to see something is happening. Opt-in (default false) so every
+  // other existing call site stays byte-for-byte unchanged; only
+  // GenesisAssistant's "Ask Genesis" button turns this on for now.
+  showPendingDot = false,
 }: {
   children: React.ReactNode;
   pendingText: string;
@@ -47,6 +54,7 @@ export function SubmitButton({
   name?: string;
   value?: string;
   trackPerf?: SubmitButtonPerfTracking;
+  showPendingDot?: boolean;
 }) {
   const { pending, data } = useFormStatus();
   const startedAtRef = useRef<number | null>(null);
@@ -109,6 +117,9 @@ export function SubmitButton({
       disabled={pending}
       className={className}
     >
+      {showPendingDot && isThisButtonPending && (
+        <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current align-middle" aria-hidden="true" />
+      )}
       {label}
     </button>
   );

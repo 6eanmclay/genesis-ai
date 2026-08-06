@@ -546,7 +546,17 @@ export function GenesisAssistant({
         <SubmitButton
           pendingText="Genesis is thinking..."
           laterPendingText="Still working on it — detailed answers can take a little longer..."
-          className="self-start rounded-full bg-[var(--brand-accent,var(--foreground))] px-4 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50 lg:bg-[#8b7cf6]"
+          showPendingDot
+          // Beta feedback (real production screenshot, 2026-08-06) — below
+          // lg:, this fell back to bg-[var(--brand-accent,var(--foreground))]
+          // whenever a store had no brand-accent set. --foreground is
+          // #ededed in dark mode (app/globals.css), so a near-white button
+          // with white text rendered on a dark panel — "a bright flashlight,"
+          // in the exact words of the report. The real Genesis violet is now
+          // the fallback everywhere, not the theme foreground color, and
+          // disabled:opacity-90 (not 50) keeps the pending label legible —
+          // the dot above is what signals "still working," not a fade.
+          className="self-start rounded-full bg-[var(--brand-accent,#8b7cf6)] px-4 py-1.5 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-90"
         >
           Ask Genesis
         </SubmitButton>
