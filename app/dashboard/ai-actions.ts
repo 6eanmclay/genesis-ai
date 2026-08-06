@@ -1402,7 +1402,9 @@ const STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT = `You are Genesis (J4), a merchant's
 
 The question you're answering may be a straightforward lookup ("what was my revenue last week") or a genuine planning/strategy request ("what should I do next," "build me a 90-day growth plan," "what's the fastest path to $10,000/month," "how would you spend N Growth Points") — both deserve a real, complete answer, grounded entirely in the data you're given below, never in anything you weren't given. A planning answer is real synthesis and judgment, not a database lookup — reasoning from goals, beliefs, trends, and recent decisions to a concrete recommendation is exactly the job, not something to decline or hedge away from.
 
-Under businessProfile, you're given the business's actual understanding of itself: identity (brand story, mission, values, target audience, USP), industry and revenue-model classification, its offerings, revenue, customers and real computed customer segments (repeat/high-value/lapsed/new), its owner/team/employees, suppliers/vendors, connected systems, stated goals, current challenges, and locations — this is the real source for "what business is this," "how does it make money," "who works here," "what are my goals/challenges," and similar business-understanding questions, not just transactional numbers. Any of these lists may be genuinely empty (e.g. no goals stated yet) — an honest "you haven't told me that yet" is correct, never a fabricated answer.
+Under businessProfile, you're given the business's actual understanding of itself: identity (brand story, mission, values, target audience, USP), industry and revenue-model classification, its offerings, revenue, customers and real computed customer segments (repeat/high-value/lapsed/new), its owner/team/employees, suppliers/vendors, connected systems, stated goals, current challenges, locations, and assets (real files the owner has uploaded — see below) — this is the real source for "what business is this," "how does it make money," "who works here," "what are my goals/challenges," and similar business-understanding questions, not just transactional numbers. Any of these lists may be genuinely empty (e.g. no goals stated yet) — an honest "you haven't told me that yet" is correct, never a fabricated answer.
+
+businessProfile.assets (and recent.asset) are real photos/documents the owner has uploaded through chat — each has fileType, category, summary, originalFilename, and extractionConfidence (0-1). category: "unclassified" or a low extractionConfidence means Genesis hasn't confidently identified what the file is yet — describe it honestly as "not yet reviewed" or "unclear," never state its summary as settled fact. A confidently-classified asset (a real category, higher confidence) is a real fact you can answer from directly — "your supplier invoice from Clayworks shows $482.50 due September 1" is exactly the kind of grounded answer this data supports. Never describe the file's storage location or any internal id — only what it actually is and what it says.
 
 You're also given real data from this business's connected systems — QuickBooks (invoices), Mailchimp (email campaigns), Google Calendar (appointments) — when those are connected and have synced. recent.document holds recent invoices, each with type, amountInCents, status ("paid"/"pending"/"overdue"), issuedAt, and dueAt — a document is overdue when its status is "overdue" or its dueAt has passed while status isn't "paid". recent.campaign holds recent email campaigns, each with name, channel, sentAt, audienceSize, and metrics (an open bag that may include opens/clicks — an open rate is opens divided by audienceSize when both are present). recent.appointment and upcomingAppointments hold calendar events, each with title, startAt, endAt, contactIds (linking to a real customer when their email matches one Genesis already knows), and status — upcomingAppointments is specifically the ones still ahead in time. recent.transaction and recent.item mirror the store's own orders/products and rarely need separate explanation. Any of these being empty means honestly nothing has synced yet (or that system isn't connected) — say so plainly, never invent a record. invoiceSummary, campaignPerformanceSummary, and appointmentSummary give you the same data already rolled up into real totals (outstanding/overdue invoice counts and dollar amounts, average open rate and most recent send date, upcoming/cancelled appointment counts and cancellation rate) — prefer these over re-deriving a total yourself from the raw recent lists, and each is null when there's honestly nothing to summarize.
 
@@ -3438,11 +3440,53 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
   // resolution — for one classification call), so the owner sees a real,
   // specific result immediately rather than a generic "got it."
   const result = await classifyAndExtractAsset(record, store.id);
+
+  // Business Assets M5 — a confidently-discovered new product still needs
+  // owner review before it's real (see classifyAndExtractAsset's own
+  // comment on why it never writes an "item" record directly). Only
+  // proposed when a real price was actually extracted — never fabricated
+  // to complete the schema; a nameless price would misrepresent an actual
+  // decision the owner never made.
+  let productApprovalCreated = false;
+  if (result?.productProposal && result.productProposal.priceInCents !== null) {
+    const proposal = result.productProposal;
+    await prisma.approvalRequest.create({
+      data: {
+        storeId: store.id,
+        recommendationId: null,
+        actionType: "create_product",
+        input: { name: proposal.name, description: proposal.description, priceInCents: proposal.priceInCents },
+        previousValues: { name: "", description: null, priceInCents: 0 },
+        summary: `Add product "${proposal.name}" (discovered from an uploaded ${label})`,
+        authorizationTier: GENESIS_ACTIONS.create_product.authorizationTier,
+        groupId: null,
+        aiUsageEventId: null,
+      },
+    });
+    productApprovalCreated = true;
+  }
+
+  const newEntityRoles =
+    result?.createdEntity?.entityType === "contact" ? (result.classification.newEntity?.data as { roles?: string[] })?.roles ?? [] : [];
+  const contactLabel = newEntityRoles.includes("vendor") ? "supplier" : newEntityRoles.includes("customer") ? "customer" : "contact";
+  const ENTITY_PHRASE: Record<string, string> = {
+    contact: contactLabel,
+    employee: "employee",
+    location: "location",
+    campaign: "marketing campaign",
+  };
+
   const assistantReply = !result
     ? `I've saved your ${label}, but I wasn't able to take a proper look at it just now — I'll use it once I can, or you can tell me what it is in the meantime.`
-    : result.isHighConfidence
-      ? `${result.classification.summary} I've filed this under "${result.classification.category.replace(/_/g, " ")}" and it's now part of what I know about your business.`
-      : `I can see this is a ${label}, but I'm not fully sure what it is — ${result.classification.summary} Can you tell me a bit more about what this is, so I file it correctly?`;
+    : result.createdEntity
+      ? `${result.classification.summary} This names a new ${ENTITY_PHRASE[result.createdEntity.entityType]}, "${result.createdEntity.name}" — I've added it to your records, so I'll factor it into what I know about your business going forward.`
+      : productApprovalCreated && result.productProposal
+        ? `${result.classification.summary} This looks like a new product — I've drafted a listing for "${result.productProposal.name}" and it's waiting for your review on Products.`
+        : result.productProposal && result.productProposal.priceInCents === null
+          ? `${result.classification.summary} This looks like a new product, but I didn't see a price anywhere — tell me what to charge and I'll get a listing ready for you to review.`
+          : result.isHighConfidence
+            ? `${result.classification.summary} I've filed this under "${result.classification.category.replace(/_/g, " ")}" and it's now part of what I know about your business.`
+            : `I can see this is a ${label}, but I'm not fully sure what it is — ${result.classification.summary} Can you tell me a bit more about what this is, so I file it correctly?`;
 
   await prisma.storeMessage.create({
     data: {
@@ -3454,13 +3498,18 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
 
   await recordGenesisExecution({
     action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-    status: !result ? "WARNING" : result.isHighConfidence ? "SUCCESS" : "WARNING",
+    status: !result ? "WARNING" : result.isHighConfidence || result.createdEntity ? "SUCCESS" : "WARNING",
     verified: false,
     message: assistantReply,
     retryable: !result,
     userId: session.user.id,
     storeId: store.id,
-    metadata: { kind: "business_asset_upload", recordId: record.id },
+    metadata: {
+      kind: "business_asset_upload",
+      recordId: record.id,
+      createdEntity: result?.createdEntity ?? null,
+      productApprovalCreated,
+    },
   });
 
   revalidatePath(returnTo);

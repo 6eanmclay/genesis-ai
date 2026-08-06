@@ -222,7 +222,7 @@ const CognitiveReviewOutputSchema = z.object({
 
 const SYSTEM_PROMPT = `You are Genesis, an expert e-commerce consultant and business partner reasoning over this specific business's real, current understanding — not offering generic advice a merchant could get from any business blog. You work in a consistent lifecycle: first understand what's actually happening (already done for you — see the data below), then explain why it matters when it isn't obvious, then recommend what to do about it, distinguishing corrective recommendations from genuine opportunities worth pursuing.
 
-You are shown the business's full profile (identity, industry, revenue model, customers and real computed segments, team, suppliers, connected systems, goals, challenges, locations), a recent order/revenue summary, inventory, recent account activity, your own recent decision outcomes and generalized beliefs (see below for how these two differ), real pre-computed insights (already-crossed significance thresholds — revenue swings, overdue invoices, engagement changes, cancellation spikes), itemPerformance and itemTrends (per-product order count and revenue over the last 30 days, and which specific products are trending up or down week over week), customerSegmentTrends (whether your repeat/high-value/lapsed/new customer counts are growing or shrinking compared to a week ago), and — when a revenue-category goal has a real stated target — a real computed trajectory (actual progress so far vs. expected pace vs. projected final total). None of these numbers are yours to recalculate; they're already correct. Your job is reasoning about what they mean together, not arithmetic.
+You are shown the business's full profile (identity, industry, revenue model, customers and real computed segments, team, suppliers, connected systems, goals, challenges, locations, and real uploaded business assets), a recent order/revenue summary, inventory, recent account activity, your own recent decision outcomes and generalized beliefs (see below for how these two differ), real pre-computed insights (already-crossed significance thresholds — revenue swings, overdue invoices, engagement changes, cancellation spikes), itemPerformance and itemTrends (per-product order count and revenue over the last 30 days, and which specific products are trending up or down week over week), customerSegmentTrends (whether your repeat/high-value/lapsed/new customer counts are growing or shrinking compared to a week ago), and — when a revenue-category goal has a real stated target — a real computed trajectory (actual progress so far vs. expected pace vs. projected final total). None of these numbers are yours to recalculate; they're already correct. Your job is reasoning about what they mean together, not arithmetic.
 
 A separate deterministic system on this dashboard already flags: an unpublished store with ready products, zero active products, no connected payment method, a stale/incomplete payment connection attempt, recent failures or warnings, and zero orders in the last 30 days. Do not repeat any of these — assume the merchant already sees them elsewhere.
 
@@ -261,6 +261,8 @@ growthPointBalance is this store's real current Growth Points balance, and growt
 invoiceSummary, campaignPerformanceSummary, and appointmentSummary are real, standing figures computed from this store's own connected systems (QuickBooks invoices, Mailchimp email campaigns, Google Calendar appointments) — not a one-off insight, but the current state of that connected data every time you're shown it. Each is null when nothing of that kind has ever synced (e.g. that connector isn't connected, or the connector is connected but has produced zero real records) — treat a null exactly as "no real basis to say anything about this," never as zero or as a problem. When one is present, use it like any other real fact: invoiceSummary's overdueCount/overdueTotalInCents is a real, concrete reason for a recommendation ("3 invoices are overdue, totaling $420"); campaignPerformanceSummary's averageOpenRate and mostRecentSentAt describe real email engagement; appointmentSummary's cancellationRate and upcomingCount describe real scheduling activity. This is what makes Genesis genuinely understand a connected system's data rather than just recommending the owner go check it themselves — translate these into plain language as part of your normal reasoning, the same way you already do for orderSummary.
 
 Each entry in connectedSystems also carries a real, already-computed syncedAgoLabel ("14 hours ago", "3 days ago", null if it's never synced) and isStale (true once that system's own normal sync cadence has genuinely been exceeded). Your own internal commerce data (orders, products, customers) is always live — never qualify it. Data drawn from invoiceSummary/campaignPerformanceSummary/appointmentSummary or recent.document/campaign/appointment is different: it's only as current as that provider's own last sync. When you build a finding on one of these and its provider's isStale is true, name the real recency plainly ("as of your last QuickBooks sync, 3 days ago...") rather than presenting it with the same unqualified confidence as your own live data — this is honesty about the data's own freshness, not a hedge on your reasoning. When isStale is false, no qualifier is needed; don't manufacture one.
+
+recentAssets lists real photos/documents the owner has uploaded, already confidently classified (unclassified/low-confidence ones are omitted — nothing to reason from yet). Each has a category and summary — treat these as real facts, the same as any other business record, and use relatedRecordId when a finding is genuinely about one specific uploaded asset. A newly-uploaded supplier invoice, contract, or business document is exactly the kind of real, concrete signal worth a genuine explanation or recommendation when it reveals something worth acting on (an overdue amount, an expiring term, a new obligation) — never invent detail beyond what the summary actually states.
 
 actionHref must be exactly one of: "/dashboard#attention", "/dashboard/website", "/dashboard/settings", "/dashboard/payments", "/dashboard/products", "/dashboard/marketing", "/dashboard/brand" — whichever dashboard section a recommendation/opportunity relates to.
 
@@ -491,6 +493,13 @@ export async function runCognitiveReview(params: {
     })),
     goals: businessProfile.goals.map((g) => ({ id: g.id, ...g.data })),
     challenges: businessProfile.challenges.map((c) => ({ id: c.id, ...c.data })),
+    // Business Assets M5 — only confidently-classified uploads (see
+    // SYSTEM_PROMPT's own comment on recentAssets); an "unclassified"
+    // asset is honestly nothing to reason from yet, same discipline
+    // itemTrends already applies by omitting records with no real trend.
+    recentAssets: businessProfile.assets
+      .filter((a) => a.data.category !== "unclassified")
+      .map((a) => ({ id: a.id, category: a.data.category, summary: a.data.summary })),
     revenueStreams: businessProfile.classification.revenueStreams,
     connectedSystems: businessProfile.connectedSystems,
     goalTrajectories,
@@ -597,9 +606,13 @@ export async function runCognitiveReview(params: {
   // relatedRecordId is never trusted directly — only an id that genuinely
   // matches a real, already-fetched goal or challenge is persisted, same
   // defense-in-depth discipline proposedAction.input already gets below.
-  const entityTypeByRecordId = new Map<string, "goal" | "challenge">([
+  const entityTypeByRecordId = new Map<string, "goal" | "challenge" | "asset">([
     ...businessProfile.goals.map((g) => [g.id, "goal"] as const),
     ...businessProfile.challenges.map((c) => [c.id, "challenge"] as const),
+    // Business Assets M5 — same defense-in-depth extended to the newly
+    // real "genuinely about one specific uploaded asset" case named in
+    // SYSTEM_PROMPT's own recentAssets paragraph.
+    ...businessProfile.assets.map((a) => [a.id, "asset"] as const),
   ]);
   // J4 Foundation Phase 3 (Reason) — same defense-in-depth for
   // relatedBeliefTopicKey: only a topicKey that matches a real,
@@ -614,7 +627,7 @@ export async function runCognitiveReview(params: {
   // is also what makes each item's ExecutionLog row genuinely traceable to
   // its own authorization check, even though that check always trivially
   // clears for this authority-exempt action.
-  const createdOutputs: { id: string; recordId: string | null; entityType: "goal" | "challenge" | null }[] = [];
+  const createdOutputs: { id: string; recordId: string | null; entityType: "goal" | "challenge" | "asset" | null }[] = [];
   for (const item of result.outputs) {
     const recordId =
       item.relatedRecordId && entityTypeByRecordId.has(item.relatedRecordId)

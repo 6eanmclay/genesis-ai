@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { randomUUID } from "crypto";
 import { callGenesisModel } from "@/lib/genesisModel";
 import { getBusinessProfile } from "@/lib/businessModel/profile";
+import { persistSyncedRecords } from "@/lib/businessModel/sync";
+import { EmployeeCaptureSchema, LocationCaptureSchema } from "@/lib/businessModel/factCapture";
 import { prisma } from "@/lib/prisma";
 import type { BusinessRecord } from "@prisma/client";
 import type { Asset } from "@/lib/businessModel/entities";
@@ -14,6 +17,38 @@ import type { Asset } from "@/lib/businessModel/entities";
 // explicitly not claimed as final (see the plan's own note on this).
 const CONFIDENCE_THRESHOLD = 0.6;
 
+// Business Assets M5 — reuses factCapture.ts's own Employee/Location
+// capture shapes (the same real contract chat's business-fact capture
+// already writes from) rather than re-declaring them; adds the two shapes
+// that module doesn't cover — a new contact (supplier/customer) and a
+// campaign — plus a product shape whose priceInCents is nullable, unlike
+// create_product's own real inputSchema, since a file may name a product
+// without ever stating its price (see the caller for why that case never
+// becomes an ApprovalRequest).
+const ContactCaptureSchema = z.object({
+  name: z.string(),
+  email: z.string().nullable(),
+  // "customer" | "vendor" — matches ContactSchema's own open roles array.
+  roles: z.array(z.string()),
+});
+const CampaignCaptureSchema = z.object({
+  name: z.string(),
+  channel: z.string(),
+});
+const ProductCaptureSchema = z.object({
+  name: z.string(),
+  description: z.string().nullable(),
+  priceInCents: z.number().int().nullable(),
+});
+
+const NewEntityProposalSchema = z.discriminatedUnion("entityType", [
+  z.object({ entityType: z.literal("contact"), data: ContactCaptureSchema }),
+  z.object({ entityType: z.literal("employee"), data: EmployeeCaptureSchema }),
+  z.object({ entityType: z.literal("location"), data: LocationCaptureSchema }),
+  z.object({ entityType: z.literal("campaign"), data: CampaignCaptureSchema }),
+  z.object({ entityType: z.literal("product"), data: ProductCaptureSchema }),
+]);
+
 const AssetClassificationSchema = z.object({
   // Free string — "product_photo" | "supplier_invoice" | "contract" |
   // "business_license" | "marketing_flyer" | "sop" | "employee_document" |
@@ -23,21 +58,29 @@ const AssetClassificationSchema = z.object({
   category: z.string(),
   summary: z.string(),
   // 0-1. The model's own honest confidence that `category` (and any
-  // proposed relatedRecordId) are correct — never a stand-in for "did the
-  // call succeed," which is handled separately via outcome.ok.
+  // proposed relatedRecordId/newEntity) are correct — never a stand-in
+  // for "did the call succeed," which is handled separately via
+  // outcome.ok.
   confidence: z.number().min(0).max(1),
   relatedRecordId: z.string().nullable(),
   relatedEntityType: z.enum(["item", "contact"]).nullable(),
+  // Set only when relatedRecordId is null AND the file clearly, specifically
+  // describes one genuinely new real-world entity worth adding to this
+  // business's own records — never both a match and a new-entity proposal
+  // at once. See NewEntityProposalSchema's own comment for why "product"
+  // is shaped differently from the other four.
+  newEntity: NewEntityProposalSchema.nullable(),
 });
 export type AssetClassification = z.infer<typeof AssetClassificationSchema>;
 
-const CLASSIFY_SYSTEM_PROMPT = `You are Genesis (J4), looking at a file a business owner just uploaded — a photo or a document — to understand what it is and extract real, useful business knowledge from it.
+const CLASSIFY_SYSTEM_PROMPT = `You are Genesis (J4), looking at a file a business owner just uploaded — a photo or a document — to understand what it is and extract real, useful business knowledge from it. The goal is never just to summarize the file — it's to permanently grow what you actually know about this business, the same way a fact stated directly in chat would.
 
 Decide:
 1. category — a short, specific label for what this actually is. Common values: "product_photo", "supplier_invoice", "customer_invoice", "receipt", "contract", "business_license", "marketing_flyer", "sop" (standard operating procedure), "employee_document", "financial_statement", "logo", "product_spec_sheet" — use one of these when it genuinely fits, or another short, specific label when it doesn't. Never a vague label like "document" or "file."
 2. summary — 1-2 real, specific sentences describing what's actually in it (names, amounts, dates, parties — whatever is genuinely visible/readable), not a generic description of the category.
 3. confidence — how much real, usable business information you were actually able to extract, not how sure you are about your own read of the file. A clear, legible invoice with a readable amount deserves high confidence. A blurry photo, a partially-legible document, or an unreadable/blank/noise file that gives you nothing real to work with deserves LOW confidence — even if you're completely sure it's unreadable/blank/noise. Being confident that there's nothing usable here is still a low-confidence result, never a high one. Never inflate this to seem helpful.
 4. relatedRecordId / relatedEntityType — you're given this business's real current products and known suppliers/customers, each with a real id. Only set these when the file clearly and specifically describes one of them (e.g. an invoice naming a supplier you were given, or a photo that's obviously of one specific listed product) — leave both null whenever the match isn't genuinely clear, rather than guessing.
+5. newEntity — only when relatedRecordId is null (nothing existing matched) and the file clearly, specifically describes ONE genuinely new real-world business entity worth remembering: a supplier or customer not already known (entityType "contact", with real roles like ["vendor"] or ["customer"]), a new employee ("employee"), a new business location ("location"), a new marketing campaign ("campaign"), or a new sellable product ("product"). Only propose this when the file is genuinely specific and clear about it — a real name plus real identifying detail, never a vague mention. Leave newEntity null for anything that doesn't cleanly fit one of these five, including contracts, policies, licenses, and SOPs — those stay real, useful, understood assets on their own; forcing them into the wrong entity type would be worse than leaving them as an asset.
 
 Never fabricate a number, name, or date that isn't actually legible in the file. If the file is unreadable, unrelated to the business, or you genuinely can't tell what it is, say so honestly in the summary and set confidence low.`;
 
@@ -50,10 +93,41 @@ Never fabricate a number, name, or date that isn't actually legible in the file.
 // uploadBusinessAssetFromChat's own null-result branch already handles —
 // never a thrown error that leaves the owner staring at a network-failure
 // banner under a message that actually already succeeded.
+export interface CreatedAssetEntity {
+  entityType: "contact" | "employee" | "location" | "campaign";
+  recordId: string;
+  name: string;
+}
+export interface AssetProductProposal {
+  name: string;
+  description: string | null;
+  priceInCents: number | null;
+}
+
+export interface AssetClassificationResult {
+  classification: AssetClassification;
+  isHighConfidence: boolean;
+  // Set when a genuinely new contact/employee/location/campaign was
+  // confidently discovered and directly written — see the newEntity
+  // handling below for why this is a direct write, same trust model as
+  // STORE_CHAT_BUSINESS_FACT's own goal/challenge/employee/location
+  // capture (internal understanding, not customer-facing, self-correcting
+  // next turn).
+  createdEntity: CreatedAssetEntity | null;
+  // Set when a genuinely new, sellable product was confidently identified
+  // — never written directly (an "item" BusinessRecord is computed live
+  // from the real Product table, see lib/businessModel/internalMapper.ts;
+  // writing one here would create a phantom record with no real product
+  // behind it). The caller turns this into a real create_product
+  // ApprovalRequest, exactly like every other customer-facing/storefront
+  // proposal in this app — owner review required, never auto-applied.
+  productProposal: AssetProductProposal | null;
+}
+
 export async function classifyAndExtractAsset(
   record: BusinessRecord,
   storeId: string
-): Promise<{ classification: AssetClassification; isHighConfidence: boolean } | null> {
+): Promise<AssetClassificationResult | null> {
   try {
     const data = record.data as Asset;
     const profile = await getBusinessProfile(storeId);
@@ -117,7 +191,47 @@ export async function classifyAndExtractAsset(
       data: { data: updatedData },
     });
 
-    return { classification, isHighConfidence };
+    let createdEntity: CreatedAssetEntity | null = null;
+    let productProposal: AssetProductProposal | null = null;
+
+    // Only when confident, and only when nothing existing already matched
+    // — newEntity and relatedRecordId are never both meaningful at once
+    // (the prompt already asks for this, this is the same defense-in-depth
+    // this codebase applies everywhere a model output feeds a real write).
+    if (isHighConfidence && !classification.relatedRecordId && classification.newEntity) {
+      const proposal = classification.newEntity;
+      const todayIso = new Date().toISOString().slice(0, 10);
+
+      if (proposal.entityType === "product") {
+        productProposal = {
+          name: proposal.data.name,
+          description: proposal.data.description,
+          priceInCents: proposal.data.priceInCents,
+        };
+      } else {
+        const recordData =
+          proposal.entityType === "contact"
+            ? { ...proposal.data, firstSeenAt: todayIso, lastSeenAt: todayIso }
+            : proposal.entityType === "employee"
+              ? { ...proposal.data, status: "active", locationId: null }
+              : proposal.entityType === "location"
+                ? proposal.data
+                : { ...proposal.data, sentAt: null, audienceSize: null, metrics: null }; // campaign
+
+        const { changes } = await persistSyncedRecords(storeId, "genesis_upload", [
+          { entityType: proposal.entityType, externalId: randomUUID(), data: recordData },
+        ]);
+        if (changes[0]) {
+          createdEntity = {
+            entityType: proposal.entityType,
+            recordId: changes[0].recordId,
+            name: proposal.data.name,
+          };
+        }
+      }
+    }
+
+    return { classification, isHighConfidence, createdEntity, productProposal };
   } catch (err) {
     const Sentry = await import("@sentry/nextjs");
     Sentry.captureException(err);

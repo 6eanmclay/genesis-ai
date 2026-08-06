@@ -100,6 +100,13 @@ export interface BusinessProfile {
   goals: CanonicalRecord<"goal">[];
   challenges: CanonicalRecord<"challenge">[];
   locations: CanonicalRecord<"location">[];
+  // Business Assets M5 — every real owner-uploaded photo/document, so this
+  // single "current facts" object is what makes uploaded knowledge actually
+  // reach planning, the Business Intelligence Engine, and the future "What
+  // J4 Knows" review UI, not just the chat turn it arrived in. Includes
+  // unclassified/low-confidence assets too (never filtered out here) —
+  // consumers decide how to treat confidence, this is just the real facts.
+  assets: CanonicalRecord<"asset">[];
   asOf: string;
 }
 
@@ -146,6 +153,7 @@ export async function getBusinessProfile(
     goals,
     challenges,
     locations,
+    assets,
     revenue30d,
     revenueAllTime,
     topContacts,
@@ -169,6 +177,7 @@ export async function getBusinessProfile(
     queryRecords(storeId, "goal"),
     queryRecords(storeId, "challenge"),
     queryRecords(storeId, "location"),
+    queryRecords(storeId, "asset"),
     getRevenue(storeId, { since: thirtyDaysAgo }),
     getRevenue(storeId),
     getTopContacts(storeId),
@@ -243,6 +252,7 @@ export async function getBusinessProfile(
     goals,
     challenges,
     locations,
+    assets,
     asOf: new Date().toISOString(),
   };
 }
