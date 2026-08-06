@@ -11,7 +11,19 @@ import { withSentryConfig } from "@sentry/nextjs";
 // confirmed by directly testing that a request with the cleared cookie
 // gets a 307 to /login, not the dashboard.
 const nextConfig: NextConfig = {
-  /* config options here */
+  experimental: {
+    // Beta 1 bug, confirmed via real production logs (2026-08-06): every
+    // chat photo/document upload (lib/businessAssets/uploadAssetFile.ts
+    // allows up to 8MB) was hitting Next's default 1MB Server Action body
+    // limit, throwing a 413 that surfaced as a generic 500 — which
+    // callGenesisAction (lib/dashboard/submitGenesisAction.ts) then
+    // reported to the owner as "the connection may have dropped," with no
+    // indication of the real cause. 10mb leaves headroom above the 8MB
+    // file ceiling for multipart boundary/field overhead.
+    serverActions: {
+      bodySizeLimit: "10mb",
+    },
+  },
 };
 
 // org/project/authToken all come from env vars the Vercel-Sentry
