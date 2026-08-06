@@ -24,6 +24,27 @@ Genesis AI is an AI-first e-commerce platform: a merchant describes their busine
 
 ---
 
+## Security & Trust — a future milestone (planned, not started)
+
+**Status: named and scoped 2026-08-06, explicitly not built.** Sean's own framing for why this earns a dedicated milestone rather than a scattered list of feature requests: *"As Genesis becomes a business operating environment that stores documents, financial information, integrations, and J4's understanding of a business, account security becomes a core product capability."* Follows the current foundation work (J4 Cognitive Architecture, Business Assets, the Understanding page) in priority — high, but deliberately sequenced after it, not competing with it.
+
+Treated as one cohesive milestone, not eight unrelated features — every item below shares the same real subject (an owner's account and everything it now protects) and should ship together, not piecemeal:
+
+1. **Two-factor authentication** — authenticator app / TOTP as the primary second factor, with real one-time recovery codes generated at setup. Owner can enable, disable, and regenerate recovery codes from an Account Security settings surface (new). The second factor is required after a successful password sign-in whenever 2FA is enabled — never a bypassable prompt. Must work cleanly on both desktop and mobile.
+2. **Active sessions** — see what's currently signed in, sign out of other devices individually or all at once.
+3. **Login history and security activity** — a real, readable log of sign-ins and security-relevant events on the account.
+4. **Trusted devices** — remember a device that's already completed 2FA once, so the second factor isn't demanded on every single sign-in from a device the owner already verified.
+5. **Account security dashboard** — the one real home for all of the above, not scattered across Settings.
+6. **Permission and access audits** — a real, reviewable answer to "who can do what on my store" (`StoreMember`/`lib/permissions.ts` already models roles; this is the first real UI surface for reviewing that model, not a redesign of it).
+7. **Security notifications** — real alerts for account-security-relevant events (new sign-in, 2FA disabled, recovery codes regenerated, and similar).
+8. **A real review of encryption, secrets management, and production security practices.** Not starting from zero: `INTEGRATION_ENCRYPTION_KEY` already encrypts stored integration credentials at rest (AES-256, `lib/integrations/credentials.ts`), and passwords are already bcrypt-hashed (`auth.ts`) — this item audits that real existing groundwork end to end (session handling, secret rotation, what's encrypted vs. what should be) rather than assuming a blank slate.
+
+**Before implementation of item 1 specifically**, the explicit instruction this milestone was scoped under: audit the current authentication architecture (`auth.ts`, NextAuth v5, JWT session strategy — see *Authentication* above) and recommend the cleanest integration with the existing system, rather than layering 2FA on afterward. The session JWT today carries only `user.id`, deliberately minimal — where a "2FA verified this session" signal belongs (the JWT itself vs. a separate check) is a real design decision for that future audit, not decided here.
+
+**Verification bar, once built**: real end-to-end testing of the complete flow (enable → scan a real authenticator code → verify → recovery codes work → disable → re-enable) before any part of this milestone is marked complete — the same live-verification discipline every other milestone in this document has already held itself to, not a lower bar because it's security-labeled.
+
+---
+
 ## Permissions & Roles
 
 Three conceptual roles: **Owner**, **Employee**, **Customer** — but only two are ever stored:
