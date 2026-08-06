@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -61,9 +62,25 @@ async function requireUserId(): Promise<string> {
 async function getOrCreateDraft(userId: string) {
   const existing = await prisma.storeDraft.findUnique({ where: { userId } });
   if (existing) return existing;
-  return prisma.storeDraft.create({
-    data: { userId, name: "New store", status: "onboarding_discovery" },
-  });
+  try {
+    return await prisma.storeDraft.create({
+      data: { userId, name: "New store", status: "onboarding_discovery" },
+    });
+  } catch (error) {
+    // Beta readiness — a real race caught live during a first-time-user
+    // walkthrough, not a hypothetical: two near-simultaneous requests for
+    // a brand-new user (a double-click on "Get Started," or a browser
+    // prefetch racing the real navigation) can both pass the findUnique
+    // check above before either write lands. The loser hit this exact
+    // unique constraint and crashed straight to the root error boundary —
+    // right after signup, the very first real screen. Re-fetch instead of
+    // failing; the winner's row is exactly what this call wanted anyway.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const draft = await prisma.storeDraft.findUnique({ where: { userId } });
+      if (draft) return draft;
+    }
+    throw error;
+  }
 }
 
 // Experience-First Onboarding — the anonymous-visitor counterpart to
@@ -75,9 +92,18 @@ async function getOrCreateAnonymousDraft() {
   const anonymousSessionToken = await getOrCreateAnonymousSessionId();
   const existing = await prisma.storeDraft.findUnique({ where: { anonymousSessionToken } });
   if (existing) return existing;
-  return prisma.storeDraft.create({
-    data: { anonymousSessionToken, name: "New store", status: "onboarding_discovery" },
-  });
+  try {
+    return await prisma.storeDraft.create({
+      data: { anonymousSessionToken, name: "New store", status: "onboarding_discovery" },
+    });
+  } catch (error) {
+    // Same real race as getOrCreateDraft above, same fix.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const draft = await prisma.storeDraft.findUnique({ where: { anonymousSessionToken } });
+      if (draft) return draft;
+    }
+    throw error;
+  }
 }
 
 function readState(onboardingState: unknown): DiscoveryState {
