@@ -94,6 +94,15 @@ It doesn't need to plug in — it already is the platform's reasoning layer, and
 
 **Gap D — OPEN, found 2026-08-05, corrects an overstated claim.** `J4_IDENTITY.md`'s "relationship continuity" principle uses the example *"we ruled this out six months ago because…"* and states this is *"a real, existing fact this system can already answer, not a new capability to build."* That overstates it. `getRecentDecisionOutcomes` — the function that would answer this — defaults to a **14-day window** (§1 above). `getEntityHistory` can pull a specific record's full unbounded timeline, but only if the caller already knows which record; recalling a past *decision by topic*, months back, isn't something `BusinessUnderstanding` supports today. Long-term *pattern* memory (`Belief`) is real and genuinely unbounded — a belief that solidified from evidence six months ago stays real today. Long-term *specific decision* recall is not. `J4_IDENTITY.md` has been corrected to reflect this distinction.
 
+## Coverage gaps — real, named, deliberately not architectural
+
+A first-person self-review (2026-08-06), Sean asking J4 to name what it's still missing before adding more capability. These are distinct from Gaps A-D above: nothing here is a flaw in how understanding is assembled or represented — every one is an honest absence of *coverage*, in data this foundation would happily carry if it existed. Named here so the distinction (and the list) survives, not solved in this pass.
+
+1. **Specific-decision recall beyond 14 days.** Gap D, above — pattern memory (`Belief`) is unbounded, a specific past decision by topic is not.
+2. **Profitability.** Revenue is real and live; cost is not — nothing in this store's own commerce data ever produces a real expense record (`Transaction.type: "expense"` exists in the schema, nothing internal writes one). Blocked on a real accounting connection (QuickBooks) being connected with real data, not an architecture question.
+3. **Inventory.** `Item.quantityAvailable` exists in the schema; nothing populates it. Already named as its own real product/schema decision in `ARCHITECTURE.md`'s Business Intelligence Engine section and `J4_IDENTITY.md`'s inventory principle (owner-controlled data, J4 provides insight on top of it) — restated here only so this document's own list of what J4 knows is honest about the omission.
+4. **Unstructured facts inside an asset summary don't become structured, actionable memory — new, found in this review.** If an uploaded lease says it expires in December, that's understood as a sentence in `Asset.summary` the moment it's read — not a date J4 holds anywhere it could act on weeks later. J4 can tell you what a document says right now; it can't yet proactively resurface an obligation buried inside one. No schema or mechanism decision made here — named as real future `lib/businessAssets/` work, the natural next step after M1-M5, not required for this foundation to be considered solid today.
+
 ## What a J4 Foundation milestone should build next
 
 Gaps A, B, and C are done — no further work. Only Gap D remains open, and it's a real, open product question, not an implementation default: how far back should decision-memory reach, and should it be a wider fixed window, or a real topic-searchable lookup instead of a time window at all? Not decided here; a real number or mechanism is Sean's own call, the same discipline every other real number in this project has followed. Until decided, `J4_IDENTITY.md`'s "six months ago" example reads as a real future capability being designed toward, not a description of what exists.
@@ -105,6 +114,8 @@ Explicitly *not* in scope: Tier 4 of the Business Intelligence Engine roadmap (S
 **J4's Business Understanding is now complete** for every gap that was scoped as this milestone's own work (A, B, C). Gap D remains real and open, explicitly a future product decision, not blocking this milestone's closure — the same way Tier 4 of the Business Intelligence Engine has always stayed deliberately emergent rather than blocking Tiers 1-3's own completion.
 
 **Business Assets (§3) is real, shipped, and verified live** (M1-M5, `9ee8e9e` and earlier) — not a gap closure, a genuine expansion of how Business Understanding grows. It doesn't introduce a fifth gap: every consumer of `getBusinessProfile()`/`getBusinessUnderstanding()` sees uploaded knowledge automatically, by construction, not by a new integration each of them separately needed.
+
+**A first-person self-review (2026-08-06) confirmed the foundation is architecturally solid** — nothing surfaced a flaw in how understanding is assembled, represented, or reaches its consumers. What it surfaced is real coverage, not architecture — see the four items above, carried forward as named future roadmap work, not blockers.
 
 ## What this document deliberately does not do
 

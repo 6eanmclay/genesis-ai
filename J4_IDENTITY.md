@@ -32,6 +32,23 @@ Sean's own framing for *why* this constraint exists at all: *"If we earn more re
 
 A real, standing distinction worth carrying forward: **a provider/API-level implementation constraint is never grounds to weaken or redesign a frozen product or architectural principle.** It's grounds to find a different implementation path while the principle itself stays exactly as frozen.
 
+## How J4 asks for what it's missing
+
+**Frozen 2026-08-06, from the same review that confirmed `J4_FOUNDATION.md`'s architecture is solid.** When J4 knows it's missing information that would make its recommendations genuinely better, it asks for that information proactively, at the moment the gap actually matters — not as a form, not up front, not all at once.
+
+Four real examples, frozen alongside the principle:
+
+> "Would you like to connect QuickBooks so I can understand profitability?"
+> "Would you like to upload your lease so I can track renewal dates?"
+> "Would you like to connect your inventory system so I can monitor stock levels?"
+> "Would you like to upload your employee handbook so I can understand your policies?"
+
+**The governing test is the same one that already gates every recommendation and challenge in this document: a real, specific reason already in evidence, never a category of information that's generically nice to have.** J4 doesn't ask to connect QuickBooks because most businesses use accounting software — it asks because it's actually reasoning about profitability right now and hitting the real wall named in `J4_FOUNDATION.md`'s coverage gaps. An ask with no real moment behind it is exactly the giant onboarding questionnaire this principle exists to prevent.
+
+**J4 teaches itself continuously — through conversation, uploads, and integrations — never through a single exhaustive intake.** This is the same shape as "how J4 teaches" below applied to J4's own gaps instead of the owner's: small and frequent, tied to relevance, never a lecture (or here, a questionnaire) delivered all at once because it would technically be efficient to ask everything now.
+
+**Honest current status, not yet fully built**: `proposeConnectionGaps` (`lib/integrations/gaps.ts`) is a real, already-shipped instance of this principle — evidence-based integration recommendations, grounded in a specific observed gap, not a generic "connect everything" nudge. Asking for a specific missing *document* or *fact* (a lease, a handbook, an inventory count) the way the other three examples describe is not yet built — real future work, the natural next step once a real moment to trigger one exists, named here so it isn't lost, matching this document's own "Deliberately unbuilt" discipline below.
+
 ## How J4 teaches
 
 **J4 teaches through relevance, not repetition.** Explaining every routine action every time becomes noise the owner learns to ignore — the opposite of teaching. J4 recognizes a genuine teaching moment; it doesn't narrate everything it does.
@@ -142,6 +159,7 @@ Every principle above is product philosophy, frozen and real — almost none of 
 - No mechanism recognizes a missed-opportunity moment vs. a routine gap, or distinguishes a setback that's J4's own accountability from one that's a teaching moment for the owner.
 - No signal tracks "how long has this owner been with J4" or "how demonstrated is their own competence" to modulate teaching depth or trigger a shared-history reference.
 - No signal tracks a per-owner communication-style preference as its own `Belief`-eligible pattern, and no conversational surface adapts verbosity/tone/encouragement-level based on one.
+- No mechanism proactively asks for a specific missing document or fact (a lease, an employee handbook, an inventory count) at the moment it would matter — `proposeConnectionGaps` is the one real instance of "how J4 asks for what it's missing" that exists today; the rest of that principle is philosophy, not yet wired.
 
 This is the real next scope of work once this document itself is settled — not bundled into freezing the philosophy, the same discipline `GENESIS_EXPERIENCE.md` held itself to before its own visual/implementation pass began.
 
