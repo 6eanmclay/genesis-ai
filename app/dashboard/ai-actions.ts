@@ -48,6 +48,7 @@ import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
+import { buildTaskSeedMessage, buildTaskUserMessage } from "@/lib/dashboard/taskConversation";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { BusinessFactSchema, toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
@@ -3521,6 +3522,62 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
 
   revalidatePath(returnTo);
   redirect(returnTo);
+}
+
+// BUSINESS_ASSETS_ARCHITECTURE.md M2 — replaces plain actionHref navigation
+// for a Task card with a real, persisted, task-aware conversation. Writes
+// both a user-turn message (honest statement of what was clicked, same
+// pattern as uploadBusinessAssetFromChat's "Uploaded a photo: ...") and a
+// real assistant-authored opening turn with taskId set — that FK is what
+// lets every later turn in this conversation see it via the normal message
+// history every chat call already reads in full, with no separate
+// context-injection mechanism needed (see taskConversation.ts's own
+// comment). Idempotent: a task already resumed once (seedMessageId already
+// set) just reopens the existing conversation rather than writing a second
+// seed turn.
+export async function startTaskConversation(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const taskId = formData.get("taskId") as string | null;
+  if (!taskId) {
+    throw new Error("Missing task.");
+  }
+
+  const currentPath = (formData.get("currentPath") as string) || "/dashboard";
+  const returnTo = currentPath.startsWith("/dashboard") ? currentPath : "/dashboard";
+
+  const resolved = await resolveUserStore(session.user.id);
+  if (!resolved) {
+    redirect(returnTo);
+  }
+  const { store, role } = resolved;
+  if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
+    throw new Error("You don't have permission to do this.");
+  }
+
+  const task = await prisma.task.findUnique({ where: { id: taskId } });
+  if (!task || task.storeId !== store.id) {
+    redirect(returnTo);
+  }
+
+  if (!task.seedMessageId) {
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "user", content: buildTaskUserMessage(task) },
+    });
+    const seedMessage = await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: buildTaskSeedMessage(task), taskId: task.id },
+    });
+    await prisma.task.update({
+      where: { id: task.id },
+      data: { status: "IN_PROGRESS", seedMessageId: seedMessage.id },
+    });
+  }
+
+  revalidatePath(returnTo);
+  redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}openChat=1`);
 }
 
 const PERSONALITY_PROMPTS: Record<string, string> = {

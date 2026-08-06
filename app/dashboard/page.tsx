@@ -832,7 +832,7 @@ export default async function DashboardPage() {
           surface for the new unified Task model. */}
       {isOwnerManager && (
         <TaskCards
-          tasks={openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary, actionHref: t.actionHref }))}
+          tasks={openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary }))}
         />
       )}
 

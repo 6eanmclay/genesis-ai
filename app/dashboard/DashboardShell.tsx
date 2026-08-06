@@ -241,6 +241,16 @@ export function DashboardShell({
       ? focusableItems.find((a) => a.id === focusId && a.section === currentSecondarySection.key)
       : undefined;
 
+  // BUSINESS_ASSETS_ARCHITECTURE.md M2 — startTaskConversation (app/
+  // dashboard/ai-actions.ts) redirects here after writing a real seeded
+  // conversation; this is what makes the panel actually open into it
+  // immediately rather than requiring the owner to notice and click the
+  // pill themselves — the one real gap the old, section-scoped "?focus="
+  // mechanism above doesn't cover (Task cards live on Home, not a
+  // secondary Your Business section, and their content is a real message
+  // already, not a banner needing focusableItems resolution).
+  const openChatFromTask = searchParams.get("openChat") === "1";
+
   // Family-beta instrumentation (v20) — navigation is otherwise completely
   // stateless (nothing records a page view today). Fire-and-forget, never
   // awaited by the caller and never blocking a real navigation — a failed
@@ -812,6 +822,7 @@ export function DashboardShell({
             ? { summary: focusedItem.summary, noticedSummary: focusedItem.noticedSummary, kind: focusedItem.kind }
             : null
         }
+        defaultOpen={openChatFromTask}
       />
     </div>
   );

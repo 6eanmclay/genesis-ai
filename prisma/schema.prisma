@@ -384,7 +384,19 @@ model StoreMessage {
   changes   Json?
   createdAt DateTime @default(now())
 
+  // BUSINESS_ASSETS_ARCHITECTURE.md M2 — set on the real, persisted opening
+  // turn a Task card writes (see startTaskConversation, app/dashboard/
+  // ai-actions.ts). This is what replaces the old ephemeral, client-only
+  // focusedContext banner: because it's a real row in the same message
+  // history every turn already reads in full, "J4 already understands why
+  // the task exists" is true for the whole conversation, not just its first
+  // render — no separate context-injection mechanism needed.
+  taskId String?
+
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  task  Task?  @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([taskId])
 }
 
 model StoreGeneration {
@@ -832,7 +844,8 @@ model Task {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store    Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  messages StoreMessage[]
 
   @@unique([storeId, dedupeKey])
   @@index([storeId, status])
