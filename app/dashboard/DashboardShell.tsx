@@ -835,6 +835,12 @@ export function DashboardShell({
             : null
         }
         defaultOpen={openChatFromTask}
+        // Response Modes plan (2026-08-07), Phase 2 — only the live-store
+        // instance has a matching streaming route (app/api/chat/route.ts,
+        // which resolves the store from the session itself). The draft/
+        // pre-launch instance (app/dashboard/page.tsx) omits this and keeps
+        // its exact current behavior.
+        streaming
       />
     </div>
   );

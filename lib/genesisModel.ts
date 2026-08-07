@@ -225,6 +225,15 @@ export type GenesisModelContext = GenesisModelScope & {
   // feature tag is exactly the silent gap this system exists to close,
   // so it's a compile error rather than an easy thing to forget.
   feature: AiFeature;
+  // Response Modes plan (2026-08-07), Phase 2 — purely additive: every
+  // existing call site omits this and gets today's exact behavior
+  // (await the complete response, nothing surfaced until it's done). When
+  // provided, real text deltas are forwarded as Claude generates them —
+  // the SDK already streams internally to produce `.finalMessage()`; this
+  // just exposes that same stream instead of discarding it. Cost
+  // governance, error classification, and usage recording all still run
+  // exactly as before, once the full message resolves.
+  onTextDelta?: (delta: string) => void;
 };
 
 // AI Cost & Usage Infrastructure — records real per-call usage from the
@@ -288,7 +297,7 @@ export async function callGenesisModel<Params extends Parameters<typeof anthropi
   GenesisModelResult<Awaited<ReturnType<ReturnType<typeof anthropic.messages.stream<Params>>["finalMessage"]>>>
 > {
   const startedAt = Date.now();
-  const { background = false, confirmedOverride = false, feature, ...scope } = context;
+  const { background = false, confirmedOverride = false, feature, onTextDelta, ...scope } = context;
   const scopeLabel =
     "storeId" in scope
       ? `storeId=${scope.storeId}`
@@ -330,7 +339,9 @@ export async function callGenesisModel<Params extends Parameters<typeof anthropi
   }
 
   try {
-    const message = await anthropic.messages.stream(params).finalMessage();
+    const stream = anthropic.messages.stream(params);
+    if (onTextDelta) stream.on("text", onTextDelta);
+    const message = await stream.finalMessage();
     const durationMs = Date.now() - startedAt;
     const aiUsageEventId = await recordUsage(scope, feature, params.model, durationMs, message.usage);
     return { ok: true, message, durationMs, aiUsageEventId };

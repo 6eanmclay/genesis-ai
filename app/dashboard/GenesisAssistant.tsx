@@ -277,6 +277,7 @@ export function GenesisAssistant({
   focusedContext,
   defaultOpen,
   dockLeft = true,
+  streaming = false,
 }: {
   storeName: string;
   messages: Message[];
@@ -285,6 +286,12 @@ export function GenesisAssistant({
   // is optional. Undefined anywhere the caller has no real Store yet.
   uploadAsset?: (formData: FormData) => void;
   focusedContext?: FocusedContext | null;
+  // Response Modes plan (2026-08-07), Phase 2 — only the live-store chat
+  // instance (DashboardShell.tsx) opts in. The draft/pre-launch instance
+  // (app/dashboard/page.tsx) has no equivalent streaming route yet
+  // (applyGenesisMessage's own migration is real future work, not this
+  // pass) and simply omits this prop, keeping its exact current behavior.
+  streaming?: boolean;
   // "Welcome to Genesis" (v20) — the pre-launch draft review page wants
   // chat open by default even with zero messages yet, since talking to
   // Genesis is meant to be the primary way to shape the business, not
@@ -319,7 +326,31 @@ export function GenesisAssistant({
   // those aren't the pattern that caused the complaint.
   const isDesktop = useSyncExternalStore(subscribeToDesktopWidth, getIsDesktopSnapshot, getIsDesktopServerSnapshot);
   const [userOverride, setUserOverride] = useState<boolean | null>(null);
-  const open = userOverride ?? (defaultOpen || !!focusedContext || (isDesktop && messages.length > 0));
+
+  // Response Modes plan (2026-08-07), Phase 2 — messages is now a seed, not
+  // the source of truth for render: real streaming needs to append/update
+  // messages locally (the optimistic user turn, then the assistant's reply
+  // growing token by token) well before any server round trip completes or
+  // a Server Action redirect brings fresh props. Resynced whenever the
+  // server actually sends a genuinely new messages array (a fallback's real
+  // redirect, a plain page load) — during render, React's own recommended
+  // pattern for this ("Adjusting some state when a prop changes") rather
+  // than an effect, since messages only ever changes reference when the
+  // server has real new data, never mid-stream (nothing here triggers a
+  // server round trip while a stream is in flight).
+  const [localMessages, setLocalMessages] = useState<Message[]>(messages);
+  const [syncedMessages, setSyncedMessages] = useState(messages);
+  if (messages !== syncedMessages) {
+    setSyncedMessages(messages);
+    setLocalMessages(messages);
+  }
+  // Honest activity narration (principle 3) — what the fast streaming path
+  // is actually doing right now, sourced from real server-emitted status
+  // events, never fabricated. Cleared the moment real content starts
+  // arriving or the turn ends.
+  const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
+
+  const open = userOverride ?? (defaultOpen || !!focusedContext || (isDesktop && localMessages.length > 0));
   const setOpen = setUserOverride;
   const pathname = usePathname();
 
@@ -328,34 +359,138 @@ export function GenesisAssistant({
   // never completed), so this is deliberately local, ephemeral UI state,
   // not a StoreMessage row. Cleared on every new attempt.
   const [sendError, setSendError] = useState<string | null>(null);
-  async function handleSend(formData: FormData) {
-    setSendError(null);
+
+  // Falls back to the exact original mechanism (the real Server Action,
+  // full-page redirect) — used both when streaming is off for this
+  // instance and as the real recovery path when the stream can't be used.
+  async function sendViaServerAction(formData: FormData) {
     const result = await callGenesisAction(() => Promise.resolve(sendMessage(formData)));
     if (!result.ok) setSendError(result.message);
   }
 
+  async function handleSend(formData: FormData) {
+    setSendError(null);
+    setStreamingStatus(null);
+    const text = String(formData.get("message") ?? "").trim();
+
+    if (!streaming || !text) {
+      await sendViaServerAction(formData);
+      return;
+    }
+
+    // Instant, genuine acknowledgment (principle 1) — the user's own
+    // message, and a real assistant placeholder to stream into, both
+    // appear before any network round trip completes. Never removed on
+    // success; only rolled back on a real failure/fallback below.
+    const optimisticUserId = `optimistic-user-${Date.now()}`;
+    const assistantId = `optimistic-assistant-${Date.now()}`;
+    setLocalMessages((prev) => [
+      ...prev,
+      { id: optimisticUserId, role: "user", content: text, changes: null },
+      { id: assistantId, role: "assistant", content: "", changes: null },
+    ]);
+    const rollBackOptimisticEntries = () =>
+      setLocalMessages((prev) => prev.filter((m) => m.id !== optimisticUserId && m.id !== assistantId));
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      if (!response.ok || !response.body) {
+        rollBackOptimisticEntries();
+        await sendViaServerAction(formData);
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let sawDone = false;
+      let sawFallback = false;
+
+      readLoop: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line) as
+            | { type: "status"; text: string }
+            | { type: "token"; delta: string }
+            | { type: "done" }
+            | { type: "fallback" }
+            | { type: "error"; message: string };
+
+          if (event.type === "status") {
+            setStreamingStatus(event.text);
+          } else if (event.type === "token") {
+            setStreamingStatus(null);
+            setLocalMessages((prev) =>
+              prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.delta } : m))
+            );
+          } else if (event.type === "done") {
+            sawDone = true;
+            setStreamingStatus(null);
+          } else if (event.type === "fallback") {
+            sawFallback = true;
+            break readLoop;
+          } else if (event.type === "error") {
+            setStreamingStatus(null);
+            setSendError(event.message);
+            rollBackOptimisticEntries();
+            return;
+          }
+        }
+      }
+
+      if (sawFallback) {
+        // The heavy content-edit path — the existing Server Action handles
+        // it exactly as it does today (full page redirect, its own real
+        // persisted messages). Remove the optimistic placeholders so they
+        // don't briefly double up with what the redirect brings back.
+        rollBackOptimisticEntries();
+        await sendViaServerAction(formData);
+        return;
+      }
+
+      if (!sawDone) {
+        // Connection dropped mid-stream with no terminal event — an honest
+        // failure state, never a silent hang.
+        setSendError("Connection dropped before Genesis finished replying. Please try again.");
+        rollBackOptimisticEntries();
+      }
+    } catch {
+      rollBackOptimisticEntries();
+      await sendViaServerAction(formData);
+    } finally {
+      setStreamingStatus(null);
+    }
+  }
+
   // Track 0 — see ConfirmCeilingOverride's own comment for why a plain
   // string match against the last message is correct here, not a gap.
-  const lastMessage = messages[messages.length - 1];
+  const lastMessage = localMessages[localMessages.length - 1];
   const showConfirmCeiling = lastMessage?.role === "assistant" && lastMessage.content === USAGE_CEILING_MESSAGE;
   const previousUserMessage = showConfirmCeiling
-    ? [...messages].reverse().find((m) => m.role === "user")?.content
+    ? [...localMessages].reverse().find((m) => m.role === "user")?.content
     : undefined;
 
-  // Keep the newest turn in view — on first open, and whenever a new
-  // message genuinely arrives (messages.length only ever grows; there's no
-  // live/streaming append mid-scroll in this architecture, since a new
-  // message always means a full page render with the complete, final
-  // conversation). Never fires just because the user scrolled up to read
-  // history — nothing here reacts to scroll position, only to message
-  // count actually changing. `current` is null while closed (this element
-  // isn't rendered then), so the effect is a no-op until the panel opens.
+  // Keep the newest turn in view — on first open, whenever a new message
+  // genuinely arrives, and (Response Modes plan, Phase 2) on every streamed
+  // token too, via localMessages.length + the growing content length of
+  // the last message — a streamed reply changes its own content in place
+  // without changing the array length, so length alone would miss it.
   const messageListRef = useRef<HTMLDivElement>(null);
+  const lastMessageContentLength = lastMessage?.content.length ?? 0;
   useEffect(() => {
     const el = messageListRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+  }, [localMessages.length, lastMessageContentLength]);
 
   // Mobile safe-area fix — hit-tested and confirmed real: below lg:, this
   // panel is nearly full-width and up to 60vh tall, fixed at the bottom of
@@ -528,7 +663,7 @@ export function GenesisAssistant({
             )}
           </div>
         )}
-        {messages.length === 0 ? (
+        {localMessages.length === 0 ? (
           <div className="text-sm text-zinc-600 dark:text-zinc-400 lg:text-[rgba(244,242,251,0.62)]">
             <p className="font-medium text-black dark:text-zinc-50 lg:text-[#f4f2fb]">
               Your business partner, always paying attention.
@@ -540,8 +675,14 @@ export function GenesisAssistant({
             </p>
           </div>
         ) : (
-          messages.map((m) => {
+          localMessages.map((m, i) => {
             const changes = m.changes as string[] | null;
+            // Response Modes plan, Phase 2 — the streaming placeholder
+            // (empty content, still waiting on the first token) shows real,
+            // honest status text instead of sitting blank. Only the very
+            // last message can ever be in this state.
+            const isStreamingPlaceholder =
+              streaming && i === localMessages.length - 1 && m.role === "assistant" && m.content === "";
             return (
               <div
                 key={m.id}
@@ -551,7 +692,14 @@ export function GenesisAssistant({
                     : "self-start rounded-lg border border-black/[.08] bg-zinc-50 px-3 py-2 text-sm dark:border-white/[.145] dark:bg-zinc-800 dark:text-zinc-50 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#8b7cf6]/10 lg:text-[#f4f2fb]"
                 }
               >
-                <p>{m.content}</p>
+                {isStreamingPlaceholder ? (
+                  <p className="flex items-center gap-1.5 italic opacity-70">
+                    <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />
+                    {streamingStatus ?? "Thinking…"}
+                  </p>
+                ) : (
+                  <p>{m.content}</p>
+                )}
                 {changes && changes.length > 0 && (
                   <details className="mt-2">
                     <summary className="cursor-pointer text-xs opacity-60 hover:opacity-100">
