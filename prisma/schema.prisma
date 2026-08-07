@@ -39,6 +39,7 @@ model User {
   referralsSent         Referral[] @relation("ReferralsSent")
   referralsReceived     Referral[] @relation("ReferralsReceived")
   businessPartnerTrialGrants BusinessPartnerTrialGrant[]
+  passwordResetTokens   PasswordResetToken[]
 }
 
 model Account {
@@ -75,6 +76,29 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+// Auth screens review (2026-08-07) — real password reset, restoring what
+// git history confirms never existed in this codebase before (checked via
+// `git log -S"Forgot Password"` across every commit — zero hits). Stores
+// only a hash of the real token (tokenHash), same discipline as User.password
+// — the raw token only ever exists in the email link itself, never at rest,
+// so a database compromise alone can't be used to reset anyone's password.
+// A fast cryptographic hash (SHA-256, not bcrypt) is correct here, unlike
+// passwords: this token is high-entropy random data, not a low-entropy
+// human-chosen secret, so it doesn't need slow, brute-force-resistant
+// hashing the way a password does.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Store {

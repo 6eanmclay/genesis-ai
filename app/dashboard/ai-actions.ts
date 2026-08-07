@@ -2138,13 +2138,30 @@ function diffStoreChanges(before: StoreState, after: StoreState): string[] {
   return changes;
 }
 
+// Real production bug (2026-08-07, reported as "chat freezing" during a
+// second real user's dogfooding): GenesisAssistant.tsx keeps the panel's
+// open/closed state as local React state (`userOverride`), which a same-page
+// Server Action redirect() throws away on remount. Below lg:, the only other
+// condition keeping the panel open is `defaultOpen`/`focusedContext` — so on
+// mobile, every ordinary chat reply silently closed an actively open
+// conversation the instant it landed. Confirmed via a real Playwright
+// reproduction: the panel visibly closed itself ~30-40s after sending,
+// exactly when the redirect fired, with the reply only surfacing later in
+// Home's own "Recently" feed — indistinguishable from a freeze/vanished
+// conversation to the person using it. openChat=1 already proved out this
+// exact fix for one flow (startTaskConversation's own final redirect,
+// below); applied everywhere a chat-panel turn completes.
+function redirectKeepingChatOpen(returnTo: string): never {
+  redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}openChat=1`);
+}
+
 async function applyGenesisMessageToStore(userId: string, userMessage: string, returnTo: string, confirmedOverride = false) {
   // Family-beta instrumentation (v20) — see logChatTurnEvent's own comment.
   const turnStartedAt = Date.now();
 
   const resolved = await resolveUserStore(userId);
   if (!resolved) {
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
   const { store, role } = resolved;
   if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
@@ -2202,7 +2219,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       likelyRephraseOf,
     });
     revalidatePath(returnTo);
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
 
   // Every current Genesis capability for a live store (identity, theme,
@@ -2245,7 +2262,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     // Action redirect() alone doesn't reliably guarantee the just-persisted
     // StoreMessage is reflected without an explicit revalidation.
     revalidatePath(returnTo);
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
 
   // Same real gap FALLBACK_THEME's own comment already documents for the v2
@@ -2429,7 +2446,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       likelyRephraseOf,
     });
     revalidatePath(returnTo);
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
 
   // Phase 3 Milestone 5 — a fourth independent triage step, same
@@ -2573,7 +2590,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         likelyRephraseOf,
       });
       revalidatePath(returnTo);
-      redirect(returnTo);
+      redirectKeepingChatOpen(returnTo);
     }
   }
 
@@ -2621,7 +2638,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       likelyRephraseOf,
     });
     revalidatePath(returnTo);
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
 
   // Detect "replace this product's image" requests first, via a separate
@@ -2694,7 +2711,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         likelyRephraseOf,
       });
       revalidatePath(returnTo);
-      redirect(returnTo);
+      redirectKeepingChatOpen(returnTo);
     }
 
     // Genesis orchestrates the whole authorized set as one delegated
@@ -2809,7 +2826,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     });
 
     revalidatePath(returnTo);
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
 
   const primaryOutcome = await callGenesisModel({
@@ -3443,7 +3460,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   });
 
   revalidatePath(returnTo);
-  redirect(returnTo);
+  redirectKeepingChatOpen(returnTo);
 }
 
 export async function sendStoreMessage(formData: FormData) {
@@ -3503,7 +3520,7 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
 
   const resolved = await resolveUserStore(session.user.id);
   if (!resolved) {
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
   const { store, role } = resolved;
   if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
@@ -3604,7 +3621,7 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
   });
 
   revalidatePath(returnTo);
-  redirect(returnTo);
+  redirectKeepingChatOpen(returnTo);
 }
 
 // BUSINESS_ASSETS_ARCHITECTURE.md M2 — replaces plain actionHref navigation
@@ -3634,7 +3651,7 @@ export async function startTaskConversation(formData: FormData) {
 
   const resolved = await resolveUserStore(session.user.id);
   if (!resolved) {
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
   const { store, role } = resolved;
   if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
@@ -3643,7 +3660,7 @@ export async function startTaskConversation(formData: FormData) {
 
   const task = await prisma.task.findUnique({ where: { id: taskId } });
   if (!task || task.storeId !== store.id) {
-    redirect(returnTo);
+    redirectKeepingChatOpen(returnTo);
   }
 
   if (!task.seedMessageId) {
@@ -3674,7 +3691,7 @@ export async function startTaskConversation(formData: FormData) {
   // refreshed off yet) — nothing left to add, just reopen chat below.
 
   revalidatePath(returnTo);
-  redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}openChat=1`);
+  redirectKeepingChatOpen(returnTo);
 }
 
 const PERSONALITY_PROMPTS: Record<string, string> = {

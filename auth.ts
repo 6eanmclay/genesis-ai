@@ -10,9 +10,25 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "jwt" },
   providers: [
+    // Real production bug (2026-08-07, reported by a genuine second real
+    // user): "Continue with Google" silently looped back to /login with no
+    // visible error. Confirmed the OAuth *initiation* itself works
+    // correctly (real redirect to Google, valid client_id/redirect_uri) —
+    // the likely failure is NextAuth's own default account-linking
+    // behavior: if an email/password account already exists for the same
+    // email as the Google account, sign-in is blocked with
+    // OAuthAccountNotLinked, and (since the login page never displayed any
+    // error at all until this same fix) that failure was completely
+    // invisible — indistinguishable from nothing happening. Safe to allow
+    // here specifically because Google verifies email ownership — the real
+    // risk this flag normally protects against (an attacker registering an
+    // OAuth account with someone else's unverified email to hijack an
+    // existing account) doesn't apply to a provider that verifies the
+    // email itself.
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      allowDangerousEmailAccountLinking: true,
     }),
     Credentials({
       name: "credentials",

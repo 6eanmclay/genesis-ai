@@ -19,10 +19,22 @@
 // can safely import MAX_UPLOAD_BYTES/ALLOWED_CONTENT_TYPES from it too —
 // client and server now validate against the exact same constants.
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB
+// image/heic and image/heif (2026-08-07, iPhone photo upload investigation)
+// — iOS's own default camera format since iOS 11. Safari usually transcodes
+// this to JPEG automatically before an <input type="file"> ever sees it, but
+// that behavior isn't universal across iOS versions and capture paths — when
+// it doesn't happen, the raw file.type really is "image/heic", and this
+// allowlist was hard-rejecting a perfectly real photo with a "wrong file
+// type" message. Genesis's own classification already degrades honestly
+// when it can't read an image (see classifyAndExtractAsset's "I wasn't able
+// to take a proper look at it" fallback), so accepting the raw bytes here is
+// safe even before there's a real client-side re-encode step.
 export const ALLOWED_CONTENT_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
   "application/pdf": "pdf",
 };
 
@@ -42,7 +54,7 @@ export function finalizeUploadedAssetFile(uploaded: {
   contentType: string;
 }): UploadedAssetFile {
   if (!ALLOWED_CONTENT_TYPES[uploaded.contentType]) {
-    throw new Error("Please upload a PNG, JPEG, WebP, or PDF file.");
+    throw new Error("Please upload a PNG, JPEG, WebP, HEIC, or PDF file.");
   }
   return {
     url: uploaded.url,

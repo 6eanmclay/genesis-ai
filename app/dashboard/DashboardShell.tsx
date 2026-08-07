@@ -249,6 +249,14 @@ export function DashboardShell({
   // mechanism above doesn't cover (Task cards live on Home, not a
   // secondary Your Business section, and their content is a real message
   // already, not a banner needing focusableItems resolution).
+  //
+  // Real production bug (2026-08-07) — every ordinary chat turn also ends in
+  // a same-page redirect() (see redirectKeepingChatOpen's own comment), which
+  // was silently closing an actively open panel on mobile the instant a
+  // reply landed (no other auto-open condition holds below lg:, since
+  // isDesktop is false there). redirectKeepingChatOpen now sends this same
+  // "?openChat=1" after every chat-panel turn, not just a Task card's first
+  // open, so this flag is no longer task-specific despite its name.
   const openChatFromTask = searchParams.get("openChat") === "1";
 
   // Family-beta instrumentation (v20) — navigation is otherwise completely

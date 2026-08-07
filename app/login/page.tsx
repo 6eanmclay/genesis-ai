@@ -1,15 +1,45 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 
+// useSearchParams() requires a Suspense boundary for static generation
+// (confirmed live via a real next build failure) — this page was
+// previously fully static with no params to read at all; the ?reset=
+// success flash (2026-08-07) is the first thing here that needs one.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+// Real production bug (2026-08-07) — every NextAuth sign-in error
+// (including a real OAuth failure) was silently redirecting back to this
+// page with an "?error=" param that nothing ever read — indistinguishable
+// from clicking "Continue with Google" and having nothing happen. Spoken,
+// not logged (Genesis Experience Principle 1): a raw NextAuth error code
+// is never shown verbatim.
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  OAuthAccountNotLinked:
+    "That Google account's email is already registered a different way. Try logging in with your email and password instead.",
+  AccessDenied: "That sign-in was cancelled or denied.",
+};
+const DEFAULT_OAUTH_ERROR_MESSAGE = "Something went wrong signing in with Google. Please try again.";
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const justReset = searchParams.get("reset") === "success";
+  const oauthErrorCode = searchParams.get("error");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(
+    oauthErrorCode ? (OAUTH_ERROR_MESSAGES[oauthErrorCode] ?? DEFAULT_OAUTH_ERROR_MESSAGE) : ""
+  );
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,6 +84,12 @@ export default function LoginPage() {
           off.
         </p>
 
+        {justReset && (
+          <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
+            Your password has been reset. Log in with your new password.
+          </p>
+        )}
+
         <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
           <input
             type="email"
@@ -63,14 +99,19 @@ export default function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
           />
-          <input
-            type="password"
-            placeholder="Password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-          />
+          <div className="flex flex-col gap-1.5">
+            <input
+              type="password"
+              placeholder="Password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+            />
+            <Link href="/forgot-password" className="self-end text-xs text-zinc-500 underline hover:text-black dark:hover:text-zinc-50">
+              Forgot password?
+            </Link>
+          </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
 

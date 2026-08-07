@@ -29,6 +29,21 @@ function getIsDesktopServerSnapshot() {
   return false;
 }
 
+// iPhone Safari photo upload investigation (2026-08-07) — crypto.randomUUID()
+// needs a secure context and Safari 15.4+; it was called here completely
+// unguarded, so on any older browser this throws synchronously inside the
+// upload handler. callGenesisAction's catch turns that into the generic
+// "connection may have dropped" message — indistinguishable from a real
+// network failure, and it would fail identically on every retry. This key
+// only needs to be unique per upload, not cryptographically random, so a
+// plain fallback is a safe, real fix rather than a guess at the actual bug.
+function randomAssetKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 // Every lg:-scoped color below is GENESIS_ATMOSPHERE (lib/dashboard/
 // genesisAtmosphere.ts) written as literal hex/rgba, not imported and
 // interpolated — Tailwind's class scanner works on static source text, so
@@ -163,7 +178,7 @@ function UploadAssetButton({
           if (!file) return;
           const extension = ALLOWED_CONTENT_TYPES[file.type];
           if (!extension) {
-            onFailure("Please upload a PNG, JPEG, WebP, or PDF file.");
+            onFailure("Please upload a PNG, JPEG, WebP, HEIC, or PDF file.");
             return;
           }
           if (file.size > MAX_UPLOAD_BYTES) {
@@ -177,7 +192,7 @@ function UploadAssetButton({
               // body entirely (see app/api/blob/business-asset-upload and
               // lib/businessAssets/uploadAssetFile.ts's own comment on why
               // that's the real fix, not just a config tweak).
-              const blob = await blobUpload(`assets/${crypto.randomUUID()}.${extension}`, file, {
+              const blob = await blobUpload(`assets/${randomAssetKey()}.${extension}`, file, {
                 access: "public",
                 handleUploadUrl: "/api/blob/business-asset-upload",
                 contentType: file.type,
@@ -569,7 +584,7 @@ export function GenesisAssistant({
             <UploadAssetButton
               label="Upload Photos"
               icon="📷"
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
               uploadAsset={uploadAsset}
               currentPath={pathname}
               onFailure={setSendError}
