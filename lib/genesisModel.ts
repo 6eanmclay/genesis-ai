@@ -146,15 +146,26 @@ export type GenesisModelResult<T> = GenesisModelSuccess<T> | GenesisModelFailure
 // both logged as kind=unknown despite being a genuine, classifiable 529.
 // Same "inspect the raw payload, not just the class" precedent isBilling
 // below already uses for a different gap in the SDK's own typed classes.
+// Real bug in this function's own first version, found live (2026-08-07):
+// the raw payload's shape is {type: "error", error: {type: "overloaded_error",
+// ...}, request_id} — a wrapper discriminator (always literally "error") one
+// level above the actual error type. The original version read `.type` off
+// whichever object it found — the outer wrapper when parsed from
+// err.message, meaning it always read back the literal string "error" and
+// never matched anything. Confirmed against the exact real logged payload
+// (request_id req_011CdofBvicce5Qz9mFdY8WK) before redeploying this fix,
+// not assumed correct from re-reading the code a second time.
 function extractStreamErrorType(err: unknown): string | null {
-  const payload =
+  const raw: unknown =
     err && typeof err === "object" && "error" in err
-      ? (err as { error?: unknown }).error
+      ? err
       : err instanceof Error
         ? tryParseJson(err.message)
         : null;
-  if (payload && typeof payload === "object" && "type" in payload && typeof (payload as { type: unknown }).type === "string") {
-    return (payload as { type: string }).type;
+  if (!raw || typeof raw !== "object" || !("error" in raw)) return null;
+  const inner = (raw as { error?: unknown }).error;
+  if (inner && typeof inner === "object" && "type" in inner && typeof (inner as { type: unknown }).type === "string") {
+    return (inner as { type: string }).type;
   }
   return null;
 }
