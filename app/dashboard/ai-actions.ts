@@ -1578,7 +1578,7 @@ async function bailOnProviderFailure(params: {
     stageDurationsMs: params.stageDurationsMs,
   });
   revalidatePath(params.returnTo);
-  redirect(params.returnTo);
+  redirectKeepingChatOpen(params.returnTo);
 }
 
 async function applyGenesisMessage(userId: string, userMessage: string, confirmedOverride = false) {

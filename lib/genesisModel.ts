@@ -134,6 +134,39 @@ export type GenesisModelResult<T> = GenesisModelSuccess<T> | GenesisModelFailure
 // confirmable is deliberately not this function's concern — it's set
 // explicitly to false wherever this result is used, since a real provider
 // error is never something a caller can "confirm past."
+// Real production gap, found live (2026-08-07): a mid-stream SSE "error"
+// event — the connection already returned 200 OK and started streaming
+// before Anthropic's own capacity gave out — never reaches
+// APIError.generate(status, ...) the way a pre-flight HTTP error does, since
+// there's no distinguishable status code once a stream is already open.
+// None of the instanceof checks below ever match it, so it fell all the way
+// through to the generic "unknown" branch. Real evidence: two live
+// overloaded_error failures this same day (request_ids
+// req_011CdoY9aqQkVdHfsW6ZpKB9, req_011CdoXpRwqomnh6t4nVAzML), each ~47-51s,
+// both logged as kind=unknown despite being a genuine, classifiable 529.
+// Same "inspect the raw payload, not just the class" precedent isBilling
+// below already uses for a different gap in the SDK's own typed classes.
+function extractStreamErrorType(err: unknown): string | null {
+  const payload =
+    err && typeof err === "object" && "error" in err
+      ? (err as { error?: unknown }).error
+      : err instanceof Error
+        ? tryParseJson(err.message)
+        : null;
+  if (payload && typeof payload === "object" && "type" in payload && typeof (payload as { type: unknown }).type === "string") {
+    return (payload as { type: string }).type;
+  }
+  return null;
+}
+
+function tryParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | "durationMs" | "confirmable"> {
   if (err instanceof Anthropic.APIConnectionError) {
     return { kind: "network", status: null, message: err.message, retryable: true };
@@ -165,10 +198,20 @@ function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | 
   if (err instanceof Anthropic.APIError) {
     return { kind: "unknown", status: err.status ?? null, message: err.message, retryable: false };
   }
+
+  const streamErrorType = extractStreamErrorType(err);
+  const rawMessage = err instanceof Error ? err.message : String(err);
+  if (streamErrorType === "overloaded_error") {
+    return { kind: "overloaded", status: null, message: rawMessage, retryable: true };
+  }
+  if (streamErrorType === "rate_limit_error") {
+    return { kind: "rate_limit", status: null, message: rawMessage, retryable: true };
+  }
+
   return {
     kind: "unknown",
     status: null,
-    message: err instanceof Error ? err.message : String(err),
+    message: rawMessage,
     retryable: false,
   };
 }
