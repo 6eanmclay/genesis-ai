@@ -121,7 +121,7 @@ If a screen or interaction can't be mapped to one of these, or doesn't leave the
 
 ## Design principles governing this experience
 
-Frozen alongside the existing Genesis Experience Principles (`project_genesis_experience_principles` memory) — these extend that set into a specific, sequential journey rather than adding a competing list.
+Frozen alongside the existing Genesis Experience Principles (now written down permanently in `GENESIS_EXPERIENCE_PRINCIPLES.md`, after living only in memory since 2026-07-31) — these extend that set into a specific, sequential journey rather than adding a competing list.
 
 1. **Optimize for the feeling, not the comparison.** Never design against a competitor. Design toward the feeling of effortlessly starting a real business; the comparison is the customer's own conclusion.
 2. **Never fake progress.** Pacing slows only where something meaningful is genuinely happening, or where the owner needs a real moment to absorb something important — never to manufacture suspense. Already a proven discipline in this codebase's arrival-beat work; carried forward here as a hard rule, not a preference.

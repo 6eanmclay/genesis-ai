@@ -192,6 +192,8 @@ Not proposing to build any of this yet — flagged here as the concrete, evidenc
 
 Confirmed by Sean, standing across every future upload/analysis flow, not just this one: the UI never waits on J4's thinking to acknowledge what the user just did. Files appear instantly, the upload begins immediately, J4 acknowledges receipt immediately ("I received your 18 photos and I'm analyzing them now"), analysis continues in the background, and results stream into the conversation without a refresh as they complete. A 10-20s real analysis time is fully acceptable as long as the interface stays visibly responsive and continuously updating throughout — the failure mode being protected against is the app *feeling* frozen, not the analysis taking a specific amount of time. This is exactly what the priority order above (1→3) is designed to produce; stated here explicitly as the frozen product principle it implements.
 
+**Since generalized into a product-wide principle** (2026-08-07, after a real dogfooding pass found the same gap in onboarding's own creative-direction generation) — see `GENESIS_EXPERIENCE_PRINCIPLES.md` principles 7 and 8. This section's own wording stays as the original, upload-specific case study; the canonical, standing rule now lives there.
+
 ---
 
 ## Approval
