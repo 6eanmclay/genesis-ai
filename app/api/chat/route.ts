@@ -55,8 +55,17 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 // deliberately NOT written until we know which path we're taking, so a
 // fallback never produces a duplicate.
 export const maxDuration = 300;
+// Real production bug (2026-08-07) — a purely conversational message got
+// misrouted into the heavy fallback path; while diagnosing it, verified
+// there's no accidental buffering in this route's own code (every text
+// delta is enqueued to the stream the instant it arrives, nothing is
+// accumulated server-side first) but added this defensively anyway, so
+// Next.js never applies any static-optimization/caching path to a route
+// that must always stream fresh, per-request output.
+export const dynamic = "force-dynamic";
 
 const CHAT_HISTORY_WINDOW = 50;
+const encoder = new TextEncoder();
 
 type StreamEvent =
   | { type: "status"; text: string }
@@ -66,7 +75,7 @@ type StreamEvent =
   | { type: "error"; message: string };
 
 function encodeEvent(event: StreamEvent): Uint8Array {
-  return new TextEncoder().encode(`${JSON.stringify(event)}\n`);
+  return encoder.encode(`${JSON.stringify(event)}\n`);
 }
 
 async function logStreamedChatTurn(params: {
@@ -222,6 +231,12 @@ export async function POST(request: Request) {
         emit({ type: "status", text: "Understanding your request…" });
 
         let streamedAnyText = false;
+        // Real TTFT vs. total-duration instrumentation (Sean, 2026-08-07) —
+        // "the user seeing the first real words as quickly as possible" is
+        // a materially different number than total call time, and needs to
+        // be measured separately, not conflated. Logged below alongside the
+        // rest of this turn's real timing.
+        let firstTokenAtMs: number | null = null;
         const unifiedOutcome = await callGenesisModel(
           {
             model: "claude-opus-4-8",
@@ -235,16 +250,18 @@ export async function POST(request: Request) {
           {
             storeId: store.id,
             feature: "store_chat_unified_triage",
-            // Real live streaming — the whole point of this route. Text the
-            // model produces (a conversational reply, or its own leading
-            // "I'll look that up" alongside a tool call) renders to the
-            // client as it's generated, not after the full call resolves.
+            // Real live streaming — the whole point of this route. Every
+            // delta is enqueued to the response stream the instant it's
+            // received from the SDK's own stream event — nothing is
+            // accumulated or batched server-side first.
             onTextDelta: (delta) => {
+              if (firstTokenAtMs === null) firstTokenAtMs = Date.now() - turnStartedAt;
               streamedAnyText = true;
               emit({ type: "token", delta });
             },
           }
         );
+        console.log(`[genesis-chat-ttft] ttftMs=${firstTokenAtMs ?? "n/a"} sinceUnifiedCallStartMs=${Date.now() - turnStartedAt}`);
 
         if (!unifiedOutcome.ok) {
           emit({ type: "fallback" });
