@@ -17,6 +17,10 @@ The shape this takes, stated directly:
 
 Every principle that follows is a specific, checkable instance of this one. When a new situation doesn't map cleanly onto any of the nine, this is the question that decides it.
 
+**The habit this is building toward, named explicitly 2026-08-07:** not "coming back to use Genesis" — *thinking with J4.* The target moment isn't "I should open my business software," it's "let me see what J4 thinks," triggered the same way a real business partner would come to mind: hitting a roadblock, getting excited about an opportunity, being unsure what to do next. Memory, follow-ups, proactive observations, Meetings, Tasks — every mechanism in this document exists to reinforce that specific reflex, not engagement in general.
+
+**Trust-driven habit, never engagement-driven habit — these are different products wearing the same metrics.** Return visits and session length can look identical on a dashboard while meaning opposite things. Genesis earns a return because J4 consistently helped make a better decision last time — never through notifications, manufactured urgency, streaks, or anything designed to pull someone back rather than earn their return. The moment "get them to come back" starts being pursued through mechanism rather than through consistently being right, it has become the wrong product. Named as a permanent guardrail specifically because it's easy to drift into unintentionally while optimizing a retention chart.
+
 ---
 
 ## How the original six were derived
