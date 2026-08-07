@@ -134,51 +134,40 @@ export type GenesisModelResult<T> = GenesisModelSuccess<T> | GenesisModelFailure
 // confirmable is deliberately not this function's concern — it's set
 // explicitly to false wherever this result is used, since a real provider
 // error is never something a caller can "confirm past."
-// Real production gap, found live (2026-08-07): a mid-stream SSE "error"
-// event — the connection already returned 200 OK and started streaming
-// before Anthropic's own capacity gave out — never reaches
-// APIError.generate(status, ...) the way a pre-flight HTTP error does, since
-// there's no distinguishable status code once a stream is already open.
-// None of the instanceof checks below ever match it, so it fell all the way
-// through to the generic "unknown" branch. Real evidence: two live
-// overloaded_error failures this same day (request_ids
-// req_011CdoY9aqQkVdHfsW6ZpKB9, req_011CdoXpRwqomnh6t4nVAzML), each ~47-51s,
-// both logged as kind=unknown despite being a genuine, classifiable 529.
-// Same "inspect the raw payload, not just the class" precedent isBilling
-// below already uses for a different gap in the SDK's own typed classes.
-// Real bug in this function's own first version, found live (2026-08-07):
-// the raw payload's shape is {type: "error", error: {type: "overloaded_error",
-// ...}, request_id} — a wrapper discriminator (always literally "error") one
-// level above the actual error type. The original version read `.type` off
-// whichever object it found — the outer wrapper when parsed from
-// err.message, meaning it always read back the literal string "error" and
-// never matched anything. Confirmed against the exact real logged payload
-// (request_id req_011CdofBvicce5Qz9mFdY8WK) before redeploying this fix,
-// not assumed correct from re-reading the code a second time.
-function extractStreamErrorType(err: unknown): string | null {
-  const raw: unknown =
-    err && typeof err === "object" && "error" in err
-      ? err
-      : err instanceof Error
-        ? tryParseJson(err.message)
-        : null;
-  if (!raw || typeof raw !== "object" || !("error" in raw)) return null;
-  const inner = (raw as { error?: unknown }).error;
-  if (inner && typeof inner === "object" && "type" in inner && typeof (inner as { type: unknown }).type === "string") {
-    return (inner as { type: string }).type;
-  }
-  return null;
-}
-
-function tryParseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
+// Real production gap, found live (2026-08-07) and mis-fixed twice before
+// this version — a mid-stream SSE "error" event (the connection already
+// returned 200 OK and started streaming before Anthropic's own capacity gave
+// out) never carries a clean, predictable object shape by the time it
+// reaches here. Attempt 1 assumed err.error held the inner error directly;
+// attempt 2 found APIError's constructor sets `this.error` but assumed it
+// held the unwrapped inner object; both were real, confirmed-live failures
+// (request_ids req_011CdofBvicce5Qz9mFdY8WK, req_011Cdoh2BVKfWHqr35ZcPG89) —
+// the second one wrong specifically because APIError.generate()'s own real
+// source passes the FULL {type:"error",error:{...}} wrapper into the
+// constructor, not the unwrapped inner object, and MessageStream.js
+// (node_modules/@anthropic-ai/sdk/lib/MessageStream.js) rewraps a non-
+// AnthropicError into a plain AnthropicError with the original stashed on
+// `.cause` — a third, different shape again. Rather than keep guessing the
+// exact nesting, this checks the resolved message text directly for the
+// provider's own error-type string — the same technique isBilling below
+// already uses for a different SDK classification gap, and the one thing
+// confirmed true across all three real failures: the raw JSON reliably ends
+// up somewhere in the message text, regardless of which class wraps it.
+function resolveErrorText(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const causeText = err.cause instanceof Error ? err.cause.message : "";
+  return `${err.message} ${causeText}`.trim();
 }
 
 function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | "durationMs" | "confirmable"> {
+  const resolvedText = resolveErrorText(err);
+  if (/"type"\s*:\s*"overloaded_error"/i.test(resolvedText)) {
+    return { kind: "overloaded", status: null, message: resolvedText, retryable: true };
+  }
+  if (/"type"\s*:\s*"rate_limit_error"/i.test(resolvedText)) {
+    return { kind: "rate_limit", status: null, message: resolvedText, retryable: true };
+  }
+
   if (err instanceof Anthropic.APIConnectionError) {
     return { kind: "network", status: null, message: err.message, retryable: true };
   }
@@ -210,19 +199,10 @@ function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | 
     return { kind: "unknown", status: err.status ?? null, message: err.message, retryable: false };
   }
 
-  const streamErrorType = extractStreamErrorType(err);
-  const rawMessage = err instanceof Error ? err.message : String(err);
-  if (streamErrorType === "overloaded_error") {
-    return { kind: "overloaded", status: null, message: rawMessage, retryable: true };
-  }
-  if (streamErrorType === "rate_limit_error") {
-    return { kind: "rate_limit", status: null, message: rawMessage, retryable: true };
-  }
-
   return {
     kind: "unknown",
     status: null,
-    message: rawMessage,
+    message: resolvedText,
     retryable: false,
   };
 }
