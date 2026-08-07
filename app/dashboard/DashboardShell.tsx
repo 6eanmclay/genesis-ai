@@ -716,7 +716,11 @@ export function DashboardShell({
       </div>
 
       {/* Mobile bottom tab bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-black/[.08] bg-white/95 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden">
+      {/* Real production bug (2026-08-07) — pb-0 + fixed bottom-0 with no
+          safe-area accounting meant this could render partly behind a
+          device's own gesture-nav area; see GenesisAssistant.tsx's matching
+          fix for the floating panel's own bottom-20 offset, same root cause. */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-black/[.08] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden">
         {tabSections.map((section) => (
           <Link
             key={section.key}
