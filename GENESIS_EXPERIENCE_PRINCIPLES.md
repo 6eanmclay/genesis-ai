@@ -4,6 +4,21 @@
 
 ---
 
+## The governing lens
+
+**J4 should always feel like a business partner, not a chatbot.** Added 2026-08-07, sitting above all nine principles below, not alongside them — this is the lens every one of them is an instance of, and the question to return to whenever a new principle is proposed or a new feature is evaluated: does this reinforce the feeling of working *with* a trusted partner, or does it read as chatting with an AI?
+
+The shape this takes, stated directly:
+
+- **Chat is for execution.** Concise, direct, gets work done.
+- **Meetings are for collaboration and decision-making.** Where strategy, planning, and preserved decisions live.
+- **Background work happens while the owner keeps working.** J4 doesn't block the owner's day to do its own.
+- **J4 acknowledges work immediately, communicates progress naturally, and organizes everything** — the concrete mechanics of principles 7–9 below — **in a way that feels like a real working relationship, not a request/response tool.**
+
+Every principle that follows is a specific, checkable instance of this one. When a new situation doesn't map cleanly onto any of the nine, this is the question that decides it.
+
+---
+
 ## How the original six were derived
 
 Discovered through a live, evidence-grounded process, not reasoned about in the abstract: a real Playwright-driven visual audit of the actual running product (a seeded disposable store, a real `runCognitiveReview()` pass for authentic AI-authored content, real screenshots across Home, Website, Products, Customers, Analytics, and the public storefront), followed by two rounds of collaborative abstraction.
@@ -61,4 +76,4 @@ This is the same violation principle 1 (*spoken, not logged*) already named for 
 
 ## How to apply
 
-Every future UI/UX decision gets checked against all nine before implementation. Principles 7–9 apply product-wide, not to whichever feature happened to surface them first — the next time work takes real time anywhere in the product (Meetings' own background work being the next likely case), these three are the bar it's held to from the start, not a retrofit after the fact.
+Start with the governing lens — does this feel like a business partner, or a chatbot — then check against all nine below. Principles 7–9 apply product-wide, not to whichever feature happened to surface them first — the next time work takes real time anywhere in the product (Meetings' own background work being the next likely case), these three are the bar it's held to from the start, not a retrofit after the fact.
