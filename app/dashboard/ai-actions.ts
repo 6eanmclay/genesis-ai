@@ -52,7 +52,23 @@ import { buildTaskSeedMessage, buildTaskUserMessage, buildTaskRecapMessage } fro
 import { completeTasksForAction } from "@/lib/dashboard/tasks";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
-import { BusinessFactSchema, toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
+import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
+import {
+  buildStoreChatUnifiedTools,
+  firstToolUse,
+  textOf,
+  type BusinessFactCaptureInput,
+  type RequestImageChangeInput,
+} from "@/lib/execution/genesisTools";
+import {
+  UploadIntentSchema,
+  STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
+  UPLOAD_INTENT_REPLY,
+  StoreChatDataAnswerSchema,
+  STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
+  STORE_CHAT_UNIFIED_SYSTEM_PROMPT,
+  extractRichContentImagePrompt,
+} from "@/lib/dashboard/storeChatUnified";
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
 import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { recordExecution } from "@/lib/execution/log";
@@ -1030,17 +1046,9 @@ const FALLBACK_THEME: ThemeWithComposition = {
   composition: DEFAULT_THEME_COMPOSITION,
 };
 
-// Live Product.richContent is untyped JSON ({keyFeatures, benefits,
-// specifications, imagePrompt}, written at confirmStoreDraft time) — unlike
-// the draft-stage ProductContent below, imagePrompt is nested here rather
-// than a direct column, so every live-product read needs this extraction.
-function extractRichContentImagePrompt(richContent: unknown): string | null {
-  if (richContent && typeof richContent === "object" && "imagePrompt" in richContent) {
-    const value = (richContent as { imagePrompt?: unknown }).imagePrompt;
-    return typeof value === "string" && value.length > 0 ? value : null;
-  }
-  return null;
-}
+// extractRichContentImagePrompt now lives in lib/dashboard/storeChatUnified.ts
+// (Response Modes plan, Phase 2) — shared with the new streaming Route
+// Handler, which also resolves product images.
 
 type ProductSpec = { label: string; value: string };
 
@@ -1298,181 +1306,22 @@ ${CONTINUATION_GUIDANCE}
 
 Structure your reply in this order: first, confirm specifically what you changed (not a vague "done!" — name the actual thing); then, if relevant, note any expert recommendations you added unprompted, named specifically and calibrated per the guidance above; only after that, optionally end with one proactive suggestion for what to consider next. Never lead with a suggestion before confirming what you did. Read like a short, natural message from a real person — never a list of field names, never the phrase "content updated" or similar. Keep it to 2-4 sentences.`;
 
-// A separate, tiny, first-run detection call — never folded into
-// StoreChatPrimarySchema, which is already schema-size-fragile (see the
-// grammar-size comment at the top of this file). Products are otherwise
-// entirely out of scope for live-store chat (real relational data tied to
-// orders — see the comment above StoreCoreFieldsSchema), but "replace this
-// product's image" is a narrow, approval-gated exception: nothing here
-// ever writes to Product directly, it only proposes an ApprovalRequest.
-const ProductImageRequestSchema = z.object({
-  isImageRequest: z.boolean(),
-  // Authorized scope, not just a product name — "all" means every currently
-  // active product, "specific" means exactly the names in productNames.
-  // null means the scope itself is genuinely unresolved (ask a clarifying
-  // question) — never used to mean "more than one product," which is a
-  // perfectly valid, resolved scope on its own. The caller re-verifies
-  // productNames against the real active product list regardless; neither
-  // field is ever trusted on its own say-so.
-  scope: z.enum(["all", "specific"]).nullable(),
-  productNames: z.array(z.string()).nullable(),
-  // Used verbatim as the assistant's reply in every outcome when
-  // isImageRequest is true: acknowledging a resolved request (naming what
-  // was resolved), or asking a genuine clarifying question when the scope
-  // can't be pinned down.
-  reply: z.string(),
-});
-
-// Business Assets — a real beta tester wrote "I have files I want to
-// upload" and Genesis fell through every other classifier below to the
-// full, expensive content-generation pipeline, which took long enough to
-// risk the client-side network-timeout race (see
-// GENESIS_NETWORK_FAILURE_MESSAGE's own comment — a slow-but-eventually-
-// successful turn can still show the merchant a local error banner) and,
-// worse, confidently told them it "can't open uploaded files directly" —
-// false as of Business Assets M2. This is the cheapest possible check
-// (matches ProductImageRequestSchema/DataQuestionSchema's own pattern) and
-// runs first, before any other classifier, so this exact message class
-// never reaches the slow pipeline at all. The reply is a fixed,
-// deterministic string, not model-generated — this is precisely the kind
-// of claim ("uploads work, here's how") that must never be paraphrased
-// into something inaccurate the way the fallback path already was.
-const UploadIntentSchema = z.object({
-  isUploadIntent: z.boolean(),
-});
-
-const STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is the merchant saying they have files — photos, documents, PDFs, spreadsheets, contracts, logos, invoices, SOPs, or similar — that they want to give Genesis, or asking how to upload/share files with Genesis?
-
-Set isUploadIntent: true for messages like "I have files I want to upload," "can I send you my logo," "I have a PDF of my supplier contract," "how do I upload photos," "I want to give you some documents about my business," or similar — any real expression of wanting to provide files, documents, photos, or videos to Genesis, or asking how to do so.
-
-Set isUploadIntent: false for everything else, including a message that merely mentions a photo or document in passing without expressing intent to provide one right now (e.g. "the photo on my homepage looks bad" is about existing content, not an upload; "can you replace my product photo" is an image-generation request, handled elsewhere).`;
-
-const UPLOAD_INTENT_REPLY =
-  "Great — upload them here and I'll analyze them, organize them, and use them to better understand your business. Use the buttons below to get started: Upload Photos or Upload Documents (Upload Videos is coming soon).";
-
-const STORE_CHAT_IMAGE_REQUEST_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. You are given the store's active product names and the merchant's latest message. Decide only one thing: is this message asking to replace, regenerate, or find a new photo for one or more existing products?
-
-Most messages are not this — identity, theme, branding, policy, and general questions are handled elsewhere and should get isImageRequest: false with an empty reply (it's ignored in that case).
-
-If it IS an image request, resolve scope — clarify ambiguity, not complexity:
-- If the merchant clearly means every active product ("all of them," "all my products," "every product," or a direct "all" answer after you already asked which one), set scope: "all", leave productNames empty, and write reply as a short, natural acknowledgment that you're finding new photos for all of them. Never ask the merchant to pick one first when they've already told you it's all of them — resolving multiple products yourself is your job, not theirs.
-- If the merchant names one or more specific products you can confidently match against the real list, set scope: "specific" and productNames to their exact names (one name is a completely normal, valid case of this), and write reply as a short, natural acknowledgment naming exactly which one(s).
-- Only set scope to null when the scope itself is genuinely unclear — no product was named, "all" wasn't said, and the name given doesn't match anything specific enough. In that case write reply as a genuine, specific clarifying question naming the plausible candidates from the real list. "The request touches more than one product" is never by itself a reason to leave scope null — that's scope: "all" or a multi-item scope: "specific", not ambiguity.`;
-
-// Phase 3 Milestone 1 (J4 Foundation) — a cheap, separate classifier
-// mirroring ProductImageRequestSchema's own pattern, run before ANY of the
-// existing content-generation pipeline. Distinguishes a pure informational
-// question ("what was my revenue last week") from a request to change
-// something. Kept deliberately minimal (no relevantEntityTypes field) —
-// the answer call below fetches a bounded recent-data context for every
-// entity type regardless (see buildChatDataContext), which is simpler and
-// safer than trusting a classifier to correctly predict which data a
-// question needs.
-//
-// Budget-Aware J4 — widened (field name kept as isDataQuestion, not
-// renamed, to avoid rippling the schema) to also cover genuine planning/
-// strategy questions ("what should I do next," "build me a 90-day plan"),
-// not just literal record lookups. Both kinds route to the same real
-// answer call below, grounded in the same real business understanding —
-// "thinking is free" (ARCHITECTURE.md) means a planning question deserves
-// exactly the same real, grounded answer a data question already gets,
-// never a fallback into the content-editing prompt further down.
-const DataQuestionSchema = z.object({
-  isDataQuestion: z.boolean(),
-});
-
-const STORE_CHAT_DATA_QUESTION_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is this message something that should be ANSWERED, in words, using the business's own real data and understanding — as opposed to a request to actually change something in the store?
-
-Set isDataQuestion: true for both of these real kinds of message:
-- An informational question about the business itself — its own data (revenue, orders, customers, upcoming appointments, campaign performance, and similar) or its own understanding (what business this is, how it makes money, what it sells, who its customers/segments are, who works there, its suppliers/vendors, its locations, what systems are connected, its stated goals, its current challenges, or how any of these relate to each other) — something answerable by looking up real records.
-- A genuine planning or strategy question — asking Genesis to think, analyze, forecast, or recommend in words, without asking it to actually apply any change. Real examples: "What should I do next?", "Build me a 90-day growth plan.", "How would you spend 20 Growth Points?", "What's the fastest path to $10,000/month?" These deserve a real, grounded answer exactly like a data question does — Genesis must always be free to think and plan out loud, regardless of anything else about the store.
-
-Most messages are NOT either of these — a request to actually change identity, theme, branding, copy, policy, or product images is handled elsewhere and should get isDataQuestion: false. A vague or conversational message that isn't really asking to be told or explained anything should also get isDataQuestion: false. Only set isDataQuestion: true when the merchant is genuinely asking to be told or explained something — a fact, an analysis, or a plan — never when they're asking for an actual change to be made.`;
-
-// The actual answer, once isDataQuestion is true — a separate, focused call
-// (not folded into the classifier above) so the classifier's job stays
-// cheap and simple, and this call can be given the real fetched data before
-// it has to say anything. Must never state a number/fact it wasn't given —
-// this is the central trust bar for the whole capability. See
-// lib/businessModel/reasoning.ts's buildChatDataContext for what "asOf"
-// and "recent" mean here.
-const StoreChatDataAnswerSchema = z.object({
-  reply: z.string(),
-});
-
-const STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT = `You are Genesis (J4), a merchant's business partner, answering a real question about their own business using only the data given to you below. This data comes from the business's own records — some of it computed live (always current), some of it may eventually come from connected third-party systems and carry its own "as of" recency.
-
-The question you're answering may be a straightforward lookup ("what was my revenue last week") or a genuine planning/strategy request ("what should I do next," "build me a 90-day growth plan," "what's the fastest path to $10,000/month," "how would you spend N Growth Points") — both deserve a real, complete answer, grounded entirely in the data you're given below, never in anything you weren't given. A planning answer is real synthesis and judgment, not a database lookup — reasoning from goals, beliefs, trends, and recent decisions to a concrete recommendation is exactly the job, not something to decline or hedge away from.
-
-Under businessProfile, you're given the business's actual understanding of itself: identity (brand story, mission, values, target audience, USP), industry and revenue-model classification, its offerings, revenue, customers and real computed customer segments (repeat/high-value/lapsed/new), its owner/team/employees, suppliers/vendors, connected systems, stated goals, current challenges, locations, and assets (real files the owner has uploaded — see below) — this is the real source for "what business is this," "how does it make money," "who works here," "what are my goals/challenges," and similar business-understanding questions, not just transactional numbers. Any of these lists may be genuinely empty (e.g. no goals stated yet) — an honest "you haven't told me that yet" is correct, never a fabricated answer.
-
-businessProfile.assets (and recent.asset) are real photos/documents the owner has uploaded through chat — each has fileType, category, summary, originalFilename, and extractionConfidence (0-1). category: "unclassified" or a low extractionConfidence means Genesis hasn't confidently identified what the file is yet — describe it honestly as "not yet reviewed" or "unclear," never state its summary as settled fact. A confidently-classified asset (a real category, higher confidence) is a real fact you can answer from directly — "your supplier invoice from Clayworks shows $482.50 due September 1" is exactly the kind of grounded answer this data supports. Never describe the file's storage location or any internal id — only what it actually is and what it says.
-
-You're also given real data from this business's connected systems — QuickBooks (invoices), Mailchimp (email campaigns), Google Calendar (appointments) — when those are connected and have synced. recent.document holds recent invoices, each with type, amountInCents, status ("paid"/"pending"/"overdue"), issuedAt, and dueAt — a document is overdue when its status is "overdue" or its dueAt has passed while status isn't "paid". recent.campaign holds recent email campaigns, each with name, channel, sentAt, audienceSize, and metrics (an open bag that may include opens/clicks — an open rate is opens divided by audienceSize when both are present). recent.appointment and upcomingAppointments hold calendar events, each with title, startAt, endAt, contactIds (linking to a real customer when their email matches one Genesis already knows), and status — upcomingAppointments is specifically the ones still ahead in time. recent.transaction and recent.item mirror the store's own orders/products and rarely need separate explanation. Any of these being empty means honestly nothing has synced yet (or that system isn't connected) — say so plainly, never invent a record. invoiceSummary, campaignPerformanceSummary, and appointmentSummary give you the same data already rolled up into real totals (outstanding/overdue invoice counts and dollar amounts, average open rate and most recent send date, upcoming/cancelled appointment counts and cancellation rate) — prefer these over re-deriving a total yourself from the raw recent lists, and each is null when there's honestly nothing to summarize.
-
-businessProfile.connectedSystems carries a real, already-computed syncedAgoLabel ("14 hours ago", "3 days ago", null if it's never synced) and isStale (true once that system's own normal sync cadence has genuinely been exceeded) for each connected provider. Your own internal commerce data (revenue, orders, top contacts) is always live — never qualify it. An answer built on invoiceSummary/campaignPerformanceSummary/appointmentSummary or recent.document/campaign/appointment is different: when the relevant provider's isStale is true, say so plainly ("as of your last QuickBooks sync, 3 days ago...") rather than answering with the same unqualified confidence you'd give your own live data. When isStale is false, just answer normally — don't manufacture a freshness caveat that isn't warranted.
-
-You're also given the same understanding Genesis's own recommendation engine reasons from — there is only one J4, not a shallower one for conversation. recentDecisions lists real, objective facts about the last 14 days: specific proposals the owner executed or rejected. beliefs lists patterns already generalized from real, repeated evidence — each with a confidence score and a maturity label ("early signal"/"an emerging pattern" are real but thin, mention cautiously if at all; "well-established" is a premise you can build a confident answer on; "being reconsidered" means something you've relied on may be breaking down right now). activeThoughts lists what you've already told this owner and haven't resolved yet — if a question touches one of these, acknowledge it rather than repeating it as if for the first time.
-
-growthPointBalance is this store's real current Growth Points balance, and growthPointCosts gives the real point cost of each actionType priced so far (absent means no real price exists yet — never invent one). Both are context, not a gate — a planning question gets a complete, real answer regardless of balance, always. Only weave affordability into your answer when it's genuinely relevant to what's being asked (e.g. the merchant literally asks "how would you spend N Growth Points," or a plan you're proposing involves a real, priced action): name what fits the current balance, and separately name what a higher-impact plan would need — informing the trade-off, never pressuring a purchase. Whenever you refer to Growth Points being used, say "invest"/"investment," never "spend"/"cost" — Growth Points represent an owner investing in their own business, not a fee for AI usage.
-
-Rules, non-negotiable:
-- Never state a number, name, or fact that isn't present in the data provided. If the data needed to answer isn't there, say so plainly and warmly — never guess or estimate. This includes Growth Point costs: never state a specific point cost for an actionType that isn't actually in growthPointCosts.
-- The revenue figures, top-contacts list, and customer segments are already correctly computed for you — relay them, don't recompute or "correct" them.
-- If a question needs something you don't have any relevant data for at all (e.g. they're asking about a system that isn't connected), say so honestly, without listing every unrelated field you do have.
-- Translate any specialized or technical language into plain, everyday terms a small-business owner would understand — never make them decode jargon.
-- Keep the tone warm, direct, and conversational, like a knowledgeable partner giving a real answer — not a report or a bulleted dump of every field.
-- This is a read-only answer: you may recommend, plan, and advise freely in words, but never claim or imply you've actually applied a change to the store — you're reporting and advising, never executing.`;
-
-// Phase 3 Milestone 5 — another cheap, separate classifier, same pattern as
-// DataQuestionSchema/ProductImageRequestSchema above: recognizes when the
-// owner is stating a durable fact about their business — a goal, a current
-// challenge, a new employee, a location — as opposed to a question, a
-// content-change request, or ordinary conversation.
-//
-// A discriminated union, not a generic z.record(z.unknown()) bag — the
-// first version of this schema used a loose record and, confirmed live
-// against the real API, Claude correctly identified the entityType every
-// time but frequently left `data` an empty object, since a generic record
-// gives the structured-output grammar no per-field pressure (no required
-// fields, no enum constraints) — only this prompt's prose said fields were
-// required, and prose alone wasn't enough. Real per-entity-type object
-// schemas, exactly the same fix ProposedActionSchema already relies on in
-// generateGenesisRecommendations.ts, make the API's own grammar compiler
-// enforce it. Each "Capture" schema deliberately covers only what Claude
-// can plausibly infer from one message — status/identifiedAt/the
-// relatedGoalIds/relatedChallengeIds reference arrays are derived in code
-// at the write site below, never asked of the model (it has no way to know
-// a real prior goal/challenge id from one isolated message).
-// Meeting with J4 M4 — these Capture schemas now live in
-// lib/businessModel/factCapture.ts, shared with the meeting's own Listen
-// stage rather than redefined here.
-
-const STORE_CHAT_BUSINESS_FACT_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live business, before anything else runs. Decide whether the merchant is stating a durable fact about their business that you should remember — a goal they have, a challenge they're currently facing, a new employee who works there, or a location/property the business operates from — as opposed to asking a question, requesting a content change, or just making ordinary conversation.
-
-Most messages are NOT this — set entityType: "none" for anything else. Only pick one of the other four when the merchant is clearly telling you something true and lasting about their business:
-- "goal": something they want to achieve (e.g. "my goal this quarter is $10k in monthly revenue"). Always fill in description with a real, specific sentence — never leave it vague or generic. If a real dollar figure was stated, also fill in targetValueInCents (e.g. "$10k" -> 1000000) — leave it null if no real number was given, never estimate one.
-- "challenge": something currently difficult for the business (e.g. "keeping enough inventory in stock has been a real problem"). Always fill in description with a real, specific sentence.
-- "employee": a person who works at the business (e.g. "I just hired Jane as store manager"). name is required — everything else, only what's actually stated.
-- "location": a physical place the business operates from (e.g. "we also have a small warehouse in Austin"). name is required (a short label like "Austin Warehouse") — everything else, only what's actually stated.
-
-For every field beyond the required one(s) above, fill it in only when you can confidently infer it from the actual message — leave it null (or, for the array fields, empty) rather than guessing. Write a short, warm confirmationReply that states back exactly what you're recording, e.g. "Got it — I'll remember that your Q3 goal is $10k in monthly revenue." so the merchant can see and correct it. For entityType: "none", leave data and confirmationReply null.`;
-
-// Marketing Engine (Chapter 3) — a cheap, separate classifier, same shape
-// as every other triage classifier in this file: distinguishes a genuine
-// "plan/create a marketing campaign" request from everything else,
-// including a plain planning/strategy QUESTION about marketing (handled
-// already by the data-question path above) — this one is specifically for
-// "do it," not "tell me about it." On true, planMarketingCampaign
-// (lib/marketing/campaigns.ts) does the real work and persists real
-// Campaign BusinessRecords; this classifier's only job is routing.
-const CampaignRequestSchema = z.object({
-  isCampaignRequest: z.boolean(),
-});
-
-const STORE_CHAT_CAMPAIGN_REQUEST_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is the merchant asking you to actually plan or create a marketing campaign — real content to promote something, across one or more channels (email, social, or similar)?
-
-Set isCampaignRequest: true for a real request like "plan a campaign for our new product," "write me a launch campaign," "create a promotion for the summer sale," or "draft some marketing content for X." Set isCampaignRequest: false for everything else, including a question ABOUT marketing strategy without asking you to actually draft anything ("how should I think about marketing this?" — that's a planning question, handled elsewhere), a request to edit an existing field like a bio or SEO title (handled elsewhere), or ordinary conversation.`;
+// factCapture.ts's Capture schemas (goal/challenge/employee/location) are a
+// discriminated union, not a generic z.record(z.unknown()) bag — the first
+// version used a loose record and, confirmed live against the real API,
+// Claude correctly identified the entityType every time but frequently left
+// `data` an empty object, since a generic record gives the structured-output
+// grammar no per-field pressure (no required fields, no enum constraints) —
+// only prose said fields were required, and prose alone wasn't enough. Real
+// per-entity-type object schemas, the same fix ProposedActionSchema already
+// relies on in generateGenesisRecommendations.ts, make the API's own grammar
+// compiler enforce it. Each "Capture" schema deliberately covers only what
+// Claude can plausibly infer from one message — status/identifiedAt/the
+// relatedGoalIds/relatedChallengeIds reference arrays are derived in code at
+// the write site below, never asked of the model. Shared with the Meeting's
+// own Listen stage (lib/businessModel/factCapture.ts) and, since Response
+// Modes Phase 1, with capture_business_fact's tool input schema
+// (lib/execution/genesisTools.ts) — one real shape, three callers.
 
 // Family-beta instrumentation (v20) — shared by both applyGenesisMessage
 // (draft chat) and applyGenesisMessageToStore (live chat) so a real chat
@@ -2353,30 +2202,100 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     content: m.content,
   }));
 
-  // Phase 3 Milestone 1 (J4 Foundation) — detect a pure data question
-  // before anything else runs, via a separate tiny call (same convention
-  // as the image-request classifier immediately below): a genuine question
-  // should never wastefully trigger that classifier or the
-  // content-generation pipeline further down, and must never risk a bogus
-  // content-change proposal for a message that was only ever asking to be
-  // told something. Any detection failure (parse error, API error) falls
-  // through to the normal chat flow below, same as the image-request
-  // classifier's own convention.
-  const dataQuestionOutcome = await callGenesisModel({
+  // Response Modes plan (2026-08-07), Phase 1 — replaces four sequential
+  // classifier calls (data-question, business-fact, campaign-request,
+  // image-request) plus the implicit "none matched" fallthrough to PRIMARY
+  // with one tool-enabled call. Real production data (stageDurationsMs,
+  // same-day instrumentation) showed each classifier alone costs ~2s and
+  // PRIMARY ~16.5s median — a pure conversational message paid for all five
+  // calls before reaching a reply. See STORE_CHAT_UNIFIED_SYSTEM_PROMPT and
+  // lib/execution/genesisTools.ts for the merged decision criteria and tool
+  // definitions. Upload-intent stays the separate, earlier classifier above
+  // (real permission reason, not a performance one) — everything below
+  // requires store:manage and only runs after that gate.
+  const activeProductNames = currentProducts.map((p) => p.name).join(", ") || "none";
+  const unifiedContextParts = [userMessage, `(Active products: ${activeProductNames})`];
+  if (pending) {
+    unifiedContextParts.push(
+      `(You previously proposed this change, awaiting confirmation: "${pending.summary}")`
+    );
+  }
+  // Prompt caching (Response Modes plan, Phase 1) — real measurement
+  // (scripts/measure-ttft-large-prompt.ts) found this call's ~13KB system
+  // prompt roughly doubles TTFT uncached; a cache_control breakpoint here
+  // caches tools + system together (tools always precede system in the
+  // request, so one breakpoint covers both) — identical on every call this
+  // function ever makes, for every store, so this is a real cache hit from
+  // the second call onward. A second breakpoint on the last prior-turn
+  // message extends that cached prefix through this conversation's own
+  // history, so a real multi-turn conversation only pays full price for the
+  // newest message each turn. Only applied to this derived copy, never
+  // mutating the shared conversationMessages array PRIMARY still uses
+  // unchanged below.
+  const cachedConversationMessages =
+    conversationMessages.length > 0
+      ? [
+          ...conversationMessages.slice(0, -1),
+          {
+            role: conversationMessages[conversationMessages.length - 1].role,
+            content: [
+              {
+                type: "text" as const,
+                text: conversationMessages[conversationMessages.length - 1].content,
+                cache_control: { type: "ephemeral" as const },
+              },
+            ],
+          },
+        ]
+      : conversationMessages;
+  const unifiedOutcome = await callGenesisModel({
     model: "claude-opus-4-8",
-    max_tokens: 500,
+    max_tokens: 1500,
     thinking: { type: "adaptive" },
-    system: STORE_CHAT_DATA_QUESTION_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage }],
-    output_config: {
-      effort: "low",
-      format: zodOutputFormat(DataQuestionSchema),
-    },
-  }, { storeId: store.id, confirmedOverride, feature: "store_chat_data_question" });
-  stageDurationsMs.dataQuestion = dataQuestionOutcome.durationMs;
-  const dataQuestionResult = dataQuestionOutcome.ok
-    ? dataQuestionOutcome.message.parsed_output
-    : null;
+    system: [{ type: "text", text: STORE_CHAT_UNIFIED_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+    messages: [...cachedConversationMessages, { role: "user", content: unifiedContextParts.join("\n") }],
+    tools: buildStoreChatUnifiedTools(),
+    tool_choice: { type: "auto" },
+  }, { storeId: store.id, confirmedOverride, feature: "store_chat_unified_triage" });
+  stageDurationsMs.unifiedTriage = unifiedOutcome.durationMs;
+
+  const unifiedContent = unifiedOutcome.ok ? unifiedOutcome.message.content : [];
+  const chosenTool = firstToolUse(unifiedContent);
+  const conversationalReply = textOf(unifiedContent);
+
+  // Pure conversation — the actual fix for "I like Cubit & Coil": no tool
+  // call, no PRIMARY, no full-store regeneration. Only when the unified call
+  // itself succeeded and genuinely produced no tool call and real text; a
+  // provider failure or an empty response both fall through to PRIMARY
+  // below, same as every classifier's own "detection failure falls through"
+  // convention that this replaces.
+  if (unifiedOutcome.ok && !chosenTool && conversationalReply) {
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: conversationalReply },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "SUCCESS",
+      verified: false,
+      message: conversationalReply,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: { kind: "conversational" },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
+      likelyRephraseOf,
+      stageDurationsMs,
+    });
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
+
+  const dataQuestionResult = chosenTool?.name === "look_up_business_data" ? { isDataQuestion: true } : null;
 
   if (dataQuestionResult?.isDataQuestion) {
     // J4 Foundation (2026-08-04) — buildChatDataContext stays separate
@@ -2484,35 +2403,23 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     redirectKeepingChatOpen(returnTo);
   }
 
-  // Phase 3 Milestone 5 — a fourth independent triage step, same
-  // "own small call, own schema, doesn't touch the main pipeline" pattern
-  // as the data-question and image-request classifiers around it. Captures
-  // a stated goal/challenge/employee/location directly into BusinessRecord
-  // via persistSyncedRecords (sourceProvider: "genesis_chat") — the exact
-  // same validate-and-upsert path a real connector's sync() already uses,
-  // reused as-is. Written directly, not through ApprovalRequest: this is
-  // Genesis's own internal understanding, never customer-facing storefront
-  // content, so it doesn't carry update_hero/update_theme's risk profile —
-  // it's still fully traceable (sourceProvider on the row, normal chat
-  // history, the confirmation reply itself) and correctable in the next
-  // turn, the same trust model the read-only Q&A path above already uses.
-  const businessFactOutcome = await callGenesisModel({
-    model: "claude-opus-4-8",
-    max_tokens: 800,
-    thinking: { type: "adaptive" },
-    system: STORE_CHAT_BUSINESS_FACT_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage }],
-    output_config: {
-      effort: "low",
-      format: zodOutputFormat(BusinessFactSchema),
-    },
-  }, { storeId: store.id, confirmedOverride, feature: "store_chat_business_fact" });
-  stageDurationsMs.businessFact = businessFactOutcome.durationMs;
-  const businessFactResult = businessFactOutcome.ok
-    ? businessFactOutcome.message.parsed_output
+  // Captures a stated goal/challenge/employee/location directly into
+  // BusinessRecord via persistSyncedRecords (sourceProvider: "genesis_chat")
+  // — the exact same validate-and-upsert path a real connector's sync()
+  // already uses, reused as-is. Written directly, not through
+  // ApprovalRequest: this is Genesis's own internal understanding, never
+  // customer-facing storefront content, so it doesn't carry
+  // update_hero/update_theme's risk profile — it's still fully traceable
+  // (sourceProvider on the row, normal chat history, the confirmation reply
+  // itself) and correctable in the next turn, the same trust model the
+  // read-only Q&A path above already uses. Trigger and extraction both now
+  // come from the unified call's capture_business_fact tool call instead of
+  // a separate classifier; not calling the tool at all is the "none" case.
+  const businessFactResult = chosenTool?.name === "capture_business_fact"
+    ? { ...(chosenTool.input as BusinessFactCaptureInput), confirmationReply: conversationalReply || null }
     : null;
 
-  if (businessFactResult && businessFactResult.entityType !== "none") {
+  if (businessFactResult) {
     const entityType = businessFactResult.entityType;
     const todayIso = new Date().toISOString().slice(0, 10);
     // The model only ever fills in what one isolated message can support
@@ -2631,24 +2538,13 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     }
   }
 
-  // Marketing Engine (Chapter 3) — a real "plan a campaign" request,
-  // detected before the image-request/content-edit checks below. Planning
-  // and content generation are pure Understand/Reason work (see
+  // Marketing Engine (Chapter 3) — a real "plan a campaign" request.
+  // Planning and content generation are pure Understand/Reason work (see
   // lib/marketing/campaigns.ts's own comment) — never touches execute() or
   // Growth Points, matching the frozen "connecting/planning is free,
-  // executing a real cadence commitment is invested" principle.
-  const campaignRequestOutcome = await callGenesisModel({
-    model: "claude-opus-4-8",
-    max_tokens: 500,
-    thinking: { type: "adaptive" },
-    system: STORE_CHAT_CAMPAIGN_REQUEST_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage }],
-    output_config: { effort: "low", format: zodOutputFormat(CampaignRequestSchema) },
-  }, { storeId: store.id, confirmedOverride, feature: "store_chat_campaign_request_detection" });
-  stageDurationsMs.campaignRequest = campaignRequestOutcome.durationMs;
-  const campaignRequestResult = campaignRequestOutcome.ok
-    ? campaignRequestOutcome.message.parsed_output
-    : null;
+  // executing a real cadence commitment is invested" principle. Trigger now
+  // comes from the unified call's plan_campaign tool call.
+  const campaignRequestResult = chosenTool?.name === "plan_campaign" ? { isCampaignRequest: true } : null;
 
   if (campaignRequestResult?.isCampaignRequest) {
     const campaignPlanStartedAt = Date.now();
@@ -2682,35 +2578,16 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     redirectKeepingChatOpen(returnTo);
   }
 
-  // Detect "replace this product's image" requests first, via a separate
-  // tiny call — see the comment above ProductImageRequestSchema for why
-  // this isn't folded into StoreChatPrimarySchema. Any detection failure
-  // (parse error, API error) falls through to the normal chat flow below
-  // rather than blocking the turn on a secondary classifier.
-  const imageRequestOutcome = await callGenesisModel({
-    model: "claude-opus-4-8",
-    max_tokens: 500,
-    thinking: { type: "adaptive" },
-    system: STORE_CHAT_IMAGE_REQUEST_SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Active products:\n${currentProducts.map((p) => `- ${p.name}`).join("\n")}\n\nMerchant's message: ${userMessage}`,
-      },
-    ],
-    output_config: {
-      effort: "low",
-      format: zodOutputFormat(ProductImageRequestSchema),
-    },
-  }, { storeId: store.id, confirmedOverride, feature: "store_chat_image_request_detection" });
-  stageDurationsMs.imageRequest = imageRequestOutcome.durationMs;
-  // A provider failure here falls through to the normal chat flow below,
-  // same as the pre-existing "detection failure" comment already intended
-  // for a parse miss — this classifier was, before this pass, the one call
-  // site whose failure crashed the entire turn immediately (every chat
-  // message passes through it first), making it the most likely single
-  // candidate for what actually crashed in the 2026-07-28 incident.
-  const imageRequestResult = imageRequestOutcome.ok ? imageRequestOutcome.message.parsed_output : null;
+  // "Replace this product's image" requests — trigger and scope resolution
+  // now come from the unified call's request_image_change tool call; the
+  // reply text is the model's own accompanying text from that same call.
+  const imageRequestResult = chosenTool?.name === "request_image_change"
+    ? {
+        isImageRequest: true as const,
+        ...(chosenTool.input as RequestImageChangeInput),
+        reply: conversationalReply || "Let me find a new photo for that.",
+      }
+    : null;
 
   if (imageRequestResult?.isImageRequest) {
     // Resolution happens here, never by trusting the model's claim

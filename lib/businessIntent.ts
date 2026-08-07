@@ -40,19 +40,25 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   draft_chat_content_primary: "build_business",
   draft_chat_content_secondary: "build_business",
   draft_chat_composition: "build_business",
-  // Same reasoning as store_chat_business_fact/j4_meeting_listen_extraction
-  // below — detecting that the owner wants to hand Genesis real business
-  // knowledge is the same kind of work, just routed to the upload flow
-  // instead of a captured fact.
+  // Same reasoning as j4_meeting_listen_extraction below — detecting that
+  // the owner wants to hand Genesis real business knowledge is the same
+  // kind of work, just routed to the upload flow instead of a captured
+  // fact.
   store_chat_upload_intent_detection: "research",
   // Turning an uploaded file into durable business knowledge — the same
-  // real kind of work as store_chat_business_fact, just sourced from a
-  // file's actual content instead of a chat statement.
+  // real kind of work store_chat_unified_triage's capture_business_fact
+  // tool does, just sourced from a file's actual content instead of a chat
+  // statement.
   business_asset_classification: "research",
-  store_chat_data_question: "analyze_business",
+  // Response Modes plan (2026-08-07) — one call now covers what
+  // store_chat_data_question/store_chat_business_fact/
+  // store_chat_campaign_request_detection/store_chat_image_request_detection
+  // used to split across four; approximated to its most common real
+  // outcome (a data question or plain conversational reply), same
+  // "reclassify freely as usage data clarifies it" practice this file
+  // already follows.
+  store_chat_unified_triage: "analyze_business",
   store_chat_data_answer: "analyze_business",
-  store_chat_business_fact: "research",
-  store_chat_image_request_detection: "create_marketing",
   store_chat_content_primary: "customer_communication",
   store_chat_content_secondary: "customer_communication",
   store_chat_composition: "improve_store",
@@ -70,12 +76,11 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   onboarding_hero_selection: "create_product",
   onboarding_experience_decision: "build_business",
   j4_meeting_reflect: "customer_communication",
-  // Matches store_chat_business_fact's own mapping — the same kind of work
-  // (turning real owner statements into durable business facts), just a
-  // different real conversation context.
+  // Matches store_chat_unified_triage's capture_business_fact tool — the
+  // same kind of work (turning real owner statements into durable business
+  // facts), just a different real conversation context.
   j4_meeting_listen_extraction: "research",
   j4_meeting_ask: "customer_communication",
-  store_chat_campaign_request_detection: "create_marketing",
   marketing_campaign_planning: "create_marketing",
   marketing_assets_draft: "create_marketing",
   // Same real synthesis pipeline as cognitive_review, just composed into a

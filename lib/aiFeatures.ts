@@ -28,10 +28,13 @@ export const AI_FEATURES = [
   "business_asset_classification",
   // Live-store chat (applyGenesisMessageToStore)
   "store_chat_upload_intent_detection",
-  "store_chat_data_question",
+  // Response Modes plan (2026-08-07) — replaces the four now-removed
+  // classifier-specific features below (store_chat_data_question,
+  // store_chat_business_fact, store_chat_image_request_detection,
+  // store_chat_campaign_request_detection) with one unified, tool-enabled
+  // triage call.
+  "store_chat_unified_triage",
   "store_chat_data_answer",
-  "store_chat_business_fact",
-  "store_chat_image_request_detection",
   "store_chat_content_primary",
   "store_chat_content_secondary",
   "store_chat_composition",
@@ -57,7 +60,6 @@ export const AI_FEATURES = [
   "j4_meeting_listen_extraction",
   "j4_meeting_ask",
   // Marketing Engine (lib/marketing/, app/dashboard/ai-actions.ts)
-  "store_chat_campaign_request_detection",
   "marketing_campaign_planning",
   "marketing_assets_draft",
   // Daily Operating Rhythm (lib/dashboard/genesisBriefingComposer.ts)
