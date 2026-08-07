@@ -2158,6 +2158,18 @@ function redirectKeepingChatOpen(returnTo: string): never {
 async function applyGenesisMessageToStore(userId: string, userMessage: string, returnTo: string, confirmedOverride = false) {
   // Family-beta instrumentation (v20) — see logChatTurnEvent's own comment.
   const turnStartedAt = Date.now();
+  // Real production latency investigation (2026-08-07) — a real baseline
+  // query (AiUsageEvent + ProductEvent) showed a successful turn's real
+  // median (78.7s) running well ahead of what the AI calls alone explained,
+  // meaning real non-AI time was unaccounted for. stageDurationsMs already
+  // existed as a field on logChatTurnEvent/ProductEvent but was only
+  // populated on a few failure paths — this makes it comprehensive, on
+  // every real exit from this function, success or failure, so the next
+  // round of production data shows the exact breakdown instead of an
+  // inferred one. One shared, mutated object rather than reconstructed per
+  // call site — every exit point below just passes this same reference.
+  const stageDurationsMs: Record<string, number | null> = {};
+  const dbFetchStartedAt = Date.now();
 
   const resolved = await resolveUserStore(userId);
   if (!resolved) {
@@ -2168,10 +2180,25 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     throw new Error("You don't have permission to do this.");
   }
 
-  const existingMessages = await prisma.storeMessage.findMany({
+  // Real production latency finding (2026-08-07, real baseline query against
+  // AiUsageEvent/ProductEvent) — this fetch had no limit, meaning every turn
+  // pulled a store's ENTIRE chat history, from day one, feeding it straight
+  // into conversationMessages below as input context for every classifier
+  // and generation call. Not just a growing DB query — a growing input-token
+  // count on every AI call for a store's whole lifetime. CHAT_HISTORY_WINDOW
+  // is a deliberately generous, not-yet-tuned starting bound (~25 turns'
+  // worth), the same "real number, not researched" status as this file's
+  // other deliberately-generous constants (see DAILY_TOKEN_CEILING in
+  // lib/genesisModel.ts) — ordered desc+take, then reversed, so the model
+  // still sees its most recent real history in correct chronological order.
+  const CHAT_HISTORY_WINDOW = 50;
+  const recentMessages = await prisma.storeMessage.findMany({
     where: { storeId: store.id },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
+    take: CHAT_HISTORY_WINDOW,
   });
+  const existingMessages = recentMessages.reverse();
+  stageDurationsMs.dbFetch = Date.now() - dbFetchStartedAt;
 
   const likelyRephraseOf = findLikelyRephraseOf(
     userMessage,
@@ -2195,6 +2222,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     messages: [{ role: "user", content: userMessage }],
     output_config: { effort: "low", format: zodOutputFormat(UploadIntentSchema) },
   }, { storeId: store.id, confirmedOverride, feature: "store_chat_upload_intent_detection" });
+  stageDurationsMs.uploadIntent = uploadIntentOutcome.durationMs;
   const uploadIntentResult = uploadIntentOutcome.ok ? uploadIntentOutcome.message.parsed_output : null;
 
   if (uploadIntentResult?.isUploadIntent) {
@@ -2217,6 +2245,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       durationMs: Date.now() - turnStartedAt,
       outcome: "success",
       likelyRephraseOf,
+      stageDurationsMs,
     });
     revalidatePath(returnTo);
     redirectKeepingChatOpen(returnTo);
@@ -2257,6 +2286,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       durationMs: Date.now() - turnStartedAt,
       outcome: "failure",
       likelyRephraseOf,
+      stageDurationsMs,
     });
     // See the chat-panel-collapse investigation (v20 follow-up) — a Server
     // Action redirect() alone doesn't reliably guarantee the just-persisted
@@ -2343,6 +2373,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       format: zodOutputFormat(DataQuestionSchema),
     },
   }, { storeId: store.id, confirmedOverride, feature: "store_chat_data_question" });
+  stageDurationsMs.dataQuestion = dataQuestionOutcome.durationMs;
   const dataQuestionResult = dataQuestionOutcome.ok
     ? dataQuestionOutcome.message.parsed_output
     : null;
@@ -2355,10 +2386,12 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     // closes Gap B from J4_FOUNDATION.md: chat now sees the same beliefs,
     // recent decisions, and active thoughts the recommendation engine
     // already reasoned from — one J4, not a shallower one for conversation.
+    const dataContextStartedAt = Date.now();
     const [dataContext, understanding] = await Promise.all([
       buildChatDataContext(store.id),
       getBusinessUnderstanding(store.id),
     ]);
+    stageDurationsMs.dataContextFetch = Date.now() - dataContextStartedAt;
     const answerOutcome = await callGenesisModel({
       model: "claude-opus-4-8",
       max_tokens: 1500,
@@ -2392,6 +2425,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         format: zodOutputFormat(StoreChatDataAnswerSchema),
       },
     }, { storeId: store.id, confirmedOverride, feature: "store_chat_data_answer" });
+    stageDurationsMs.dataAnswer = answerOutcome.durationMs;
 
     if (!answerOutcome.ok) {
       return bailOnProviderFailure({
@@ -2402,7 +2436,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         returnTo,
         turnStartedAt,
         likelyRephraseOf,
-        stageDurationsMs: { dataQuestion: answerOutcome.durationMs },
+        stageDurationsMs,
       });
     }
     const dataAnswer = answerOutcome.message.parsed_output;
@@ -2415,7 +2449,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         returnTo,
         turnStartedAt,
         likelyRephraseOf,
-        stageDurationsMs: { dataQuestion: answerOutcome.durationMs },
+        stageDurationsMs,
       });
     }
 
@@ -2444,6 +2478,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       durationMs: Date.now() - turnStartedAt,
       outcome: "success",
       likelyRephraseOf,
+      stageDurationsMs,
     });
     revalidatePath(returnTo);
     redirectKeepingChatOpen(returnTo);
@@ -2472,6 +2507,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       format: zodOutputFormat(BusinessFactSchema),
     },
   }, { storeId: store.id, confirmedOverride, feature: "store_chat_business_fact" });
+  stageDurationsMs.businessFact = businessFactOutcome.durationMs;
   const businessFactResult = businessFactOutcome.ok
     ? businessFactOutcome.message.parsed_output
     : null;
@@ -2588,6 +2624,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         durationMs: Date.now() - turnStartedAt,
         outcome: "success",
         likelyRephraseOf,
+        stageDurationsMs,
       });
       revalidatePath(returnTo);
       redirectKeepingChatOpen(returnTo);
@@ -2608,12 +2645,15 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     messages: [{ role: "user", content: userMessage }],
     output_config: { effort: "low", format: zodOutputFormat(CampaignRequestSchema) },
   }, { storeId: store.id, confirmedOverride, feature: "store_chat_campaign_request_detection" });
+  stageDurationsMs.campaignRequest = campaignRequestOutcome.durationMs;
   const campaignRequestResult = campaignRequestOutcome.ok
     ? campaignRequestOutcome.message.parsed_output
     : null;
 
   if (campaignRequestResult?.isCampaignRequest) {
+    const campaignPlanStartedAt = Date.now();
     const planned = await planMarketingCampaign(store.id, userMessage);
+    stageDurationsMs.campaignPlan = Date.now() - campaignPlanStartedAt;
     const reply = planned
       ? `I've planned "${planned.name}" — ${planned.channels.length} channel${planned.channels.length === 1 ? "" : "s"}: ${planned.channels.map((c) => c.channel).join(", ")}. Take a look and let me know what you'd like to adjust before we schedule it.`
       : "I wasn't able to put a real campaign plan together from that — tell me a bit more about what you're promoting and I'll try again.";
@@ -2636,6 +2676,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       durationMs: Date.now() - turnStartedAt,
       outcome: "success",
       likelyRephraseOf,
+      stageDurationsMs,
     });
     revalidatePath(returnTo);
     redirectKeepingChatOpen(returnTo);
@@ -2662,6 +2703,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       format: zodOutputFormat(ProductImageRequestSchema),
     },
   }, { storeId: store.id, confirmedOverride, feature: "store_chat_image_request_detection" });
+  stageDurationsMs.imageRequest = imageRequestOutcome.durationMs;
   // A provider failure here falls through to the normal chat flow below,
   // same as the pre-existing "detection failure" comment already intended
   // for a parse miss — this classifier was, before this pass, the one call
@@ -2709,6 +2751,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
         durationMs: Date.now() - turnStartedAt,
         outcome: "failure",
         likelyRephraseOf,
+        stageDurationsMs,
       });
       revalidatePath(returnTo);
       redirectKeepingChatOpen(returnTo);
@@ -2723,6 +2766,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     // N separate clarifying questions.
     const groupId = randomUUID();
     const outcomes: { id: string; name: string; candidate: string | null }[] = [];
+    const imageResolutionStartedAt = Date.now();
     for (const product of targetProducts) {
       const sourced = await resolveProductImage({
         prompt: extractRichContentImagePrompt(product.richContent) ?? product.description ?? product.name,
@@ -2769,6 +2813,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       }
       outcomes.push({ id: product.id, name: product.name, candidate });
     }
+    stageDurationsMs.imageResolution = Date.now() - imageResolutionStartedAt;
 
     const foundNames = outcomes.filter((o) => o.candidate).map((o) => o.name);
     const missedNames = outcomes.filter((o) => !o.candidate).map((o) => o.name);
@@ -2823,6 +2868,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       durationMs: Date.now() - turnStartedAt,
       outcome: foundNames.length > 0 ? "success" : "failure",
       likelyRephraseOf,
+      stageDurationsMs,
     });
 
     revalidatePath(returnTo);
@@ -2843,6 +2889,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       format: zodOutputFormat(StoreChatPrimarySchema),
     },
   }, { storeId: store.id, confirmedOverride, feature: "store_chat_content_primary" });
+  stageDurationsMs.primary = primaryOutcome.durationMs;
   if (!primaryOutcome.ok) {
     return bailOnProviderFailure({
       kind: primaryOutcome.kind,
@@ -2852,11 +2899,10 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       returnTo,
       turnStartedAt,
       likelyRephraseOf,
-      stageDurationsMs: { primary: primaryOutcome.durationMs },
+      stageDurationsMs,
     });
   }
 
-  const primaryDurationMs = primaryOutcome.durationMs;
   const primaryAiUsageEventId = primaryOutcome.aiUsageEventId;
   const primaryResult = primaryOutcome.message.parsed_output;
   if (!primaryResult) {
@@ -2876,7 +2922,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       durationMs: Date.now() - turnStartedAt,
       outcome: "failure",
       likelyRephraseOf,
-      stageDurationsMs: { primary: primaryDurationMs },
+      stageDurationsMs,
     });
     throw new Error("Genesis couldn't process that request");
   }
@@ -3009,6 +3055,8 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     const [secondaryOutcome, compositionOutcome] = await Promise.all([secondaryPromise, compositionPromise]);
     secondaryDurationMs = secondaryOutcome?.durationMs ?? null;
     compositionDurationMs = compositionOutcome?.durationMs ?? null;
+    stageDurationsMs.secondary = secondaryDurationMs;
+    stageDurationsMs.composition = compositionDurationMs;
 
     // Phase 2 Milestone 1 — storeContent/marketingAssets(non-SEO)/
     // designDirection now flow through their own approvals, same as every
@@ -3452,11 +3500,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
     durationMs: Date.now() - turnStartedAt,
     outcome: "success",
     likelyRephraseOf,
-    stageDurationsMs: {
-      primary: primaryDurationMs,
-      secondary: secondaryDurationMs,
-      composition: compositionDurationMs,
-    },
+    stageDurationsMs,
   });
 
   revalidatePath(returnTo);
