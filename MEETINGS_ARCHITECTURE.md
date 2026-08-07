@@ -136,12 +136,26 @@ Per your own framing ("a business builds a library of meetings... instead of sea
 
 ---
 
-## 7. Resolved since v1
+## 7. The Meeting Room is not the chat with a label on it
+
+Reframed 2026-08-07, and this is a real, structural correction, not decoration: **the Dashboard is where you operate the business; the Meeting Room is where you think about it.** The conversation controls what's in the room. Talking about the website surfaces the website. Discussing analytics surfaces analytics. Redesigning a logo surfaces the logo concepts. This makes a `Meeting` genuinely different from a scoped chat thread (§2.2's `StoreMessage.meetingId`) — the messages are still the record, but the room also needs a real, live **workspace surface** that changes based on what's being discussed, not just a taller version of the same message list.
+
+This is real, additional scope beyond §2's data model — a `Meeting` needs some notion of "what's currently in view" (a product, a homepage draft, a logo concept, an analytics chart), driven by the same real classification work already proposed for the meeting-suggestion trigger (§3.1). Concretely: the topic classifier that decides *whether* to suggest a meeting is a close cousin of whatever would decide *what to surface* once inside one — likely worth designing as one real capability, not two separate ones, when this reaches implementation. Not designed further here — named as real scope this document didn't previously account for, not solved.
+
+## 8. Growth Points: thinking is free, execution is invested
+
+This isn't a new economic model — it's the sharpest, most concrete instance yet of a principle already frozen in this project on 2026-08-04 (`ARCHITECTURE.md`): **thinking is free, execution is invested.** Stated for Meetings specifically: brainstorming, reviewing drafts, going back and forth on ideas, looking at mockups — all free, no matter how long the room is occupied. A Growth Point is spent at exactly one moment: when the owner tells J4 to actually change the business ("apply this to my live store," "replace my current logo") and that request reaches real execution.
+
+**This is mostly already true architecturally, not a new mechanism to build.** `execute()` (`lib/execution/engine.ts`) is the only place a Growth Point is ever charged (`opts.actionType` gates `checkGrowthPointBalance`) — a chat turn that never reaches `execute()` has never cost anything, today, for any conversation, meeting or not. What Meetings adds is a *felt* boundary matching that real mechanical one: the room makes free collaboration obviously free, and the moment execution is invoked (through the same real `ApprovalRequest`/`execute()` path M3 already built) is the one, obvious place a cost could ever appear — never ambient, never mid-conversation. This directly addresses the "Growth Points as toll booth" concern named in the product critique earlier this session: gated correctly, at the right moment, points read as *"hiring your partner to execute something you've already agreed on,"* not a tax on the relationship itself.
+
+## 9. Resolved since v1
 
 1. **Retroactive scoping** — resolved: never copy or retag prior messages. A real, synthesized meeting brief (§3.3) is the meeting's own starting point instead.
 2. **Where the classifier runs** — resolved: a two-stage gate (§3.1), a free deterministic pre-filter before any real model call, triggered by conversation *type*, never length or turn count.
+3. **What Growth Points mean inside a Meeting** — resolved (§8): free until execution, exactly matching the existing `execute()`-gated mechanism.
 
-## 8. Still open before implementation
+## 10. Still open before implementation
 
 1. **Meetings library placement** — new nav destination, or folded into an existing section (mirroring the same "foundational service vs. destination" question already resolved for Business Assets)?
 2. **Stage 1's exact keyword/topic list** — real, but not yet enumerated here; needs a first real pass before implementation, and will need tuning against real usage regardless.
+3. **The workspace-surface mechanism (§7)** — real scope, not yet designed; likely shares real machinery with the suggestion classifier, but that's an observation, not a design.
