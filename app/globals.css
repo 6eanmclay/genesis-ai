@@ -37,9 +37,20 @@ body {
    near-full-width sheet, and this class only ever gets added below lg:
    (see the isDesktop check in GenesisAssistant). 1023.98px matches
    Tailwind's own lg: boundary (1024px) exactly. */
+/* Mobile scroll bug (2026-08-06) — position: fixed + a JS-set negative
+   `top` (GenesisAssistant.tsx's own effect) is the standard, robust way to
+   truly stop the page behind an open panel from scrolling on every mobile
+   engine, including iOS Safari, where plain `overflow: hidden` on <body>
+   is well-documented as unreliable. width: 100% is required alongside
+   position: fixed — without it the body collapses to its content width
+   the instant it's taken out of normal flow, breaking layout the moment
+   chat opens. */
 @media (max-width: 1023.98px) {
   body.genesis-chat-open {
     padding-bottom: 60vh;
+    position: fixed;
+    width: 100%;
+    overflow: hidden;
   }
 }
 

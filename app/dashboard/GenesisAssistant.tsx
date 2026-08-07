@@ -356,10 +356,35 @@ export function GenesisAssistant({
   // relies on plain document-level scroll (no internal scroll container
   // exists until lg:, per the viewport-containment chain), so one rule on
   // <body> correctly reaches the draft page and every live page uniformly.
+  // Mobile scroll bug (2026-08-06) — genesis-chat-open previously only ever
+  // reserved bottom padding; it never actually stopped the page behind the
+  // panel from scrolling. Confirmed live: with chat open, a scroll gesture
+  // anywhere on the panel outside the message list (its header, its own
+  // padding) passed straight through and moved the real page underneath.
+  // Plain `overflow: hidden` on <body> is well-documented as unreliable on
+  // iOS Safari specifically (it still allows rubber-band scroll under some
+  // conditions), so this uses the standard, robust cross-browser technique
+  // instead: pin the body with position: fixed at its current negative
+  // scroll offset (see globals.css's own rule, same max-width: 1023.98px
+  // scope as the existing padding fix, so desktop's small corner widget is
+  // completely unaffected), then restore the exact scroll position on
+  // close so the page doesn't visually jump. Setting body.style.top has no
+  // effect at all unless position: fixed also applies (desktop never sets
+  // it), so this is a safe no-op above lg: even though the effect itself
+  // isn't viewport-gated, matching the class toggle's own existing pattern.
   useEffect(() => {
-    document.body.classList.toggle("genesis-chat-open", open);
+    if (!open) {
+      document.body.classList.remove("genesis-chat-open");
+      document.body.style.top = "";
+      return;
+    }
+    const scrollY = window.scrollY;
+    document.body.style.top = `-${scrollY}px`;
+    document.body.classList.add("genesis-chat-open");
     return () => {
       document.body.classList.remove("genesis-chat-open");
+      document.body.style.top = "";
+      window.scrollTo(0, scrollY);
     };
   }, [open]);
 
@@ -447,7 +472,18 @@ export function GenesisAssistant({
         </button>
       </div>
 
-      <div ref={messageListRef} className="flex min-h-0 max-h-48 flex-col gap-3 overflow-y-auto p-4 lg:max-h-80">
+      <div
+        ref={messageListRef}
+        // Mobile scroll bug (2026-08-06, reported independently by Sean and
+        // his mother, confirmed live via real touch-emulated Playwright
+        // testing) — without overscroll-contain, scrolling this list to its
+        // own boundary and continuing the gesture chains straight through to
+        // the page behind the fixed panel (reproduced: page scrollY moved
+        // even though the finger never left this element). contain stops
+        // the chain exactly at this element's own edge, on every engine that
+        // implements the CSS Overscroll Behavior spec, including iOS Safari.
+        className="flex min-h-0 max-h-48 flex-col gap-3 overflow-y-auto overscroll-contain p-4 lg:max-h-80"
+      >
         {focusedContext && (
           <div className="self-start rounded-lg border border-[var(--brand-accent,var(--foreground))]/30 bg-[var(--brand-accent,var(--foreground))]/[.06] px-3 py-2 text-sm text-black dark:text-zinc-50 lg:border-[#8b7cf6]/30 lg:bg-[#8b7cf6]/10 lg:text-[#f4f2fb]">
             {focusedContext.kind === "observation" ? (
