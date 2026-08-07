@@ -22,6 +22,18 @@ export interface TaskInput {
   priority: "FAILED" | "WARNING" | "opportunity";
 }
 
+// M3 bug found via real end-to-end testing, fixed twice: v1 was a single
+// prisma.task.upsert() whose `update` branch unconditionally reset status
+// to "OPEN" on every re-detection, silently stomping IN_PROGRESS/COMPLETED
+// back to OPEN. v2 (a read-then-create-or-update pattern) fixed that but
+// introduced a real race — two concurrent detection runs could both see
+// "doesn't exist" and both call create(), tripping the real unique
+// constraint (confirmed live: "Unique constraint failed on (storeId,
+// dedupeKey)"). This version is fully atomic again: the upsert's own
+// `update` branch never touches status at all, and reactivating a
+// terminal (COMPLETED/DISMISSED) row back to OPEN on genuine recurrence —
+// GenesisObservation's own real semantics — is a separate, independently
+// atomic updateMany scoped by status, immune to the same race either way.
 export async function upsertTask(storeId: string, task: TaskInput): Promise<void> {
   await prisma.task.upsert({
     where: { storeId_dedupeKey: { storeId, dedupeKey: task.dedupeKey } },
@@ -49,10 +61,15 @@ export async function upsertTask(storeId: string, task: TaskInput): Promise<void
       relatedAssetId: task.relatedAssetId ?? null,
       actionHref: task.actionHref ?? null,
       priority: task.priority,
-      status: "OPEN",
-      completedAt: null,
-      dismissedAt: null,
+      // status intentionally absent — see this function's own comment on
+      // why an already-active row is never touched here.
     },
+  });
+
+  // Atomic, race-free reactivation — see comment above.
+  await prisma.task.updateMany({
+    where: { storeId, dedupeKey: task.dedupeKey, status: { in: ["COMPLETED", "DISMISSED"] } },
+    data: { status: "OPEN", completedAt: null, dismissedAt: null },
   });
 }
 
@@ -72,5 +89,21 @@ export async function getOpenTasks(storeId: string) {
   return prisma.task.findMany({
     where: { storeId, status: "OPEN" },
     orderBy: { createdAt: "asc" },
+  });
+}
+
+// BUSINESS_ASSETS_ARCHITECTURE.md M3 — real dashboard-updates-on-completion.
+// Called after any successful execute() of a real GENESIS_ACTIONS type
+// (conversational auto-execute in proposeAction, or a normal manual
+// approve) — whichever real task was waiting on this exact action type
+// completes, whether the execution was automatic or a manual click.
+// Scoped to IN_PROGRESS (a task the owner has actually opened a
+// conversation for) rather than every OPEN task sharing this actionType,
+// so an unrelated still-untouched task of the same type never gets
+// silently marked done by someone else's action.
+export async function completeTasksForAction(storeId: string, actionType: string): Promise<void> {
+  await prisma.task.updateMany({
+    where: { storeId, actionType, status: "IN_PROGRESS" },
+    data: { status: "COMPLETED", completedAt: new Date() },
   });
 }

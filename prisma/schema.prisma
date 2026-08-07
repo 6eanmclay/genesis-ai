@@ -831,6 +831,12 @@ model Task {
   trustLevel    String  @default("recommend") // "inform" | "recommend" | "prepare" | "auto_execute" | "always_approve"
   requiredInput Json?
   actionHref    String? // plain navigation fallback, same mechanism every other card in this codebase already uses
+  // BUSINESS_ASSETS_ARCHITECTURE.md M3 — real infrastructure for the
+  // Prepare workflow (multi-turn drafting held across turns before a final
+  // commit decision), not yet populated by anything in M3 itself. Added now
+  // so the field exists ahead of the dedicated implementation pass that
+  // actually builds the drafting loop, rather than another migration later.
+  draftState Json?
 
   priority String // "FAILED" | "WARNING" | "opportunity" — reuses AttentionItem's existing severity vocabulary
   status   String @default("OPEN") // OPEN | IN_PROGRESS | AWAITING_INPUT | COMPLETED | DISMISSED

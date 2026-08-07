@@ -48,7 +48,8 @@ import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
-import { buildTaskSeedMessage, buildTaskUserMessage } from "@/lib/dashboard/taskConversation";
+import { buildTaskSeedMessage, buildTaskUserMessage, buildTaskRecapMessage } from "@/lib/dashboard/taskConversation";
+import { completeTasksForAction } from "@/lib/dashboard/tasks";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { BusinessFactSchema, toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
@@ -2867,7 +2868,16 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   // Summaries of anything created as an ApprovalRequest this turn, rather
   // than applied directly — used to correct the model's reply, which has
   // no idea some of what it just "did" is actually only proposed.
-  const proposalSummaries: string[] = [];
+  //
+  // M3 — now also tracks `executed`: the model's own inline reply text
+  // (primaryResult.reply) is generated before the real server-side outcome
+  // is known, so for an auto-execute-tiered action it can say "Done" even
+  // when execute() actually failed (e.g., a real Growth Points shortfall,
+  // found via live testing this milestone). This deterministic, code-built
+  // sentence — not model-generated — is the one part of the reply that
+  // must always match the real outcome, same reasoning as the upload-
+  // intent classifier's fixed reply strings.
+  const proposalSummaries: { summary: string; executed: boolean }[] = [];
   let secondaryDurationMs: number | null = null;
   let compositionDurationMs: number | null = null;
 
@@ -3191,7 +3201,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
       const parsedInput = definition.inputSchema.safeParse(proposedInput);
       if (!parsedInput.success) return; // defense in depth — never create an approval from an unvalidated shape
       await supersedePendingApproval(store.id, actionType);
-      await prisma.approvalRequest.create({
+      const approval = await prisma.approvalRequest.create({
         data: {
           storeId: store.id,
           recommendationId: null,
@@ -3226,7 +3236,56 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
           topicKey: null,
         },
       });
-      proposalSummaries.push(summary);
+
+      // BUSINESS_ASSETS_ARCHITECTURE.md M3 — conversational auto-execute.
+      // definition.authorizationTier is a real, deliberate per-action trust
+      // decision (see genesisActions.ts's own comments on which actions
+      // have actually earned this — today, only update_seo) — this never
+      // second-guesses that decision, it just acts on it immediately
+      // instead of waiting for a click the owner already said isn't needed
+      // for this specific action. authorityExempt actions are excluded:
+      // they carry no real ApprovalRequest identity to resolve (see
+      // GenesisActionDefinition's own comment on that field).
+      let executed = false;
+      if (definition.authorizationTier === "auto" && !definition.authorityExempt) {
+        const result = await execute(definition.executable, parsedInput.data, {
+          storeId: store.id,
+          actorType: "GENESIS",
+          actionType: actionType as GenesisActionType,
+        });
+        // A FAILED execution must never read back as EXECUTED — same
+        // guarantee performApproveGenesisAction already gives the manual
+        // approve path. Left PENDING_APPROVAL so the owner can review and
+        // retry manually rather than the attempt silently vanishing. Found
+        // live during M3 verification: this real, correct path is what
+        // fires when a store has insufficient Growth Points for a paid
+        // auto-execute action (e.g. update_seo) — the execution genuinely
+        // didn't happen, so `executed` staying false here (and the honest
+        // "still needs review" wording it produces below) is the accurate
+        // outcome, not a bug to route around.
+        if (result.status !== "FAILED") {
+          await prisma.approvalRequest.update({
+            // storeId is required here, not just id — this codebase's real
+            // tenant-isolation guard (lib/tenantIsolation.ts) throws on any
+            // ApprovalRequest.update missing a store-scoping filter, found
+            // live during M3 verification: this exact omission crashed the
+            // entire turn 30s in, *after* execute() had already genuinely
+            // applied the change — same store.id already used to create
+            // this approval a few lines up.
+            where: { id: approval.id, storeId: store.id },
+            data: {
+              status: "EXECUTED",
+              executionId: result.executionId,
+              decidedByUserId: userId,
+              decidedAt: new Date(),
+            },
+          });
+          await completeTasksForAction(store.id, actionType);
+          executed = true;
+        }
+      }
+
+      proposalSummaries.push({ summary, executed });
     }
 
     if (proposedTheme) {
@@ -3330,12 +3389,36 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   // review UI ("Genesis has N related changes from one idea") — it just
   // was never said here, in the one place the merchant sees immediately
   // after asking for something that felt like one small change.
+  // M3 — split by real outcome rather than assuming every proposal still
+  // needs review. executedSummaries only ever has entries for actions
+  // genuinely tiered "auto" AND genuinely executed (see proposeAction) —
+  // this sentence is deterministic, not model-generated, specifically so
+  // it can't inherit primaryResult.reply's own possible "Done" claim for
+  // something that's actually still PENDING_APPROVAL (found live during
+  // verification: a Growth Points shortfall correctly leaves an
+  // auto-tiered action unexecuted, and the model's own inline wording has
+  // no way to know that when it writes its reply).
+  const executedSummaries = proposalSummaries.filter((p) => p.executed).map((p) => p.summary);
+  const pendingSummaries = proposalSummaries.filter((p) => !p.executed).map((p) => p.summary);
+
+  const outcomeSentences: string[] = [];
+  if (executedSummaries.length > 0) {
+    outcomeSentences.push(
+      executedSummaries.length === 1
+        ? `I already applied this — no review needed: ${executedSummaries[0]}.`
+        : `I already applied ${executedSummaries.length} of these automatically — no review needed: ${executedSummaries.join("; ")}.`
+    );
+  }
+  if (pendingSummaries.length > 1) {
+    outcomeSentences.push(
+      `I broke your request into ${pendingSummaries.length} related changes — they're all part of one idea, and you'll see them grouped together for review before any of it goes live: ${pendingSummaries.join("; ")}.`
+    );
+  } else if (pendingSummaries.length === 1) {
+    outcomeSentences.push(`This needs your review before it goes live — I've prepared it for you: ${pendingSummaries[0]}.`);
+  }
+
   const finalReply =
-    proposalSummaries.length > 1
-      ? `${primaryResult.reply}\n\nI broke your request into ${proposalSummaries.length} related changes — they're all part of one idea, and you'll see them grouped together for review before any of it goes live: ${proposalSummaries.join("; ")}.`
-      : proposalSummaries.length === 1
-        ? `${primaryResult.reply}\n\nThis needs your review before it goes live — I've prepared it for you: ${proposalSummaries[0]}.`
-        : primaryResult.reply;
+    outcomeSentences.length > 0 ? `${primaryResult.reply}\n\n${outcomeSentences.join(" ")}` : primaryResult.reply;
 
   await prisma.storeMessage.create({
     data: {
@@ -3574,7 +3657,21 @@ export async function startTaskConversation(formData: FormData) {
       where: { id: task.id },
       data: { status: "IN_PROGRESS", seedMessageId: seedMessage.id },
     });
+  } else if (task.status === "IN_PROGRESS") {
+    // M3 — "the user should never feel like they're starting over." A
+    // second (or later) click on a task already resumed once gets a real,
+    // honest recap turn — the actual prior turns are already sitting right
+    // above this in the same message history (see taskConversation.ts's
+    // own comment on why this stays generic rather than restating them).
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "user", content: buildTaskUserMessage(task) },
+    });
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: buildTaskRecapMessage(task), taskId: task.id },
+    });
   }
+  // status === "COMPLETED" (a stale click on a task the dashboard hasn't
+  // refreshed off yet) — nothing left to add, just reopen chat below.
 
   revalidatePath(returnTo);
   redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}openChat=1`);
@@ -4167,6 +4264,11 @@ export async function approveGenesisActionGroup(groupId: string) {
     if (approval.recommendationId) {
       await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId, storeId } });
     }
+    // M3 — a manually-approved action completes any real Task waiting on
+    // it exactly like the conversational auto-execute path does (see
+    // proposeAction) — completion tracking shouldn't depend on how the
+    // execution happened.
+    await completeTasksForAction(storeId, approval.actionType);
     await logApprovalDecisionEvent({
       userId,
       storeId,
@@ -4275,6 +4377,12 @@ export async function performApproveGenesisAction(approvalRequestId: string): Pr
   if (approval.recommendationId) {
     await prisma.generatedRecommendation.deleteMany({ where: { id: approval.recommendationId, storeId } });
   }
+
+  // M3 — same completion tracking as the conversational auto-execute path
+  // (see proposeAction) and the batch-approve path (approveGenesisActionGroup)
+  // — a real Task waiting on this actionType completes regardless of which
+  // of the three approval surfaces actually triggered the execution.
+  await completeTasksForAction(storeId, approval.actionType);
 
   await logApprovalDecisionEvent({
     userId,

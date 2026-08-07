@@ -666,6 +666,7 @@ export default async function DashboardPage() {
     await runTaskDetection(store.id, {
       hasActiveProducts: (inventorySnapshot?.activeCount ?? 0) > 0,
       logoUrl: store.logoUrl,
+      blueprint: store.blueprint,
     });
   }
   const openTasks = isOwnerManager ? await getOpenTasks(store.id) : [];

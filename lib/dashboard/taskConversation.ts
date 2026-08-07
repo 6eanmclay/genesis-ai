@@ -15,6 +15,12 @@ const SEED_MESSAGE_BY_DEDUPE_KEY: Record<string, string> = {
     "You don't have any products yet — that's the first thing a customer needs to see before your store can sell anything. Tell me what you'd like to sell (what it is, and roughly what you'd charge) and I'll get a real listing ready for you to review.",
   "task.no_logo":
     "Your store doesn't have a logo yet — it's one of the first things a visitor notices. I can generate real options from your brand identity, or if you already have one, you can upload it right here. Which would you like to do?",
+  // M3 — real, honest about the fact that this one gets applied for you,
+  // not just proposed: update_seo is genuinely auto-execute-tiered now
+  // (see genesisActions.ts), so this task really does end with J4 having
+  // already done the work, not another approval click.
+  "task.no_seo":
+    "Your store doesn't have an SEO title or meta description yet, so search engines have nothing real to show for it. Tell me a bit about what makes your store worth finding, and I'll write both and apply them for you directly.",
 };
 
 export function buildTaskSeedMessage(task: Pick<Task, "dedupeKey" | "summary">): string {
@@ -27,4 +33,17 @@ export function buildTaskSeedMessage(task: Pick<Task, "dedupeKey" | "summary">):
 // the owner's behalf already follows.
 export function buildTaskUserMessage(task: Pick<Task, "title">): string {
   return `Let's work on: ${task.title}`;
+}
+
+// BUSINESS_ASSETS_ARCHITECTURE.md M3 — "the user should never feel like
+// they're starting over." Reopening a task already IN_PROGRESS (clicked
+// once before, navigated away, comes back) gets a real, honest recap turn
+// instead of either a duplicate seed message or silently reopening with no
+// acknowledgment at all. Deliberately generic and status-only — never
+// fabricates specifics about what was discussed (the real prior turns are
+// already sitting right above this one in the same message history; this
+// only needs to signal "I remember," not restate content the owner can
+// already see).
+export function buildTaskRecapMessage(task: Pick<Task, "title">): string {
+  return `Picking back up on: ${task.title}. Everything from where we left off is still right here — what would you like to do next?`;
 }

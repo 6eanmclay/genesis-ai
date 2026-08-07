@@ -303,7 +303,16 @@ export const GENESIS_ACTIONS: Record<
       seoMetaDescription: blueprint?.marketingAssets?.seoMetaDescription ?? "",
     }),
     category: "content",
-    authorizationTier: "always_ask",
+    // BUSINESS_ASSETS_ARCHITECTURE.md M3 — promoted from "always_ask" to
+    // "auto", the real trust-earning step this action's own Phase 6 comment
+    // below already anticipated ("the first... delegable action"), and
+    // Sean's own explicit example of what should auto-execute ("fixing SEO
+    // metadata") once authorized. Action-specific, not a category change —
+    // every other content action stays exactly as it was; this promotion
+    // rests on update_seo's own real properties (narrow blast radius,
+    // reversible, invisible to an already-visiting customer), not a
+    // blanket trust grant to its category.
+    authorizationTier: "auto",
     // Phase 6 — the first (and, for now, only) delegable action: narrow
     // blast radius, reversible via previousValues, no visible effect to an
     // already-visiting customer, and already something Genesis can
