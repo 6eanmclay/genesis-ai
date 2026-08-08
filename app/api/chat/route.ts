@@ -293,13 +293,14 @@ export async function POST(request: Request) {
         // rest of this turn's real timing.
         let firstTokenAtMs: number | null = null;
         diagLog(requestId, turnStartedAt, "unified_call_started");
+        const unifiedRequestMessages = [...cachedConversationMessages, { role: "user" as const, content: unifiedContextParts.join("\n") }];
         const unifiedOutcome = await callGenesisModel(
           {
             model: "claude-opus-4-8",
             max_tokens: 1500,
             thinking: { type: "adaptive" },
             system: [{ type: "text", text: STORE_CHAT_UNIFIED_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-            messages: [...cachedConversationMessages, { role: "user", content: unifiedContextParts.join("\n") }],
+            messages: unifiedRequestMessages,
             tools: buildStoreChatUnifiedTools(),
             tool_choice: { type: "auto" },
           },
@@ -327,7 +328,21 @@ export async function POST(request: Request) {
         });
 
         if (!unifiedOutcome.ok) {
-          diagLog(requestId, turnStartedAt, "unified_call_failed", { kind: unifiedOutcome.kind });
+          // Temporary production diagnostic (2026-08-08) — the one piece
+          // the earlier trace was missing: kind:"invalid_request" alone
+          // doesn't say WHY Anthropic rejected the request. roleSequence
+          // catches a role-alternation violation (Anthropic requires
+          // strict user/assistant alternation; StoreMessage has no such
+          // constraint) at a glance; message is the real BadRequestError
+          // text (see classifyAnthropicError) truncated, never full
+          // request/message content — no owner business data logged.
+          diagLog(requestId, turnStartedAt, "unified_call_failed", {
+            kind: unifiedOutcome.kind,
+            status: unifiedOutcome.status,
+            message: unifiedOutcome.message.slice(0, 300),
+            roleSequence: unifiedRequestMessages.map((m) => m.role),
+            messageCount: unifiedRequestMessages.length,
+          });
           emit({ type: "fallback" });
           controller.close();
           return;

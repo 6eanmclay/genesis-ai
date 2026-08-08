@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { unstable_rethrow } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { deriveAssessmentState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
@@ -417,6 +418,19 @@ export function J4Workspace({
         }
       }
     } catch (err) {
+      // Real bug, confirmed via production trace (2026-08-08): when the
+      // server signals a fallback (see the sawFallback branch above),
+      // sendViaServerAction calls the real "use server" sendMessage
+      // action directly — which ends in redirect() (applyGenesisMessageToStore),
+      // thrown as Next's own NEXT_REDIRECT control-flow signal, not a real
+      // error. That signal must propagate all the way to Next's router
+      // (see submitGenesisAction.ts's own comment on this exact pattern);
+      // this catch previously swallowed it as if the read loop itself had
+      // failed, running reconciliation for a request that was actually
+      // still completing normally, just slowly. unstable_rethrow detects
+      // and re-throws Next's own signals; it's a no-op for a real error,
+      // so the reconciliation logic below is unchanged for genuine failures.
+      unstable_rethrow(err);
       reportDiag(requestId, tStart, "client_read_loop_threw", {
         message: err instanceof Error ? err.message : String(err),
         name: err instanceof Error ? err.name : undefined,
