@@ -5,7 +5,7 @@ import Link from "next/link";
 import { unstable_rethrow, useRouter } from "next/navigation";
 import { useFormStatus, flushSync } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
-import { deriveAssessmentState } from "@/lib/dashboard/genesisState";
+import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
@@ -15,6 +15,7 @@ import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/up
 import { ALLOWED_VOICE_MEMO_CONTENT_TYPES, MAX_VOICE_MEMO_BYTES } from "@/lib/voice/voiceMemoFile";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
 // (app/j4/page.tsx), replacing the floating GenesisAssistant panel for the
@@ -1452,16 +1453,33 @@ export function J4Workspace({
       <input type="hidden" name="audioUrl" ref={audioUrlInputRef} />
 
       {/* Identity strip — "J4 identity should be prominent and official at
-          the top" (Sean). A real avatar (state/activity-aware, the same
-          component used everywhere else J4 needs presence), not a plain
-          status dot; the Portal's own name and who it's partnering with,
-          not a question implying this is only for asking things. */}
+          the top" (Sean). A real avatar (activity-aware, the same
+          component used everywhere else J4 needs presence); the Portal's
+          own name and who it's partnering with, not a question implying
+          this is only for asking things.
+          Visual polish (2026-08-08) — the avatar itself no longer
+          recolors for business-assessment state (Sean: "I don't want the
+          avatar changing to red/orange/purple based on state... calm,
+          consistent, recognizable every time"). The real signal moves to
+          a small corner dot instead — same GENESIS_STATE_META color/label
+          language DashboardShell's own nav pills already use, just here
+          instead of on the photo. */}
       <div
         className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3 pt-[calc(0.75rem+env(safe-area-inset-top))]"
         style={{ borderColor: GENESIS_ATMOSPHERE.border, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
       >
         <div className="flex min-w-0 items-center gap-3">
-          <GenesisAvatar state={overallState} className="h-10 w-10 shrink-0" />
+          <div className="relative shrink-0">
+            <GenesisAvatar className={GENESIS_AVATAR_SIZE.inline} />
+            {overallState !== "idle" && (
+              <span
+                className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ${GENESIS_STATE_META[overallState].dotClassName}`}
+                style={{ boxShadow: `0 0 0 2px ${GENESIS_ATMOSPHERE.bgElevated}` }}
+                aria-label={GENESIS_STATE_META[overallState].label}
+                title={GENESIS_STATE_META[overallState].label}
+              />
+            )}
+          </div>
           <div className="min-w-0">
             <p className="text-base font-semibold tracking-wide text-[#f4f2fb]">J4</p>
             <p className="truncate text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>

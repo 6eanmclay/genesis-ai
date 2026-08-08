@@ -1,8 +1,8 @@
 "use client";
 
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
-import { type GenesisState } from "@/lib/dashboard/genesisState";
 import { GenesisAvatar } from "./GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 
 // Genesis's full-screen arrival mechanism — formerly MobileArrivalOverlay
 // (mobile-only, per the original Arrival Experience design record: "mobile
@@ -23,16 +23,11 @@ import { GenesisAvatar } from "./GenesisAvatar";
 // `md:hidden` behavior; set (the returning-user login moment) drops it.
 export function GenesisArrivalOverlay({
   text,
-  state = "idle",
   leaving = false,
   onSkip,
   fullScreenOnDesktop = false,
 }: {
   text: string;
-  // Real current Genesis Language state — drives the same glow hue/
-  // intensity every other surface uses. Defaults to Peace (idle): neither
-  // scenario has a real "problem" to report during arrival itself.
-  state?: GenesisState;
   // True during the final hand-off — fades the overlay out so the real
   // shell underneath (already rendering) becomes visible. A CSS transition,
   // not an unmount race: the caller keeps this mounted through the fade,
@@ -58,7 +53,7 @@ export function GenesisArrivalOverlay({
           spanning it on mobile) but caps well short of dominating a large
           desktop screen. wakeOnMount: this is the one context where Genesis
           should visibly wake up — see GenesisAvatar.tsx. */}
-      <GenesisAvatar state={state} className="aspect-square w-[min(72vw,440px)]" wakeOnMount />
+      <GenesisAvatar className={GENESIS_AVATAR_SIZE.arrival} wakeOnMount />
       <p
         className="max-w-sm text-lg font-medium"
         style={{ color: GENESIS_ATMOSPHERE.text }}

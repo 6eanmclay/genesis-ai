@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisWorking, setGenesisComposing } from "@/lib/dashboard/genesisActivity";
 import { applyOwnerPrice } from "@/lib/onboarding/pricing";
@@ -419,7 +420,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
     <div className={shell} style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}>
       {beat === "positioning" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             {"Got it. Who's this for, and what feeling should it have?"}
           </p>
@@ -460,7 +461,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "approach" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             How would you like to create your first product?
           </p>
@@ -501,7 +502,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "artwork_upload" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Show me what you&rsquo;ve got — I&rsquo;ll build the product around it.
           </p>
@@ -525,7 +526,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "fulfillment_strategy" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           {creativeApproach === "resell" && fulfillmentStrategy && fulfillmentStrategy !== "printful" ? (
             <>
               <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
@@ -608,7 +609,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "generating_directions" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Let me put together a few different directions&hellip;
           </p>
@@ -617,7 +618,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "direction_review" && directionOptions && directionOptions.length > 0 && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(24vw,100px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.sm} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Which one feels like you?
           </p>
@@ -666,7 +667,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "connecting" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             One more thing — setting up how this gets made and shipped.
           </p>
@@ -685,7 +686,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "self_fulfillment_pricing" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             What does it cost you, all-in, to make and ship one?
           </p>
@@ -730,7 +731,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "building_product" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Bringing it to life&hellip;
           </p>
@@ -739,7 +740,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "considering" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Let me find something that actually fits&hellip;
           </p>
@@ -748,7 +749,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "reveal" && candidate && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(24vw,110px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.sm} />
           <div
             className="w-[min(64vw,300px)] aspect-square rounded-[20px] overflow-hidden"
             style={{ boxShadow: "0 30px 80px rgba(0,0,0,.55), 0 0 0 1px " + GENESIS_ATMOSPHERE.border }}
@@ -778,7 +779,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "pricing" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(24vw,100px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.sm} />
           {chosenDirection && (
             <div className="flex flex-col items-center gap-2">
               <div
@@ -873,7 +874,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "storefront_reveal" && storeUrl && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(20vw,84px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.sm} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             {storeName ? `${storeName} is real.` : "This is real."}
           </p>
@@ -898,7 +899,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
 
       {beat === "handoff" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             This is a real business now.
           </p>

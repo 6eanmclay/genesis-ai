@@ -5,6 +5,7 @@ import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { useBeatSequence, type Beat } from "@/lib/dashboard/arrivalBeats";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 
 // Real phase status (StoreDraft.status, polled from /api/draft-status —
 // see CreateStoreForm.tsx's own comment for why this is polling rather
@@ -46,7 +47,7 @@ export function CreateBusinessArrival({
     [name, storeName]
   );
 
-  const { activeBeat, done } = useBeatSequence(completionBeats, {
+  const { activeBeat } = useBeatSequence(completionBeats, {
     autoStart: complete,
     onComplete: onFinished,
   });
@@ -55,11 +56,9 @@ export function CreateBusinessArrival({
     ? (activeBeat?.text ?? "")
     : (phase ? (PHASE_TEXT[phase] ?? "I'm building your business…") : `Thank you${name}. I'm building your business.`);
 
-  const state = complete && done ? "opportunity" : "idle";
-
   return (
     <>
-      <GenesisArrivalOverlay text={liveText} state={state} />
+      <GenesisArrivalOverlay text={liveText} />
 
       {/* Desktop — deliberately not a full-screen takeover (see the design
           record's platform split). This page has no live Store yet, so
@@ -70,7 +69,7 @@ export function CreateBusinessArrival({
         className="mt-6 hidden max-w-md flex-col items-center gap-4 rounded-2xl p-10 text-center md:flex"
         style={{ backgroundColor: GENESIS_ATMOSPHERE.bg, border: `1px solid ${GENESIS_ATMOSPHERE.border}` }}
       >
-        <GenesisAvatar state={state} className="h-16 w-16" />
+        <GenesisAvatar className={GENESIS_AVATAR_SIZE.card} />
         <p className="text-base font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
           {liveText}
         </p>

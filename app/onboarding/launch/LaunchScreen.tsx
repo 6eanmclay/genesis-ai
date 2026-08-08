@@ -3,6 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { launchConfirmStore, launchConnectStripe, launchConnectPaypal, launchGoLive } from "./actions";
@@ -164,7 +165,7 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
     <div className={shell} style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}>
       {beat === "commitment" && data.phase === "commitment" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Ready to make {storeName} real?
           </p>
@@ -205,7 +206,7 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
 
       {beat === "building" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Building {storeName}.
           </p>
@@ -217,7 +218,7 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
 
       {beat === "payment_choice" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             How should {storeName} get paid?
           </p>
@@ -245,7 +246,7 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
 
       {beat === "stripe_connecting" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             You&rsquo;ll finish this on Stripe&rsquo;s site.
           </p>
@@ -263,7 +264,7 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
 
       {beat === "paypal_form" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Connect your PayPal account.
           </p>
@@ -309,7 +310,7 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
 
       {beat === "ready" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Everything&rsquo;s ready.
           </p>
@@ -327,7 +328,7 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
 
       {beat === "publishing" && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,120px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             Going live.
           </p>
@@ -336,7 +337,7 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
 
       {beat === "live" && storeUrl && (
         <>
-          <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
           <p className="max-w-sm text-xl font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
             {storeName} is open.
           </p>

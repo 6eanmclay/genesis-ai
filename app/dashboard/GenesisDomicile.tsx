@@ -1,6 +1,7 @@
 import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { GenesisAvatar } from "./GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 
 // Genesis's persistent visual presence in the left rail — lg:+ only (see
 // DashboardShell.tsx), always the atmospheric treatment regardless of the
@@ -37,7 +38,7 @@ export function GenesisDomicile({
   return (
     <div className="flex w-full flex-col items-center pt-2 text-center">
       <div className="relative flex w-full items-center justify-center">
-        <GenesisAvatar state={state} className="aspect-square w-[78%]" />
+        <GenesisAvatar className={GENESIS_AVATAR_SIZE.domicile} />
       </div>
       <p
         className="mt-8 font-[var(--font-heading,inherit)] text-2xl font-semibold"

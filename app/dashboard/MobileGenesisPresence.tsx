@@ -1,4 +1,4 @@
-import { deriveAssessmentState } from "@/lib/dashboard/genesisState";
+import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import {
   buildBriefing,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/dashboard/genesisBriefing";
 import { GenesisGreeting } from "./GenesisGreeting";
 import { GenesisAvatar } from "./GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 
 // Mobile's own persistent Genesis presence — true mobile (<768px) only, see
 // DashboardShell.tsx. Below lg:, GenesisDomicile/LiveIntelligence (the
@@ -73,9 +74,22 @@ export function MobileGenesisPresence({
     >
       {/* 44px — up from the old 36px mobile icon (~22% larger, inside the
           20-30% range asked for). GenesisAvatar owns its own glow/activity
-          animation now — see that file's own comment. */}
+          animation now — see that file's own comment.
+          Visual polish (2026-08-08) — the avatar no longer recolors for
+          state (Sean: calm, consistent, recognizable every time); the
+          corner dot below carries the same real signal instead, only
+          shown when there's actually something to it (idle shows nothing,
+          matching Peace being "nothing needs you right now"). */}
       <div className="relative h-11 w-11 shrink-0">
-        <GenesisAvatar state={state} className="h-11 w-11" />
+        <GenesisAvatar className={GENESIS_AVATAR_SIZE.presence} />
+        {state !== "idle" && (
+          <span
+            className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ${GENESIS_STATE_META[state].dotClassName}`}
+            style={{ boxShadow: `0 0 0 2px ${GENESIS_ATMOSPHERE.bg}` }}
+            aria-label={GENESIS_STATE_META[state].label}
+            title={GENESIS_STATE_META[state].label}
+          />
+        )}
       </div>
       <div className="min-w-0">
         <GenesisGreeting name={userName} sizeClassName="text-lg font-semibold" />

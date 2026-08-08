@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
 import {
   deriveActivityState,
   getGenesisActivityServerSnapshot,
@@ -26,15 +25,14 @@ import {
 // already the same dark Genesis atmosphere background), while the photo's
 // own bright glow blends additively with the haze/ribbons behind it.
 //
-// Color and activity are the same two orthogonal real signals as before:
-// hue is purely the real GenesisState (idle leaves the photo's own
-// natural blue untouched — zero hue-rotate — everything else rotates
-// toward the real state's actual hue via a CSS filter, since a real photo
-// can't be recolored by swapping a fill value the way the hand-drawn
-// version could); activity (idle/listening/thinking/response) only ever
-// changes how present the atmosphere is, never the photo's own hue and
-// never its geometry. Real isWorking/isComposing signals read from the
-// shared store (lib/dashboard/genesisActivity.ts) exactly as before.
+// Color is fixed, not a real signal — the avatar always renders its own
+// natural blue (Sean, 2026-08-08: "I don't want the avatar changing to
+// red/orange/purple based on state... the goal is for J4 to feel calm,
+// consistent, and recognizable every time the owner sees him"). Only
+// activity (idle/listening/thinking/response) still varies how present
+// the atmosphere is, never the photo's own hue and never its geometry.
+// Real isWorking/isComposing signals read from the shared store
+// (lib/dashboard/genesisActivity.ts) exactly as before.
 const RESPONSE_DURATION_MS = 1400; // matches globals.css's genesis-exhale duration
 
 // "Waking up" — an opt-in one-shot mount phase for the full-screen arrival
@@ -50,28 +48,10 @@ const RESPONSE_DURATION_MS = 1400; // matches globals.css's genesis-exhale durat
 // right as the orb finishes waking.
 const WAKE_DURATION_MS = 1700;
 
-// The photo's own dominant hue — measured against its actual blue, not a
-// guess — so idle (hueRotate === 0) shows the reference exactly as shot,
-// and every other state's rotation is computed relative to real ground
-// truth rather than hardcoded per-state degrees that could silently drift
-// from GENESIS_STATE_META if that palette ever changes.
-const SOURCE_IMAGE_HUE = hexHue("#6d9bff");
-
-function hexHue(hex: string): number {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const delta = max - min;
-  if (delta === 0) return 0;
-  let hue: number;
-  if (max === r) hue = ((g - b) / delta) % 6;
-  else if (max === g) hue = (b - r) / delta + 2;
-  else hue = (r - g) / delta + 4;
-  hue *= 60;
-  return hue < 0 ? hue + 360 : hue;
-}
+// hexHue/SOURCE_IMAGE_HUE removed (2026-08-08) — only ever existed to
+// compute a per-state hue-rotation the avatar no longer performs (see
+// the color comment below: the avatar is always blue now,
+// never state-driven).
 
 type VisualState = "idle" | "listening" | "thinking" | "response";
 
@@ -118,11 +98,9 @@ const AMBIENT_SPARKS: { x: number; y: number; duration: number; delay: number }[
 ];
 
 export function GenesisAvatar({
-  state,
   className = "",
   wakeOnMount = false,
 }: {
-  state: GenesisState;
   // Caller controls sizing entirely via className (aspect-square + a
   // width), same convention every call site already used before.
   className?: string;
@@ -175,8 +153,16 @@ export function GenesisAvatar({
   }, [responding]);
 
   const visualState: VisualState = responding ? "response" : activityState;
-  const color = state === "idle" ? "#6d9bff" : GENESIS_STATE_META[state].glowColor;
-  const hueRotateDeg = state === "idle" ? 0 : hexHue(color) - SOURCE_IMAGE_HUE;
+  // Visual polish (2026-08-08) — Sean's explicit call: the avatar itself
+  // must never change color based on business-assessment state ("I don't
+  // want the avatar changing to red/orange/purple based on state... the
+  // goal is for J4 to feel calm, consistent, and recognizable every time
+  // the owner sees him"). Pending/urgent/opportunity signaling stays real
+  // — GENESIS_STATE_META still drives every non-avatar indicator (nav
+  // pills, ObservationsPanel, the Genesis Language legend, StateDot) — it
+  // simply no longer reaches the avatar at all, so this component no
+  // longer takes a GenesisState prop.
+  const color = "#6d9bff";
 
   return (
     <div
@@ -262,23 +248,33 @@ export function GenesisAvatar({
         style={{
           mixBlendMode: "screen",
           transitionDuration: `${WAKE_DURATION_MS}ms`,
-          filter: `brightness(${waking ? 0.35 : 1.15}) saturate(${state === "idle" ? 1 : 1.2}) hue-rotate(${hueRotateDeg}deg)`,
+          filter: `brightness(${waking ? 0.35 : 1.15}) saturate(1) hue-rotate(0deg)`,
           // The source photo (546x350, landscape) isn't perfectly square
           // and its "black" background is a few RGB values above zero
           // (confirmed by sampling) — object-contain's letterboxing plus
           // that residual color shows as a faint rectangle under
           // mix-blend-mode alone. A radial alpha mask fades the image's
           // own edges to fully transparent, guaranteeing no visible
-          // boundary. A long, multi-stop taper (not the old 2-stop
-          // 48%->78% fade) — at the arrival overlay's much larger real
-          // size, that shorter fade was visible as a soft-edged circle;
-          // this one settles to fully transparent well before the box's
-          // own edge, matching the backdrop wash's own fade above so
-          // neither layer draws a perceptible line.
+          // boundary.
+          //
+          // Visual polish (2026-08-08) — real bug: this used to be a
+          // uniform CIRCLE, but object-contain letterboxes a 546x350
+          // (landscape) photo inside a SQUARE box — the photo's own real
+          // content only spans ~64.1% of the box's height (350/546),
+          // centered, while a circular mask fades relative to the full
+          // square. That mismatch is exactly what left a visible straight
+          // edge at the top/bottom of the letterboxed photo, where the
+          // circle's own falloff hadn't caught up yet. An ellipse sized
+          // to the photo's real aspect ratio (50% horizontal, 32% ≈ 50% *
+          // 0.641 vertical) makes the mask's edge coincide with the
+          // photo's real edge on every side at once — same multi-stop
+          // taper proportions as before (a long fade reads calmer than a
+          // short one at the arrival overlay's much larger real size),
+          // just correctly shaped.
           WebkitMaskImage:
-            "radial-gradient(circle, black 0%, black 32%, rgba(0,0,0,0.65) 48%, rgba(0,0,0,0.25) 64%, transparent 84%)",
+            "radial-gradient(ellipse 50% 32% at 50% 50%, black 0%, black 32%, rgba(0,0,0,0.65) 48%, rgba(0,0,0,0.25) 64%, transparent 84%)",
           maskImage:
-            "radial-gradient(circle, black 0%, black 32%, rgba(0,0,0,0.65) 48%, rgba(0,0,0,0.25) 64%, transparent 84%)",
+            "radial-gradient(ellipse 50% 32% at 50% 50%, black 0%, black 32%, rgba(0,0,0,0.65) 48%, rgba(0,0,0,0.25) 64%, transparent 84%)",
         }}
       />
 

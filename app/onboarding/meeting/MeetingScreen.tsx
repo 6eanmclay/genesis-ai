@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisComposing } from "@/lib/dashboard/genesisActivity";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
@@ -101,7 +102,7 @@ export function MeetingScreen({ reflection }: { reflection: string }) {
 
   return (
     <div className={shell} style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}>
-      <GenesisAvatar state="idle" className="aspect-square w-[min(42vw,220px)]" />
+      <GenesisAvatar className={GENESIS_AVATAR_SIZE.lg} />
 
       {errorMessage && (beat === "converse" || beat === "recommend") && (
         <p className="max-w-md text-sm text-red-500" role="alert">

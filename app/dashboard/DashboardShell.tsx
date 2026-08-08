@@ -14,6 +14,7 @@ import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
 import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { GENESIS_STATE_META, deriveAssessmentState } from "@/lib/dashboard/genesisState";
 import { buildBriefing } from "@/lib/dashboard/genesisBriefing";
@@ -378,7 +379,7 @@ export function DashboardShell({
   // premium app icon next to the store name, not an illustration competing
   // with it. Shared so the desktop, TV-header, and mobile homes below all
   // render the exact same element.
-  const genesisIcon = <GenesisAvatar state={genesisState} className="h-7 w-7 shrink-0" />;
+  const genesisIcon = <GenesisAvatar className={GENESIS_AVATAR_SIZE.toolbar} />;
 
   // Primary nav row content — storeName + tabs/More dropdown + View Store/
   // Sign out. Rendered from this one JSX value in two different homes (the
@@ -583,7 +584,6 @@ export function DashboardShell({
       {returningActive && (
         <GenesisArrivalOverlay
           text={returningBeat?.text ?? ""}
-          state={genesisState}
           leaving={returningLeaving}
           fullScreenOnDesktop
         />
@@ -628,7 +628,7 @@ export function DashboardShell({
             the button) means if space ever runs out, the name is what
             gives way, never View Store. */}
         <div className="flex min-w-0 items-center gap-2.5">
-          <GenesisAvatar state={genesisState} className="h-9 w-9 shrink-0" />
+          <GenesisAvatar className={GENESIS_AVATAR_SIZE.header} />
           <p className="truncate text-lg font-bold text-black dark:text-zinc-50">{storeName}</p>
         </div>
         {viewStoreLink}

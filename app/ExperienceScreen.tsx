@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisWorking, setGenesisComposing } from "@/lib/dashboard/genesisActivity";
 import { submitExperienceMessage } from "@/app/onboarding/actions";
@@ -106,7 +107,7 @@ export function ExperienceScreen({ initialState }: { initialState: ExperienceSta
         Log in
       </Link>
 
-      <GenesisAvatar state="idle" className="aspect-square w-[min(58vw,340px)]" wakeOnMount />
+      <GenesisAvatar className={GENESIS_AVATAR_SIZE.xl} wakeOnMount />
 
       <p
         key={view.question}
@@ -185,7 +186,7 @@ const INSIGHT_BEAT_MS = 2600;
 function InsightBeat({ concept }: { concept: ExperienceConcept }) {
   return (
     <div className={shell} style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}>
-      <GenesisAvatar state="idle" className="aspect-square w-[min(30vw,150px)]" />
+      <GenesisAvatar className={GENESIS_AVATAR_SIZE.md} />
       <p className="genesis-onboarding-rise max-w-md text-lg font-medium" style={{ color: GENESIS_ATMOSPHERE.text }}>
         {concept.creativeDirection.description}
       </p>

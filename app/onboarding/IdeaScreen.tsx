@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
+import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisWorking, setGenesisComposing } from "@/lib/dashboard/genesisActivity";
 import { submitBusinessModelAnswer } from "./actions";
@@ -66,7 +67,7 @@ export function IdeaScreen() {
       className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-8 px-8 text-center"
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
     >
-      <GenesisAvatar state="idle" className="aspect-square w-[min(58vw,340px)]" wakeOnMount />
+      <GenesisAvatar className={GENESIS_AVATAR_SIZE.xl} wakeOnMount />
 
       <p
         className="genesis-onboarding-rise max-w-sm text-xl font-medium"
