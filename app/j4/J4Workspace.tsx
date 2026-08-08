@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { unstable_rethrow } from "next/navigation";
+import { unstable_rethrow, useRouter } from "next/navigation";
 import { useFormStatus, flushSync } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { deriveAssessmentState } from "@/lib/dashboard/genesisState";
@@ -159,6 +159,31 @@ function reportDiag(requestId: string, tStart: number, event: string, meta?: Rec
   } catch {
     // best-effort only — never let diagnostics themselves break the real flow
   }
+}
+
+// Real production investigation, round 2 (2026-08-08) — "do not assume
+// the previous flushSync fix solved it," and it didn't alone. flushSync
+// forces React to commit synchronously, but it does NOT force the
+// browser to actually paint — if one reader.read() call returns a
+// buffer containing several NDJSON "token" lines (routine network/OS
+// coalescing, not a bug), the for-loop below processes all of them in
+// one uninterrupted synchronous JS execution; flushSync re-renders after
+// each one, but the browser's rendering engine can't paint any of those
+// intermediate frames until the JS thread actually yields back to it.
+// The result is indistinguishable from no streaming at all, even though
+// every earlier layer (server emission, network delivery, React state)
+// is genuinely correct. Awaiting one real animation frame after each
+// token's flushSync gives the browser that yield point — the standard
+// technique real streaming-text UIs use to make token-by-token delivery
+// actually visible, not just technically true.
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame !== "undefined") {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
 }
 
 function randomAssetKey(): string {
@@ -516,9 +541,9 @@ function CategoryRow({
   const inner = (
     <div className="flex items-start gap-2.5">
       <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dotClassName}`} aria-hidden="true" />
-      <div className="min-w-0">
-        {title && <p className="text-sm font-medium text-[#f4f2fb]">{title}</p>}
-        <p className={`text-sm ${title ? "mt-0.5 text-[rgba(244,242,251,0.62)]" : "text-[#f4f2fb]"}`}>{summary}</p>
+      <div className="min-w-0 flex-1">
+        {title && <p className="break-words text-sm font-medium text-[#f4f2fb]">{title}</p>}
+        <p className={`break-words text-sm ${title ? "mt-0.5 text-[rgba(244,242,251,0.62)]" : "text-[#f4f2fb]"}`}>{summary}</p>
       </div>
     </div>
   );
@@ -597,6 +622,7 @@ export function J4Workspace({
   information: InformationItem[];
 } & J4Signals) {
   const currentPath = "/j4";
+  const router = useRouter();
   const [activeCategory, setActiveCategory] = useState<Category>("conversation");
   const overallState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
 
@@ -817,10 +843,24 @@ export function J4Workspace({
               setStreamingStatus(null);
               setLocalMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.delta } : m)));
             });
+            await nextPaint();
           } else if (event.type === "done") {
             sawDone = true;
             reportDiag(requestId, tStart, "client_done_event_received");
             setStreamingStatus(null);
+            // Real bug (Sean, 2026-08-08): a rename (or any other real
+            // store-content change) executed by J4 left the Portal
+            // header showing the old business name — page.tsx's own
+            // server-fetched props (storeName, task/decision counts,
+            // etc.) only refresh on a real navigation, and most turns
+            // here never navigate at all. router.refresh() is Next's own
+            // real mechanism for exactly this — re-fetch this route's
+            // server data now, reconciled into the same mounted
+            // component (localMessages and every other client state
+            // untouched) — not a second, hand-rolled cache-busting
+            // workaround. Every turn refreshes, not just ones that
+            // happen to touch the store name, since any turn could.
+            router.refresh();
           } else if (event.type === "fallback") {
             sawFallback = true;
             reportDiag(requestId, tStart, "client_fallback_event_received");
@@ -940,7 +980,7 @@ export function J4Workspace({
     <form
       ref={formRef}
       action={handleSend}
-      className="fixed inset-0 z-[100] flex flex-col text-[#f4f2fb]"
+      className="fixed inset-0 z-[100] flex w-full flex-col overflow-x-hidden text-[#f4f2fb]"
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
     >
       <input type="hidden" name="currentPath" value={currentPath} />
@@ -1002,7 +1042,10 @@ export function J4Workspace({
       {/* Center region — conversation reads as a workspace log (role
           labels, no bubbles, no left/right alternation), every other
           category as a plain browsable list of real records. */}
-      <div ref={messageListRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+      <div
+        ref={messageListRef}
+        className="min-h-0 w-full min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-5 py-4"
+      >
         {activeCategory === "conversation" ? (
           localMessages.length === 0 ? (
             <div className="text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
@@ -1013,7 +1056,7 @@ export function J4Workspace({
               </p>
             </div>
           ) : (
-            <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {localMessages.map((m, i) => {
                 const changeList = extractChangeList(m.changes);
                 const imageUrl = extractImageUrl(m.changes);
@@ -1028,7 +1071,7 @@ export function J4Workspace({
                 const quickReplies = m.role === "assistant" && isLastMessage ? extractQuickReplies(m.changes) : null;
                 const isStreamingPlaceholder = isLastMessage && m.role === "assistant" && m.content === "";
                 return (
-                  <div key={m.id} className="py-3 first:pt-0" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+                  <div key={m.id} className="min-w-0 w-full max-w-full py-3 first:pt-0" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
                     <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                       {m.role === "user" ? "You" : "J4"}
                     </p>
@@ -1042,12 +1085,12 @@ export function J4Workspace({
                       // streamingStatus already carries real, evolving
                       // per-phase text from the server (or the fallback
                       // path's own honest "this can take a minute").
-                      <div className="mt-1 flex items-center gap-2 text-sm text-[#f4f2fb]">
+                      <div className="mt-1 flex min-w-0 items-center gap-2 text-sm text-[#f4f2fb]">
                         <span className="relative inline-flex h-2 w-2 shrink-0" aria-hidden="true">
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8b7cf6] opacity-75" />
                           <span className="relative inline-flex h-2 w-2 rounded-full bg-[#8b7cf6]" />
                         </span>
-                        <span>{streamingStatus ?? "J4 is working on this…"}</span>
+                        <span className="min-w-0 break-words">{streamingStatus ?? "J4 is working on this…"}</span>
                       </div>
                     ) : imageUrls && imageUrls.length > 0 ? (
                       // Batch intake (2026-08-08) — "the Portal should
@@ -1072,7 +1115,7 @@ export function J4Workspace({
                             </a>
                           ))}
                         </div>
-                        <p className="mt-1.5 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                        <p className="mt-1.5 break-words text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                           {m.content}
                         </p>
                       </div>
@@ -1090,9 +1133,9 @@ export function J4Workspace({
                           aria-label="View full-size image"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element -- same reasoning as DashboardShell's own product-image rendering: Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config */}
-                          <img src={imageUrl} alt={m.content} className="block max-h-64 max-w-[260px] object-cover" />
+                          <img src={imageUrl} alt={m.content} className="block max-h-64 w-auto max-w-full object-cover sm:max-w-[260px]" />
                         </a>
-                        <p className="mt-1 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                        <p className="mt-1 break-words text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                           {m.content}
                         </p>
                       </div>
@@ -1103,12 +1146,12 @@ export function J4Workspace({
                       // (Sean, 2026-08-08). The recording plays inline
                       // above it, full size text below, not a muted
                       // caption.
-                      <div className="mt-1">
-                        <audio src={audioUrl} controls preload="metadata" className="h-10 w-full max-w-xs" />
-                        <p className="mt-1.5 text-sm leading-relaxed text-[#f4f2fb]">{m.content}</p>
+                      <div className="mt-1 min-w-0">
+                        <audio src={audioUrl} controls preload="metadata" className="h-10 w-full max-w-full sm:max-w-xs" />
+                        <p className="mt-1.5 text-sm leading-relaxed text-[#f4f2fb] break-words">{m.content}</p>
                       </div>
                     ) : (
-                      <p className="mt-1 text-sm leading-relaxed text-[#f4f2fb]">{m.content}</p>
+                      <p className="mt-1 text-sm leading-relaxed text-[#f4f2fb] break-words">{m.content}</p>
                     )}
                     {quickReplies && quickReplies.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1146,7 +1189,7 @@ export function J4Workspace({
           tasks.length === 0 ? (
             <CategoryEmptyState label="Tasks" />
           ) : (
-            <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {tasks.map((t) => (
                 <CategoryRow key={t.id} title={t.title} summary={t.summary} href={t.href} dotClassName={taskPriorityDotClassName(t.priority)} />
               ))}
@@ -1156,7 +1199,7 @@ export function J4Workspace({
           ideas.length === 0 ? (
             <CategoryEmptyState label="Ideas" />
           ) : (
-            <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {ideas.map((o) => (
                 <CategoryRow key={o.id} summary={o.summary} href={o.href} dotClassName="bg-purple-500" />
               ))}
@@ -1166,7 +1209,7 @@ export function J4Workspace({
           decisions.length === 0 ? (
             <CategoryEmptyState label="Decisions" />
           ) : (
-            <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {decisions.map((d) => (
                 <CategoryRow key={d.id} summary={d.summary} href={d.href} dotClassName="bg-amber-400" />
               ))}
@@ -1175,7 +1218,7 @@ export function J4Workspace({
         ) : information.length === 0 ? (
           <CategoryEmptyState label="Information" />
         ) : (
-          <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+          <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
             {information.map((i) => (
               <CategoryRow key={i.id} summary={i.summary} href={i.href} dotClassName={i.kind === "urgent" ? "bg-red-500" : "bg-teal-400"} />
             ))}
@@ -1211,7 +1254,7 @@ export function J4Workspace({
           glance test this now needs to pass: this is J4 / this is where I
           talk to J4 / these buttons add files / that arrow sends it. */}
       <div
-        className="shrink-0 border-t px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2"
+        className="w-full min-w-0 max-w-full shrink-0 overflow-x-hidden border-t px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2"
         style={{ borderColor: GENESIS_ATMOSPHERE.border }}
       >
         <div className="mb-1.5 flex items-center gap-1.5">
@@ -1238,7 +1281,7 @@ export function J4Workspace({
           <VoiceMemoButton uploadVoiceMemo={uploadVoiceMemo} currentPath={currentPath} onFailure={setSendError} />
         </div>
         <div
-          className="flex items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
+          className="flex min-w-0 w-full max-w-full items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
           style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
         >
           <textarea
@@ -1249,7 +1292,7 @@ export function J4Workspace({
             required
             onFocus={() => setGenesisComposing(true)}
             onBlur={() => setGenesisComposing(false)}
-            className="max-h-40 min-h-[2.75rem] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
+            className="min-w-0 max-h-40 min-h-[2.75rem] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
           />
           <SubmitButton
             pendingText="…"
