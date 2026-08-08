@@ -1111,21 +1111,37 @@ export function J4Workspace({
                       {m.role === "user" ? "You" : "J4"}
                     </p>
                     {isStreamingPlaceholder ? (
-                      // "explicit work states... visibly communicate that
-                      // J4 is working" (Sean, 2026-08-08, after his
-                      // mother's real test read a static "thinking" line
-                      // as "no answer"). Not italic/muted metadata — this
-                      // is the primary channel telling the owner J4
-                      // received the request and is actively on it;
-                      // streamingStatus already carries real, evolving
-                      // per-phase text from the server (or the fallback
-                      // path's own honest "this can take a minute").
-                      <div className="mt-1 flex min-w-0 items-center gap-2 text-sm text-[#f4f2fb]">
-                        <span className="relative inline-flex h-2 w-2 shrink-0" aria-hidden="true">
-                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8b7cf6] opacity-75" />
-                          <span className="relative inline-flex h-2 w-2 rounded-full bg-[#8b7cf6]" />
-                        </span>
-                        <span className="min-w-0 break-words">{streamingStatus ?? "J4 is working on this…"}</span>
+                      // J4 response indicator — four-bar signal (2026-08-08,
+                      // revised same day from an earlier three-dot version).
+                      // "Four simple vertical bars of increasing height...
+                      // animate sequentially left to right... the four bars
+                      // represent J4" (Sean) — an equalizer/soundwave shape,
+                      // deliberately meant to carry through into J4's own
+                      // spoken-response voice later, not just text. Real
+                      // wait-time feedback, not a fixed-duration animation:
+                      // this renders only while content is still empty and
+                      // disappears the instant the first token lands
+                      // (isStreamingPlaceholder itself flips false right
+                      // then) — however long or short that real wait
+                      // actually is, in this exact response position, never
+                      // a separate loading component elsewhere on the page.
+                      // streamingStatus still carries real, evolving
+                      // per-phase text (or the fallback path's own honest
+                      // "this can take a minute") as small, secondary text
+                      // beside the bars — the earlier fix for the fallback
+                      // path's own "feels stuck/broken" bug stays intact.
+                      <div className="mt-1 flex min-w-0 items-center gap-2">
+                        <div className="j4-response-bars flex items-end gap-1" role="status" aria-label="J4 is responding">
+                          <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 6 }} />
+                          <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 10 }} />
+                          <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 16 }} />
+                          <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 22 }} />
+                        </div>
+                        {streamingStatus && (
+                          <span className="min-w-0 break-words text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                            {streamingStatus}
+                          </span>
+                        )}
                       </div>
                     ) : imageUrls && imageUrls.length > 0 ? (
                       // Batch intake (2026-08-08) — "the Portal should

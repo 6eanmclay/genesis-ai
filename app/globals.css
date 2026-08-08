@@ -320,9 +320,54 @@ body {
   box-shadow: 0 0 0 5px rgba(139, 124, 246, 0.14); /* GENESIS_ATMOSPHERE.violetGlow */
 }
 
+/* J4 response indicator — four-bar signal (2026-08-08, revised same day
+   from an earlier three-dot version — replaced outright, not layered
+   alongside it). "Four simple vertical bars of increasing height...
+   animate sequentially left to right... the four bars represent J4"
+   (Sean) — deliberately an equalizer/soundwave shape, not a generic
+   spinner, since this same indicator is meant to carry through into
+   J4's own spoken-response voice later, not just text. J4Workspace.tsx
+   renders this only while isStreamingPlaceholder is true and swaps it
+   for the real streamed text the instant the first token arrives — real
+   wait-time feedback, never a fixed-duration animation regardless of
+   how long that real wait is. transform-origin: bottom so each bar
+   scales up from its base like a real level meter, not from its center. */
+@keyframes j4-response-bar {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+.j4-response-bars span {
+  transform-origin: bottom;
+  animation: j4-response-bar 1s ease-in-out infinite;
+}
+.j4-response-bars span:nth-child(1) {
+  animation-delay: 0s;
+}
+.j4-response-bars span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.j4-response-bars span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.j4-response-bars span:nth-child(4) {
+  animation-delay: 0.45s;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .genesis-onboarding-rise {
     animation: none !important;
     opacity: 1;
+  }
+  .j4-response-bars span {
+    animation: none !important;
+    opacity: 0.7;
+    transform: scaleY(1) !important;
   }
 }
