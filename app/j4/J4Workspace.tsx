@@ -1346,8 +1346,14 @@ export function J4Workspace({
             className="min-w-0 max-h-40 min-h-[2.75rem] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
           />
           <SubmitButton
-            pendingText="…"
-            laterPendingText="…"
+            // Real bug (Sean, 2026-08-08, from a real screenshot): "…" here
+            // read as a second, competing "thinking" indicator sitting
+            // inside the send button — the real one belongs only in the
+            // response area (see isStreamingPlaceholder's own four-bar
+            // indicator below). The button now stays visually identical
+            // while pending — same arrow, just dimmed via the existing
+            // disabled:opacity-50 — never a second signal of its own.
+            pendingText="→"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#8b7cf6] text-lg text-white shadow-[0_0_20px_-6px_rgba(139,124,246,0.6)] transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             <span aria-hidden="true">→</span>
