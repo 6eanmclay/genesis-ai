@@ -25,7 +25,7 @@ import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 //   J4 conversation with the exact originating context already seeded in,
 //   never a second surface asking the owner to re-explain what they're
 //   acting on.
-export type AttentionCardKind = "proposal" | "issue" | "discovery" | "task";
+export type AttentionCardKind = "proposal" | "issue" | "discovery" | "task" | "observation";
 
 interface AttentionCardCommon {
   id: string;
@@ -44,6 +44,11 @@ interface AttentionCardCommon {
 export interface ProposalAttentionCard extends AttentionCardCommon {
   kind: "proposal";
   approvalRequestId: string;
+  // Phase 1 (2026-08-08) — carried through specifically so a caller can
+  // conditionally offer the same Regenerate action ApprovalRequestsPanel
+  // already offers for update_product_image proposals, preserving that
+  // real capability rather than quietly dropping it during consolidation.
+  actionType: string;
   input: Record<string, unknown>;
   previousValues: Record<string, unknown>;
   reviewHref: string | null;
@@ -65,7 +70,25 @@ export interface TaskAttentionCard extends AttentionCardCommon {
   taskId: string;
 }
 
-export type AttentionCard = ProposalAttentionCard | IssueAttentionCard | DiscoveryAttentionCard | TaskAttentionCard;
+// Phase 1 (2026-08-08) — Brand/Website/Products/Marketing/Settings each
+// independently rendered ObservationsPanel (a real GenesisObservation row
+// — "Genesis flagged this as urgent"/"Genesis noticed an opportunity",
+// purely informational, no action). Folded into the same card language
+// as everything else rather than left as a fifth visual pattern. Purely
+// a presentation change — ObservationsPanel had no action button before
+// this either, so this card has none now: adding one would be a
+// behavioral change, not the consistency pass this is.
+export interface ObservationAttentionCard extends AttentionCardCommon {
+  kind: "observation";
+  dedupeKey: string;
+}
+
+export type AttentionCard =
+  | ProposalAttentionCard
+  | IssueAttentionCard
+  | DiscoveryAttentionCard
+  | TaskAttentionCard
+  | ObservationAttentionCard;
 
 // A calm, fixed J4 identity color for this zone — deliberately NOT the
 // merchant's own --brand-accent (an arbitrary per-store color that could
@@ -89,6 +112,91 @@ const DOT_NEUTRAL = "bg-zinc-400 dark:bg-zinc-600";
 // Only the cap that matters for "at a glance" — real content stays
 // available (see overflowCount below), nothing is discarded.
 export const ATTENTION_ZONE_CAP = 5;
+
+// Shared by both buildAttentionCards (Home, capped/multi-source) and
+// buildPageAttentionCards (a single secondary page, uncapped) — one real
+// approval always becomes one real proposal card, regardless of which
+// caller built it.
+function buildProposalCard(approval: PendingApproval): ProposalAttentionCard {
+  const section = ACTION_SECTIONS[approval.actionType];
+  return {
+    id: `proposal:${approval.id}`,
+    kind: "proposal",
+    rank: 1,
+    summary: approval.summary,
+    detail: null,
+    occurredAt: approval.createdAt,
+    dotClassName: DOT_DECISION,
+    approvalRequestId: approval.id,
+    actionType: approval.actionType,
+    input: approval.input,
+    previousValues: approval.previousValues,
+    reviewHref: section?.href ?? null,
+  };
+}
+
+function buildObservationCard(obs: { dedupeKey: string; genesisState: string; summary: string }): ObservationAttentionCard {
+  const isUrgent = obs.genesisState === "urgent";
+  return {
+    id: `observation:${obs.dedupeKey}`,
+    kind: "observation",
+    rank: isUrgent ? 0 : 2,
+    summary: obs.summary,
+    detail: null,
+    occurredAt: null,
+    dotClassName: isUrgent ? DOT_URGENT : DOT_OPPORTUNITY,
+    dedupeKey: obs.dedupeKey,
+  };
+}
+
+// Phase 1 (2026-08-08) — the page-scoped counterpart to buildAttentionCards
+// below: one secondary page's own pre-filtered approvals/observations
+// (Brand's own update_brand_identity/update_store_identity approvals plus
+// its own /dashboard/brand-scoped observations, and so on), rendered
+// through the exact same AttentionCard component Home uses. Deliberately
+// NOT capped (ATTENTION_ZONE_CAP is a Home-specific "at a glance" concern
+// — a page the owner navigated to specifically should show everything
+// relevant to it) and deliberately doesn't touch issues/discoveryItems/
+// tasks/nextRecommendation, which are Home-only concepts with no meaning
+// scoped to one section. A highlighted card (the owner arrived via a
+// "?focus=" deep link) always sorts first, regardless of rank — the same
+// real intent ApprovalRequestsPanel/ObservationsPanel's own highlightId
+// already served, just applied before the normal rank/recency sort
+// instead of only affecting styling.
+export function buildPageAttentionCards(params: {
+  approvals: PendingApproval[];
+  observations: { dedupeKey: string; genesisState: string; summary: string }[];
+  highlightId?: string;
+}): AttentionCard[] {
+  const all: AttentionCard[] = [
+    ...params.approvals.map(buildProposalCard),
+    ...params.observations.map(buildObservationCard),
+  ];
+
+  all.sort((a, b) => {
+    const aHighlighted = isHighlighted(a, params.highlightId);
+    const bHighlighted = isHighlighted(b, params.highlightId);
+    if (aHighlighted !== bHighlighted) return aHighlighted ? -1 : 1;
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    const aTime = a.occurredAt?.getTime() ?? 0;
+    const bTime = b.occurredAt?.getTime() ?? 0;
+    return bTime - aTime;
+  });
+
+  return all;
+}
+
+// A card's own "natural" id (what a real ?focus= deep link actually
+// points at) is never the same as its prefixed AttentionCard.id — a
+// proposal is focused by approvalRequestId, an observation by dedupeKey,
+// matching exactly what ApprovalRequestsPanel/ObservationsPanel already
+// compared against before this.
+export function isHighlighted(card: AttentionCard, highlightId: string | undefined): boolean {
+  if (!highlightId) return false;
+  if (card.kind === "proposal") return card.approvalRequestId === highlightId;
+  if (card.kind === "observation") return card.dedupeKey === highlightId;
+  return false;
+}
 
 export function buildAttentionCards(params: {
   issues: AttentionItem[];
@@ -129,6 +237,7 @@ export function buildAttentionCards(params: {
       occurredAt: null,
       dotClassName: DOT_DECISION,
       approvalRequestId: rec.approvalRequestId,
+      actionType: rec.actionType,
       input: rec.input,
       previousValues: rec.previousValues,
       reviewHref: null,
@@ -139,20 +248,7 @@ export function buildAttentionCards(params: {
     // Already carried as the lead recommendation above — never show the
     // same real ApprovalRequest twice.
     if (params.nextRecommendation?.approvalRequestId === approval.id) continue;
-    const section = ACTION_SECTIONS[approval.actionType];
-    all.push({
-      id: `proposal:${approval.id}`,
-      kind: "proposal",
-      rank: 1,
-      summary: approval.summary,
-      detail: null,
-      occurredAt: approval.createdAt,
-      dotClassName: DOT_DECISION,
-      approvalRequestId: approval.id,
-      input: approval.input,
-      previousValues: approval.previousValues,
-      reviewHref: section?.href ?? null,
-    });
+    all.push(buildProposalCard(approval));
   }
 
   for (const item of params.discoveryItems) {

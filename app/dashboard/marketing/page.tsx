@@ -2,9 +2,18 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
-import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, revertApprovalRequest, approveGenesisActionGroup } from "../ai-actions";
+import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
+import {
+  approveGenesisAction,
+  rejectGenesisAction,
+  regenerateApprovalImage,
+  revertApprovalRequest,
+  startIssueConversation,
+  startDiscoveryConversation,
+  startTaskConversation,
+} from "../ai-actions";
 import { grantAuthority, revokeAuthority } from "../actions";
-import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
+import { AttentionCard } from "../AttentionCard";
 import { SubmitButton } from "../SubmitButton";
 import { RevertDecisionButton } from "../RevertDecisionButton";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
@@ -44,6 +53,14 @@ export default async function MarketingPage() {
   // xBio now flow through the same approval framework SEO already uses,
   // closing one more piece of the chat-vs-manual fork.
   const marketingAssetsApprovals = pendingApprovals.filter((a) => a.actionType === "update_marketing_assets");
+  // Phase 1 (2026-08-08) — same compact card language as every other
+  // secondary page now uses; kept as two separate lists under their own
+  // existing, distinct headings (real, different meaning: a direct SEO
+  // approval vs. a broader social-presence proposal) rather than merged
+  // into one — only the card rendering changes, not this page's own
+  // structure. No observations on this page (unchanged).
+  const seoCards = buildPageAttentionCards({ approvals: seoApprovals, observations: [] });
+  const marketingAssetsCards = buildPageAttentionCards({ approvals: marketingAssetsApprovals, observations: [] });
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
   const seoTitle = blueprint?.marketingAssets?.seoTitle;
@@ -58,33 +75,47 @@ export default async function MarketingPage() {
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Marketing</h1>
 
-      {seoApprovals.length > 0 && (
+      {seoCards.length > 0 && (
         <>
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
-            Awaiting Your Approval ({seoApprovals.length})
+            Awaiting Your Approval ({seoCards.length})
           </h2>
-          <ApprovalRequestsPanel
-            approvals={seoApprovals}
-            approveAction={approveGenesisAction}
-            rejectAction={rejectGenesisAction}
-            regenerateAction={regenerateApprovalImage}
-            approveGroupAction={approveGenesisActionGroup}
-          />
+          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
+            {seoCards.map((card) => (
+              <AttentionCard
+                key={card.id}
+                card={card}
+                approveAction={approveGenesisAction}
+                rejectAction={rejectGenesisAction}
+                issueAction={startIssueConversation}
+                discoveryAction={startDiscoveryConversation}
+                taskAction={startTaskConversation}
+                regenerateAction={regenerateApprovalImage}
+              />
+            ))}
+          </div>
         </>
       )}
 
-      {marketingAssetsApprovals.length > 0 && (
+      {marketingAssetsCards.length > 0 && (
         <>
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
-            Genesis&apos;s ideas for your social presence ({marketingAssetsApprovals.length})
+            Genesis&apos;s ideas for your social presence ({marketingAssetsCards.length})
           </h2>
-          <ApprovalRequestsPanel
-            approvals={marketingAssetsApprovals}
-            approveAction={approveGenesisAction}
-            rejectAction={rejectGenesisAction}
-            regenerateAction={regenerateApprovalImage}
-            approveGroupAction={approveGenesisActionGroup}
-          />
+          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
+            {marketingAssetsCards.map((card) => (
+              <AttentionCard
+                key={card.id}
+                card={card}
+                approveAction={approveGenesisAction}
+                rejectAction={rejectGenesisAction}
+                issueAction={startIssueConversation}
+                discoveryAction={startDiscoveryConversation}
+                taskAction={startTaskConversation}
+                regenerateAction={regenerateApprovalImage}
+              />
+            ))}
+          </div>
         </>
       )}
 

@@ -31,14 +31,18 @@ export interface NavSection {
 // secondary workspace or a Genesis-contextual capability first (see
 // ARCHITECTURE.md).
 //
-// Orders deliberately isn't a primary nav destination — it surfaces
-// contextually on Your Business instead (recent orders, positively framed)
-// since the page itself is just a list with no dedicated workflow yet. The
-// route (`app/dashboard/orders/page.tsx`) and its data are untouched and
-// still reachable directly, just unlinked from nav.
+// Business Portal Phase 1 polish (2026-08-08) — Orders promoted to a real
+// primary nav destination. Previously deliberately unlinked (reachable
+// only by direct URL) on the reasoning that it was "just a list with no
+// dedicated workflow yet" — reversed on Sean's own explicit call: order
+// processing is core enough to a daily command-center experience that it
+// shouldn't be hidden behind a URL a real owner would never guess. Nothing
+// else here was reordered or promoted — see PRIMARY_TAB_COUNT's own
+// comment for why Marketing/Analytics/etc. stay in More for now.
 export const NAV_SECTIONS: NavSection[] = [
   { key: "home", label: "Your Business", href: "/dashboard", permission: null },
   { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
+  { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
   { key: "marketing", label: "Marketing", href: "/dashboard/marketing", permission: "store:manage" },
   { key: "payments", label: "Payments", href: "/dashboard/payments", permission: "payments:manage" },
   { key: "analytics", label: "Analytics", href: "/dashboard/analytics", permission: "analytics:view" },
@@ -67,8 +71,11 @@ export const NAV_SECTIONS: NavSection[] = [
 // too, since the whole point of this correction is that primary nav stays
 // exactly this small regardless of viewport width, not just on narrow
 // screens — there is deliberately no wider-screen tier that shows
-// everything inline again).
-export const PRIMARY_TAB_COUNT = 2;
+// everything inline again). Raised from 2 to 3 (2026-08-08) specifically
+// to admit Orders — Marketing/Payments/Analytics/Connections/Growth
+// Points/Billing/Settings all stay under More by deliberate choice, not
+// yet revisited.
+export const PRIMARY_TAB_COUNT = 3;
 
 // Secondary navigation, shown only while inside Your Business — only the
 // real, currently-shipped workspaces, nothing speculative (no "Socials"

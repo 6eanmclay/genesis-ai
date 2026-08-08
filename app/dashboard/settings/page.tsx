@@ -2,13 +2,16 @@ import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
+import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
 import {
   approveGenesisAction,
   rejectGenesisAction,
   regenerateApprovalImage,
-  approveGenesisActionGroup,
+  startIssueConversation,
+  startDiscoveryConversation,
+  startTaskConversation,
 } from "../ai-actions";
-import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
+import { AttentionCard } from "../AttentionCard";
 
 // Product Vision Phase 1 — business identity (name/tagline/description,
 // brand story/mission/etc., and the update_brand_identity/
@@ -31,6 +34,11 @@ export default async function SettingsPage() {
   const designDirectionApprovals = pendingApprovals.filter(
     (a) => a.actionType === "update_design_direction"
   );
+  // Phase 1 (2026-08-08) — same compact card language as every other
+  // secondary page now uses; kept as two separate lists under their own
+  // existing headings, only the card rendering changes.
+  const storeContentCards = buildPageAttentionCards({ approvals: storeContentApprovals, observations: [] });
+  const designDirectionCards = buildPageAttentionCards({ approvals: designDirectionApprovals, observations: [] });
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
   const storeContent = blueprint?.storeContent;
@@ -60,18 +68,25 @@ export default async function SettingsPage() {
         </p>
       )}
 
-      {storeContentApprovals.length > 0 && (
+      {storeContentCards.length > 0 && (
         <>
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
-            Genesis&apos;s updates to your policies ({storeContentApprovals.length})
+            Genesis&apos;s updates to your policies ({storeContentCards.length})
           </h2>
-          <ApprovalRequestsPanel
-            approvals={storeContentApprovals}
-            approveAction={approveGenesisAction}
-            rejectAction={rejectGenesisAction}
-            regenerateAction={regenerateApprovalImage}
-            approveGroupAction={approveGenesisActionGroup}
-          />
+          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
+            {storeContentCards.map((card) => (
+              <AttentionCard
+                key={card.id}
+                card={card}
+                approveAction={approveGenesisAction}
+                rejectAction={rejectGenesisAction}
+                issueAction={startIssueConversation}
+                discoveryAction={startDiscoveryConversation}
+                taskAction={startTaskConversation}
+                regenerateAction={regenerateApprovalImage}
+              />
+            ))}
+          </div>
         </>
       )}
 
@@ -97,18 +112,25 @@ export default async function SettingsPage() {
         </>
       )}
 
-      {designDirectionApprovals.length > 0 && (
+      {designDirectionCards.length > 0 && (
         <>
           <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-            Genesis&apos;s updates to your design direction ({designDirectionApprovals.length})
+            Genesis&apos;s updates to your design direction ({designDirectionCards.length})
           </h2>
-          <ApprovalRequestsPanel
-            approvals={designDirectionApprovals}
-            approveAction={approveGenesisAction}
-            rejectAction={rejectGenesisAction}
-            regenerateAction={regenerateApprovalImage}
-            approveGroupAction={approveGenesisActionGroup}
-          />
+          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
+            {designDirectionCards.map((card) => (
+              <AttentionCard
+                key={card.id}
+                card={card}
+                approveAction={approveGenesisAction}
+                rejectAction={rejectGenesisAction}
+                issueAction={startIssueConversation}
+                discoveryAction={startDiscoveryConversation}
+                taskAction={startTaskConversation}
+                regenerateAction={regenerateApprovalImage}
+              />
+            ))}
+          </div>
         </>
       )}
 

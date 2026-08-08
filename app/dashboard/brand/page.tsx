@@ -3,10 +3,16 @@ import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permis
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
-import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, approveGenesisActionGroup } from "../ai-actions";
+import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
+import {
+  approveGenesisAction,
+  rejectGenesisAction,
+  startIssueConversation,
+  startDiscoveryConversation,
+  startTaskConversation,
+} from "../ai-actions";
 import { EditStoreForm } from "../EditStoreForm";
-import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
-import { ObservationsPanel } from "../ObservationsPanel";
+import { AttentionCard } from "../AttentionCard";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 // The 9 AI-generated identity fields, in the same order FIELD_LABELS
@@ -61,15 +67,17 @@ export default async function BrandPage({
   const identityApprovals = pendingApprovals.filter(
     (a) => a.actionType === "update_brand_identity" || a.actionType === "update_store_identity"
   );
-  // Contextual deep-linking: identityApprovals is already scoped to this
-  // store, this section's action types, and PENDING_APPROVAL only — so a
-  // match here is automatically valid; anything invalid/stale/resolved/
-  // mismatched simply doesn't match and highlightId stays undefined. Same
-  // reasoning for brandObservations, already scoped to this page.
   const { focus } = await searchParams;
-  const highlightId = focus && identityApprovals.some((a) => a.id === focus) ? focus : undefined;
-  const highlightObservationId =
-    focus && brandObservations.some((o) => o.dedupeKey === focus) ? focus : undefined;
+  // Phase 1 (2026-08-08) — one unified card list instead of two separate
+  // sections/components (ObservationsPanel + ApprovalRequestsPanel). focus
+  // is passed straight through: isHighlighted() only ever matches a real
+  // card's own approvalRequestId/dedupeKey, so an invalid/stale focus
+  // value is already a safe no-op, same as before.
+  const brandCards = buildPageAttentionCards({
+    approvals: identityApprovals,
+    observations: brandObservations,
+    highlightId: focus,
+  });
 
   const brandIdentity = (store.blueprint as BlueprintContextSubset | null)?.brandIdentity;
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
@@ -86,31 +94,30 @@ export default async function BrandPage({
         Who your business is — the identity every part of your presence draws from.
       </p>
 
-      {/* Real GenesisObservation rows (Red/Purple) — separate from the
-          approval surface below; observations have no Approve/Reject, they
-          resolve automatically when the real condition stops being true. */}
-      {brandObservations.length > 0 && (
+      {/* Phase 1 (2026-08-08) — one unified card list (real issues/
+          decisions Genesis noticed about your identity), same compact
+          language Home's own "J4 Noticed" zone uses — replaces the two
+          separate ObservationsPanel/ApprovalRequestsPanel sections this
+          page used to render on its own. */}
+      {brandCards.length > 0 && (
         <>
           <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
-            Genesis noticed ({brandObservations.length})
+            Genesis noticed ({brandCards.length})
           </h2>
-          <ObservationsPanel observations={brandObservations} highlightId={highlightObservationId} />
-        </>
-      )}
-
-      {identityApprovals.length > 0 && (
-        <>
-          <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
-            Awaiting Your Approval ({identityApprovals.length})
-          </h2>
-          <ApprovalRequestsPanel
-            approvals={identityApprovals}
-            approveAction={approveGenesisAction}
-            rejectAction={rejectGenesisAction}
-            regenerateAction={regenerateApprovalImage}
-            approveGroupAction={approveGenesisActionGroup}
-            highlightId={highlightId}
-          />
+          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
+            {brandCards.map((card) => (
+              <AttentionCard
+                key={card.id}
+                card={card}
+                approveAction={approveGenesisAction}
+                rejectAction={rejectGenesisAction}
+                issueAction={startIssueConversation}
+                discoveryAction={startDiscoveryConversation}
+                taskAction={startTaskConversation}
+                highlightId={focus}
+              />
+            ))}
+          </div>
         </>
       )}
 

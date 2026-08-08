@@ -6,12 +6,20 @@ import { getPendingApprovals, type PendingApproval } from "@/lib/dashboard/pendi
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { SECTION_LABELS, type SectionKey } from "@/lib/storefrontSections";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
+import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
 import { toggleStorePublished } from "../actions";
-import { approveGenesisAction, rejectGenesisAction, approveGenesisActionGroup } from "../ai-actions";
+import {
+  approveGenesisAction,
+  rejectGenesisAction,
+  approveGenesisActionGroup,
+  startIssueConversation,
+  startDiscoveryConversation,
+  startTaskConversation,
+} from "../ai-actions";
 import { SubmitButton } from "../SubmitButton";
 import { VisualProposal } from "../VisualProposal";
 import { HeroMock } from "../HeroMock";
-import { ObservationsPanel } from "../ObservationsPanel";
+import { AttentionCard } from "../AttentionCard";
 import { FieldValueList } from "../FieldValueList";
 import { StringListView } from "../StringListView";
 import { FaqListView } from "../FaqListView";
@@ -110,8 +118,16 @@ export default async function WebsitePage({
   // reasoning for websiteObservations, already scoped to this exact page.
   const { focus } = await searchParams;
   const focusedWebsiteApproval = focus ? websiteApprovals.find((a) => a.id === focus) : undefined;
-  const highlightObservationId =
-    focus && websiteObservations.some((o) => o.dedupeKey === focus) ? focus : undefined;
+  // Phase 1 (2026-08-08) — observations only; website's own approvals stay
+  // on the existing bespoke VisualProposal rendering above (real visual
+  // mocks/iframe previews per actionType, deliberately not collapsed into
+  // a generic text card — that would be a real regression, not a
+  // consistency improvement).
+  const websiteObservationCards = buildPageAttentionCards({
+    approvals: [],
+    observations: websiteObservations,
+    highlightId: focus,
+  });
   // Rendered once, standalone, above the grouped list — remove it from
   // whichever group it belongs to so it never renders twice.
   const remainingApprovalGroups = [...websiteApprovalGroups.entries()]
@@ -360,15 +376,28 @@ export default async function WebsitePage({
         </SubmitButton>
       </form>
 
-      {/* Real GenesisObservation rows (Red/Purple) — separate from the
-          approval surface below; observations have no Approve/Reject, they
-          resolve automatically when the real condition stops being true. */}
-      {websiteObservations.length > 0 && (
+      {/* Phase 1 (2026-08-08) — same compact card language Home's own "J4
+          Noticed" zone uses, replacing ObservationsPanel here. Approvals
+          stay in the bespoke VisualProposal rendering above, untouched. */}
+      {websiteObservationCards.length > 0 && (
         <>
           <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-            Genesis noticed ({websiteObservations.length})
+            Genesis noticed ({websiteObservationCards.length})
           </h2>
-          <ObservationsPanel observations={websiteObservations} highlightId={highlightObservationId} />
+          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
+            {websiteObservationCards.map((card) => (
+              <AttentionCard
+                key={card.id}
+                card={card}
+                approveAction={approveGenesisAction}
+                rejectAction={rejectGenesisAction}
+                issueAction={startIssueConversation}
+                discoveryAction={startDiscoveryConversation}
+                taskAction={startTaskConversation}
+                highlightId={focus}
+              />
+            ))}
+          </div>
         </>
       )}
 

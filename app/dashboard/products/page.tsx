@@ -2,13 +2,20 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { toggleProductActive, deleteProduct, uploadProductImage } from "../actions";
-import { approveGenesisAction, rejectGenesisAction, regenerateApprovalImage, approveGenesisActionGroup } from "../ai-actions";
+import {
+  approveGenesisAction,
+  rejectGenesisAction,
+  regenerateApprovalImage,
+  startIssueConversation,
+  startDiscoveryConversation,
+  startTaskConversation,
+} from "../ai-actions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
+import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
 import { DeleteProductButton } from "../DeleteProductButton";
 import { SubmitButton } from "../SubmitButton";
-import { ApprovalRequestsPanel } from "../ApprovalRequestsPanel";
-import { ObservationsPanel } from "../ObservationsPanel";
+import { AttentionCard } from "../AttentionCard";
 import { CreateProductForm } from "./CreateProductForm";
 import { EditProductForm } from "./EditProductForm";
 
@@ -54,43 +61,43 @@ export default async function ProductsPage({
   const productApprovals = pendingApprovals.filter(
     (a) => a.actionType === "update_product_image" || a.actionType === "create_product"
   );
-  // Contextual deep-linking: see brand/page.tsx for why a match here is
-  // already fully validated (store/section/status-scoped) by construction.
-  // Same reasoning for productObservations, already scoped to this page.
   const { focus } = await searchParams;
-  const highlightId = focus && productApprovals.some((a) => a.id === focus) ? focus : undefined;
-  const highlightObservationId =
-    focus && productObservations.some((o) => o.dedupeKey === focus) ? focus : undefined;
+  // Phase 1 (2026-08-08) — see brand/page.tsx for the same real reasoning:
+  // one unified card list instead of two separate sections/components.
+  const productCards = buildPageAttentionCards({
+    approvals: productApprovals,
+    observations: productObservations,
+    highlightId: focus,
+  });
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Products</h1>
 
-      {/* Real GenesisObservation rows (Red/Purple) — separate from the
-          approval surface below; observations have no Approve/Reject, they
-          resolve automatically when the real condition stops being true. */}
-      {productObservations.length > 0 && (
+      {/* Phase 1 (2026-08-08) — one unified card list, same compact
+          language Home's own "J4 Noticed" zone uses — replaces the two
+          separate ObservationsPanel/ApprovalRequestsPanel sections this
+          page used to render on its own. */}
+      {productCards.length > 0 && (
         <>
           <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
-            Genesis noticed ({productObservations.length})
+            Genesis noticed ({productCards.length})
           </h2>
-          <ObservationsPanel observations={productObservations} highlightId={highlightObservationId} />
-        </>
-      )}
-
-      {productApprovals.length > 0 && (
-        <>
-          <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
-            Awaiting Your Approval ({productApprovals.length})
-          </h2>
-          <ApprovalRequestsPanel
-            approvals={productApprovals}
-            approveAction={approveGenesisAction}
-            rejectAction={rejectGenesisAction}
-            regenerateAction={regenerateApprovalImage}
-            approveGroupAction={approveGenesisActionGroup}
-            highlightId={highlightId}
-          />
+          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
+            {productCards.map((card) => (
+              <AttentionCard
+                key={card.id}
+                card={card}
+                approveAction={approveGenesisAction}
+                rejectAction={rejectGenesisAction}
+                issueAction={startIssueConversation}
+                discoveryAction={startDiscoveryConversation}
+                taskAction={startTaskConversation}
+                highlightId={focus}
+                regenerateAction={regenerateApprovalImage}
+              />
+            ))}
+          </div>
         </>
       )}
 
