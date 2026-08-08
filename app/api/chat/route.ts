@@ -22,6 +22,7 @@ import {
   textOf,
   type BusinessFactCaptureInput,
   type RequestImageChangeInput,
+  type RequestProductRemovalInput,
 } from "@/lib/execution/genesisTools";
 import {
   UploadIntentSchema,
@@ -708,6 +709,100 @@ export async function POST(request: Request) {
           emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: foundNames.length > 0 ? "success" : "failure", likelyRephraseOf, kind: "image_request" });
+          controller.close();
+          return;
+        }
+
+        // 2026-08-08 — the real missing capability: J4 previously had no
+        // way to remove a product at all and told the owner to do it
+        // manually. This never executes the deletion itself (delete_product
+        // is a hard-locked "destructive" category action — see
+        // genesisActions.ts's CATEGORY_MAX_TIER) — it proposes one
+        // ApprovalRequest per resolved product, same shape as
+        // request_image_change above, and the owner's real confirmation is
+        // the existing Approve action on Products, not a second bespoke
+        // confirmation UI.
+        if (chosenTool?.name === "request_product_removal") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "request_product_removal" });
+          const input = chosenTool.input as RequestProductRemovalInput;
+          const targetProducts =
+            input.scope === "all"
+              ? currentProducts
+              : input.scope === "specific"
+                ? currentProducts.filter((p) =>
+                    (input.productNames ?? []).map((n) => n.trim().toLowerCase()).includes(p.name.trim().toLowerCase())
+                  )
+                : [];
+
+          if (targetProducts.length === 0) {
+            const clarification =
+              input.scope === "specific"
+                ? `I want to make sure I remove the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
+                : conversationalReply || "Which product would you like me to remove?";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
+            if (!streamedAnyText) emit({ type: "token", delta: clarification });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "product_removal_request" });
+            controller.close();
+            return;
+          }
+
+          const groupId = randomUUID();
+          for (const product of targetProducts) {
+            // A fresh proposal supersedes any earlier still-pending one for
+            // the same product, same dedupe rule request_image_change's own
+            // loop already follows above.
+            await prisma.approvalRequest.deleteMany({
+              where: {
+                storeId: store.id,
+                actionType: "delete_product",
+                status: "PENDING_APPROVAL",
+                input: { path: ["productId"], equals: product.id },
+              },
+            });
+            await prisma.approvalRequest.create({
+              data: {
+                storeId: store.id,
+                recommendationId: null,
+                actionType: "delete_product",
+                input: { productId: product.id, name: product.name },
+                previousValues: { productId: product.id, name: product.name },
+                summary: `Remove "${product.name}" — this permanently deletes it`,
+                authorizationTier: GENESIS_ACTIONS.delete_product.authorizationTier,
+                groupId,
+              },
+            });
+          }
+
+          const names = targetProducts.map((p) => p.name);
+          const replyParts = [
+            conversationalReply ||
+              (names.length > 1
+                ? `I've proposed removing ${names.length} products: ${names.join(", ")}.`
+                : `I've proposed removing "${names[0]}".`),
+          ];
+          replyParts.push(
+            names.length > 1
+              ? `These are grouped as one idea on Products — review and approve each to permanently delete them.`
+              : `You'll find it waiting for your review on Products — approve it to permanently delete it.`
+          );
+          const finalReply = replyParts.join(" ");
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "PENDING",
+            verified: false,
+            message: `Proposed removing ${names.join(", ")}`,
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: { groupId, productIds: targetProducts.map((p) => p.id) },
+          });
+          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "product_removal_request" });
           controller.close();
           return;
         }

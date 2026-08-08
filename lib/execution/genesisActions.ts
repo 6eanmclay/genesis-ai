@@ -49,7 +49,12 @@ import {
   communicateFindingExecutable,
   type CommunicateFindingInput,
 } from "./executables/communicateFinding";
-import { createProductExecutable, type CreateProductInput } from "./executables/products";
+import {
+  createProductExecutable,
+  type CreateProductInput,
+  deleteProductExecutable,
+  type DeleteProductInput,
+} from "./executables/products";
 
 // The minimal subset of Store.blueprint relevant to the actions registered
 // below — shared between generateGenesisRecommendations.ts (which fetches
@@ -293,6 +298,7 @@ export const GENESIS_ACTIONS: Record<
     | ResolveChallengeInput
     | CommunicateFindingInput
     | CreateProductInput
+    | DeleteProductInput
   >
 > = {
   update_seo: {
@@ -365,6 +371,27 @@ export const GENESIS_ACTIONS: Record<
     }),
     getCurrentValues: () => ({ name: "", description: null, priceInCents: 0 }),
     category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  // 2026-08-08 — the missing capability a real owner (Sean's own store,
+  // via J4) hit directly: J4 could talk about removing obsolete products
+  // but had no real way to do it, and kept telling the owner to go delete
+  // each one by hand. deleteProductExecutable already existed, wired only
+  // to the owner's own manual dashboard delete button — this registers it
+  // for Genesis the same way create_product registered
+  // createProductExecutable, no new execution machinery. category is
+  // "destructive" specifically so CATEGORY_MAX_TIER's hard "always_ask"
+  // ceiling applies here by construction — a real, permanent Product
+  // delete must never become delegable, unlike update_seo.
+  delete_product: {
+    executable: deleteProductExecutable,
+    inputSchema: z.object({ productId: z.string(), name: z.string() }),
+    getCurrentValues: ({ product }) => ({
+      productId: product?.id ?? "",
+      name: product?.name ?? "",
+    }),
+    category: "destructive",
     authorizationTier: "always_ask",
     maxAuthorityTier: "always_ask",
   },
@@ -645,6 +672,7 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },
   create_product: { key: "products", label: "Products", href: "/dashboard/products" },
+  delete_product: { key: "products", label: "Products", href: "/dashboard/products" },
   update_theme: { key: "website", label: "Website", href: "/dashboard/website" },
   update_homepage_content: { key: "website", label: "Website", href: "/dashboard/website" },
   update_brand_identity: { key: "brand", label: "Identity", href: "/dashboard/brand" },

@@ -116,7 +116,7 @@ export const toggleProductActiveExecutable: Executable<ToggleActiveInput, Produc
   },
 };
 
-interface DeleteProductInput {
+export interface DeleteProductInput {
   productId: string;
   name: string;
 }

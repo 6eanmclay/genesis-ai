@@ -60,6 +60,7 @@ import {
   textOf,
   type BusinessFactCaptureInput,
   type RequestImageChangeInput,
+  type RequestProductRemovalInput,
 } from "@/lib/execution/genesisTools";
 import {
   UploadIntentSchema,
@@ -2760,6 +2761,110 @@ async function applyGenesisMessageToStore(
       storeId: store.id,
       durationMs: Date.now() - turnStartedAt,
       outcome: foundNames.length > 0 ? "success" : "failure",
+      likelyRephraseOf,
+      stageDurationsMs,
+    });
+
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
+
+  // 2026-08-08 — the missing product-delete capability, non-streaming
+  // fallback copy of the same handling in app/api/chat/route.ts's own
+  // request_product_removal branch (see that file's comment for the full
+  // reasoning: destructive/always_ask, hard-locked in genesisActions.ts,
+  // never auto-executed — this only ever proposes).
+  const productRemovalResult = chosenTool?.name === "request_product_removal"
+    ? {
+        isProductRemovalRequest: true as const,
+        ...(chosenTool.input as RequestProductRemovalInput),
+        reply: conversationalReply || "Let me take care of that.",
+      }
+    : null;
+
+  if (productRemovalResult?.isProductRemovalRequest) {
+    const targetProducts =
+      productRemovalResult.scope === "all"
+        ? currentProducts
+        : productRemovalResult.scope === "specific"
+          ? currentProducts.filter((p) =>
+              (productRemovalResult.productNames ?? [])
+                .map((n) => n.trim().toLowerCase())
+                .includes(p.name.trim().toLowerCase())
+            )
+          : [];
+
+    if (targetProducts.length === 0) {
+      const clarification =
+        productRemovalResult.scope === "specific"
+          ? `I want to make sure I remove the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
+          : productRemovalResult.reply;
+      await prisma.storeMessage.create({
+        data: { storeId: store.id, role: "assistant", content: clarification },
+      });
+      await logChatTurnEvent({
+        userId,
+        storeId: store.id,
+        durationMs: Date.now() - turnStartedAt,
+        outcome: "failure",
+        likelyRephraseOf,
+        stageDurationsMs,
+      });
+      revalidatePath(returnTo);
+      redirectKeepingChatOpen(returnTo);
+    }
+
+    const groupId = randomUUID();
+    for (const product of targetProducts) {
+      await prisma.approvalRequest.deleteMany({
+        where: {
+          storeId: store.id,
+          actionType: "delete_product",
+          status: "PENDING_APPROVAL",
+          input: { path: ["productId"], equals: product.id },
+        },
+      });
+      await prisma.approvalRequest.create({
+        data: {
+          storeId: store.id,
+          recommendationId: null,
+          actionType: "delete_product",
+          input: { productId: product.id, name: product.name },
+          previousValues: { productId: product.id, name: product.name },
+          summary: `Remove "${product.name}" — this permanently deletes it`,
+          authorizationTier: GENESIS_ACTIONS.delete_product.authorizationTier,
+          groupId,
+        },
+      });
+    }
+
+    const names = targetProducts.map((p) => p.name);
+    const replyParts = [productRemovalResult.reply];
+    replyParts.push(
+      names.length > 1
+        ? `These are grouped as one idea on Products — review and approve each to permanently delete them.`
+        : `You'll find it waiting for your review on Products — approve it to permanently delete it.`
+    );
+
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: replyParts.join(" ") },
+    });
+
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "PENDING",
+      verified: false,
+      message: `Proposed removing ${names.join(", ")}`,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: { groupId, productIds: targetProducts.map((p) => p.id) },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
       likelyRephraseOf,
       stageDurationsMs,
     });

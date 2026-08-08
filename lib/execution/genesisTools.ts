@@ -48,6 +48,20 @@ export const RequestImageChangeInputSchema = z.object({
 });
 export type RequestImageChangeInput = z.infer<typeof RequestImageChangeInputSchema>;
 
+// 2026-08-08 — the missing product-delete capability, same real scope-
+// resolution shape as RequestImageChangeInputSchema above (an "all"/
+// "specific" split resolved against the real active product list, never
+// trusting the model's own restatement of which product it means). A
+// separate tool, not folded into edit_store_content: this is a discrete,
+// list-based structural removal, not a content-generation request, and
+// (unlike edit_store_content) never needs the PRIMARY content pipeline —
+// it's handled as its own real fast path exactly like request_image_change.
+export const RequestProductRemovalInputSchema = z.object({
+  scope: z.enum(["all", "specific"]).nullable(),
+  productNames: z.array(z.string()).nullable(),
+});
+export type RequestProductRemovalInput = z.infer<typeof RequestProductRemovalInputSchema>;
+
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
@@ -55,6 +69,7 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "capture_business_fact",
   "plan_campaign",
   "request_image_change",
+  "request_product_removal",
   "edit_store_content",
 ] as const;
 export type StoreChatUnifiedToolName = (typeof STORE_CHAT_UNIFIED_TOOL_NAMES)[number];
@@ -84,6 +99,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant is asking to replace, regenerate, or find a new photo for one or more existing products. Resolve scope yourself: 'all' when they clearly mean every active product, 'specific' with productNames set to the exact matching names, or null only when the scope is genuinely unclear (then ask a specific clarifying question in your reply text).",
       input_schema: z.toJSONSchema(RequestImageChangeInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "request_product_removal",
+      description:
+        "Call this when the merchant explicitly asks to remove, delete, discontinue, or get rid of one or more existing products — e.g. 'the old ones are obsolete, remove them', 'discontinue the wipes', 'delete that product'. This is a DESTRUCTIVE, irreversible action: calling this tool only PROPOSES the removal for the merchant's own review and approval, it never deletes anything immediately. Resolve scope against the active product list the same way as request_image_change: 'all' when they clearly mean every active product, 'specific' with productNames set to the exact matching names, or null only when genuinely unclear (then ask a specific clarifying question in your reply text).",
+      input_schema: z.toJSONSchema(RequestProductRemovalInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "edit_store_content",
