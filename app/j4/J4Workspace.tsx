@@ -400,15 +400,29 @@ function VoiceMemoButton({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Real bug (Sean, 2026-08-08, real iPhone Safari screenshot): every
+  // recording called getUserMedia() fresh and then, on stop, called
+  // track.stop() on it — which fully releases the hardware mic, not just
+  // this recording. The NEXT tap then had no live stream to reuse and
+  // had to request a brand new one, which is exactly the "tap Allow, tap
+  // Record again, get asked again" symptom. A granted getUserMedia
+  // permission is meant to be reusable for the page's whole lifetime;
+  // the fix is to actually reuse the stream instead of tearing it down
+  // each time, not to build any custom permission UI over Apple's own
+  // native prompt.
+  const streamRef = useRef<MediaStream | null>(null);
 
   // Real hardware/browser resource — released the instant the component
   // unmounts (leaving /j4) even if a recording is somehow still active,
-  // not left running in the background.
+  // not left running in the background. This is now the ONLY place the
+  // stream's tracks get stopped — not after every individual recording.
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       const recorder = mediaRecorderRef.current;
       if (recorder && recorder.state !== "inactive") recorder.stop();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     };
   }, []);
 
@@ -431,7 +445,16 @@ function VoiceMemoButton({
 
   async function startRecording() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Reuse the already-granted stream whenever it's still live —
+      // this is the real fix: only ever call getUserMedia() again if
+      // there's genuinely no usable stream (first-ever tap, or a track
+      // that's died for some real reason), never unconditionally.
+      let stream = streamRef.current;
+      const hasLiveTrack = stream?.getAudioTracks().some((track) => track.readyState === "live") ?? false;
+      if (!stream || !hasLiveTrack) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+      }
       const mimeType = pickSupportedVoiceMemoMimeType();
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       chunksRef.current = [];
@@ -440,7 +463,10 @@ function VoiceMemoButton({
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop());
+        // Deliberately NOT stopping the stream's tracks here anymore —
+        // see streamRef's own comment on why. The mic stays held
+        // (matching how a native app's own "record again" affordance
+        // behaves) until this component unmounts.
         const contentType = (recorder.mimeType || "audio/webm").split(";")[0];
         const extension = ALLOWED_VOICE_MEMO_CONTENT_TYPES[contentType] ?? "webm";
         const blob = new Blob(chunksRef.current, { type: contentType });
