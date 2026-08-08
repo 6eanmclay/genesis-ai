@@ -3530,8 +3530,20 @@ export async function sendStoreMessage(formData: FormData) {
   const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
   // Track 0 — see sendDraftMessage's identical comment.
   const confirmedOverride = formData.get("confirmedOverride") === "true";
+  // Voice-memo streaming convergence (2026-08-08) — set only when the
+  // streaming path (app/api/chat/route.ts) fell back here for a
+  // transcribed memo's turn (network failure, or a request needing the
+  // heavier content-edit pipeline); preserves the same {audioUrl} shape
+  // on the persisted user message regardless of which path handled it.
+  const audioUrl = (formData.get("audioUrl") as string | null) || null;
 
-  await applyGenesisMessageToStore(session.user.id, userMessage, returnTo, confirmedOverride);
+  await applyGenesisMessageToStore(
+    session.user.id,
+    userMessage,
+    returnTo,
+    confirmedOverride,
+    audioUrl ? { audioUrl } : undefined
+  );
 }
 
 // Business Assets M2 — uploading a photo or document directly inside the
@@ -3702,11 +3714,13 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
 // content is what the owner said, not a file to classify. Sean's own
 // examples ("I need to remember to call the supplier tomorrow," "here's
 // what I want the new homepage to feel like") are requests and facts, not
-// documents — so once transcribed, the memo becomes a real userMessage
-// through applyGenesisMessageToStore, the exact same conversational
+// documents — so once transcribed, the memo is handed to the client as
+// real text (see this function's own return below) to submit through
+// app/api/chat's streaming endpoint, the exact same conversational
 // understanding/routing a typed message gets (capture_business_fact,
 // look_up_business_data, edit_store_content, etc.), never a second,
-// parallel "interpret the memo" pipeline.
+// parallel "interpret the memo" pipeline — and, unlike the older
+// applyGenesisMessageToStore route, one that can actually stream.
 export async function uploadVoiceMemo(formData: FormData) {
   const session = await auth();
   if (!session?.user) {
@@ -3759,7 +3773,21 @@ export async function uploadVoiceMemo(formData: FormData) {
     redirectKeepingChatOpen(returnTo);
   }
 
-  await applyGenesisMessageToStore(session.user.id, transcription.transcript, returnTo, false, { audioUrl: blobUrl });
+  // 2026-08-08 — real production finding: routing the transcript through
+  // applyGenesisMessageToStore (a Server Action that always ends in
+  // redirect()) meant J4's reply could only ever appear as one complete,
+  // already-finished block after a full page navigation — a voice memo
+  // could never stream the way typed text now genuinely does. A
+  // transcript is real conversational text; app/api/chat/route.ts's own
+  // streaming unified pipeline already understands and routes plain text
+  // exactly like this, no second understanding pipeline needed. Returning
+  // the transcript here (instead of driving the reply from this Server
+  // Action) lets the client submit it through the exact same streaming
+  // path a typed message uses — this action's own job now stops at
+  // "produce a transcript," the same boundary uploadBusinessAssetFromChat
+  // still has for its own (structurally different, non-conversational)
+  // classification reply.
+  return { transcript: transcription.transcript, audioUrl: blobUrl };
 }
 
 // J4 Portal batch intake (2026-08-08) — "when multiple photos are

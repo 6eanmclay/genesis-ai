@@ -119,7 +119,7 @@ function diagLog(requestId: string, turnStartedAt: number, event: string, meta?:
 export async function POST(request: Request) {
   const turnStartedAt = Date.now();
   const body = (await request.json().catch(() => null)) as
-    | { message?: string; requestId?: string }
+    | { message?: string; requestId?: string; audioUrl?: string }
     | null;
   const requestId = body?.requestId ?? "unknown";
   diagLog(requestId, turnStartedAt, "request_received");
@@ -143,6 +143,16 @@ export async function POST(request: Request) {
   }
   const { store, role } = resolved;
   diagLog(requestId, turnStartedAt, "auth_and_store_resolved", { storeId: store.id });
+
+  // 2026-08-08 — voice-memo streaming convergence: a transcribed memo is
+  // real conversational text, submitted through this exact same endpoint a
+  // typed message uses (see uploadVoiceMemo's own comment on why it no
+  // longer drives the reply itself). The one real difference is this
+  // turn's user StoreMessage should carry the same {audioUrl} shape it
+  // always has, so the conversation still renders it as a playable memo,
+  // not silently as plain text. Undefined (the default) preserves every
+  // existing typed-message write byte-for-byte.
+  const userMessageChanges = body?.audioUrl ? { audioUrl: body.audioUrl } : undefined;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -223,7 +233,7 @@ export async function POST(request: Request) {
         diagLog(requestId, turnStartedAt, "upload_intent_classified", { isUploadIntent: !!uploadIntentResult?.isUploadIntent });
 
         if (uploadIntentResult?.isUploadIntent) {
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: UPLOAD_INTENT_REPLY } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
@@ -245,7 +255,7 @@ export async function POST(request: Request) {
         if (!hasPermission(role, PERMISSIONS.STORE_MANAGE)) {
           const declineMessage =
             "That's something only the store owner can change — I don't have permission to update store settings, branding, or policies on your account. Ask them to make this change, or to give you broader access.";
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: declineMessage } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
@@ -385,7 +395,7 @@ export async function POST(request: Request) {
         // finish; no further model or tool work needed.
         if (!chosenTool && conversationalReply) {
           diagLog(requestId, turnStartedAt, "db_write_start", { kind: "conversational" });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: conversationalReply } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
@@ -479,7 +489,7 @@ export async function POST(request: Request) {
             return;
           }
           diagLog(requestId, turnStartedAt, "db_write_start", { kind: "data_question" });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: dataAnswerReply } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
@@ -565,7 +575,7 @@ export async function POST(request: Request) {
             }
           }
           const reply = conversationalReply || "Got it — I'll remember that about your business.";
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
@@ -591,7 +601,7 @@ export async function POST(request: Request) {
           const reply = planned
             ? `I've planned "${planned.name}" — ${planned.channels.length} channel${planned.channels.length === 1 ? "" : "s"}: ${planned.channels.map((c) => c.channel).join(", ")}. Take a look and let me know what you'd like to adjust before we schedule it.`
             : "I wasn't able to put a real campaign plan together from that — tell me a bit more about what you're promoting and I'll try again.";
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
@@ -628,7 +638,7 @@ export async function POST(request: Request) {
               input.scope === "specific"
                 ? `I want to make sure I update the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
                 : conversationalReply || "Which product would you like a new photo for?";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
             await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
             if (!streamedAnyText) emit({ type: "token", delta: clarification });
             emit({ type: "done", changes: null });
@@ -691,7 +701,7 @@ export async function POST(request: Request) {
             replyParts.push(`I couldn't find a good option for ${missedNames.join(", ")} — you may want to upload ${missedNames.length > 1 ? "those" : "that one"} directly for now.`);
           }
           const finalReply = replyParts.join(" ");
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
@@ -739,7 +749,7 @@ export async function POST(request: Request) {
               input.scope === "specific"
                 ? `I want to make sure I remove the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
                 : conversationalReply || "Which product would you like me to remove?";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
             await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
             if (!streamedAnyText) emit({ type: "token", delta: clarification });
             emit({ type: "done", changes: null });
@@ -788,7 +798,7 @@ export async function POST(request: Request) {
               : `You'll find it waiting for your review on Products — approve it to permanently delete it.`
           );
           const finalReply = replyParts.join(" ");
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,

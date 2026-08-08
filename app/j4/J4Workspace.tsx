@@ -389,10 +389,17 @@ function VoiceMemoButton({
   uploadVoiceMemo,
   currentPath,
   onFailure,
+  onTranscribed,
 }: {
-  uploadVoiceMemo: (formData: FormData) => void;
+  uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
   currentPath: string;
   onFailure: (message: string) => void;
+  // 2026-08-08 — voice-memo streaming convergence: uploadVoiceMemo no
+  // longer drives J4's reply itself (see its own comment in
+  // app/dashboard/ai-actions.ts) — it only transcribes and hands the real
+  // text back here, for the parent to submit through the exact same
+  // streaming send path a typed message uses.
+  onTranscribed: (transcript: string, audioUrl: string) => void;
 }) {
   const [isPending, startTransition] = useTransition();
   const [isRecording, setIsRecording] = useState(false);
@@ -490,7 +497,11 @@ function VoiceMemoButton({
             formData.set("currentPath", currentPath);
             return uploadVoiceMemo(formData);
           });
-          if (!result.ok) onFailure(result.message);
+          if (!result.ok) {
+            onFailure(result.message);
+          } else if (result.value) {
+            onTranscribed(result.value.transcript, result.value.audioUrl);
+          }
         });
       };
 
@@ -716,7 +727,7 @@ export function J4Workspace({
   sendMessage: (formData: FormData) => void;
   uploadAsset: (formData: FormData) => void;
   uploadPhotoBatch: (formData: FormData) => void;
-  uploadVoiceMemo: (formData: FormData) => void;
+  uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
   tasks: TaskItem[];
   decisions: DecisionItem[];
   ideas: IdeaItem[];
@@ -746,6 +757,11 @@ export function J4Workspace({
   // typing and pressing send already does, not a shortcut around it.
   const formRef = useRef<HTMLFormElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  // Voice-memo streaming convergence (2026-08-08) — carries a transcribed
+  // memo's real audioUrl across the same form submission sendQuickReply's
+  // own hidden currentPath field already uses, so handleSend can persist
+  // it on the turn's user StoreMessage without a second send mechanism.
+  const audioUrlInputRef = useRef<HTMLInputElement>(null);
 
   // Directly tests "is the component/page lifecycle killing the request" —
   // set for the duration of a real turn so a real disconnect/backgrounding
@@ -863,6 +879,12 @@ export function J4Workspace({
     setStreamingStatus(null);
     const text = String(formData.get("message") ?? "").trim();
     if (!text) return;
+    // Voice-memo streaming convergence (2026-08-08) — read once, then
+    // clear immediately so a voice memo's audioUrl never leaks onto the
+    // NEXT, unrelated typed submit; sendVoiceMemo below is the only thing
+    // that ever sets this field.
+    const audioUrl = (formData.get("audioUrl") as string | null) || null;
+    if (audioUrlInputRef.current) audioUrlInputRef.current.value = "";
 
     const optimisticUserId = `optimistic-user-${Date.now()}`;
     const assistantId = `optimistic-assistant-${Date.now()}`;
@@ -893,7 +915,7 @@ export function J4Workspace({
     flushSync(() => {
       setLocalMessages((prev) => [
         ...prev,
-        { id: optimisticUserId, role: "user", content: text, changes: null },
+        { id: optimisticUserId, role: "user", content: text, changes: audioUrl ? { audioUrl } : null },
         { id: assistantId, role: "assistant", content: "", changes: null },
       ]);
       setActiveRequestMeta({ requestId, tStart });
@@ -913,7 +935,7 @@ export function J4Workspace({
       response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, requestId }),
+        body: JSON.stringify({ message: text, requestId, audioUrl: audioUrl ?? undefined }),
       });
     } catch (err) {
       reportDiag(requestId, tStart, "client_fetch_threw", { message: err instanceof Error ? err.message : String(err) });
@@ -1153,6 +1175,17 @@ export function J4Workspace({
     formRef.current?.requestSubmit();
   }
 
+  // Voice-memo streaming convergence (2026-08-08) — same real <form>
+  // submission mechanism as sendQuickReply above (never a second, direct
+  // call into handleSend), with the transcript's real audioUrl carried
+  // through the hidden field so the turn's user message renders as a
+  // playable memo, not plain text, from the very first optimistic paint.
+  function sendVoiceMemo(transcript: string, audioUrl: string) {
+    if (messageInputRef.current) messageInputRef.current.value = transcript;
+    if (audioUrlInputRef.current) audioUrlInputRef.current.value = audioUrl;
+    formRef.current?.requestSubmit();
+  }
+
   const lastMessage = localMessages[localMessages.length - 1];
   const showConfirmCeiling = lastMessage?.role === "assistant" && lastMessage.content === USAGE_CEILING_MESSAGE;
   const previousUserMessage = showConfirmCeiling ? [...localMessages].reverse().find((m) => m.role === "user")?.content : undefined;
@@ -1185,6 +1218,7 @@ export function J4Workspace({
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
     >
       <input type="hidden" name="currentPath" value={currentPath} />
+      <input type="hidden" name="audioUrl" ref={audioUrlInputRef} />
 
       {/* Identity strip — "J4 identity should be prominent and official at
           the top" (Sean). A real avatar (state/activity-aware, the same
@@ -1471,7 +1505,12 @@ export function J4Workspace({
             currentPath={currentPath}
             onFailure={setSendError}
           />
-          <VoiceMemoButton uploadVoiceMemo={uploadVoiceMemo} currentPath={currentPath} onFailure={setSendError} />
+          <VoiceMemoButton
+            uploadVoiceMemo={uploadVoiceMemo}
+            currentPath={currentPath}
+            onFailure={setSendError}
+            onTranscribed={sendVoiceMemo}
+          />
         </div>
         <div
           className="flex min-w-0 w-full max-w-full items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
