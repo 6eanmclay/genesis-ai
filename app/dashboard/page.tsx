@@ -16,9 +16,11 @@ import {
   confirmStoreDraft,
   approveGenesisAction,
   rejectGenesisAction,
+  startIssueConversation,
+  startDiscoveryConversation,
+  startTaskConversation,
 } from "./ai-actions";
 import { getNextBestAction } from "@/lib/intelligence/nextBestAction";
-import { NextRecommendation } from "./NextRecommendation";
 import { DEFAULT_THEME, googleFontsUrl, themeCssVars, type Theme } from "@/lib/theme";
 import type { OnboardingState } from "@/lib/onboarding/types";
 import { PERMISSIONS, hasPermission, resolveUserStore, type Permission } from "@/lib/permissions";
@@ -32,12 +34,10 @@ import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement
 import { runTaskDetection } from "@/lib/dashboard/taskDetectors";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
-import { AttentionPanel } from "./AttentionPanel";
-import { DiscoveryFeed } from "./DiscoveryFeed";
-import { ApprovalsSummary } from "./ApprovalsSummary";
+import { AttentionCard } from "./AttentionCard";
+import { buildAttentionCards } from "@/lib/dashboard/attentionCards";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessJourney } from "./BusinessJourney";
-import { TaskCards } from "./TaskCards";
 import { logJourneyStageIfChanged } from "@/lib/dashboard/journeyStage";
 
 const BRAND_PERSONALITIES = [
@@ -660,8 +660,8 @@ export default async function DashboardPage() {
   // BUSINESS_ASSETS_ARCHITECTURE.md M1 — awaited, not after(), unlike the
   // journey-stage logger above: that call is pure instrumentation that
   // doesn't affect this render, while task detection has to be visible on
-  // THIS page load for TaskCards below to render real, current data rather
-  // than lagging one view behind.
+  // THIS page load for the J4 Noticed zone below to render real, current
+  // task cards rather than lagging one view behind.
   if (isOwnerManager) {
     await runTaskDetection(store.id, {
       hasActiveProducts: (inventorySnapshot?.activeCount ?? 0) > 0,
@@ -686,27 +686,29 @@ export default async function DashboardPage() {
 
   const storeTheme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const fontsUrl = googleFontsUrl([storeTheme.typography.headingFont]);
-  const hasAttentionOrApprovals = attention.recentOutcomes.length > 0 || pendingApprovals.length > 0;
+
+  // Home Redesign (2026-08-08) — "the dashboard shows the business, J4
+  // handles the work" (Sean). Previously four independently-designed
+  // sections (NextRecommendation, AttentionPanel+ApprovalsSummary,
+  // DiscoveryFeed, TaskCards) competed for the same real estate with four
+  // different visual languages, all really answering one question: "does
+  // this business need me right now?" buildAttentionCards normalizes all
+  // four real sources into one shared, capped, prioritized card list — see
+  // lib/dashboard/attentionCards.ts for the full reasoning. Every input
+  // here is already permission-gated at the fetch site above (empty/null
+  // when the role doesn't have access), so this needs no extra permission
+  // branching of its own.
+  const attentionCards = buildAttentionCards({
+    issues: attention.recentOutcomes,
+    pendingApprovals,
+    nextRecommendation,
+    discoveryItems,
+    tasks: openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary })),
+  });
 
   return (
     <div style={themeCssVars(storeTheme)} className="min-h-screen p-8 lg:min-h-0">
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
-
-      {/* Growth Engine M3 (VISION.md Chapter 1) — the real center of Home,
-          rendered before anything else on the page: "Here's what I
-          noticed," not "what would you like to do today." Everything
-          below this is real, supporting context for why J4 made this
-          call, not a redesign of any of it. */}
-      {canViewAnalytics && (
-        <div className="mb-8">
-          <NextRecommendation
-            storeName={store.name}
-            recommendation={nextRecommendation}
-            approveAction={approveGenesisAction}
-            rejectAction={rejectGenesisAction}
-          />
-        </div>
-      )}
 
       {/* Today, at a glance — the workspace now begins directly with real
           business state; the greeting moved to Live Intelligence (see
@@ -759,62 +761,60 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Needs your attention (Watching) — genuine issues only (Red) and
-          real pending decisions (Yellow), in that priority order; routine
-          incomplete setup lives positively in Business Journey below
-          instead. Deliberately rendered here, directly under Snapshot and
-          before Discovery/Business Journey, rather than further down the
-          page: when a genuine owner-action state exists, the thing
-          requiring the owner should be visible in the initial viewport
-          without scrolling. This is presentation ordering of the exact
-          same gated block, not a second alert — when hasAttentionOrApprovals
-          is false (nothing renders here at all), Discovery below is exactly
-          what a visitor sees first. Watching vs. Working (v30): this
-          section is mechanical monitoring — what already happened and needs
-          a look — distinct from Discovery's active search for value below. */}
-      {isOwnerManager && hasAttentionOrApprovals && (
+      {/* J4 Noticed — Home Redesign (2026-08-08): one compact, capped,
+          prioritized zone replacing four separately-designed sections
+          (see attentionCards's own comment above). Rendered directly under
+          Snapshot, before Business Journey, so a genuine owner-action state
+          is visible in the initial viewport without scrolling — same
+          positioning reasoning the old "Needs your attention" section
+          already established, just for the unified list. The review
+          control moves here from Discovery's old header — it's the same
+          "how current is what J4 noticed" question, now asked in one place
+          instead of two. */}
+      {(isOwnerManager || canViewAnalytics) && (
         <>
-          <p className="mt-10 text-[10px] font-medium uppercase tracking-wide text-zinc-500">Watching</p>
-          <h2 id="attention" className="text-lg font-semibold text-black dark:text-zinc-50">
-            Needs your attention
-          </h2>
-          <div className="mt-3 flex max-w-md flex-col gap-4">
-            <AttentionPanel items={attention.recentOutcomes} />
-            {canViewAnalytics && pendingApprovals.length > 0 && (
-              <div>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                  Awaiting your decision
-                </p>
-                <ApprovalsSummary approvals={pendingApprovals} />
+          <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
+            <h2 id="attention" className="text-lg font-semibold text-black dark:text-zinc-50">
+              J4 Noticed
+            </h2>
+            {canViewAnalytics && (
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-zinc-500">
+                  {lastDiscoveryRunAt
+                    ? `Reviewed ${formatTimeAgo(lastDiscoveryRunAt)}`
+                    : "Genesis hasn't reviewed this business yet"}
+                </span>
+                <ReviewBusinessButton className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]" />
               </div>
             )}
           </div>
-        </>
-      )}
-
-      {/* Discovery (Working) — the centerpiece (v30): what Genesis found
-          while actively searching for ways to improve the business, not
-          another dashboard panel reporting what already happened. Replaces
-          the old "From Genesis" recommendations slice; keeps its manual
-          review control even when there's nothing to show right now — the
-          empty state itself is the honest, calm answer, not a fallback. */}
-      {canViewAnalytics && (
-        <>
-          <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">Working</p>
-              <h2 className="text-lg font-semibold text-black dark:text-zinc-50">Discovery</h2>
+          {attentionCards.cards.length === 0 ? (
+            <div className="mt-3 max-w-2xl rounded-2xl border border-[#2563eb]/15 bg-[#2563eb]/[0.035] px-5 py-4">
+              <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                Nothing needs you right now — I&apos;m still watching {store.name}.
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">Genesis never stops working on your business.</p>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-zinc-500">
-                {lastDiscoveryRunAt
-                  ? `Reviewed ${formatTimeAgo(lastDiscoveryRunAt)}`
-                  : "Genesis hasn't reviewed this business yet"}
-              </span>
-              <ReviewBusinessButton className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]" />
+          ) : (
+            <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
+              {attentionCards.cards.map((card) => (
+                <AttentionCard
+                  key={card.id}
+                  card={card}
+                  approveAction={approveGenesisAction}
+                  rejectAction={rejectGenesisAction}
+                  issueAction={startIssueConversation}
+                  discoveryAction={startDiscoveryConversation}
+                  taskAction={startTaskConversation}
+                />
+              ))}
+              {attentionCards.overflowCount > 0 && (
+                <p className="mt-1 text-xs text-zinc-500">
+                  +{attentionCards.overflowCount} more — ask J4 what else it&apos;s noticed.
+                </p>
+              )}
             </div>
-          </div>
-          <DiscoveryFeed items={discoveryItems} />
+          )}
         </>
       )}
 
@@ -826,14 +826,6 @@ export default async function DashboardPage() {
           stripeIntegration={stripeIntegration}
           paypalIntegration={paypalIntegration}
           allTimeOrderCount={orderSummary.allTimeOrderCount}
-        />
-      )}
-
-      {/* Tasks — BUSINESS_ASSETS_ARCHITECTURE.md M1's first real rendering
-          surface for the new unified Task model. */}
-      {isOwnerManager && (
-        <TaskCards
-          tasks={openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary }))}
         />
       )}
 

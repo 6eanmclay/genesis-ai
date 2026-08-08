@@ -4034,7 +4034,88 @@ export async function startTaskConversation(formData: FormData) {
   // refreshed off yet) — nothing left to add, just reopen chat below.
 
   revalidatePath(returnTo);
-  redirectKeepingChatOpen(returnTo);
+  // Home Redesign (2026-08-08) — "Have J4 take care of it" now means the
+  // real J4 Portal (/j4), not the deprecated floating GenesisAssistant
+  // panel ?openChat=1 used to reopen. redirectKeepingChatOpen still exists
+  // for the few real callers still on the old panel; this one action moves
+  // to the surface Sean's own words describe ("open J4").
+  redirect("/j4");
+}
+
+// Home Redesign (2026-08-08) — "the dashboard shows the business, J4
+// handles the work." Generalizes startTaskConversation's own pattern (a
+// real, honest user-turn statement of what's being acted on, plus a real
+// J4 seed reply, landing the owner directly in a live conversation with
+// full context already there) to the other two "hand off to J4" card
+// kinds: a genuine issue AttentionPanel used to only ever link to a
+// dashboard section for, and a raw Discovery finding that hasn't yet been
+// turned into a concrete proposal. Neither AttentionItem nor DiscoveryItem
+// is a stable, independently-refetchable row the way a Task is (an
+// AttentionItem is computed fresh every page load, never persisted) — the
+// real text rides along on the form itself rather than a second DB lookup.
+export async function startIssueConversation(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const message = (formData.get("message") as string | null)?.trim();
+  if (!message) {
+    throw new Error("Missing issue.");
+  }
+
+  const resolved = await resolveUserStore(session.user.id);
+  if (!resolved) {
+    redirect("/j4");
+  }
+  const { store, role } = resolved;
+  if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
+    throw new Error("You don't have permission to do this.");
+  }
+
+  // Honest statement of what the owner clicked, never a fabricated
+  // first-person quote — same voice-mechanics rule buildTaskUserMessage
+  // already follows.
+  await prisma.storeMessage.create({
+    data: { storeId: store.id, role: "user", content: `Let's take care of this: ${message}` },
+  });
+  await prisma.storeMessage.create({
+    data: { storeId: store.id, role: "assistant", content: `${message} What would you like me to do about this?` },
+  });
+
+  revalidatePath("/j4");
+  redirect("/j4");
+}
+
+export async function startDiscoveryConversation(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const summary = (formData.get("summary") as string | null)?.trim();
+  if (!summary) {
+    throw new Error("Missing finding.");
+  }
+
+  const resolved = await resolveUserStore(session.user.id);
+  if (!resolved) {
+    redirect("/j4");
+  }
+  const { store, role } = resolved;
+  if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
+    throw new Error("You don't have permission to do this.");
+  }
+
+  await prisma.storeMessage.create({
+    data: { storeId: store.id, role: "user", content: `Let's take care of this: ${summary}` },
+  });
+  await prisma.storeMessage.create({
+    data: { storeId: store.id, role: "assistant", content: `${summary} Want me to go ahead, or would you like to talk it through first?` },
+  });
+
+  revalidatePath("/j4");
+  redirect("/j4");
 }
 
 const PERSONALITY_PROMPTS: Record<string, string> = {
