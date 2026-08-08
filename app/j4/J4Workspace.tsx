@@ -555,6 +555,7 @@ function VoiceMemoButton({
   onStart,
   onFailure,
   onTranscribed,
+  size = "default",
 }: {
   uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
   currentPath: string;
@@ -571,6 +572,11 @@ function VoiceMemoButton({
   // text back here, for the parent to submit through the exact same
   // streaming send path a typed message uses.
   onTranscribed: (transcript: string, audioUrl: string) => void;
+  // Priority 4 — Just Talk (2026-08-08, scope frozen). Same component,
+  // same recording/upload/transcribe logic — only the button's own visual
+  // size changes for Just Talk's mic-primary layout, so there is exactly
+  // one voice-memo implementation, never a second "big mic" component.
+  size?: "default" | "large";
 }) {
   const [isPending, startTransition] = useTransition();
   const [isRecording, setIsRecording] = useState(false);
@@ -726,22 +732,35 @@ function VoiceMemoButton({
         aria-label={isRecording ? "Stop recording" : micBlocked ? "Microphone blocked — tap for help" : "Record a voice memo"}
         title={isRecording ? "Stop recording" : micBlocked ? "Microphone blocked — tap for help" : "Record a voice memo"}
         className={
-          isRecording
-            ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-red-500/15 px-2 text-base text-red-400"
-            : micBlocked
-              ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg bg-amber-500/15 px-1.5 text-base text-amber-500 transition hover:bg-amber-500/25"
-              : "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg px-1.5 text-base text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] disabled:opacity-50"
+          size === "large"
+            ? isRecording
+              ? "flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-full bg-red-500/15 text-red-400 shadow-[0_0_28px_-6px_rgba(239,68,68,0.5)]"
+              : micBlocked
+                ? "flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-3xl text-amber-500 transition hover:bg-amber-500/25"
+                : "flex h-20 w-20 shrink-0 items-center justify-center rounded-full text-3xl text-white shadow-[0_0_28px_-6px_rgba(139,124,246,0.6)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            : isRecording
+              ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-red-500/15 px-2 text-base text-red-400"
+              : micBlocked
+                ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg bg-amber-500/15 px-1.5 text-base text-amber-500 transition hover:bg-amber-500/25"
+                : "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg px-1.5 text-base text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] disabled:opacity-50"
         }
+        style={size === "large" && !isRecording && !micBlocked ? { backgroundColor: GENESIS_ATMOSPHERE.violet } : undefined}
       >
         {isPending ? (
-          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          <span
+            className={
+              size === "large"
+                ? "inline-block h-6 w-6 animate-spin rounded-full border-2 border-current border-t-transparent"
+                : "inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+            }
+          />
         ) : isRecording ? (
           <>
-            <span className="relative inline-flex h-2 w-2 shrink-0" aria-hidden="true">
+            <span className={size === "large" ? "relative inline-flex h-3 w-3 shrink-0" : "relative inline-flex h-2 w-2 shrink-0"} aria-hidden="true">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+              <span className={size === "large" ? "relative inline-flex h-3 w-3 rounded-full bg-red-500" : "relative inline-flex h-2 w-2 rounded-full bg-red-500"} />
             </span>
-            <span className="text-xs tabular-nums">
+            <span className={size === "large" ? "text-sm tabular-nums" : "text-xs tabular-nums"}>
               {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, "0")}
             </span>
           </>
@@ -966,6 +985,15 @@ export function J4Workspace({
   const currentPath = "/j4";
   const router = useRouter();
   const [activeCategory, setActiveCategory] = useState<Category>("conversation");
+  // Priority 4 — Just Talk (2026-08-08, scope frozen). A presentation-only
+  // toggle over the exact same conversation/pipeline — no new route, no
+  // new data, no change to handleSend/VoiceMemoButton/streamingStatus or
+  // anything server-side. Off by default: the category rail, Add-to-J4
+  // upload row, and header status dot are the Portal's normal chrome;
+  // Just Talk simply hides them and gives the mic primary visual weight,
+  // per Sean's own explicit calls on both open questions from the frozen
+  // scope doc.
+  const [justTalk, setJustTalk] = useState(false);
   const overallState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
 
   // Server-persisted StoreMessage rows stay the one source of truth;
@@ -1524,7 +1552,12 @@ export function J4Workspace({
         <div className="flex min-w-0 items-center gap-3">
           <div className="relative shrink-0">
             <GenesisAvatar className={GENESIS_AVATAR_SIZE.inline} />
-            {overallState !== "idle" && (
+            {/* Just Talk hides the operational status dot — a "something
+                needs attention" signal is exactly the management-console
+                framing this mode exists to step away from. Nothing about
+                the underlying state stops being tracked; it just isn't
+                shown here while the owner is just talking. */}
+            {overallState !== "idle" && !justTalk && (
               <span
                 className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ${GENESIS_STATE_META[overallState].dotClassName}`}
                 style={{ boxShadow: `0 0 0 2px ${GENESIS_ATMOSPHERE.bgElevated}` }}
@@ -1541,40 +1574,89 @@ export function J4Workspace({
           </div>
           <J4WorkingPublisher />
         </div>
-        <Link
-          href="/dashboard"
-          aria-label="Return to dashboard"
-          className="-m-2 shrink-0 p-2 text-[rgba(244,242,251,0.62)] hover:text-[#f4f2fb]"
-        >
-          ✕
-        </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* Quiet pending-approval indicator (frozen scope decision) — the
+              only new UI a real action gets while in Just Talk. Reuses
+              decisions.length, already resolved server-side in page.tsx;
+              nothing blocks or interrupts the conversation, and the real
+              approval UI still lives exactly where it already does
+              (Decisions tab / the relevant dashboard page) once the owner
+              exits. */}
+          {justTalk && decisions.length > 0 && (
+            <span
+              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
+              style={{ backgroundColor: "rgba(251,191,36,0.12)", color: "#fbbf24" }}
+              title="Waiting for your decision — see the Decisions tab in Workspace"
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
+              {decisions.length} waiting for you
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              // Real edge case: the rail this toggle hides is the only way
+              // to switch categories — if the owner was on Tasks/Ideas/
+              // Decisions/Information when toggling Just Talk on, they'd be
+              // stranded there with no rail to get back to Conversation.
+              // Forcing Conversation on every toggle (both directions)
+              // sidesteps that entirely rather than tracking "whichever tab
+              // was active before."
+              setJustTalk((v) => !v);
+              setActiveCategory("conversation");
+            }}
+            aria-pressed={justTalk}
+            className={
+              justTalk
+                ? "shrink-0 rounded-full bg-[#8b7cf6] px-3 py-1.5 text-xs font-medium text-white"
+                : "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
+            }
+          >
+            {justTalk ? "Workspace" : "Just Talk"}
+          </button>
+          <Link
+            href="/dashboard"
+            aria-label="Return to dashboard"
+            className="-m-2 shrink-0 p-2 text-[rgba(244,242,251,0.62)] hover:text-[#f4f2fb]"
+          >
+            ✕
+          </Link>
+        </div>
       </div>
 
       {/* Category rail — "organize into meaningful categories... rather
           than everything simply appearing as chat messages" (Sean). Every
           count is real data resolved server-side (page.tsx), never a
           placeholder; Conversation has no count of its own (it's the
-          default view, not a queue to clear). */}
-      <div
-        className="flex shrink-0 gap-1 overflow-x-auto border-b px-5 py-2"
-        style={{ borderColor: GENESIS_ATMOSPHERE.border }}
-      >
-        {categoryTabs.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setActiveCategory(tab.key)}
-            className={
-              activeCategory === tab.key
-                ? "shrink-0 rounded-full bg-[#8b7cf6] px-3 py-1.5 text-xs font-medium text-white"
-                : "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
-            }
-          >
-            {tab.label}
-            {tab.count > 0 && <span className="ml-1.5 opacity-80">{tab.count}</span>}
-          </button>
-        ))}
-      </div>
+          default view, not a queue to clear).
+          Just Talk hides this rail entirely (frozen scope) — it's the
+          single biggest "this is a management console" signal in the
+          Portal, present even while just talking. The toggle button
+          itself forces activeCategory back to "conversation" on every
+          switch (see its own comment) so there's never a state where this
+          rail is hidden but a non-Conversation tab is showing. */}
+      {!justTalk && (
+        <div
+          className="flex shrink-0 gap-1 overflow-x-auto border-b px-5 py-2"
+          style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+        >
+          {categoryTabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveCategory(tab.key)}
+              className={
+                activeCategory === tab.key
+                  ? "shrink-0 rounded-full bg-[#8b7cf6] px-3 py-1.5 text-xs font-medium text-white"
+                  : "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
+              }
+            >
+              {tab.label}
+              {tab.count > 0 && <span className="ml-1.5 opacity-80">{tab.count}</span>}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Center region — conversation reads as a workspace log (role
           labels, no bubbles, no left/right alternation), every other
@@ -1786,27 +1868,39 @@ export function J4Workspace({
         className="w-full min-w-0 max-w-full shrink-0 overflow-x-hidden border-t px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2"
         style={{ borderColor: GENESIS_ATMOSPHERE.border }}
       >
-        <div className="mb-1.5 flex items-center gap-1.5">
-          <span className="pl-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-            Add to J4
-          </span>
-          <UploadAssetButton
-            label="Add photos"
-            icon="📷"
-            accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
-            uploadAsset={uploadAsset}
-            uploadAssetBatch={uploadPhotoBatch}
-            currentPath={currentPath}
-            onFailure={setSendError}
-          />
-          <UploadAssetButton
-            label="Add documents"
-            icon="📄"
-            accept="application/pdf"
-            uploadAsset={uploadAsset}
-            currentPath={currentPath}
-            onFailure={setSendError}
-          />
+        {/* Priority 4 — Just Talk, mic-primary layout (frozen scope, Sean's
+            explicit call). VoiceMemoButton stays exactly ONE instance at
+            the same position in this row, regardless of mode — only its
+            own size prop and its neighbors change. Splitting this into two
+            separately-rendered VoiceMemoButtons (one per mode) would
+            unmount/remount it on every toggle, silently dropping the
+            cached getUserMedia() stream (see streamRef's own comment) and,
+            worse, truncating a real recording if toggled mid-recording. */}
+        <div className={justTalk ? "mb-2 flex items-center justify-center" : "mb-1.5 flex items-center gap-1.5"}>
+          {!justTalk && (
+            <>
+              <span className="pl-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                Add to J4
+              </span>
+              <UploadAssetButton
+                label="Add photos"
+                icon="📷"
+                accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+                uploadAsset={uploadAsset}
+                uploadAssetBatch={uploadPhotoBatch}
+                currentPath={currentPath}
+                onFailure={setSendError}
+              />
+              <UploadAssetButton
+                label="Add documents"
+                icon="📄"
+                accept="application/pdf"
+                uploadAsset={uploadAsset}
+                currentPath={currentPath}
+                onFailure={setSendError}
+              />
+            </>
+          )}
           <VoiceMemoButton
             uploadVoiceMemo={uploadVoiceMemo}
             currentPath={currentPath}
@@ -1816,6 +1910,7 @@ export function J4Workspace({
               setSendError(message);
             }}
             onTranscribed={sendVoiceMemo}
+            size={justTalk ? "large" : "default"}
           />
         </div>
         <div
