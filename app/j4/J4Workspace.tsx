@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { unstable_rethrow } from "next/navigation";
-import { useFormStatus } from "react-dom";
+import { useFormStatus, flushSync } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { deriveAssessmentState } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
@@ -753,10 +753,35 @@ export function J4Workspace({
       let sawFallback = false;
       let sawFirstChunk = false;
       let sawFirstToken = false;
+      // Real production investigation (2026-08-08) — "do not infer that
+      // streaming works because the final response arrives quickly." A
+      // real, concrete, testable hypothesis this specifically checks: the
+      // server can genuinely emit N separate small chunks while the
+      // network/OS still coalesces them into fewer, larger reader.read()
+      // calls — if several "token" lines arrive within ONE read(), the
+      // for-loop below calls setLocalMessages several times inside one
+      // synchronous tick, and React 18's automatic batching collapses
+      // them into a single paint. That would look exactly like "pasted
+      // all at once" on a real phone despite the server, the network
+      // transport, and the parsing all being genuinely correct. readIndex
+      // ties every token to the specific read() call it arrived in —
+      // tokensThisRead > 1 on the same readIndex, repeated across most of
+      // the response, is the direct signature of that failure mode.
+      // flushSync below is the standard, always-safe fix for exactly this
+      // (forces each token's DOM update to actually paint before the loop
+      // continues) — applied now alongside the instrumentation rather
+      // than waiting for a second test round-trip to confirm the theory
+      // before fixing it, since forcing more frequent paint is never
+      // wrong even if this isn't the actual bottleneck.
+      let readIndex = 0;
+      let tokenIndex = 0;
 
       readLoop: while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        readIndex += 1;
+        const thisReadIndex = readIndex;
+        let tokensThisRead = 0;
         if (!sawFirstChunk) {
           sawFirstChunk = true;
           reportDiag(requestId, tStart, "client_first_chunk_received", { byteLength: value?.length ?? 0 });
@@ -785,8 +810,13 @@ export function J4Workspace({
               sawFirstToken = true;
               reportDiag(requestId, tStart, "client_first_token_setstate", { deltaLength: event.delta.length });
             }
-            setStreamingStatus(null);
-            setLocalMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.delta } : m)));
+            tokenIndex += 1;
+            tokensThisRead += 1;
+            reportDiag(requestId, tStart, "client_token_applied", { i: tokenIndex, readIndex: thisReadIndex, tokensThisRead, len: event.delta.length });
+            flushSync(() => {
+              setStreamingStatus(null);
+              setLocalMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.delta } : m)));
+            });
           } else if (event.type === "done") {
             sawDone = true;
             reportDiag(requestId, tStart, "client_done_event_received");
@@ -803,7 +833,11 @@ export function J4Workspace({
             return;
           }
         }
+        if (tokensThisRead > 0) {
+          reportDiag(requestId, tStart, "client_read_summary", { readIndex: thisReadIndex, byteLength: value?.length ?? 0, tokensThisRead });
+        }
       }
+      reportDiag(requestId, tStart, "client_stream_summary", { totalReads: readIndex, totalTokensApplied: tokenIndex });
 
       if (sawFallback) {
         // Real bug, confirmed via production trace (2026-08-08): this used

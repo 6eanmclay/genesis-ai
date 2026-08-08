@@ -311,6 +311,16 @@ export async function POST(request: Request) {
         let firstTokenAtMs: number | null = null;
         diagLog(requestId, turnStartedAt, "unified_call_started");
         const unifiedRequestMessages = [...cachedConversationMessages, { role: "user" as const, content: unifiedContextParts.join("\n") }];
+        // Real production investigation (2026-08-08) — Sean's real iPhone
+        // test still shows the complete response appearing in one paste
+        // despite the server-side padding fix, disconnect-safe
+        // persistence, and the schema fix that finally let this call
+        // succeed at all. Per-delta logging (every one, not just the
+        // first) is the only way to tell "Anthropic is genuinely sending
+        // many small deltas" from "one big delta arrived" — the two look
+        // identical from firstTokenAtMs alone. Temporary, deleted once
+        // the real bottleneck layer is found.
+        let deltaIndex = 0;
         const unifiedOutcome = await callGenesisModel(
           {
             model: "claude-opus-4-8",
@@ -331,13 +341,15 @@ export async function POST(request: Request) {
             onTextDelta: (delta) => {
               if (firstTokenAtMs === null) {
                 firstTokenAtMs = Date.now() - turnStartedAt;
-                diagLog(requestId, turnStartedAt, "unified_first_model_delta", { deltaLength: delta.length });
               }
+              deltaIndex += 1;
+              diagLog(requestId, turnStartedAt, "unified_delta", { i: deltaIndex, len: delta.length });
               streamedAnyText = true;
               emit({ type: "token", delta });
             },
           }
         );
+        diagLog(requestId, turnStartedAt, "unified_delta_summary", { totalDeltas: deltaIndex, firstTokenAtMs });
         console.log(`[genesis-chat-ttft] ttftMs=${firstTokenAtMs ?? "n/a"} sinceUnifiedCallStartMs=${Date.now() - turnStartedAt}`);
         diagLog(requestId, turnStartedAt, "unified_call_finished", {
           ok: unifiedOutcome.ok,
@@ -415,6 +427,7 @@ export async function POST(request: Request) {
           // one block, which is what actually produced "buffered paragraph
           // appears all at once," not a platform-level streaming problem.
           let dataAnswerReply = "";
+          let dataAnswerDeltaIndex = 0;
           diagLog(requestId, turnStartedAt, "data_answer_call_started");
           const answerOutcome = await callGenesisModel(
             {
@@ -447,14 +460,16 @@ export async function POST(request: Request) {
               onTextDelta: (delta) => {
                 if (firstTokenAtMs === null) {
                   firstTokenAtMs = Date.now() - turnStartedAt;
-                  diagLog(requestId, turnStartedAt, "data_answer_first_model_delta", { deltaLength: delta.length });
                 }
+                dataAnswerDeltaIndex += 1;
+                diagLog(requestId, turnStartedAt, "data_answer_delta", { i: dataAnswerDeltaIndex, len: delta.length });
                 streamedAnyText = true;
                 dataAnswerReply += delta;
                 emit({ type: "token", delta });
               },
             }
           );
+          diagLog(requestId, turnStartedAt, "data_answer_delta_summary", { totalDeltas: dataAnswerDeltaIndex, firstTokenAtMs });
           diagLog(requestId, turnStartedAt, "data_answer_call_finished", { ok: answerOutcome.ok, replyLength: dataAnswerReply.length });
           if (!answerOutcome.ok || !dataAnswerReply) {
             diagLog(requestId, turnStartedAt, "data_answer_failed");
