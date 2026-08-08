@@ -3400,8 +3400,13 @@ export async function sendStoreMessage(formData: FormData) {
   // the merchant to Home. The client supplies where it was via a hidden
   // field (not the referer header, which privacy settings can strip); an
   // unrecognized or missing value still falls back safely to Home.
+  // J4 Workspace, Phase A (2026-08-08) — /j4 is a real, separate route
+  // (app/j4/page.tsx), not under /dashboard's own tree. The heavy
+  // content-edit fallback path must return there when that's genuinely
+  // where the turn started, not silently bounce the owner out to
+  // /dashboard mid-conversation.
   const currentPath = (formData.get("currentPath") as string) || "/dashboard";
-  const returnTo = currentPath.startsWith("/dashboard") ? currentPath : "/dashboard";
+  const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
   // Track 0 — see sendDraftMessage's identical comment.
   const confirmedOverride = formData.get("confirmedOverride") === "true";
 
@@ -3436,8 +3441,10 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
     throw new Error("Please choose a file to upload.");
   }
 
+  // J4 Workspace, Phase A — see sendStoreMessage's identical comment; /j4
+  // is a real, separate route and must be a valid return target too.
   const currentPath = (formData.get("currentPath") as string) || "/dashboard";
-  const returnTo = currentPath.startsWith("/dashboard") ? currentPath : "/dashboard";
+  const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
 
   const resolved = await resolveUserStore(session.user.id);
   if (!resolved) {

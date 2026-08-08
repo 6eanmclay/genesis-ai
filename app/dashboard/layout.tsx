@@ -9,7 +9,6 @@ import { getOrderSummary, getRevenueTrend } from "@/lib/dashboard/whatHappened";
 import { getNewCustomerCount } from "@/lib/dashboard/customers";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { getBaseUrl } from "@/lib/integrations/util";
-import { sendStoreMessage, uploadBusinessAssetFromChat } from "./ai-actions";
 import { signOutOfGenesis } from "./actions";
 import { DashboardShell } from "./DashboardShell";
 
@@ -90,7 +89,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
 
   const [
-    storeMessages,
     pendingApprovals,
     activeObservations,
     activeExplanations,
@@ -99,7 +97,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     newCustomerCount,
     activeOwnerBriefing,
   ] = await Promise.all([
-    prisma.storeMessage.findMany({ where: { storeId: store.id }, orderBy: { createdAt: "asc" } }),
     hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
     // Phase 4 — the real, deduplicated Purple/Red signals. A cheap, indexed
     // read (same status/storeId index every other approval query already
@@ -327,9 +324,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       orderCount={orderSummary?.orderCount ?? null}
       revenueTrend={revenueTrend}
       newCustomerCount={newCustomerCount}
-      genesisMessages={storeMessages}
-      sendGenesisMessage={sendStoreMessage}
-      uploadGenesisAsset={uploadBusinessAssetFromChat}
       growthPointBalance={store.growthPointBalance}
       // The real Genesis Language signals — Yellow reuses the same grouped
       // count computed above; Purple/Red are real, deduplicated

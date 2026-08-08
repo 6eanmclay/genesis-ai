@@ -8,7 +8,6 @@ import { PRIMARY_TAB_COUNT } from "@/lib/dashboard/navConfig";
 import { NavIcon } from "./NavIcon";
 import { signOutOfGenesis } from "./actions";
 import { logClientEvent } from "./telemetry-actions";
-import { GenesisAssistant } from "./GenesisAssistant";
 import { GenesisDomicile } from "./GenesisDomicile";
 import { LiveIntelligence } from "./LiveIntelligence";
 import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
@@ -21,8 +20,6 @@ import { buildBriefing } from "@/lib/dashboard/genesisBriefing";
 import { useFreshLaunch, resetFreshLaunch } from "@/lib/dashboard/useFreshLaunch";
 import { useBeatSequence } from "@/lib/dashboard/arrivalBeats";
 import { buildArrivalBeats } from "@/lib/dashboard/genesisArrivalCopy";
-
-type GenesisMessage = { id: string; role: string; content: string; changes: unknown };
 
 // Contextual-review connection layer: one entry per still-pending approval
 // that has a real owning section, resolved server-side in layout.tsx (see
@@ -89,9 +86,6 @@ export function DashboardShell({
   orderCount,
   revenueTrend,
   newCustomerCount,
-  genesisMessages,
-  sendGenesisMessage,
-  uploadGenesisAsset,
   growthPointBalance,
   hasUrgentIssue,
   hasPendingDecision,
@@ -126,11 +120,6 @@ export function DashboardShell({
   orderCount: number | null;
   revenueTrend: number[] | null;
   newCustomerCount: number | null;
-  genesisMessages: GenesisMessage[];
-  sendGenesisMessage: (formData: FormData) => void;
-  // Business Assets M2 — see GenesisAssistant's own comment on why this is
-  // optional (this shell always has a real Store, so it always passes one).
-  uploadGenesisAsset?: (formData: FormData) => void;
   growthPointBalance: number;
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
@@ -241,23 +230,12 @@ export function DashboardShell({
       ? focusableItems.find((a) => a.id === focusId && a.section === currentSecondarySection.key)
       : undefined;
 
-  // BUSINESS_ASSETS_ARCHITECTURE.md M2 — startTaskConversation (app/
-  // dashboard/ai-actions.ts) redirects here after writing a real seeded
-  // conversation; this is what makes the panel actually open into it
-  // immediately rather than requiring the owner to notice and click the
-  // pill themselves — the one real gap the old, section-scoped "?focus="
-  // mechanism above doesn't cover (Task cards live on Home, not a
-  // secondary Your Business section, and their content is a real message
-  // already, not a banner needing focusableItems resolution).
-  //
-  // Real production bug (2026-08-07) — every ordinary chat turn also ends in
-  // a same-page redirect() (see redirectKeepingChatOpen's own comment), which
-  // was silently closing an actively open panel on mobile the instant a
-  // reply landed (no other auto-open condition holds below lg:, since
-  // isDesktop is false there). redirectKeepingChatOpen now sends this same
-  // "?openChat=1" after every chat-panel turn, not just a Task card's first
-  // open, so this flag is no longer task-specific despite its name.
-  const openChatFromTask = searchParams.get("openChat") === "1";
+  // "?openChat=1" (redirectKeepingChatOpen, app/dashboard/ai-actions.ts,
+  // still appended after sendStoreMessage/uploadBusinessAssetFromChat's own
+  // heavy-fallback redirect) was this shell's own auto-open signal for the
+  // now-deprecated floating panel — no longer read here (J4 Workspace,
+  // Phase A, 2026-08-08). Harmless when it lands on /j4 instead; that page
+  // doesn't read it either, since it has no closed state to auto-open.
 
   // Family-beta instrumentation (v20) — navigation is otherwise completely
   // stateless (nothing records a page view today). Fire-and-forget, never
@@ -820,28 +798,32 @@ export function DashboardShell({
         </div>
       )}
 
-      <GenesisAssistant
-        storeName={storeName}
-        messages={genesisMessages}
-        sendMessage={sendGenesisMessage}
-        uploadAsset={uploadGenesisAsset}
-        hasUrgentIssue={hasUrgentIssue}
-        hasPendingDecision={hasPendingDecision}
-        hasOpportunity={hasOpportunity}
-        hasCuriosity={hasCuriosity}
-        focusedContext={
-          focusedItem
-            ? { summary: focusedItem.summary, noticedSummary: focusedItem.noticedSummary, kind: focusedItem.kind }
-            : null
-        }
-        defaultOpen={openChatFromTask}
-        // Response Modes plan (2026-08-07), Phase 2 — only the live-store
-        // instance has a matching streaming route (app/api/chat/route.ts,
-        // which resolves the store from the session itself). The draft/
-        // pre-launch instance (app/dashboard/page.tsx) omits this and keeps
-        // its exact current behavior.
-        streaming
-      />
+      {/* J4 Workspace, Phase A (2026-08-08) — the floating GenesisAssistant
+          panel is deprecated for the live-store case (Sean's own words: "not
+          something we continue improving"); it survives only inside the
+          pre-launch draft flow (app/dashboard/page.tsx), which renders its
+          own separate instance, untouched by this shell. In its place: a
+          real entry point into /j4, a dedicated route/environment, not a
+          bigger version of the same panel.
+
+          Naming, Sean's explicit correction (2026-08-08): this button says
+          "J4 Portal," never "J4 Chat," "J4 Assistant," or "Open J4."
+          "Portal" is the intended mental model — Dashboard is where the
+          owner sees/manages the business; the Portal is where the owner
+          enters the business workspace WITH J4. Conversation is the first
+          capability the Portal offers, not its definition — future
+          capabilities (task work, planning, captured ideas) live inside the
+          same dedicated environment this links to, not a second surface. */}
+      <Link
+        href="/j4"
+        className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 md:bottom-6 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
+      >
+        <span
+          className={`inline-flex h-2 w-2 shrink-0 rounded-full ${GENESIS_STATE_META[genesisState].dotClassName}`}
+          aria-hidden="true"
+        />
+        J4 Portal
+      </Link>
     </div>
   );
 }
