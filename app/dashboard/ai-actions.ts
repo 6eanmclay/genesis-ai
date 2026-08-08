@@ -51,6 +51,7 @@ import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
 import { buildTaskSeedMessage, buildTaskUserMessage, buildTaskRecapMessage } from "@/lib/dashboard/taskConversation";
 import { completeTasksForAction } from "@/lib/dashboard/tasks";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { transcribeVoiceMemo } from "@/lib/voice/j4VoiceMemo";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
@@ -3880,16 +3881,43 @@ export async function uploadPhotoBatchFromChat(formData: FormData) {
     throw new Error("You don't have permission to do this.");
   }
 
-  await Promise.all(
-    files.map((f) => ingestBusinessAsset(store.id, { url: f.blobUrl, originalFilename: f.originalFilename, contentType: f.contentType }))
+  // Resilient batch upload architecture (2026-08-08) — real production
+  // finding: 100+ files each already safely uploaded to Blob (this
+  // function only ever receives files the client already confirmed as
+  // uploaded) could still lose records to a Promise.all fail-fast DB
+  // write. A concurrency-limited, per-file-caught ingest means one bad
+  // write never costs the other 99 real records, and the owner is told
+  // the true count rather than an assumed one.
+  const ingestResults = await mapWithConcurrency(files, 8, (f) =>
+    ingestBusinessAsset(store.id, { url: f.blobUrl, originalFilename: f.originalFilename, contentType: f.contentType })
   );
+  const ingested = files.filter((_, i) => ingestResults[i].ok);
+  const ingestFailedCount = files.length - ingested.length;
 
-  const imageUrls = files.map((f) => f.blobUrl);
+  if (ingested.length === 0) {
+    // Every file was already safely in Blob storage by the time this ran
+    // — a total ingest failure here is a real, honest failure to report,
+    // never silently swallowed into a fake success message.
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "FAILED",
+      verified: false,
+      message: `Failed to save ${files.length} uploaded photo(s)`,
+      retryable: true,
+      userId: session.user.id,
+      storeId: store.id,
+      metadata: { kind: "photo_batch_intake", photoCount: files.length, ingestFailedCount },
+    });
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
+
+  const imageUrls = ingested.map((f) => f.blobUrl);
   await prisma.storeMessage.create({
     data: {
       storeId: store.id,
       role: "user",
-      content: `Uploaded ${files.length} photos`,
+      content: `Uploaded ${ingested.length} photos`,
       changes: { imageUrls },
     },
   });
@@ -3911,7 +3939,10 @@ export async function uploadPhotoBatchFromChat(formData: FormData) {
     "Review them with me",
     "Something else",
   ];
-  const reply = `I've got ${files.length} photos. What would you like me to do with them?`;
+  const reply =
+    ingestFailedCount > 0
+      ? `I've got ${ingested.length} photos — ${ingestFailedCount} didn't save and will need to be uploaded again. What would you like me to do with the ones I have?`
+      : `I've got ${ingested.length} photos. What would you like me to do with them?`;
   await prisma.storeMessage.create({
     data: {
       storeId: store.id,
@@ -3923,13 +3954,13 @@ export async function uploadPhotoBatchFromChat(formData: FormData) {
 
   await recordGenesisExecution({
     action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-    status: "SUCCESS",
+    status: ingestFailedCount > 0 ? "WARNING" : "SUCCESS",
     verified: false,
     message: reply,
-    retryable: false,
+    retryable: ingestFailedCount > 0,
     userId: session.user.id,
     storeId: store.id,
-    metadata: { kind: "photo_batch_intake", photoCount: files.length },
+    metadata: { kind: "photo_batch_intake", photoCount: ingested.length, ingestFailedCount },
   });
 
   revalidatePath(returnTo);
