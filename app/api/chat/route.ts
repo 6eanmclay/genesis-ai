@@ -27,7 +27,6 @@ import {
   UploadIntentSchema,
   STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
   UPLOAD_INTENT_REPLY,
-  StoreChatDataAnswerSchema,
   STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
   STORE_CHAT_UNIFIED_SYSTEM_PROMPT,
   extractRichContentImagePrompt,
@@ -299,6 +298,19 @@ export async function POST(request: Request) {
             buildChatDataContext(store.id),
             getBusinessUnderstanding(store.id),
           ]);
+          // Real bug found live (2026-08-07) — this call previously used
+          // structured output (zodOutputFormat), which meant its own reply
+          // text was never actually streamed: the whole point of this route
+          // is real token streaming, but a structured-output call's raw
+          // stream is JSON matching the schema grammar (`{"reply": "...`),
+          // not clean prose — piping that straight to onTextDelta would
+          // leak JSON syntax into the visible text. Switched to plain text
+          // (no output_config), matching the unified call's own
+          // conversational branch, so this is now a genuine live stream —
+          // the previous code awaited the full response and emitted it as
+          // one block, which is what actually produced "buffered paragraph
+          // appears all at once," not a platform-level streaming problem.
+          let dataAnswerReply = "";
           const answerOutcome = await callGenesisModel(
             {
               model: "claude-opus-4-8",
@@ -323,29 +335,38 @@ export async function POST(request: Request) {
                   )}\n\nMerchant's question: ${userMessage}`,
                 },
               ],
-              output_config: { effort: "medium", format: zodOutputFormat(StoreChatDataAnswerSchema) },
             },
-            { storeId: store.id, feature: "store_chat_data_answer" }
+            {
+              storeId: store.id,
+              feature: "store_chat_data_answer",
+              onTextDelta: (delta) => {
+                if (firstTokenAtMs === null) firstTokenAtMs = Date.now() - turnStartedAt;
+                streamedAnyText = true;
+                dataAnswerReply += delta;
+                emit({ type: "token", delta });
+              },
+            }
           );
-          if (!answerOutcome.ok || !answerOutcome.message.parsed_output) {
+          if (!answerOutcome.ok || !dataAnswerReply) {
             emit({ type: "error", message: genesisModelFailureMessage(answerOutcome.ok ? "unknown" : answerOutcome.kind) });
             controller.close();
             return;
           }
-          const reply = answerOutcome.message.parsed_output.reply;
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: dataAnswerReply } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
             status: "SUCCESS",
             verified: false,
-            message: reply,
+            message: dataAnswerReply,
             retryable: false,
             userId,
             storeId: store.id,
             metadata: { kind: "data_question" },
           });
-          emit({ type: "token", delta: reply });
+          // No trailing token emit here — the reply was already streamed
+          // live above via onTextDelta; emitting it again would duplicate
+          // the text in the UI.
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "data_question" });
           controller.close();
