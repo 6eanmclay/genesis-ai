@@ -88,10 +88,23 @@ export async function getStoreRole(
 // returns null when the user has no store yet, which is a normal state
 // (a brand new signup), not an error — callers that need to require access
 // should use requireStorePermission instead.
+//
+// 2026-08-08 — real header-identity staleness investigation: Store.userId
+// carries no unique constraint, and confirmStoreDraftCore (onboarding's
+// real store-creation path, reachable from three separate flows) never
+// checks for an existing store before creating one — so the "one store
+// per user" comment above is this app's real intent, not a DB-enforced
+// guarantee. The unordered findFirst this replaced picked whichever row
+// Postgres happened to return first, which is only ever safe if that
+// intent perfectly held. orderBy makes this deterministic regardless —
+// the most recently updated store is "the" one every caller (both the J4
+// Portal header and the main dashboard's own DashboardShell, which share
+// this exact function) resolves and displays, rather than an arbitrary,
+// possibly stale row. A no-op when the invariant does hold.
 export async function resolveUserStore(
   userId: string
 ): Promise<{ store: Store; role: StoreRole } | null> {
-  const owned = await prisma.store.findFirst({ where: { userId } });
+  const owned = await prisma.store.findFirst({ where: { userId }, orderBy: { updatedAt: "desc" } });
   if (owned) return { store: owned, role: "OWNER" };
 
   const membership = await prisma.storeMember.findFirst({

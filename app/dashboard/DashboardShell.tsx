@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
 import { PRIMARY_TAB_COUNT } from "@/lib/dashboard/navConfig";
 import { NavIcon } from "./NavIcon";
@@ -129,6 +129,7 @@ export function DashboardShell({
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false); // mobile bottom sheet
   const [desktopMoreOpen, setDesktopMoreOpen] = useState(false); // top-bar dropdown
 
@@ -241,6 +242,41 @@ export function DashboardShell({
   // stateless (nothing records a page view today). Fire-and-forget, never
   // awaited by the caller and never blocking a real navigation — a failed
   // write here (see logProductEvent) can't break the page.
+  // 2026-08-08 — same real bug already found and fixed for the J4 Portal
+  // header (app/j4/J4Workspace.tsx): a change approved elsewhere (a rename
+  // via update_store_identity, "always_ask" tier — see genesisActions.ts)
+  // left THIS shell's own storeName stale too, since it's server-rendered
+  // in layout.tsx and this shell only ever reflects whatever it was handed
+  // on mount. Confirmed against this project's own bundled Next.js docs
+  // (staleTimes.md): Next's back/forward cache deliberately serves a
+  // stale render "to prevent layout shift and losing scroll position,"
+  // bypassing staleTimes entirely — a genuinely different mechanism than
+  // this shell's own nav.section_view tracking below, and one no ordinary
+  // navigation-triggered re-render can self-heal. pageshow's event.persisted
+  // is the standard signal for exactly a bfcache-style restoration;
+  // visibilitychange covers the same backgrounded-tab case defensively,
+  // since which one actually fires can vary by browser/OS. This was never
+  // applied here when it shipped for J4 — storeName (and every other
+  // server-resolved identity value this shell renders) needs the same
+  // self-healing, not just the Portal's own copy of it.
+  useEffect(() => {
+    function refreshOnReturn() {
+      router.refresh();
+    }
+    function handlePageShow(event: PageTransitionEvent) {
+      if (event.persisted) refreshOnReturn();
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") refreshOnReturn();
+    }
+    window.addEventListener("pageshow", handlePageShow);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [router]);
+
   const prevPathnameRef = useRef<string | null>(null);
   useEffect(() => {
     const fromSection = prevPathnameRef.current;
