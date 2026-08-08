@@ -86,6 +86,11 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   // Same real synthesis pipeline as cognitive_review, just composed into a
   // narrative rather than structured findings.
   owner_briefing_composer: "growth_recommendation",
+  // Same reasoning as business_asset_classification above — turning a
+  // recorded memo into text is the input layer for durable business
+  // knowledge, not the understanding itself (store_chat_unified_triage
+  // handles the transcript's real content afterward).
+  voice_memo_transcription: "research",
 };
 
 export function businessIntentFor(feature: AiFeature): BusinessIntentCategory {

@@ -51,6 +51,7 @@ import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
 import { buildTaskSeedMessage, buildTaskUserMessage, buildTaskRecapMessage } from "@/lib/dashboard/taskConversation";
 import { completeTasksForAction } from "@/lib/dashboard/tasks";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
+import { transcribeVoiceMemo } from "@/lib/voice/j4VoiceMemo";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import {
@@ -2004,7 +2005,22 @@ function redirectKeepingChatOpen(returnTo: string): never {
   redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}openChat=1`);
 }
 
-async function applyGenesisMessageToStore(userId: string, userMessage: string, returnTo: string, confirmedOverride = false) {
+// J4 Voice Memos (2026-08-08) — userMessageChanges is additive, optional,
+// and used by exactly one new caller (uploadVoiceMemo below): a voice
+// memo's transcript becomes this function's real userMessage (so it gets
+// J4's actual understanding/routing, same as typed text), while
+// {audioUrl} rides along on the same user-turn StoreMessage row so the
+// Portal can render the original recording inline — the same
+// changes-carries-the-attachment convention already shipped for photo
+// uploads ({imageUrl}). Every existing caller (sendStoreMessage) omits
+// this, leaving that plain-text user-turn write completely unchanged.
+async function applyGenesisMessageToStore(
+  userId: string,
+  userMessage: string,
+  returnTo: string,
+  confirmedOverride = false,
+  userMessageChanges?: Record<string, unknown>
+) {
   // Family-beta instrumentation (v20) — see logChatTurnEvent's own comment.
   const turnStartedAt = Date.now();
   // Real production latency investigation (2026-08-07) — a real baseline
@@ -2055,7 +2071,7 @@ async function applyGenesisMessageToStore(userId: string, userMessage: string, r
   );
 
   await prisma.storeMessage.create({
-    data: { storeId: store.id, role: "user", content: userMessage },
+    data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges },
   });
 
   // See UploadIntentSchema's own comment above for why this runs first,
@@ -3572,6 +3588,73 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
   revalidatePath(returnTo);
   if (skipRedirect) return;
   redirectKeepingChatOpen(returnTo);
+}
+
+// J4 Voice Memos (2026-08-08) — the fourth way of giving J4 information,
+// alongside text/photos/documents. Deliberately does NOT follow
+// uploadBusinessAssetFromChat's own pattern above (ingestBusinessAsset +
+// classifyAndExtractAsset, "what is this file"): a voice memo's real
+// content is what the owner said, not a file to classify. Sean's own
+// examples ("I need to remember to call the supplier tomorrow," "here's
+// what I want the new homepage to feel like") are requests and facts, not
+// documents — so once transcribed, the memo becomes a real userMessage
+// through applyGenesisMessageToStore, the exact same conversational
+// understanding/routing a typed message gets (capture_business_fact,
+// look_up_business_data, edit_store_content, etc.), never a second,
+// parallel "interpret the memo" pipeline.
+export async function uploadVoiceMemo(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const blobUrl = formData.get("blobUrl") as string | null;
+  const originalFilename = formData.get("originalFilename") as string | null;
+  const contentType = formData.get("contentType") as string | null;
+  if (!blobUrl || !originalFilename || !contentType) {
+    throw new Error("Please record a voice memo first.");
+  }
+
+  // Same /j4-aware returnTo as every other real chat action — see
+  // sendStoreMessage's identical comment.
+  const currentPath = (formData.get("currentPath") as string) || "/dashboard";
+  const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
+
+  const resolved = await resolveUserStore(session.user.id);
+  if (!resolved) {
+    redirectKeepingChatOpen(returnTo);
+  }
+  const { store, role } = resolved;
+  if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
+    throw new Error("You don't have permission to do this.");
+  }
+
+  const transcription = await transcribeVoiceMemo({
+    audioUrl: blobUrl,
+    originalFilename,
+    scope: { storeId: store.id },
+  });
+
+  if (!transcription) {
+    // Real, honest failure — never fabricate a transcript. The recording
+    // itself is still real and kept (audioUrl), so the memo isn't
+    // silently lost even though J4 couldn't understand it this time.
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "user", content: "Recorded a voice memo", changes: { audioUrl: blobUrl } },
+    });
+    await prisma.storeMessage.create({
+      data: {
+        storeId: store.id,
+        role: "assistant",
+        content:
+          "I saved your voice memo, but I wasn't able to understand it just now — you can tell me what it was about, or try recording again.",
+      },
+    });
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
+
+  await applyGenesisMessageToStore(session.user.id, transcription.transcript, returnTo, false, { audioUrl: blobUrl });
 }
 
 // BUSINESS_ASSETS_ARCHITECTURE.md M2 — replaces plain actionHref navigation

@@ -64,6 +64,11 @@ export const AI_FEATURES = [
   "marketing_assets_draft",
   // Daily Operating Rhythm (lib/dashboard/genesisBriefingComposer.ts)
   "owner_briefing_composer",
+  // J4 Voice Memos (lib/voice/j4VoiceMemo.ts) — transcribing a recorded
+  // memo, distinct from store_chat_unified_triage's own real understanding
+  // call on the resulting transcript text (applyGenesisMessageToStore
+  // handles that with its existing features, unchanged).
+  "voice_memo_transcription",
 ] as const;
 
 export type AiFeature = (typeof AI_FEATURES)[number];

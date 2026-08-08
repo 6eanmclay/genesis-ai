@@ -11,6 +11,7 @@ import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisA
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
+import { ALLOWED_VOICE_MEMO_CONTENT_TYPES, MAX_VOICE_MEMO_BYTES } from "@/lib/voice/voiceMemoFile";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 
@@ -61,6 +62,16 @@ function extractChangeList(changes: unknown): string[] | null {
 function extractImageUrl(changes: unknown): string | null {
   if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
   const value = (changes as Record<string, unknown>).imageUrl;
+  return typeof value === "string" ? value : null;
+}
+// J4 Voice Memos — the same {changes} convention, one more real shape.
+// Unlike a photo's filename (disposable, purely secondary), a voice
+// memo's message content IS its real transcript — the primary channel
+// J4 is actually responding to — so rendering treats audioUrl
+// differently from imageUrl (see the message-list JSX below).
+function extractAudioUrl(changes: unknown): string | null {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
+  const value = (changes as Record<string, unknown>).audioUrl;
   return typeof value === "string" ? value : null;
 }
 
@@ -265,6 +276,155 @@ function UploadAssetButton({
   );
 }
 
+// J4 Voice Memos (2026-08-08) — the fourth "Add to J4" control, alongside
+// photos/documents. Recording (MediaRecorder) is architecturally distinct
+// from UploadAssetButton's file-picker flow above, so this is a separate
+// component rather than a variant of it — but the resulting blob still
+// goes through the exact same @vercel/blob/client upload() mechanism
+// before uploadVoiceMemo (a real Server Action, app/dashboard/ai-actions.ts)
+// ever sees it, same as every other real upload in this app.
+const MAX_RECORDING_SECONDS = 600; // 10 minutes — "speak naturally and at length" (Sean), not unbounded
+
+function pickSupportedVoiceMemoMimeType(): string | null {
+  if (typeof MediaRecorder === "undefined") return null;
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/mpeg"];
+  for (const type of candidates) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return null;
+}
+
+function VoiceMemoButton({
+  uploadVoiceMemo,
+  currentPath,
+  onFailure,
+}: {
+  uploadVoiceMemo: (formData: FormData) => void;
+  currentPath: string;
+  onFailure: (message: string) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [isRecording, setIsRecording] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Real hardware/browser resource — released the instant the component
+  // unmounts (leaving /j4) even if a recording is somehow still active,
+  // not left running in the background.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+    };
+  }, []);
+
+  const isAvailable =
+    typeof window !== "undefined" && typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
+  // Honest absence, not a disabled-and-confusing control — same principle
+  // UploadAssetButton's own graceful-fallback comment already follows.
+  if (!isAvailable) return null;
+
+  function finishRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsRecording(false);
+    recorder.stop();
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = pickSupportedVoiceMemoMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      chunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const contentType = (recorder.mimeType || "audio/webm").split(";")[0];
+        const extension = ALLOWED_VOICE_MEMO_CONTENT_TYPES[contentType] ?? "webm";
+        const blob = new Blob(chunksRef.current, { type: contentType });
+        chunksRef.current = [];
+        if (blob.size === 0) return;
+        if (blob.size > MAX_VOICE_MEMO_BYTES) {
+          onFailure("That recording is too long to upload — please keep voice memos under 20MB.");
+          return;
+        }
+        startTransition(async () => {
+          const result = await callGenesisAction(async () => {
+            const uploaded = await blobUpload(`voice-memos/${randomAssetKey()}.${extension}`, blob, {
+              access: "public",
+              handleUploadUrl: "/api/blob/business-asset-upload",
+              contentType,
+            });
+            const formData = new FormData();
+            formData.set("blobUrl", uploaded.url);
+            formData.set("originalFilename", `voice-memo.${extension}`);
+            formData.set("contentType", contentType);
+            formData.set("currentPath", currentPath);
+            return uploadVoiceMemo(formData);
+          });
+          if (!result.ok) onFailure(result.message);
+        });
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+      setElapsedSeconds(0);
+      timerRef.current = setInterval(() => {
+        setElapsedSeconds((s) => {
+          const next = s + 1;
+          if (next >= MAX_RECORDING_SECONDS) finishRecording();
+          return next;
+        });
+      }, 1000);
+    } catch {
+      onFailure("Couldn't access your microphone — check your browser's permission for this site.");
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={isPending}
+      onClick={() => (isRecording ? finishRecording() : startRecording())}
+      aria-label={isRecording ? "Stop recording" : "Record a voice memo"}
+      title={isRecording ? "Stop recording" : "Record a voice memo"}
+      className={
+        isRecording
+          ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-red-500/15 px-2 text-base text-red-400"
+          : "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg px-1.5 text-base text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] disabled:opacity-50"
+      }
+    >
+      {isPending ? (
+        <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+      ) : isRecording ? (
+        <>
+          <span className="relative inline-flex h-2 w-2 shrink-0" aria-hidden="true">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+          </span>
+          <span className="text-xs tabular-nums">
+            {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, "0")}
+          </span>
+        </>
+      ) : (
+        "🎙️"
+      )}
+    </button>
+  );
+}
+
 function taskPriorityDotClassName(priority: string): string {
   if (priority === "FAILED") return "bg-red-500";
   if (priority === "WARNING") return "bg-amber-400";
@@ -348,6 +508,7 @@ export function J4Workspace({
   messages,
   sendMessage,
   uploadAsset,
+  uploadVoiceMemo,
   hasUrgentIssue,
   hasPendingDecision,
   hasOpportunity,
@@ -361,6 +522,7 @@ export function J4Workspace({
   messages: Message[];
   sendMessage: (formData: FormData) => void;
   uploadAsset: (formData: FormData) => void;
+  uploadVoiceMemo: (formData: FormData) => void;
   tasks: TaskItem[];
   decisions: DecisionItem[];
   ideas: IdeaItem[];
@@ -729,6 +891,7 @@ export function J4Workspace({
               {localMessages.map((m, i) => {
                 const changeList = extractChangeList(m.changes);
                 const imageUrl = extractImageUrl(m.changes);
+                const audioUrl = extractAudioUrl(m.changes);
                 const isStreamingPlaceholder = i === localMessages.length - 1 && m.role === "assistant" && m.content === "";
                 return (
                   <div key={m.id} className="py-3 first:pt-0" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
@@ -771,6 +934,17 @@ export function J4Workspace({
                         <p className="mt-1 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                           {m.content}
                         </p>
+                      </div>
+                    ) : audioUrl ? (
+                      // Unlike a photo, the transcript IS the real message
+                      // — "the audio itself is a first-class Portal input,
+                      // not merely converted into a disposable transcript"
+                      // (Sean, 2026-08-08). The recording plays inline
+                      // above it, full size text below, not a muted
+                      // caption.
+                      <div className="mt-1">
+                        <audio src={audioUrl} controls preload="metadata" className="h-10 w-full max-w-xs" />
+                        <p className="mt-1.5 text-sm leading-relaxed text-[#f4f2fb]">{m.content}</p>
                       </div>
                     ) : (
                       <p className="mt-1 text-sm leading-relaxed text-[#f4f2fb]">{m.content}</p>
@@ -884,6 +1058,7 @@ export function J4Workspace({
             currentPath={currentPath}
             onFailure={setSendError}
           />
+          <VoiceMemoButton uploadVoiceMemo={uploadVoiceMemo} currentPath={currentPath} onFailure={setSendError} />
         </div>
         <div
           className="flex items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
