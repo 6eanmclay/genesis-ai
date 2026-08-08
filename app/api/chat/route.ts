@@ -178,6 +178,19 @@ export async function POST(request: Request) {
           // the real result — only a reason to stop trying to show it.
         }
       };
+
+      // "explicit work states... visibly communicate that J4 is working"
+      // (Sean, 2026-08-08, after a real test read the old static
+      // "thinking" line as "no answer"). The client already shows its own
+      // optimistic "received" text the instant the form submits (before
+      // any network round trip); this is the first SERVER-confirmed
+      // stage, sent before any real work (the DB read below can take a
+      // moment on a busy conversation) so the transition from "the
+      // browser thinks it sent this" to "J4 actually has it" happens as
+      // early as honestly possible.
+      emit({ type: "status", text: "J4 received your message — understanding what you need…" });
+      diagLog(requestId, turnStartedAt, "status_received_emitted");
+
       try {
         const recentMessages = await prisma.storeMessage.findMany({
           where: { storeId: store.id },
@@ -282,7 +295,11 @@ export async function POST(request: Request) {
               ]
             : conversationMessages;
 
-        emit({ type: "status", text: "Understanding your request…" });
+        // Real next stage, distinct from the earlier "received" status —
+        // upload-intent classification (above) has already run; this is
+        // J4 actually reasoning about the request, not just acknowledging
+        // it.
+        emit({ type: "status", text: "Working on your request…" });
         diagLog(requestId, turnStartedAt, "status_understanding_emitted");
 
         let streamedAnyText = false;

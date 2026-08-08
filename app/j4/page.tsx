@@ -3,6 +3,8 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
+import { getOpenTasks } from "@/lib/dashboard/tasks";
+import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { sendStoreMessage, uploadBusinessAssetFromChat } from "@/app/dashboard/ai-actions";
 import { J4Workspace } from "./J4Workspace";
 
@@ -48,27 +50,43 @@ export default async function J4Page() {
   // into every AI call uncapped) — kept in sync deliberately, not by
   // coincidence.
   const CHAT_HISTORY_WINDOW = 50;
-  const [recentMessages, activeObservations, activeExplanations, pendingApprovals] = await Promise.all([
+  const [recentMessages, observations, explanations, pendingApprovals, openTasks] = await Promise.all([
     prisma.storeMessage.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
       take: CHAT_HISTORY_WINDOW,
     }),
+    // Real Genesis Language rows — see genesisState.ts. Only ever "urgent"
+    // or "opportunity" (compareObservationPriority's own comment); this
+    // Portal maps opportunity -> Ideas, urgent -> Information (see
+    // J4Workspace's own category comment for why).
     prisma.genesisObservation.findMany({
       where: { storeId: store.id, status: "ACTIVE" },
-      select: { genesisState: true },
+      select: { id: true, genesisState: true, summary: true, actionHref: true },
+      orderBy: { firstNoticedAt: "desc" },
     }),
     prisma.cognitiveOutput.findMany({
       where: { storeId: store.id, kind: "explanation", status: "ACTIVE" },
-      select: { id: true },
+      select: { id: true, summary: true },
+      orderBy: { generatedAt: "desc" },
     }),
     hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
+    // Same permission tier as observations/explanations above (neither is
+    // ANALYTICS_VIEW-gated either) — a Task is operational work, not
+    // financial data.
+    getOpenTasks(store.id),
   ]);
 
   const messages = recentMessages.reverse();
-  const hasUrgentIssue = activeObservations.some((o) => o.genesisState === "urgent");
-  const hasOpportunity = activeObservations.some((o) => o.genesisState === "opportunity");
-  const hasCuriosity = activeExplanations.length > 0;
+  const urgentObservations = observations.filter((o) => o.genesisState === "urgent");
+  const ideas = observations.filter((o) => o.genesisState === "opportunity");
+  const information = [
+    ...urgentObservations.map((o) => ({ id: o.id, summary: o.summary, href: o.actionHref, kind: "urgent" as const })),
+    ...explanations.map((e) => ({ id: e.id, summary: e.summary, href: null, kind: "curiosity" as const })),
+  ];
+  const hasUrgentIssue = urgentObservations.length > 0;
+  const hasOpportunity = ideas.length > 0;
+  const hasCuriosity = explanations.length > 0;
   const hasPendingDecision = pendingApprovals.length > 0;
 
   return (
@@ -81,6 +99,15 @@ export default async function J4Page() {
       hasPendingDecision={hasPendingDecision}
       hasOpportunity={hasOpportunity}
       hasCuriosity={hasCuriosity}
+      tasks={openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary, href: t.actionHref, priority: t.priority }))}
+      decisions={pendingApprovals.map((a) => ({
+        id: a.id,
+        summary: a.summary,
+        createdAt: a.createdAt.toISOString(),
+        href: ACTION_SECTIONS[a.actionType]?.href ?? null,
+      }))}
+      ideas={ideas.map((o) => ({ id: o.id, summary: o.summary, href: o.actionHref }))}
+      information={information}
     />
   );
 }

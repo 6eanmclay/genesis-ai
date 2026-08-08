@@ -5,12 +5,14 @@ import Link from "next/link";
 import { unstable_rethrow } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
-import { deriveAssessmentState, GENESIS_STATE_META, type GenesisState } from "@/lib/dashboard/genesisState";
+import { deriveAssessmentState } from "@/lib/dashboard/genesisState";
+import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
+import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
 // (app/j4/page.tsx), replacing the floating GenesisAssistant panel for the
@@ -52,6 +54,43 @@ interface J4Signals {
   hasCuriosity: boolean;
 }
 
+// Portal categories (Sean, 2026-08-08) — "J4 should be able to organize
+// things into meaningful categories such as Tasks, Ideas, Decisions,
+// Information, and Conversation rather than everything simply appearing
+// as chat messages." Each maps to a real, already-existing model
+// (page.tsx resolves all four server-side) — never a fabricated grouping:
+// Tasks = open Task rows; Decisions = pending ApprovalRequest rows; Ideas
+// = "opportunity"-state GenesisObservation rows; Information = "urgent"-
+// state GenesisObservation rows plus "explanation"-kind CognitiveOutput
+// rows (both are things J4 has concluded and wants the owner to know,
+// distinct from an opportunity or a thing needing approval).
+type Category = "conversation" | "tasks" | "ideas" | "decisions" | "information";
+
+interface TaskItem {
+  id: string;
+  title: string;
+  summary: string;
+  href: string | null;
+  priority: string;
+}
+interface DecisionItem {
+  id: string;
+  summary: string;
+  createdAt: string;
+  href: string | null;
+}
+interface IdeaItem {
+  id: string;
+  summary: string;
+  href: string | null;
+}
+interface InformationItem {
+  id: string;
+  summary: string;
+  href: string | null;
+  kind: "urgent" | "curiosity";
+}
+
 // Temporary production tracing (2026-08-08) — carried over from the
 // GenesisAssistant investigation; the real streaming/lifecycle path is
 // unchanged by the route move, so the same correlated tracing applies
@@ -82,22 +121,6 @@ function randomAssetKey(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function J4StatusDot({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity }: J4Signals) {
-  const { pending } = useFormStatus();
-  const state: GenesisState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
-  if (state === "idle" && !pending) return null;
-  const meta = GENESIS_STATE_META[state];
-  return (
-    <span
-      className={`relative inline-flex h-2 w-2 shrink-0 rounded-full ${meta.dotClassName}`}
-      aria-hidden="true"
-      title={pending ? "J4 is actively working on your last request" : meta.description}
-    >
-      {pending && <span className="absolute -inset-1 rounded-full ring-2 ring-blue-400/70 animate-pulse" aria-hidden="true" />}
-    </span>
-  );
-}
-
 function J4WorkingPublisher() {
   const { pending } = useFormStatus();
   useEffect(() => {
@@ -122,42 +145,85 @@ function UploadAssetButton({
   onFailure: (message: string) => void;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <>
+      {/* Multi-file upload foundation (Sean, 2026-08-08) — "the owner
+          needs to be able to select/upload multiple photos and eventually
+          large batches of business material... design the upload
+          architecture so it isn't fundamentally limited to one file per
+          interaction." Each file still gets its own real ingest/classify/
+          StoreMessage turn (uploadBusinessAssetFromChat, unchanged) —
+          this is real per-file processing run N times from one selection,
+          not a fabricated "batch" that just uploads bytes. Associating
+          uploads with an active task instead of asking what each one is
+          (Sean's explicit next step) is real Phase B work, not done here. */}
       <input
         ref={inputRef}
         type="file"
         accept={accept}
+        multiple
         className="hidden"
         onChange={(event) => {
-          const file = event.target.files?.[0] ?? null;
+          const files = Array.from(event.target.files ?? []);
           event.target.value = "";
-          if (!file) return;
-          const extension = ALLOWED_CONTENT_TYPES[file.type];
-          if (!extension) {
-            onFailure("Please upload a PNG, JPEG, WebP, HEIC, or PDF file.");
+          if (files.length === 0) return;
+
+          const validFiles: { file: File; extension: string }[] = [];
+          const problems: string[] = [];
+          for (const file of files) {
+            const extension = ALLOWED_CONTENT_TYPES[file.type];
+            if (!extension) {
+              problems.push(`${file.name} (unsupported type)`);
+              continue;
+            }
+            if (file.size > MAX_UPLOAD_BYTES) {
+              problems.push(`${file.name} (over 8MB)`);
+              continue;
+            }
+            validFiles.push({ file, extension });
+          }
+          if (validFiles.length === 0) {
+            onFailure(
+              problems.length > 0
+                ? `Couldn't upload: ${problems.join(", ")}.`
+                : "Please choose a PNG, JPEG, WebP, HEIC, or PDF file."
+            );
             return;
           }
-          if (file.size > MAX_UPLOAD_BYTES) {
-            onFailure("File is too large — please upload something under 8MB.");
-            return;
-          }
+
           startTransition(async () => {
-            const result = await callGenesisAction(async () => {
-              const blob = await blobUpload(`assets/${randomAssetKey()}.${extension}`, file, {
-                access: "public",
-                handleUploadUrl: "/api/blob/business-asset-upload",
-                contentType: file.type,
+            for (let i = 0; i < validFiles.length; i++) {
+              const { file, extension } = validFiles[i];
+              const isLast = i === validFiles.length - 1;
+              setProgress({ current: i + 1, total: validFiles.length });
+              const result = await callGenesisAction(async () => {
+                const blob = await blobUpload(`assets/${randomAssetKey()}.${extension}`, file, {
+                  access: "public",
+                  handleUploadUrl: "/api/blob/business-asset-upload",
+                  contentType: file.type,
+                });
+                const formData = new FormData();
+                formData.set("blobUrl", blob.url);
+                formData.set("originalFilename", file.name);
+                formData.set("contentType", file.type);
+                formData.set("currentPath", currentPath);
+                // Only the batch's last file redirects/reopens the
+                // conversation — see uploadBusinessAssetFromChat's own
+                // comment on why every earlier one must not (Next only
+                // ever lets one redirect actually navigate per submit).
+                if (!isLast) formData.set("skipRedirect", "true");
+                return uploadAsset(formData);
               });
-              const formData = new FormData();
-              formData.set("blobUrl", blob.url);
-              formData.set("originalFilename", file.name);
-              formData.set("contentType", file.type);
-              formData.set("currentPath", currentPath);
-              return uploadAsset(formData);
-            });
-            if (!result.ok) onFailure(result.message);
+              if (!result.ok) {
+                setProgress(null);
+                onFailure(result.message);
+                return;
+              }
+            }
+            setProgress(null);
+            if (problems.length > 0) onFailure(`Uploaded ${validFiles.length} file(s). Couldn't upload: ${problems.join(", ")}.`);
           });
         }}
       />
@@ -165,12 +231,66 @@ function UploadAssetButton({
         type="button"
         disabled={isPending}
         onClick={() => inputRef.current?.click()}
-        className="rounded-full border border-[rgba(139,124,246,0.18)] px-3 py-1.5 text-xs text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] disabled:opacity-50"
+        aria-label={label}
+        title={label}
+        className="flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 text-base text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] disabled:opacity-50"
       >
-        {isPending ? "Uploading…" : `${icon} ${label}`}
+        {isPending ? (
+          <>
+            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            {progress && progress.total > 1 && <span className="text-xs">{progress.current}/{progress.total}</span>}
+          </>
+        ) : (
+          icon
+        )}
       </button>
     </>
   );
+}
+
+function taskPriorityDotClassName(priority: string): string {
+  if (priority === "FAILED") return "bg-red-500";
+  if (priority === "WARNING") return "bg-amber-400";
+  return "bg-purple-500"; // "opportunity"
+}
+
+// Deliberately plain rows in a document-like list, not cards mimicking
+// GenesisDomicile/ObservationsPanel's own framed-widget treatment — this
+// is the Portal's own category browser, not a second copy of a dashboard
+// panel. A title is only shown for Tasks (the one category with a real,
+// separate title field); everything else leads with its summary.
+function CategoryRow({
+  title,
+  summary,
+  href,
+  dotClassName,
+}: {
+  title?: string;
+  summary: string;
+  href: string | null;
+  dotClassName: string;
+}) {
+  const inner = (
+    <div className="flex items-start gap-2.5">
+      <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dotClassName}`} aria-hidden="true" />
+      <div className="min-w-0">
+        {title && <p className="text-sm font-medium text-[#f4f2fb]">{title}</p>}
+        <p className={`text-sm ${title ? "mt-0.5 text-[rgba(244,242,251,0.62)]" : "text-[#f4f2fb]"}`}>{summary}</p>
+      </div>
+    </div>
+  );
+  const rowClassName = "block rounded-lg px-2 py-2.5 transition hover:bg-white/[.04]";
+  return href ? (
+    <a href={href} className={rowClassName}>
+      {inner}
+    </a>
+  ) : (
+    <div className={rowClassName}>{inner}</div>
+  );
+}
+
+function CategoryEmptyState({ label }: { label: string }) {
+  return <p className="px-2 py-2.5 text-sm text-[rgba(244,242,251,0.5)]">Nothing in {label} right now.</p>;
 }
 
 function ConfirmCeilingOverride({
@@ -215,13 +335,23 @@ export function J4Workspace({
   hasPendingDecision,
   hasOpportunity,
   hasCuriosity,
+  tasks,
+  decisions,
+  ideas,
+  information,
 }: {
   storeName: string;
   messages: Message[];
   sendMessage: (formData: FormData) => void;
   uploadAsset: (formData: FormData) => void;
+  tasks: TaskItem[];
+  decisions: DecisionItem[];
+  ideas: IdeaItem[];
+  information: InformationItem[];
 } & J4Signals) {
   const currentPath = "/j4";
+  const [activeCategory, setActiveCategory] = useState<Category>("conversation");
+  const overallState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
 
   // Server-persisted StoreMessage rows stay the one source of truth;
   // localMessages is a working cache that appends the optimistic turn and
@@ -258,9 +388,20 @@ export function J4Workspace({
     };
   }, []);
 
-  async function sendViaServerAction(formData: FormData) {
+  async function sendViaServerAction(formData: FormData, rollBackOptimisticEntries: () => void) {
     const result = await callGenesisAction(() => Promise.resolve(sendMessage(formData)));
-    if (!result.ok) setSendError(result.message);
+    // ok:true is never actually reached here for the real redirecting
+    // action (sendStoreMessage ends in redirect(), thrown as Next's own
+    // NEXT_REDIRECT and re-thrown past this by callGenesisAction's own
+    // unstable_rethrow) — this only fires for a genuine, non-redirecting
+    // failure, which is the only case that should roll back the
+    // optimistic entries now (see handleSend's own comment on why the
+    // fallback path itself no longer does).
+    if (!result.ok) {
+      setStreamingStatus(null);
+      setSendError(result.message);
+      rollBackOptimisticEntries();
+    }
   }
 
   // The reconciliation check. Per the already-shipped server-side fix
@@ -309,6 +450,12 @@ export function J4Workspace({
     const rollBackOptimisticEntries = () =>
       setLocalMessages((prev) => prev.filter((m) => m.id !== optimisticUserId && m.id !== assistantId));
 
+    // Instant, honest acknowledgment — real production finding (Sean's
+    // mother, 2026-08-08, testing live): "Simple request and no answer."
+    // The request genuinely was received the moment this line runs; this
+    // is not a server round trip away, it's true immediately.
+    setStreamingStatus("J4 received your message…");
+
     const requestId =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -327,16 +474,20 @@ export function J4Workspace({
     } catch (err) {
       reportDiag(requestId, tStart, "client_fetch_threw", { message: err instanceof Error ? err.message : String(err) });
       inFlightRequestRef.current = null;
-      rollBackOptimisticEntries();
-      await sendViaServerAction(formData);
+      // Falling back to the slower path is not itself a failure — keep
+      // the owner's message and J4's placeholder visible (see the
+      // sawFallback branch below for why this changed) rather than
+      // wiping the screen while the fallback runs.
+      setStreamingStatus("J4 is working on a complete response — this can take a little longer…");
+      await sendViaServerAction(formData, rollBackOptimisticEntries);
       return;
     }
     reportDiag(requestId, tStart, "client_fetch_resolved", { ok: response.ok, status: response.status, hasBody: !!response.body });
 
     if (!response.ok || !response.body) {
       inFlightRequestRef.current = null;
-      rollBackOptimisticEntries();
-      await sendViaServerAction(formData);
+      setStreamingStatus("J4 is working on a complete response — this can take a little longer…");
+      await sendViaServerAction(formData, rollBackOptimisticEntries);
       return;
     }
 
@@ -402,8 +553,17 @@ export function J4Workspace({
       }
 
       if (sawFallback) {
-        rollBackOptimisticEntries();
-        await sendViaServerAction(formData);
+        // Real bug, confirmed via production trace (2026-08-08): this used
+        // to roll back the optimistic entries immediately, wiping the
+        // owner's own message and J4's placeholder from view for the
+        // entire ~40s the fallback path can take — the owner's screen went
+        // completely blank, indistinguishable from nothing having
+        // happened. A fallback is an expected, honest "this needs the
+        // slower path," not a failure — keep both rows visible and say so
+        // plainly; only a genuine failure inside sendViaServerAction rolls
+        // them back now.
+        setStreamingStatus("J4 is working on a complete response — this can take up to a minute…");
+        await sendViaServerAction(formData, rollBackOptimisticEntries);
         return;
       }
 
@@ -457,26 +617,47 @@ export function J4Workspace({
   useEffect(() => {
     const el = messageListRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [localMessages.length, lastMessageContentLength]);
+    // Conversation always tracks the newest turn; the other categories are
+    // plain browsable lists, not a live feed — switching into one of them
+    // should land at the top, not wherever Conversation's scroll happened
+    // to be (they share one scroll container across category switches).
+    el.scrollTop = activeCategory === "conversation" ? el.scrollHeight : 0;
+  }, [localMessages.length, lastMessageContentLength, activeCategory]);
+
+  const categoryTabs: { key: Category; label: string; count: number }[] = [
+    { key: "conversation", label: "Conversation", count: 0 },
+    { key: "tasks", label: "Tasks", count: tasks.length },
+    { key: "ideas", label: "Ideas", count: ideas.length },
+    { key: "decisions", label: "Decisions", count: decisions.length },
+    { key: "information", label: "Information", count: information.length },
+  ];
 
   return (
-    <form action={handleSend} className="fixed inset-0 z-[100] flex flex-col bg-[#07060d] text-[#f4f2fb]">
+    <form
+      action={handleSend}
+      className="fixed inset-0 z-[100] flex flex-col text-[#f4f2fb]"
+      style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
+    >
       <input type="hidden" name="currentPath" value={currentPath} />
 
-      <div className="flex shrink-0 items-start justify-between border-b border-[rgba(139,124,246,0.18)] px-5 py-4 pt-[calc(1rem+env(safe-area-inset-top))]">
-        <div>
-          <div className="flex items-center gap-2">
-            <p className="font-[var(--font-heading,inherit)] text-lg font-semibold text-[#f4f2fb]">How can J4 help today?</p>
-            <J4StatusDot
-              hasUrgentIssue={hasUrgentIssue}
-              hasPendingDecision={hasPendingDecision}
-              hasOpportunity={hasOpportunity}
-              hasCuriosity={hasCuriosity}
-            />
-            <J4WorkingPublisher />
+      {/* Identity strip — "J4 identity should be prominent and official at
+          the top" (Sean). A real avatar (state/activity-aware, the same
+          component used everywhere else J4 needs presence), not a plain
+          status dot; the Portal's own name and who it's partnering with,
+          not a question implying this is only for asking things. */}
+      <div
+        className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3 pt-[calc(0.75rem+env(safe-area-inset-top))]"
+        style={{ borderColor: GENESIS_ATMOSPHERE.border, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <GenesisAvatar state={overallState} className="h-10 w-10 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-base font-semibold tracking-wide text-[#f4f2fb]">J4</p>
+            <p className="truncate text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+              Business Partner for {storeName}
+            </p>
           </div>
-          <p className="mt-1 text-xs text-[rgba(244,242,251,0.62)]">Your business partner for {storeName}</p>
+          <J4WorkingPublisher />
         </div>
         <Link
           href="/dashboard"
@@ -487,58 +668,135 @@ export function J4Workspace({
         </Link>
       </div>
 
+      {/* Category rail — "organize into meaningful categories... rather
+          than everything simply appearing as chat messages" (Sean). Every
+          count is real data resolved server-side (page.tsx), never a
+          placeholder; Conversation has no count of its own (it's the
+          default view, not a queue to clear). */}
       <div
-        ref={messageListRef}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-5"
+        className="flex shrink-0 gap-1 overflow-x-auto border-b px-5 py-2"
+        style={{ borderColor: GENESIS_ATMOSPHERE.border }}
       >
-        {localMessages.length === 0 ? (
-          <div className="text-sm text-[rgba(244,242,251,0.62)]">
-            <p className="font-medium text-[#f4f2fb]">Your business partner, always paying attention.</p>
-            <p className="mt-1">
-              Ask J4 to change something, or just check in — it&apos;s already
-              watching for what needs you, and will tell you what it&apos;s
-              noticed or handled.
-            </p>
-          </div>
+        {categoryTabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveCategory(tab.key)}
+            className={
+              activeCategory === tab.key
+                ? "shrink-0 rounded-full bg-[#8b7cf6] px-3 py-1.5 text-xs font-medium text-white"
+                : "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
+            }
+          >
+            {tab.label}
+            {tab.count > 0 && <span className="ml-1.5 opacity-80">{tab.count}</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Center region — conversation reads as a workspace log (role
+          labels, no bubbles, no left/right alternation), every other
+          category as a plain browsable list of real records. */}
+      <div ref={messageListRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+        {activeCategory === "conversation" ? (
+          localMessages.length === 0 ? (
+            <div className="text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+              <p className="font-medium text-[#f4f2fb]">Your business partner, always paying attention.</p>
+              <p className="mt-1">
+                Ask J4 to change something, give it instructions, or just check in — it&apos;s already watching for
+                what needs you, and will tell you what it&apos;s noticed or handled.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+              {localMessages.map((m, i) => {
+                const changes = m.changes as string[] | null;
+                const isStreamingPlaceholder = i === localMessages.length - 1 && m.role === "assistant" && m.content === "";
+                return (
+                  <div key={m.id} className="py-3 first:pt-0" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                      {m.role === "user" ? "You" : "J4"}
+                    </p>
+                    {isStreamingPlaceholder ? (
+                      // "explicit work states... visibly communicate that
+                      // J4 is working" (Sean, 2026-08-08, after his
+                      // mother's real test read a static "thinking" line
+                      // as "no answer"). Not italic/muted metadata — this
+                      // is the primary channel telling the owner J4
+                      // received the request and is actively on it;
+                      // streamingStatus already carries real, evolving
+                      // per-phase text from the server (or the fallback
+                      // path's own honest "this can take a minute").
+                      <div className="mt-1 flex items-center gap-2 text-sm text-[#f4f2fb]">
+                        <span className="relative inline-flex h-2 w-2 shrink-0" aria-hidden="true">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8b7cf6] opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-[#8b7cf6]" />
+                        </span>
+                        <span>{streamingStatus ?? "J4 is working on this…"}</span>
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-sm leading-relaxed text-[#f4f2fb]">{m.content}</p>
+                    )}
+                    {changes && changes.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-xs hover:text-[#f4f2fb]" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                          See what changed
+                        </summary>
+                        <ul className="mt-1 list-disc pl-4 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                          {changes.map((c, i) => (
+                            <li key={i}>{c}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : activeCategory === "tasks" ? (
+          tasks.length === 0 ? (
+            <CategoryEmptyState label="Tasks" />
+          ) : (
+            <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+              {tasks.map((t) => (
+                <CategoryRow key={t.id} title={t.title} summary={t.summary} href={t.href} dotClassName={taskPriorityDotClassName(t.priority)} />
+              ))}
+            </div>
+          )
+        ) : activeCategory === "ideas" ? (
+          ideas.length === 0 ? (
+            <CategoryEmptyState label="Ideas" />
+          ) : (
+            <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+              {ideas.map((o) => (
+                <CategoryRow key={o.id} summary={o.summary} href={o.href} dotClassName="bg-purple-500" />
+              ))}
+            </div>
+          )
+        ) : activeCategory === "decisions" ? (
+          decisions.length === 0 ? (
+            <CategoryEmptyState label="Decisions" />
+          ) : (
+            <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+              {decisions.map((d) => (
+                <CategoryRow key={d.id} summary={d.summary} href={d.href} dotClassName="bg-amber-400" />
+              ))}
+            </div>
+          )
+        ) : information.length === 0 ? (
+          <CategoryEmptyState label="Information" />
         ) : (
-          localMessages.map((m, i) => {
-            const changes = m.changes as string[] | null;
-            const isStreamingPlaceholder = i === localMessages.length - 1 && m.role === "assistant" && m.content === "";
-            return (
-              <div
-                key={m.id}
-                className={
-                  m.role === "user"
-                    ? "self-end rounded-lg bg-[#8b7cf6] px-3 py-2 text-sm text-white"
-                    : "self-start rounded-lg border border-[rgba(139,124,246,0.18)] bg-[#8b7cf6]/10 px-3 py-2 text-sm text-[#f4f2fb]"
-                }
-              >
-                {isStreamingPlaceholder ? (
-                  <p className="flex items-center gap-1.5 italic opacity-70">
-                    <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />
-                    {streamingStatus ?? "Thinking…"}
-                  </p>
-                ) : (
-                  <p>{m.content}</p>
-                )}
-                {changes && changes.length > 0 && (
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs opacity-60 hover:opacity-100">See what changed</summary>
-                    <ul className="mt-1 list-disc pl-4 text-xs opacity-75">
-                      {changes.map((c, i) => (
-                        <li key={i}>{c}</li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-              </div>
-            );
-          })
+          <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+            {information.map((i) => (
+              <CategoryRow key={i.id} summary={i.summary} href={i.href} dotClassName={i.kind === "urgent" ? "bg-red-500" : "bg-teal-400"} />
+            ))}
+          </div>
         )}
       </div>
 
       {showConfirmCeiling && previousUserMessage && (
-        <div className="shrink-0 border-t border-[rgba(139,124,246,0.18)] px-5 pt-3">
+        <div className="shrink-0 border-t px-5 pt-3" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
           <ConfirmCeilingOverride
             sendMessage={sendMessage}
             previousUserMessage={previousUserMessage}
@@ -549,13 +807,25 @@ export function J4Workspace({
       )}
 
       {sendError && (
-        <div className="shrink-0 border-t border-[rgba(139,124,246,0.18)] px-5 pt-3 text-sm text-red-400">{sendError}</div>
+        <div className="shrink-0 border-t px-5 pt-3 text-sm text-red-400" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+          {sendError}
+        </div>
       )}
 
-      <div className="flex shrink-0 flex-col gap-2 border-t border-[rgba(139,124,246,0.18)] p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Command area — "should feel like a command/work area where the
+          owner can type, upload photos/documents, ask questions, give
+          instructions" (Sean), not a chat composer: one bar, icon
+          controls, a compact send control instead of a labeled CTA. */}
+      <div
+        className="shrink-0 border-t px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+        style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+      >
+        <div
+          className="flex items-end gap-1 rounded-xl border p-1.5"
+          style={{ borderColor: GENESIS_ATMOSPHERE.border, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+        >
           <UploadAssetButton
-            label="Upload Photos"
+            label="Upload photos"
             icon="📷"
             accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             uploadAsset={uploadAsset}
@@ -563,34 +833,31 @@ export function J4Workspace({
             onFailure={setSendError}
           />
           <UploadAssetButton
-            label="Upload Documents"
+            label="Upload documents"
             icon="📄"
             accept="application/pdf"
             uploadAsset={uploadAsset}
             currentPath={currentPath}
             onFailure={setSendError}
           />
-          <span className="cursor-default rounded-full border border-dashed border-[rgba(244,242,251,0.2)] px-3 py-1.5 text-xs text-[rgba(244,242,251,0.4)]">
-            🎬 Upload Videos — coming soon
-          </span>
+          <textarea
+            name="message"
+            placeholder="Type to J4 — ask, instruct, or just check in…"
+            rows={1}
+            required
+            onFocus={() => setGenesisComposing(true)}
+            onBlur={() => setGenesisComposing(false)}
+            className="max-h-40 min-h-[2.5rem] flex-1 resize-none bg-transparent px-2 py-2.5 text-sm text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.4)] focus:outline-none"
+          />
+          <SubmitButton
+            pendingText="…"
+            laterPendingText="…"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#8b7cf6] text-base text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            <span aria-hidden="true">→</span>
+            <span className="sr-only">Send to J4</span>
+          </SubmitButton>
         </div>
-        <textarea
-          name="message"
-          placeholder="Ask J4 anything about your business…"
-          rows={2}
-          required
-          onFocus={() => setGenesisComposing(true)}
-          onBlur={() => setGenesisComposing(false)}
-          className="rounded-lg border border-[rgba(139,124,246,0.18)] bg-[#100d1c] px-3 py-2 text-sm text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.62)]"
-        />
-        <SubmitButton
-          pendingText="J4 is thinking…"
-          laterPendingText="Still working on it — detailed answers can take a little longer…"
-          showPendingDot
-          className="self-start rounded-full bg-[var(--brand-accent,#8b7cf6)] px-4 py-1.5 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-90"
-        >
-          Ask J4
-        </SubmitButton>
       </div>
     </form>
   );

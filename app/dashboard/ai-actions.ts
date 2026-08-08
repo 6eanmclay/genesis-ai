@@ -3445,9 +3445,20 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
   // is a real, separate route and must be a valid return target too.
   const currentPath = (formData.get("currentPath") as string) || "/dashboard";
   const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
+  // J4 Portal multi-file upload foundation (2026-08-08) — this action's
+  // own redirect() is exactly right for a single upload (Sean's earlier
+  // "?openChat=1 reopens the panel" fix), but a batch of N files calling
+  // it N times would redirect after the FIRST one and never reach the
+  // rest — a real Next.js control-flow constraint, not a design choice.
+  // The Portal's upload button sets this for every file but the last in
+  // a batch, so each still does its own real ingest/classify/StoreMessage
+  // work, just returns instead of navigating; the batch's own last call
+  // (or single-file callers, unchanged) still redirects exactly as before.
+  const skipRedirect = formData.get("skipRedirect") === "true";
 
   const resolved = await resolveUserStore(session.user.id);
   if (!resolved) {
+    if (skipRedirect) return;
     redirectKeepingChatOpen(returnTo);
   }
   const { store, role } = resolved;
@@ -3549,6 +3560,7 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
   });
 
   revalidatePath(returnTo);
+  if (skipRedirect) return;
   redirectKeepingChatOpen(returnTo);
 }
 
