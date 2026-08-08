@@ -385,6 +385,34 @@ function pickSupportedVoiceMemoMimeType(): string | null {
   return null;
 }
 
+// Real Android finding (Sean's mother, 2026-08-08): tapping the mic showed
+// the generic "check your browser's permission" error, but no native
+// permission dialog ever appeared — unlike iOS. This isn't a bug in the
+// reasoning, it's real, documented cross-platform behavior: Android has
+// TWO permission layers (the browser app's own OS-level microphone
+// permission, plus the per-site browser permission), and if either is
+// already blocked, getUserMedia() rejects with NotAllowedError
+// immediately, silently, with no in-page prompt at all — nothing JS can
+// do makes the browser re-show a dialog it has already decided not to
+// show again. The only real recovery is telling the owner exactly where
+// to go fix it, and the "where" differs by platform. A coarse User-Agent
+// check is standard, accepted practice for this kind of messaging-only
+// branch (never used for anything security-relevant).
+function describeMicPermissionFix(): string {
+  if (typeof navigator === "undefined") {
+    return "Check your browser's site settings for this page, allow microphone access, then try again.";
+  }
+  const ua = navigator.userAgent;
+  if (/Android/i.test(ua)) {
+    return "Tap the lock or info icon next to the address bar, then Permissions → Microphone → Allow. If it's still blocked, check your phone's own Settings → Apps → " +
+      "(your browser) → Permissions → Microphone.";
+  }
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    return "Open the Settings app → Safari → Microphone, and set this website to Allow. Or in Safari, tap \"aA\" in the address bar → Website Settings → Microphone → Allow.";
+  }
+  return "Check your browser's site settings for this page, allow microphone access, then try again.";
+}
+
 function VoiceMemoButton({
   uploadVoiceMemo,
   currentPath,
@@ -404,6 +432,14 @@ function VoiceMemoButton({
   const [isPending, startTransition] = useTransition();
   const [isRecording, setIsRecording] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  // Real Android finding (2026-08-08) — a nontechnical owner stuck at a
+  // one-line error message has no obvious next step. When getUserMedia()
+  // rejects as an access-denied case (see describeMicPermissionFix's own
+  // comment), this drives a real, dismissible recovery panel instead of
+  // just another toast — platform-specific instructions plus a real "Try
+  // again" that re-attempts getUserMedia() (works for the case permission
+  // was just fixed in Settings, harmless no-op otherwise).
+  const [micBlocked, setMicBlocked] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -451,6 +487,7 @@ function VoiceMemoButton({
   }
 
   async function startRecording() {
+    setMicBlocked(false);
     try {
       // Reuse the already-granted stream whenever it's still live —
       // this is the real fix: only ever call getUserMedia() again if
@@ -516,40 +553,89 @@ function VoiceMemoButton({
           return next;
         });
       }, 1000);
-    } catch {
-      onFailure("Couldn't access your microphone — check your browser's permission for this site.");
+    } catch (err) {
+      // Real Android finding (2026-08-08) — branch by the real DOMException
+      // name getUserMedia() actually rejects with, not one generic message
+      // for every failure. NotAllowedError is the "already blocked, no
+      // prompt will ever show again" case — that's the one that needs a
+      // real recovery panel, not a toast that vanishes with nothing the
+      // owner can act on.
+      const name = err instanceof DOMException ? err.name : "";
+      if (name === "NotAllowedError") {
+        setMicBlocked(true);
+      } else if (name === "NotFoundError") {
+        onFailure("No microphone was found on this device.");
+      } else if (name === "NotReadableError") {
+        onFailure("Your microphone is being used by another app — close it and try again.");
+      } else {
+        onFailure("Couldn't access your microphone — check your browser's permission for this site.");
+      }
     }
   }
 
   return (
-    <button
-      type="button"
-      disabled={isPending}
-      onClick={() => (isRecording ? finishRecording() : startRecording())}
-      aria-label={isRecording ? "Stop recording" : "Record a voice memo"}
-      title={isRecording ? "Stop recording" : "Record a voice memo"}
-      className={
-        isRecording
-          ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-red-500/15 px-2 text-base text-red-400"
-          : "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg px-1.5 text-base text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] disabled:opacity-50"
-      }
-    >
-      {isPending ? (
-        <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-      ) : isRecording ? (
-        <>
-          <span className="relative inline-flex h-2 w-2 shrink-0" aria-hidden="true">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
-          </span>
-          <span className="text-xs tabular-nums">
-            {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, "0")}
-          </span>
-        </>
-      ) : (
-        "🎙️"
+    <div className="relative">
+      <button
+        type="button"
+        disabled={isPending}
+        onClick={() => (isRecording ? finishRecording() : startRecording())}
+        aria-label={isRecording ? "Stop recording" : micBlocked ? "Microphone blocked — tap for help" : "Record a voice memo"}
+        title={isRecording ? "Stop recording" : micBlocked ? "Microphone blocked — tap for help" : "Record a voice memo"}
+        className={
+          isRecording
+            ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-red-500/15 px-2 text-base text-red-400"
+            : micBlocked
+              ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg bg-amber-500/15 px-1.5 text-base text-amber-500 transition hover:bg-amber-500/25"
+              : "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg px-1.5 text-base text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] disabled:opacity-50"
+        }
+      >
+        {isPending ? (
+          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        ) : isRecording ? (
+          <>
+            <span className="relative inline-flex h-2 w-2 shrink-0" aria-hidden="true">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+            </span>
+            <span className="text-xs tabular-nums">
+              {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, "0")}
+            </span>
+          </>
+        ) : micBlocked ? (
+          "⚠️"
+        ) : (
+          "🎙️"
+        )}
+      </button>
+
+      {/* Absolutely positioned so this never affects the composer row's
+          own height/layout — the horizontal-scroll fix stays untouched. */}
+      {micBlocked && (
+        <div
+          className="absolute bottom-full left-0 z-10 mb-2 w-64 rounded-xl border border-amber-500/25 p-3 text-xs shadow-lg"
+          style={{ backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+        >
+          <p className="font-medium text-amber-400">Microphone is blocked for this site</p>
+          <p className="mt-1.5 text-[rgba(244,242,251,0.75)]">{describeMicPermissionFix()}</p>
+          <div className="mt-2.5 flex gap-2">
+            <button
+              type="button"
+              onClick={() => startRecording()}
+              className="rounded-full bg-amber-500/20 px-3 py-1 text-xs font-medium text-amber-400 hover:bg-amber-500/30"
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              onClick={() => setMicBlocked(false)}
+              className="rounded-full px-3 py-1 text-xs text-[rgba(244,242,251,0.62)] hover:bg-white/[.06]"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
       )}
-    </button>
+    </div>
   );
 }
 
