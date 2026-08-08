@@ -24,6 +24,24 @@ export const BusinessFactCaptureInputSchema = z.discriminatedUnion("entityType",
 ]);
 export type BusinessFactCaptureInput = z.infer<typeof BusinessFactCaptureInputSchema>;
 
+// Real production bug, found via trace evidence (2026-08-08) — every
+// single J4 Portal message was failing the unified call with a genuine
+// Anthropic 400 ("tools.1.custom.input_schema.type: Field required"),
+// silently forcing every turn onto the old non-streaming fallback path.
+// Root cause, reproduced locally: z.toJSONSchema() on a discriminated
+// union puts "oneOf" at the schema root with no root "type" key —
+// Anthropic's tool input_schema requires "type": "object" at the root.
+// This is a separate, looser schema purely for what Anthropic sees;
+// BusinessFactCaptureInputSchema (the real discriminated union) stays
+// the source of truth for TypeScript narrowing in route.ts, and the real
+// per-entityType strict validation still happens there via
+// ENTITY_REGISTRY[entityType].schema.safeParse after the tool call
+// returns, completely unchanged.
+const BUSINESS_FACT_CAPTURE_TOOL_SCHEMA = z.object({
+  entityType: z.enum(["goal", "challenge", "employee", "location"]),
+  data: z.record(z.string(), z.unknown()),
+});
+
 export const RequestImageChangeInputSchema = z.object({
   scope: z.enum(["all", "specific"]).nullable(),
   productNames: z.array(z.string()).nullable(),
@@ -53,7 +71,7 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       name: "capture_business_fact",
       description:
         "Call this when the merchant is stating a durable fact about their business you should remember — a goal they have, a challenge they're currently facing, a new employee, or a location — not a question, not a content-change request, not ordinary conversation. Fill in only what you can confidently infer from the actual message; leave optional fields null rather than guessing.",
-      input_schema: z.toJSONSchema(BusinessFactCaptureInputSchema) as Anthropic.Tool.InputSchema,
+      input_schema: z.toJSONSchema(BUSINESS_FACT_CAPTURE_TOOL_SCHEMA) as Anthropic.Tool.InputSchema,
     },
     {
       name: "plan_campaign",
