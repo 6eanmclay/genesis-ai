@@ -964,6 +964,14 @@ export function J4Workspace({
       let buffer = "";
       let sawDone = false;
       let sawFallback = false;
+      // J4 command execution fix (2026-08-08) — carries route.ts's own
+      // "this was edit_store_content" determination through to the
+      // fallback Server Action, so applyGenesisMessageToStore doesn't
+      // re-run an independent second classification of the same message
+      // that could genuinely disagree with the first (see that function's
+      // own preClassifiedTool comment for the real, confirmed risk this
+      // closes).
+      let fallbackReason: "edit_store_content" | null = null;
       let sawFirstChunk = false;
       let sawFirstToken = false;
       // Real production investigation (2026-08-08) — "do not infer that
@@ -1016,7 +1024,7 @@ export function J4Workspace({
             | { type: "status"; text: string }
             | { type: "token"; delta: string }
             | { type: "done" }
-            | { type: "fallback" }
+            | { type: "fallback"; reason?: "edit_store_content" }
             | { type: "error"; message: string };
 
           if (event.type === "padding") {
@@ -1085,7 +1093,8 @@ export function J4Workspace({
             router.refresh();
           } else if (event.type === "fallback") {
             sawFallback = true;
-            reportDiag(requestId, tStart, "client_fallback_event_received");
+            fallbackReason = event.reason ?? null;
+            reportDiag(requestId, tStart, "client_fallback_event_received", { reason: fallbackReason });
             break readLoop;
           } else if (event.type === "error") {
             reportDiag(requestId, tStart, "client_error_event_received", { message: event.message });
@@ -1112,6 +1121,7 @@ export function J4Workspace({
         // plainly; only a genuine failure inside sendViaServerAction rolls
         // them back now.
         setStreamingStatus("J4 is working on a complete response — this can take up to a minute…");
+        if (fallbackReason) formData.set("preClassifiedTool", fallbackReason);
         await sendViaServerAction(formData, rollBackOptimisticEntries);
         return;
       }

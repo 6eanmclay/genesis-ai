@@ -72,7 +72,11 @@ type StreamEvent =
   | { type: "status"; text: string }
   | { type: "token"; delta: string }
   | { type: "done"; changes: string[] | null }
-  | { type: "fallback" }
+  // reason is optional and only ever "edit_store_content" today — see the
+  // one real emit site below for why (J4 command execution fix,
+  // 2026-08-08). Every other fallback (provider failure, unresolved
+  // classification) omits it, preserving today's exact client behavior.
+  | { type: "fallback"; reason?: "edit_store_content" }
   | { type: "error"; message: string };
 
 function encodeEvent(event: StreamEvent): Uint8Array {
@@ -822,8 +826,20 @@ export async function POST(request: Request) {
         // already-working Server Action. Nothing was persisted for this
         // turn yet, so the fallback's own user-message write is the only
         // one that happens — no duplicate.
-        diagLog(requestId, turnStartedAt, "fallback_emitted", { reason: "no_tool_no_text_or_edit_store_content" });
-        emit({ type: "fallback" });
+        //
+        // 2026-08-08 — J4 command execution fix: when THIS call already
+        // determined edit_store_content, say so in the fallback event
+        // itself, so the client can pass it straight through to
+        // applyGenesisMessageToStore instead of that function re-running
+        // an entirely independent second classification of the same
+        // message — see its own preClassifiedTool comment for the real,
+        // confirmed risk this closes (a real rename instruction silently
+        // downgraded to pure conversation on disagreement between the two
+        // calls). Genuinely unresolved turns (no tool, no usable text)
+        // still fall back with no hint, exactly as before.
+        const isEditStoreContent = chosenTool?.name === "edit_store_content";
+        diagLog(requestId, turnStartedAt, "fallback_emitted", { reason: isEditStoreContent ? "edit_store_content" : "unresolved" });
+        emit(isEditStoreContent ? { type: "fallback", reason: "edit_store_content" } : { type: "fallback" });
         controller.close();
         diagLog(requestId, turnStartedAt, "controller_closed", { kind: "fallback" });
       } catch (err) {

@@ -2020,7 +2020,16 @@ async function applyGenesisMessageToStore(
   userMessage: string,
   returnTo: string,
   confirmedOverride = false,
-  userMessageChanges?: Record<string, unknown>
+  userMessageChanges?: Record<string, unknown>,
+  // 2026-08-08 — J4 command execution fix. See this param's own use below
+  // for the full reasoning: route.ts's unified call already determined
+  // this exact message calls edit_store_content (the one tool it
+  // deliberately never handles itself) before falling back here; passing
+  // that decision through avoids re-asking the same non-deterministic
+  // question a second time, which could genuinely disagree with the first
+  // answer and silently downgrade a real rename instruction into pure
+  // conversation.
+  preClassifiedTool?: "edit_store_content"
 ) {
   // Family-beta instrumentation (v20) — see logChatTurnEvent's own comment.
   const turnStartedAt = Date.now();
@@ -2079,17 +2088,25 @@ async function applyGenesisMessageToStore(
   // before even the STORE_MANAGE gate below — pointing at the upload
   // buttons never changes the store, so it's safe for any role with real
   // chat access, and it's the one message class every branch below would
-  // otherwise mishandle.
-  const uploadIntentOutcome = await callGenesisModel({
-    model: "claude-opus-4-8",
-    max_tokens: 200,
-    thinking: { type: "adaptive" },
-    system: STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage }],
-    output_config: { effort: "low", format: zodOutputFormat(UploadIntentSchema) },
-  }, { storeId: store.id, confirmedOverride, feature: "store_chat_upload_intent_detection" });
-  stageDurationsMs.uploadIntent = uploadIntentOutcome.durationMs;
-  const uploadIntentResult = uploadIntentOutcome.ok ? uploadIntentOutcome.message.parsed_output : null;
+  // otherwise mishandle. Skipped when preClassifiedTool is set — route.ts
+  // already ran this exact classifier on this exact message before ever
+  // reaching its own unified call (a message classified as upload intent
+  // never falls back at all, it's handled inline there), so re-running it
+  // here would only risk a second, redundant disagreement.
+  const uploadIntentResult = preClassifiedTool
+    ? null
+    : await (async () => {
+        const uploadIntentOutcome = await callGenesisModel({
+          model: "claude-opus-4-8",
+          max_tokens: 200,
+          thinking: { type: "adaptive" },
+          system: STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userMessage }],
+          output_config: { effort: "low", format: zodOutputFormat(UploadIntentSchema) },
+        }, { storeId: store.id, confirmedOverride, feature: "store_chat_upload_intent_detection" });
+        stageDurationsMs.uploadIntent = uploadIntentOutcome.durationMs;
+        return uploadIntentOutcome.ok ? uploadIntentOutcome.message.parsed_output : null;
+      })();
 
   if (uploadIntentResult?.isUploadIntent) {
     await prisma.storeMessage.create({
@@ -2265,28 +2282,47 @@ async function applyGenesisMessageToStore(
           },
         ]
       : conversationMessages;
-  const unifiedOutcome = await callGenesisModel({
-    model: "claude-opus-4-8",
-    max_tokens: 1500,
-    thinking: { type: "adaptive" },
-    system: [{ type: "text", text: STORE_CHAT_UNIFIED_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-    messages: [...cachedConversationMessages, { role: "user", content: unifiedContextParts.join("\n") }],
-    tools: buildStoreChatUnifiedTools(),
-    tool_choice: { type: "auto" },
-  }, { storeId: store.id, confirmedOverride, feature: "store_chat_unified_triage" });
-  stageDurationsMs.unifiedTriage = unifiedOutcome.durationMs;
+  // 2026-08-08 — J4 command execution fix: preClassifiedTool set means
+  // route.ts's own unified call already answered this exact question for
+  // this exact message (it only ever falls back here for edit_store_content
+  // or an unresolved turn — see its own comment) — skip re-asking a second,
+  // independent sample of a genuinely non-deterministic classification.
+  // This matters specifically because STORE_CHAT_UNIFIED_SYSTEM_PROMPT
+  // deliberately biases toward "conversation" whenever genuinely unsure
+  // (the real fix for the earlier "I like Cubit & Coil" bug below) — a
+  // second, independent call could disagree with route.ts's first one and
+  // silently downgrade a real, explicit rename instruction into a plain
+  // conversational reply that never reaches PRIMARY/touchesIdentity at
+  // all. chosenTool staying null here is exactly what's needed: every
+  // branch below it already treats "no chosenTool" as "fall through to
+  // PRIMARY," so an explicit edit_store_content classification correctly
+  // reaches the same store-identity/content handling every other content
+  // edit does, with zero changes to that branching logic itself.
+  let chosenTool: ReturnType<typeof firstToolUse> = null;
+  let conversationalReply = "";
+  if (!preClassifiedTool) {
+    const unifiedOutcome = await callGenesisModel({
+      model: "claude-opus-4-8",
+      max_tokens: 1500,
+      thinking: { type: "adaptive" },
+      system: [{ type: "text", text: STORE_CHAT_UNIFIED_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+      messages: [...cachedConversationMessages, { role: "user", content: unifiedContextParts.join("\n") }],
+      tools: buildStoreChatUnifiedTools(),
+      tool_choice: { type: "auto" },
+    }, { storeId: store.id, confirmedOverride, feature: "store_chat_unified_triage" });
+    stageDurationsMs.unifiedTriage = unifiedOutcome.durationMs;
 
-  const unifiedContent = unifiedOutcome.ok ? unifiedOutcome.message.content : [];
-  const chosenTool = firstToolUse(unifiedContent);
-  const conversationalReply = textOf(unifiedContent);
+    const unifiedContent = unifiedOutcome.ok ? unifiedOutcome.message.content : [];
+    chosenTool = firstToolUse(unifiedContent);
+    conversationalReply = textOf(unifiedContent);
 
-  // Pure conversation — the actual fix for "I like Cubit & Coil": no tool
-  // call, no PRIMARY, no full-store regeneration. Only when the unified call
-  // itself succeeded and genuinely produced no tool call and real text; a
-  // provider failure or an empty response both fall through to PRIMARY
-  // below, same as every classifier's own "detection failure falls through"
-  // convention that this replaces.
-  if (unifiedOutcome.ok && !chosenTool && conversationalReply) {
+    // Pure conversation — the actual fix for "I like Cubit & Coil": no tool
+    // call, no PRIMARY, no full-store regeneration. Only when the unified call
+    // itself succeeded and genuinely produced no tool call and real text; a
+    // provider failure or an empty response both fall through to PRIMARY
+    // below, same as every classifier's own "detection failure falls through"
+    // convention that this replaces.
+    if (unifiedOutcome.ok && !chosenTool && conversationalReply) {
     await prisma.storeMessage.create({
       data: { storeId: store.id, role: "assistant", content: conversationalReply },
     });
@@ -2310,7 +2346,8 @@ async function applyGenesisMessageToStore(
     });
     revalidatePath(returnTo);
     redirectKeepingChatOpen(returnTo);
-  }
+    }
+  } // end preClassifiedTool guard around the unified classification call
 
   const dataQuestionResult = chosenTool?.name === "look_up_business_data" ? { isDataQuestion: true } : null;
 
@@ -3536,13 +3573,21 @@ export async function sendStoreMessage(formData: FormData) {
   // heavier content-edit pipeline); preserves the same {audioUrl} shape
   // on the persisted user message regardless of which path handled it.
   const audioUrl = (formData.get("audioUrl") as string | null) || null;
+  // J4 command execution fix (2026-08-08) — set only when app/api/chat/
+  // route.ts's own unified call already determined this exact message
+  // calls edit_store_content before falling back here; see
+  // applyGenesisMessageToStore's own preClassifiedTool param for why this
+  // matters (avoids a second, independent, non-deterministic
+  // classification silently disagreeing with the first one).
+  const preClassifiedTool = formData.get("preClassifiedTool") === "edit_store_content" ? "edit_store_content" : undefined;
 
   await applyGenesisMessageToStore(
     session.user.id,
     userMessage,
     returnTo,
     confirmedOverride,
-    audioUrl ? { audioUrl } : undefined
+    audioUrl ? { audioUrl } : undefined,
+    preClassifiedTool
   );
 }
 
