@@ -392,18 +392,38 @@ export function GenesisAssistant({
     const rollBackOptimisticEntries = () =>
       setLocalMessages((prev) => prev.filter((m) => m.id !== optimisticUserId && m.id !== assistantId));
 
+    // Real production bug (2026-08-07) — backgrounding the tab mid-reply
+    // (or any other mid-stream disconnect) used to be treated exactly like
+    // "the request never reached the server at all," auto-resubmitting the
+    // same message through the old Server Action — creating a real
+    // duplicate turn whenever the server had actually kept working (which,
+    // per the matching server-side fix, it now reliably does). The two
+    // failure shapes are genuinely different and must be handled
+    // differently: connect() failing means nothing happened server-side
+    // yet, so falling back is safe; a read-loop failure after a real
+    // response started means the server likely already has this covered,
+    // so the honest move is to say so and point at reloading, never to
+    // silently resubmit.
+    let response: Response;
     try {
-      const response = await fetch("/api/chat", {
+      response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
       });
-      if (!response.ok || !response.body) {
-        rollBackOptimisticEntries();
-        await sendViaServerAction(formData);
-        return;
-      }
+    } catch {
+      rollBackOptimisticEntries();
+      await sendViaServerAction(formData);
+      return;
+    }
 
+    if (!response.ok || !response.body) {
+      rollBackOptimisticEntries();
+      await sendViaServerAction(formData);
+      return;
+    }
+
+    try {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -419,13 +439,18 @@ export function GenesisAssistant({
         for (const line of lines) {
           if (!line.trim()) continue;
           const event = JSON.parse(line) as
+            | { type: "padding" }
             | { type: "status"; text: string }
             | { type: "token"; delta: string }
             | { type: "done" }
             | { type: "fallback" }
             | { type: "error"; message: string };
 
-          if (event.type === "status") {
+          if (event.type === "padding") {
+            // Inert — sent only to cross Safari's ~1KB streaming-buffer
+            // threshold on a short reply. Nothing to render.
+            continue;
+          } else if (event.type === "status") {
             setStreamingStatus(event.text);
           } else if (event.type === "token") {
             setStreamingStatus(null);
@@ -458,14 +483,24 @@ export function GenesisAssistant({
       }
 
       if (!sawDone) {
-        // Connection dropped mid-stream with no terminal event — an honest
-        // failure state, never a silent hang.
-        setSendError("Connection dropped before Genesis finished replying. Please try again.");
+        // Stream ended with no terminal event but didn't throw — an honest
+        // failure state, never a silent hang. Doesn't resubmit: the server
+        // may still be genuinely finishing this turn.
+        setSendError("Lost the live connection before seeing Genesis finish — it may still complete on its own. Reload in a moment to check.");
         rollBackOptimisticEntries();
       }
     } catch {
+      // The read loop itself failed (a real mid-stream disconnect, e.g.
+      // the tab was backgrounded) — NOT the same as the request never
+      // reaching the server. Never auto-resubmit here: the server-side
+      // turn was already underway and, per the matching fix in
+      // app/api/chat/route.ts, keeps generating and persists its real
+      // result regardless of whether this reader is still listening.
+      // Reloading is the real, honest recovery — no new mechanism to
+      // build, since the result will already be there.
+      setStreamingStatus(null);
+      setSendError("Connection interrupted — Genesis may have kept working. Reload to check before sending that again.");
       rollBackOptimisticEntries();
-      await sendViaServerAction(formData);
     } finally {
       setStreamingStatus(null);
     }
