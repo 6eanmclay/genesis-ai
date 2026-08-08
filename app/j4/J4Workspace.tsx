@@ -74,6 +74,25 @@ function extractAudioUrl(changes: unknown): string | null {
   const value = (changes as Record<string, unknown>).audioUrl;
   return typeof value === "string" ? value : null;
 }
+// J4 Portal batch intake — a grouped multi-photo upload (uploadPhotoBatchFromChat)
+// carries the whole set on one user-turn StoreMessage, rendered as a
+// thumbnail grid rather than N separate message rows.
+function extractImageUrls(changes: unknown): string[] | null {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
+  const value = (changes as Record<string, unknown>).imageUrls;
+  return Array.isArray(value) && value.every((v) => typeof v === "string") ? (value as string[]) : null;
+}
+// "Give the owner useful choices... J4 should not assume the purpose of
+// the photos" (Sean, 2026-08-08) — real, tappable options on the
+// assistant's own batch-intake reply; extractChangeList's array shape
+// already exists for a different purpose (diff lists), so this checks
+// for the same {quickReplies} object shape imageUrl/audioUrl use, not a
+// second overload of the plain-array case.
+function extractQuickReplies(changes: unknown): string[] | null {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
+  const value = (changes as Record<string, unknown>).quickReplies;
+  return Array.isArray(value) && value.every((v) => typeof v === "string") ? (value as string[]) : null;
+}
 
 interface J4Signals {
   hasUrgentIssue: boolean;
@@ -162,6 +181,7 @@ function UploadAssetButton({
   icon,
   accept,
   uploadAsset,
+  uploadAssetBatch,
   currentPath,
   onFailure,
 }: {
@@ -169,6 +189,16 @@ function UploadAssetButton({
   icon: string;
   accept: string;
   uploadAsset: (formData: FormData) => void;
+  // J4 Portal batch intake (2026-08-08) — optional, and only ever passed
+  // for the photo button today ("documents eventually," Sean's own
+  // words, not built yet). When present AND more than one valid file is
+  // selected, every file still uploads to Blob individually (unchanged),
+  // but instead of looping uploadAsset per file (immediate classify+
+  // reply each time), this calls uploadAssetBatch exactly once with the
+  // full list — see uploadPhotoBatchFromChat's own comment for why.
+  // A single file, or no batch handler at all, keeps the original loop
+  // byte-for-byte unchanged.
+  uploadAssetBatch?: (formData: FormData) => void;
   currentPath: string;
   onFailure: (message: string) => void;
 }) {
@@ -222,6 +252,42 @@ function UploadAssetButton({
           }
 
           startTransition(async () => {
+            // Batch intake (2026-08-08) — a real multi-file selection
+            // goes through one grouped upload+one owner-facing turn
+            // instead of N individual classify+reply turns. Each file
+            // still uploads to Blob independently (parallel now, since
+            // there's no per-file server round trip to sequence); only
+            // the resulting metadata is sent, once, to uploadAssetBatch.
+            if (uploadAssetBatch && validFiles.length > 1) {
+              let completed = 0;
+              setProgress({ current: 0, total: validFiles.length });
+              const result = await callGenesisAction(async () => {
+                const uploaded = await Promise.all(
+                  validFiles.map(async ({ file, extension }) => {
+                    const blob = await blobUpload(`assets/${randomAssetKey()}.${extension}`, file, {
+                      access: "public",
+                      handleUploadUrl: "/api/blob/business-asset-upload",
+                      contentType: file.type,
+                    });
+                    completed += 1;
+                    setProgress({ current: completed, total: validFiles.length });
+                    return { blobUrl: blob.url, originalFilename: file.name, contentType: file.type };
+                  })
+                );
+                const formData = new FormData();
+                formData.set("files", JSON.stringify(uploaded));
+                formData.set("currentPath", currentPath);
+                return uploadAssetBatch(formData);
+              });
+              setProgress(null);
+              if (!result.ok) {
+                onFailure(result.message);
+                return;
+              }
+              if (problems.length > 0) onFailure(`Uploaded ${validFiles.length} file(s). Couldn't upload: ${problems.join(", ")}.`);
+              return;
+            }
+
             for (let i = 0; i < validFiles.length; i++) {
               const { file, extension } = validFiles[i];
               const isLast = i === validFiles.length - 1;
@@ -508,6 +574,7 @@ export function J4Workspace({
   messages,
   sendMessage,
   uploadAsset,
+  uploadPhotoBatch,
   uploadVoiceMemo,
   hasUrgentIssue,
   hasPendingDecision,
@@ -522,6 +589,7 @@ export function J4Workspace({
   messages: Message[];
   sendMessage: (formData: FormData) => void;
   uploadAsset: (formData: FormData) => void;
+  uploadPhotoBatch: (formData: FormData) => void;
   uploadVoiceMemo: (formData: FormData) => void;
   tasks: TaskItem[];
   decisions: DecisionItem[];
@@ -545,6 +613,12 @@ export function J4Workspace({
   }
   const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Quick-reply buttons (batch intake) submit through the real <form>
+  // (formRef.requestSubmit()), not by calling handleSend directly as a
+  // second, plain call path — same real action, dispatched the same way
+  // typing and pressing send already does, not a shortcut around it.
+  const formRef = useRef<HTMLFormElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Directly tests "is the component/page lifecycle killing the request" —
   // set for the duration of a real turn so a real disconnect/backgrounding
@@ -787,6 +861,23 @@ export function J4Workspace({
     }
   }
 
+  // J4 Portal batch intake — a tapped quick-reply ("Organize them", "Tell
+  // me what you see", ...) is a real conversational turn, sent through
+  // the exact same handleSend pipeline a typed message uses (streaming,
+  // optimistic UI, reconciliation, all of it) — not a second, simplified
+  // send path just because the text came from a button instead of the
+  // keyboard.
+  // J4 Portal batch intake — a tapped quick-reply ("Organize them", "Tell
+  // me what you see", ...) is a real conversational turn, sent through
+  // the exact same real <form>/handleSend pipeline a typed message uses
+  // (streaming, optimistic UI, reconciliation, all of it) — via a real
+  // form submission (requestSubmit), not a second, direct call path into
+  // handleSend, so this stays exactly one real send mechanism.
+  function sendQuickReply(text: string) {
+    if (messageInputRef.current) messageInputRef.current.value = text;
+    formRef.current?.requestSubmit();
+  }
+
   const lastMessage = localMessages[localMessages.length - 1];
   const showConfirmCeiling = lastMessage?.role === "assistant" && lastMessage.content === USAGE_CEILING_MESSAGE;
   const previousUserMessage = showConfirmCeiling ? [...localMessages].reverse().find((m) => m.role === "user")?.content : undefined;
@@ -813,6 +904,7 @@ export function J4Workspace({
 
   return (
     <form
+      ref={formRef}
       action={handleSend}
       className="fixed inset-0 z-[100] flex flex-col text-[#f4f2fb]"
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
@@ -891,8 +983,16 @@ export function J4Workspace({
               {localMessages.map((m, i) => {
                 const changeList = extractChangeList(m.changes);
                 const imageUrl = extractImageUrl(m.changes);
+                const imageUrls = extractImageUrls(m.changes);
                 const audioUrl = extractAudioUrl(m.changes);
-                const isStreamingPlaceholder = i === localMessages.length - 1 && m.role === "assistant" && m.content === "";
+                const isLastMessage = i === localMessages.length - 1;
+                // Only ever shown on the most recent turn — an older
+                // batch's quick-replies would be stale once the
+                // conversation has moved on (see uploadPhotoBatchFromChat's
+                // own comment on why this stays real conversational
+                // context, not a separate "active batch" flag).
+                const quickReplies = m.role === "assistant" && isLastMessage ? extractQuickReplies(m.changes) : null;
+                const isStreamingPlaceholder = isLastMessage && m.role === "assistant" && m.content === "";
                 return (
                   <div key={m.id} className="py-3 first:pt-0" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
                     <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
@@ -914,6 +1014,33 @@ export function J4Workspace({
                           <span className="relative inline-flex h-2 w-2 rounded-full bg-[#8b7cf6]" />
                         </span>
                         <span>{streamingStatus ?? "J4 is working on this…"}</span>
+                      </div>
+                    ) : imageUrls && imageUrls.length > 0 ? (
+                      // Batch intake (2026-08-08) — "the Portal should
+                      // display the uploaded photos together in a clean
+                      // photo bucket / batch view" (Sean). A real grid of
+                      // real thumbnails, every one still openable at full
+                      // size — "don't reduce the upload to filenames."
+                      <div className="mt-1">
+                        <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+                          {imageUrls.map((url, idx) => (
+                            <a
+                              key={url}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block aspect-square overflow-hidden rounded-md border"
+                              style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+                              aria-label={`View photo ${idx + 1} of ${imageUrls.length} full size`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element -- same reasoning as the single-photo case below: Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config */}
+                              <img src={url} alt="" className="h-full w-full object-cover" />
+                            </a>
+                          ))}
+                        </div>
+                        <p className="mt-1.5 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                          {m.content}
+                        </p>
                       </div>
                     ) : imageUrl ? (
                       // The image is the primary representation — the
@@ -948,6 +1075,21 @@ export function J4Workspace({
                       </div>
                     ) : (
                       <p className="mt-1 text-sm leading-relaxed text-[#f4f2fb]">{m.content}</p>
+                    )}
+                    {quickReplies && quickReplies.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {quickReplies.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => sendQuickReply(option)}
+                            className="rounded-full border px-3 py-1.5 text-xs font-medium text-[#f4f2fb] transition hover:bg-white/[.06]"
+                            style={{ borderColor: GENESIS_ATMOSPHERE.violet }}
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
                     )}
                     {changeList && changeList.length > 0 && (
                       <details className="mt-2">
@@ -1047,6 +1189,7 @@ export function J4Workspace({
             icon="📷"
             accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             uploadAsset={uploadAsset}
+            uploadAssetBatch={uploadPhotoBatch}
             currentPath={currentPath}
             onFailure={setSendError}
           />
@@ -1065,6 +1208,7 @@ export function J4Workspace({
           style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
         >
           <textarea
+            ref={messageInputRef}
             name="message"
             placeholder="Talk to J4 — ask, instruct, or tell J4 what you're working on…"
             rows={1}

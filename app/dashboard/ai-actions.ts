@@ -3657,6 +3657,107 @@ export async function uploadVoiceMemo(formData: FormData) {
   await applyGenesisMessageToStore(session.user.id, transcription.transcript, returnTo, false, { audioUrl: blobUrl });
 }
 
+// J4 Portal batch intake (2026-08-08) — "when multiple photos are
+// uploaded together, do not immediately generate an individual
+// conversational response/classification for every photo... batch first,
+// intent second" (Sean). A real, general Portal intake pattern (Receive
+// -> show what was received -> ask what the owner wants -> understand
+// intent -> route), deliberately started narrow (photos only — Sean's
+// own explicit "documents eventually," not now) rather than built as a
+// speculative generic framework before one real case proves it out.
+//
+// A single photo still gets uploadBusinessAssetFromChat's existing
+// immediate classify+reply (unchanged, real, already working) — this
+// action only ever runs for a real multi-file selection (see
+// UploadAssetButton's own comment on when it calls this instead). Each
+// file is still ingested as a real BusinessRecord (so "organize them" or
+// "these are product photos" has real rows to reason about once the
+// owner states intent), but classifyAndExtractAsset's own AI call is
+// deliberately skipped per file — real cost avoided, not just fewer
+// messages, since the batch reply doesn't need a guess at each photo's
+// purpose before the owner has said what it even is.
+export async function uploadPhotoBatchFromChat(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+
+  const filesJson = formData.get("files") as string | null;
+  const files = filesJson
+    ? (JSON.parse(filesJson) as { blobUrl: string; originalFilename: string; contentType: string }[])
+    : [];
+  if (files.length === 0) {
+    throw new Error("Please choose photos to upload.");
+  }
+
+  const currentPath = (formData.get("currentPath") as string) || "/dashboard";
+  const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
+
+  const resolved = await resolveUserStore(session.user.id);
+  if (!resolved) {
+    redirectKeepingChatOpen(returnTo);
+  }
+  const { store, role } = resolved;
+  if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
+    throw new Error("You don't have permission to do this.");
+  }
+
+  await Promise.all(
+    files.map((f) => ingestBusinessAsset(store.id, { url: f.blobUrl, originalFilename: f.originalFilename, contentType: f.contentType }))
+  );
+
+  const imageUrls = files.map((f) => f.blobUrl);
+  await prisma.storeMessage.create({
+    data: {
+      storeId: store.id,
+      role: "user",
+      content: `Uploaded ${files.length} photos`,
+      changes: { imageUrls },
+    },
+  });
+
+  // "J4 should not assume the purpose of the photos just because it can
+  // identify their contents" (Sean) — real, owner-facing choices, not a
+  // single generic "got it." Whichever the owner picks (or types
+  // something else entirely) becomes the next real turn, understood by
+  // the same unified conversational pipeline every message already goes
+  // through — the batch StoreMessage above is real, visible history, so
+  // "organize them" or "these are product photos" already has the right
+  // context without any separate "active batch" state to track.
+  const quickReplies = [
+    "Organize them",
+    "Tell me what you see",
+    "Find anything important",
+    "Use them for my business",
+    "Attach them to something",
+    "Review them with me",
+    "Something else",
+  ];
+  const reply = `I've got ${files.length} photos. What would you like me to do with them?`;
+  await prisma.storeMessage.create({
+    data: {
+      storeId: store.id,
+      role: "assistant",
+      content: reply,
+      changes: { quickReplies },
+    },
+  });
+
+  await recordGenesisExecution({
+    action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+    status: "SUCCESS",
+    verified: false,
+    message: reply,
+    retryable: false,
+    userId: session.user.id,
+    storeId: store.id,
+    metadata: { kind: "photo_batch_intake", photoCount: files.length },
+  });
+
+  revalidatePath(returnTo);
+  redirectKeepingChatOpen(returnTo);
+}
+
 // BUSINESS_ASSETS_ARCHITECTURE.md M2 — replaces plain actionHref navigation
 // for a Task card with a real, persisted, task-aware conversation. Writes
 // both a user-turn message (honest statement of what was clicked, same

@@ -5,7 +5,7 @@ import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions"
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
-import { sendStoreMessage, uploadBusinessAssetFromChat, uploadVoiceMemo } from "@/app/dashboard/ai-actions";
+import { sendStoreMessage, uploadBusinessAssetFromChat, uploadPhotoBatchFromChat, uploadVoiceMemo } from "@/app/dashboard/ai-actions";
 import { J4Workspace } from "./J4Workspace";
 
 // Reliability hardening — same real evidence as app/dashboard/layout.tsx
@@ -95,6 +95,7 @@ export default async function J4Page() {
       messages={messages.map((m) => ({ id: m.id, role: m.role, content: m.content, changes: m.changes }))}
       sendMessage={sendStoreMessage}
       uploadAsset={uploadBusinessAssetFromChat}
+      uploadPhotoBatch={uploadPhotoBatchFromChat}
       uploadVoiceMemo={uploadVoiceMemo}
       hasUrgentIssue={hasUrgentIssue}
       hasPendingDecision={hasPendingDecision}
