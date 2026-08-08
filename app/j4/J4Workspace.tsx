@@ -552,11 +552,18 @@ function describeMicPermissionFix(): string {
 function VoiceMemoButton({
   uploadVoiceMemo,
   currentPath,
+  onStart,
   onFailure,
   onTranscribed,
 }: {
   uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
   currentPath: string;
+  // Priority 3 — J4 Voice Responsiveness (2026-08-08). Fires the instant
+  // recording stops, before the blob upload or transcription call even
+  // begins — this is the real "immediate acknowledgment" moment Sean's
+  // audit found missing: previously nothing told the owner anything was
+  // happening until the ENTIRE upload+transcribe round trip finished.
+  onStart: () => void;
   onFailure: (message: string) => void;
   // 2026-08-08 — voice-memo streaming convergence: uploadVoiceMemo no
   // longer drives J4's reply itself (see its own comment in
@@ -656,6 +663,7 @@ function VoiceMemoButton({
           onFailure("That recording is too long to upload — please keep voice memos under 20MB.");
           return;
         }
+        onStart();
         startTransition(async () => {
           const result = await callGenesisAction(async () => {
             const uploaded = await blobUpload(`voice-memos/${randomAssetKey()}.${extension}`, blob, {
@@ -972,6 +980,16 @@ export function J4Workspace({
     setLocalMessages(messages);
   }
   const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
+  // Priority 3 — J4 Voice Responsiveness (2026-08-08). A separate status
+  // channel from streamingStatus (which is reserved for a real /api/chat
+  // turn) covering the window handleSend never used to reach at all: the
+  // real network upload + Server Action round trip + Whisper call between
+  // "recording stopped" and "transcript ready." voiceMemoPlaceholderRef
+  // tracks the optimistic message pair so it can be removed the instant
+  // the real turn (with the actual transcript) takes its place — never
+  // left behind as an orphaned empty bubble.
+  const [voiceMemoStatus, setVoiceMemoStatus] = useState<string | null>(null);
+  const voiceMemoPlaceholderRef = useRef<{ userId: string; assistantId: string } | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   // Quick-reply buttons (batch intake) submit through the real <form>
   // (formRef.requestSubmit()), not by calling handleSend directly as a
@@ -1407,12 +1425,47 @@ export function J4Workspace({
     formRef.current?.requestSubmit();
   }
 
+  // Priority 3 — J4 Voice Responsiveness (2026-08-08). Fires the instant
+  // recording stops — before the blob upload or transcription call even
+  // begins — so the owner sees a real acknowledgment in the actual
+  // conversation, not just a spinner inside the small record button. Reuses
+  // the exact same optimistic-message + flushSync pattern handleSend
+  // already uses for the real turn, so the same J4ResponseIndicator bars
+  // render immediately, then hand off seamlessly once the transcript lands.
+  function handleVoiceMemoStart() {
+    const userId = `optimistic-voice-user-${Date.now()}`;
+    const assistantId = `optimistic-voice-assistant-${Date.now()}`;
+    voiceMemoPlaceholderRef.current = { userId, assistantId };
+    flushSync(() => {
+      setLocalMessages((prev) => [
+        ...prev,
+        { id: userId, role: "user", content: "Recorded a voice memo", changes: null },
+        { id: assistantId, role: "assistant", content: "", changes: null },
+      ]);
+      setVoiceMemoStatus("Transcribing your voice memo…");
+    });
+  }
+
+  // Clears the placeholder pair above — called both on a real transcript
+  // (about to be replaced by handleSend's own real optimistic turn) and on
+  // failure (nothing to hand off to, so it must not linger as a dead
+  // empty bubble).
+  function clearVoiceMemoPlaceholder() {
+    const placeholder = voiceMemoPlaceholderRef.current;
+    voiceMemoPlaceholderRef.current = null;
+    setVoiceMemoStatus(null);
+    if (placeholder) {
+      setLocalMessages((prev) => prev.filter((m) => m.id !== placeholder.userId && m.id !== placeholder.assistantId));
+    }
+  }
+
   // Voice-memo streaming convergence (2026-08-08) — same real <form>
   // submission mechanism as sendQuickReply above (never a second, direct
   // call into handleSend), with the transcript's real audioUrl carried
   // through the hidden field so the turn's user message renders as a
   // playable memo, not plain text, from the very first optimistic paint.
   function sendVoiceMemo(transcript: string, audioUrl: string) {
+    clearVoiceMemoPlaceholder();
     if (messageInputRef.current) messageInputRef.current.value = transcript;
     if (audioUrlInputRef.current) audioUrlInputRef.current.value = audioUrl;
     formRef.current?.requestSubmit();
@@ -1565,7 +1618,7 @@ export function J4Workspace({
                       {m.role === "user" ? "You" : "J4"}
                     </p>
                     {isStreamingPlaceholder ? (
-                      <J4ResponseIndicator requestMeta={activeRequestMeta} streamingStatus={streamingStatus} />
+                      <J4ResponseIndicator requestMeta={activeRequestMeta} streamingStatus={streamingStatus ?? voiceMemoStatus} />
                     ) : imageUrls && imageUrls.length > 0 ? (
                       // Batch intake (2026-08-08) — "the Portal should
                       // display the uploaded photos together in a clean
@@ -1757,7 +1810,11 @@ export function J4Workspace({
           <VoiceMemoButton
             uploadVoiceMemo={uploadVoiceMemo}
             currentPath={currentPath}
-            onFailure={setSendError}
+            onStart={handleVoiceMemoStart}
+            onFailure={(message) => {
+              clearVoiceMemoPlaceholder();
+              setSendError(message);
+            }}
             onTranscribed={sendVoiceMemo}
           />
         </div>
