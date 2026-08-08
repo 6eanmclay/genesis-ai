@@ -594,6 +594,81 @@ function ConfirmCeilingOverride({
   );
 }
 
+// Real production investigation (2026-08-08) — "confirm the response-row
+// indicator actually mounts in the DOM... confirm whether it is being
+// hidden/clipped/off-screen... confirm the browser actually paints"
+// (Sean, after two prior fixes changed nothing visible). A dedicated
+// component specifically so it gets its own real mount lifecycle
+// (useEffect fires exactly once, the instant React actually commits this
+// into the DOM) — the inline version this replaced had no way to
+// independently confirm it existed at all, distinct from React's
+// virtual state saying it should. requestMeta is null until handleSend's
+// own flushSync commits it (see that function's own comment on why the
+// very first paint needed the same fix the token-by-token updates
+// already got) — this component simply doesn't render at all until
+// there's a real request to correlate its trace with.
+function J4ResponseIndicator({
+  requestMeta,
+  streamingStatus,
+}: {
+  requestMeta: { requestId: string; tStart: number } | null;
+  streamingStatus: string | null;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!requestMeta) return;
+    const { requestId, tStart } = requestMeta;
+    const el = ref.current;
+    if (!el) {
+      reportDiag(requestId, tStart, "indicator_mount_no_dom_node");
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    reportDiag(requestId, tStart, "indicator_mounted", {
+      rectTop: rect.top,
+      rectLeft: rect.left,
+      rectWidth: rect.width,
+      rectHeight: rect.height,
+      display: style.display,
+      visibility: style.visibility,
+      opacity: style.opacity,
+      inViewport: rect.top >= 0 && rect.top < window.innerHeight && rect.width > 0 && rect.height > 0,
+    });
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        reportDiag(requestId, tStart, "indicator_paint_confirmed");
+      });
+    });
+    // Deliberately requestMeta.requestId only — a new turn (new
+    // requestId) is the only thing that should re-run this; the ref
+    // itself never changes identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestMeta?.requestId]);
+
+  return (
+    <div ref={ref} className="mt-1 flex min-w-0 items-center gap-2">
+      {/* J4 response indicator — four-bar signal. "Four simple vertical
+          bars of increasing height... animate sequentially left to
+          right... the four bars represent J4" (Sean) — an equalizer/
+          soundwave shape, deliberately meant to carry through into J4's
+          own spoken-response voice later, not just text. */}
+      <div className="j4-response-bars flex items-end gap-1" role="status" aria-label="J4 is responding">
+        <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 6 }} />
+        <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 10 }} />
+        <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 16 }} />
+        <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 22 }} />
+      </div>
+      {streamingStatus && (
+        <span className="min-w-0 break-words text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+          {streamingStatus}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function J4Workspace({
   storeName,
   messages,
@@ -650,6 +725,15 @@ export function J4Workspace({
   // set for the duration of a real turn so a real disconnect/backgrounding
   // event can be reported precisely, not just generically.
   const inFlightRequestRef = useRef<{ requestId: string; tStart: number } | null>(null);
+  // Real production investigation (2026-08-08) — "we need evidence of
+  // where the response disappears between state and pixels" (Sean).
+  // requestId/tStart are otherwise only ever local variables inside
+  // handleSend; lifted into real state so the render below can hand the
+  // SAME correlation ids to J4ResponseIndicator's own DOM-mount/paint
+  // instrumentation — one continuous, correlatable trace from "the
+  // owner tapped send" through to "the browser actually painted a
+  // pixel," not two disconnected logs.
+  const [activeRequestMeta, setActiveRequestMeta] = useState<{ requestId: string; tStart: number } | null>(null);
   useEffect(() => {
     function onVisibilityChange() {
       const inFlight = inFlightRequestRef.current;
@@ -756,19 +840,8 @@ export function J4Workspace({
 
     const optimisticUserId = `optimistic-user-${Date.now()}`;
     const assistantId = `optimistic-assistant-${Date.now()}`;
-    setLocalMessages((prev) => [
-      ...prev,
-      { id: optimisticUserId, role: "user", content: text, changes: null },
-      { id: assistantId, role: "assistant", content: "", changes: null },
-    ]);
     const rollBackOptimisticEntries = () =>
       setLocalMessages((prev) => prev.filter((m) => m.id !== optimisticUserId && m.id !== assistantId));
-
-    // Instant, honest acknowledgment — real production finding (Sean's
-    // mother, 2026-08-08, testing live): "Simple request and no answer."
-    // The request genuinely was received the moment this line runs; this
-    // is not a server round trip away, it's true immediately.
-    setStreamingStatus("J4 received your message…");
 
     const requestId =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -776,6 +849,37 @@ export function J4Workspace({
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const tStart = Date.now();
     inFlightRequestRef.current = { requestId, tStart };
+
+    // Real production investigation (2026-08-08) — "confirm when the
+    // pending/thinking state becomes true" and "we need evidence of
+    // where the response disappears between state and pixels" (Sean).
+    // handleSend runs as a <form action={handleSend}> body — React 19
+    // treats that whole execution as an implicit transition, and every
+    // setState call inside it (including this one, previously) was NOT
+    // guaranteed to commit/paint before the async work below continues.
+    // The token-by-token updates later in this function already learned
+    // this lesson (flushSync, added after the first failed streaming
+    // fix) — this exact same gap existed here too, on the FIRST paint
+    // that's supposed to show the four-bar indicator at all, and had
+    // never been closed. flushSync forces React to synchronously commit
+    // and lets the browser paint before the fetch/network work starts.
+    reportDiag(requestId, tStart, "optimistic_placeholder_intent");
+    flushSync(() => {
+      setLocalMessages((prev) => [
+        ...prev,
+        { id: optimisticUserId, role: "user", content: text, changes: null },
+        { id: assistantId, role: "assistant", content: "", changes: null },
+      ]);
+      setActiveRequestMeta({ requestId, tStart });
+      // Instant, honest acknowledgment — real production finding (Sean's
+      // mother, 2026-08-08, testing live): "Simple request and no
+      // answer." The request genuinely was received the moment this
+      // line runs; this is not a server round trip away, it's true
+      // immediately.
+      setStreamingStatus("J4 received your message…");
+    });
+    reportDiag(requestId, tStart, "optimistic_placeholder_committed");
+
     reportDiag(requestId, tStart, "client_fetch_start");
 
     let response: Response;
@@ -836,6 +940,13 @@ export function J4Workspace({
       // wrong even if this isn't the actual bottleneck.
       let readIndex = 0;
       let tokenIndex = 0;
+      // "confirm each streamed token causes the displayed message state
+      // to update" AND that the update reaches real pixels, not just
+      // React's virtual state (Sean, 2026-08-08) — tracks the length
+      // React's state SHOULD now hold after each flushSync, to compare
+      // directly against what querySelector finds in the real DOM a
+      // moment later.
+      let accumulatedContentLength = 0;
 
       readLoop: while (true) {
         const { done, value } = await reader.read();
@@ -873,10 +984,38 @@ export function J4Workspace({
             }
             tokenIndex += 1;
             tokensThisRead += 1;
+            accumulatedContentLength += event.delta.length;
             reportDiag(requestId, tStart, "client_token_applied", { i: tokenIndex, readIndex: thisReadIndex, tokensThisRead, len: event.delta.length });
             flushSync(() => {
               setStreamingStatus(null);
               setLocalMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.delta } : m)));
+            });
+            // Real bridge check, state -> real DOM: read the actual
+            // rendered text back out of the page immediately after the
+            // flushSync commit above claims to have applied it. If
+            // domTextLength never catches up to expectedLength, React's
+            // own state is updating but isn't reaching the screen — a
+            // completely different bug than anything upstream of the
+            // client. data-message-id/data-role="content" (added to the
+            // message row JSX below) are what make this selector real.
+            const domEl = messageListRef.current?.querySelector(`[data-message-id="${assistantId}"] [data-role="content"]`);
+            reportDiag(requestId, tStart, "client_token_dom_check", {
+              i: tokenIndex,
+              expectedLength: accumulatedContentLength,
+              domTextLength: domEl?.textContent?.length ?? null,
+              domFound: !!domEl,
+            });
+            // Real paint confirmation: requestAnimationFrame only ever
+            // fires immediately before the browser paints. A callback
+            // scheduled inside another already-fired rAF callback is a
+            // real, standard signal that a genuine paint cycle completed
+            // between the two — the closest a page can get to "the pixel
+            // actually changed" without the (unavailable-here) Paint
+            // Timing API.
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                reportDiag(requestId, tStart, "client_token_paint_confirmed", { i: tokenIndex });
+              });
             });
             await nextPaint();
           } else if (event.type === "done") {
@@ -966,6 +1105,7 @@ export function J4Workspace({
       }
     } finally {
       inFlightRequestRef.current = null;
+      setActiveRequestMeta(null);
       setStreamingStatus(null);
     }
   }
@@ -1106,43 +1246,17 @@ export function J4Workspace({
                 const quickReplies = m.role === "assistant" && isLastMessage ? extractQuickReplies(m.changes) : null;
                 const isStreamingPlaceholder = isLastMessage && m.role === "assistant" && m.content === "";
                 return (
-                  <div key={m.id} className="min-w-0 w-full max-w-full py-3 first:pt-0" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+                  <div
+                    key={m.id}
+                    data-message-id={m.id}
+                    className="min-w-0 w-full max-w-full py-3 first:pt-0"
+                    style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+                  >
                     <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                       {m.role === "user" ? "You" : "J4"}
                     </p>
                     {isStreamingPlaceholder ? (
-                      // J4 response indicator — four-bar signal (2026-08-08,
-                      // revised same day from an earlier three-dot version).
-                      // "Four simple vertical bars of increasing height...
-                      // animate sequentially left to right... the four bars
-                      // represent J4" (Sean) — an equalizer/soundwave shape,
-                      // deliberately meant to carry through into J4's own
-                      // spoken-response voice later, not just text. Real
-                      // wait-time feedback, not a fixed-duration animation:
-                      // this renders only while content is still empty and
-                      // disappears the instant the first token lands
-                      // (isStreamingPlaceholder itself flips false right
-                      // then) — however long or short that real wait
-                      // actually is, in this exact response position, never
-                      // a separate loading component elsewhere on the page.
-                      // streamingStatus still carries real, evolving
-                      // per-phase text (or the fallback path's own honest
-                      // "this can take a minute") as small, secondary text
-                      // beside the bars — the earlier fix for the fallback
-                      // path's own "feels stuck/broken" bug stays intact.
-                      <div className="mt-1 flex min-w-0 items-center gap-2">
-                        <div className="j4-response-bars flex items-end gap-1" role="status" aria-label="J4 is responding">
-                          <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 6 }} />
-                          <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 10 }} />
-                          <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 16 }} />
-                          <span className="block w-1 rounded-sm bg-[#8b7cf6]" style={{ height: 22 }} />
-                        </div>
-                        {streamingStatus && (
-                          <span className="min-w-0 break-words text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-                            {streamingStatus}
-                          </span>
-                        )}
-                      </div>
+                      <J4ResponseIndicator requestMeta={activeRequestMeta} streamingStatus={streamingStatus} />
                     ) : imageUrls && imageUrls.length > 0 ? (
                       // Batch intake (2026-08-08) — "the Portal should
                       // display the uploaded photos together in a clean
@@ -1202,7 +1316,9 @@ export function J4Workspace({
                         <p className="mt-1.5 text-sm leading-relaxed text-[#f4f2fb] break-words">{m.content}</p>
                       </div>
                     ) : (
-                      <p className="mt-1 text-sm leading-relaxed text-[#f4f2fb] break-words">{m.content}</p>
+                      <p data-role="content" className="mt-1 text-sm leading-relaxed text-[#f4f2fb] break-words">
+                        {m.content}
+                      </p>
                     )}
                     {quickReplies && quickReplies.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
