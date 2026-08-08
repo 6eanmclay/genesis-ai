@@ -667,6 +667,41 @@ export function J4Workspace({
     };
   }, []);
 
+  // Real bug (Sean, 2026-08-08): a rename approved elsewhere (e.g. the
+  // Brand/Identity page an "always_ask"-tier change like this one really
+  // requires — see update_store_identity's own authorizationTier) left
+  // the Portal header stale even after the earlier router.refresh()-on-
+  // turn-completion fix. Confirmed against this project's own bundled
+  // Next.js docs (staleTimes.md): a dynamic route's client-side page
+  // cache defaults to 0s (not cached) for regular navigation, but Next's
+  // separate back/forward cache deliberately serves a stale render
+  // anyway "to prevent layout shift and losing scroll position" — and
+  // that path bypasses staleTimes entirely. router.refresh() on a
+  // completed /j4 turn only ever covers staying on this page the whole
+  // time; it does nothing for "left /j4 to approve something elsewhere
+  // (or just backgrounded the tab), came back." pageshow's own
+  // event.persisted is the real, standard browser signal for exactly a
+  // bfcache-style restoration; visibilitychange covers the same backgrounded-tab
+  // case defensively, since which one actually fires can vary by
+  // browser/OS. Cheap either way — just one more RSC fetch, not an AI call.
+  useEffect(() => {
+    function refreshOnReturn() {
+      router.refresh();
+    }
+    function handlePageShow(event: PageTransitionEvent) {
+      if (event.persisted) refreshOnReturn();
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") refreshOnReturn();
+    }
+    window.addEventListener("pageshow", handlePageShow);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [router]);
+
   async function sendViaServerAction(formData: FormData, rollBackOptimisticEntries: () => void) {
     const result = await callGenesisAction(() => Promise.resolve(sendMessage(formData)));
     // ok:true is never actually reached here for the real redirecting
