@@ -11,6 +11,33 @@ import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
 import { SubmitButton } from "./SubmitButton";
 
+// Temporary production tracing (2026-08-08) — real phone tests kept
+// failing after fixes only ever verified in isolation, so this reports the
+// real client-side milestones of one real streamed turn back to
+// app/api/diag-client-log/route.ts, correlated against the server's own
+// diagLog() calls in app/api/chat/route.ts via a shared requestId. Uses
+// sendBeacon specifically because it's designed to survive the exact
+// conditions under investigation (backgrounding, navigation, page
+// teardown) that a normal fetch() call would not. Delete once the actual
+// failing layer is found and fixed — not meant to ship long-term.
+function reportDiag(requestId: string, tStart: number, event: string, meta?: Record<string, unknown>) {
+  const payload = JSON.stringify({ requestId, event, tMs: Date.now() - tStart, meta });
+  try {
+    if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+      const blob = new Blob([payload], { type: "application/json" });
+      navigator.sendBeacon("/api/diag-client-log", blob);
+      return;
+    }
+  } catch {
+    // fall through to fetch
+  }
+  try {
+    fetch("/api/diag-client-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true }).catch(() => {});
+  } catch {
+    // best-effort only — never let diagnostics themselves break the real flow
+  }
+}
+
 // Hydration-safe read of the same lg: breakpoint (1024px) this codebase
 // already uses everywhere else — useSyncExternalStore (not useState+effect)
 // is the correct tool here: it gives server and the first client render the
@@ -360,6 +387,32 @@ export function GenesisAssistant({
   // not a StoreMessage row. Cleared on every new attempt.
   const [sendError, setSendError] = useState<string | null>(null);
 
+  // Temporary production tracing (2026-08-08) — directly tests the
+  // "is the component/page lifecycle killing the request" hypothesis.
+  // inFlightRequestRef is set for the duration of a real streamed turn
+  // (see handleSend) so these two listeners can report real visibility
+  // changes and real unmounts *while a request is actually in flight*,
+  // not just generically. Delete alongside the rest of this tracing pass.
+  const inFlightRequestRef = useRef<{ requestId: string; tStart: number } | null>(null);
+  useEffect(() => {
+    function onVisibilityChange() {
+      const inFlight = inFlightRequestRef.current;
+      if (!inFlight) return;
+      reportDiag(inFlight.requestId, inFlight.tStart, "page_visibility_changed", {
+        visibilityState: document.visibilityState,
+      });
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+  useEffect(() => {
+    return () => {
+      const inFlight = inFlightRequestRef.current;
+      if (!inFlight) return;
+      reportDiag(inFlight.requestId, inFlight.tStart, "component_unmounted_while_request_in_flight");
+    };
+  }, []);
+
   // Falls back to the exact original mechanism (the real Server Action,
   // full-page redirect) — used both when streaming is off for this
   // instance and as the real recovery path when the stream can't be used.
@@ -392,6 +445,17 @@ export function GenesisAssistant({
     const rollBackOptimisticEntries = () =>
       setLocalMessages((prev) => prev.filter((m) => m.id !== optimisticUserId && m.id !== assistantId));
 
+    // Temporary production tracing (2026-08-08) — see reportDiag's own
+    // comment. requestId correlates this browser's real milestones against
+    // app/api/chat/route.ts's own server-side log lines for this exact turn.
+    const requestId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const tStart = Date.now();
+    inFlightRequestRef.current = { requestId, tStart };
+    reportDiag(requestId, tStart, "client_fetch_start");
+
     // Real production bug (2026-08-07) — backgrounding the tab mid-reply
     // (or any other mid-stream disconnect) used to be treated exactly like
     // "the request never reached the server at all," auto-resubmitting the
@@ -409,15 +473,19 @@ export function GenesisAssistant({
       response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, requestId }),
       });
-    } catch {
+    } catch (err) {
+      reportDiag(requestId, tStart, "client_fetch_threw", { message: err instanceof Error ? err.message : String(err) });
+      inFlightRequestRef.current = null;
       rollBackOptimisticEntries();
       await sendViaServerAction(formData);
       return;
     }
+    reportDiag(requestId, tStart, "client_fetch_resolved", { ok: response.ok, status: response.status, hasBody: !!response.body });
 
     if (!response.ok || !response.body) {
+      inFlightRequestRef.current = null;
       rollBackOptimisticEntries();
       await sendViaServerAction(formData);
       return;
@@ -425,14 +493,21 @@ export function GenesisAssistant({
 
     try {
       const reader = response.body.getReader();
+      reportDiag(requestId, tStart, "client_reader_created");
       const decoder = new TextDecoder();
       let buffer = "";
       let sawDone = false;
       let sawFallback = false;
+      let sawFirstChunk = false;
+      let sawFirstToken = false;
 
       readLoop: while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (!sawFirstChunk) {
+          sawFirstChunk = true;
+          reportDiag(requestId, tStart, "client_first_chunk_received", { byteLength: value?.length ?? 0 });
+        }
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
@@ -449,21 +524,30 @@ export function GenesisAssistant({
           if (event.type === "padding") {
             // Inert — sent only to cross Safari's ~1KB streaming-buffer
             // threshold on a short reply. Nothing to render.
+            reportDiag(requestId, tStart, "client_padding_event_received");
             continue;
           } else if (event.type === "status") {
+            reportDiag(requestId, tStart, "client_status_event_received", { text: event.text });
             setStreamingStatus(event.text);
           } else if (event.type === "token") {
+            if (!sawFirstToken) {
+              sawFirstToken = true;
+              reportDiag(requestId, tStart, "client_first_token_setstate", { deltaLength: event.delta.length });
+            }
             setStreamingStatus(null);
             setLocalMessages((prev) =>
               prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.delta } : m))
             );
           } else if (event.type === "done") {
             sawDone = true;
+            reportDiag(requestId, tStart, "client_done_event_received");
             setStreamingStatus(null);
           } else if (event.type === "fallback") {
             sawFallback = true;
+            reportDiag(requestId, tStart, "client_fallback_event_received");
             break readLoop;
           } else if (event.type === "error") {
+            reportDiag(requestId, tStart, "client_error_event_received", { message: event.message });
             setStreamingStatus(null);
             setSendError(event.message);
             rollBackOptimisticEntries();
@@ -486,10 +570,11 @@ export function GenesisAssistant({
         // Stream ended with no terminal event but didn't throw — an honest
         // failure state, never a silent hang. Doesn't resubmit: the server
         // may still be genuinely finishing this turn.
+        reportDiag(requestId, tStart, "client_stream_ended_no_terminal_event");
         setSendError("Lost the live connection before seeing Genesis finish — it may still complete on its own. Reload in a moment to check.");
         rollBackOptimisticEntries();
       }
-    } catch {
+    } catch (err) {
       // The read loop itself failed (a real mid-stream disconnect, e.g.
       // the tab was backgrounded) — NOT the same as the request never
       // reaching the server. Never auto-resubmit here: the server-side
@@ -498,10 +583,15 @@ export function GenesisAssistant({
       // result regardless of whether this reader is still listening.
       // Reloading is the real, honest recovery — no new mechanism to
       // build, since the result will already be there.
+      reportDiag(requestId, tStart, "client_read_loop_threw", {
+        message: err instanceof Error ? err.message : String(err),
+        name: err instanceof Error ? err.name : undefined,
+      });
       setStreamingStatus(null);
       setSendError("Connection interrupted — Genesis may have kept working. Reload to check before sending that again.");
       rollBackOptimisticEntries();
     } finally {
+      inFlightRequestRef.current = null;
       setStreamingStatus(null);
     }
   }
