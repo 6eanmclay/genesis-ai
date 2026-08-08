@@ -47,6 +47,23 @@ type Message = {
   changes: unknown;
 };
 
+// Real bug, found via live testing (2026-08-08): J4 could see and
+// correctly describe an uploaded photo, but the owner only ever saw
+// "Uploaded a photo: X.png" — the real image URL lived on a separate
+// BusinessRecord row, unreachable from the conversation itself.
+// uploadBusinessAssetFromChat (app/dashboard/ai-actions.ts) now writes it
+// into the same StoreMessage.changes field the diff-list case below
+// already uses, as { imageUrl } — the two shapes are distinguished here
+// rather than adding a second upload/reference system.
+function extractChangeList(changes: unknown): string[] | null {
+  return Array.isArray(changes) ? changes.filter((c): c is string => typeof c === "string") : null;
+}
+function extractImageUrl(changes: unknown): string | null {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
+  const value = (changes as Record<string, unknown>).imageUrl;
+  return typeof value === "string" ? value : null;
+}
+
 interface J4Signals {
   hasUrgentIssue: boolean;
   hasPendingDecision: boolean;
@@ -710,7 +727,8 @@ export function J4Workspace({
           ) : (
             <div className="flex flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {localMessages.map((m, i) => {
-                const changes = m.changes as string[] | null;
+                const changeList = extractChangeList(m.changes);
+                const imageUrl = extractImageUrl(m.changes);
                 const isStreamingPlaceholder = i === localMessages.length - 1 && m.role === "assistant" && m.content === "";
                 return (
                   <div key={m.id} className="py-3 first:pt-0" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
@@ -734,16 +752,36 @@ export function J4Workspace({
                         </span>
                         <span>{streamingStatus ?? "J4 is working on this…"}</span>
                       </div>
+                    ) : imageUrl ? (
+                      // The image is the primary representation — the
+                      // filename stays as secondary metadata below it, not
+                      // the other way around (Sean, 2026-08-08).
+                      <div className="mt-1">
+                        <a
+                          href={imageUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block overflow-hidden rounded-lg border"
+                          style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+                          aria-label="View full-size image"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element -- same reasoning as DashboardShell's own product-image rendering: Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config */}
+                          <img src={imageUrl} alt={m.content} className="block max-h-64 max-w-[260px] object-cover" />
+                        </a>
+                        <p className="mt-1 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                          {m.content}
+                        </p>
+                      </div>
                     ) : (
                       <p className="mt-1 text-sm leading-relaxed text-[#f4f2fb]">{m.content}</p>
                     )}
-                    {changes && changes.length > 0 && (
+                    {changeList && changeList.length > 0 && (
                       <details className="mt-2">
                         <summary className="cursor-pointer text-xs hover:text-[#f4f2fb]" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                           See what changed
                         </summary>
                         <ul className="mt-1 list-disc pl-4 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-                          {changes.map((c, i) => (
+                          {changeList.map((c, i) => (
                             <li key={i}>{c}</li>
                           ))}
                         </ul>
@@ -812,20 +850,26 @@ export function J4Workspace({
         </div>
       )}
 
-      {/* Command area — "should feel like a command/work area where the
-          owner can type, upload photos/documents, ask questions, give
-          instructions" (Sean), not a chat composer: one bar, icon
-          controls, a compact send control instead of a labeled CTA. */}
+      {/* Command area — real mobile testing (Sean, 2026-08-08) found the
+          original single-row bar read as "an add/attachment control," not
+          "the place I talk to J4" — the camera/document icons competed
+          visually with the field itself. Redesigned into two clearly
+          unequal rows: a small, muted "Add to J4" strip (secondary,
+          labeled so the icons are never ambiguous) sits above a full-
+          width, strongly-bordered field that is unmistakably the primary
+          input, ending in a distinct circular send control. Two-second
+          glance test this now needs to pass: this is J4 / this is where I
+          talk to J4 / these buttons add files / that arrow sends it. */}
       <div
-        className="shrink-0 border-t px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+        className="shrink-0 border-t px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2"
         style={{ borderColor: GENESIS_ATMOSPHERE.border }}
       >
-        <div
-          className="flex items-end gap-1 rounded-xl border p-1.5"
-          style={{ borderColor: GENESIS_ATMOSPHERE.border, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
-        >
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <span className="pl-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+            Add to J4
+          </span>
           <UploadAssetButton
-            label="Upload photos"
+            label="Add photos"
             icon="📷"
             accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             uploadAsset={uploadAsset}
@@ -833,26 +877,31 @@ export function J4Workspace({
             onFailure={setSendError}
           />
           <UploadAssetButton
-            label="Upload documents"
+            label="Add documents"
             icon="📄"
             accept="application/pdf"
             uploadAsset={uploadAsset}
             currentPath={currentPath}
             onFailure={setSendError}
           />
+        </div>
+        <div
+          className="flex items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
+          style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+        >
           <textarea
             name="message"
-            placeholder="Type to J4 — ask, instruct, or just check in…"
+            placeholder="Talk to J4 — ask, instruct, or tell J4 what you're working on…"
             rows={1}
             required
             onFocus={() => setGenesisComposing(true)}
             onBlur={() => setGenesisComposing(false)}
-            className="max-h-40 min-h-[2.5rem] flex-1 resize-none bg-transparent px-2 py-2.5 text-sm text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.4)] focus:outline-none"
+            className="max-h-40 min-h-[2.75rem] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
           />
           <SubmitButton
             pendingText="…"
             laterPendingText="…"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#8b7cf6] text-base text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#8b7cf6] text-lg text-white shadow-[0_0_20px_-6px_rgba(139,124,246,0.6)] transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             <span aria-hidden="true">→</span>
             <span className="sr-only">Send to J4</span>

@@ -3470,14 +3470,24 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
   const data = record.data as { fileType: string; originalFilename: string };
   const label = data.fileType === "document" ? "document" : "photo";
 
-  // Never expose internal storage details (Blob URLs, record ids) in a
-  // message the owner reads — same voice-mechanics rule every other
-  // owner-facing StoreMessage in this file already follows.
+  // Real bug, found via live testing (2026-08-08): J4 could see and
+  // correctly describe an uploaded photo (the blob URL always reached
+  // classifyAndExtractAsset below), but the owner never could — this
+  // StoreMessage carried only the filename as plain text, with the real
+  // image URL living solely on the separate BusinessRecord row
+  // ingestBusinessAsset just wrote, unreachable from the conversation's
+  // own render path. changes (Json?) already exists on StoreMessage for
+  // structured per-message metadata (see the diff-list usage elsewhere in
+  // this file) — reused here for a photo's real URL rather than inventing
+  // a second upload/reference system. Documents don't get a thumbnail
+  // (no `changes` set) since there's nothing visual to show inline; the
+  // filename text alone is still the right representation for those.
   await prisma.storeMessage.create({
     data: {
       storeId: store.id,
       role: "user",
       content: `Uploaded a ${label}: ${data.originalFilename}`,
+      changes: label === "photo" ? { imageUrl: blobUrl } : undefined,
     },
   });
 
