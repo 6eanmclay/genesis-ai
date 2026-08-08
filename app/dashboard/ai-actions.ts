@@ -62,6 +62,7 @@ import {
   type BusinessFactCaptureInput,
   type RequestImageChangeInput,
   type RequestProductRemovalInput,
+  type ManageBusinessAssetInput,
 } from "@/lib/execution/genesisTools";
 import {
   UploadIntentSchema,
@@ -2911,6 +2912,53 @@ async function applyGenesisMessageToStore(
     redirectKeepingChatOpen(returnTo);
   }
 
+  // Hard J4 capability requirement (2026-08-08) — non-streaming fallback
+  // copy of route.ts's own manage_business_asset handling (see that
+  // file's comment for the full reasoning: the file is already
+  // permanently saved the instant upload completes, so this reply is
+  // deterministic, never model-generated, and never the old false "I
+  // can't save this"). userMessage was already written once at the top
+  // of this function — only the assistant reply is new here.
+  const manageAssetResult = chosenTool?.name === "manage_business_asset" ? (chosenTool.input as ManageBusinessAssetInput) : null;
+
+  if (manageAssetResult) {
+    const mostRecentAsset = await prisma.businessRecord.findFirst({
+      where: { storeId: store.id, entityType: "asset" },
+      orderBy: { syncedAt: "desc" },
+    });
+
+    const reply = !mostRecentAsset
+      ? "I don't see anything uploaded yet to save — share a photo or document and I'll take it from there."
+      : manageAssetResult.role
+        ? `That's already saved as part of your business files. Assigning it specifically as "${manageAssetResult.role}" isn't something I can do yet — that's a capability coming soon. For now it's safely on file and I can pull it back up whenever you need it.`
+        : `That's already saved as part of your business files. Want me to give it a specific role — like your primary logo — or is keeping it on file for now good?`;
+
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: reply },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "SUCCESS",
+      verified: false,
+      message: reply,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: { kind: "manage_business_asset", hadAsset: !!mostRecentAsset, role: manageAssetResult.role },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
+      likelyRephraseOf,
+      stageDurationsMs,
+    });
+
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
+
   const primaryOutcome = await callGenesisModel({
     model: "claude-opus-4-8",
     max_tokens: 16000,
@@ -3712,17 +3760,30 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
     campaign: "marketing campaign",
   };
 
+  // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
+  // the file IS already permanently saved — ingestBusinessAsset already
+  // wrote a real BusinessRecord above, unconditionally, before any
+  // classification even ran. The real production bug this closes was
+  // never a storage gap (confirmed by direct audit: getBusinessProfile's
+  // asset query has no limit/expiry, every uploaded asset is always
+  // reachable in every future conversation) — it was that J4's own reply
+  // never consistently SAID so. The low-confidence branch below in
+  // particular used to ask a clarifying question with zero reassurance
+  // the file was even kept, which is exactly the gap a real owner hit.
+  // Every branch now states persistence explicitly and unconditionally,
+  // never only implying it through "filed under X" phrasing that a
+  // low-confidence result wouldn't even get.
   const assistantReply = !result
     ? `I've saved your ${label}, but I wasn't able to take a proper look at it just now — I'll use it once I can, or you can tell me what it is in the meantime.`
     : result.createdEntity
-      ? `${result.classification.summary} This names a new ${ENTITY_PHRASE[result.createdEntity.entityType]}, "${result.createdEntity.name}" — I've added it to your records, so I'll factor it into what I know about your business going forward.`
+      ? `${result.classification.summary} This names a new ${ENTITY_PHRASE[result.createdEntity.entityType]}, "${result.createdEntity.name}" — I've saved it and added it to your records, so I'll factor it into what I know about your business going forward.`
       : productApprovalCreated && result.productProposal
-        ? `${result.classification.summary} This looks like a new product — I've drafted a listing for "${result.productProposal.name}" and it's waiting for your review on Products.`
+        ? `${result.classification.summary} I've saved it, and this looks like a new product — I've drafted a listing for "${result.productProposal.name}" and it's waiting for your review on Products.`
         : result.productProposal && result.productProposal.priceInCents === null
-          ? `${result.classification.summary} This looks like a new product, but I didn't see a price anywhere — tell me what to charge and I'll get a listing ready for you to review.`
+          ? `${result.classification.summary} I've saved it. This looks like a new product, but I didn't see a price anywhere — tell me what to charge and I'll get a listing ready for you to review.`
           : result.isHighConfidence
-            ? `${result.classification.summary} I've filed this under "${result.classification.category.replace(/_/g, " ")}" and it's now part of what I know about your business.`
-            : `I can see this is a ${label}, but I'm not fully sure what it is — ${result.classification.summary} Can you tell me a bit more about what this is, so I file it correctly?`;
+            ? `${result.classification.summary} I've saved it and filed it under "${result.classification.category.replace(/_/g, " ")}" — it's now part of what I know about your business.`
+            : `I've saved this ${label} to your business files. I can see it's a ${label}, but I'm not fully sure what it is — ${result.classification.summary} Can you tell me a bit more about what this is, so I file it correctly?`;
 
   await prisma.storeMessage.create({
     data: {
@@ -3939,10 +4000,13 @@ export async function uploadPhotoBatchFromChat(formData: FormData) {
     "Review them with me",
     "Something else",
   ];
+  // Same hard persistence-acknowledgment requirement as the single-file
+  // path above — explicit, not implied, and honest about the ones that
+  // genuinely didn't make it (never claimed saved when they weren't).
   const reply =
     ingestFailedCount > 0
-      ? `I've got ${ingested.length} photos — ${ingestFailedCount} didn't save and will need to be uploaded again. What would you like me to do with the ones I have?`
-      : `I've got ${ingested.length} photos. What would you like me to do with them?`;
+      ? `I've saved ${ingested.length} photos to your business files — ${ingestFailedCount} didn't save and will need to be uploaded again. What would you like me to do with the ones I have?`
+      : `I've saved ${ingested.length} photos to your business files. What would you like me to do with them?`;
   await prisma.storeMessage.create({
     data: {
       storeId: store.id,

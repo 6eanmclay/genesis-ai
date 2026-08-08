@@ -23,6 +23,7 @@ import {
   type BusinessFactCaptureInput,
   type RequestImageChangeInput,
   type RequestProductRemovalInput,
+  type ManageBusinessAssetInput,
 } from "@/lib/execution/genesisTools";
 import {
   UploadIntentSchema,
@@ -817,6 +818,51 @@ export async function POST(request: Request) {
           emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "product_removal_request" });
+          controller.close();
+          return;
+        }
+
+        // Hard J4 capability requirement (2026-08-08) — "save this",
+        // "save this as my logo": the file is ALREADY permanently saved
+        // (ingestBusinessAsset wrote a real BusinessRecord the instant the
+        // upload completed, unconditionally — confirmed by direct audit
+        // that businessProfile's own asset query has no limit or expiry).
+        // The reply here is deterministic, not model-generated, precisely
+        // because "I've saved it" must be an airtight, always-true claim,
+        // never a phrasing the model could get subtly wrong. role stays
+        // honest: designation (actually assigning this as THE logo, THE
+        // brand guide, etc.) isn't built yet, so this says so plainly
+        // rather than pretending — never the old false "I can't save
+        // this" either, since the file itself is real and already kept.
+        if (chosenTool?.name === "manage_business_asset") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "manage_business_asset" });
+          const input = chosenTool.input as ManageBusinessAssetInput;
+          const mostRecentAsset = await prisma.businessRecord.findFirst({
+            where: { storeId: store.id, entityType: "asset" },
+            orderBy: { syncedAt: "desc" },
+          });
+
+          const reply = !mostRecentAsset
+            ? "I don't see anything uploaded yet to save — share a photo or document and I'll take it from there."
+            : input.role
+              ? `That's already saved as part of your business files. Assigning it specifically as "${input.role}" isn't something I can do yet — that's a capability coming soon. For now it's safely on file and I can pull it back up whenever you need it.`
+              : `That's already saved as part of your business files. Want me to give it a specific role — like your primary logo — or is keeping it on file for now good?`;
+
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "SUCCESS",
+            verified: false,
+            message: reply,
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: { kind: "manage_business_asset", hadAsset: !!mostRecentAsset, role: input.role },
+          });
+          if (!streamedAnyText) emit({ type: "token", delta: reply });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "manage_business_asset" });
           controller.close();
           return;
         }

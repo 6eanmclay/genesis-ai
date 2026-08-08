@@ -64,6 +64,25 @@ export type RequestProductRemovalInput = z.infer<typeof RequestProductRemovalInp
 
 const EMPTY_INPUT_SCHEMA = z.object({});
 
+// Hard J4 capability requirement (2026-08-08): once an upload succeeds,
+// the file is already permanently saved (ingestBusinessAsset writes a
+// real BusinessRecord unconditionally, before classification even runs)
+// — confirmed by direct audit that businessProfile's own asset query has
+// no limit or expiry, so every uploaded asset is always reachable in
+// every future conversation. The real gap was never storage, it was that
+// a LATER turn referencing an already-uploaded file ("save this," "save
+// this as my logo") had no tool to reach at all, so the honest-capability
+// rule elsewhere correctly said it couldn't help — even though the file
+// was already safely saved. `role` is deliberately the one real input
+// this needs today (null = "just keep it," a string = the merchant's own
+// words for what they want it designated as) — this exact shape is what
+// the future asset-designation milestone will consume too, so wiring
+// real designation in later is additive to this tool, never a rebuild.
+export const ManageBusinessAssetInputSchema = z.object({
+  role: z.string().nullable(),
+});
+export type ManageBusinessAssetInput = z.infer<typeof ManageBusinessAssetInputSchema>;
+
 export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "look_up_business_data",
   "capture_business_fact",
@@ -71,6 +90,7 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "request_image_change",
   "request_product_removal",
   "edit_store_content",
+  "manage_business_asset",
 ] as const;
 export type StoreChatUnifiedToolName = (typeof STORE_CHAT_UNIFIED_TOOL_NAMES)[number];
 
@@ -111,6 +131,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant is asking to actually change the store's identity, tagline, description, theme, brand identity, homepage content, policies, or design direction — anything that edits the live store, rather than answering a question, capturing a fact, planning a campaign, or changing a product photo.",
       input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "manage_business_asset",
+      description:
+        "Call this when the merchant asks you to save, keep, hold onto, or designate a file they've already uploaded — e.g. 'save this', 'keep this for later', 'save this as my logo', 'use this as the product photo', 'remember this as our supplier agreement'. This ALWAYS refers to the most recently uploaded photo or document in this conversation, never something never uploaded. If the merchant names a specific role or purpose for it (a logo, a product photo, a brand guide, an agreement — their own words, don't invent one), set role to that; if they just say 'save this' / 'keep this' with no stated purpose, set role to null.",
+      input_schema: z.toJSONSchema(ManageBusinessAssetInputSchema) as Anthropic.Tool.InputSchema,
     },
   ];
 }
