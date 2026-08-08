@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
@@ -12,10 +12,11 @@ import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
-import { ALLOWED_VOICE_MEMO_CONTENT_TYPES, MAX_VOICE_MEMO_BYTES } from "@/lib/voice/voiceMemoFile";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
+import { extractAudioUrl, extractChangeList, extractImageUrl, extractImageUrls, extractQuickReplies } from "./messageChanges";
+import { VoiceMemoButton } from "./VoiceMemoButton";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
 // (app/j4/page.tsx), replacing the floating GenesisAssistant panel for the
@@ -49,52 +50,6 @@ type Message = {
   content: string;
   changes: unknown;
 };
-
-// Real bug, found via live testing (2026-08-08): J4 could see and
-// correctly describe an uploaded photo, but the owner only ever saw
-// "Uploaded a photo: X.png" — the real image URL lived on a separate
-// BusinessRecord row, unreachable from the conversation itself.
-// uploadBusinessAssetFromChat (app/dashboard/ai-actions.ts) now writes it
-// into the same StoreMessage.changes field the diff-list case below
-// already uses, as { imageUrl } — the two shapes are distinguished here
-// rather than adding a second upload/reference system.
-function extractChangeList(changes: unknown): string[] | null {
-  return Array.isArray(changes) ? changes.filter((c): c is string => typeof c === "string") : null;
-}
-function extractImageUrl(changes: unknown): string | null {
-  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
-  const value = (changes as Record<string, unknown>).imageUrl;
-  return typeof value === "string" ? value : null;
-}
-// J4 Voice Memos — the same {changes} convention, one more real shape.
-// Unlike a photo's filename (disposable, purely secondary), a voice
-// memo's message content IS its real transcript — the primary channel
-// J4 is actually responding to — so rendering treats audioUrl
-// differently from imageUrl (see the message-list JSX below).
-function extractAudioUrl(changes: unknown): string | null {
-  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
-  const value = (changes as Record<string, unknown>).audioUrl;
-  return typeof value === "string" ? value : null;
-}
-// J4 Portal batch intake — a grouped multi-photo upload (uploadPhotoBatchFromChat)
-// carries the whole set on one user-turn StoreMessage, rendered as a
-// thumbnail grid rather than N separate message rows.
-function extractImageUrls(changes: unknown): string[] | null {
-  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
-  const value = (changes as Record<string, unknown>).imageUrls;
-  return Array.isArray(value) && value.every((v) => typeof v === "string") ? (value as string[]) : null;
-}
-// "Give the owner useful choices... J4 should not assume the purpose of
-// the photos" (Sean, 2026-08-08) — real, tappable options on the
-// assistant's own batch-intake reply; extractChangeList's array shape
-// already exists for a different purpose (diff lists), so this checks
-// for the same {quickReplies} object shape imageUrl/audioUrl use, not a
-// second overload of the plain-array case.
-function extractQuickReplies(changes: unknown): string[] | null {
-  if (!changes || typeof changes !== "object" || Array.isArray(changes)) return null;
-  const value = (changes as Record<string, unknown>).quickReplies;
-  return Array.isArray(value) && value.every((v) => typeof v === "string") ? (value as string[]) : null;
-}
 
 interface J4Signals {
   hasUrgentIssue: boolean;
@@ -495,305 +450,6 @@ function UploadAssetButton({
               className="rounded-full px-3 py-1 text-xs text-[rgba(244,242,251,0.5)] hover:bg-white/[.06] disabled:opacity-50"
             >
               Discard
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// J4 Voice Memos (2026-08-08) — the fourth "Add to J4" control, alongside
-// photos/documents. Recording (MediaRecorder) is architecturally distinct
-// from UploadAssetButton's file-picker flow above, so this is a separate
-// component rather than a variant of it — but the resulting blob still
-// goes through the exact same @vercel/blob/client upload() mechanism
-// before uploadVoiceMemo (a real Server Action, app/dashboard/ai-actions.ts)
-// ever sees it, same as every other real upload in this app.
-const MAX_RECORDING_SECONDS = 600; // 10 minutes — "speak naturally and at length" (Sean), not unbounded
-
-function pickSupportedVoiceMemoMimeType(): string | null {
-  if (typeof MediaRecorder === "undefined") return null;
-  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/mpeg"];
-  for (const type of candidates) {
-    if (MediaRecorder.isTypeSupported(type)) return type;
-  }
-  return null;
-}
-
-// Real Android finding (Sean's mother, 2026-08-08): tapping the mic showed
-// the generic "check your browser's permission" error, but no native
-// permission dialog ever appeared — unlike iOS. This isn't a bug in the
-// reasoning, it's real, documented cross-platform behavior: Android has
-// TWO permission layers (the browser app's own OS-level microphone
-// permission, plus the per-site browser permission), and if either is
-// already blocked, getUserMedia() rejects with NotAllowedError
-// immediately, silently, with no in-page prompt at all — nothing JS can
-// do makes the browser re-show a dialog it has already decided not to
-// show again. The only real recovery is telling the owner exactly where
-// to go fix it, and the "where" differs by platform. A coarse User-Agent
-// check is standard, accepted practice for this kind of messaging-only
-// branch (never used for anything security-relevant).
-function describeMicPermissionFix(): string {
-  if (typeof navigator === "undefined") {
-    return "Check your browser's site settings for this page, allow microphone access, then try again.";
-  }
-  const ua = navigator.userAgent;
-  if (/Android/i.test(ua)) {
-    return "Tap the lock or info icon next to the address bar, then Permissions → Microphone → Allow. If it's still blocked, check your phone's own Settings → Apps → " +
-      "(your browser) → Permissions → Microphone.";
-  }
-  if (/iPhone|iPad|iPod/i.test(ua)) {
-    return "Open the Settings app → Safari → Microphone, and set this website to Allow. Or in Safari, tap \"aA\" in the address bar → Website Settings → Microphone → Allow.";
-  }
-  return "Check your browser's site settings for this page, allow microphone access, then try again.";
-}
-
-function VoiceMemoButton({
-  uploadVoiceMemo,
-  currentPath,
-  onStart,
-  onFailure,
-  onTranscribed,
-  size = "default",
-}: {
-  uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
-  currentPath: string;
-  // Priority 3 — J4 Voice Responsiveness (2026-08-08). Fires the instant
-  // recording stops, before the blob upload or transcription call even
-  // begins — this is the real "immediate acknowledgment" moment Sean's
-  // audit found missing: previously nothing told the owner anything was
-  // happening until the ENTIRE upload+transcribe round trip finished.
-  onStart: () => void;
-  onFailure: (message: string) => void;
-  // 2026-08-08 — voice-memo streaming convergence: uploadVoiceMemo no
-  // longer drives J4's reply itself (see its own comment in
-  // app/dashboard/ai-actions.ts) — it only transcribes and hands the real
-  // text back here, for the parent to submit through the exact same
-  // streaming send path a typed message uses.
-  onTranscribed: (transcript: string, audioUrl: string) => void;
-  // Priority 4 — Just Talk (2026-08-08, scope frozen). Same component,
-  // same recording/upload/transcribe logic — only the button's own visual
-  // size changes for Just Talk's mic-primary layout, so there is exactly
-  // one voice-memo implementation, never a second "big mic" component.
-  size?: "default" | "large";
-}) {
-  const [isPending, startTransition] = useTransition();
-  const [isRecording, setIsRecording] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  // Real Android finding (2026-08-08) — a nontechnical owner stuck at a
-  // one-line error message has no obvious next step. When getUserMedia()
-  // rejects as an access-denied case (see describeMicPermissionFix's own
-  // comment), this drives a real, dismissible recovery panel instead of
-  // just another toast — platform-specific instructions plus a real "Try
-  // again" that re-attempts getUserMedia() (works for the case permission
-  // was just fixed in Settings, harmless no-op otherwise).
-  const [micBlocked, setMicBlocked] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Real bug (Sean, 2026-08-08, real iPhone Safari screenshot): every
-  // recording called getUserMedia() fresh and then, on stop, called
-  // track.stop() on it — which fully releases the hardware mic, not just
-  // this recording. The NEXT tap then had no live stream to reuse and
-  // had to request a brand new one, which is exactly the "tap Allow, tap
-  // Record again, get asked again" symptom. A granted getUserMedia
-  // permission is meant to be reusable for the page's whole lifetime;
-  // the fix is to actually reuse the stream instead of tearing it down
-  // each time, not to build any custom permission UI over Apple's own
-  // native prompt.
-  const streamRef = useRef<MediaStream | null>(null);
-
-  // Real hardware/browser resource — released the instant the component
-  // unmounts (leaving /j4) even if a recording is somehow still active,
-  // not left running in the background. This is now the ONLY place the
-  // stream's tracks get stopped — not after every individual recording.
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      const recorder = mediaRecorderRef.current;
-      if (recorder && recorder.state !== "inactive") recorder.stop();
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    };
-  }, []);
-
-  const isAvailable =
-    typeof window !== "undefined" && typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
-  // Honest absence, not a disabled-and-confusing control — same principle
-  // UploadAssetButton's own graceful-fallback comment already follows.
-  if (!isAvailable) return null;
-
-  function finishRecording() {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") return;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    setIsRecording(false);
-    recorder.stop();
-  }
-
-  async function startRecording() {
-    setMicBlocked(false);
-    try {
-      // Reuse the already-granted stream whenever it's still live —
-      // this is the real fix: only ever call getUserMedia() again if
-      // there's genuinely no usable stream (first-ever tap, or a track
-      // that's died for some real reason), never unconditionally.
-      let stream = streamRef.current;
-      const hasLiveTrack = stream?.getAudioTracks().some((track) => track.readyState === "live") ?? false;
-      if (!stream || !hasLiveTrack) {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        streamRef.current = stream;
-      }
-      const mimeType = pickSupportedVoiceMemoMimeType();
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      chunksRef.current = [];
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        // Deliberately NOT stopping the stream's tracks here anymore —
-        // see streamRef's own comment on why. The mic stays held
-        // (matching how a native app's own "record again" affordance
-        // behaves) until this component unmounts.
-        const contentType = (recorder.mimeType || "audio/webm").split(";")[0];
-        const extension = ALLOWED_VOICE_MEMO_CONTENT_TYPES[contentType] ?? "webm";
-        const blob = new Blob(chunksRef.current, { type: contentType });
-        chunksRef.current = [];
-        if (blob.size === 0) return;
-        if (blob.size > MAX_VOICE_MEMO_BYTES) {
-          onFailure("That recording is too long to upload — please keep voice memos under 20MB.");
-          return;
-        }
-        onStart();
-        startTransition(async () => {
-          const result = await callGenesisAction(async () => {
-            const uploaded = await blobUpload(`voice-memos/${randomAssetKey()}.${extension}`, blob, {
-              access: "public",
-              handleUploadUrl: "/api/blob/business-asset-upload",
-              contentType,
-            });
-            const formData = new FormData();
-            formData.set("blobUrl", uploaded.url);
-            formData.set("originalFilename", `voice-memo.${extension}`);
-            formData.set("contentType", contentType);
-            formData.set("currentPath", currentPath);
-            return uploadVoiceMemo(formData);
-          });
-          if (!result.ok) {
-            onFailure(result.message);
-          } else if (result.value) {
-            onTranscribed(result.value.transcript, result.value.audioUrl);
-          }
-        });
-      };
-
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      setIsRecording(true);
-      setElapsedSeconds(0);
-      timerRef.current = setInterval(() => {
-        setElapsedSeconds((s) => {
-          const next = s + 1;
-          if (next >= MAX_RECORDING_SECONDS) finishRecording();
-          return next;
-        });
-      }, 1000);
-    } catch (err) {
-      // Real Android finding (2026-08-08) — branch by the real DOMException
-      // name getUserMedia() actually rejects with, not one generic message
-      // for every failure. NotAllowedError is the "already blocked, no
-      // prompt will ever show again" case — that's the one that needs a
-      // real recovery panel, not a toast that vanishes with nothing the
-      // owner can act on.
-      const name = err instanceof DOMException ? err.name : "";
-      if (name === "NotAllowedError") {
-        setMicBlocked(true);
-      } else if (name === "NotFoundError") {
-        onFailure("No microphone was found on this device.");
-      } else if (name === "NotReadableError") {
-        onFailure("Your microphone is being used by another app — close it and try again.");
-      } else {
-        onFailure("Couldn't access your microphone — check your browser's permission for this site.");
-      }
-    }
-  }
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        disabled={isPending}
-        onClick={() => (isRecording ? finishRecording() : startRecording())}
-        aria-label={isRecording ? "Stop recording" : micBlocked ? "Microphone blocked — tap for help" : "Record a voice memo"}
-        title={isRecording ? "Stop recording" : micBlocked ? "Microphone blocked — tap for help" : "Record a voice memo"}
-        className={
-          size === "large"
-            ? isRecording
-              ? "flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-full bg-red-500/15 text-red-400 shadow-[0_0_28px_-6px_rgba(239,68,68,0.5)]"
-              : micBlocked
-                ? "flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-3xl text-amber-500 transition hover:bg-amber-500/25"
-                : "flex h-20 w-20 shrink-0 items-center justify-center rounded-full text-3xl text-white shadow-[0_0_28px_-6px_rgba(139,124,246,0.6)] transition-opacity hover:opacity-90 disabled:opacity-50"
-            : isRecording
-              ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-red-500/15 px-2 text-base text-red-400"
-              : micBlocked
-                ? "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg bg-amber-500/15 px-1.5 text-base text-amber-500 transition hover:bg-amber-500/25"
-                : "flex h-10 min-w-[2.5rem] shrink-0 items-center justify-center rounded-lg px-1.5 text-base text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] disabled:opacity-50"
-        }
-        style={size === "large" && !isRecording && !micBlocked ? { backgroundColor: GENESIS_ATMOSPHERE.violet } : undefined}
-      >
-        {isPending ? (
-          <span
-            className={
-              size === "large"
-                ? "inline-block h-6 w-6 animate-spin rounded-full border-2 border-current border-t-transparent"
-                : "inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
-            }
-          />
-        ) : isRecording ? (
-          <>
-            <span className={size === "large" ? "relative inline-flex h-3 w-3 shrink-0" : "relative inline-flex h-2 w-2 shrink-0"} aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
-              <span className={size === "large" ? "relative inline-flex h-3 w-3 rounded-full bg-red-500" : "relative inline-flex h-2 w-2 rounded-full bg-red-500"} />
-            </span>
-            <span className={size === "large" ? "text-sm tabular-nums" : "text-xs tabular-nums"}>
-              {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, "0")}
-            </span>
-          </>
-        ) : micBlocked ? (
-          "⚠️"
-        ) : (
-          "🎙️"
-        )}
-      </button>
-
-      {/* Absolutely positioned so this never affects the composer row's
-          own height/layout — the horizontal-scroll fix stays untouched. */}
-      {micBlocked && (
-        <div
-          className="absolute bottom-full left-0 z-10 mb-2 w-64 rounded-xl border border-amber-500/25 p-3 text-xs shadow-lg"
-          style={{ backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
-        >
-          <p className="font-medium text-amber-400">Microphone is blocked for this site</p>
-          <p className="mt-1.5 text-[rgba(244,242,251,0.75)]">{describeMicPermissionFix()}</p>
-          <div className="mt-2.5 flex gap-2">
-            <button
-              type="button"
-              onClick={() => startRecording()}
-              className="rounded-full bg-amber-500/20 px-3 py-1 text-xs font-medium text-amber-400 hover:bg-amber-500/30"
-            >
-              Try again
-            </button>
-            <button
-              type="button"
-              onClick={() => setMicBlocked(false)}
-              className="rounded-full px-3 py-1 text-xs text-[rgba(244,242,251,0.62)] hover:bg-white/[.06]"
-            >
-              Dismiss
             </button>
           </div>
         </div>
@@ -1913,34 +1569,55 @@ export function J4Workspace({
             size={justTalk ? "large" : "default"}
           />
         </div>
-        <div
-          className="flex min-w-0 w-full max-w-full items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
-          style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
-        >
-          <textarea
-            ref={messageInputRef}
-            name="message"
-            placeholder="Talk to J4 — ask, instruct, or tell J4 what you're working on…"
-            rows={1}
-            required
-            onFocus={() => setGenesisComposing(true)}
-            onBlur={() => setGenesisComposing(false)}
-            className="min-w-0 max-h-40 min-h-[2.75rem] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
-          />
-          <SubmitButton
-            // Real bug (Sean, 2026-08-08, from a real screenshot): "…" here
-            // read as a second, competing "thinking" indicator sitting
-            // inside the send button — the real one belongs only in the
-            // response area (see isStreamingPlaceholder's own four-bar
-            // indicator below). The button now stays visually identical
-            // while pending — same arrow, just dimmed via the existing
-            // disabled:opacity-50 — never a second signal of its own.
-            pendingText="→"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#8b7cf6] text-lg text-white shadow-[0_0_20px_-6px_rgba(139,124,246,0.6)] transition-opacity hover:opacity-90 disabled:opacity-50"
+        <div className="flex min-w-0 w-full max-w-full items-end gap-2">
+          {/* J4 Room doorway (2026-08-08, Phase 1) — "the small square
+              control at the bottom-left" (Sean's own words) is navigation
+              into the separate, immersive J4 Room screen, never a
+              recording control — the small J4 avatar itself (always blue,
+              never recolored) is what marks it as J4's own doorway rather
+              than a generic icon. Composer shifts right and grows to two
+              lines to make room for it, per the frozen design. Just Talk
+              (justTalk state, header toggle, mic-primary row above) stays
+              completely untouched — both entry points coexist until Room
+              fully replaces Just Talk in a later cleanup pass. */}
+          <Link
+            href="/j4/room"
+            aria-label="Enter J4 Room"
+            title="Enter J4 Room"
+            className="flex h-[4.5rem] w-[4.5rem] shrink-0 items-center justify-center rounded-2xl border-2 transition hover:opacity-90"
+            style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
           >
-            <span aria-hidden="true">→</span>
-            <span className="sr-only">Send to J4</span>
-          </SubmitButton>
+            <GenesisAvatar className={GENESIS_AVATAR_SIZE.header} />
+          </Link>
+          <div
+            className="flex min-w-0 flex-1 max-w-full items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
+            style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+          >
+            <textarea
+              ref={messageInputRef}
+              name="message"
+              placeholder="Talk to J4 — ask, instruct, or tell J4 what you're working on…"
+              rows={2}
+              required
+              onFocus={() => setGenesisComposing(true)}
+              onBlur={() => setGenesisComposing(false)}
+              className="min-w-0 max-h-40 min-h-[4.5rem] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
+            />
+            <SubmitButton
+              // Real bug (Sean, 2026-08-08, from a real screenshot): "…" here
+              // read as a second, competing "thinking" indicator sitting
+              // inside the send button — the real one belongs only in the
+              // response area (see isStreamingPlaceholder's own four-bar
+              // indicator below). The button now stays visually identical
+              // while pending — same arrow, just dimmed via the existing
+              // disabled:opacity-50 — never a second signal of its own.
+              pendingText="→"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#8b7cf6] text-lg text-white shadow-[0_0_20px_-6px_rgba(139,124,246,0.6)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              <span aria-hidden="true">→</span>
+              <span className="sr-only">Send to J4</span>
+            </SubmitButton>
+          </div>
         </div>
       </div>
     </form>
