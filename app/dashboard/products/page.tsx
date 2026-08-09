@@ -18,7 +18,7 @@ import { SubmitButton } from "../SubmitButton";
 import { AttentionCard } from "../AttentionCard";
 import { CreateProductForm } from "./CreateProductForm";
 import { EditProductForm } from "./EditProductForm";
-import { ProductPhotoUploadForm } from "./ProductPhotoUploadForm";
+import { ProductImageGallery } from "./ProductImageGallery";
 
 export default async function ProductsPage({
   searchParams,
@@ -43,6 +43,10 @@ export default async function ProductsPage({
     prisma.product.findMany({
       where: { storeId: store.id },
       orderBy: { position: "asc" },
+      // Product media gallery (2026-08-08) — real ordered images, for the
+      // admin gallery UI below. Product.imageUrl itself is untouched and
+      // stays the primary-image mirror every other reader still uses.
+      include: { images: { orderBy: { position: "asc" } } },
     }),
     canReviewApprovals ? getPendingApprovals(store.id) : Promise.resolve([]),
     // Real GenesisObservation rows (Red/Purple) whose own actionHref points
@@ -113,37 +117,16 @@ export default async function ProductsPage({
               key={product.id}
               className="flex gap-4 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]"
             >
-              <div className="flex w-32 shrink-0 flex-col gap-2">
-                {/* Real product photo only — no placeholder/fake image when
-                    one hasn't been sourced yet, matching the same honest
-                    "No image" treatment the public storefront already uses. */}
-                <div className="h-32 w-32 overflow-hidden rounded-lg bg-black/[.03] dark:bg-white/[.05]">
-                  {product.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={product.imageUrl}
-                      alt={product.name}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-center text-xs text-zinc-400">
-                      No image
-                    </div>
-                  )}
-                </div>
-
-                {/* Upload your own photo — a direct write, no approval step
-                    (see uploadProductImage's own comment). Distinct from
-                    the Genesis-proposed photos above, which still go
-                    through Approve/Reject. Beta readiness fix, 2026-08-05
-                    — previously a 96×23px, unlabeled control that a real
-                    first-time merchant reliably missed (confirmed via a
-                    live test); real label + a real touch-target size now. */}
-                {/* Real mobile bug fix (2026-08-08) — moved into a client
-                    component so the file can upload directly to Blob from
-                    the browser (ProductPhotoUploadForm.tsx's own comment
-                    has the real root cause). */}
-                <ProductPhotoUploadForm productId={product.id} hasExistingImage={!!product.imageUrl} />
+              <div className="flex w-full shrink-0 flex-col gap-2 sm:w-64">
+                {/* Product media gallery (2026-08-08) — "a proper product
+                    media gallery, not ten separate unrelated upload
+                    buttons" (Sean). Replaces the old single-photo
+                    thumbnail + upload form; up to 10 ordered images,
+                    reorder/replace/delete per image, multi-select add. */}
+                <ProductImageGallery
+                  productId={product.id}
+                  images={product.images.map((img) => ({ id: img.id, url: img.url, position: img.position }))}
+                />
               </div>
 
               <div className="min-w-0 flex-1">

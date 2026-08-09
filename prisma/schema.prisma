@@ -466,6 +466,32 @@ model Product {
 
   store  Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
   orders Order[]
+  images ProductImage[]
+}
+
+// Product media gallery (2026-08-08) — up to 10 images per product,
+// ordered. position 0 is the primary image; "reorder" and "make primary"
+// are deliberately the same real operation (move to position 0), not two
+// separate mechanisms. Product.imageUrl is kept, unchanged in shape,
+// deliberately: it's now a denormalized mirror of this table's own
+// position-0 row, kept in sync by every write path (see
+// lib/execution/executables/productImages.ts). That one decision is what
+// lets every existing reader of Product.imageUrl — the storefront hero,
+// the homepage fallback, the admin list, the chat regenerate flow, AI
+// image generation — keep working completely unchanged, automatically
+// showing the correct primary image, with zero migration needed on their
+// side. This table is the new, additional source of truth for ordering
+// and the additional (non-primary) images only.
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  url       String
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, position])
 }
 
 model NewsletterSignup {

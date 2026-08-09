@@ -17,7 +17,12 @@ import {
   deleteProductExecutable,
 } from "@/lib/execution/executables/products";
 import { toggleOrderFulfilledExecutable } from "@/lib/execution/executables/orders";
-import { updateProductImageExecutable } from "@/lib/execution/executables/updateProductImage";
+import {
+  addProductImagesExecutable,
+  reorderProductImagesExecutable,
+  deleteProductImageExecutable,
+  replaceProductImageExecutable,
+} from "@/lib/execution/executables/productImages";
 import { connectExecutable, verifyExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { grantDelegatedAuthority, revokeDelegatedAuthority } from "@/lib/execution/genesisAutonomy";
 import { logProductEvent } from "@/lib/telemetry/events";
@@ -83,16 +88,28 @@ export async function createProduct(
     // meaning the request was dying before this code ever ran). The
     // browser now uploads directly to Blob (CreateProductForm.tsx, same
     // real mechanism J4's chat uploads already use) and this action only
-    // ever receives the resulting URL — a short string, regardless of the
-    // real photo's size.
-    const imageUrlInput = (formData.get("imageUrl") as string | null)?.trim();
-    const uploadedImageUrl = imageUrlInput ? imageUrlInput : null;
+    // ever receives the resulting URLs — short strings, regardless of the
+    // real photos' size. Product media gallery (2026-08-08) — a real JSON
+    // array now (multi-select from the start), not a single optional URL.
+    let uploadedImageUrls: string[] = [];
+    const imageUrlsRaw = formData.get("imageUrls") as string | null;
+    if (imageUrlsRaw) {
+      try {
+        const parsed = JSON.parse(imageUrlsRaw);
+        if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
+          uploadedImageUrls = parsed;
+        }
+      } catch {
+        // Malformed input from a tampered client — treated the same as no
+        // photos chosen rather than failing the whole product creation.
+      }
+    }
 
     const result = await execute(createProductExecutable, {
       name,
       description: description || null,
       priceInCents,
-      uploadedImageUrl,
+      uploadedImageUrls,
     });
     // Real bug fix (2026-08-08) — execute() never throws for a business-
     // logic failure inside run(); it catches everything internally and
@@ -113,37 +130,24 @@ export async function createProduct(
   redirect("/dashboard/products");
 }
 
-// Owner-initiated upload — bypasses the ApprovalRequest workflow entirely,
-// per explicit direction: a manual upload is the owner's own direct
-// decision, unlike Genesis-generated/stock-sourced images, which continue
-// through approval (see the update_product_image chat/regenerate call
-// sites in ai-actions.ts). Reuses updateProductImageExecutable — the
-// underlying write ("set this product's image to this URL") is identical
-// regardless of where the URL came from; only the approval step differs.
-export async function uploadProductImage(productId: string, formData: FormData) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
-
-  // Real mobile bug fix (2026-08-08) — ProductPhotoUploadForm.tsx now
-  // uploads directly to Blob client-side (same real mechanism J4's chat
-  // uploads already use) and hands this action only the resulting URL,
-  // never the file itself — see that component's own comment for why the
-  // old File-through-the-Server-Action-body path silently failed above
-  // Vercel's platform 4.5MB ceiling on a real phone photo.
-  const imageUrl = (formData.get("imageUrl") as string | null)?.trim();
-  if (!imageUrl) {
-    throw new Error("Please choose an image to upload");
-  }
-
-  const result = await execute(updateProductImageExecutable, { productId, imageUrl }, { storeId });
-  if (result.status === "FAILED") {
-    throw new Error(result.message);
-  }
-
-  // A manual upload supersedes any still-pending Genesis-proposed image for
-  // this exact product — the owner just made their own direct decision, so
-  // an old proposed candidate left pending would be stale and confusing,
-  // not useful. Scoped to this product's id, same as every other
-  // update_product_image supersede in this codebase.
+// Product media gallery (2026-08-08) — plain callable Server Actions
+// (never a <form action>/redirect pattern like the actions above), meant
+// to be invoked directly from ProductImageGallery.tsx's own client code
+// via callGenesisAction, the same real pattern J4's own upload flows
+// already use. Each urls/url argument is already a real, final, direct-
+// to-Blob-uploaded URL by the time it reaches here — these actions never
+// see file bytes, only strings, so none of them can hit the platform body
+// ceiling the mobile upload bug was rooted in. No redirect: the gallery
+// stays on the same page and re-renders from the real returned/refreshed
+// data instead of a full navigation, since a delete/reorder/replace click
+// should feel instant, not trigger a page reload.
+// Same real behavior uploadProductImage always had (preserved here, not
+// dropped, when that single-photo form was replaced by the gallery below)
+// — a manual choice about a product's own primary photo supersedes any
+// still-pending Genesis-proposed image for that exact product; an old
+// proposed candidate left pending would be stale and confusing once the
+// owner has already made their own direct decision.
+async function supersedePendingImageApproval(storeId: string, productId: string) {
   await prisma.approvalRequest.deleteMany({
     where: {
       storeId,
@@ -152,8 +156,48 @@ export async function uploadProductImage(productId: string, formData: FormData) 
       input: { path: ["productId"], equals: productId },
     },
   });
+}
 
-  redirect("/dashboard/products");
+export async function addProductImages(productId: string, urls: string[]) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+  const existingCount = await prisma.productImage.count({ where: { productId } });
+  const result = await execute(addProductImagesExecutable, { productId, urls }, { storeId });
+  if (result.status === "FAILED") {
+    throw new Error(result.message);
+  }
+  // Only the first image(s) on a previously-empty product actually change
+  // the primary — see addProductImagesExecutable's own identical check.
+  if (existingCount === 0) {
+    await supersedePendingImageApproval(storeId, productId);
+  }
+}
+
+export async function reorderProductImages(productId: string, orderedImageIds: string[]) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+  const result = await execute(reorderProductImagesExecutable, { productId, orderedImageIds }, { storeId });
+  if (result.status === "FAILED") {
+    throw new Error(result.message);
+  }
+}
+
+export async function deleteProductImage(imageId: string) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+  const result = await execute(deleteProductImageExecutable, { imageId }, { storeId });
+  if (result.status === "FAILED") {
+    throw new Error(result.message);
+  }
+}
+
+export async function replaceProductImage(imageId: string, url: string) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+  const image = await prisma.productImage.findUnique({ where: { id: imageId }, select: { productId: true, position: true } });
+  const result = await execute(replaceProductImageExecutable, { imageId, url }, { storeId });
+  if (result.status === "FAILED") {
+    throw new Error(result.message);
+  }
+  if (image?.position === 0) {
+    await supersedePendingImageApproval(storeId, image.productId);
+  }
 }
 
 export async function editStore(

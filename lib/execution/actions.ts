@@ -10,6 +10,12 @@ export const EXECUTION_ACTIONS = {
   PRODUCT_DELETE: "product.delete",
   PRODUCT_TOGGLE_ACTIVE: "product.toggle_active",
   PRODUCT_UPDATE_IMAGE: "product.update_image",
+  // Product media gallery (2026-08-08) — up to 10 ordered images per
+  // product, see lib/execution/executables/productImages.ts.
+  PRODUCT_ADD_IMAGES: "product.add_images",
+  PRODUCT_REORDER_IMAGES: "product.reorder_images",
+  PRODUCT_DELETE_IMAGE: "product.delete_image",
+  PRODUCT_REPLACE_IMAGE: "product.replace_image",
   ORDER_TOGGLE_FULFILLED: "order.toggle_fulfilled",
   INTEGRATION_STRIPE_CONNECT: "integration.stripe.connect",
   INTEGRATION_STRIPE_VERIFY: "integration.stripe.verify",

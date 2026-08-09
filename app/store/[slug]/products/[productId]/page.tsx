@@ -16,12 +16,12 @@ import {
   type Theme,
 } from "@/lib/theme";
 import {
-  ProductImage,
   canStoreAcceptPayments,
   CHECKOUT_UNAVAILABLE_MESSAGE,
   type Blueprint,
   type ProductRichContent,
 } from "../../shared";
+import { ProductGallery } from "./ProductGallery";
 
 export async function generateMetadata({
   params,
@@ -56,6 +56,10 @@ export default async function ProductDetailPage({
 
   const product = await prisma.product.findFirst({
     where: { id: productId, storeId: store.id, active: true },
+    // Product media gallery (2026-08-08) — real ordered images for
+    // ProductGallery below. Product.imageUrl itself is untouched and
+    // stays the primary-image source of truth for every other reader.
+    include: { images: { orderBy: { position: "asc" } } },
   });
   if (!product) {
     notFound();
@@ -88,11 +92,11 @@ export default async function ProductDetailPage({
         </Link>
 
         <div className="mt-6 grid grid-cols-1 gap-10 md:grid-cols-2">
-          <div
+          <ProductGallery
+            images={product.images.length > 0 ? product.images : product.imageUrl ? [{ url: product.imageUrl }] : []}
+            productName={product.name}
             className={`aspect-square w-full overflow-hidden bg-[var(--brand-text)]/[.05] ${imageFrameClass(theme, cardRadius)} ${shadow}`}
-          >
-            <ProductImage product={product} className="h-full w-full object-cover" />
-          </div>
+          />
 
           <div>
             {/* Deliberately not wired to typeScale: this heading was

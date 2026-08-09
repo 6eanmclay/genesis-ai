@@ -26,9 +26,14 @@ export interface CreateProductInput {
   // That meant a real phone photo's bytes had to survive the Server
   // Action's own request body first, hard-capped at Vercel's platform-
   // level 4.5MB Function payload ceiling. The browser now uploads directly
-  // to Blob (CreateProductForm.tsx) before this executable ever runs; it
-  // receives only the resulting URL.
-  uploadedImageUrl?: string | null;
+  // to Blob (CreateProductForm.tsx) before this executable ever runs.
+  //
+  // Product media gallery (2026-08-08) — plural now: the create form
+  // supports selecting several images at once, per Sean's explicit "the
+  // upload flow must support selecting multiple images at once" and "do
+  // not make the 10-image feature dependent on uploading images one at a
+  // time." Empty array behaves exactly like the old null case.
+  uploadedImageUrls?: string[];
 }
 
 // Same logic createProduct always had (position by current count,
@@ -39,10 +44,10 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
   async run(input, ctx) {
     const productCount = await prisma.product.count({ where: { storeId: ctx.storeId } });
 
-    let imageUrl: string | null;
+    let imageUrls: string[];
     let generationPrompt: string | undefined;
-    if (input.uploadedImageUrl) {
-      imageUrl = input.uploadedImageUrl;
+    if (input.uploadedImageUrls && input.uploadedImageUrls.length > 0) {
+      imageUrls = input.uploadedImageUrls;
     } else {
       const sourced = await resolveProductImage({
         prompt: input.description || input.name,
@@ -52,7 +57,7 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
         scope: { storeId: ctx.storeId },
         feature: "product_image_generation",
       });
-      imageUrl = sourced?.url ?? null;
+      imageUrls = sourced?.url ? [sourced.url] : [];
       generationPrompt = sourced?.generationPrompt;
     }
 
@@ -63,13 +68,24 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
         description: input.description,
         priceInCents: input.priceInCents,
         position: productCount,
-        imageUrl,
+        imageUrl: imageUrls[0] ?? null,
         // Preserves a generated image's prompt the same way
         // updateProductImageExecutable does — see its own comment. Never
         // set for an owner-uploaded photo — there's no prompt behind it.
         ...(generationPrompt ? { richContent: { imagePrompt: generationPrompt } } : {}),
       },
     });
+    // Product media gallery (2026-08-08) — every image this product is
+    // created with (uploaded or AI-generated) becomes a real ProductImage
+    // row too, not just the Product.imageUrl scalar, so a freshly created
+    // product participates in the same gallery model a backfilled one
+    // does from the start — never a product that only gets a real gallery
+    // once someone separately uses the "Add photos" control.
+    if (imageUrls.length > 0) {
+      await prisma.productImage.createMany({
+        data: imageUrls.map((url, i) => ({ productId: product.id, url, position: i })),
+      });
+    }
     return {
       message: `Added product "${product.name}"`,
       metadata: { productId: product.id, name: product.name, priceInCents: product.priceInCents },

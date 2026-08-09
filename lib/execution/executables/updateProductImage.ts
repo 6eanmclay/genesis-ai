@@ -42,6 +42,26 @@ export const updateProductImageExecutable: Executable<UpdateProductImageInput, P
       where: { id: input.productId, storeId: ctx.storeId },
       data: { imageUrl: input.imageUrl, ...(richContent ? { richContent } : {}) },
     });
+
+    // Product media gallery (2026-08-08) — this executable predates the
+    // gallery and only ever wrote Product.imageUrl directly; without this,
+    // a chat-approved photo replacement would desync the scalar column
+    // from the ProductImage table's own position-0 row (the real source
+    // every gallery UI reads from), silently reverting to the old photo
+    // the next time anything reads the gallery instead of imageUrl
+    // directly. Same real operation as ReplaceProductImageInput's own
+    // primary-image case: update the existing position-0 row in place, or
+    // create one if this product had no images at all yet.
+    const existingPrimary = await prisma.productImage.findFirst({
+      where: { productId: input.productId },
+      orderBy: { position: "asc" },
+    });
+    if (existingPrimary) {
+      await prisma.productImage.update({ where: { id: existingPrimary.id }, data: { url: input.imageUrl } });
+    } else {
+      await prisma.productImage.create({ data: { productId: input.productId, url: input.imageUrl, position: 0 } });
+    }
+
     return {
       message: `Updated image for "${product.name}"`,
       metadata: { productId: product.id, name: product.name },
