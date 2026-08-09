@@ -115,11 +115,21 @@ export default async function ProductsPage({
           No products yet. Add your first one below.
         </p>
       ) : (
-        <ul className="mt-4 flex max-w-md flex-col gap-4">
+        <ul className="mt-4 flex max-w-4xl flex-col gap-4">
           {products.map((product) => (
             <li
               key={product.id}
-              className="flex gap-4 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]"
+              // Responsive layout fix (2026-08-09) — "cuts off the
+              // description almost entirely" on mobile, "only a few words
+              // visible at a time" on desktop (Sean). The real bug: this
+              // was always a row (`flex gap-4`), so a mobile-width gallery
+              // column fighting a flex-1 sibling for the same narrow row
+              // is exactly what squeezed the description to nothing.
+              // flex-col below sm: (Sean's exact order: gallery, name,
+              // price, description, save) / sm:flex-row for a real
+              // two-column desktop layout, now inside a wide enough <ul>
+              // for the description to actually have room.
+              className="flex flex-col gap-4 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145] sm:flex-row"
             >
               <div className="flex w-full shrink-0 flex-col gap-2 sm:w-64">
                 {/* Product media gallery (2026-08-08) — "a proper product
