@@ -1,4 +1,8 @@
+"use client";
+
+import { useState } from "react";
 import { FIELD_LABELS } from "@/lib/execution/fieldLabels";
+import { ImageLightbox } from "@/app/dashboard/ImageLightbox";
 
 // Meeting with J4 M2 — extracted from ApprovalRequestsPanel.tsx so any
 // future caller (the meeting's inline explain/approve/execute UI) renders
@@ -7,6 +11,14 @@ import { FIELD_LABELS } from "@/lib/execution/fieldLabels";
 // no changes here — it renders correctly the moment it's added to
 // GENESIS_ACTIONS/FIELD_LABELS, the same guarantee this already held
 // before the extraction, just no longer only true for one caller.
+//
+// "use client" (2026-08-09) — the image-diff preview below needs real tap-
+// to-inspect state (ImageLightbox): "J4 is now going to be able to
+// recommend product-photo changes. I need to be able to inspect those
+// photos properly before approving them" (Sean). This file has zero
+// server-only dependencies (see fieldLabels.ts's own comment), so it was
+// always safe to render from either a Server or Client Component — this
+// just makes that explicit and adds the one real interactive island.
 export const HIDDEN_DIFF_KEYS = new Set(["productId"]);
 
 // A plain string array (e.g. coreValues, brandKeywords) formatted for one
@@ -39,6 +51,11 @@ export function ActionDiffRows({
   previousValues: Record<string, unknown>;
 }) {
   const diffKeys = Object.keys(input).filter((key) => !HIDDEN_DIFF_KEYS.has(key));
+  // "I need to be able to inspect those photos properly before approving
+  // them" (Sean) — 0 opens Current large, 1 opens Proposed large; null is
+  // closed. Real DB URLs only (a missing side renders "No image," never a
+  // lightbox entry), so the index always matches ImageLightbox's own array.
+  const [openImageIndex, setOpenImageIndex] = useState<number | null>(null);
 
   return (
     <dl className="mt-2 flex flex-col gap-2">
@@ -47,6 +64,13 @@ export function ActionDiffRows({
         const proposed = input[key];
 
         if (key === "imageUrl") {
+          const lightboxImages = [
+            ...(typeof previous === "string" ? [{ id: "current", url: previous }] : []),
+            ...(typeof proposed === "string" ? [{ id: "proposed", url: proposed }] : []),
+          ];
+          // Current is always lightboxImages[0] when present; Proposed is
+          // whichever slot follows it — never assume a fixed index.
+          const proposedLightboxIndex = typeof previous === "string" ? 1 : 0;
           return (
             <div key={key} className="text-xs">
               <dt className="font-medium text-zinc-500">{FIELD_LABELS[key] ?? key}</dt>
@@ -58,7 +82,8 @@ export function ActionDiffRows({
                     <img
                       src={previous}
                       alt="Current product"
-                      className="aspect-square w-full rounded-md object-cover"
+                      onClick={() => setOpenImageIndex(0)}
+                      className="aspect-square w-full cursor-zoom-in rounded-md object-cover"
                     />
                   ) : (
                     <div className="flex aspect-square w-full items-center justify-center rounded-md bg-black/[.03] text-zinc-400 dark:bg-white/[.05]">
@@ -73,7 +98,8 @@ export function ActionDiffRows({
                     <img
                       src={proposed}
                       alt="Proposed product"
-                      className="aspect-square w-full rounded-md object-cover"
+                      onClick={() => setOpenImageIndex(proposedLightboxIndex)}
+                      className="aspect-square w-full cursor-zoom-in rounded-md object-cover"
                     />
                   ) : (
                     <div className="flex aspect-square w-full items-center justify-center rounded-md bg-black/[.03] text-zinc-400 dark:bg-white/[.05]">
@@ -82,6 +108,9 @@ export function ActionDiffRows({
                   )}
                 </div>
               </div>
+              {openImageIndex !== null && (
+                <ImageLightbox images={lightboxImages} startIndex={openImageIndex} onClose={() => setOpenImageIndex(null)} />
+              )}
             </div>
           );
         }

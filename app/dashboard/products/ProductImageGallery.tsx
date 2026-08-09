@@ -12,11 +12,20 @@
 // mobile upload-bug fix already proved out) — the Server Actions this
 // calls only ever receive already-final URLs, never file bytes, so this
 // UI can never reintroduce the platform 4.5MB body-limit failure.
+//
+// Lightbox (2026-08-09) — "I have to hit the little arrow every single
+// time... I want the gallery to behave like a modern image gallery" (Sean),
+// made concrete by a real need: J4 can now propose product-photo changes,
+// and the owner has to actually inspect a photo before approving it. Tap
+// any thumbnail to open it large, drag/swipe to move between images — the
+// tiny per-thumbnail arrows stay exactly where they are, as secondary
+// reorder controls, never the only way to browse.
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { addProductImages, reorderProductImages, deleteProductImage, replaceProductImage } from "../actions";
+import { ImageLightbox } from "../ImageLightbox";
 
 const MAX_IMAGES = 10;
 
@@ -51,6 +60,7 @@ export function ProductImageGallery({ productId, images }: { productId: string; 
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ succeeded: number; total: number } | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const replaceTargetId = useRef<string | null>(null);
@@ -141,10 +151,20 @@ export function ProductImageGallery({ productId, images }: { productId: string; 
         <div className="flex flex-wrap gap-2">
           {ordered.map((image, i) => (
             <div key={image.id} className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-black/[.03] dark:bg-white/[.05]">
+              {/* Tap to inspect large — the primary way to browse now.
+                  Listener lives on the image itself, not the wrapping div,
+                  so a tap on any of the overlay buttons below (siblings,
+                  not descendants of this img) never also opens the
+                  lightbox. */}
               {/* eslint-disable-next-line @next/next/no-img-element -- Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config, same reasoning as every other Blob-sourced image in this app */}
-              <img src={image.url} alt="" className="h-full w-full object-cover" />
+              <img
+                src={image.url}
+                alt=""
+                onClick={() => setLightboxIndex(i)}
+                className="h-full w-full cursor-zoom-in object-cover"
+              />
               {i === 0 && (
-                <span className="absolute left-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[9px] font-medium text-white">
+                <span className="pointer-events-none absolute left-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[9px] font-medium text-white">
                   Primary
                 </span>
               )}
@@ -231,6 +251,10 @@ export function ProductImageGallery({ productId, images }: { productId: string; 
         </span>
       )}
       {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+
+      {lightboxIndex !== null && (
+        <ImageLightbox images={ordered} startIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />
+      )}
     </div>
   );
 }
