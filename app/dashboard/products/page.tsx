@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
-import { toggleProductActive, deleteProduct, uploadProductImage } from "../actions";
+import { toggleProductActive, deleteProduct } from "../actions";
 import {
   approveGenesisAction,
   rejectGenesisAction,
@@ -18,6 +18,7 @@ import { SubmitButton } from "../SubmitButton";
 import { AttentionCard } from "../AttentionCard";
 import { CreateProductForm } from "./CreateProductForm";
 import { EditProductForm } from "./EditProductForm";
+import { ProductPhotoUploadForm } from "./ProductPhotoUploadForm";
 
 export default async function ProductsPage({
   searchParams,
@@ -138,31 +139,11 @@ export default async function ProductsPage({
                     — previously a 96×23px, unlabeled control that a real
                     first-time merchant reliably missed (confirmed via a
                     live test); real label + a real touch-target size now. */}
-                {/* No explicit encType here — React manages it
-                    automatically for a function action and errors if it's
-                    set manually; file inputs still submit correctly as
-                    part of the FormData React builds for the action. */}
-                <form
-                  action={uploadProductImage.bind(null, product.id)}
-                  className="flex flex-col gap-1"
-                >
-                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                    {product.imageUrl ? "Change photo" : "Add photo"}
-                  </span>
-                  <input
-                    type="file"
-                    name="image"
-                    accept="image/png,image/jpeg,image/webp"
-                    required
-                    className="w-full text-xs text-zinc-500 file:mr-1 file:rounded-full file:border-0 file:bg-black/[.05] file:px-3 file:py-2 file:text-xs file:font-medium file:text-black hover:file:bg-black/[.08] dark:text-zinc-400 dark:file:bg-white/[.1] dark:file:text-zinc-50 dark:hover:file:bg-white/[.15]"
-                  />
-                  <SubmitButton
-                    pendingText="Uploading..."
-                    className="w-full rounded-full bg-black/[.05] px-3 py-2 text-xs font-medium text-black hover:bg-black/[.08] disabled:opacity-50 dark:bg-white/[.1] dark:text-zinc-50 dark:hover:bg-white/[.15]"
-                  >
-                    Upload photo
-                  </SubmitButton>
-                </form>
+                {/* Real mobile bug fix (2026-08-08) — moved into a client
+                    component so the file can upload directly to Blob from
+                    the browser (ProductPhotoUploadForm.tsx's own comment
+                    has the real root cause). */}
+                <ProductPhotoUploadForm productId={product.id} hasExistingImage={!!product.imageUrl} />
               </div>
 
               <div className="min-w-0 flex-1">

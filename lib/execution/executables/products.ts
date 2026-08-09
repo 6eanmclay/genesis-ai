@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
-import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
 
@@ -21,7 +20,15 @@ export interface CreateProductInput {
   // resolveProductImage's AI-generation/stock-search chain never runs at
   // all — no paid AI call, no image the owner didn't ask for. Null (the
   // default, unset field) preserves the original behavior exactly.
-  uploadedImage?: File | null;
+  //
+  // Real mobile bug fix (2026-08-08) — this used to be `uploadedImage:
+  // File | null`, uploaded to Blob server-side inside this executable.
+  // That meant a real phone photo's bytes had to survive the Server
+  // Action's own request body first, hard-capped at Vercel's platform-
+  // level 4.5MB Function payload ceiling. The browser now uploads directly
+  // to Blob (CreateProductForm.tsx) before this executable ever runs; it
+  // receives only the resulting URL.
+  uploadedImageUrl?: string | null;
 }
 
 // Same logic createProduct always had (position by current count,
@@ -34,9 +41,8 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
 
     let imageUrl: string | null;
     let generationPrompt: string | undefined;
-    if (input.uploadedImage) {
-      const uploaded = await uploadProductImageFile(input.uploadedImage);
-      imageUrl = uploaded.url;
+    if (input.uploadedImageUrl) {
+      imageUrl = input.uploadedImageUrl;
     } else {
       const sourced = await resolveProductImage({
         prompt: input.description || input.name,

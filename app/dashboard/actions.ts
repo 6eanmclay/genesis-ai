@@ -18,7 +18,6 @@ import {
 } from "@/lib/execution/executables/products";
 import { toggleOrderFulfilledExecutable } from "@/lib/execution/executables/orders";
 import { updateProductImageExecutable } from "@/lib/execution/executables/updateProductImage";
-import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
 import { connectExecutable, verifyExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { grantDelegatedAuthority, revokeDelegatedAuthority } from "@/lib/execution/genesisAutonomy";
 import { logProductEvent } from "@/lib/telemetry/events";
@@ -75,21 +74,37 @@ export async function createProduct(
       throw new RecoverableError("Enter a valid price");
     }
 
-    // Beta readiness fix — a real photo field on the creation form itself
-    // (previously only reachable after the fact, on the products list, in
-    // a control small and unlabeled enough that a first-time merchant
-    // reliably missed it — see CreateProductForm.tsx's own comment). An
-    // empty file input still submits a real File of size 0, never
-    // undefined, so size is the real "did they attach one" check.
-    const imageFile = formData.get("image");
-    const uploadedImage = imageFile instanceof File && imageFile.size > 0 ? imageFile : null;
+    // Real mobile bug fix (2026-08-08) — this used to receive the raw File
+    // itself and upload it server-side, which meant a real phone photo's
+    // bytes had to survive this Server Action's own request body — hard-
+    // capped by Vercel's platform-level 4.5MB Function payload ceiling
+    // (confirmed against Vercel's current docs; ExecutionLog showed zero
+    // FAILED product.create rows despite a real reported mobile failure,
+    // meaning the request was dying before this code ever ran). The
+    // browser now uploads directly to Blob (CreateProductForm.tsx, same
+    // real mechanism J4's chat uploads already use) and this action only
+    // ever receives the resulting URL — a short string, regardless of the
+    // real photo's size.
+    const imageUrlInput = (formData.get("imageUrl") as string | null)?.trim();
+    const uploadedImageUrl = imageUrlInput ? imageUrlInput : null;
 
-    await execute(createProductExecutable, {
+    const result = await execute(createProductExecutable, {
       name,
       description: description || null,
       priceInCents,
-      uploadedImage,
+      uploadedImageUrl,
     });
+    // Real bug fix (2026-08-08) — execute() never throws for a business-
+    // logic failure inside run(); it catches everything internally and
+    // returns a FAILED ExecutionResult instead (see engine.ts's own doc
+    // comment). This result was previously discarded entirely — ANY
+    // failure inside createProductExecutable.run() (an image upload
+    // rejected, or anything else) silently redirected to the products list
+    // as if the product had been created, with nothing actually saved and
+    // no error shown at all.
+    if (result.status === "FAILED") {
+      throw new RecoverableError(result.message);
+    }
   } catch (error) {
     unstable_rethrow(error);
     return toActionState(error, formData);
@@ -108,13 +123,21 @@ export async function createProduct(
 export async function uploadProductImage(productId: string, formData: FormData) {
   const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
 
-  const file = formData.get("image");
-  if (!(file instanceof File) || file.size === 0) {
+  // Real mobile bug fix (2026-08-08) — ProductPhotoUploadForm.tsx now
+  // uploads directly to Blob client-side (same real mechanism J4's chat
+  // uploads already use) and hands this action only the resulting URL,
+  // never the file itself — see that component's own comment for why the
+  // old File-through-the-Server-Action-body path silently failed above
+  // Vercel's platform 4.5MB ceiling on a real phone photo.
+  const imageUrl = (formData.get("imageUrl") as string | null)?.trim();
+  if (!imageUrl) {
     throw new Error("Please choose an image to upload");
   }
 
-  const sourced = await uploadProductImageFile(file);
-  await execute(updateProductImageExecutable, { productId, imageUrl: sourced.url }, { storeId });
+  const result = await execute(updateProductImageExecutable, { productId, imageUrl }, { storeId });
+  if (result.status === "FAILED") {
+    throw new Error(result.message);
+  }
 
   // A manual upload supersedes any still-pending Genesis-proposed image for
   // this exact product — the owner just made their own direct decision, so
