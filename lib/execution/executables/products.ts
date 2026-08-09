@@ -93,20 +93,36 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
   },
 };
 
-interface EditProductInput {
+// J4 approvable product content changes (2026-08-09) — "if J4 can perform
+// the change, J4 should perform the change after I approve it... product
+// names, descriptions" (Sean). name/description/priceInCents are now
+// individually optional (only productId is required) so a real chat-
+// driven proposal (request_product_content_change, app/api/chat/route.ts)
+// can carry just the field(s) it's actually changing — an owner asking
+// J4 to improve a product's name shouldn't force a redundant "Price:
+// $19.99 -> $19.99" row into the approval diff. The existing manual edit
+// form (EditProductForm.tsx -> editProduct, app/dashboard/actions.ts)
+// always sends all three fields — this stays a no-op change for that
+// real, already-working call site.
+export interface EditProductInput {
   productId: string;
-  name: string;
-  description: string | null;
-  priceInCents: number;
+  name?: string;
+  description?: string | null;
+  priceInCents?: number;
 }
 
 export const editProductExecutable: Executable<EditProductInput, ProductMetadata> = {
   action: EXECUTION_ACTIONS.PRODUCT_EDIT,
   requiredPermission: PERMISSIONS.PRODUCTS_MANAGE,
   async run(input, ctx) {
+    const data: { name?: string; description?: string | null; priceInCents?: number } = {};
+    if (input.name !== undefined) data.name = input.name;
+    if (input.description !== undefined) data.description = input.description;
+    if (input.priceInCents !== undefined) data.priceInCents = input.priceInCents;
+
     const product = await prisma.product.update({
       where: { id: input.productId, storeId: ctx.storeId },
-      data: { name: input.name, description: input.description, priceInCents: input.priceInCents },
+      data,
     });
     return {
       message: `Updated product "${product.name}"`,

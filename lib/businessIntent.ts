@@ -67,6 +67,10 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   hero_image_query: "create_marketing",
   stock_image_query_reformulation: "create_marketing",
   product_image_generation: "create_product",
+  // Same real kind of work as product_image_generation — J4 preparing a
+  // real, approvable change to an existing product, just text instead of
+  // an image.
+  product_content_generation: "improve_store",
   business_icon_generation: "improve_store",
   onboarding_business_model_classification: "build_business",
   onboarding_brand_positioning_classification: "build_business",

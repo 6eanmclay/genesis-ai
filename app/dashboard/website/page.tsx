@@ -20,7 +20,7 @@ import {
 import { SubmitButton } from "../SubmitButton";
 import { VisualProposal } from "../VisualProposal";
 import { HeroMock } from "../HeroMock";
-import { AttentionCard } from "../AttentionCard";
+import { AttentionCardList } from "../AttentionCardList";
 import { FieldValueList } from "../FieldValueList";
 import { StringListView } from "../StringListView";
 import { FaqListView } from "../FaqListView";
@@ -387,21 +387,19 @@ export default async function WebsitePage({
           <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis noticed ({websiteObservationCards.length})
           </h2>
-          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
-            {websiteObservationCards.map((card) => (
-              <AttentionCard
-                key={card.id}
-                card={card}
-                approveAction={approveGenesisAction}
-                rejectAction={rejectGenesisAction}
-                issueAction={startIssueConversation}
-                discoveryAction={startDiscoveryConversation}
-                taskAction={startTaskConversation}
-                highlightId={focus}
-                dismissAction={dismissAttentionCard}
-                currentPath="/dashboard/website"
-              />
-            ))}
+          <div className="mt-3">
+            <AttentionCardList
+              cards={websiteObservationCards}
+              approveAction={approveGenesisAction}
+              rejectAction={rejectGenesisAction}
+              approveGroupAction={approveGenesisActionGroup}
+              issueAction={startIssueConversation}
+              discoveryAction={startDiscoveryConversation}
+              taskAction={startTaskConversation}
+              highlightId={focus}
+              dismissAction={dismissAttentionCard}
+              currentPath="/dashboard/website"
+            />
           </div>
         </>
       )}

@@ -54,6 +54,8 @@ import {
   type CreateProductInput,
   deleteProductExecutable,
   type DeleteProductInput,
+  editProductExecutable,
+  type EditProductInput,
 } from "./executables/products";
 
 // The minimal subset of Store.blueprint relevant to the actions registered
@@ -117,7 +119,7 @@ export interface BlueprintContextSubset {
 // relevant to the action(s) it's creating and leaves the rest absent.
 export interface GenesisActionContext {
   blueprint: BlueprintContextSubset | null;
-  product?: { id: string; name: string; imageUrl: string | null } | null;
+  product?: { id: string; name: string; imageUrl: string | null; description?: string | null } | null;
   theme?: Theme | null;
   storeIdentity?: { name: string; tagline: string | null; description: string | null } | null;
   // Phase 3 Milestone 6 — same "one context field per record-scoped action
@@ -299,6 +301,7 @@ export const GENESIS_ACTIONS: Record<
     | CommunicateFindingInput
     | CreateProductInput
     | DeleteProductInput
+    | EditProductInput
   >
 > = {
   update_seo: {
@@ -349,6 +352,34 @@ export const GENESIS_ACTIONS: Record<
     getCurrentValues: ({ product }) => ({
       productId: product?.id ?? "",
       imageUrl: product?.imageUrl ?? "",
+    }),
+    category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  // "J4 is already giving good recommendations about the products. But
+  // right now it is saying things like 'you paste the winners into each
+  // product's name field.' I do not want that... if J4 can perform the
+  // change, J4 should perform the change after I approve it" (Sean,
+  // 2026-08-09) — the same real gap the delete_product entry above
+  // documents its own discovery of, one milestone later: editProductExecutable
+  // already existed, wired only to the owner's own manual Edit form. This
+  // registers it for Genesis the same way, no new execution machinery.
+  // name/description both optional in the schema — a real proposal only
+  // ever carries the field(s) it's actually changing (see
+  // request_product_content_change, app/api/chat/route.ts), so the diff
+  // shown to the owner never pads in an unrelated unchanged field.
+  update_product: {
+    executable: editProductExecutable,
+    inputSchema: z.object({
+      productId: z.string(),
+      name: z.string().optional(),
+      description: z.string().nullable().optional(),
+    }),
+    getCurrentValues: ({ product }) => ({
+      productId: product?.id ?? "",
+      name: product?.name ?? "",
+      description: product?.description ?? null,
     }),
     category: "content",
     authorizationTier: "always_ask",
@@ -671,6 +702,7 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_hero: { key: "website", label: "Website", href: "/dashboard/website" },
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },
+  update_product: { key: "products", label: "Products", href: "/dashboard/products" },
   create_product: { key: "products", label: "Products", href: "/dashboard/products" },
   delete_product: { key: "products", label: "Products", href: "/dashboard/products" },
   update_theme: { key: "website", label: "Website", href: "/dashboard/website" },

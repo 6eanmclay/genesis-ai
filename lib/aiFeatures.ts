@@ -46,6 +46,11 @@ export const AI_FEATURES = [
   "stock_image_query_reformulation",
   "product_image_generation",
   "business_icon_generation",
+  // J4 approvable product content changes (2026-08-09) — real, grounded
+  // name/description suggestions for one or more existing products,
+  // generated once request_product_content_change resolves scope (see
+  // lib/execution/productContentGeneration.ts).
+  "product_content_generation",
   // Onboarding v2 / activation flow (app/onboarding/actions.ts)
   "onboarding_business_model_classification",
   "onboarding_brand_positioning_classification",

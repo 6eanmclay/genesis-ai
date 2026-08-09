@@ -16,6 +16,7 @@ import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
+import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import {
   buildStoreChatUnifiedTools,
   firstToolUse,
@@ -23,6 +24,7 @@ import {
   type BusinessFactCaptureInput,
   type RequestImageChangeInput,
   type RequestProductRemovalInput,
+  type RequestProductContentChangeInput,
   type ManageBusinessAssetInput,
 } from "@/lib/execution/genesisTools";
 import {
@@ -818,6 +820,127 @@ export async function POST(request: Request) {
           emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "product_removal_request" });
+          controller.close();
+          return;
+        }
+
+        // J4 approvable product content changes (2026-08-09) — "if J4 can
+        // perform the change, J4 should perform the change after I
+        // approve it... product names, descriptions" (Sean, real feedback
+        // after J4 told him to paste suggested names in by hand). Same
+        // real "resolve scope, then a focused generation call, then one
+        // ApprovalRequest per resolved product sharing a groupId" shape as
+        // request_image_change above — update_product (genesisActions.ts)
+        // is the real, already-existing executable this proposes into,
+        // same Approve action Products already has.
+        if (chosenTool?.name === "request_product_content_change") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "request_product_content_change" });
+          emit({ type: "status", text: "Preparing suggestions…" });
+          const input = chosenTool.input as RequestProductContentChangeInput;
+          const targetProducts =
+            input.scope === "all"
+              ? currentProducts
+              : input.scope === "specific"
+                ? currentProducts.filter((p) =>
+                    (input.productNames ?? []).map((n) => n.trim().toLowerCase()).includes(p.name.trim().toLowerCase())
+                  )
+                : [];
+
+          if (targetProducts.length === 0) {
+            const clarification =
+              input.scope === "specific"
+                ? `I want to make sure I work on the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
+                : conversationalReply || "Which product would you like me to work on?";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
+            if (!streamedAnyText) emit({ type: "token", delta: clarification });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "product_content_change_request" });
+            controller.close();
+            return;
+          }
+
+          const suggestions = await generateProductContentChanges({
+            storeId: store.id,
+            products: targetProducts.map((p) => ({ id: p.id, name: p.name, description: p.description, priceInCents: p.priceInCents })),
+            changeType: input.changeType,
+            ownerRequest: userMessage,
+          });
+
+          const groupId = randomUUID();
+          const proposed: { id: string; name: string }[] = [];
+          const unchanged: string[] = [];
+          for (const product of targetProducts) {
+            const suggestion = suggestions.find((s) => s.productId === product.id);
+            const changedFields: { name?: string; description?: string | null } = {};
+            if (suggestion?.name && suggestion.name.trim() && suggestion.name.trim() !== product.name) {
+              changedFields.name = suggestion.name.trim();
+            }
+            if (
+              input.changeType !== "name" &&
+              suggestion?.description &&
+              suggestion.description.trim() &&
+              suggestion.description.trim() !== (product.description ?? "")
+            ) {
+              changedFields.description = suggestion.description.trim();
+            }
+
+            if (Object.keys(changedFields).length === 0) {
+              unchanged.push(product.name);
+              continue;
+            }
+
+            await prisma.approvalRequest.deleteMany({
+              where: {
+                storeId: store.id,
+                actionType: "update_product",
+                status: "PENDING_APPROVAL",
+                input: { path: ["productId"], equals: product.id },
+              },
+            });
+            const previousValues: Record<string, unknown> = { productId: product.id };
+            if ("name" in changedFields) previousValues.name = product.name;
+            if ("description" in changedFields) previousValues.description = product.description;
+            await prisma.approvalRequest.create({
+              data: {
+                storeId: store.id,
+                recommendationId: null,
+                actionType: "update_product",
+                input: { productId: product.id, ...changedFields },
+                previousValues,
+                summary: suggestion?.reasoning ? `${product.name}: ${suggestion.reasoning}` : `Update "${product.name}"`,
+                authorizationTier: GENESIS_ACTIONS.update_product.authorizationTier,
+                groupId,
+              },
+            });
+            proposed.push({ id: product.id, name: product.name });
+          }
+
+          const replyParts = [conversationalReply || "I've looked at your products."];
+          if (proposed.length > 1) {
+            replyParts.push(`I've proposed changes for ${proposed.length}: ${proposed.map((p) => p.name).join(", ")} — review each on Products, or approve all together.`);
+          } else if (proposed.length === 1) {
+            replyParts.push(`You'll find my proposed change for "${proposed[0].name}" waiting for your review on Products.`);
+          }
+          if (unchanged.length > 0) {
+            replyParts.push(`${unchanged.length > 1 ? "These" : "One"} already read${unchanged.length > 1 ? "" : "s"} well as-is, so I left ${unchanged.length > 1 ? "them" : "it"} unchanged: ${unchanged.join(", ")}.`);
+          }
+          const finalReply = replyParts.join(" ");
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: proposed.length > 0 ? "PENDING" : "WARNING",
+            verified: false,
+            message: proposed.length > 0 ? `Proposed content changes for ${proposed.map((p) => p.name).join(", ")}` : "No real content changes to propose",
+            retryable: proposed.length === 0,
+            userId,
+            storeId: store.id,
+            metadata: { groupId, productIds: proposed.map((p) => p.id) },
+          });
+          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: proposed.length > 0 ? "success" : "failure", likelyRephraseOf, kind: "product_content_change_request" });
           controller.close();
           return;
         }

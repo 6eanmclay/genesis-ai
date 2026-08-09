@@ -16,6 +16,7 @@ import {
   confirmStoreDraft,
   approveGenesisAction,
   rejectGenesisAction,
+  approveGenesisActionGroup,
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
@@ -35,7 +36,7 @@ import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement
 import { runTaskDetection } from "@/lib/dashboard/taskDetectors";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
-import { AttentionCard } from "./AttentionCard";
+import { AttentionCardList } from "./AttentionCardList";
 import { buildAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessJourney } from "./BusinessJourney";
@@ -799,20 +800,18 @@ export default async function DashboardPage() {
               <p className="mt-1 text-xs text-zinc-500">Genesis never stops working on your business.</p>
             </div>
           ) : (
-            <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
-              {attentionCards.cards.map((card) => (
-                <AttentionCard
-                  key={card.id}
-                  card={card}
-                  approveAction={approveGenesisAction}
-                  rejectAction={rejectGenesisAction}
-                  issueAction={startIssueConversation}
-                  discoveryAction={startDiscoveryConversation}
-                  taskAction={startTaskConversation}
-                  dismissAction={dismissAttentionCard}
-                  currentPath="/dashboard"
-                />
-              ))}
+            <div className="mt-3">
+              <AttentionCardList
+                cards={attentionCards.cards}
+                approveAction={approveGenesisAction}
+                rejectAction={rejectGenesisAction}
+                approveGroupAction={approveGenesisActionGroup}
+                issueAction={startIssueConversation}
+                discoveryAction={startDiscoveryConversation}
+                taskAction={startTaskConversation}
+                dismissAction={dismissAttentionCard}
+                currentPath="/dashboard"
+              />
               {attentionCards.overflowCount > 0 && (
                 <p className="mt-1 text-xs text-zinc-500">
                   +{attentionCards.overflowCount} more — ask J4 what else it&apos;s noticed.

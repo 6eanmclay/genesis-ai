@@ -5,6 +5,7 @@ import { toggleProductActive, deleteProduct } from "../actions";
 import {
   approveGenesisAction,
   rejectGenesisAction,
+  approveGenesisActionGroup,
   regenerateApprovalImage,
   startIssueConversation,
   startDiscoveryConversation,
@@ -16,7 +17,7 @@ import { compareObservationPriority } from "@/lib/dashboard/genesisState";
 import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { DeleteProductButton } from "../DeleteProductButton";
 import { SubmitButton } from "../SubmitButton";
-import { AttentionCard } from "../AttentionCard";
+import { AttentionCardList } from "../AttentionCardList";
 import { CreateProductForm } from "./CreateProductForm";
 import { EditProductForm } from "./EditProductForm";
 import { ProductImageGallery } from "./ProductImageGallery";
@@ -91,22 +92,20 @@ export default async function ProductsPage({
           <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis noticed ({productCards.length})
           </h2>
-          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
-            {productCards.map((card) => (
-              <AttentionCard
-                key={card.id}
-                card={card}
-                approveAction={approveGenesisAction}
-                rejectAction={rejectGenesisAction}
-                issueAction={startIssueConversation}
-                discoveryAction={startDiscoveryConversation}
-                taskAction={startTaskConversation}
-                highlightId={focus}
-                regenerateAction={regenerateApprovalImage}
-                dismissAction={dismissAttentionCard}
-                currentPath="/dashboard/products"
-              />
-            ))}
+          <div className="mt-3">
+            <AttentionCardList
+              cards={productCards}
+              approveAction={approveGenesisAction}
+              rejectAction={rejectGenesisAction}
+              approveGroupAction={approveGenesisActionGroup}
+              issueAction={startIssueConversation}
+              discoveryAction={startDiscoveryConversation}
+              taskAction={startTaskConversation}
+              highlightId={focus}
+              regenerateAction={regenerateApprovalImage}
+              dismissAction={dismissAttentionCard}
+              currentPath="/dashboard/products"
+            />
           </div>
         </>
       )}

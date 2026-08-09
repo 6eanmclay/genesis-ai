@@ -7,13 +7,14 @@ import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/at
 import {
   approveGenesisAction,
   rejectGenesisAction,
+  approveGenesisActionGroup,
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
   dismissAttentionCard,
 } from "../ai-actions";
 import { EditStoreForm } from "../EditStoreForm";
-import { AttentionCard } from "../AttentionCard";
+import { AttentionCardList } from "../AttentionCardList";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 // The 9 AI-generated identity fields, in the same order FIELD_LABELS
@@ -107,21 +108,19 @@ export default async function BrandPage({
           <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis noticed ({brandCards.length})
           </h2>
-          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
-            {brandCards.map((card) => (
-              <AttentionCard
-                key={card.id}
-                card={card}
-                approveAction={approveGenesisAction}
-                rejectAction={rejectGenesisAction}
-                issueAction={startIssueConversation}
-                discoveryAction={startDiscoveryConversation}
-                taskAction={startTaskConversation}
-                highlightId={focus}
-                dismissAction={dismissAttentionCard}
-                currentPath="/dashboard/brand"
-              />
-            ))}
+          <div className="mt-3">
+            <AttentionCardList
+              cards={brandCards}
+              approveAction={approveGenesisAction}
+              rejectAction={rejectGenesisAction}
+              approveGroupAction={approveGenesisActionGroup}
+              issueAction={startIssueConversation}
+              discoveryAction={startDiscoveryConversation}
+              taskAction={startTaskConversation}
+              highlightId={focus}
+              dismissAction={dismissAttentionCard}
+              currentPath="/dashboard/brand"
+            />
           </div>
         </>
       )}

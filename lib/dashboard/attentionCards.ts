@@ -73,6 +73,14 @@ export interface ProposalAttentionCard extends AttentionCardCommon {
   input: Record<string, unknown>;
   previousValues: Record<string, unknown>;
   reviewHref: string | null;
+  // J4 recommendations -> real approvals (2026-08-09) — "for multiple
+  // proposed changes, allow individual approval and, where appropriate,
+  // Approve All" (Sean). Several real proposals from the same turn (e.g.
+  // request_product_content_change resolving to 3 products) already
+  // share one real ApprovalRequest.groupId — this just carries it through
+  // to the card so a caller can group and offer Approve All, rather than
+  // inventing a second grouping concept.
+  groupId: string | null;
 }
 
 export interface IssueAttentionCard extends AttentionCardCommon {
@@ -153,6 +161,7 @@ function buildProposalCard(approval: PendingApproval): ProposalAttentionCard {
     input: approval.input,
     previousValues: approval.previousValues,
     reviewHref: section?.href ?? null,
+    groupId: approval.groupId,
   };
 }
 
@@ -217,6 +226,37 @@ export function buildPageAttentionCards(params: {
 // proposal is focused by approvalRequestId, an observation by dedupeKey,
 // matching exactly what ApprovalRequestsPanel/ObservationsPanel already
 // compared against before this.
+export interface AttentionCardGroup {
+  groupId: string | null;
+  cards: AttentionCard[];
+}
+
+// "For multiple proposed changes, allow individual approval and, where
+// appropriate, Approve All" (Sean, 2026-08-09) — groups consecutive-or-not
+// proposal cards sharing one real ApprovalRequest.groupId into one
+// AttentionCardGroup, preserving each card's own individual position
+// otherwise (first occurrence's spot in the already-sorted list). Only
+// "proposal" cards can ever have a non-null groupId; every other kind (and
+// an ungrouped proposal) is always its own group of exactly one — grouping
+// is purely presentational (a shared "Approve All" header), never a
+// combined decision: each card underneath keeps its own real Approve/
+// Reject regardless of which group it's in.
+export function groupAttentionCards(cards: AttentionCard[]): AttentionCardGroup[] {
+  const groups: AttentionCardGroup[] = [];
+  const groupIndexByGroupId = new Map<string, number>();
+  for (const card of cards) {
+    const groupId = card.kind === "proposal" ? card.groupId : null;
+    const existingIndex = groupId ? groupIndexByGroupId.get(groupId) : undefined;
+    if (existingIndex !== undefined) {
+      groups[existingIndex].cards.push(card);
+    } else {
+      if (groupId) groupIndexByGroupId.set(groupId, groups.length);
+      groups.push({ groupId, cards: [card] });
+    }
+  }
+  return groups;
+}
+
 export function isHighlighted(card: AttentionCard, highlightId: string | undefined): boolean {
   if (!highlightId) return false;
   if (card.kind === "proposal") return card.approvalRequestId === highlightId;
@@ -270,6 +310,9 @@ export function buildAttentionCards(params: {
       input: rec.input,
       previousValues: rec.previousValues,
       reviewHref: null,
+      // The single lead recommendation is never part of a multi-proposal
+      // group by construction — it's deliberately the one standout card.
+      groupId: null,
     });
   }
 

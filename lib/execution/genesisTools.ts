@@ -62,6 +62,26 @@ export const RequestProductRemovalInputSchema = z.object({
 });
 export type RequestProductRemovalInput = z.infer<typeof RequestProductRemovalInputSchema>;
 
+// J4 approvable product content changes (2026-08-09) — "if J4 can perform
+// the change, J4 should perform the change after I approve it... product
+// names, descriptions" (Sean, real production feedback after J4 told him
+// to "paste the winners" into each product's name field by hand). Same
+// real scope-resolution shape as RequestImageChangeInputSchema/
+// RequestProductRemovalInputSchema — this tool only ever resolves WHICH
+// products and WHAT KIND of change; it deliberately does not generate the
+// actual proposed name/description text itself (a routing-call schema is
+// the wrong place for real, grounded content generation — see
+// generateProductContentChanges, called separately once scope is
+// resolved, same real "resolve scope here, generate content in a focused
+// follow-up call" split request_image_change already established for
+// photos).
+export const RequestProductContentChangeInputSchema = z.object({
+  scope: z.enum(["all", "specific"]).nullable(),
+  productNames: z.array(z.string()).nullable(),
+  changeType: z.enum(["name", "description", "both"]),
+});
+export type RequestProductContentChangeInput = z.infer<typeof RequestProductContentChangeInputSchema>;
+
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
@@ -89,6 +109,7 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "plan_campaign",
   "request_image_change",
   "request_product_removal",
+  "request_product_content_change",
   "edit_store_content",
   "manage_business_asset",
 ] as const;
@@ -125,6 +146,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant explicitly asks to remove, delete, discontinue, or get rid of one or more existing products — e.g. 'the old ones are obsolete, remove them', 'discontinue the wipes', 'delete that product'. This is a DESTRUCTIVE, irreversible action: calling this tool only PROPOSES the removal for the merchant's own review and approval, it never deletes anything immediately. Resolve scope against the active product list the same way as request_image_change: 'all' when they clearly mean every active product, 'specific' with productNames set to the exact matching names, or null only when genuinely unclear (then ask a specific clarifying question in your reply text).",
       input_schema: z.toJSONSchema(RequestProductRemovalInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "request_product_content_change",
+      description:
+        "Call this when the merchant is asking you to rename, rewrite, improve, or clean up the name and/or description of one or more EXISTING products — this includes both an explicit instruction ('change the name to X') and a genuine request for your own recommendation ('these names are too keyword-stuffed, what should they be', 'review my products and suggest better descriptions'). Either way, you have the real capability to prepare the actual change for the merchant's approval — never just describe what they should type in themselves. Resolve scope the same way as request_image_change: 'all' when they clearly mean every active product, 'specific' with productNames set to the exact matching names, or null only when genuinely unclear (then ask a specific clarifying question in your reply text). Set changeType to whichever the merchant is actually asking about — 'name', 'description', or 'both'. This tool only decides WHICH products and WHAT KIND of change; the actual proposed wording is generated separately, grounded in what you really know about the business and each product, not guessed from the existing text alone.",
+      input_schema: z.toJSONSchema(RequestProductContentChangeInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "edit_store_content",

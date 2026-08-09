@@ -6,6 +6,7 @@ import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/at
 import {
   approveGenesisAction,
   rejectGenesisAction,
+  approveGenesisActionGroup,
   regenerateApprovalImage,
   revertApprovalRequest,
   startIssueConversation,
@@ -14,7 +15,7 @@ import {
   dismissAttentionCard,
 } from "../ai-actions";
 import { grantAuthority, revokeAuthority } from "../actions";
-import { AttentionCard } from "../AttentionCard";
+import { AttentionCardList } from "../AttentionCardList";
 import { SubmitButton } from "../SubmitButton";
 import { RevertDecisionButton } from "../RevertDecisionButton";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
@@ -82,21 +83,19 @@ export default async function MarketingPage() {
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
             Awaiting Your Approval ({seoCards.length})
           </h2>
-          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
-            {seoCards.map((card) => (
-              <AttentionCard
-                key={card.id}
-                card={card}
-                approveAction={approveGenesisAction}
-                rejectAction={rejectGenesisAction}
-                issueAction={startIssueConversation}
-                discoveryAction={startDiscoveryConversation}
-                taskAction={startTaskConversation}
-                regenerateAction={regenerateApprovalImage}
-                dismissAction={dismissAttentionCard}
-                currentPath="/dashboard/marketing"
-              />
-            ))}
+          <div className="mt-3">
+            <AttentionCardList
+              cards={seoCards}
+              approveAction={approveGenesisAction}
+              rejectAction={rejectGenesisAction}
+              approveGroupAction={approveGenesisActionGroup}
+              issueAction={startIssueConversation}
+              discoveryAction={startDiscoveryConversation}
+              taskAction={startTaskConversation}
+              regenerateAction={regenerateApprovalImage}
+              dismissAction={dismissAttentionCard}
+              currentPath="/dashboard/marketing"
+            />
           </div>
         </>
       )}
@@ -106,21 +105,19 @@ export default async function MarketingPage() {
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis&apos;s ideas for your social presence ({marketingAssetsCards.length})
           </h2>
-          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
-            {marketingAssetsCards.map((card) => (
-              <AttentionCard
-                key={card.id}
-                card={card}
-                approveAction={approveGenesisAction}
-                rejectAction={rejectGenesisAction}
-                issueAction={startIssueConversation}
-                discoveryAction={startDiscoveryConversation}
-                taskAction={startTaskConversation}
-                regenerateAction={regenerateApprovalImage}
-                dismissAction={dismissAttentionCard}
-                currentPath="/dashboard/marketing"
-              />
-            ))}
+          <div className="mt-3">
+            <AttentionCardList
+              cards={marketingAssetsCards}
+              approveAction={approveGenesisAction}
+              rejectAction={rejectGenesisAction}
+              approveGroupAction={approveGenesisActionGroup}
+              issueAction={startIssueConversation}
+              discoveryAction={startDiscoveryConversation}
+              taskAction={startTaskConversation}
+              regenerateAction={regenerateApprovalImage}
+              dismissAction={dismissAttentionCard}
+              currentPath="/dashboard/marketing"
+            />
           </div>
         </>
       )}

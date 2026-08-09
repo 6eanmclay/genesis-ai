@@ -6,13 +6,14 @@ import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/at
 import {
   approveGenesisAction,
   rejectGenesisAction,
+  approveGenesisActionGroup,
   regenerateApprovalImage,
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
   dismissAttentionCard,
 } from "../ai-actions";
-import { AttentionCard } from "../AttentionCard";
+import { AttentionCardList } from "../AttentionCardList";
 
 // Product Vision Phase 1 — business identity (name/tagline/description,
 // brand story/mission/etc., and the update_brand_identity/
@@ -77,21 +78,19 @@ export default async function SettingsPage() {
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis&apos;s updates to your policies ({storeContentCards.length})
           </h2>
-          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
-            {storeContentCards.map((card) => (
-              <AttentionCard
-                key={card.id}
-                card={card}
-                approveAction={approveGenesisAction}
-                rejectAction={rejectGenesisAction}
-                issueAction={startIssueConversation}
-                discoveryAction={startDiscoveryConversation}
-                taskAction={startTaskConversation}
-                regenerateAction={regenerateApprovalImage}
-                dismissAction={dismissAttentionCard}
-                currentPath="/dashboard/settings"
-              />
-            ))}
+          <div className="mt-3">
+            <AttentionCardList
+              cards={storeContentCards}
+              approveAction={approveGenesisAction}
+              rejectAction={rejectGenesisAction}
+              approveGroupAction={approveGenesisActionGroup}
+              issueAction={startIssueConversation}
+              discoveryAction={startDiscoveryConversation}
+              taskAction={startTaskConversation}
+              regenerateAction={regenerateApprovalImage}
+              dismissAction={dismissAttentionCard}
+              currentPath="/dashboard/settings"
+            />
           </div>
         </>
       )}
@@ -123,21 +122,19 @@ export default async function SettingsPage() {
           <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis&apos;s updates to your design direction ({designDirectionCards.length})
           </h2>
-          <div className="mt-3 flex max-w-2xl flex-col gap-2.5">
-            {designDirectionCards.map((card) => (
-              <AttentionCard
-                key={card.id}
-                card={card}
-                approveAction={approveGenesisAction}
-                rejectAction={rejectGenesisAction}
-                issueAction={startIssueConversation}
-                discoveryAction={startDiscoveryConversation}
-                taskAction={startTaskConversation}
-                regenerateAction={regenerateApprovalImage}
-                dismissAction={dismissAttentionCard}
-                currentPath="/dashboard/settings"
-              />
-            ))}
+          <div className="mt-3">
+            <AttentionCardList
+              cards={designDirectionCards}
+              approveAction={approveGenesisAction}
+              rejectAction={rejectGenesisAction}
+              approveGroupAction={approveGenesisActionGroup}
+              issueAction={startIssueConversation}
+              discoveryAction={startDiscoveryConversation}
+              taskAction={startTaskConversation}
+              regenerateAction={regenerateApprovalImage}
+              dismissAction={dismissAttentionCard}
+              currentPath="/dashboard/settings"
+            />
           </div>
         </>
       )}
