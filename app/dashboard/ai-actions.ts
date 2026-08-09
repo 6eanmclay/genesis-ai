@@ -4031,6 +4031,32 @@ export async function uploadPhotoBatchFromChat(formData: FormData) {
   redirectKeepingChatOpen(returnTo);
 }
 
+// J4 Noticed dismiss/exit (2026-08-08) — "every item shown in this
+// section should be individually dismissible... dismissal must NOT mean
+// resolution" (Sean). One real, uniform mechanism for every card kind
+// (proposal/issue/discovery/task/observation) — cardId is the same real
+// AttentionCard.id string every kind already carries, so this needs no
+// per-kind branching. Deliberately does NOT touch the underlying
+// ApprovalRequest/GenesisObservation/Task/AttentionItem row at all — only
+// a new, separate row recording "don't show this in Noticed right now,"
+// which lib/dashboard/attentionCards.ts's own builders filter against.
+// Every other reader of the underlying record (chat's own business-data
+// lookups, a business review, this page's own Decisions/Tasks/etc. list
+// where one exists) is completely unaffected — the real record stays
+// exactly as available to J4 as it always was.
+export async function dismissAttentionCard(cardId: string, currentPath: string) {
+  const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+
+  await prisma.dismissedAttentionCard.upsert({
+    where: { storeId_cardId: { storeId, cardId } },
+    create: { storeId, cardId, dismissedByUserId: userId },
+    update: { dismissedAt: new Date(), dismissedByUserId: userId },
+  });
+
+  const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
+  revalidatePath(returnTo);
+}
+
 // BUSINESS_ASSETS_ARCHITECTURE.md M2 — replaces plain actionHref navigation
 // for a Task card with a real, persisted, task-aware conversation. Writes
 // both a user-turn message (honest statement of what was clicked, same

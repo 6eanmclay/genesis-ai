@@ -19,6 +19,7 @@ import {
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
+  dismissAttentionCard,
 } from "./ai-actions";
 import { getNextBestAction } from "@/lib/intelligence/nextBestAction";
 import { DEFAULT_THEME, googleFontsUrl, themeCssVars, type Theme } from "@/lib/theme";
@@ -35,7 +36,7 @@ import { runTaskDetection } from "@/lib/dashboard/taskDetectors";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
 import { AttentionCard } from "./AttentionCard";
-import { buildAttentionCards } from "@/lib/dashboard/attentionCards";
+import { buildAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessJourney } from "./BusinessJourney";
 import { logJourneyStageIfChanged } from "@/lib/dashboard/journeyStage";
@@ -670,7 +671,7 @@ export default async function DashboardPage() {
     });
   }
   const openTasks = isOwnerManager ? await getOpenTasks(store.id) : [];
-  const [discoveryItems, lastDiscoveryRunAt, pendingApprovals, nextRecommendation] = canViewAnalytics
+  const [discoveryItems, lastDiscoveryRunAt, pendingApprovals, nextRecommendation, dismissedCardIds] = canViewAnalytics
     ? await Promise.all([
         getDiscoveryFeed(store.id),
         getLastDiscoveryRunAt(store.id),
@@ -681,8 +682,9 @@ export default async function DashboardPage() {
         // track-record-informed confidence) already keeping the
         // underlying state genuinely current.
         getNextBestAction(store.id, session.user.id, { refresh: false }),
+        getDismissedCardIds(store.id),
       ])
-    : [[], null, [], null];
+    : [[], null, [], null, new Set<string>()];
 
   const storeTheme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const fontsUrl = googleFontsUrl([storeTheme.typography.headingFont]);
@@ -704,6 +706,7 @@ export default async function DashboardPage() {
     nextRecommendation,
     discoveryItems,
     tasks: openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary })),
+    dismissedCardIds: dismissedCardIds as Set<string>,
   });
 
   return (
@@ -806,6 +809,8 @@ export default async function DashboardPage() {
                   issueAction={startIssueConversation}
                   discoveryAction={startDiscoveryConversation}
                   taskAction={startTaskConversation}
+                  dismissAction={dismissAttentionCard}
+                  currentPath="/dashboard"
                 />
               ))}
               {attentionCards.overflowCount > 0 && (

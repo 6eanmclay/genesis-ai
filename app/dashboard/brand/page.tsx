@@ -3,13 +3,14 @@ import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permis
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
-import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
+import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import {
   approveGenesisAction,
   rejectGenesisAction,
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
+  dismissAttentionCard,
 } from "../ai-actions";
 import { EditStoreForm } from "../EditStoreForm";
 import { AttentionCard } from "../AttentionCard";
@@ -53,7 +54,7 @@ export default async function BrandPage({
 }) {
   const { store, role } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
   const canReviewApprovals = hasPermission(role, PERMISSIONS.ANALYTICS_VIEW);
-  const [pendingApprovals, rawObservations] = await Promise.all([
+  const [pendingApprovals, rawObservations, dismissedCardIds] = await Promise.all([
     canReviewApprovals ? getPendingApprovals(store.id) : Promise.resolve([]),
     // Real GenesisObservation rows (Red/Purple) whose own actionHref points
     // directly at this page — the same real data Live Intelligence/the nav
@@ -62,6 +63,7 @@ export default async function BrandPage({
       where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/brand" },
       select: { dedupeKey: true, genesisState: true, summary: true },
     }),
+    getDismissedCardIds(store.id),
   ]);
   const brandObservations = [...rawObservations].sort(compareObservationPriority);
   const identityApprovals = pendingApprovals.filter(
@@ -77,6 +79,7 @@ export default async function BrandPage({
     approvals: identityApprovals,
     observations: brandObservations,
     highlightId: focus,
+    dismissedCardIds,
   });
 
   const brandIdentity = (store.blueprint as BlueprintContextSubset | null)?.brandIdentity;
@@ -115,6 +118,8 @@ export default async function BrandPage({
                 discoveryAction={startDiscoveryConversation}
                 taskAction={startTaskConversation}
                 highlightId={focus}
+                dismissAction={dismissAttentionCard}
+                currentPath="/dashboard/brand"
               />
             ))}
           </div>

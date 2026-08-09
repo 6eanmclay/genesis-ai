@@ -56,6 +56,7 @@ const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
   delegatedAuthority: ["storeId"],
   postExecutionMeasurement: ["storeId"],
   genesisObservation: ["storeId"],
+  dismissedAttentionCard: ["storeId"],
   businessRecord: ["storeId"],
   businessEvent: ["storeId"],
   businessEventCursor: ["storeId"],

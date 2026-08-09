@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
-import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
+import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import {
   approveGenesisAction,
   rejectGenesisAction,
@@ -11,6 +11,7 @@ import {
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
+  dismissAttentionCard,
 } from "../ai-actions";
 import { grantAuthority, revokeAuthority } from "../actions";
 import { AttentionCard } from "../AttentionCard";
@@ -28,7 +29,7 @@ export default async function MarketingPage() {
   const { store, role } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
   const canManageAuthority = hasPermission(role, PERMISSIONS.AUTHORITY_MANAGE);
 
-  const [subscribers, pendingApprovals, seoAuthorityGrant, recentSeoDecisions] = await Promise.all([
+  const [subscribers, pendingApprovals, seoAuthorityGrant, recentSeoDecisions, dismissedCardIds] = await Promise.all([
     prisma.newsletterSignup.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
@@ -47,6 +48,7 @@ export default async function MarketingPage() {
       orderBy: { decidedAt: "desc" },
       take: 5,
     }),
+    getDismissedCardIds(store.id),
   ]);
   const seoApprovals = pendingApprovals.filter((a) => a.actionType === "update_seo");
   // Phase 2 Milestone 1 — brandKeywords/instagramBio/facebookDescription/
@@ -59,8 +61,8 @@ export default async function MarketingPage() {
   // approval vs. a broader social-presence proposal) rather than merged
   // into one — only the card rendering changes, not this page's own
   // structure. No observations on this page (unchanged).
-  const seoCards = buildPageAttentionCards({ approvals: seoApprovals, observations: [] });
-  const marketingAssetsCards = buildPageAttentionCards({ approvals: marketingAssetsApprovals, observations: [] });
+  const seoCards = buildPageAttentionCards({ approvals: seoApprovals, observations: [], dismissedCardIds });
+  const marketingAssetsCards = buildPageAttentionCards({ approvals: marketingAssetsApprovals, observations: [], dismissedCardIds });
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
   const seoTitle = blueprint?.marketingAssets?.seoTitle;
@@ -91,6 +93,8 @@ export default async function MarketingPage() {
                 discoveryAction={startDiscoveryConversation}
                 taskAction={startTaskConversation}
                 regenerateAction={regenerateApprovalImage}
+                dismissAction={dismissAttentionCard}
+                currentPath="/dashboard/marketing"
               />
             ))}
           </div>
@@ -113,6 +117,8 @@ export default async function MarketingPage() {
                 discoveryAction={startDiscoveryConversation}
                 taskAction={startTaskConversation}
                 regenerateAction={regenerateApprovalImage}
+                dismissAction={dismissAttentionCard}
+                currentPath="/dashboard/marketing"
               />
             ))}
           </div>

@@ -213,6 +213,7 @@ model Store {
   generatedRecommendations  GeneratedRecommendation[]
   approvalRequests          ApprovalRequest[]
   observations              GenesisObservation[]
+  dismissedAttentionCards   DismissedAttentionCard[]
   postExecutionMeasurements PostExecutionMeasurement[]
   delegatedAuthorities      DelegatedAuthority[]
   productEvents             ProductEvent[]
@@ -847,6 +848,36 @@ model GenesisObservation {
 
   @@unique([storeId, dedupeKey])
   @@index([storeId, status])
+}
+
+// J4 Noticed dismiss/exit (2026-08-08) — "dismissal must NOT mean
+// resolution... the underlying observation/problem/decision remains
+// persisted and available to J4" (Sean). Deliberately NOT reusing
+// GenesisObservation's own existing (real but never wired up) `status:
+// "DISMISSED"`/`dismissedAt` fields — those would only ever cover one of
+// five real card kinds (proposal/issue/discovery/task/observation), and
+// Sean's own explicit requirement is one uniform rule for all of them,
+// not a different mechanism per kind. This table only ever affects
+// whether a card renders in the Noticed presentation (see
+// lib/dashboard/attentionCards.ts's own filtering) — it never touches
+// ApprovalRequest/GenesisObservation/Task/AttentionItem's real status,
+// so every other reader of those (including J4's own chat/business-
+// understanding queries) sees them completely unaffected.
+// cardId is the same real, already-existing AttentionCard.id string
+// (e.g. "observation:xyz", "proposal:abc") — no new per-source-type
+// modeling needed, one generic mechanism works uniformly across all five
+// kinds because they already share one canonical id scheme.
+model DismissedAttentionCard {
+  id          String   @id @default(cuid())
+  storeId     String
+  cardId      String
+  dismissedAt DateTime @default(now())
+  dismissedByUserId String?
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, cardId])
+  @@index([storeId, dismissedAt])
 }
 
 // BUSINESS_ASSETS_ARCHITECTURE.md M1 — the unified representation of "one

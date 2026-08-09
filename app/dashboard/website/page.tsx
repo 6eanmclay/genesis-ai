@@ -6,7 +6,7 @@ import { getPendingApprovals, type PendingApproval } from "@/lib/dashboard/pendi
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { SECTION_LABELS, type SectionKey } from "@/lib/storefrontSections";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
-import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
+import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { toggleStorePublished } from "../actions";
 import {
   approveGenesisAction,
@@ -15,6 +15,7 @@ import {
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
+  dismissAttentionCard,
 } from "../ai-actions";
 import { SubmitButton } from "../SubmitButton";
 import { VisualProposal } from "../VisualProposal";
@@ -67,7 +68,7 @@ export default async function WebsitePage({
       })
     : null;
 
-  const [visions, pendingApprovals, firstProduct, rawObservations] = await Promise.all([
+  const [visions, pendingApprovals, firstProduct, rawObservations, dismissedCardIds] = await Promise.all([
     prisma.storeGeneration.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "asc" },
@@ -85,6 +86,7 @@ export default async function WebsitePage({
       where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/website" },
       select: { dedupeKey: true, genesisState: true, summary: true },
     }),
+    getDismissedCardIds(store.id),
   ]);
   const websiteObservations = [...rawObservations].sort(compareObservationPriority);
   const originalVision = visions.find((v) => v.milestone === "original");
@@ -127,6 +129,7 @@ export default async function WebsitePage({
     approvals: [],
     observations: websiteObservations,
     highlightId: focus,
+    dismissedCardIds,
   });
   // Rendered once, standalone, above the grouped list — remove it from
   // whichever group it belongs to so it never renders twice.
@@ -395,6 +398,8 @@ export default async function WebsitePage({
                 discoveryAction={startDiscoveryConversation}
                 taskAction={startTaskConversation}
                 highlightId={focus}
+                dismissAction={dismissAttentionCard}
+                currentPath="/dashboard/website"
               />
             ))}
           </div>

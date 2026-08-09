@@ -3,6 +3,27 @@ import type { PendingApproval } from "./pendingApprovals";
 import type { DiscoveryItem } from "./discovery";
 import type { NextBestAction } from "@/lib/intelligence/nextBestAction";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
+import { prisma } from "@/lib/prisma";
+
+// J4 Noticed dismiss/exit (2026-08-08) — one real, shared fetch for every
+// page rendering AttentionCards (Home + the 5 secondary pages), so each
+// doesn't duplicate the same query. A dismissal lasts 7 days — long
+// enough that "I don't want to see this right now" genuinely means
+// something, short enough that a real, still-true issue ("no payment
+// method connected") can't be permanently buried by one tap and silently
+// forgotten. Real, finer-grained resurfacing ("when the user asks what
+// needs attention, or when it becomes especially relevant" — Sean's own
+// words) is a real Reason-engine capability for later, not built here;
+// this is the honest, simple mechanism for now.
+const DISMISS_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+
+export async function getDismissedCardIds(storeId: string): Promise<Set<string>> {
+  const rows = await prisma.dismissedAttentionCard.findMany({
+    where: { storeId, dismissedAt: { gte: new Date(Date.now() - DISMISS_DURATION_MS) } },
+    select: { cardId: true },
+  });
+  return new Set(rows.map((r) => r.cardId));
+}
 
 // Home Redesign (2026-08-08) — "the dashboard shows the business, J4
 // handles the work" (Sean). Previously Home stacked four independently-
@@ -167,11 +188,16 @@ export function buildPageAttentionCards(params: {
   approvals: PendingApproval[];
   observations: { dedupeKey: string; genesisState: string; summary: string }[];
   highlightId?: string;
+  // J4 Noticed dismiss/exit (2026-08-08) — real dismissed AttentionCard.id
+  // strings for this store (DismissedAttentionCard rows, fetched by the
+  // page itself). Filtered out here, before sort/cap, so a dismissed card
+  // simply never appears — never touches the real underlying record.
+  dismissedCardIds?: Set<string>;
 }): AttentionCard[] {
   const all: AttentionCard[] = [
     ...params.approvals.map(buildProposalCard),
     ...params.observations.map(buildObservationCard),
-  ];
+  ].filter((card) => !params.dismissedCardIds?.has(card.id));
 
   all.sort((a, b) => {
     const aHighlighted = isHighlighted(a, params.highlightId);
@@ -204,6 +230,9 @@ export function buildAttentionCards(params: {
   nextRecommendation: NextBestAction | null;
   discoveryItems: DiscoveryItem[];
   tasks: { id: string; title: string; summary: string }[];
+  // J4 Noticed dismiss/exit (2026-08-08) — see buildPageAttentionCards's
+  // own identical comment; same real mechanism, same filtering point.
+  dismissedCardIds?: Set<string>;
 }): { cards: AttentionCard[]; overflowCount: number } {
   const all: AttentionCard[] = [];
 
@@ -278,7 +307,9 @@ export function buildAttentionCards(params: {
     });
   }
 
-  all.sort((a, b) => {
+  const visible = all.filter((card) => !params.dismissedCardIds?.has(card.id));
+
+  visible.sort((a, b) => {
     if (a.rank !== b.rank) return a.rank - b.rank;
     const aTime = a.occurredAt?.getTime() ?? 0;
     const bTime = b.occurredAt?.getTime() ?? 0;
@@ -286,7 +317,7 @@ export function buildAttentionCards(params: {
   });
 
   return {
-    cards: all.slice(0, ATTENTION_ZONE_CAP),
-    overflowCount: Math.max(0, all.length - ATTENTION_ZONE_CAP),
+    cards: visible.slice(0, ATTENTION_ZONE_CAP),
+    overflowCount: Math.max(0, visible.length - ATTENTION_ZONE_CAP),
   };
 }

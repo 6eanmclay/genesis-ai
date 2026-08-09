@@ -2,7 +2,7 @@ import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
-import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
+import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import {
   approveGenesisAction,
   rejectGenesisAction,
@@ -10,6 +10,7 @@ import {
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
+  dismissAttentionCard,
 } from "../ai-actions";
 import { AttentionCard } from "../AttentionCard";
 
@@ -29,7 +30,10 @@ export default async function SettingsPage() {
   const { store } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
-  const pendingApprovals = await getPendingApprovals(store.id);
+  const [pendingApprovals, dismissedCardIds] = await Promise.all([
+    getPendingApprovals(store.id),
+    getDismissedCardIds(store.id),
+  ]);
   const storeContentApprovals = pendingApprovals.filter((a) => a.actionType === "update_store_content");
   const designDirectionApprovals = pendingApprovals.filter(
     (a) => a.actionType === "update_design_direction"
@@ -37,8 +41,8 @@ export default async function SettingsPage() {
   // Phase 1 (2026-08-08) — same compact card language as every other
   // secondary page now uses; kept as two separate lists under their own
   // existing headings, only the card rendering changes.
-  const storeContentCards = buildPageAttentionCards({ approvals: storeContentApprovals, observations: [] });
-  const designDirectionCards = buildPageAttentionCards({ approvals: designDirectionApprovals, observations: [] });
+  const storeContentCards = buildPageAttentionCards({ approvals: storeContentApprovals, observations: [], dismissedCardIds });
+  const designDirectionCards = buildPageAttentionCards({ approvals: designDirectionApprovals, observations: [], dismissedCardIds });
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
   const storeContent = blueprint?.storeContent;
@@ -84,6 +88,8 @@ export default async function SettingsPage() {
                 discoveryAction={startDiscoveryConversation}
                 taskAction={startTaskConversation}
                 regenerateAction={regenerateApprovalImage}
+                dismissAction={dismissAttentionCard}
+                currentPath="/dashboard/settings"
               />
             ))}
           </div>
@@ -128,6 +134,8 @@ export default async function SettingsPage() {
                 discoveryAction={startDiscoveryConversation}
                 taskAction={startTaskConversation}
                 regenerateAction={regenerateApprovalImage}
+                dismissAction={dismissAttentionCard}
+                currentPath="/dashboard/settings"
               />
             ))}
           </div>

@@ -33,6 +33,8 @@ export function AttentionCard({
   taskAction,
   highlightId,
   regenerateAction,
+  dismissAction,
+  currentPath,
 }: {
   card: AttentionCardData;
   approveAction: (id: string) => Promise<void>;
@@ -50,6 +52,15 @@ export function AttentionCard({
   // proposals specifically (Products page). Optional: only ever passed
   // by a caller whose approvals can actually include that actionType.
   regenerateAction?: (id: string) => Promise<void>;
+  // J4 Noticed dismiss/exit (2026-08-08) — "every item... should be
+  // individually dismissible, regardless of whether it is an approval,
+  // observation, warning, pending issue, or recommended action... the
+  // same consistent exit affordance and behavior" (Sean). One control,
+  // present on every card kind uniformly, deliberately separate from the
+  // kind-specific action row below (Approve/Reject/"Have J4 take care of
+  // it") — dismissing is never routed through any of those.
+  dismissAction: (cardId: string, currentPath: string) => Promise<void>;
+  currentPath: string;
 }) {
   const highlighted = isHighlighted(card, highlightId);
   const hasExpandableDetail =
@@ -140,6 +151,20 @@ export function AttentionCard({
             )}
           </div>
         </div>
+        {/* J4 Noticed dismiss/exit (2026-08-08) — same control, same
+            position, every card kind. Hides this card from the Noticed
+            presentation only; the real underlying record is completely
+            untouched (see dismissAttentionCard's own comment). */}
+        <form action={dismissAction.bind(null, card.id, currentPath)}>
+          <button
+            type="submit"
+            aria-label="Dismiss — hide this for now"
+            title="Dismiss — hide this for now, J4 still knows about it"
+            className="-m-1 shrink-0 rounded-full p-1 text-zinc-400 transition hover:bg-black/[.05] hover:text-zinc-600 dark:hover:bg-white/[.08] dark:hover:text-zinc-300"
+          >
+            <span aria-hidden="true">✕</span>
+          </button>
+        </form>
       </div>
     </div>
   );

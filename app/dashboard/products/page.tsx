@@ -9,10 +9,11 @@ import {
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
+  dismissAttentionCard,
 } from "../ai-actions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
-import { buildPageAttentionCards } from "@/lib/dashboard/attentionCards";
+import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { DeleteProductButton } from "../DeleteProductButton";
 import { SubmitButton } from "../SubmitButton";
 import { AttentionCard } from "../AttentionCard";
@@ -39,7 +40,7 @@ export default async function ProductsPage({
   // rather than rendering working-looking buttons that would throw on click.
   const canReviewApprovals = hasPermission(role, PERMISSIONS.ANALYTICS_VIEW);
 
-  const [products, pendingApprovals, rawObservations] = await Promise.all([
+  const [products, pendingApprovals, rawObservations, dismissedCardIds] = await Promise.all([
     prisma.product.findMany({
       where: { storeId: store.id },
       orderBy: { position: "asc" },
@@ -56,6 +57,7 @@ export default async function ProductsPage({
       where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/products" },
       select: { dedupeKey: true, genesisState: true, summary: true },
     }),
+    getDismissedCardIds(store.id),
   ]);
   const productObservations = [...rawObservations].sort(compareObservationPriority);
   // Meeting with J4 M2 — create_product is this page's second real action
@@ -73,6 +75,7 @@ export default async function ProductsPage({
     approvals: productApprovals,
     observations: productObservations,
     highlightId: focus,
+    dismissedCardIds,
   });
 
   return (
@@ -100,6 +103,8 @@ export default async function ProductsPage({
                 taskAction={startTaskConversation}
                 highlightId={focus}
                 regenerateAction={regenerateApprovalImage}
+                dismissAction={dismissAttentionCard}
+                currentPath="/dashboard/products"
               />
             ))}
           </div>
