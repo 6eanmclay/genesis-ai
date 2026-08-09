@@ -3,7 +3,7 @@ import { unstable_rethrow } from "next/navigation";
 import { requireStorePermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import type { Executable, ExecutionContext } from "./executable";
-import { GENESIS_ACTIONS, type GenesisActionType } from "./genesisActions";
+import { ACTION_SECTIONS, GENESIS_ACTIONS, type GenesisActionType } from "./genesisActions";
 import { CURRENT_EXECUTION_SCHEMA_VERSION, type ActorType, type ExecutionResult, type ExecutionStatus } from "./types";
 import { recordExecution } from "./log";
 import { checkGrowthPointBalance, deductGrowthPoints } from "@/lib/growthPoints/ledger";
@@ -170,19 +170,33 @@ export async function execute<TInput, TMetadata>(
   // real work happens. Only engages when the caller passed a real
   // GenesisActionType (see ExecuteOptions.actionType's own doc comment);
   // growthPointCost stays null (free, matching every "honest null" catalog
-  // in this codebase) for every unpriced action, which today is all of
-  // them — the catalog is deliberately empty until Sean assigns real values.
+  // in this codebase) for every unpriced action. The catalog itself is real
+  // and priced (frozen by Sean 2026-08-05, lib/growthPoints/catalog.ts) —
+  // null here means "this specific action has no catalog entry," not "the
+  // catalog is unfinished."
   let growthPointCost: number | null = null;
   if (opts.actionType) {
     const gate = await checkGrowthPointBalance(ctx.storeId, opts.actionType);
     growthPointCost = gate.cost;
     if (!gate.ok) {
+      // Real, specific shortfall (GENESIS_EXPERIENCE_PRINCIPLES.md Principle
+      // 9's own prescribed fix for this exact message, "speaks business
+      // language, not execution language") instead of the old bare
+      // "This would need more Growth Points than you currently have to
+      // invest." — names what J4 was about to do and exactly how short the
+      // balance is, so the owner isn't left guessing.
+      const sectionLabel = ACTION_SECTIONS[opts.actionType]?.label;
+      const shortfall = Math.max((gate.cost ?? 0) - (gate.balance ?? 0), 0);
+      const pointsWord = shortfall === 1 ? "Growth Point" : "Growth Points";
+      const message = sectionLabel
+        ? `J4 prepared your ${sectionLabel.toLowerCase()} update, but publishing it needs ${shortfall} more ${pointsWord} than you currently have.`
+        : `J4 prepared this change, but publishing it needs ${shortfall} more ${pointsWord} than you currently have.`;
       const result = buildResult<TMetadata>({
         executionId,
         action: executable.action,
         status: "FAILED",
         verified: false,
-        message: "This would need more Growth Points than you currently have to invest.",
+        message,
         retryable: false,
         actorType: ctx.actorType,
         actorId: ctx.userId,

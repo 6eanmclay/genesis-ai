@@ -25,6 +25,7 @@ import {
 } from "@/lib/dashboard/explainRecommendation";
 import { runCognitiveReview, PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
+import { checkGrowthPointBalanceForActions } from "@/lib/growthPoints/ledger";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
@@ -4957,6 +4958,30 @@ export async function performApproveGenesisActionGroup(groupId: string): Promise
 
   const succeeded: string[] = [];
   const failed: { summary: string; reason: string }[] = [];
+
+  // Real fix (2026-08-09) for "the exact same activity repeated at the exact
+  // same timestamp" — check the group's total real cost ONCE, before any
+  // member executes, instead of letting each of up to N members
+  // independently hit the same insufficient-balance gate inside execute()
+  // and each write its own genuinely-distinct FAILED ExecutionLog row with
+  // byte-identical text (ActivityFeed doesn't surface per-item action
+  // context, so N real rows read as one duplicated one). Nothing here is
+  // executed and no ApprovalRequest is touched — every member stays exactly
+  // as retryable as it was before this check ran.
+  const memberActionTypes = members
+    .map((m) => m.actionType as GenesisActionType)
+    .filter((actionType) => Boolean(GENESIS_ACTIONS[actionType]));
+  const groupGate = await checkGrowthPointBalanceForActions(storeId, memberActionTypes);
+  if (!groupGate.ok) {
+    const shortfall = groupGate.totalCost - groupGate.balance;
+    const pointsWord = shortfall === 1 ? "Growth Point" : "Growth Points";
+    const reason = `J4 prepared ${members.length === 1 ? "this change" : `these ${members.length} changes`}, but publishing needs ${shortfall} more ${pointsWord} than you currently have.`;
+    return {
+      totalMembers: members.length,
+      succeeded: [],
+      failed: members.map((approval) => ({ summary: approval.summary, reason })),
+    };
+  }
 
   for (const approval of members) {
     const definition = GENESIS_ACTIONS[approval.actionType];

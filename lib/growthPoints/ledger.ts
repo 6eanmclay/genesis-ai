@@ -4,10 +4,16 @@ import { growthPointCostFor } from "./catalog";
 
 export interface GrowthPointGate {
   ok: boolean;
-  // null means the action has no catalog entry yet — free, the real
-  // production state today (every action is unpriced until Sean assigns
-  // real values). Non-null is the real cost this gate checked against.
+  // null means the action has no catalog entry yet — free. Non-null is
+  // the real cost this gate checked against (the catalog is real and
+  // priced today — see catalog.ts's own comment; this is no longer the
+  // "everything is unpriced" state it was before 2026-08-05).
   cost: number | null;
+  // The store's real current balance at check time — carried back so a
+  // caller can report an honest, specific shortfall ("you need 2 more")
+  // instead of a bare rejection. Null exactly when cost is null (the gate
+  // never needed to look up a balance at all).
+  balance: number | null;
 }
 
 // Growth Points pricing (Chapter 5) — the Business Partner "unlimited
@@ -45,7 +51,7 @@ export async function checkGrowthPointBalance(
   actionType: GenesisActionType
 ): Promise<GrowthPointGate> {
   const cost = growthPointCostFor(actionType);
-  if (cost === null) return { ok: true, cost: null };
+  if (cost === null) return { ok: true, cost: null, balance: null };
 
   const store = await prisma.store.findUnique({
     where: { id: storeId },
@@ -55,13 +61,56 @@ export async function checkGrowthPointBalance(
       plan: { select: { unlimitedActionCostCeiling: true } },
     },
   });
+  const balance = store?.growthPointBalance ?? 0;
   if (isUnlimitedViaPlan(store?.plan?.unlimitedActionCostCeiling, cost)) {
-    return { ok: true, cost };
+    return { ok: true, cost, balance };
   }
   if (await isUnlimitedViaTrial(store?.businessPartnerTrialEndsAt, cost)) {
-    return { ok: true, cost };
+    return { ok: true, cost, balance };
   }
-  return { ok: (store?.growthPointBalance ?? 0) >= cost, cost };
+  return { ok: balance >= cost, cost, balance };
+}
+
+// Real fix (2026-08-09) for the "same activity repeated at the exact same
+// timestamp" report — root cause traced to performApproveGenesisActionGroup
+// (app/dashboard/ai-actions.ts) looping through every pending member of a
+// group and letting each one independently hit checkGrowthPointBalance via
+// execute(), each writing its own genuinely-distinct FAILED ExecutionLog row
+// with byte-identical generic text — ActivityFeed doesn't surface per-item
+// action context, so N real rows read as one duplicated one. This is the
+// group-level counterpart to checkGrowthPointBalance: one query, one
+// combined shortfall, checked BEFORE any member is executed, so an
+// unaffordable group fails once with one clear reason instead of N.
+export interface GroupGrowthPointGate {
+  ok: boolean;
+  totalCost: number;
+  balance: number;
+}
+
+export async function checkGrowthPointBalanceForActions(
+  storeId: string,
+  actionTypes: readonly GenesisActionType[]
+): Promise<GroupGrowthPointGate> {
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: {
+      growthPointBalance: true,
+      businessPartnerTrialEndsAt: true,
+      plan: { select: { unlimitedActionCostCeiling: true } },
+    },
+  });
+  const balance = store?.growthPointBalance ?? 0;
+
+  let totalCost = 0;
+  for (const actionType of actionTypes) {
+    const cost = growthPointCostFor(actionType);
+    if (cost === null) continue;
+    if (isUnlimitedViaPlan(store?.plan?.unlimitedActionCostCeiling, cost)) continue;
+    if (await isUnlimitedViaTrial(store?.businessPartnerTrialEndsAt, cost)) continue;
+    totalCost += cost;
+  }
+
+  return { ok: balance >= totalCost, totalCost, balance };
 }
 
 // Debits the store's real balance and writes exactly one GrowthPointTransaction
@@ -128,6 +177,43 @@ export async function deductGrowthPoints(params: {
         description: `Invested in "${params.actionType}"`,
       },
     });
+  });
+}
+
+// Real, urgent gap closed (2026-08-09) — "do not let Growth Points become a
+// blocker that makes the product impossible to test" (Sean, after hitting
+// the insufficient-balance gate 4 times in one day on a store starting at
+// balance 0). GrowthPointTransaction.type already documented "ADJUSTMENT"
+// as a real, intended value (see the Prisma schema's own comment) — no
+// code anywhere actually created one. This completes that, rather than
+// inventing a new mechanism: a real, fully transparent, owner-only,
+// audit-labeled balance adjustment, honestly named "Adjustment" in the
+// exact same ledger/history UI every other transaction type already
+// renders through (app/dashboard/growth-points/page.tsx's own
+// TYPE_LABEL map already expected this to exist). Never disguised as a
+// purchase or an earned reward — the description says exactly what it is
+// and who did it.
+export async function adjustGrowthPointBalance(params: {
+  storeId: string;
+  amount: number;
+  adjustedByLabel: string; // e.g. the acting user's name/email — recorded in the description, not a separate column, matching every other transaction type's own plain-text description convention
+}): Promise<{ balanceAfter: number }> {
+  return prisma.$transaction(async (tx) => {
+    const store = await tx.store.update({
+      where: { id: params.storeId },
+      data: { growthPointBalance: { increment: params.amount } },
+      select: { growthPointBalance: true },
+    });
+    await tx.growthPointTransaction.create({
+      data: {
+        storeId: params.storeId,
+        type: "ADJUSTMENT",
+        amount: params.amount,
+        balanceAfter: store.growthPointBalance,
+        description: `Manual adjustment by ${params.adjustedByLabel} — development/testing`,
+      },
+    });
+    return { balanceAfter: store.growthPointBalance };
   });
 }
 

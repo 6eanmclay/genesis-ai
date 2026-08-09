@@ -3,7 +3,8 @@ import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
 import { getGrowthPointHistory, getGrowthPointUsageByAction, getReferralsSent } from "@/lib/growthPoints/ownerQueries";
 import { getOrCreateReferralCode } from "@/lib/growthPoints/referral";
 import { growthPointPackages } from "@/lib/growthPoints/purchaseCatalog";
-import { purchaseGrowthPoints } from "./actions";
+import { purchaseGrowthPoints, addGrowthPointsForTesting } from "./actions";
+import { SubmitButton } from "../SubmitButton";
 
 // Growth Points Economy (Chapter 2) — the owner's own real economy view:
 // current balance, real point history, real usage by action, their own
@@ -80,6 +81,48 @@ export default async function GrowthPointsPage() {
           sub={`${referrals.length} invited total`}
         />
       </div>
+
+      {/* Real, urgent unblock (2026-08-09) — "do not let Growth Points
+          become a blocker that makes the product impossible to test"
+          (Sean). Deliberately separate from, and visually distinct from,
+          "Buy more Growth Points" below — this is a development/testing
+          convenience, never disguised as a purchase or an earned reward.
+          Every adjustment is fully visible in Point history below, labeled
+          honestly. Real, known limitation worth revisiting before real
+          paying merchants are onboarded broadly: as built, any OWNER can
+          self-serve points repeatedly (capped per submission, not
+          lifetime) — fine for a single pre-launch store, a real product
+          decision to gate/remove before that stops being true. */}
+      {role === "OWNER" && (
+        <div className="mt-6 rounded-xl border border-dashed border-amber-400/40 bg-amber-50/50 p-5 dark:border-amber-400/25 dark:bg-amber-950/10">
+          <p className="text-sm font-medium text-black dark:text-zinc-50">Add Growth Points — development/testing</p>
+          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+            A real, transparent balance adjustment (never a purchase or an earned reward) so testing J4 never
+            gets blocked while you&rsquo;re still building. Shows up honestly in Point history below.
+          </p>
+          <form action={addGrowthPointsForTesting} className="mt-3 flex flex-wrap items-end gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">Amount (max 500)</span>
+              <input
+                type="number"
+                name="amount"
+                min={1}
+                max={500}
+                step={1}
+                defaultValue={100}
+                required
+                className="w-32 rounded-lg border border-black/[.08] px-3 py-1.5 text-sm dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+              />
+            </label>
+            <SubmitButton
+              pendingText="Adding..."
+              className="rounded-full bg-amber-500 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              Add points
+            </SubmitButton>
+          </form>
+        </div>
+      )}
 
       <h2 className="mt-12 text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
         Usage by action
