@@ -530,6 +530,14 @@ model Order {
   status            String              @default("paid")
   paymentProvider   IntegrationProvider
   externalOrderId   String
+  // Real gap closed (2026-08-09) — refunds had nowhere to attach: Order was
+  // only ever keyed by the CHECKOUT-level id (externalOrderId, a Stripe
+  // Checkout Session id), but a refund webhook (charge.refunded) arrives
+  // keyed by payment_intent, one level down. Nullable (a future non-Stripe
+  // provider, or an order created before this field existed, may not have
+  // one) and unique-when-set so a refund event can look its Order up
+  // directly rather than re-deriving it from metadata a second time.
+  externalPaymentId String?
   // Implementation roadmap Milestone 1 — a real, fulfillable business needs
   // a real shipping address; neither checkout path collected or stored one
   // before this. Normalized to one common shape regardless of provider
@@ -553,6 +561,7 @@ model Order {
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@unique([paymentProvider, externalOrderId])
+  @@unique([paymentProvider, externalPaymentId])
 }
 
 // The Execution & Verification Engine's history: append-only, never updated.

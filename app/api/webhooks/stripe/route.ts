@@ -111,6 +111,13 @@ export async function POST(request: Request) {
             status: "paid",
             paymentProvider: "STRIPE",
             externalOrderId: session.id,
+            // Real gap closed (2026-08-09) — the charge-level id, distinct
+            // from externalOrderId (the checkout-level id above). A refund
+            // webhook (charge.refunded) arrives keyed by payment_intent, not
+            // by Checkout Session — without this, a refund has no way to
+            // find its own Order. Not expanded on this session (no `expand`
+            // was requested), so it's always the plain id string here.
+            externalPaymentId: typeof session.payment_intent === "string" ? session.payment_intent : null,
             // Real, verified against the installed Stripe SDK's own types
             // before writing this — this API version nests it under
             // collected_information, not directly on the session (an
@@ -143,6 +150,41 @@ export async function POST(request: Request) {
           measureDueMeasurements(storeId),
         ]).catch(() => {})
       );
+    }
+  }
+
+  // Real gap closed (2026-08-09) — refunds previously had no code path at
+  // all: an owner refunding a customer directly in their own Stripe
+  // Dashboard left Genesis's own Order.status stuck on "paid" forever, even
+  // though the UI already had a "Refunded" label ready and
+  // internalMapper.ts already reads order.status === "refunded" for
+  // reporting. This is the writer that label/read path was always missing.
+  if (event.type === "charge.refunded") {
+    const charge = event.data.object as Stripe.Charge;
+    const paymentIntentId = typeof charge.payment_intent === "string" ? charge.payment_intent : null;
+    // Only a genuinely full refund flips status — a partial refund doesn't
+    // change what the owner still needs to fulfill/ship, and silently
+    // relabeling a still-substantially-paid order "refunded" would mislead
+    // the owner. Partial refunds are a real, named gap (not reflected in
+    // Order.status at all yet), not a silent oversight.
+    const isFullRefund = charge.amount_refunded >= charge.amount;
+    if (paymentIntentId && isFullRefund) {
+      // Fetch-then-scope, the same confirmed-safe pattern used elsewhere in
+      // this codebase (lib/tenantIsolation.ts): a bare single-record lookup
+      // (findFirst) is allowed unscoped, but the actual mutation must carry
+      // a real storeId in its own where clause — the refund event itself
+      // only gives us a payment_intent id, so the store has to be resolved
+      // first before the update can satisfy that guard.
+      const target = await prisma.order.findFirst({
+        where: { paymentProvider: "STRIPE", externalPaymentId: paymentIntentId },
+        select: { id: true, storeId: true, status: true },
+      });
+      if (target && target.status !== "refunded") {
+        await prisma.order.update({
+          where: { id: target.id, storeId: target.storeId },
+          data: { status: "refunded" },
+        });
+      }
     }
   }
 
