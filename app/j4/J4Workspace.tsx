@@ -10,7 +10,7 @@ import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
-import { mapWithConcurrency } from "@/lib/concurrency";
+import { mapWithConcurrency, withRetry } from "@/lib/concurrency";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
@@ -159,6 +159,45 @@ function J4WorkingPublisher() {
   return null;
 }
 
+// Real per-file lifecycle (2026-08-09) — "queued -> uploading -> uploaded
+// / failed... make the progress indicator truthful" (Sean, from real
+// mobile testing evidence: a real 10-image batch got visibly stuck at "1
+// of 12," with individual PNGs failing on a generic connection/timeout
+// message). Traced the actual pipeline rather than assuming: that exact
+// per-file "(Genesis couldn't complete that...)" message can ONLY come
+// from callGenesisAction's own generic catch-all (submitGenesisAction.ts),
+// wrapping ONE PER FILE — which only happens in the old sequential loop
+// below, never in the batch path. The sequential loop calls uploadAsset
+// per file, and uploadBusinessAssetFromChat does a REAL, SYNCHRONOUS
+// Claude classification call before it ever returns — several real
+// seconds each, one at a time, zero concurrency, zero retry. The batch
+// path (uploadAssetBatch/uploadPhotoBatchFromChat) is fundamentally
+// different and faster: it only ingests (a cheap DB write) and defers
+// classification, with real concurrency via mapWithConcurrency. The
+// actual fix is structural, not a retry bolted onto the slow path: a
+// multi-file image selection must never be able to reach the slow,
+// unparallelized, retry-less sequential loop at all — every file that CAN
+// go through uploadAssetBatch now does, regardless of count (the old
+// `validFiles.length > 1` gate is gone). The sequential loop still exists
+// only for callers with no batch handler at all (documents, today).
+type FileUploadStatus = "queued" | "uploading" | "uploaded" | "failed";
+interface BatchEntry {
+  id: string;
+  file: File;
+  extension: string;
+}
+interface LiveFileState {
+  id: string;
+  name: string;
+  status: FileUploadStatus;
+}
+
+let batchEntrySeq = 0;
+function makeBatchEntry(file: File, extension: string): BatchEntry {
+  batchEntrySeq += 1;
+  return { id: `${file.name}-${file.size}-${file.lastModified}-${batchEntrySeq}`, file, extension };
+}
+
 function UploadAssetButton({
   label,
   icon,
@@ -174,19 +213,23 @@ function UploadAssetButton({
   uploadAsset: (formData: FormData) => void;
   // J4 Portal batch intake (2026-08-08) — optional, and only ever passed
   // for the photo button today ("documents eventually," Sean's own
-  // words, not built yet). When present AND more than one valid file is
-  // selected, every file still uploads to Blob individually (unchanged),
-  // but instead of looping uploadAsset per file (immediate classify+
-  // reply each time), this calls uploadAssetBatch exactly once with the
-  // full list — see uploadPhotoBatchFromChat's own comment for why.
-  // A single file, or no batch handler at all, keeps the original loop
-  // byte-for-byte unchanged.
+  // words, not built yet). Whenever present, EVERY file (not just a
+  // multi-file selection — see this block's own top comment) goes through
+  // the resilient batch path: uploaded to Blob with real concurrency +
+  // automatic retry, then handed to uploadAssetBatch in one call. Only a
+  // caller with no batch handler at all falls back to the slower
+  // sequential loop.
   uploadAssetBatch?: (formData: FormData) => void;
   currentPath: string;
   onFailure: (message: string) => void;
 }) {
   const [isPending, startTransition] = useTransition();
   const [progress, setProgress] = useState<{ succeeded: number; total: number } | null>(null);
+  // Live per-file status, shown while a run is in flight — "the progress
+  // indicator should visibly advance as each file completes," not just a
+  // number. Cleared (not just left stale) at the very start of every new
+  // selection — see the real bug fixed below this state block.
+  const [liveFiles, setLiveFiles] = useState<LiveFileState[] | null>(null);
   // Resilient batch upload architecture (2026-08-08) — real production
   // finding: a 100+ photo selection sent every file to Blob at once via
   // Promise.all, which discards every already-succeeded result the
@@ -199,17 +242,35 @@ function UploadAssetButton({
   // produced at least one failure; the review panel it renders blocks the
   // final server submission until the owner decides, so a real failure
   // is never silently swept away by an immediate redirect.
-  const [failedBatchFiles, setFailedBatchFiles] = useState<{ file: File; extension: string; error: string }[] | null>(null);
+  const [failedBatchFiles, setFailedBatchFiles] = useState<BatchEntry[] | null>(null);
   const [readyBatchFiles, setReadyBatchFiles] = useState<{ blobUrl: string; originalFilename: string; contentType: string }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  async function uploadOneToBlob(entry: { file: File; extension: string }) {
-    const blob = await blobUpload(`assets/${randomAssetKey()}.${entry.extension}`, entry.file, {
-      access: "public",
-      handleUploadUrl: "/api/blob/business-asset-upload",
-      contentType: entry.file.type,
-    });
-    return { blobUrl: blob.url, originalFilename: entry.file.name, contentType: entry.file.type };
+  function setEntryStatus(id: string, status: FileUploadStatus) {
+    setLiveFiles((prev) => (prev ? prev.map((f) => (f.id === id ? { ...f, status } : f)) : prev));
+  }
+
+  // Automatic retry for transient failures (2026-08-09) — confirmed
+  // against Vercel's own current docs before writing this: @vercel/blob's
+  // client upload() has no built-in whole-request retry of its own (only
+  // multipart's internal part-retry, for one large file split into
+  // chunks — not this). By the time a file reaches this call it has
+  // already passed local content-type/size validation, so any failure
+  // here really is transient (dropped connection, timeout, a momentary
+  // 5xx) — safe to retry automatically without inspecting the error.
+  async function uploadOneToBlob(entry: BatchEntry) {
+    setEntryStatus(entry.id, "uploading");
+    return withRetry(
+      async () => {
+        const blob = await blobUpload(`assets/${randomAssetKey()}.${entry.extension}`, entry.file, {
+          access: "public",
+          handleUploadUrl: "/api/blob/business-asset-upload",
+          contentType: entry.file.type,
+        });
+        return { blobUrl: blob.url, originalFilename: entry.file.name, contentType: entry.file.type };
+      },
+      { attempts: 3, baseDelayMs: 1000 }
+    );
   }
 
   // A real concurrency cap, not "all N at once" — each Blob upload also
@@ -219,22 +280,21 @@ function UploadAssetButton({
   // phone's own network stack and that function's concurrent invocations.
   const BATCH_UPLOAD_CONCURRENCY = 4;
 
-  async function runBatchUpload(entries: { file: File; extension: string }[]) {
+  async function runBatchUpload(entries: BatchEntry[]) {
     setProgress({ succeeded: 0, total: entries.length });
     let succeededSoFar = 0;
     const newlySucceeded: { blobUrl: string; originalFilename: string; contentType: string }[] = [];
-    const stillFailing: { file: File; extension: string; error: string }[] = [];
+    const stillFailing: BatchEntry[] = [];
 
     await mapWithConcurrency(entries, BATCH_UPLOAD_CONCURRENCY, uploadOneToBlob, (index, result) => {
+      const entry = entries[index];
       if (result.ok) {
         succeededSoFar += 1;
         newlySucceeded.push(result.value);
+        setEntryStatus(entry.id, "uploaded");
       } else {
-        stillFailing.push({
-          file: entries[index].file,
-          extension: entries[index].extension,
-          error: result.error instanceof Error ? result.error.message : "Upload failed",
-        });
+        stillFailing.push(entry);
+        setEntryStatus(entry.id, "failed");
       }
       setProgress({ succeeded: succeededSoFar, total: entries.length });
     });
@@ -276,7 +336,18 @@ function UploadAssetButton({
           event.target.value = "";
           if (files.length === 0) return;
 
-          const validFiles: { file: File; extension: string }[] = [];
+          // Real bug fix (2026-08-09) — a prior run's failed/ready state
+          // was never cleared when a new selection began. A second pick
+          // made while an earlier batch's review panel was still showing
+          // could silently combine two independent batches into one
+          // count — exactly the kind of "queue" bug behind a mismatched
+          // total. A new selection is always a new, independent batch.
+          setFailedBatchFiles(null);
+          setReadyBatchFiles([]);
+          setLiveFiles(null);
+          setProgress(null);
+
+          const validFiles: BatchEntry[] = [];
           const problems: string[] = [];
           for (const file of files) {
             const extension = ALLOWED_CONTENT_TYPES[file.type];
@@ -288,24 +359,26 @@ function UploadAssetButton({
               problems.push(`${file.name} (over 8MB)`);
               continue;
             }
-            validFiles.push({ file, extension });
+            validFiles.push(makeBatchEntry(file, extension));
           }
           if (validFiles.length === 0) {
             onFailure(
               problems.length > 0
-                ? `Couldn't upload: ${problems.join(", ")}.`
-                : "Please choose a PNG, JPEG, WebP, HEIC, or PDF file."
+                ? `Couldn't upload: ${problems.join(", ")}. Genesis currently accepts PNG, JPEG, WebP, HEIC, DOCX, or PDF files.`
+                : "Please choose a PNG, JPEG, WebP, HEIC, DOCX, or PDF file."
             );
             return;
           }
 
           startTransition(async () => {
-            // Resilient batch upload (2026-08-08) — a real multi-file
-            // selection goes through one grouped upload+one owner-facing
-            // turn instead of N individual classify+reply turns, throttled
-            // and fault-tolerant rather than one all-or-nothing
-            // Promise.all. See runBatchUpload's own comment.
-            if (uploadAssetBatch && validFiles.length > 1) {
+            // Resilient batch upload (2026-08-08, hardened 2026-08-09) —
+            // every file goes through one throttled, auto-retrying,
+            // fault-tolerant pool, never the slow one-at-a-time loop, as
+            // long as this button has a batch handler at all. See this
+            // function's own top comment for why the old file-count gate
+            // was removed.
+            if (uploadAssetBatch) {
+              setLiveFiles(validFiles.map((e) => ({ id: e.id, name: e.file.name, status: "queued" })));
               const { newlySucceeded, stillFailing } = await runBatchUpload(validFiles);
               setProgress(null);
               if (stillFailing.length === 0) {
@@ -323,20 +396,30 @@ function UploadAssetButton({
               return;
             }
 
+            // No batch handler for this button (documents, today) — same
+            // real per-file resilience (retry, isolated failures, live
+            // status), just submitted one at a time since there's no
+            // batch-intake Server Action to hand them to yet.
+            setLiveFiles(validFiles.map((e) => ({ id: e.id, name: e.file.name, status: "queued" })));
             for (let i = 0; i < validFiles.length; i++) {
-              const { file, extension } = validFiles[i];
+              const entry = validFiles[i];
               const isLast = i === validFiles.length - 1;
               setProgress({ succeeded: i, total: validFiles.length });
+              setEntryStatus(entry.id, "uploading");
               const result = await callGenesisAction(async () => {
-                const blob = await blobUpload(`assets/${randomAssetKey()}.${extension}`, file, {
-                  access: "public",
-                  handleUploadUrl: "/api/blob/business-asset-upload",
-                  contentType: file.type,
-                });
+                const blob = await withRetry(
+                  () =>
+                    blobUpload(`assets/${randomAssetKey()}.${entry.extension}`, entry.file, {
+                      access: "public",
+                      handleUploadUrl: "/api/blob/business-asset-upload",
+                      contentType: entry.file.type,
+                    }),
+                  { attempts: 3, baseDelayMs: 1000 }
+                );
                 const formData = new FormData();
                 formData.set("blobUrl", blob.url);
-                formData.set("originalFilename", file.name);
-                formData.set("contentType", file.type);
+                formData.set("originalFilename", entry.file.name);
+                formData.set("contentType", entry.file.type);
                 formData.set("currentPath", currentPath);
                 // Only the batch's last file redirects/reopens the
                 // conversation — see uploadBusinessAssetFromChat's own
@@ -347,17 +430,15 @@ function UploadAssetButton({
               });
               if (!result.ok) {
                 // Resilient sequential upload (2026-08-08) — a real
-                // failure on one document (or single-file photo) used to
-                // abort every file after it, even ones that would have
-                // succeeded. Recorded and skipped instead; the rest of
-                // the selection still gets a real attempt. The LAST
-                // attempted file still needs to be the one that redirects
-                // (see isLast's own comment above) — a failure on what
-                // was meant to be the last file falls through the loop
-                // normally, so problems below still reports it honestly.
-                problems.push(`${file.name} (${result.message})`);
+                // failure on one document used to abort every file after
+                // it, even ones that would have succeeded. Recorded and
+                // skipped instead; the rest of the selection still gets a
+                // real attempt.
+                setEntryStatus(entry.id, "failed");
+                problems.push(`${entry.file.name} (${result.message})`);
                 continue;
               }
+              setEntryStatus(entry.id, "uploaded");
             }
             setProgress(null);
             if (problems.length > 0) onFailure(`Uploaded ${validFiles.length - problems.length} of ${validFiles.length} file(s). Couldn't upload: ${problems.join(", ")}.`);
@@ -384,8 +465,31 @@ function UploadAssetButton({
         )}
       </button>
 
-      {/* Absolutely positioned, matching VoiceMemoButton's own recovery-
+      {/* Live per-file status — "queued -> uploading -> uploaded/failed,"
+          visibly advancing as each file completes, not a static count.
+          Absolutely positioned, matching VoiceMemoButton's own recovery-
           panel pattern — never affects the composer row's own layout. */}
+      {isPending && liveFiles && liveFiles.length > 1 && (
+        <div
+          className="absolute bottom-full left-0 z-10 mb-2 w-72 rounded-xl border p-3 text-xs shadow-lg"
+          style={{ borderColor: GENESIS_ATMOSPHERE.border, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+        >
+          <p className="font-medium text-[#f4f2fb]">
+            Uploading {progress?.succeeded ?? 0}/{progress?.total ?? liveFiles.length}
+          </p>
+          <ul className="mt-1.5 max-h-32 overflow-y-auto">
+            {liveFiles.map((f) => (
+              <li key={f.id} className="flex items-center gap-1.5 truncate py-0.5 text-[rgba(244,242,251,0.75)]">
+                <span aria-hidden="true" className="shrink-0">
+                  {f.status === "uploaded" ? "✓" : f.status === "failed" ? "✕" : f.status === "uploading" ? "…" : "·"}
+                </span>
+                <span className="truncate">{f.name}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {failedBatchFiles && failedBatchFiles.length > 0 && (
         <div
           className="absolute bottom-full left-0 z-10 mb-2 w-72 rounded-xl border border-amber-500/25 p-3 text-xs shadow-lg"
@@ -396,7 +500,7 @@ function UploadAssetButton({
           </p>
           <ul className="mt-1.5 max-h-24 overflow-y-auto text-[rgba(244,242,251,0.62)]">
             {failedBatchFiles.map((f) => (
-              <li key={f.file.name} className="truncate">{f.file.name}</li>
+              <li key={f.id} className="truncate">{f.file.name}</li>
             ))}
           </ul>
           <div className="mt-2.5 flex flex-wrap gap-2">
@@ -405,9 +509,8 @@ function UploadAssetButton({
               disabled={isPending}
               onClick={() => {
                 startTransition(async () => {
-                  const { newlySucceeded, stillFailing } = await runBatchUpload(
-                    failedBatchFiles.map(({ file, extension }) => ({ file, extension }))
-                  );
+                  setLiveFiles(failedBatchFiles.map((e) => ({ id: e.id, name: e.file.name, status: "queued" })));
+                  const { newlySucceeded, stillFailing } = await runBatchUpload(failedBatchFiles);
                   setProgress(null);
                   const nowReady = [...readyBatchFiles, ...newlySucceeded];
                   if (stillFailing.length === 0) {
@@ -1558,7 +1661,7 @@ export function J4Workspace({
               <UploadAssetButton
                 label="Add documents"
                 icon="📄"
-                accept="application/pdf"
+                accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 uploadAsset={uploadAsset}
                 currentPath={currentPath}
                 onFailure={setSendError}

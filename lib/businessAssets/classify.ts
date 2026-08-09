@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
+import mammoth from "mammoth";
 import { callGenesisModel } from "@/lib/genesisModel";
 import { getBusinessProfile } from "@/lib/businessModel/profile";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
@@ -138,10 +139,29 @@ export async function classifyAndExtractAsset(
       topCustomers: profile.customers.topContacts.map((c) => ({ id: c.contact.id, name: c.contact.data.name })),
     };
 
-    const fileContentBlock =
-      data.fileType === "document"
-        ? ({ type: "document" as const, source: { type: "url" as const, url: data.storageUrl } })
-        : ({ type: "image" as const, source: { type: "url" as const, url: data.storageUrl } });
+    // DOCX support (2026-08-09) — confirmed against Anthropic's current
+    // docs: the document content block reads PDFs natively but does NOT
+    // read .docx (binary Office formats must be converted to text or PDF
+    // first). Real support, not a workaround: extract the file's actual
+    // text server-side (mammoth) and hand Claude that text directly,
+    // rather than silently rejecting a real business document. Detected
+    // by filename since Asset carries no separate contentType field —
+    // ALLOWED_CONTENT_TYPES only ever let a real .docx reach fileType
+    // "document" in the first place (see uploadAssetFile.ts).
+    const isDocx = data.fileType === "document" && data.originalFilename.toLowerCase().endsWith(".docx");
+    let fileContentBlock:
+      | { type: "text"; text: string }
+      | { type: "document"; source: { type: "url"; url: string } }
+      | { type: "image"; source: { type: "url"; url: string } };
+    if (isDocx) {
+      const fileBytes = await (await fetch(data.storageUrl)).arrayBuffer();
+      const { value: extractedText } = await mammoth.extractRawText({ buffer: Buffer.from(fileBytes) });
+      fileContentBlock = { type: "text", text: `[Extracted text from "${data.originalFilename}"]\n\n${extractedText}` };
+    } else if (data.fileType === "document") {
+      fileContentBlock = { type: "document", source: { type: "url", url: data.storageUrl } };
+    } else {
+      fileContentBlock = { type: "image", source: { type: "url", url: data.storageUrl } };
+    }
 
     const outcome = await callGenesisModel(
       {

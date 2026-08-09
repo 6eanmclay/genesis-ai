@@ -44,3 +44,39 @@ export async function mapWithConcurrency<T, R>(
   await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
   return results;
 }
+
+// Automatic retry for transient failures (2026-08-09) — real mobile
+// production finding: a real 18-photo batch reported "Uploaded 8 of 18"
+// with the rest failing on a generic connection/timeout message. Confirmed
+// against Vercel's own current docs before writing this: @vercel/blob's
+// client upload() has no built-in whole-request retry (multipart's own
+// internal part-retry only applies to one large file split into chunks,
+// not a dropped connection on an ordinary single-file PUT) — so a mobile
+// network blip mid-batch was a real, permanent failure with nothing to
+// recover it beyond the owner noticing and tapping Retry by hand.
+// By the time a file reaches the network call this wraps, it has already
+// passed local validation (content type, size) — every remaining failure
+// here really is transient (dropped connection, timeout, a momentary 5xx),
+// so retrying automatically is safe and correct, not something that needs
+// per-error-type sniffing. Exponential backoff, not a tight loop, so a
+// brief real network hiccup gets a real chance to clear before the next
+// attempt.
+export async function withRetry<T>(
+  task: () => Promise<T>,
+  options: { attempts?: number; baseDelayMs?: number; onRetry?: (attempt: number, error: unknown) => void } = {}
+): Promise<T> {
+  const attempts = options.attempts ?? 3;
+  const baseDelayMs = options.baseDelayMs ?? 800;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      options.onRetry?.(attempt, error);
+      await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
+    }
+  }
+  throw lastError;
+}

@@ -29,6 +29,15 @@ export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB
 // when it can't read an image (see classifyAndExtractAsset's "I wasn't able
 // to take a proper look at it" fallback), so accepting the raw bytes here is
 // safe even before there's a real client-side re-encode step.
+// DOCX (2026-08-09) — "if Genesis is intended to accept documents/
+// knowledge files, .docx needs to be supported" (Sean, after a real
+// upload — a workbook chapter file — was silently rejected as
+// "unsupported type"). Genuinely supported end-to-end, not just allow-
+// listed: classify.ts extracts real text from the file (via mammoth)
+// before it's ever shown to Claude, since Anthropic's own document
+// content blocks don't read .docx natively (confirmed against their
+// current docs — binary formats like .docx must be converted to text or
+// PDF first, unlike PDF's own native block support).
 export const ALLOWED_CONTENT_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -36,7 +45,12 @@ export const ALLOWED_CONTENT_TYPES: Record<string, string> = {
   "image/heic": "heic",
   "image/heif": "heif",
   "application/pdf": "pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
 };
+
+// Content types classified as a real document (readable text/pages), not
+// a photo — everything else in ALLOWED_CONTENT_TYPES is an image type.
+const DOCUMENT_CONTENT_TYPES = new Set<string>(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
 
 export interface UploadedAssetFile {
   url: string;
@@ -54,11 +68,11 @@ export function finalizeUploadedAssetFile(uploaded: {
   contentType: string;
 }): UploadedAssetFile {
   if (!ALLOWED_CONTENT_TYPES[uploaded.contentType]) {
-    throw new Error("Please upload a PNG, JPEG, WebP, HEIC, or PDF file.");
+    throw new Error("Please upload a PNG, JPEG, WebP, HEIC, DOCX, or PDF file.");
   }
   return {
     url: uploaded.url,
     originalFilename: uploaded.originalFilename,
-    fileType: uploaded.contentType === "application/pdf" ? "document" : "photo",
+    fileType: DOCUMENT_CONTENT_TYPES.has(uploaded.contentType) ? "document" : "photo",
   };
 }

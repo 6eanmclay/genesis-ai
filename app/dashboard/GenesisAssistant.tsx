@@ -205,7 +205,7 @@ function UploadAssetButton({
           if (!file) return;
           const extension = ALLOWED_CONTENT_TYPES[file.type];
           if (!extension) {
-            onFailure("Please upload a PNG, JPEG, WebP, HEIC, or PDF file.");
+            onFailure("Please upload a PNG, JPEG, WebP, HEIC, DOCX, or PDF file.");
             return;
           }
           if (file.size > MAX_UPLOAD_BYTES) {
@@ -874,7 +874,7 @@ export function GenesisAssistant({
             <UploadAssetButton
               label="Upload Documents"
               icon="📄"
-              accept="application/pdf"
+              accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               uploadAsset={uploadAsset}
               currentPath={pathname}
               onFailure={setSendError}
