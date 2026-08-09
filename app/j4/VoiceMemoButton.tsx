@@ -92,6 +92,28 @@ export function VoiceMemoButton({
   const [isPending, startTransition] = useTransition();
   const [isRecording, setIsRecording] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  // Real production finding (Sean, 2026-08-09): "I recorded something,
+  // lost my thought, and J4 received confusing input... stopping a
+  // recording must NOT automatically send it to J4." Recording no longer
+  // uploads/transcribes/sends the instant it stops — it lands here first,
+  // playable, with an explicit Delete or Send to J4 choice. Nothing about
+  // this recording exists to the server (no upload, no transcription, no
+  // conversation turn, no business context) until "Send to J4" is
+  // actually tapped — Delete just revokes the local object URL and this
+  // state, a purely client-side no-op as far as J4/the server ever knows.
+  const [pendingBlob, setPendingBlob] = useState<{
+    blob: Blob;
+    url: string;
+    contentType: string;
+    extension: string;
+    durationSeconds: number;
+  } | null>(null);
+  // recorder.onstop's own closure is created once per startRecording()
+  // call, so reading elapsedSeconds directly inside it would capture a
+  // stale value from that render, not the real final duration — this ref
+  // is updated alongside the state on every tick specifically so onstop
+  // can read the genuinely-current value.
+  const elapsedSecondsRef = useRef(0);
   // Real Android finding (2026-08-08) — a nontechnical owner stuck at a
   // one-line error message has no obvious next step. When getUserMedia()
   // rejects as an access-denied case (see describeMicPermissionFix's own
@@ -127,6 +149,20 @@ export function VoiceMemoButton({
       if (recorder && recorder.state !== "inactive") recorder.stop();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
+    };
+  }, []);
+  // A pending (not-yet-sent) recording's object URL is a real browser
+  // resource too — revoked if the owner navigates away mid-review without
+  // ever choosing Delete or Send. A ref (not reading pendingBlob directly)
+  // so this effect's own cleanup always sees the latest value without
+  // needing to re-run on every pendingBlob change.
+  const pendingBlobRef = useRef(pendingBlob);
+  useEffect(() => {
+    pendingBlobRef.current = pendingBlob;
+  }, [pendingBlob]);
+  useEffect(() => {
+    return () => {
+      if (pendingBlobRef.current) URL.revokeObjectURL(pendingBlobRef.current.url);
     };
   }, []);
 
@@ -181,36 +217,26 @@ export function VoiceMemoButton({
           onFailure("That recording is too long to upload — please keep voice memos under 20MB.");
           return;
         }
-        onStart();
-        startTransition(async () => {
-          const result = await callGenesisAction(async () => {
-            const uploaded = await blobUpload(`voice-memos/${randomAssetKey()}.${extension}`, blob, {
-              access: "public",
-              handleUploadUrl: "/api/blob/business-asset-upload",
-              contentType,
-            });
-            const formData = new FormData();
-            formData.set("blobUrl", uploaded.url);
-            formData.set("originalFilename", `voice-memo.${extension}`);
-            formData.set("contentType", contentType);
-            formData.set("currentPath", currentPath);
-            return uploadVoiceMemo(formData);
-          });
-          if (!result.ok) {
-            onFailure(result.message);
-          } else if (result.value) {
-            onTranscribed(result.value.transcript, result.value.audioUrl);
-          }
-        });
+        // Real production finding (Sean, 2026-08-09) — stopping a
+        // recording used to upload+transcribe+send it immediately. Now it
+        // only ever lands in review: nothing touches the server, nothing
+        // becomes conversation/business context, until the owner
+        // explicitly taps "Send to J4" (see handleSendToJ4 below).
+        // Deleting from here is a pure client-side discard — J4 never
+        // learns this recording existed at all.
+        const url = URL.createObjectURL(blob);
+        setPendingBlob({ blob, url, contentType, extension, durationSeconds: elapsedSecondsRef.current });
       };
 
       mediaRecorderRef.current = recorder;
       recorder.start();
       setIsRecording(true);
       setElapsedSeconds(0);
+      elapsedSecondsRef.current = 0;
       timerRef.current = setInterval(() => {
         setElapsedSeconds((s) => {
           const next = s + 1;
+          elapsedSecondsRef.current = next;
           if (next >= MAX_RECORDING_SECONDS) finishRecording();
           return next;
         });
@@ -235,11 +261,51 @@ export function VoiceMemoButton({
     }
   }
 
+  // Pure client-side discard — revokes the local object URL and clears
+  // state. No request of any kind is ever made; the server, J4's
+  // conversation, and J4's business context never learn this recording
+  // existed.
+  function handleDeleteRecording() {
+    if (pendingBlob) URL.revokeObjectURL(pendingBlob.url);
+    setPendingBlob(null);
+  }
+
+  // The one real boundary where a recording becomes J4 input — same real
+  // upload/transcribe/onTranscribed sequence this used to run
+  // automatically on stop, now gated behind an explicit tap.
+  function handleSendToJ4() {
+    if (!pendingBlob) return;
+    const { blob, contentType, extension, url } = pendingBlob;
+    URL.revokeObjectURL(url);
+    setPendingBlob(null);
+    onStart();
+    startTransition(async () => {
+      const result = await callGenesisAction(async () => {
+        const uploaded = await blobUpload(`voice-memos/${randomAssetKey()}.${extension}`, blob, {
+          access: "public",
+          handleUploadUrl: "/api/blob/business-asset-upload",
+          contentType,
+        });
+        const formData = new FormData();
+        formData.set("blobUrl", uploaded.url);
+        formData.set("originalFilename", `voice-memo.${extension}`);
+        formData.set("contentType", contentType);
+        formData.set("currentPath", currentPath);
+        return uploadVoiceMemo(formData);
+      });
+      if (!result.ok) {
+        onFailure(result.message);
+      } else if (result.value) {
+        onTranscribed(result.value.transcript, result.value.audioUrl);
+      }
+    });
+  }
+
   return (
     <div className="relative">
       <button
         type="button"
-        disabled={isPending}
+        disabled={isPending || !!pendingBlob}
         onClick={() => (isRecording ? finishRecording() : startRecording())}
         aria-label={isRecording ? "Stop recording" : micBlocked ? "Microphone blocked — tap for help" : "Record a voice memo"}
         title={isRecording ? "Stop recording" : micBlocked ? "Microphone blocked — tap for help" : "Record a voice memo"}
@@ -306,6 +372,42 @@ export function VoiceMemoButton({
               className="rounded-full px-3 py-1 text-xs text-[rgba(244,242,251,0.62)] hover:bg-white/[.06]"
             >
               Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Voice memo review (2026-08-09) — "Record → Stop → Review →
+          Delete OR Send to J4... stopping a recording must NOT
+          automatically send it to J4" (Sean). Same absolutely-positioned
+          popover pattern as the mic-blocked panel above, so it never
+          shifts the composer's own layout. Real playback via a genuine
+          local object URL — nothing here has touched the network yet. */}
+      {pendingBlob && (
+        <div
+          className="absolute bottom-full left-0 z-10 mb-2 w-72 rounded-xl border p-3 text-xs shadow-lg"
+          style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+        >
+          <p className="font-medium text-[#f4f2fb]">
+            Voice memo ready · {Math.floor(pendingBlob.durationSeconds / 60)}:
+            {String(pendingBlob.durationSeconds % 60).padStart(2, "0")}
+          </p>
+          <audio controls src={pendingBlob.url} className="mt-2 h-8 w-full" />
+          <div className="mt-2.5 flex gap-2">
+            <button
+              type="button"
+              onClick={handleSendToJ4}
+              className="rounded-full px-3 py-1 text-xs font-medium text-white hover:opacity-90"
+              style={{ backgroundColor: GENESIS_ATMOSPHERE.violet }}
+            >
+              Send to J4 →
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteRecording}
+              className="rounded-full px-3 py-1 text-xs text-[rgba(244,242,251,0.62)] hover:bg-white/[.06]"
+            >
+              Delete
             </button>
           </div>
         </div>
