@@ -83,7 +83,7 @@ export function ActionDiffRows({
                       src={previous}
                       alt="Current product"
                       onClick={() => setOpenImageIndex(0)}
-                      className="aspect-square w-full cursor-zoom-in rounded-md object-cover"
+                      className="aspect-square w-full rounded-md object-cover"
                     />
                   ) : (
                     <div className="flex aspect-square w-full items-center justify-center rounded-md bg-black/[.03] text-zinc-400 dark:bg-white/[.05]">
@@ -99,7 +99,7 @@ export function ActionDiffRows({
                       src={proposed}
                       alt="Proposed product"
                       onClick={() => setOpenImageIndex(proposedLightboxIndex)}
-                      className="aspect-square w-full cursor-zoom-in rounded-md object-cover"
+                      className="aspect-square w-full rounded-md object-cover"
                     />
                   ) : (
                     <div className="flex aspect-square w-full items-center justify-center rounded-md bg-black/[.03] text-zinc-400 dark:bg-white/[.05]">

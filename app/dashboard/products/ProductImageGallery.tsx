@@ -121,7 +121,7 @@ function SortableThumbnail({
       className="relative h-20 w-20 shrink-0 touch-none overflow-hidden rounded-lg bg-black/[.03] dark:bg-white/[.05]"
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config, same reasoning as every other Blob-sourced image in this app */}
-      <img src={image.url} alt="" onClick={onOpen} className="h-full w-full cursor-zoom-in object-cover" draggable={false} />
+      <img src={image.url} alt="" onClick={onOpen} className="h-full w-full object-cover" draggable={false} />
       {isPrimary && (
         <span className="pointer-events-none absolute left-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[9px] font-medium text-white">
           Primary
