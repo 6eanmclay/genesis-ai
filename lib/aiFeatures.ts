@@ -69,6 +69,9 @@ export const AI_FEATURES = [
   // call on the resulting transcript text (applyGenesisMessageToStore
   // handles that with its existing features, unchanged).
   "voice_memo_transcription",
+  // J4 spoken response (lib/voice/j4VoiceOutput.ts) — synthesizing J4's
+  // own reply as speech, concurrent with the text already streaming.
+  "j4_voice_output",
 ] as const;
 
 export type AiFeature = (typeof AI_FEATURES)[number];

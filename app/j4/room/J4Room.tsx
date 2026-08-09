@@ -31,6 +31,7 @@ import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { extractAudioUrl, extractImageUrl } from "../messageChanges";
 import { VoiceMemoButton } from "../VoiceMemoButton";
+import { J4SpeakButton } from "../J4SpeakButton";
 
 type Message = { id: string; role: string; content: string; changes: unknown };
 
@@ -419,6 +420,11 @@ export function J4Room({
                       <p className="whitespace-pre-wrap break-words text-sm text-[#f4f2fb]" data-role="content">
                         {m.content}
                       </p>
+                    )}
+                    {/* J4 Voice Output (2026-08-08) — see J4Workspace.tsx's
+                        identical usage; same shared control, same gating. */}
+                    {m.role === "assistant" && !isStreamingPlaceholder && m.content && (
+                      <J4SpeakButton text={m.content} />
                     )}
                   </div>
                 );

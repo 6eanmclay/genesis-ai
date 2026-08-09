@@ -17,6 +17,7 @@ import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { extractAudioUrl, extractChangeList, extractImageUrl, extractImageUrls, extractQuickReplies } from "./messageChanges";
 import { VoiceMemoButton } from "./VoiceMemoButton";
+import { J4SpeakButton } from "./J4SpeakButton";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
 // (app/j4/page.tsx), replacing the floating GenesisAssistant panel for the
@@ -1419,6 +1420,13 @@ export function J4Workspace({
                       <p data-role="content" className="mt-1 text-sm leading-relaxed text-[#f4f2fb] break-words">
                         {m.content}
                       </p>
+                    )}
+                    {/* J4 Voice Output (2026-08-08) — only ever offered for
+                        a real, finished assistant reply: never the
+                        streaming placeholder (nothing to speak yet), never
+                        the owner's own messages. */}
+                    {m.role === "assistant" && !isStreamingPlaceholder && m.content && (
+                      <J4SpeakButton text={m.content} />
                     )}
                     {quickReplies && quickReplies.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">

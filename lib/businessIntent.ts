@@ -91,6 +91,10 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   // knowledge, not the understanding itself (store_chat_unified_triage
   // handles the transcript's real content afterward).
   voice_memo_transcription: "research",
+  // Same category as store_chat_unified_triage — this is that same
+  // conversational reply, just spoken; the underlying content's real
+  // intent already lives with whichever turn produced the text.
+  j4_voice_output: "analyze_business",
 };
 
 export function businessIntentFor(feature: AiFeature): BusinessIntentCategory {

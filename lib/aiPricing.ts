@@ -48,3 +48,22 @@ export function computeImageCost(model: string, imageCount: number): number | nu
   if (rate === undefined) return null;
   return rate * imageCount;
 }
+
+// $ per character. eleven_flash_v2_5 — J4's own spoken-response voice
+// (lib/voice/j4VoiceOutput.ts), ElevenLabs' own recommended model for
+// real-time/conversational use (lowest published latency, ~75ms).
+// Estimated from ElevenLabs' published Creator-tier overage rate ($0.30
+// per 1,000 characters, cached 2026-08-08) — same "real, published,
+// clearly flagged, not an exact invoice line-item" status as the OpenAI
+// image rate above; this app's actual ElevenLabs plan/tier isn't known
+// from inside this codebase, so this is the most defensible real number
+// available, not a guess.
+const ELEVENLABS_RATE_USD_PER_CHARACTER: Record<string, number> = {
+  eleven_flash_v2_5: 0.0003,
+};
+
+export function computeVoiceSynthesisCost(model: string, characterCount: number): number | null {
+  const rate = ELEVENLABS_RATE_USD_PER_CHARACTER[model];
+  if (rate === undefined) return null;
+  return rate * characterCount;
+}

@@ -26,6 +26,7 @@
     "react-dom": "19.2.4",
     "resend": "^6.18.1",
     "stripe": "^22.3.2",
+    "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -35,6 +36,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "prisma": "^7.8.0",
