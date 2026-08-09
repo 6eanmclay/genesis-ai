@@ -63,6 +63,92 @@ export async function getPendingApprovals(storeId: string): Promise<PendingAppro
   }));
 }
 
+// J4 conversational approval (2026-08-09) — "when I tell J4 'approve all'
+// or 'take care of everything,' that's authorization for the group of
+// changes it just presented, not a new request to re-analyze" (Sean). The
+// only honest way to resolve "the group it just presented" without asking
+// the model to guess or hallucinate a groupId is the most recently created
+// still-pending ApprovalRequest — in a real, linear conversation that IS
+// whatever J4 last proposed. If it carries a groupId, every other member of
+// that same batch comes along too (the conversational analogue of the
+// "Approve All N" button); an ungrouped proposal resolves to just itself.
+export interface PendingApprovalBatch {
+  groupId: string | null;
+  approvalIds: string[];
+  summaries: string[];
+}
+
+export async function resolveMostRecentPendingApprovalBatch(storeId: string): Promise<PendingApprovalBatch | null> {
+  const mostRecent = await prisma.approvalRequest.findFirst({
+    where: { storeId, status: "PENDING_APPROVAL" },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!mostRecent) return null;
+
+  if (!mostRecent.groupId) {
+    return { groupId: null, approvalIds: [mostRecent.id], summaries: [mostRecent.summary] };
+  }
+
+  const members = await prisma.approvalRequest.findMany({
+    where: { storeId, groupId: mostRecent.groupId, status: "PENDING_APPROVAL" },
+    orderBy: { createdAt: "asc" },
+  });
+  return { groupId: mostRecent.groupId, approvalIds: members.map((m) => m.id), summaries: members.map((m) => m.summary) };
+}
+
+// J4 conversational approval (2026-08-09) — plain, non-"use server" home for
+// the batch-approval result shape and its two deterministic phrasings
+// (ai-actions.ts's own exports can only be async functions, so these — and
+// GroupApprovalResult itself — live here instead, imported by both
+// ai-actions.ts's perform*/approveGenesisActionGroup and route.ts's
+// approve_pending_changes handler).
+export interface GroupApprovalResult {
+  totalMembers: number;
+  succeeded: string[];
+  // "If one fails, tell me exactly which change failed and why" (Sean). The
+  // button's own describeGroupApprovalResult only ever needed a count; the
+  // chat reply needs the real per-item reason, so this carries both rather
+  // than a caller having to re-derive "why" from nothing.
+  failed: { summary: string; reason: string }[];
+}
+
+// One honest, human-readable outcome for a batch approval — the manual
+// "Approve All" button's own StoreMessage.
+export function describeGroupApprovalResult(result: GroupApprovalResult): string {
+  return result.failed.length === 0
+    ? `Applied all ${result.succeeded.length} change${result.succeeded.length === 1 ? "" : "s"} from that idea.`
+    : result.succeeded.length === 0
+      ? `Couldn't apply ${result.failed.length === 1 ? "that change" : `any of the ${result.failed.length} changes`} — still pending, so you can retry from the review page.`
+      : `Applied ${result.succeeded.length} of ${result.totalMembers} — ${result.failed.length} couldn't be applied and ${result.failed.length === 1 ? "is" : "are"} still pending so you can retry.`;
+}
+
+// "Done. I applied all 4 changes and verified them." / "3 of 4 completed.
+// One needs attention: [specific failure]." (Sean's own exact desired
+// phrasing). Deterministic, not model-generated — same discipline
+// manage_business_asset's own reply already follows, since "I applied and
+// verified this" is exactly the kind of claim that must be airtight, never
+// something the model could get subtly wrong. Shared by both
+// approve_pending_changes call sites (app/api/chat/route.ts and
+// applyGenesisMessageToStore) so the report reads identically regardless of
+// which path handled the turn.
+export function describeApprovalExecutionForChat(result: GroupApprovalResult): string {
+  if (result.totalMembers === 0) {
+    return "There's nothing pending for me to approve right now.";
+  }
+  if (result.failed.length === 0) {
+    return result.succeeded.length === 1
+      ? "Done. I applied that change and verified it."
+      : `Done. I applied all ${result.succeeded.length} changes and verified them.`;
+  }
+  const failureList = result.failed.map((f) => `${f.summary} — ${f.reason}`).join("; ");
+  if (result.succeeded.length === 0) {
+    return result.totalMembers === 1
+      ? `That didn't go through: ${failureList}. It's still pending, so we can retry.`
+      : `None of the ${result.totalMembers} changes went through: ${failureList}. They're still pending, so we can retry.`;
+  }
+  return `${result.succeeded.length} of ${result.totalMembers} completed. ${result.failed.length === 1 ? "One needs" : `${result.failed.length} need`} attention: ${failureList}.`;
+}
+
 // Shared by every path that creates a new proposal for an action type a
 // store can only have one pending decision for at a time (chat's
 // update_product_image detection, the new Phase 1 chat-driven actions, and

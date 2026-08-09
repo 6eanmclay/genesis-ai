@@ -29,7 +29,13 @@ import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { GENESIS_ACTIONS, type GenesisActionContext, type GenesisActionType } from "@/lib/execution/genesisActions";
-import { supersedePendingApproval } from "@/lib/dashboard/pendingApprovals";
+import {
+  supersedePendingApproval,
+  resolveMostRecentPendingApprovalBatch,
+  describeGroupApprovalResult,
+  describeApprovalExecutionForChat,
+  type GroupApprovalResult,
+} from "@/lib/dashboard/pendingApprovals";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
 import {
   BUSINESS_SUBCATEGORY_SLUGS,
@@ -2258,6 +2264,17 @@ async function applyGenesisMessageToStore(
       `(You previously proposed this change, awaiting confirmation: "${pending.summary}")`
     );
   }
+  // J4 conversational approval (2026-08-09) — mirrors route.ts's own
+  // identical addition (see that file's comment). This fallback's unified
+  // call can run genuinely fresh (not just as route.ts's own fallback —
+  // sendStoreMessage can reach this directly), so it needs the same
+  // "something's really pending" signal independently.
+  const pendingApprovalBatch = await resolveMostRecentPendingApprovalBatch(store.id);
+  if (pendingApprovalBatch) {
+    unifiedContextParts.push(
+      `(Awaiting your decision — ${pendingApprovalBatch.summaries.length} change${pendingApprovalBatch.summaries.length === 1 ? "" : "s"} you already proposed: ${pendingApprovalBatch.summaries.map((s) => `"${s}"`).join(", ")}. If the merchant now clearly authorizes you to proceed with these, call approve_pending_changes.)`
+    );
+  }
   // Prompt caching (Response Modes plan, Phase 1) — real measurement
   // (scripts/measure-ttft-large-prompt.ts) found this call's ~13KB system
   // prompt roughly doubles TTFT uncached; a cache_control breakpoint here
@@ -3044,6 +3061,48 @@ async function applyGenesisMessageToStore(
       storeId: store.id,
       durationMs: Date.now() - turnStartedAt,
       outcome: proposed.length > 0 ? "success" : "failure",
+      likelyRephraseOf,
+      stageDurationsMs,
+    });
+
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
+
+  // J4 conversational approval (2026-08-09) — non-streaming fallback copy
+  // of route.ts's own approve_pending_changes handling (see that file's
+  // comment for the full reasoning). userMessage was already written once
+  // at the top of this function — only the assistant reply is new here.
+  if (chosenTool?.name === "approve_pending_changes") {
+    let finalReply: string;
+    try {
+      const result = await performApprovePendingChanges(store.id);
+      finalReply = describeApprovalExecutionForChat(result);
+    } catch (err) {
+      finalReply =
+        err instanceof Error && err.message.includes("permission")
+          ? "Approving changes is something only the store owner can do — ask them to approve this, or to give you broader access."
+          : "Something went wrong applying those changes — they're still pending, so you can retry from the review page.";
+    }
+
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: finalReply },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "SUCCESS",
+      verified: false,
+      message: finalReply,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: {},
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
       likelyRephraseOf,
       stageDurationsMs,
     });
@@ -4874,7 +4933,18 @@ async function logApprovalDecisionEvent(params: {
 // member keeps its own real ApprovalRequest row and its own
 // EXECUTED/PENDING_APPROVAL status — this batches real individual
 // decisions, it never fabricates one merged decision.
-export async function approveGenesisActionGroup(groupId: string) {
+// J4 conversational approval (2026-08-09) — "I approve all together, make
+// the change" was routing back into request_product_content_change
+// (regenerating fresh suggestions, which then honestly found nothing new
+// to change) instead of executing the proposals already sitting in
+// PENDING_APPROVAL — a real, structural gap Sean caught by testing the
+// actual deployed flow. Extracted so app/api/chat/route.ts's own
+// approve_pending_changes tool handler can run the exact same execute/
+// verify/record loop the manual "Approve All" button already uses,
+// matching performApproveGenesisAction's own established
+// core-function/redirecting-wrapper split below — never a second approval
+// system, never a re-analysis.
+export async function performApproveGenesisActionGroup(groupId: string): Promise<GroupApprovalResult> {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
   const members = await prisma.approvalRequest.findMany({
     where: { storeId, groupId, status: "PENDING_APPROVAL" },
@@ -4882,16 +4952,16 @@ export async function approveGenesisActionGroup(groupId: string) {
   });
 
   if (members.length === 0) {
-    redirect("/dashboard");
+    return { totalMembers: 0, succeeded: [], failed: [] };
   }
 
   const succeeded: string[] = [];
-  const failed: string[] = [];
+  const failed: { summary: string; reason: string }[] = [];
 
   for (const approval of members) {
     const definition = GENESIS_ACTIONS[approval.actionType];
     if (!definition) {
-      failed.push(approval.summary);
+      failed.push({ summary: approval.summary, reason: `Unknown action type "${approval.actionType}"` });
       continue;
     }
 
@@ -4919,7 +4989,7 @@ export async function approveGenesisActionGroup(groupId: string) {
         name: "approval.approve_failed",
         outcome: "failure",
       });
-      failed.push(approval.summary);
+      failed.push({ summary: approval.summary, reason: result.message });
       continue;
     }
 
@@ -4950,20 +5020,45 @@ export async function approveGenesisActionGroup(groupId: string) {
     succeeded.push(approval.summary);
   }
 
-  // One honest, human-readable outcome for the whole batch, visible in the
-  // real conversation history — not just inferable from which cards
-  // happened to disappear from the review page.
-  const summaryText =
-    failed.length === 0
-      ? `Applied all ${succeeded.length} change${succeeded.length === 1 ? "" : "s"} from that idea.`
-      : succeeded.length === 0
-        ? `Couldn't apply ${failed.length === 1 ? "that change" : `any of the ${failed.length} changes`} — still pending, so you can retry from the review page.`
-        : `Applied ${succeeded.length} of ${members.length} — ${failed.length} couldn't be applied and ${failed.length === 1 ? "is" : "are"} still pending so you can retry.`;
-  await prisma.storeMessage.create({
-    data: { storeId, role: "assistant", content: summaryText },
-  });
+  return { totalMembers: members.length, succeeded, failed };
+}
 
+export async function approveGenesisActionGroup(groupId: string) {
+  const result = await performApproveGenesisActionGroup(groupId);
+  if (result.totalMembers > 0) {
+    const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+    await prisma.storeMessage.create({
+      data: { storeId, role: "assistant", content: describeGroupApprovalResult(result) },
+    });
+  }
   redirect("/dashboard");
+}
+
+// J4 conversational approval (2026-08-09) — the real function behind
+// approve_pending_changes: resolves "the group of changes I just presented"
+// (resolveMostRecentPendingApprovalBatch's own real, non-guessing
+// definition of that) and executes it through the exact same
+// performApproveGenesisActionGroup/performApproveGenesisAction machinery
+// the manual buttons already use — never a second approval system.
+// Normalizes the single-approval case into the same GroupApprovalResult
+// shape so both callers (app/api/chat/route.ts, applyGenesisMessageToStore)
+// report through the one shared describeApprovalExecutionForChat.
+export async function performApprovePendingChanges(storeId: string): Promise<GroupApprovalResult> {
+  const batch = await resolveMostRecentPendingApprovalBatch(storeId);
+  if (!batch) {
+    return { totalMembers: 0, succeeded: [], failed: [] };
+  }
+  if (batch.groupId) {
+    return performApproveGenesisActionGroup(batch.groupId);
+  }
+  const single = await performApproveGenesisAction(batch.approvalIds[0]);
+  if (single.outcome === "not_found") {
+    return { totalMembers: 0, succeeded: [], failed: [] };
+  }
+  if (single.outcome === "execution_failed") {
+    return { totalMembers: 1, succeeded: [], failed: [{ summary: batch.summaries[0], reason: single.message }] };
+  }
+  return { totalMembers: 1, succeeded: [batch.summaries[0]], failed: [] };
 }
 
 // Meeting with J4 M2 — the real decision logic, extracted so both the

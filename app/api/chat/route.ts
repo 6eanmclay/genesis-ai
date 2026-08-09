@@ -17,6 +17,8 @@ import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
+import { resolveMostRecentPendingApprovalBatch, describeApprovalExecutionForChat } from "@/lib/dashboard/pendingApprovals";
+import { performApprovePendingChanges } from "@/app/dashboard/ai-actions";
 import {
   buildStoreChatUnifiedTools,
   firstToolUse,
@@ -291,6 +293,21 @@ export async function POST(request: Request) {
         const unifiedContextParts = [userMessage, `(Active products: ${activeProductNames})`];
         if (pending) {
           unifiedContextParts.push(`(You previously proposed this change, awaiting confirmation: "${pending.summary}")`);
+        }
+        // J4 conversational approval (2026-08-09) — real evidence this was
+        // missing: Sean said "I approve all together, make the change" and
+        // the model, with no signal that anything was actually pending,
+        // called request_product_content_change again instead of executing
+        // what it had just proposed. This is the model's only way to know
+        // there's something real to authorize, distinct from pendingChange
+        // above (that's the lighter, non-ApprovalRequest confirmation loop
+        // edit_store_content uses; this is the real, structured, groupId-
+        // backed proposal system every other tool here writes into).
+        const pendingApprovalBatch = await resolveMostRecentPendingApprovalBatch(store.id);
+        if (pendingApprovalBatch) {
+          unifiedContextParts.push(
+            `(Awaiting your decision — ${pendingApprovalBatch.summaries.length} change${pendingApprovalBatch.summaries.length === 1 ? "" : "s"} you already proposed: ${pendingApprovalBatch.summaries.map((s) => `"${s}"`).join(", ")}. If the merchant now clearly authorizes you to proceed with these, call approve_pending_changes.)`
+          );
         }
         const conversationMessages = existingMessages.map((m) => ({
           role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
@@ -941,6 +958,56 @@ export async function POST(request: Request) {
           emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: proposed.length > 0 ? "success" : "failure", likelyRephraseOf, kind: "product_content_change_request" });
+          controller.close();
+          return;
+        }
+
+        // J4 conversational approval (2026-08-09) — "I approve all
+        // together. Make the change please" was routing back into
+        // request_product_content_change (a fresh re-analysis, which
+        // honestly found nothing new to change) instead of executing what
+        // was already proposed. This tool means "execute exactly what you
+        // already presented" — never a new analysis. Reuses the same
+        // execute/verify/record machinery the manual "Approve All" button
+        // already runs (performApprovePendingChanges ->
+        // performApproveGenesisActionGroup/performApproveGenesisAction);
+        // the reply is deterministic, matching manage_business_asset's own
+        // "the real outcome is reported by code, not the model" discipline
+        // — an "I applied and verified this" claim must be airtight.
+        if (chosenTool?.name === "approve_pending_changes") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "approve_pending_changes" });
+          emit({ type: "status", text: "Applying the approved changes…" });
+          let finalReply: string;
+          try {
+            const result = await performApprovePendingChanges(store.id);
+            finalReply = describeApprovalExecutionForChat(result);
+          } catch (err) {
+            // requireStorePermission (inside the perform* functions) throws
+            // a plain Error for a real, insufficient-permission case —
+            // ANALYTICS_VIEW is stricter than the STORE_MANAGE gate already
+            // passed above, so an Employee role can genuinely reach here.
+            // Same honest decline wording as the STORE_MANAGE gate earlier
+            // in this route, not a generic failure.
+            finalReply =
+              err instanceof Error && err.message.includes("permission")
+                ? "Approving changes is something only the store owner can do — ask them to approve this, or to give you broader access."
+                : "Something went wrong applying those changes — they're still pending, so you can retry from the review page.";
+          }
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "SUCCESS",
+            verified: false,
+            message: finalReply,
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: {},
+          });
+          emit({ type: "token", delta: finalReply });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "approve_pending_changes" });
           controller.close();
           return;
         }

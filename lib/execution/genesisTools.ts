@@ -110,6 +110,7 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "request_image_change",
   "request_product_removal",
   "request_product_content_change",
+  "approve_pending_changes",
   "edit_store_content",
   "manage_business_asset",
 ] as const;
@@ -152,6 +153,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant is asking you to rename, rewrite, improve, or clean up the name and/or description of one or more EXISTING products — this includes both an explicit instruction ('change the name to X') and a genuine request for your own recommendation ('these names are too keyword-stuffed, what should they be', 'review my products and suggest better descriptions'). Either way, you have the real capability to prepare the actual change for the merchant's approval — never just describe what they should type in themselves. Resolve scope the same way as request_image_change: 'all' when they clearly mean every active product, 'specific' with productNames set to the exact matching names, or null only when genuinely unclear (then ask a specific clarifying question in your reply text). Set changeType to whichever the merchant is actually asking about — 'name', 'description', or 'both'. This tool only decides WHICH products and WHAT KIND of change; the actual proposed wording is generated separately, grounded in what you really know about the business and each product, not guessed from the existing text alone.",
       input_schema: z.toJSONSchema(RequestProductContentChangeInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "approve_pending_changes",
+      description:
+        "Call this when the merchant gives clear, explicit authorization to proceed with change(s) you already proposed and are still awaiting their decision on (see 'Awaiting your decision' in the context below, if present) — e.g. 'approve all', 'approve them', 'yes, make the changes', 'take care of everything', 'do it'. This executes the real, already-prepared proposal(s) exactly as shown — it never re-analyzes or regenerates anything, so never call this to prepare a NEW change (that's request_product_content_change, request_image_change, request_product_removal, or edit_store_content instead). Only call this when there really is something awaiting a decision noted below; if there's nothing pending, treat the message as plain conversation instead.",
+      input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
     },
     {
       name: "edit_store_content",
