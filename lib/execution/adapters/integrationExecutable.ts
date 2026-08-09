@@ -135,6 +135,18 @@ export function syncExecutable(
         connector.provider.toLowerCase(),
         records
       );
+      // Social Connections & Business Intelligence (2026-08-09) — real
+      // interpretation, not just storage, but never at the cost of the
+      // sync's own honest success/failure report. Fire-and-await, but
+      // caught: a real Claude-call failure here degrades to "the sync
+      // worked, the insight didn't," never the reverse.
+      if (connector.interpretSync && result.written > 0) {
+        try {
+          await connector.interpretSync(ctx.storeId);
+        } catch (error) {
+          console.error(`[interpretSync] ${connector.provider} failed:`, error);
+        }
+      }
       return {
         message: `Synced ${result.written} record(s) from ${connector.displayName}${
           result.errors.length > 0 ? ` (${result.errors.length} couldn't be saved)` : ""

@@ -107,6 +107,13 @@ export interface BusinessProfile {
   // unclassified/low-confidence assets too (never filtered out here) —
   // consumers decide how to treat confidence, this is just the real facts.
   assets: CanonicalRecord<"asset">[];
+  // Social Connections & Business Intelligence (2026-08-09) — real,
+  // currently-synced Facebook/Instagram/TikTok account data, reaching
+  // getBusinessUnderstanding() the moment it's connected (unlike Campaign,
+  // whose own gap this deliberately avoids repeating — see this field's
+  // own read site in lib/dashboard/storeChatUnified.ts for how J4 is
+  // instructed to interpret, not just relay, this data).
+  socialAccounts: CanonicalRecord<"socialAccount">[];
   asOf: string;
 }
 
@@ -154,6 +161,7 @@ export async function getBusinessProfile(
     challenges,
     locations,
     assets,
+    socialAccounts,
     revenue30d,
     revenueAllTime,
     topContacts,
@@ -178,6 +186,7 @@ export async function getBusinessProfile(
     queryRecords(storeId, "challenge"),
     queryRecords(storeId, "location"),
     queryRecords(storeId, "asset"),
+    queryRecords(storeId, "socialAccount"),
     getRevenue(storeId, { since: thirtyDaysAgo }),
     getRevenue(storeId),
     getTopContacts(storeId),
@@ -253,6 +262,7 @@ export async function getBusinessProfile(
     challenges,
     locations,
     assets,
+    socialAccounts,
     asOf: new Date().toISOString(),
   };
 }

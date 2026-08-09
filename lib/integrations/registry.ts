@@ -6,6 +6,9 @@ import { googleCalendarConnector } from "./googleCalendar";
 import { quickbooksConnector } from "./quickbooks";
 import { mailchimpConnector } from "./mailchimp";
 import { printfulConnector } from "./printful";
+import { facebookConnector } from "./facebook";
+import { instagramConnector } from "./instagram";
+import { tiktokConnector } from "./tiktok";
 
 // Adding a new integration means writing a connector module and adding one
 // line here — nothing else in the framework needs to know it exists. The 3
@@ -21,6 +24,10 @@ const CONNECTORS: Partial<Record<IntegrationProvider, IntegrationConnector>> = {
   // FOR (fulfillment catalog browsing/pricing/ordering) goes through
   // lib/fulfillment/registry.ts instead, never through this file.
   PRINTFUL: printfulConnector,
+  // Social Connections & Business Intelligence (2026-08-09).
+  FACEBOOK: facebookConnector,
+  INSTAGRAM: instagramConnector,
+  TIKTOK: tiktokConnector,
 };
 
 export function getConnector(provider: IntegrationProvider): IntegrationConnector {

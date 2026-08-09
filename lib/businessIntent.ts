@@ -99,6 +99,10 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   // conversational reply, just spoken; the underlying content's real
   // intent already lives with whichever turn produced the text.
   j4_voice_output: "analyze_business",
+  // Real interpretation of a store's own connected social data — the same
+  // "understand what's happening" work analyze_business already covers for
+  // orders/revenue/customers, just for social presence.
+  social_insight_generation: "analyze_business",
 };
 
 export function businessIntentFor(feature: AiFeature): BusinessIntentCategory {

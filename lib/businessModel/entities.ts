@@ -218,6 +218,85 @@ export const AssetSchema = z.object({
 });
 export type Asset = z.infer<typeof AssetSchema>;
 
+// Social Connections & Business Intelligence (2026-08-09) — "J4 should be
+// able to interpret the data rather than simply display it... follower/
+// audience size, demographics, geographic distribution, growth, reach/
+// views/impressions, engagement, top-performing content" (Sean). One row
+// per (store, platform) — externalId is the platform's own account id, so
+// a re-sync updates this record in place via BusinessRecord's existing
+// @@unique constraint, same as every other entity type. Deliberately NOT
+// CampaignSchema: a campaign is one promotional push with a start/end; this
+// is an ongoing account's own standing presence — a genuinely different
+// shape (Sean's own examples are all cross-platform/audience-level
+// comparisons, never about one specific post's send).
+//
+// "If a platform doesn't expose a particular audience metric... store that
+// metric as unavailable rather than fabricating or estimating it" — every
+// metric-bearing field here is nullable for exactly that honest reason, and
+// unavailableMetrics names which ones a given platform/account genuinely
+// doesn't expose (vs. simply not yet synced), so a consumer (J4's own
+// reasoning, a future UI) never has to guess why a field is null.
+//
+// recentDailyMetrics is a real, provider-returned rolling window (e.g.
+// Instagram Insights' own day-period series), refreshed whole on every
+// sync — not an unbounded history Genesis accumulates indefinitely itself.
+// That's an honest, deliberately modest v1 scope for "growth/trends over
+// time": what the platform's own API already returns, not a promise of
+// unlimited historical analytics this integration doesn't actually have.
+export const SocialAccountSchema = z.object({
+  // "facebook" | "instagram" | "tiktok" — lowercase, matching this file's
+  // own free-string categorical-field convention (never z.enum()).
+  platform: z.string(),
+  accountName: z.string().nullable(),
+  accountUsername: z.string().nullable(),
+  profileUrl: z.string().nullable(),
+  followerCount: z.number().int().nullable(),
+  followingCount: z.number().int().nullable(),
+  mediaCount: z.number().int().nullable(),
+  engagementRate: z.number().nullable(), // 0-1, null when not computable from what the platform returns
+  audienceDemographics: z
+    .object({
+      // e.g. {"18-24": 0.31, "25-34": 0.42, ...} — shares of the audience, not raw counts.
+      ageRanges: z.record(z.string(), z.number()).nullable(),
+      genderSplit: z.record(z.string(), z.number()).nullable(),
+      topCountries: z.record(z.string(), z.number()).nullable(),
+      topCities: z.record(z.string(), z.number()).nullable(),
+    })
+    .nullable(),
+  recentDailyMetrics: z
+    .array(
+      z.object({
+        date: z.string(), // ISO date
+        followerCount: z.number().int().nullable(),
+        reach: z.number().int().nullable(),
+        impressions: z.number().int().nullable(),
+        profileViews: z.number().int().nullable(),
+      })
+    )
+    .nullable(),
+  topContent: z
+    .array(
+      z.object({
+        externalId: z.string(),
+        caption: z.string().nullable(),
+        postedAt: z.string().nullable(), // ISO datetime
+        permalink: z.string().nullable(),
+        // Open bag — reach/impressions/likes/comments/shares/views, whatever
+        // the platform actually returned for this piece of content.
+        metrics: z.record(z.string(), z.number()),
+      })
+    )
+    .nullable(),
+  // Real field names this platform/account genuinely doesn't expose right
+  // now (e.g. "audienceDemographics" for a TikTok Display API-only
+  // connection, or any demographic field for an account under a platform's
+  // own minimum-follower threshold) — never inferred from a field simply
+  // being null, always explicitly set by the connector that knows why.
+  unavailableMetrics: z.array(z.string()),
+  syncedFromApiAt: z.string(), // ISO datetime — when this snapshot was actually pulled from the platform
+});
+export type SocialAccount = z.infer<typeof SocialAccountSchema>;
+
 export const ENTITY_REGISTRY = {
   contact: { schema: ContactSchema, label: "Contact" },
   transaction: { schema: TransactionSchema, label: "Transaction" },
@@ -230,6 +309,7 @@ export const ENTITY_REGISTRY = {
   employee: { schema: EmployeeSchema, label: "Employee" },
   location: { schema: LocationSchema, label: "Location" },
   asset: { schema: AssetSchema, label: "Asset" },
+  socialAccount: { schema: SocialAccountSchema, label: "Social Account" },
 } as const;
 
 export type EntityType = keyof typeof ENTITY_REGISTRY;

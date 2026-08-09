@@ -277,6 +277,15 @@ enum IntegrationProvider {
   // registered, of which this is the first. See ONBOARDING_V2_DESIGN.md
   // section 6.
   PRINTFUL
+  // Social Connections & Business Intelligence (2026-08-09) — Facebook and
+  // Instagram are two independent StoreIntegration rows (each does its own
+  // full OAuth against the Meta Graph API, matching every other connector's
+  // self-contained lifecycle) even though they share low-level OAuth/token
+  // helpers (lib/integrations/metaShared.ts) — a merchant genuinely may
+  // want one without the other. TikTok is a separate app/API entirely.
+  FACEBOOK
+  INSTAGRAM
+  TIKTOK
 }
 
 enum IntegrationStatus {

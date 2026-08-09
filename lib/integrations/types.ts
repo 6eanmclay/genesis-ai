@@ -60,4 +60,15 @@ export interface IntegrationConnector {
   // matching this phase's "leaving the underlying software responsible
   // for its own operational workflows" non-goal.
   sync?(storeId: string): Promise<SyncedRecord[]>;
+
+  // Social Connections & Business Intelligence (2026-08-09) — optional,
+  // general-purpose (not social-specific): called once by syncExecutable
+  // right after this sync's own records are persisted, for a connector
+  // that wants to do more than store raw data — "J4 should be able to
+  // interpret the data rather than simply display it" (Sean's own words,
+  // about social specifically, but the hook itself is a real framework
+  // capability any connector could adopt later). Failures here are caught
+  // and swallowed by the caller: a broken interpretation must never turn a
+  // genuinely successful sync into a reported failure.
+  interpretSync?(storeId: string): Promise<void>;
 }

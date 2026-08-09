@@ -3,6 +3,9 @@ import type { IntegrationConnector } from "./types";
 import { googleCalendarConnector } from "./googleCalendar";
 import { quickbooksConnector } from "./quickbooks";
 import { mailchimpConnector } from "./mailchimp";
+import { facebookConnector } from "./facebook";
+import { instagramConnector } from "./instagram";
+import { tiktokConnector } from "./tiktok";
 
 // Phase 3 Milestone 2 — the categorized registry driving /dashboard/
 // connections. Covers all 7 of Sean's categories immediately, even though
@@ -131,6 +134,39 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     ],
     connector: mailchimpConnector,
   },
+  {
+    id: "facebook",
+    provider: "FACEBOOK",
+    name: "Facebook Page",
+    category: "social_media",
+    description: "Bring your Page's audience size, reach, and engagement into Genesis so J4 can tell you what it means.",
+    authMethod: "oauth",
+    sensitivity: "standard",
+    recommendedFor: ["boutique_apparel", "online_dtc_brand", "restaurant", "artist_maker", "marketing_agency"],
+    connector: facebookConnector,
+  },
+  {
+    id: "instagram",
+    provider: "INSTAGRAM",
+    name: "Instagram Business",
+    category: "social_media",
+    description: "Audience size, demographics, reach, and top-performing posts — real insights, not just follower counts.",
+    authMethod: "oauth",
+    sensitivity: "standard",
+    recommendedFor: ["boutique_apparel", "online_dtc_brand", "restaurant", "artist_maker", "marketing_agency"],
+    connector: instagramConnector,
+  },
+  {
+    id: "tiktok",
+    provider: "TIKTOK",
+    name: "TikTok",
+    category: "social_media",
+    description: "Follower count, video performance, and engagement — audience demographics aren't available through TikTok's standard API yet.",
+    authMethod: "oauth",
+    sensitivity: "standard",
+    recommendedFor: ["boutique_apparel", "online_dtc_brand", "artist_maker", "marketing_agency"],
+    connector: tiktokConnector,
+  },
 
   // Coming soon — seeds every category so the page shows the full vision
   // immediately, per Sean's own "don't build dozens immediately... but the
@@ -199,17 +235,6 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     authMethod: "api_key",
     sensitivity: "standard",
     recommendedFor: ["restaurant", "salon_spa", "contractor_construction", "event_venue"],
-    connector: null,
-  },
-  {
-    id: "instagram",
-    provider: null,
-    name: "Instagram",
-    category: "social_media",
-    description: "Business profile insights and post performance.",
-    authMethod: "oauth",
-    sensitivity: "standard",
-    recommendedFor: ["boutique_apparel", "online_dtc_brand", "restaurant", "artist_maker"],
     connector: null,
   },
 ];

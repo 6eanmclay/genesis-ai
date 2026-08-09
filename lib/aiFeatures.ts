@@ -77,6 +77,11 @@ export const AI_FEATURES = [
   // J4 spoken response (lib/voice/j4VoiceOutput.ts) — synthesizing J4's
   // own reply as speech, concurrent with the text already streaming.
   "j4_voice_output",
+  // Social Connections & Business Intelligence (2026-08-09) — real
+  // cross-platform interpretation of a store's just-synced social account
+  // data (lib/execution/socialInsight.ts), triggered after a Facebook/
+  // Instagram/TikTok sync.
+  "social_insight_generation",
 ] as const;
 
 export type AiFeature = (typeof AI_FEATURES)[number];
