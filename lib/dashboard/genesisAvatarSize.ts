@@ -24,8 +24,11 @@ export const GENESIS_AVATAR_SIZE = {
   card: "h-16 w-16", // 64px — a real card-level moment (e.g. CreateBusinessArrival)
   // GenesisDomicile's own ambient orb — sized relative to its own frame,
   // not a fixed pixel value, kept as its own real token rather than
-  // forced onto the fixed-pixel scale above.
-  domicile: "aspect-square w-[78%]",
+  // forced onto the fixed-pixel scale above. Bumped 78% -> 85% (2026-08-09,
+  // real-device feedback): "the recent size increase is better, but
+  // increase the avatar one more size step... keep the existing visual
+  // treatment/proportions, just give it slightly more presence."
+  domicile: "aspect-square w-[85%]",
 
   // Onboarding/full-screen feature moments — responsive (viewport-relative
   // with a max cap), smallest to largest.

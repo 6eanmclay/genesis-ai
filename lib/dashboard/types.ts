@@ -47,6 +47,18 @@ export interface AttentionItem {
   message: string;
   occurredAt: Date | null; // null for ongoing state issues, no single timestamp
   actionHref?: string;
+  // Notice dedup (2026-08-09) — "don't repeat the same insight multiple
+  // times just because J4 found it in multiple places... group related/
+  // duplicate findings into one concise insight with expandable details"
+  // (Sean, after seeing the same Growth Points shortfall message 4-5 times
+  // on one dashboard). Set only when this item represents 2+ real,
+  // separately-logged occurrences sharing identical message text —
+  // `occurredAt`/`id` above stay the most recent occurrence's own values,
+  // `groupedItems` carries every real occurrence (including this one) for
+  // an expand view. A card with no duplicates simply never gets these
+  // fields, so every existing single-occurrence rendering is untouched.
+  count?: number;
+  groupedItems?: { id: string; occurredAt: Date | null }[];
 }
 
 export interface RecentOrder {

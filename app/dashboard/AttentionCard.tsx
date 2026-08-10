@@ -132,10 +132,23 @@ export function AttentionCard({
 
             {hasExpandableDetail && (
               <details className="group" open={highlighted || undefined}>
-                <summary className="cursor-pointer list-none text-xs text-zinc-500 underline">Details</summary>
+                <summary className="cursor-pointer list-none text-xs text-zinc-500 underline">
+                  {card.kind === "issue" && card.count && card.count > 1
+                    ? `View ${card.count} occurrences →`
+                    : "Details"}
+                </summary>
                 <div className="mt-2 flex flex-col gap-1.5 text-xs text-zinc-500">
                   {card.occurredAt && <p>{card.occurredAt.toLocaleString()}</p>}
                   {card.kind === "task" && card.detail && <p>{card.detail}</p>}
+                  {card.kind === "issue" && card.groupedItems && card.groupedItems.length > 1 && (
+                    <ul className="flex flex-col gap-1 border-t border-black/[.06] pt-1.5 dark:border-white/[.08]">
+                      {card.groupedItems.map((occurrence) => (
+                        <li key={occurrence.id}>
+                          {occurrence.occurredAt ? occurrence.occurredAt.toLocaleString() : "Ongoing"}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {card.kind === "proposal" && (
                     <div className="rounded-lg border border-black/[.06] bg-white/60 p-3 dark:border-white/[.08] dark:bg-black/20">
                       <ActionDiffRows input={card.input} previousValues={card.previousValues} />

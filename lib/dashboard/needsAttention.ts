@@ -160,6 +160,38 @@ function getUnsellableStoreIssue(params: {
   return null;
 }
 
+// Notice dedup (2026-08-09) — real UX principle, not a Growth-Points-only
+// patch: J4 is thorough underneath (it should keep logging every real
+// occurrence), but the dashboard should present ONE signal with a count,
+// not N copies of the same sentence. Groups items sharing byte-identical
+// message text; a group of one is returned completely unchanged (no
+// count/groupedItems set), so this is a safe no-op everywhere duplication
+// genuinely isn't happening. Order-preserving: a group's position is
+// wherever its first (most recent, since callers already sort desc)
+// member appeared.
+export function dedupeAttentionItemsByMessage(items: AttentionItem[]): AttentionItem[] {
+  const order: string[] = [];
+  const byMessage = new Map<string, AttentionItem[]>();
+  for (const item of items) {
+    if (!byMessage.has(item.message)) {
+      order.push(item.message);
+      byMessage.set(item.message, []);
+    }
+    byMessage.get(item.message)!.push(item);
+  }
+
+  return order.map((message) => {
+    const group = byMessage.get(message)!;
+    if (group.length === 1) return group[0];
+    const mostRecent = group[0]; // callers already sort desc by occurredAt
+    return {
+      ...mostRecent,
+      count: group.length,
+      groupedItems: group.map((g) => ({ id: g.id, occurredAt: g.occurredAt })),
+    };
+  });
+}
+
 // Combines all four sources into the two UI groups AttentionPanel renders
 // — never blended, per the design: "Recent issues" (timestamped, things
 // that happened) vs. "Needs fixing now" (ongoing conditions).
@@ -175,12 +207,12 @@ export async function getAttentionItems(
 
   const unsellableStoreIssue = getUnsellableStoreIssue(currentStateParams);
 
-  const recentOutcomes = [
+  const sortedOutcomes = [
     ...recentFailures,
     ...staleExecutions,
     ...integrationIssues,
     ...(unsellableStoreIssue ? [unsellableStoreIssue] : []),
   ].sort((a, b) => (b.occurredAt?.getTime() ?? 0) - (a.occurredAt?.getTime() ?? 0));
 
-  return { recentOutcomes, currentState: getStateIssues(currentStateParams) };
+  return { recentOutcomes: dedupeAttentionItemsByMessage(sortedOutcomes), currentState: getStateIssues(currentStateParams) };
 }

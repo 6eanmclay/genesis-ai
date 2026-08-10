@@ -86,6 +86,13 @@ export interface ProposalAttentionCard extends AttentionCardCommon {
 export interface IssueAttentionCard extends AttentionCardCommon {
   kind: "issue";
   message: string;
+  // Notice dedup (2026-08-09) — set only when this card consolidates 2+
+  // real, separately-logged occurrences sharing identical message text.
+  // See dedupeAttentionItemsByMessage's own comment (lib/dashboard/
+  // needsAttention.ts) for why this is safe to leave unset everywhere
+  // duplication genuinely isn't happening.
+  count?: number;
+  groupedItems?: { id: string; occurredAt: Date | null }[];
 }
 
 export interface DiscoveryAttentionCard extends AttentionCardCommon {
@@ -163,6 +170,21 @@ function buildProposalCard(approval: PendingApproval): ProposalAttentionCard {
     reviewHref: section?.href ?? null,
     groupId: approval.groupId,
   };
+}
+
+// Notice dedup (2026-08-09) — the consolidated-card summary. Sean's own
+// worked example ("5 opportunities require more Growth Points than you
+// currently have") gets that exact phrasing since it's a real, common,
+// recognizable pattern (matches the shortfall message lib/execution/
+// engine.ts writes); every other deduped message falls back to an honest
+// generic "(x N)" suffix rather than fabricating bespoke copy for a
+// pattern this hasn't been taught to recognize yet.
+function describeIssueSummary(item: { message: string; count?: number }): string {
+  if (!item.count || item.count <= 1) return item.message;
+  if (item.message.includes("more Growth Points than you currently have")) {
+    return `${item.count} opportunities require more Growth Points than you currently have.`;
+  }
+  return `${item.message} (×${item.count})`;
 }
 
 function buildObservationCard(obs: { dedupeKey: string; genesisState: string; summary: string }): ObservationAttentionCard {
@@ -281,11 +303,13 @@ export function buildAttentionCards(params: {
       id: `issue:${item.id}`,
       kind: "issue",
       rank: item.severity === "FAILED" ? 0 : 2,
-      summary: item.message,
+      summary: describeIssueSummary(item),
       detail: null,
       occurredAt: item.occurredAt,
       dotClassName: item.severity === "FAILED" ? DOT_URGENT : DOT_OPPORTUNITY,
       message: item.message,
+      count: item.count,
+      groupedItems: item.groupedItems,
     });
   }
 
