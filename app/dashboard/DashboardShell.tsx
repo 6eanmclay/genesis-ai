@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
@@ -133,6 +134,21 @@ export function DashboardShell({
   const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false); // mobile bottom sheet
   const [desktopMoreOpen, setDesktopMoreOpen] = useState(false); // top-bar dropdown
+  // Real bug fix (2026-08-09) — at lg:+, primaryNavRow renders inside the
+  // framed "TV" workspace, which has lg:overflow-hidden for its own
+  // rounded-corner clipping (see the comment on that container below).
+  // The dropdown panel used position:absolute relative to a `relative`
+  // ancestor INSIDE that frame — absolute positioning escapes normal
+  // layout flow, but not an ancestor's overflow:hidden clipping, so the
+  // panel rendered completely invisible on desktop even though the click
+  // handler and state both worked correctly (confirmed via Sean's own
+  // real-device report: "tapping More does not open this menu at all" on
+  // desktop, but the identical mobile sheet — a different, unclipped DOM
+  // path below — worked fine). Fixed by portaling the panel to
+  // document.body and positioning it with `fixed` at the button's own
+  // measured coordinates, so it's never inside a clipped ancestor
+  // regardless of which of primaryNavRow's two mounted homes triggered it.
+  const [desktopMoreCoords, setDesktopMoreCoords] = useState<{ top: number; left: number } | null>(null);
 
   // The real business-assessment color behind every avatar surface in this
   // shell — the primary nav icon and mobile header icon below, plus (via
@@ -415,7 +431,18 @@ export function DashboardShell({
         {moreSections.length > 0 && (
           <div className="relative shrink-0">
             <button
-              onClick={() => setDesktopMoreOpen((open) => !open)}
+              onClick={(e) => {
+                // event.currentTarget rather than a shared ref — primaryNavRow
+                // mounts at TWO DOM locations simultaneously (CSS-hidden per
+                // breakpoint, not conditionally rendered), so a single ref
+                // object would only reliably track whichever instance last
+                // committed, not necessarily the one actually visible/clicked.
+                if (!desktopMoreOpen) {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setDesktopMoreCoords({ top: rect.bottom + 4, left: rect.left });
+                }
+                setDesktopMoreOpen((open) => !open);
+              }}
               className={`relative flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm transition-colors ${
                 desktopMoreOpen
                   ? "bg-black/[.03] text-black dark:bg-white/[.05] dark:text-zinc-50"
@@ -430,42 +457,49 @@ export function DashboardShell({
                 <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-400" />
               )}
             </button>
-            {desktopMoreOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setDesktopMoreOpen(false)} />
-                <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-lg border border-black/[.08] bg-white py-1 shadow-lg dark:border-white/[.145] dark:bg-zinc-900">
-                  {moreSections.map((section) => {
-                    // The row itself gets a subtle amber tint (not just the
-                    // number pill) so the connection between the outer
-                    // yellow "Decision" dot on the More button and the
-                    // specific destination carrying it is unmistakable at
-                    // a glance, not just a small badge easy to miss among
-                    // plain-looking rows.
-                    const hasBadge = (sectionBadgeCounts[section.key] ?? 0) > 0;
-                    return (
-                      <Link
-                        key={section.key}
-                        href={section.href}
-                        onClick={() => setDesktopMoreOpen(false)}
-                        className={`flex items-center gap-3 px-3 py-2 text-sm text-black dark:text-zinc-50 ${
-                          hasBadge
-                            ? "bg-amber-400/10 hover:bg-amber-400/15"
-                            : "hover:bg-black/[.03] dark:hover:bg-white/[.05]"
-                        }`}
-                      >
-                        <NavIcon section={section.key} className="h-4 w-4 shrink-0" />
-                        <span className="flex-1">{section.label}</span>
-                        {hasBadge && (
-                          <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                            {sectionBadgeCounts[section.key]}
-                          </span>
-                        )}
-                      </Link>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+            {desktopMoreOpen &&
+              desktopMoreCoords &&
+              typeof document !== "undefined" &&
+              createPortal(
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setDesktopMoreOpen(false)} />
+                  <div
+                    className="fixed z-50 w-48 rounded-lg border border-black/[.08] bg-white py-1 shadow-lg dark:border-white/[.145] dark:bg-zinc-900"
+                    style={{ top: desktopMoreCoords.top, left: desktopMoreCoords.left }}
+                  >
+                    {moreSections.map((section) => {
+                      // The row itself gets a subtle amber tint (not just the
+                      // number pill) so the connection between the outer
+                      // yellow "Decision" dot on the More button and the
+                      // specific destination carrying it is unmistakable at
+                      // a glance, not just a small badge easy to miss among
+                      // plain-looking rows.
+                      const hasBadge = (sectionBadgeCounts[section.key] ?? 0) > 0;
+                      return (
+                        <Link
+                          key={section.key}
+                          href={section.href}
+                          onClick={() => setDesktopMoreOpen(false)}
+                          className={`flex items-center gap-3 px-3 py-2 text-sm text-black dark:text-zinc-50 ${
+                            hasBadge
+                              ? "bg-amber-400/10 hover:bg-amber-400/15"
+                              : "hover:bg-black/[.03] dark:hover:bg-white/[.05]"
+                          }`}
+                        >
+                          <NavIcon section={section.key} className="h-4 w-4 shrink-0" />
+                          <span className="flex-1">{section.label}</span>
+                          {hasBadge && (
+                            <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                              {sectionBadgeCounts[section.key]}
+                            </span>
+                          )}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </>,
+                document.body
+              )}
           </div>
         )}
       </nav>

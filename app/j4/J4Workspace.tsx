@@ -785,6 +785,22 @@ export function J4Workspace({
   // typing and pressing send already does, not a shortcut around it.
   const formRef = useRef<HTMLFormElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  // Defense-in-depth for the same "typed text disappears while attachments
+  // upload" bug the narrowed visibilitychange refresh above targets — this
+  // guards the composer regardless of what actually causes a stray
+  // remount/reset (there could be more than one path into it, on top of
+  // the real one found above). sessionStorage, not React state: the
+  // textarea itself stays deliberately uncontrolled (existing convention,
+  // read via FormData on submit), so this restores on mount rather than
+  // trying to make every keystroke round-trip through React.
+  const DRAFT_STORAGE_KEY = "j4-portal-draft-message";
+  useEffect(() => {
+    if (typeof window === "undefined" || !messageInputRef.current) return;
+    const saved = window.sessionStorage.getItem(DRAFT_STORAGE_KEY);
+    if (saved && !messageInputRef.current.value) {
+      messageInputRef.current.value = saved;
+    }
+  }, []);
   // Voice-memo streaming convergence (2026-08-08) — carries a transcribed
   // memo's real audioUrl across the same form submission sendQuickReply's
   // own hidden currentPath field already uses, so handleSend can persist
@@ -838,6 +854,24 @@ export function J4Workspace({
   // bfcache-style restoration; visibilitychange covers the same backgrounded-tab
   // case defensively, since which one actually fires can vary by
   // browser/OS. Cheap either way — just one more RSC fetch, not an AI call.
+  // Real bug fix (2026-08-09) — this fired router.refresh() on EVERY
+  // visibilitychange "visible" event, with no minimum-hidden-duration
+  // check. A native mobile photo/document picker backgrounds the tab for
+  // a couple of seconds too — the single most common moment for this to
+  // fire is exactly mid-upload, refetching page.tsx's server data
+  // (messages, tasks, etc.) and feeding a fresh `messages` array into the
+  // "adjust state during render" resync above (`if (messages !==
+  // syncedMessages) { ...; setLocalMessages(messages); }`), which is a
+  // real, plausible mechanism for wiping in-progress composer state right
+  // when the owner returns from picking attachments — the exact bug Sean
+  // reported ("typed text disappears while photos are being added").
+  // Narrowed to only refresh after a REAL absence (>=15s hidden), which
+  // still covers the original "left /j4 to approve something elsewhere,
+  // came back later" case this was built for, without firing on a quick
+  // picker round trip. pageshow's real bfcache-restoration signal
+  // (event.persisted) is untouched — that's a a different, always-genuine
+  // "you navigated away and the browser restored a stale page" case.
+  const hiddenSinceRef = useRef<number | null>(null);
   useEffect(() => {
     function refreshOnReturn() {
       router.refresh();
@@ -846,7 +880,15 @@ export function J4Workspace({
       if (event.persisted) refreshOnReturn();
     }
     function handleVisibilityChange() {
-      if (document.visibilityState === "visible") refreshOnReturn();
+      if (document.visibilityState === "hidden") {
+        hiddenSinceRef.current = Date.now();
+        return;
+      }
+      const hiddenSince = hiddenSinceRef.current;
+      hiddenSinceRef.current = null;
+      if (hiddenSince !== null && Date.now() - hiddenSince >= 15_000) {
+        refreshOnReturn();
+      }
     }
     window.addEventListener("pageshow", handlePageShow);
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -907,6 +949,7 @@ export function J4Workspace({
     setStreamingStatus(null);
     const text = String(formData.get("message") ?? "").trim();
     if (!text) return;
+    if (typeof window !== "undefined") window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
     // Voice-memo streaming convergence (2026-08-08) — read once, then
     // clear immediately so a voice memo's audioUrl never leaks onto the
     // NEXT, unrelated typed submit; sendVoiceMemo below is the only thing
@@ -1712,6 +1755,14 @@ export function J4Workspace({
               required
               onFocus={() => setGenesisComposing(true)}
               onBlur={() => setGenesisComposing(false)}
+              onChange={(e) => {
+                if (typeof window === "undefined") return;
+                if (e.target.value) {
+                  window.sessionStorage.setItem(DRAFT_STORAGE_KEY, e.target.value);
+                } else {
+                  window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+                }
+              }}
               className="min-w-0 max-h-40 min-h-[4.5rem] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
             />
             <SubmitButton
