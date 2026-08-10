@@ -8,7 +8,7 @@ import { encryptCredentials } from "./credentials";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
-type StripeCredentials = {
+export type StripeCredentials = {
   schemaVersion: 1;
   accessToken: string;
   refreshToken?: string;
