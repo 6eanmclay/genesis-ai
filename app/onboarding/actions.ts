@@ -589,7 +589,7 @@ export async function submitUploadedArtwork(formData: FormData): Promise<{ state
     throw new Error("Please choose an image to upload.");
   }
   // Real, already-proven upload path — same validation (PNG/JPEG/WebP,
-  // 8MB max) and same Vercel Blob upload app/dashboard/actions.ts's
+  // 20MB max) and same Vercel Blob upload app/dashboard/actions.ts's
   // uploadProductImage already uses for a live store's own product photos.
   const sourced = await uploadProductImageFile(file);
 

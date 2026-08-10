@@ -11,7 +11,7 @@ import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisA
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
 import { mapWithConcurrency, withRetry } from "@/lib/concurrency";
-import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
+import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES, resolveAssetContentType } from "@/lib/businessAssets/uploadAssetFile";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -185,6 +185,14 @@ interface BatchEntry {
   id: string;
   file: File;
   extension: string;
+  // Real mobile-browser gotcha fix (2026-08-09) — resolved once at
+  // selection time via resolveAssetContentType (browser-reported type,
+  // falling back to the filename's own extension when that's empty/
+  // unrecognized), then used everywhere downstream instead of re-reading
+  // file.type directly, so a file the browser mis-reports still uploads
+  // with the CORRECT content type rather than carrying the empty/wrong
+  // one all the way to Blob storage and the server-side finalize check.
+  contentType: string;
 }
 interface LiveFileState {
   id: string;
@@ -193,9 +201,9 @@ interface LiveFileState {
 }
 
 let batchEntrySeq = 0;
-function makeBatchEntry(file: File, extension: string): BatchEntry {
+function makeBatchEntry(file: File, extension: string, contentType: string): BatchEntry {
   batchEntrySeq += 1;
-  return { id: `${file.name}-${file.size}-${file.lastModified}-${batchEntrySeq}`, file, extension };
+  return { id: `${file.name}-${file.size}-${file.lastModified}-${batchEntrySeq}`, file, extension, contentType };
 }
 
 function UploadAssetButton({
@@ -265,9 +273,9 @@ function UploadAssetButton({
         const blob = await blobUpload(`assets/${randomAssetKey()}.${entry.extension}`, entry.file, {
           access: "public",
           handleUploadUrl: "/api/blob/business-asset-upload",
-          contentType: entry.file.type,
+          contentType: entry.contentType,
         });
-        return { blobUrl: blob.url, originalFilename: entry.file.name, contentType: entry.file.type };
+        return { blobUrl: blob.url, originalFilename: entry.file.name, contentType: entry.contentType };
       },
       { attempts: 3, baseDelayMs: 1000 }
     );
@@ -350,16 +358,17 @@ function UploadAssetButton({
           const validFiles: BatchEntry[] = [];
           const problems: string[] = [];
           for (const file of files) {
-            const extension = ALLOWED_CONTENT_TYPES[file.type];
-            if (!extension) {
+            const contentType = resolveAssetContentType(file);
+            const extension = contentType ? ALLOWED_CONTENT_TYPES[contentType] : undefined;
+            if (!contentType || !extension) {
               problems.push(`${file.name} (unsupported type)`);
               continue;
             }
             if (file.size > MAX_UPLOAD_BYTES) {
-              problems.push(`${file.name} (over 8MB)`);
+              problems.push(`${file.name} (over 20MB)`);
               continue;
             }
-            validFiles.push(makeBatchEntry(file, extension));
+            validFiles.push(makeBatchEntry(file, extension, contentType));
           }
           if (validFiles.length === 0) {
             onFailure(
@@ -412,14 +421,14 @@ function UploadAssetButton({
                     blobUpload(`assets/${randomAssetKey()}.${entry.extension}`, entry.file, {
                       access: "public",
                       handleUploadUrl: "/api/blob/business-asset-upload",
-                      contentType: entry.file.type,
+                      contentType: entry.contentType,
                     }),
                   { attempts: 3, baseDelayMs: 1000 }
                 );
                 const formData = new FormData();
                 formData.set("blobUrl", blob.url);
                 formData.set("originalFilename", entry.file.name);
-                formData.set("contentType", entry.file.type);
+                formData.set("contentType", entry.contentType);
                 formData.set("currentPath", currentPath);
                 // Only the batch's last file redirects/reopens the
                 // conversation — see uploadBusinessAssetFromChat's own

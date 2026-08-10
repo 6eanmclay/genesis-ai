@@ -23,7 +23,11 @@ import type { ImageSourceResult } from "./types";
 // caller that still routes bytes through a Server Action body inherits
 // Vercel's real 4.5MB platform ceiling regardless of this file's own 8MB
 // check, which never gets the chance to run above that).
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB
+// Real bug (2026-08-09) — see lib/businessAssets/uploadAssetFile.ts's own
+// matching comment: 8MB was an arbitrary self-imposed cap, not a real
+// platform ceiling, and rejected genuinely ordinary photos (PNG especially
+// — no lossy compression). Raised to match that same fix.
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20MB
 export const ALLOWED_CONTENT_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -36,7 +40,7 @@ export async function uploadProductImageFile(file: File): Promise<ImageSourceRes
     throw new Error("Please upload a PNG, JPEG, or WebP image.");
   }
   if (file.size > MAX_UPLOAD_BYTES) {
-    throw new Error("Image is too large — please upload a file under 8MB.");
+    throw new Error("Image is too large — please upload a file under 20MB.");
   }
 
   const { url } = await put(`products/${randomUUID()}.${extension}`, file, {

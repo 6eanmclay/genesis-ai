@@ -18,7 +18,15 @@
 // no `crypto`) specifically so GenesisAssistant.tsx (a client component)
 // can safely import MAX_UPLOAD_BYTES/ALLOWED_CONTENT_TYPES from it too —
 // client and server now validate against the exact same constants.
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8MB
+// Real bug (Sean, 2026-08-09, real-device report): a genuine photo
+// ("IMG_8019.png") failed to upload. 8MB was never a platform constraint
+// (see this file's own top comment — direct-to-Blob has no serverless
+// body-limit ceiling) — it was just an arbitrary self-imposed cap, and
+// PNG in particular has no lossy compression, so a modern phone's
+// full-resolution photo or a long screenshot can easily clear 8MB while
+// still being a completely ordinary file. Raised to match the precedent
+// already set for voice memos (lib/voice/voiceMemoFile.ts's own 20MB).
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20MB
 // image/heic and image/heif (2026-08-07, iPhone photo upload investigation)
 // — iOS's own default camera format since iOS 11. Safari usually transcodes
 // this to JPEG automatically before an <input type="file"> ever sees it, but
@@ -51,6 +59,35 @@ export const ALLOWED_CONTENT_TYPES: Record<string, string> = {
 // Content types classified as a real document (readable text/pages), not
 // a photo — everything else in ALLOWED_CONTENT_TYPES is an image type.
 const DOCUMENT_CONTENT_TYPES = new Set<string>(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
+
+// Real, well-known mobile-browser gotcha (2026-08-09) — File.type is not
+// always reliable: some mobile browsers/OS share-sheet flows report an
+// empty string, or a generic type like "application/octet-stream", for a
+// genuinely ordinary photo. Extension-based fallback, checked only when
+// the browser's own reported type isn't already a real match, so this
+// never overrides a type the browser DID report correctly.
+const EXTENSION_CONTENT_TYPE: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  heic: "image/heic",
+  heif: "image/heif",
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+};
+
+// Resolves a File to one of ALLOWED_CONTENT_TYPES' own keys, trusting the
+// browser-reported type first and falling back to the filename's own
+// extension only when that type isn't already a real match. Returns null
+// when neither signal resolves to a supported type — the real "genuinely
+// unsupported file" case, unchanged from before this fix.
+export function resolveAssetContentType(file: { type: string; name: string }): string | null {
+  if (ALLOWED_CONTENT_TYPES[file.type]) return file.type;
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  const fallback = ext ? EXTENSION_CONTENT_TYPE[ext] : undefined;
+  return fallback ?? null;
+}
 
 export interface UploadedAssetFile {
   url: string;

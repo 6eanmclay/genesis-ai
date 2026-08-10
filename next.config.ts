@@ -13,15 +13,20 @@ import { withSentryConfig } from "@sentry/nextjs";
 const nextConfig: NextConfig = {
   experimental: {
     // Beta 1 bug, confirmed via real production logs (2026-08-06): every
-    // chat photo/document upload (lib/businessAssets/uploadAssetFile.ts
-    // allows up to 8MB) was hitting Next's default 1MB Server Action body
-    // limit, throwing a 413 that surfaced as a generic 500 — which
-    // callGenesisAction (lib/dashboard/submitGenesisAction.ts) then
+    // chat photo/document upload was hitting Next's default 1MB Server
+    // Action body limit, throwing a 413 that surfaced as a generic 500 —
+    // which callGenesisAction (lib/dashboard/submitGenesisAction.ts) then
     // reported to the owner as "the connection may have dropped," with no
-    // indication of the real cause. 10mb leaves headroom above the 8MB
-    // file ceiling for multipart boundary/field overhead.
+    // indication of the real cause. The chat/business-asset and product-
+    // gallery upload paths have since moved to direct-to-Blob (never
+    // touching this limit at all) — the one real path still sending raw
+    // bytes through a Server Action body is onboarding's own artwork
+    // upload (app/onboarding/actions.ts, lib/imageProviders/
+    // uploadProvider.ts's MAX_UPLOAD_BYTES, now 20MB after the 2026-08-09
+    // fix). 22mb leaves the same kind of headroom above that file ceiling
+    // for multipart boundary/field overhead this value always has.
     serverActions: {
-      bodySizeLimit: "10mb",
+      bodySizeLimit: "22mb",
     },
   },
 };

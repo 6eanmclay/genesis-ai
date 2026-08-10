@@ -8,7 +8,7 @@ import { deriveAssessmentState, GENESIS_STATE_META, type GenesisState } from "@/
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
-import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
+import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES, resolveAssetContentType } from "@/lib/businessAssets/uploadAssetFile";
 import { SubmitButton } from "./SubmitButton";
 
 // Temporary production tracing (2026-08-08) — real phone tests kept
@@ -203,13 +203,14 @@ function UploadAssetButton({
           const file = event.target.files?.[0] ?? null;
           event.target.value = "";
           if (!file) return;
-          const extension = ALLOWED_CONTENT_TYPES[file.type];
-          if (!extension) {
+          const contentType = resolveAssetContentType(file);
+          const extension = contentType ? ALLOWED_CONTENT_TYPES[contentType] : undefined;
+          if (!contentType || !extension) {
             onFailure("Please upload a PNG, JPEG, WebP, HEIC, DOCX, or PDF file.");
             return;
           }
           if (file.size > MAX_UPLOAD_BYTES) {
-            onFailure("File is too large — please upload something under 8MB.");
+            onFailure("File is too large — please upload something under 20MB.");
             return;
           }
           startTransition(async () => {
@@ -222,12 +223,12 @@ function UploadAssetButton({
               const blob = await blobUpload(`assets/${randomAssetKey()}.${extension}`, file, {
                 access: "public",
                 handleUploadUrl: "/api/blob/business-asset-upload",
-                contentType: file.type,
+                contentType,
               });
               const formData = new FormData();
               formData.set("blobUrl", blob.url);
               formData.set("originalFilename", file.name);
-              formData.set("contentType", file.type);
+              formData.set("contentType", contentType);
               formData.set("currentPath", currentPath);
               return uploadAsset(formData);
             });

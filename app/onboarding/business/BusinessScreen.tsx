@@ -507,7 +507,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
             Show me what you&rsquo;ve got — I&rsquo;ll build the product around it.
           </p>
           <p className="max-w-sm text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-            PNG, JPEG, or WebP — under 8MB.
+            PNG, JPEG, or WebP — under 20MB.
           </p>
           <label
             className="cursor-pointer rounded-full px-7 py-3 text-sm font-semibold transition-transform hover:scale-[1.02] active:scale-[0.98]"
