@@ -1,7 +1,7 @@
 "use client";
 
-import { useTransition } from "react";
-import { toggleOrderFulfilled } from "./actions";
+import { useState, useTransition } from "react";
+import { toggleOrderFulfilled, purchaseShippingLabel } from "./actions";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -19,6 +19,10 @@ export interface OrderRow {
   createdAt: Date;
   fulfillmentStatus: string;
   shippingAddress: OrderShippingAddress | null;
+  carrier: string | null;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  labelUrl: string | null;
 }
 
 function formatAddress(address: OrderShippingAddress): string {
@@ -33,14 +37,81 @@ function formatAddress(address: OrderShippingAddress): string {
     .join(" · ");
 }
 
+function BuyLabelForm({ orderId }: { orderId: string }) {
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="rounded-full bg-[var(--brand-accent,#2563eb)] px-3 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"
+      >
+        Buy shipping label
+      </button>
+    );
+  }
+
+  return (
+    <form
+      action={(formData) => startTransition(() => purchaseShippingLabel(formData))}
+      className="flex flex-wrap items-center gap-2"
+    >
+      <input type="hidden" name="orderId" value={orderId} />
+      <input
+        name="weightOz"
+        type="number"
+        step="0.1"
+        min="0.1"
+        required
+        placeholder="Weight (oz)"
+        className="w-24 rounded-lg border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+      />
+      <input
+        name="lengthIn"
+        type="number"
+        step="0.1"
+        placeholder="L (in)"
+        className="w-16 rounded-lg border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+      />
+      <input
+        name="widthIn"
+        type="number"
+        step="0.1"
+        placeholder="W (in)"
+        className="w-16 rounded-lg border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+      />
+      <input
+        name="heightIn"
+        type="number"
+        step="0.1"
+        placeholder="H (in)"
+        className="w-16 rounded-lg border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+      />
+      <button
+        type="submit"
+        disabled={isPending}
+        className="rounded-full bg-[var(--brand-accent,#2563eb)] px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+      >
+        {isPending ? "Buying..." : "Buy"}
+      </button>
+    </form>
+  );
+}
+
 function OrderRowCard({
   order,
   canViewRevenue,
   canManage,
+  canBuyLabel,
 }: {
   order: OrderRow;
   canViewRevenue: boolean;
   canManage: boolean;
+  // Priority 2 (shipping, 2026-08-09) — real, both prerequisites (USPS
+  // connected AND a real ship-from address on file) checked once by the
+  // page, not re-derived per row.
+  canBuyLabel: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const isFulfilled = order.fulfillmentStatus === "fulfilled";
@@ -77,6 +148,30 @@ function OrderRowCard({
         <p className="mt-2 text-xs text-zinc-500">No shipping address on file.</p>
       )}
 
+      {order.trackingNumber ? (
+        <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+          Shipped via {order.carrier} — tracking {order.trackingNumber}
+          {order.trackingUrl && (
+            <>
+              {" "}
+              ·{" "}
+              <a href={order.trackingUrl} target="_blank" rel="noreferrer" className="underline">
+                Track
+              </a>
+            </>
+          )}
+          {order.labelUrl && (
+            <>
+              {" "}
+              ·{" "}
+              <a href={order.labelUrl} target="_blank" rel="noreferrer" className="underline">
+                Label
+              </a>
+            </>
+          )}
+        </p>
+      ) : null}
+
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-zinc-500">
           {order.paymentProvider} &middot; {order.createdAt.toLocaleDateString()}
@@ -84,15 +179,20 @@ function OrderRowCard({
             <> &middot; ${(order.amountInCents / 100).toFixed(2)}</>
           )}
         </p>
-        {canManage && (
-          <button
-            disabled={isPending}
-            onClick={() => startTransition(() => toggleOrderFulfilled(order.id))}
-            className="rounded-full border border-black/[.08] px-3 py-1 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
-          >
-            {isPending ? "Updating..." : isFulfilled ? "Mark as unfulfilled" : "Mark as fulfilled"}
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {canManage && canBuyLabel && order.shippingAddress && !order.trackingNumber && (
+            <BuyLabelForm orderId={order.id} />
+          )}
+          {canManage && (
+            <button
+              disabled={isPending}
+              onClick={() => startTransition(() => toggleOrderFulfilled(order.id))}
+              className="rounded-full border border-black/[.08] px-3 py-1 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
+            >
+              {isPending ? "Updating..." : isFulfilled ? "Mark as unfulfilled" : "Mark as fulfilled"}
+            </button>
+          )}
+        </div>
       </div>
     </li>
   );
@@ -102,10 +202,12 @@ export function OrdersList({
   orders,
   canViewRevenue,
   canManage,
+  canBuyLabel,
 }: {
   orders: OrderRow[];
   canViewRevenue: boolean;
   canManage: boolean;
+  canBuyLabel: boolean;
 }) {
   if (orders.length === 0) {
     return <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">No orders yet.</p>;
@@ -123,7 +225,13 @@ export function OrdersList({
           </h3>
           <ul className="mt-3 flex flex-col gap-3">
             {unfulfilled.map((order) => (
-              <OrderRowCard key={order.id} order={order} canViewRevenue={canViewRevenue} canManage={canManage} />
+              <OrderRowCard
+                key={order.id}
+                order={order}
+                canViewRevenue={canViewRevenue}
+                canManage={canManage}
+                canBuyLabel={canBuyLabel}
+              />
             ))}
           </ul>
         </div>
@@ -135,7 +243,13 @@ export function OrdersList({
           </h3>
           <ul className="mt-3 flex flex-col gap-3">
             {fulfilled.map((order) => (
-              <OrderRowCard key={order.id} order={order} canViewRevenue={canViewRevenue} canManage={canManage} />
+              <OrderRowCard
+                key={order.id}
+                order={order}
+                canViewRevenue={canViewRevenue}
+                canManage={canManage}
+                canBuyLabel={canBuyLabel}
+              />
             ))}
           </ul>
         </div>

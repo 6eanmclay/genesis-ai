@@ -17,6 +17,7 @@ export const EXECUTION_ACTIONS = {
   PRODUCT_DELETE_IMAGE: "product.delete_image",
   PRODUCT_REPLACE_IMAGE: "product.replace_image",
   ORDER_TOGGLE_FULFILLED: "order.toggle_fulfilled",
+  ORDER_PURCHASE_SHIPPING_LABEL: "order.purchase_shipping_label",
   INTEGRATION_STRIPE_CONNECT: "integration.stripe.connect",
   INTEGRATION_STRIPE_VERIFY: "integration.stripe.verify",
   INTEGRATION_PAYPAL_CONNECT: "integration.paypal.connect",

@@ -17,6 +17,7 @@ import {
   deleteProductExecutable,
 } from "@/lib/execution/executables/products";
 import { toggleOrderFulfilledExecutable } from "@/lib/execution/executables/orders";
+import { purchaseShippingLabelExecutable } from "@/lib/execution/executables/shipping";
 import {
   addProductImagesExecutable,
   reorderProductImagesExecutable,
@@ -35,7 +36,7 @@ import { logProductEvent } from "@/lib/telemetry/events";
 // without inventing a separate retry counter. Never blocks or throws —
 // logProductEvent already swallows its own failures.
 async function logConnectAttempt(
-  provider: "stripe" | "paypal",
+  provider: "stripe" | "paypal" | "usps",
   action: string,
   result: ExecutionResult<unknown>
 ) {
@@ -397,6 +398,92 @@ export async function recheckPaypal() {
   await logConnectAttempt("paypal", "integration.recheck_attempt", result);
 
   redirect("/dashboard/payments");
+}
+
+// Priority 2 (shipping, 2026-08-09) — same form-based connect pattern as
+// PayPal (an EasyPost account has no OAuth flow either, just an API key).
+export async function submitUspsCredentials(formData: FormData) {
+  const apiKey = (formData.get("apiKey") as string)?.trim();
+  if (!apiKey) {
+    throw new Error("EasyPost API Key is required");
+  }
+
+  const result = await execute(connectExecutable(getConnector("USPS")), {
+    params: { apiKey },
+  });
+  await logConnectAttempt("usps", "integration.connect_attempt", result);
+
+  redirect(
+    result.status === "FAILED" ? "/dashboard/orders?integration_error=usps" : "/dashboard/orders?integration_connected=usps"
+  );
+}
+
+export async function disconnectUsps() {
+  const { storeId } = await requireStorePermission(PERMISSIONS.ORDERS_MANAGE);
+
+  await getConnector("USPS").disconnect(storeId);
+
+  redirect("/dashboard/orders");
+}
+
+export async function recheckUsps() {
+  const result = await execute(verifyExecutable(getConnector("USPS")), undefined);
+  await logConnectAttempt("usps", "integration.recheck_attempt", result);
+
+  redirect("/dashboard/orders");
+}
+
+// Priority 2 (shipping, 2026-08-09) — buys one real USPS label for one
+// order, via EasyPost. See purchaseShippingLabelExecutable's own comment
+// for why this is deliberately owner-triggered, never automatic.
+export async function purchaseShippingLabel(formData: FormData) {
+  const orderId = formData.get("orderId") as string;
+  const weightOz = Number(formData.get("weightOz"));
+  const lengthIn = formData.get("lengthIn") ? Number(formData.get("lengthIn")) : undefined;
+  const widthIn = formData.get("widthIn") ? Number(formData.get("widthIn")) : undefined;
+  const heightIn = formData.get("heightIn") ? Number(formData.get("heightIn")) : undefined;
+
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order) {
+    throw new Error("Order not found");
+  }
+
+  await execute(
+    purchaseShippingLabelExecutable,
+    { orderId, weightOz, lengthIn, widthIn, heightIn },
+    { storeId: order.storeId }
+  );
+
+  redirect("/dashboard/orders");
+}
+
+// Priority 2 (shipping, 2026-08-09) — the owner's own ship-from address,
+// required before any label can be bought (see purchaseShippingLabelExecutable's
+// own honest-error check). A plain field update, not a real Executable —
+// no external system call, no verification step, matching how Store.theme
+// and other plain-JSON settings fields are already saved elsewhere.
+export async function saveReturnAddress(formData: FormData) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.ORDERS_MANAGE);
+
+  const name = (formData.get("name") as string)?.trim();
+  const phone = (formData.get("phone") as string)?.trim();
+  const line1 = (formData.get("line1") as string)?.trim();
+  const line2 = (formData.get("line2") as string)?.trim() || null;
+  const city = (formData.get("city") as string)?.trim();
+  const state = (formData.get("state") as string)?.trim() || null;
+  const postalCode = (formData.get("postalCode") as string)?.trim();
+  const country = (formData.get("country") as string)?.trim() || "US";
+
+  if (!name || !phone || !line1 || !city || !postalCode) {
+    throw new Error("Name, phone, address, city, and postal code are required");
+  }
+
+  await prisma.store.update({
+    where: { id: storeId },
+    data: { returnAddress: { name, phone, line1, line2, city, state, postalCode, country } },
+  });
+
+  redirect("/dashboard/orders");
 }
 
 // Phase 6 — owner-only (AUTHORITY_MANAGE is never granted to EMPLOYEE, see

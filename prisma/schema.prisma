@@ -197,6 +197,15 @@ model Store {
   // Kept in sync from Stripe's own customer.subscription.updated events —
   // never computed locally.
   subscriptionCurrentPeriodEnd DateTime?
+  // Priority 2 (shipping, 2026-08-09) — the merchant's own "ship from"
+  // address, required to buy a real USPS label (EasyPost needs a real
+  // from_address, not just the customer's to_address already captured on
+  // Order.shippingAddress). Same OrderShippingAddress shape
+  // (lib/orders/shippingAddress.ts) plus name/phone, which a merchant
+  // address requires but a customer's doesn't always have on file. Null
+  // until the owner fills it in on Settings — label purchase is blocked
+  // with an honest message until it's set, never a fabricated default.
+  returnAddress      Json?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -555,6 +564,18 @@ model Order {
   // later Phase 2 capability, not an oversight.
   fulfillmentStatus String              @default("unfulfilled")
   fulfilledAt       DateTime?
+  // Priority 2 (shipping, 2026-08-09) — set together, only by a real,
+  // owner-triggered EasyPost label purchase (lib/execution/executables/
+  // shipping.ts). Nullable: unset for every order until the owner
+  // explicitly buys a label — this never happens automatically on
+  // payment, matching fulfillmentStatus's own "manual, owner-triggered"
+  // precedent above (now extended to a step that spends real money on
+  // postage, so it must stay an explicit action more than ever).
+  carrier              String?
+  trackingNumber       String?
+  trackingUrl          String?
+  labelUrl             String?
+  shippingCostInCents  Int?
   createdAt         DateTime            @default(now())
 
   store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
