@@ -19,13 +19,27 @@ export interface GrowthPointPackage {
 // "Growth Points Economy — initial real pricing" section). Deliberately
 // priced slightly above the equivalent per-point subscription rate so a
 // one-off pack never quietly out-values committing to a plan.
-// stripePriceId is populated by scripts/provision-pricing.ts against
-// Stripe's real sandbox — null here until that script has run.
+// stripePriceId is populated by scripts/provision-pricing.ts.
+//
+// These are LIVE-mode Price IDs on acct_1TuhvRBDW1ilB8Vd (the real Genesis
+// account), provisioned 2026-08-11 — they replaced the original sandbox
+// IDs, which had been unreachable in production since Aug 2 the moment
+// STRIPE_SECRET_KEY there became a live key. Every one of them fails
+// against a test-mode key, so a local dev run pointed at the sandbox will
+// now correctly error on a Growth Point purchase rather than silently
+// charging in the wrong mode.
+//
+// Per-point rates here ($2.50, or $2.22 on the 45-pack) are deliberately
+// the WORST in the economy: every subscription tier in scripts/
+// provision-pricing.ts beats them ($2.00 Starter, $1.79 Growth), which is
+// the property that makes committing to a plan rational. Repricing a pack
+// below $2.22/pt would break that and needs the plan ladder re-checked
+// alongside it.
 const GROWTH_POINT_PURCHASE_CATALOG: Record<string, GrowthPointPackage> = {
-  pack_4: { label: "4 Growth Points", pointAmount: 4, stripePriceId: "price_1U16bJBo3H6St4fl1pVnA3ld", priceInCents: 999 },
-  pack_8: { label: "8 Growth Points", pointAmount: 8, stripePriceId: "price_1U16bKBo3H6St4fl5giNboiY", priceInCents: 1999 },
-  pack_20: { label: "20 Growth Points", pointAmount: 20, stripePriceId: "price_1U16bKBo3H6St4flAYfFSirU", priceInCents: 4999 },
-  pack_45: { label: "45 Growth Points", pointAmount: 45, stripePriceId: "price_1U16bLBo3H6St4flBHEVlZb1", priceInCents: 9999 },
+  pack_4: { label: "4 Growth Points", pointAmount: 4, stripePriceId: "price_1U3LobBDW1ilB8VdfgQ2baiS", priceInCents: 999 },
+  pack_8: { label: "8 Growth Points", pointAmount: 8, stripePriceId: "price_1U3LobBDW1ilB8VdTJsRLpI9", priceInCents: 1999 },
+  pack_20: { label: "20 Growth Points", pointAmount: 20, stripePriceId: "price_1U3LocBDW1ilB8Vd9zDPL5Y6", priceInCents: 4999 },
+  pack_45: { label: "45 Growth Points", pointAmount: 45, stripePriceId: "price_1U3LocBDW1ilB8VdE4KNOPqg", priceInCents: 9999 },
 };
 
 // Only entries with a real, non-null Stripe Price — same "honest null"
