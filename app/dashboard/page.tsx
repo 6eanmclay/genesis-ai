@@ -37,6 +37,7 @@ import { runTaskDetection } from "@/lib/dashboard/taskDetectors";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
 import { AttentionCardList } from "./AttentionCardList";
+import { J4NoticedDisclosure } from "./J4NoticedDisclosure";
 import { buildAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessJourney } from "./BusinessJourney";
@@ -777,7 +778,9 @@ export default async function DashboardPage() {
           instead of two. */}
       {(isOwnerManager || canViewAnalytics) && (
         <>
-          <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
+          {/* Header is desktop-only now — on mobile J4NoticedDisclosure's own
+              row is the heading, the count, and the control all at once. */}
+          <div className="mt-10 hidden flex-wrap items-center justify-between gap-3 md:flex">
             <h2 id="attention" className="text-lg font-semibold text-black dark:text-zinc-50">
               J4 Noticed
             </h2>
@@ -797,27 +800,29 @@ export default async function DashboardPage() {
               <p className="text-sm text-zinc-700 dark:text-zinc-300">
                 Nothing needs you right now — I&apos;m still watching {store.name}.
               </p>
-              <p className="mt-1 text-xs text-zinc-500">Genesis never stops working on your business.</p>
+              <p className="mt-1 text-xs text-zinc-500">J4 never stops working on your business.</p>
             </div>
           ) : (
-            <div className="mt-3">
-              <AttentionCardList
-                cards={attentionCards.cards}
-                approveAction={approveGenesisAction}
-                rejectAction={rejectGenesisAction}
-                approveGroupAction={approveGenesisActionGroup}
-                issueAction={startIssueConversation}
-                discoveryAction={startDiscoveryConversation}
-                taskAction={startTaskConversation}
-                dismissAction={dismissAttentionCard}
-                currentPath="/dashboard"
-              />
-              {attentionCards.overflowCount > 0 && (
-                <p className="mt-1 text-xs text-zinc-500">
-                  +{attentionCards.overflowCount} more — ask J4 what else it&apos;s noticed.
-                </p>
-              )}
-            </div>
+            <J4NoticedDisclosure count={attentionCards.cards.length + attentionCards.overflowCount}>
+              <div className="mt-3">
+                <AttentionCardList
+                  cards={attentionCards.cards}
+                  approveAction={approveGenesisAction}
+                  rejectAction={rejectGenesisAction}
+                  approveGroupAction={approveGenesisActionGroup}
+                  issueAction={startIssueConversation}
+                  discoveryAction={startDiscoveryConversation}
+                  taskAction={startTaskConversation}
+                  dismissAction={dismissAttentionCard}
+                  currentPath="/dashboard"
+                />
+                {attentionCards.overflowCount > 0 && (
+                  <p className="mt-1 text-xs text-zinc-500">
+                    +{attentionCards.overflowCount} more — ask J4 what else he&apos;s noticed.
+                  </p>
+                )}
+              </div>
+            </J4NoticedDisclosure>
           )}
         </>
       )}
