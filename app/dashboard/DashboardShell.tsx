@@ -14,6 +14,7 @@ import { GenesisDomicile } from "./GenesisDomicile";
 import { LiveIntelligence } from "./LiveIntelligence";
 import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
 import { MobileGenesisPresence } from "./MobileGenesisPresence";
+import { J4MobileHero } from "./J4MobileHero";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -257,6 +258,11 @@ export function DashboardShell({
   // tabSections as one uninterrupted row.
   const mobileLeftTabs = tabSections.slice(0, 2);
   const mobileRightTabs = tabSections.slice(2);
+
+  // Business home exactly — not the whole Your Business group. This is the
+  // one route where J4 is the hero rather than an ambient bar, so it's also
+  // the one route whose fixed-chrome offsets differ.
+  const isHome = pathname === "/dashboard";
 
   // Secondary nav only renders while the current route is genuinely one of
   // Your Business's own workspaces (Overview/Identity/Website/Products) —
@@ -567,7 +573,12 @@ export function DashboardShell({
   // exact rather than measured at runtime.
   const secondaryNav = isInYourBusiness && (
     <nav
-      className="fixed inset-x-0 top-[140px] z-30 flex h-10 items-center gap-1 overflow-x-auto border-b border-black/[.06] bg-white px-4 dark:border-white/[.1] dark:bg-zinc-950 md:top-14 lg:static lg:inset-auto lg:w-full lg:shrink-0 lg:px-4"
+      className={`fixed inset-x-0 z-30 flex h-10 items-center gap-1 overflow-x-auto border-b border-black/[.06] bg-white px-4 dark:border-white/[.1] dark:bg-zinc-950 md:top-14 lg:static lg:inset-auto lg:w-full lg:shrink-0 lg:px-4 ${
+        // Business home suppresses the 76px MobileGenesisPresence bar so J4
+        // appears exactly once (as the hero), which lifts everything stacked
+        // beneath it by that same 76px.
+        isHome ? "top-16" : "top-[140px]"
+      }`}
       aria-label="Your Business"
     >
       {secondarySections.map((section) => {
@@ -664,24 +675,34 @@ export function DashboardShell({
           the existing mobile header. Genesis speaks (this bar); the page
           identifies where you are (the header below it, and each page's
           own content) — two different layers, never merged into one. */}
-      <MobileGenesisPresence
-        hasUrgentIssue={hasUrgentIssue}
-        hasPendingDecision={hasPendingDecision}
-        hasOpportunity={hasOpportunity}
-        hasCuriosity={hasCuriosity}
-        focusableApprovals={focusableApprovals}
-        liveObservations={liveObservations}
-        curiosityItems={curiosityItems}
-        ownerBriefingSummary={ownerBriefingSummary}
-        userName={userName}
-        justArrived={justArrived}
-      />
+      {/* Suppressed on business home — J4MobileHero is his presence there,
+          and two J4 presences on one screen is the duplication this design
+          keeps deleting. Everywhere else the compact bar is still how J4
+          stays ambient. */}
+      {!isHome && (
+        <MobileGenesisPresence
+          hasUrgentIssue={hasUrgentIssue}
+          hasPendingDecision={hasPendingDecision}
+          hasOpportunity={hasOpportunity}
+          hasCuriosity={hasCuriosity}
+          focusableApprovals={focusableApprovals}
+          liveObservations={liveObservations}
+          curiosityItems={curiosityItems}
+          ownerBriefingSummary={ownerBriefingSummary}
+          userName={userName}
+          justArrived={justArrived}
+        />
+      )}
 
       {/* Mobile top bar — explicit h-16 (not padding-driven) so the
           secondary nav below can stack under it at a known, exact offset.
           Offset by the new MobileGenesisPresence bar's own height (76px)
           above it. */}
-      <header className="fixed inset-x-0 top-[76px] z-40 flex h-16 items-center justify-between border-b border-black/[.08] bg-white/90 px-4 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/90 md:hidden">
+      <header
+        className={`fixed inset-x-0 z-40 flex h-16 items-center justify-between border-b border-black/[.08] bg-white/90 px-4 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/90 md:hidden ${
+          isHome ? "top-0" : "top-[76px]"
+        }`}
+      >
         {/* Business identity is the primary visual element here, not the
             View Store button — icon and store name both sized up from
             the shared desktop treatment so they read with real
@@ -767,9 +788,26 @@ export function DashboardShell({
 
             <main
               className={`pb-20 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
-                isInYourBusiness ? "pt-[180px] md:pt-24 lg:pt-0" : "pt-[140px] md:pt-14 lg:pt-0"
+                // Home clears only the 64px header + 40px secondary nav; the
+                // other routes also clear MobileGenesisPresence's 76px bar.
+                isHome
+                  ? "pt-[104px] md:pt-24 lg:pt-0"
+                  : isInYourBusiness
+                    ? "pt-[180px] md:pt-24 lg:pt-0"
+                    : "pt-[140px] md:pt-14 lg:pt-0"
               }`}
             >
+              {isHome && (
+                <div className="px-4 pb-2 md:hidden">
+                  <J4MobileHero
+                    focusableApprovals={focusableApprovals}
+                    liveObservations={liveObservations}
+                    curiosityItems={curiosityItems}
+                    ownerBriefingSummary={ownerBriefingSummary}
+                    justArrived={justArrived}
+                  />
+                </div>
+              )}
               {children}
             </main>
           </div>
@@ -827,13 +865,23 @@ export function DashboardShell({
         {/* The one blue element in the bar, and it is blue because it is J4 —
             not because it is important. Everything else here is monochrome
             line work, so the accent can only ever mean one thing. */}
-        <div className="flex flex-1 flex-col items-center pb-1.5">
+        <div className="flex flex-1 flex-col items-center justify-end">
           <Link
             href="/j4"
             aria-label="J4"
-            className="flex h-12 w-12 items-center justify-center rounded-full transition-transform active:scale-95"
+            // Lifted out of the bar rather than sitting in it. At tab-icon
+            // scale J4 read as a fifth navigation item; at 64px breaking the
+            // bar's own top edge he reads as the control the bar is arranged
+            // around, which is the actual claim this design is making.
+            className="relative -mt-7 mb-1 flex items-center justify-center rounded-full transition-transform duration-200 active:scale-95"
           >
-            <GenesisAvatar className={GENESIS_AVATAR_SIZE.presence} />
+            {/* Halo, deliberately larger than the orb — J4's presence should
+                extend past his own edge. Blue, because it is J4. */}
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute -inset-2.5 rounded-full bg-[#2563eb]/25 blur-lg"
+            />
+            <GenesisAvatar className={`relative ${GENESIS_AVATAR_SIZE.card}`} />
           </Link>
         </div>
 

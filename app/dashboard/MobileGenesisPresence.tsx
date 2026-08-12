@@ -10,6 +10,34 @@ import { GenesisGreeting } from "./GenesisGreeting";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 
+// The one real sentence J4 says on mobile, extracted 2026-08-12 so the
+// compact presence bar (below) and the home hero (J4MobileHero) can never
+// speak differently about the same business state. Same rule this file's own
+// comment already set for the desktop/mobile split: one real briefing logic,
+// two presentations — never a second, independently invented interpretation.
+export function presenceBriefingText({
+  focusableApprovals,
+  liveObservations,
+  curiosityItems,
+  ownerBriefingSummary,
+  justArrived,
+}: {
+  focusableApprovals: FocusableApprovalBrief[];
+  liveObservations: LiveObservationBrief[];
+  curiosityItems: CuriosityBrief[];
+  ownerBriefingSummary?: string | null;
+  justArrived?: boolean;
+}): string {
+  if (ownerBriefingSummary) return ownerBriefingSummary;
+  const briefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
+  if (briefing) {
+    return justArrived ? `While you were away — ${briefing.lead}.` : briefing.lead;
+  }
+  return justArrived
+    ? "While you were away, everything ran smoothly."
+    : "Everything's running smoothly today.";
+}
+
 // Mobile's own persistent Genesis presence — true mobile (<768px) only, see
 // DashboardShell.tsx. Below lg:, GenesisDomicile/LiveIntelligence (the
 // desktop treatment) don't render at all; this is the mobile equivalent,
@@ -56,16 +84,13 @@ export function MobileGenesisPresence({
   ownerBriefingSummary?: string | null;
 }) {
   const state = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
-  const briefing = buildBriefing({ focusableApprovals, liveObservations, curiosityItems });
-  const briefingText = ownerBriefingSummary
-    ? ownerBriefingSummary
-    : briefing
-      ? justArrived
-        ? `While you were away — ${briefing.lead}.`
-        : briefing.lead
-      : justArrived
-        ? "While you were away, everything ran smoothly."
-        : "Everything's running smoothly today.";
+  const briefingText = presenceBriefingText({
+    focusableApprovals,
+    liveObservations,
+    curiosityItems,
+    ownerBriefingSummary,
+    justArrived,
+  });
 
   return (
     <div

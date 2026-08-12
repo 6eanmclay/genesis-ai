@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { J4Icon } from "@/app/dashboard/J4Icon";
@@ -13,6 +13,10 @@ import { J4Icon } from "@/app/dashboard/J4Icon";
 const subscribeToNothing = () => () => {};
 const clientSnapshot = () => true;
 const serverSnapshot = () => false;
+
+// Slightly shorter than the 380ms entrance — leaving should feel quicker than
+// arriving, and waiting the full duration before navigating reads as lag.
+const EXIT_MS = 240;
 
 // The summoned J4 layer (2026-08-12). J4 comes to where the owner is rather
 // than the owner leaving their business to go find J4 — Sean's own framing,
@@ -43,9 +47,18 @@ export function J4SummonSheet({ children }: { children: React.ReactNode }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // Dismissal has to animate too. router.back() on its own unmounts this
+  // instantly, so J4 grew smoothly out of the control and then vanished — an
+  // asymmetry you feel even if you can't name it. Reverse the entrance, then
+  // navigate once it has actually played.
+  const dismiss = useCallback(() => {
+    setShown(false);
+    window.setTimeout(() => router.back(), EXIT_MS);
+  }, [router]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") router.back();
+      if (e.key === "Escape") dismiss();
     };
     document.addEventListener("keydown", onKey);
     // The page underneath must not scroll while J4 is over it — otherwise
@@ -57,7 +70,7 @@ export function J4SummonSheet({ children }: { children: React.ReactNode }) {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [router]);
+  }, [dismiss]);
 
   if (!mounted) return null;
 
@@ -70,15 +83,25 @@ export function J4SummonSheet({ children }: { children: React.ReactNode }) {
       <button
         type="button"
         aria-label="Close J4"
-        onClick={() => router.back()}
-        className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${
+        onClick={dismiss}
+        // Lighter than a modal scrim on purpose. The owner should still be
+        // able to read the workspace they summoned J4 from — dimmed, not
+        // replaced. That legibility is what makes this feel like J4 arrived
+        // rather than like the dashboard was navigated away from.
+        className={`absolute inset-0 bg-black/30 transition-opacity duration-300 md:bg-black/50 ${
           shown ? "opacity-100" : "opacity-0"
         }`}
       />
 
       <div
-        className={`absolute inset-x-0 bottom-0 top-14 flex flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl transition-transform duration-300 ease-out dark:bg-zinc-950 md:top-0 md:rounded-none ${
-          shown ? "translate-y-0" : "translate-y-full"
+        // Grows out of the bottom-center — exactly where the J4 control sits
+        // in the tab bar — rather than sliding in from off-screen as a
+        // separate window. origin-bottom plus a small scale/fade reads as
+        // "this expanded out of that button"; a pure translate-y read as
+        // "a new screen arrived." Same distinction Sean drew: J4 isn't a
+        // page I go to, J4 comes to me.
+        className={`absolute inset-x-0 bottom-0 top-24 flex origin-bottom flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 md:top-0 md:rounded-none ${
+          shown ? "translate-y-0 scale-100 opacity-100" : "translate-y-8 scale-[0.96] opacity-0"
         }`}
         style={{ transitionTimingFunction: "cubic-bezier(0.32, 0.72, 0, 1)" }}
       >
@@ -89,7 +112,7 @@ export function J4SummonSheet({ children }: { children: React.ReactNode }) {
           />
           <button
             type="button"
-            onClick={() => router.back()}
+            onClick={dismiss}
             aria-label="Close J4"
             className="rounded-full p-1.5 text-zinc-500 dark:text-zinc-400"
           >
