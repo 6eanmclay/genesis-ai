@@ -136,13 +136,36 @@ export type AttentionCard =
 // the red/orange treatment).
 export const J4_ATTENTION_ACCENT = "#2563eb";
 
-const DOT_URGENT = "bg-red-500";
-// Written as a literal class string, not interpolated from
-// J4_ATTENTION_ACCENT — Tailwind's build-time scanner only ever detects
-// classes it can find as literal text in source, never a runtime-computed
-// string.
+// Semantic state colors — "The Workshop and the Light" visual language, pass
+// 2 of 2 (2026-08-12). These are STATE colors, never a brand palette: each
+// one is only ever emitted by a real business state below, so a color a
+// merchant sees is always telling them something true. Genesis itself stays
+// neutral; blue stays J4's alone.
+//
+// Two of the four defined meanings are wired here because two of them have a
+// real state behind them today. Growth (#2F6B4F) and Curiosity (#6B4E9E) are
+// deliberately NOT introduced: nothing in buildAttentionCards currently
+// produces "this genuinely improved" or "J4 noticed a pattern he can't
+// explain yet," and adding the colors before the states exist is exactly how
+// a semantic system decays into a decorative one. They arrive with their
+// states or not at all.
+//
+// Written as literal class strings, never interpolated — Tailwind's
+// build-time scanner only detects classes it can find as literal text in
+// source, never a runtime-computed string.
+
+// Risk: real jeopardy — a failed execution, an urgent issue. Clay rather
+// than bg-red-500, which is an alarm color; this is serious, not screaming.
+const DOT_URGENT = "bg-[#B23B2E]";
+// Decision: J4 is asking the owner something. Stays blue because blue is J4,
+// and a proposal awaiting approval is J4 speaking, not a severity level.
 const DOT_DECISION = "bg-[#2563eb]";
-const DOT_OPPORTUNITY = "bg-amber-500/70";
+// Waiting: something real needs attention but nothing is in jeopardy yet.
+// Clay-amber rather than bg-amber-500/70 — closer to paper, and it reads as
+// elapsed time rather than as a warning.
+const DOT_OPPORTUNITY = "bg-[#8A6D3B]";
+// No meaning at all — deliberately colorless, so the absence of color is
+// itself information.
 const DOT_NEUTRAL = "bg-zinc-400 dark:bg-zinc-600";
 
 // Only the cap that matters for "at a glance" — real content stays
