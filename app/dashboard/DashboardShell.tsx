@@ -7,6 +7,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
 import { PRIMARY_TAB_COUNT } from "@/lib/dashboard/navConfig";
 import { NavIcon } from "./NavIcon";
+import { J4Icon, type J4IconName } from "./J4Icon";
 import { signOutOfGenesis } from "./actions";
 import { logClientEvent } from "./telemetry-actions";
 import { GenesisDomicile } from "./GenesisDomicile";
@@ -20,6 +21,25 @@ import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { GENESIS_STATE_META, deriveAssessmentState } from "@/lib/dashboard/genesisState";
 import { buildBriefing } from "@/lib/dashboard/genesisBriefing";
 import { useFreshLaunch, resetFreshLaunch } from "@/lib/dashboard/useFreshLaunch";
+
+// Maps a real NAV_SECTIONS key to the J4 icon system (2026-08-12). Mobile
+// only for now — NavIcon still serves every desktop surface untouched, so
+// this deliberately doesn't try to be a full replacement yet. Falls back to
+// "more" rather than throwing: a new nav section should never be able to
+// crash the tab bar just because nobody drew its icon.
+const NAV_ICONS: Record<string, J4IconName> = {
+  home: "home",
+  customers: "customers",
+  orders: "orders",
+  marketing: "marketing",
+  payments: "payments",
+  analytics: "analytics",
+  connections: "connections",
+  settings: "settings",
+};
+function navIconName(key: string): J4IconName {
+  return NAV_ICONS[key] ?? "more";
+}
 import { useBeatSequence } from "@/lib/dashboard/arrivalBeats";
 import { buildArrivalBeats } from "@/lib/dashboard/genesisArrivalCopy";
 
@@ -230,6 +250,13 @@ export function DashboardShell({
   const tabSections = sections.slice(0, PRIMARY_TAB_COUNT);
   const moreSections = sections.slice(PRIMARY_TAB_COUNT);
   const hasHiddenBadge = moreSections.some((s) => (sectionBadgeCounts[s.key] ?? 0) > 0);
+
+  // Mobile only — the same tabSections above, split so J4 can occupy the
+  // center slot with real destinations on either side. Nothing is added or
+  // removed from navigation by this split; desktop keeps rendering
+  // tabSections as one uninterrupted row.
+  const mobileLeftTabs = tabSections.slice(0, 2);
+  const mobileRightTabs = tabSections.slice(2);
 
   // Secondary nav only renders while the current route is genuinely one of
   // Your Business's own workspaces (Overview/Identity/Website/Products) —
@@ -768,32 +795,76 @@ export function DashboardShell({
           safe-area accounting meant this could render partly behind a
           device's own gesture-nav area; see GenesisAssistant.tsx's matching
           fix for the floating panel's own bottom-20 offset, same root cause. */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-black/[.08] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden">
-        {tabSections.map((section) => (
+      {/* J4-centered mobile navigation (2026-08-12) — the approved interface
+          direction, applied to the sections that already exist rather than
+          inventing new ones. J4 takes the center slot with two real
+          destinations on either side, so he is the thing your thumb reaches
+          first and the navigation arranges itself around him. Deliberately
+          NOT a sixth destination: the same three primary sections and the
+          same More sheet as before, just re-laid-out around J4.
+
+          Mobile only. The lg:+ treatment is untouched, and desktop is its own
+          design pass that hasn't happened yet. */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-end border-t border-black/[.08] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden">
+        {mobileLeftTabs.map((section) => (
           <Link
             key={section.key}
             href={section.href}
             className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
               isActive(section.href)
-                ? "text-[var(--brand-accent,var(--foreground))]"
+                ? "text-black dark:text-zinc-50"
                 : "text-zinc-500 dark:text-zinc-400"
             }`}
           >
-            <NavIcon section={section.key} className="h-5 w-5" />
+            <J4Icon name={navIconName(section.key)} size={20} />
             {section.label}
             {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
               <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
             )}
           </Link>
         ))}
+
+        {/* The one blue element in the bar, and it is blue because it is J4 —
+            not because it is important. Everything else here is monochrome
+            line work, so the accent can only ever mean one thing. */}
+        <div className="flex flex-1 flex-col items-center pb-1.5">
+          <Link
+            href="/j4"
+            aria-label="J4"
+            className="flex h-12 w-12 items-center justify-center rounded-full transition-transform active:scale-95"
+          >
+            <GenesisAvatar className={GENESIS_AVATAR_SIZE.presence} />
+          </Link>
+        </div>
+
+        {mobileRightTabs.map((section) => (
+          <Link
+            key={section.key}
+            href={section.href}
+            className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
+              isActive(section.href)
+                ? "text-black dark:text-zinc-50"
+                : "text-zinc-500 dark:text-zinc-400"
+            }`}
+          >
+            <J4Icon name={navIconName(section.key)} size={20} />
+            {section.label}
+            {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
+              <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
+            )}
+          </Link>
+        ))}
+
         {moreSections.length > 0 && (
           <button
             onClick={() => setMoreOpen((open) => !open)}
             className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
-              moreOpen ? "text-[var(--brand-accent,var(--foreground))]" : "text-zinc-500 dark:text-zinc-400"
+              moreOpen ? "text-black dark:text-zinc-50" : "text-zinc-500 dark:text-zinc-400"
             }`}
           >
-            <span className="text-base leading-none">•••</span>
+            {/* Was a "•••" text glyph, which couldn't hold the system's
+                stroke weight or inherit color like every other icon here. */}
+            <J4Icon name="more" size={20} />
             More
             {hasHiddenBadge && (
               <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
@@ -886,7 +957,12 @@ export function DashboardShell({
           same dedicated environment this links to, not a second surface. */}
       <Link
         href="/j4"
-        className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-6 z-50 flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 md:bottom-6 lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
+        // Desktop only as of 2026-08-12. On mobile the J4 center slot in the
+        // tab bar above is now the single entry point — keeping this floating
+        // pill as well would put two J4 doorways on one screen, the same
+        // duplication that got the business-area icon grid deleted from the
+        // approved home design. Desktop is untouched pending its own pass.
+        className="fixed bottom-6 right-6 z-50 hidden items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background shadow-xl transition-transform hover:scale-105 md:flex lg:bg-[#8b7cf6] lg:text-white lg:shadow-[0_0_40px_-10px_rgba(139,124,246,0.35)]"
       >
         <span
           className={`inline-flex h-2 w-2 shrink-0 rounded-full ${GENESIS_STATE_META[genesisState].dotClassName}`}
