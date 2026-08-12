@@ -12,6 +12,11 @@ import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset, type GenesisActionType } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
+import {
+  canSuggestStorefrontImprovement,
+  recordStorefrontSuggestionMade,
+  STOREFRONT_SUGGESTION_ACTION_TYPES,
+} from "@/lib/dashboard/storefrontSuggestionGate";
 import { checkAndProposeMarketingAssetsUpdate } from "@/lib/marketing/assets";
 import { proposeConnectionGaps } from "@/lib/integrations/gaps";
 import {
@@ -665,6 +670,11 @@ export async function runCognitiveReview(params: {
 
   let approvalRequestsCreated = 0;
   let autonomouslyHandledCount = 0;
+  // Storefront ideas J4 had but stayed quiet about, and why. Recorded on the
+  // review's own ExecutionLog metadata below rather than discarded — a
+  // governor that silently drops proposals is indistinguishable from a
+  // reasoning layer that stopped having ideas, and only one of those is a bug.
+  const storefrontSuggestionsSuppressed: { actionType: string; reason: string; detail: string }[] = [];
   for (let i = 0; i < result.outputs.length; i++) {
     const item = result.outputs[i];
     if (!("proposedAction" in item) || !item.proposedAction) continue;
@@ -715,6 +725,30 @@ export async function runCognitiveReview(params: {
       businessRecord: currentRecord,
     });
 
+    // Progressive storefront improvement (2026-08-12) — the frequency
+    // governor and suggestion memory. This is J4's own initiative, so it is
+    // exactly the path that must stay occasional: a storefront idea the
+    // owner has already declined, or one raised inside the cooldown window,
+    // is dropped here rather than becoming a proposal the owner has to
+    // dismiss again. Nothing else J4 proposes is affected.
+    //
+    // Placed BEFORE the supersede/delete below on purpose: a suppressed
+    // suggestion must not clear a pending proposal the owner may still be
+    // considering. Suppression means "stay quiet," never "withdraw."
+    const storefrontGate = await canSuggestStorefrontImprovement({
+      storeId,
+      actionType: item.proposedAction.actionType,
+      topicKey: item.topicKey,
+    });
+    if (!storefrontGate.allowed) {
+      storefrontSuggestionsSuppressed.push({
+        actionType: item.proposedAction.actionType,
+        reason: storefrontGate.reason,
+        detail: storefrontGate.detail,
+      });
+      continue;
+    }
+
     if (!supersededActionTypes.has(item.proposedAction.actionType)) {
       await prisma.approvalRequest.deleteMany({
         where: { storeId, actionType: item.proposedAction.actionType, status: "PENDING_APPROVAL" },
@@ -741,6 +775,13 @@ export async function runCognitiveReview(params: {
       data: { status: "SUPERSEDED", approvalRequestId: approval.id },
     });
     approvalRequestsCreated++;
+
+    // Stamp the governor only once a storefront proposal genuinely exists —
+    // never on the attempt, so a suppressed suggestion can't quietly start
+    // the owner's cooldown on their behalf.
+    if (STOREFRONT_SUGGESTION_ACTION_TYPES.has(item.proposedAction.actionType)) {
+      await recordStorefrontSuggestionMade(storeId);
+    }
   }
 
   await recordGenesisExecution({
@@ -762,7 +803,16 @@ export async function runCognitiveReview(params: {
     retryable: false,
     userId,
     storeId,
-    metadata: { outputs: result.outputs },
+    metadata: {
+      outputs: result.outputs,
+      // Present only when the governor actually suppressed something, so an
+      // ordinary review's metadata is unchanged. This is the audit trail for
+      // "why didn't J4 mention my storefront" — without it, a working
+      // governor and a broken Reason pass look identical from the outside.
+      ...(storefrontSuggestionsSuppressed.length > 0
+        ? { storefrontSuggestionsSuppressed }
+        : {}),
+    },
   });
 
   // Daily Operating Rhythm — composed last, after everything else this pass

@@ -162,6 +162,17 @@ model Store {
   // durable, deletion-proof record of the grant itself lives in
   // BusinessPartnerTrialGrant below — this field is only the live check.
   businessPartnerTrialEndsAt DateTime?
+  // Progressive storefront improvement — the frequency governor (2026-08-12).
+  // Stamped every time J4 raises an UNPROMPTED storefront-improvement
+  // proposal, and read before he is allowed to raise another. This is what
+  // makes "occasionally" a real product behaviour rather than a request in a
+  // prompt: without it, nothing structurally prevents J4 from proposing a
+  // redesign on every single review sweep.
+  // Null = he has never suggested one, so the next one is always allowed.
+  // Deliberately governs only J4's own initiative — a storefront change the
+  // OWNER asks for in chat is never gated by this, because being asked is
+  // not the same as volunteering. See lib/dashboard/storefrontSuggestionGate.ts.
+  lastStorefrontSuggestionAt DateTime?
   // Growth Points Economy (Chapter 2) — the store's real, spendable balance.
   // Debited by execute() when an approved GENESIS_ACTIONS action has a real
   // catalog cost (lib/growthPoints/catalog.ts), credited by the monthly
