@@ -46,7 +46,26 @@ export const maxDuration = 300;
 // multi-section app shell. Both branches re-check auth/resolve the store
 // themselves rather than threading data down, matching this codebase's
 // existing per-component-fetches-its-own-data convention.
-export default async function DashboardLayout({ children }: { children: ReactNode }) {
+// `j4` is a parallel-route slot (app/dashboard/@j4), added 2026-08-12 for the
+// J4 summon. It renders nothing until the owner navigates to /j4 from inside
+// the dashboard, at which point app/dashboard/@j4/(..)j4 intercepts that
+// navigation and renders the REAL /j4 route as a sheet over whatever page
+// they were on — rather than replacing it. That's what makes the center
+// control a summon instead of a destination.
+//
+// Deliberately an interception rather than a second chat surface: the sheet
+// renders app/j4/page.tsx itself, so there is exactly one J4 workspace, one
+// set of server actions, and one Request → Execute → Verify → Record →
+// Display path. A hard load of /j4 (shared link, refresh) bypasses this
+// entirely and renders the full page, which is the correct behavior for a
+// real URL.
+export default async function DashboardLayout({
+  children,
+  j4,
+}: {
+  children: ReactNode;
+  j4: ReactNode;
+}) {
   const session = await auth();
   if (!session?.user) {
     redirect("/login");
@@ -334,6 +353,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       hasCuriosity={hasCuriosity}
     >
       {children}
+      {j4}
     </DashboardShell>
   );
 }
