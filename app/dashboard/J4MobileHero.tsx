@@ -2,6 +2,7 @@ import Link from "next/link";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { J4Icon } from "./J4Icon";
+import { J4_VOICE } from "@/lib/dashboard/j4Voice";
 import {
   presenceBriefingText,
 } from "./MobileGenesisPresence";
@@ -57,7 +58,11 @@ export function J4MobileHero({
         <p className="mt-4 text-[32px] font-semibold leading-none tracking-tight text-black dark:text-zinc-50">
           J4
         </p>
-        <p className="mt-2 max-w-[26rem] text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
+        {/* J4's own words, so J4's own voice — see lib/dashboard/j4Voice.ts
+            for why this treatment stops here and never reaches the chrome. */}
+        <p
+          className={`mt-2 max-w-[26rem] text-[14px] leading-snug text-zinc-500 dark:text-zinc-400 ${J4_VOICE}`}
+        >
           {briefingText}
         </p>
       </div>

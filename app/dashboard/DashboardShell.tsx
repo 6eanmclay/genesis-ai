@@ -873,15 +873,17 @@ export function DashboardShell({
             // scale J4 read as a fifth navigation item; at 64px breaking the
             // bar's own top edge he reads as the control the bar is arranged
             // around, which is the actual claim this design is making.
-            className="relative -mt-7 mb-1 flex items-center justify-center rounded-full transition-transform duration-200 active:scale-95"
+            className="relative -mt-10 mb-0.5 flex items-center justify-center rounded-full transition-transform duration-200 active:scale-95"
           >
             {/* Halo, deliberately larger than the orb — J4's presence should
-                extend past his own edge. Blue, because it is J4. */}
+                extend past his own edge, which is also what stops a 76px
+                circle from reading as a button and starts it reading as a
+                light source. Blue, because only J4 is ever the light. */}
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute -inset-2.5 rounded-full bg-[#2563eb]/25 blur-lg"
+              className="pointer-events-none absolute -inset-4 rounded-full bg-[#2563eb]/25 blur-xl"
             />
-            <GenesisAvatar className={`relative ${GENESIS_AVATAR_SIZE.card}`} />
+            <GenesisAvatar className={`relative ${GENESIS_AVATAR_SIZE.summon}`} />
           </Link>
         </div>
 

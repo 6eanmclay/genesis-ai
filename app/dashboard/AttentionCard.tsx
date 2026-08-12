@@ -2,6 +2,7 @@ import Link from "next/link";
 import { isHighlighted, type AttentionCard as AttentionCardData } from "@/lib/dashboard/attentionCards";
 import { ActionDiffRows } from "@/lib/execution/ActionDiff";
 import { RegenerateImageButton } from "./RegenerateImageButton";
+import { J4_VOICE } from "@/lib/dashboard/j4Voice";
 
 // Home Redesign (2026-08-08) — "the dashboard shows the business, J4
 // handles the work" (Sean). One shared card language for everything that
@@ -78,7 +79,12 @@ export function AttentionCard({
           {highlighted && (
             <p className="mb-1 text-xs font-medium text-[#2563eb]">J4 brought you here to review this</p>
           )}
-          <p className="line-clamp-2 text-sm text-black dark:text-zinc-50">{card.summary}</p>
+          {/* The observation itself is J4 speaking, so it carries his voice.
+              Everything around it — labels, buttons, timestamps — stays in
+              the interface sans. See lib/dashboard/j4Voice.ts. */}
+          <p className={`line-clamp-2 text-[15px] text-black dark:text-zinc-50 ${J4_VOICE}`}>
+            {card.summary}
+          </p>
 
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {card.kind === "proposal" ? (

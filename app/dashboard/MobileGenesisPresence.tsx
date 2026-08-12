@@ -1,5 +1,6 @@
 import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
+import { J4_VOICE } from "@/lib/dashboard/j4Voice";
 import {
   buildBriefing,
   type FocusableApprovalBrief,
@@ -7,8 +8,6 @@ import {
   type CuriosityBrief,
 } from "@/lib/dashboard/genesisBriefing";
 import { GenesisGreeting } from "./GenesisGreeting";
-import { GenesisAvatar } from "./GenesisAvatar";
-import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 
 // The one real sentence J4 says on mobile, extracted 2026-08-12 so the
 // compact presence bar (below) and the home hero (J4MobileHero) can never
@@ -97,32 +96,32 @@ export function MobileGenesisPresence({
       className="fixed inset-x-0 top-0 z-40 flex h-[76px] items-center gap-3 px-4 md:hidden"
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg, borderBottom: `1px solid ${GENESIS_ATMOSPHERE.border}` }}
     >
-      {/* 44px — up from the old 36px mobile icon (~22% larger, inside the
-          20-30% range asked for). GenesisAvatar owns its own glow/activity
-          animation now — see that file's own comment.
-          Visual polish (2026-08-08) — the avatar no longer recolors for
-          state (Sean: calm, consistent, recognizable every time); the
-          corner dot below carries the same real signal instead, only
-          shown when there's actually something to it (idle shows nothing,
-          matching Peace being "nothing needs you right now"). */}
-      <div className="relative h-11 w-11 shrink-0">
-        <GenesisAvatar className={GENESIS_AVATAR_SIZE.presence} />
-        {state !== "idle" && (
-          <span
-            className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ${GENESIS_STATE_META[state].dotClassName}`}
-            style={{ boxShadow: `0 0 0 2px ${GENESIS_ATMOSPHERE.bg}` }}
-            aria-label={GENESIS_STATE_META[state].label}
-            title={GENESIS_STATE_META[state].label}
-          />
-        )}
-      </div>
+      {/* No orb here as of 2026-08-12. J4 now has exactly three
+          representations and this was a fourth: the business avatar is the
+          business's identity, J4MobileHero is his presence on home, and the
+          tab bar's summon control is how you reach him from anywhere. On
+          every non-home route this bar's orb sat directly above that summon
+          control — two J4s on one screen, which is the duplication this
+          design keeps deleting.
+          What stays is what only this bar can say: the real state dot and the
+          briefing sentence. J4's voice, without a second J4. */}
+      {state !== "idle" && (
+        <span
+          className={`mt-2 h-2 w-2 shrink-0 self-start rounded-full ${GENESIS_STATE_META[state].dotClassName}`}
+          aria-label={GENESIS_STATE_META[state].label}
+          title={GENESIS_STATE_META[state].label}
+        />
+      )}
       <div className="min-w-0">
         <GenesisGreeting name={userName} sizeClassName="text-lg font-semibold" />
         {/* Natural-language only — no bare state word ("Curiosity") the way
             Domicile's own label shows one; the briefing sentence already
             communicates the state in Genesis's own voice, which is a
             better fit for this compact format. */}
-        <p className="truncate text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+        <p
+          className={`truncate text-[13px] ${J4_VOICE}`}
+          style={{ color: GENESIS_ATMOSPHERE.textSecondary }}
+        >
           {briefingText}
         </p>
       </div>

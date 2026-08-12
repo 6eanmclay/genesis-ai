@@ -22,6 +22,14 @@ export const GENESIS_AVATAR_SIZE = {
   inline: "h-10 w-10 shrink-0", // 40px — J4 Portal header avatar
   presence: "h-11 w-11", // 44px — MobileGenesisPresence ambient icon
   card: "h-16 w-16", // 64px — a real card-level moment (e.g. CreateBusinessArrival)
+  // 76px — the mobile summon control in DashboardShell's tab bar. Its own
+  // tier rather than a bespoke value, because it is a genuinely different
+  // job from `card`: this is the primary interaction point of the entire
+  // mobile product and has to out-weigh four navigation icons sitting beside
+  // it without inflating the bar that contains it. Added 2026-08-12 after
+  // real-device feedback that 44px, then 64px, both still read as "a fifth
+  // nav icon" rather than as the control the bar is arranged around.
+  summon: "h-[76px] w-[76px] shrink-0",
   // GenesisDomicile's own ambient orb — sized relative to its own frame,
   // not a fixed pixel value, kept as its own real token rather than
   // forced onto the fixed-pixel scale above. Bumped 78% -> 85% (2026-08-09,
