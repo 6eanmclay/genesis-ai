@@ -107,7 +107,7 @@ function StateDot({ state, isWorking = false }: { state: GenesisState; isWorking
     <span
       className={`relative inline-flex h-2 w-2 shrink-0 rounded-full ${meta.dotClassName}`}
       aria-hidden="true"
-      title={isWorking ? "Genesis is actively working on your last request" : meta.description}
+      title={isWorking ? "J4 is working on your last request" : meta.description}
     >
       {isWorking && (
         <span className="absolute -inset-1 rounded-full ring-2 ring-blue-400/70 animate-pulse" aria-hidden="true" />
@@ -572,7 +572,7 @@ export function GenesisAssistant({
         // failure state, never a silent hang. Doesn't resubmit: the server
         // may still be genuinely finishing this turn.
         reportDiag(requestId, tStart, "client_stream_ended_no_terminal_event");
-        setSendError("Lost the live connection before seeing Genesis finish — it may still complete on its own. Reload in a moment to check.");
+        setSendError("Lost the live connection before seeing J4 finish — he may still complete on his own. Reload in a moment to check.");
         rollBackOptimisticEntries();
       }
     } catch (err) {
@@ -589,7 +589,7 @@ export function GenesisAssistant({
         name: err instanceof Error ? err.name : undefined,
       });
       setStreamingStatus(null);
-      setSendError("Connection interrupted — Genesis may have kept working. Reload to check before sending that again.");
+      setSendError("Connection interrupted — J4 may have kept working. Reload to check before sending that again.");
       rollBackOptimisticEntries();
     } finally {
       inFlightRequestRef.current = null;
@@ -795,9 +795,9 @@ export function GenesisAssistant({
               Your business partner, always paying attention.
             </p>
             <p className="mt-1">
-              Ask Genesis to change something, or just check in — it&apos;s
+              Ask J4 to change something, or just check in — he&apos;s
               already watching for what needs you, and will tell you what
-              it&apos;s noticed or handled.
+              he&apos;s noticed or handled.
             </p>
           </div>
         ) : (
@@ -891,7 +891,13 @@ export function GenesisAssistant({
         )}
         <textarea
           name="message"
-          placeholder="Ask Genesis anything about your business…"
+          // J4/Genesis naming audit (2026-08-12) — Genesis is the environment
+          // you are in; J4 is the partner who thinks, works, notices, and
+          // answers. You address a partner, not a platform. Every aria-label
+          // in this shell already said "J4" while every visible string said
+          // "Genesis," so screen-reader users were being introduced to a
+          // partner the sighted UI never mentioned.
+          placeholder="Ask J4 anything about your business…"
           rows={2}
           required
           // Real "the owner is actively composing" signal for
@@ -903,7 +909,7 @@ export function GenesisAssistant({
           className="rounded-lg border border-black/[.08] px-3 py-2 text-sm dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50 lg:border-[rgba(139,124,246,0.18)] lg:bg-[#07060d] lg:text-[#f4f2fb] lg:placeholder:text-[rgba(244,242,251,0.62)]"
         />
         <SubmitButton
-          pendingText="Genesis is thinking..."
+          pendingText="J4 is thinking…"
           laterPendingText="Still working on it — detailed answers can take a little longer..."
           showPendingDot
           // Beta feedback (real production screenshot, 2026-08-06) — below
@@ -917,7 +923,7 @@ export function GenesisAssistant({
           // the dot above is what signals "still working," not a fade.
           className="self-start rounded-full bg-[var(--brand-accent,#8b7cf6)] px-4 py-1.5 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-90"
         >
-          Ask Genesis
+          Ask J4
         </SubmitButton>
       </div>
     </form>

@@ -53,7 +53,7 @@ export function VisualProposal({
     >
       {highlighted && (
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--brand-accent)]">
-          Genesis brought you here to review this
+          J4 brought you here to review this
         </p>
       )}
       <p className="text-sm font-medium text-black dark:text-zinc-50">{title}</p>

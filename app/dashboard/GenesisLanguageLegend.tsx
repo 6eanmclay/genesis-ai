@@ -50,8 +50,8 @@ export function GenesisLanguageLegend() {
           or replaces one of the five colors above. Explained honestly here
           rather than misrepresented as a peer state. */}
       <p className="mt-3 text-xs leading-relaxed" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-        A pulsing ring means Genesis is actively working on your last
-        request — layered on top of whichever color is already showing.
+        A pulsing ring means J4 is working on your last request — layered
+        on top of whichever color is already showing.
       </p>
     </div>
   );

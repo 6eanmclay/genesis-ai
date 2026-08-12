@@ -159,7 +159,7 @@ export default async function WebsitePage({
       return (
         <VisualProposal
           key={approval.id}
-          title="Genesis has an idea for your homepage"
+          title="J4 has an idea for your homepage"
           summary={approval.summary}
           approvalId={approval.id}
           approveAction={approveGenesisAction}
@@ -195,7 +195,7 @@ export default async function WebsitePage({
       return (
         <VisualProposal
           key={approval.id}
-          title="Genesis has a new look for your storefront"
+          title="J4 has a new look for your storefront"
           summary={approval.summary}
           approvalId={approval.id}
           approveAction={approveGenesisAction}
@@ -237,7 +237,7 @@ export default async function WebsitePage({
       return (
         <VisualProposal
           key={approval.id}
-          title="Genesis has a new order for your homepage sections"
+          title="J4 has a new order for your homepage sections"
           summary={approval.summary}
           approvalId={approval.id}
           approveAction={approveGenesisAction}
@@ -302,7 +302,7 @@ export default async function WebsitePage({
     return (
       <VisualProposal
         key={approval.id}
-        title="Genesis has updates for your homepage content"
+        title="J4 has updates for your homepage content"
         summary={approval.summary}
         approvalId={approval.id}
         approveAction={approveGenesisAction}
@@ -455,7 +455,7 @@ export default async function WebsitePage({
             <li className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
               <p className="font-medium text-black dark:text-zinc-50">Original Vision</p>
               <p className="mt-1 text-xs text-zinc-500">
-                The first version Genesis created from your original idea.
+                The first version J4 created from your original idea.
               </p>
               <p className="mt-1 text-xs text-zinc-400">
                 {originalVision.createdAt.toLocaleDateString()}

@@ -99,7 +99,7 @@ export default async function AnalyticsPage() {
           <span className="text-xs text-zinc-500">
             {lastDiscoveryRunAt
               ? `Generated ${formatTimeAgo(lastDiscoveryRunAt)}`
-              : "Genesis hasn't reviewed this business yet"}
+              : "J4 hasn't reviewed this business yet"}
           </span>
           <ReviewBusinessButton className="rounded-full bg-[var(--brand-accent,var(--foreground))] px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50" />
         </div>

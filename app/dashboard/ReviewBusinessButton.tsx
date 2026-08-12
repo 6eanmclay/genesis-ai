@@ -30,7 +30,7 @@ export function ReviewBusinessButton({ className }: { className: string }) {
           laterPendingText="Still reviewing — a full business review can take a little longer..."
           className={className}
         >
-          ✨ Ask Genesis to Review My Business
+          Ask J4 to Review My Business
         </SubmitButton>
       </form>
       {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}

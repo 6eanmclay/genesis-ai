@@ -151,7 +151,7 @@ export function CreateStoreForm({
       router.push("/dashboard");
       router.refresh();
     } catch {
-      setError("Couldn't reach Genesis just now. Please check your connection and try again.");
+      setError("Couldn't reach J4 just now. Please check your connection and try again.");
       setIsGenerating(false);
     }
   };

@@ -56,7 +56,7 @@ export function RecommendationItem({
             className="text-xs font-medium text-zinc-500 underline decoration-dotted hover:text-black disabled:opacity-50 dark:hover:text-zinc-50"
           >
             {state === "loading"
-              ? "Asking Genesis..."
+              ? "Asking J4…"
               : state === "error"
                 ? "Couldn't explain — try again"
                 : "Why does this matter?"}

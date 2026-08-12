@@ -175,7 +175,7 @@ export default async function MarketingPage() {
 
       <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">SEO</h2>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-        Ask Genesis to update your SEO title or description — changes go
+        Ask J4 to update your SEO title or description — changes go
         through the usual approval step.
       </p>
       <div className="mt-4 max-w-md rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
@@ -193,7 +193,7 @@ export default async function MarketingPage() {
 
       <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">Social presence</h2>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-        Ask Genesis to update your social bios or keywords — changes go
+        Ask J4 to update your social bios or keywords — changes go
         through the usual approval step, same as SEO.
       </p>
       <div className="mt-4 max-w-md rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">

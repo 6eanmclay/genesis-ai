@@ -348,7 +348,7 @@ export default async function DashboardPage() {
                       ? "Current Vision"
                       : `Version ${gen.version}`,
                   blurb: isOriginal
-                    ? "The first version Genesis created from your original idea."
+                    ? "The first version J4 created from your original idea."
                     : isCurrent
                       ? "The version currently shaping your store."
                       : "An earlier version, saved along the way.",
@@ -786,7 +786,7 @@ export default async function DashboardPage() {
                 <span className="text-xs text-zinc-500">
                   {lastDiscoveryRunAt
                     ? `Reviewed ${formatTimeAgo(lastDiscoveryRunAt)}`
-                    : "Genesis hasn't reviewed this business yet"}
+                    : "J4 hasn't reviewed this business yet"}
                 </span>
                 <ReviewBusinessButton className="rounded-full border border-black/[.08] px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]" />
               </div>

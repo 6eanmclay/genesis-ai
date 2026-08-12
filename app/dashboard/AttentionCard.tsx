@@ -76,7 +76,7 @@ export function AttentionCard({
         <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${card.dotClassName}`} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           {highlighted && (
-            <p className="mb-1 text-xs font-medium text-[#2563eb]">Genesis brought you here to review this</p>
+            <p className="mb-1 text-xs font-medium text-[#2563eb]">J4 brought you here to review this</p>
           )}
           <p className="line-clamp-2 text-sm text-black dark:text-zinc-50">{card.summary}</p>
 
