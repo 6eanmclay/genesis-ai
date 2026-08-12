@@ -45,6 +45,7 @@ import { initialExperienceState, MAX_VISITOR_TURNS_BEFORE_FORCED_GENERATION } fr
 import type { FulfillmentCandidate } from "@/lib/fulfillment/types";
 import { DEFAULT_THEME } from "@/lib/theme";
 import type { Theme, ThemeColors } from "@/lib/theme";
+import { applyInitialDesignRestraint } from "@/lib/onboarding/initialDesignRestraint";
 
 // Onboarding v2 — the server actions driving the guided discovery flow
 // (lib/onboarding/discoveryFlow.ts's pure state machine, called here with
@@ -729,13 +730,28 @@ const CreativeThemeStructureSchema = z.object({
   }),
 });
 
+// Conservative initial generation (2026-08-12) — this is a business's FIRST
+// storefront, generated before a single order has been placed, so it is
+// deliberately asked for restraint rather than for maximum expression. The
+// owner should think "yeah, that's a legitimate website," not "J4 redesigned
+// the entire internet." The budget named here is also enforced in code
+// afterwards (lib/onboarding/initialDesignRestraint.ts) — the prompt explains
+// the intent, the clamp guarantees it.
 const CREATIVE_THEME_STRUCTURE_SYSTEM_PROMPT =
   `Choose theme.presentation and theme.composition deliberately to match this specific creative direction — ` +
   `these ten choices control the real structural shape of the storefront (card/button radius, shadow, spacing, ` +
   `hero layout, heading scale, section layout, backgrounds, image framing, and CTA emphasis), not just color. ` +
   `Sharp/flat/minimal choices suit clean or premium/luxury directions; soft/rounded/spacious choices suit playful ` +
   `or approachable ones; bold shadows and display type scale suit bold or statement directions. Make all ten ` +
-  `choices feel like one coherent, deliberate aesthetic for this direction, not an arbitrary mix.`;
+  `choices feel like one coherent, deliberate aesthetic for this direction, not an arbitrary mix.\n\n` +
+  `IMPORTANT — this is the business's first storefront, built before anything is known about how it actually ` +
+  `performs. Aim for a competent, clean, professional foundation appropriate to this business, not a maximal ` +
+  `statement. Change at most FOUR of the ten choices away from the calm default (rounded cards, pill buttons, ` +
+  `subtle shadows, comfortable spacing, centered hero, standard type scale, centered sections, tint-band ` +
+  `backgrounds, contained images, button CTAs). Spend those four where they say the most about THIS business — ` +
+  `usually the hero layout and the type scale — and leave the rest at the default. Restraint is the goal: a ` +
+  `first storefront should look legitimate and considered, and leave room to be improved later once there is ` +
+  `real evidence about what the business needs.`;
 
 // Runs once fulfillment is connected (custom-design path). Picks a real
 // Printful blank to print the chosen direction's artwork on — the blank is
@@ -793,12 +809,24 @@ export async function buildCreativeProduct(): Promise<{ state: DiscoveryState }>
 
   const structure = structureOutcome.ok ? structureOutcome.message.parsed_output : null;
   const existingTheme = (draft.theme as Theme | null) ?? DEFAULT_THEME;
+
+  // Conservative initial generation — the prompt above asks for at most four
+  // departures from the calm baseline; this enforces it. A model asked for
+  // restraint is restrained on average; an enforced budget is restrained
+  // every time, which is what leaves J4 something real to earn later.
+  // Only applies to a genuinely NEW storefront's own generated structure —
+  // if the model returned nothing, the existing/default theme is used
+  // untouched, exactly as before.
+  const restrained = structure
+    ? applyInitialDesignRestraint({ presentation: structure.presentation, composition: structure.composition })
+    : null;
+
   const nextTheme: Theme = {
     colors: direction.colors,
     typography: direction.typography,
     layout: existingTheme.layout,
-    presentation: structure?.presentation ?? existingTheme.presentation ?? DEFAULT_THEME.presentation,
-    composition: structure?.composition ?? existingTheme.composition ?? DEFAULT_THEME.composition,
+    presentation: restrained?.presentation ?? existingTheme.presentation ?? DEFAULT_THEME.presentation,
+    composition: restrained?.composition ?? existingTheme.composition ?? DEFAULT_THEME.composition,
   };
   await prisma.storeDraft.update({ where: { id: draft.id }, data: { theme: nextTheme as unknown as object } });
 
