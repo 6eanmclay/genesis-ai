@@ -61,7 +61,7 @@ import { completeTasksForAction } from "@/lib/dashboard/tasks";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { transcribeVoiceMemo } from "@/lib/voice/j4VoiceMemo";
-import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
+import { ENTITY_REGISTRY, type Asset } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import {
   buildStoreChatUnifiedTools,
@@ -270,6 +270,62 @@ const SecondaryBlueprintSchema = z.object({
 // history, not a JSON blob — so unlike the draft, chat for a live store
 // never touches products. Only store-level identity/content is editable
 // here; product edits stay on the existing per-product forms.
+// The one phrase that both asks the scope question and detects that it was
+// already asked. Shared rather than written per-site on purpose: if the two
+// ever drift apart, repeat-detection silently stops working and the
+// conversational loop comes straight back.
+const SCOPE_QUESTION = "which product did you mean?";
+
+// Conversational-loop fix (2026-08-12), shared by all three scope-resolution
+// sites (image change, removal, name/description change). Two real defects
+// were duplicated across them.
+//
+// First, an unresolved scope emitted the MODEL's own free-form reply. That is
+// exactly the shape that restates the merchant's sentence back at them as a
+// question — "You'd like to change a product photo?" — which answers nothing
+// and advances nothing.
+//
+// Second, and worse, no site knew it had already asked. A merchant who
+// answered ambiguously got the identical question again, forever, because
+// every turn recomputed the same clarification from scratch with no memory of
+// the last one. That is the loop: J4 has to advance conversational state, not
+// re-emit it.
+//
+// So: never echo the model, always ground the question in the real active
+// product list, and if the previous assistant turn was already this question,
+// escalate to something answerable in one tap rather than repeating a
+// question that has already failed once.
+// The previous assistant turn's text, or undefined on a fresh conversation —
+// the only state buildScopeClarification needs to tell "ask" from "ask again."
+function lastAssistantContent(
+  messages: { role: string; content: string }[]
+): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") return messages[i].content;
+  }
+  return undefined;
+}
+
+function buildScopeClarification({
+  verb,
+  activeNames,
+  lastAssistantContent,
+}: {
+  verb: string;
+  activeNames: string[];
+  lastAssistantContent: string | undefined;
+}): string {
+  if (activeNames.length === 0) {
+    return `I don't have any active products to ${verb} yet — add one first and I'll take it from there.`;
+  }
+  if (lastAssistantContent?.includes(SCOPE_QUESTION)) {
+    return `Let me make this easier — reply with just the number:\n${activeNames
+      .map((name, i) => `${i + 1}. ${name}`)
+      .join("\n")}`;
+  }
+  return `I want to make sure I ${verb} the right one — ${SCOPE_QUESTION} Your active products are: ${activeNames.join(", ")}.`;
+}
+
 const StoreCoreFieldsSchema = z.object({
   storeName: z.string(),
   tagline: z.string(),
@@ -279,7 +335,20 @@ const StoreCoreFieldsSchema = z.object({
 
 const StoreChatPrimarySchema = StoreCoreFieldsSchema.extend({
   brandIdentity: BrandIdentitySchema,
-  homepageContent: HomepageContentSchema,
+  // Priority 4 (asset-to-storefront, 2026-08-09) — heroImageUrl lives ONLY
+  // on this live-chat schema, not the shared HomepageContentSchema: the
+  // onboarding draft path (PrimaryBlueprintSchema, which also extends
+  // HomepageContentSchema) deliberately sources its own hero image after
+  // generation via sourceHeroImageCandidate (see confirmStoreDraft's own
+  // comment on why that field is "never asked of Claude" there — no
+  // uploaded assets exist yet at onboarding time anyway). A live store's
+  // chat, by contrast, may have real uploaded website-imagery assets
+  // (see RECENT WEBSITE IMAGERY in the context this schema's own call
+  // builds below) worth referencing — real, uploaded, storageUrl only,
+  // never fabricated. Null means "leave the current hero image
+  // untouched," matching every other homepageContent field's own
+  // touchesBrandContent-gated preserve-if-untouched convention.
+  homepageContent: HomepageContentSchema.extend({ heroImageUrl: z.string().nullable() }),
   reply: z.string(),
   requiresConfirmation: z.boolean(),
   touchesIdentity: z.boolean(),
@@ -1083,7 +1152,15 @@ type DesignDirection = z.infer<typeof DesignDirectionSchema>;
 
 type Blueprint = {
   brandIdentity: BrandIdentity;
-  homepageContent: HomepageContent;
+  // Priority 4 (asset-to-storefront, 2026-08-09) — heroImageUrl lives in
+  // the STORED blueprint JSON but deliberately isn't part of
+  // HomepageContentSchema (the AI-facing draft-generation shape — see
+  // StoreChatPrimarySchema's own comment on why it's scoped to the live-
+  // chat schema only, and confirmStoreDraft's own comment on why
+  // onboarding attaches it after generation instead of asking Claude for
+  // it). Same "storage-only field, not widened onto the AI schema"
+  // separation that path already established for this exact field.
+  homepageContent: HomepageContent & { heroImageUrl?: string | null };
   storeContent: StoreContent;
   marketingAssets: MarketingAssets;
   designDirection: DesignDirection;
@@ -2205,6 +2282,27 @@ async function applyGenesisMessageToStore(
     orderBy: { position: "asc" },
   });
 
+  // Priority 4 (asset-to-storefront, 2026-08-09) — the real gap this
+  // closes: J4 could talk about using an uploaded photo as website
+  // imagery, but the content-generation call had no visibility into what
+  // was actually uploaded, so it had no real URL to reference even if it
+  // wanted to. Not filtered by category — classify.ts's own classification
+  // is purely visual (it never sees the merchant's own accompanying
+  // message, e.g. "these are for the website, not products"), so a real,
+  // owner-stated purpose only ever lives in conversationMessages. Recency-
+  // capped, not identity-filtered: the model itself connects "the owner
+  // said these 6 are for the website" (from real chat history) with "here
+  // are their real URLs" (from this), the same way a person would.
+  const recentPhotoAssetRecords = await prisma.businessRecord.findMany({
+    where: { storeId: store.id, entityType: "asset" },
+    orderBy: { syncedAt: "desc" },
+    take: 30,
+  });
+  const recentPhotoAssets = recentPhotoAssetRecords
+    .map((r) => r.data as Asset)
+    .filter((a) => a.fileType === "photo")
+    .slice(0, 12);
+
   const before: StoreState = {
     name: store.name,
     tagline: store.tagline,
@@ -2238,6 +2336,21 @@ async function applyGenesisMessageToStore(
   if (pending) {
     contextParts.push(
       `\nYou previously proposed this change, awaiting confirmation: "${pending.summary}"`
+    );
+  }
+  // Priority 4 (asset-to-storefront, 2026-08-09) — real, uploaded photos
+  // this store actually has on file, so heroImageUrl can ever be a real
+  // storageUrl instead of never being set at all. The merchant's own
+  // stated purpose for any of these (if given) lives in conversation
+  // history above, not here — this block is deliberately just "what
+  // exists," not a re-interpretation of what it's for.
+  if (recentPhotoAssets.length > 0) {
+    contextParts.push(
+      `\nRecently uploaded photos on file (most recent first) — real URLs, only ever use one of these exact urls for heroImageUrl, never invent one:\n${JSON.stringify(
+        recentPhotoAssets.map((a) => ({ url: a.storageUrl, filename: a.originalFilename, category: a.category, summary: a.summary })),
+        null,
+        2
+      )}`
     );
   }
   contextParts.push(`\nUser's latest message: ${userMessage}`);
@@ -2691,10 +2804,11 @@ async function applyGenesisMessageToStore(
       // no approval, and do not fall through to the general chat call
       // either — fall back to a safe, generic clarifying question rather
       // than trusting an unmatched name.
-      const clarification =
-        imageRequestResult.scope === "specific"
-          ? `I want to make sure I update the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
-          : imageRequestResult.reply;
+      const clarification = buildScopeClarification({
+        verb: "change the photo on",
+        activeNames: currentProducts.map((p) => p.name),
+        lastAssistantContent: lastAssistantContent(existingMessages),
+      });
       await prisma.storeMessage.create({
         data: { storeId: store.id, role: "assistant", content: clarification },
       });
@@ -2854,10 +2968,11 @@ async function applyGenesisMessageToStore(
           : [];
 
     if (targetProducts.length === 0) {
-      const clarification =
-        productRemovalResult.scope === "specific"
-          ? `I want to make sure I remove the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
-          : productRemovalResult.reply;
+      const clarification = buildScopeClarification({
+        verb: "remove",
+        activeNames: currentProducts.map((p) => p.name),
+        lastAssistantContent: lastAssistantContent(existingMessages),
+      });
       await prisma.storeMessage.create({
         data: { storeId: store.id, role: "assistant", content: clarification },
       });
@@ -2958,10 +3073,11 @@ async function applyGenesisMessageToStore(
           : [];
 
     if (targetProducts.length === 0) {
-      const clarification =
-        productContentChangeResult.scope === "specific"
-          ? `I want to make sure I work on the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
-          : productContentChangeResult.reply;
+      const clarification = buildScopeClarification({
+        verb: "work on",
+        activeNames: currentProducts.map((p) => p.name),
+        lastAssistantContent: lastAssistantContent(existingMessages),
+      });
       await prisma.storeMessage.create({
         data: { storeId: store.id, role: "assistant", content: clarification },
       });
@@ -3410,7 +3526,7 @@ async function applyGenesisMessageToStore(
     // / update_hero / update_homepage_content / update_section_order — the
     // last is Phase 3B, Genesis's first structural Website action).
     let proposedBrandIdentity: BrandIdentity | null = null;
-    let proposedHero: { heroHeadline: string; heroSubheadline: string } | null = null;
+    let proposedHero: { heroHeadline: string; heroSubheadline: string; heroImageUrl?: string } | null = null;
     let proposedHomepageContent: {
       primaryCallToAction: string;
       secondaryCallToAction: string | null;
@@ -3429,6 +3545,15 @@ async function applyGenesisMessageToStore(
       proposedHero = {
         heroHeadline: primaryResult.homepageContent.heroHeadline,
         heroSubheadline: primaryResult.homepageContent.heroSubheadline,
+        // Only ever a real, non-null asset URL the model actually chose —
+        // omitted entirely (never a bare null) when it had nothing new to
+        // apply, so updateHeroExecutable's own "heroImageUrl" in input
+        // check correctly leaves any existing hero image untouched rather
+        // than reading an unrelated headline-only edit as "clear the
+        // image." See StoreChatPrimarySchema's own comment for the field.
+        ...(primaryResult.homepageContent.heroImageUrl
+          ? { heroImageUrl: primaryResult.homepageContent.heroImageUrl }
+          : {}),
       };
       proposedHomepageContent = {
         primaryCallToAction: primaryResult.homepageContent.primaryCallToAction,
@@ -3455,6 +3580,10 @@ async function applyGenesisMessageToStore(
         heroHeadline: currentHomepageContent?.heroHeadline ?? primaryResult.homepageContent.heroHeadline,
         heroSubheadline:
           currentHomepageContent?.heroSubheadline ?? primaryResult.homepageContent.heroSubheadline,
+        // Priority 4 (asset-to-storefront, 2026-08-09) — same "flows
+        // through its own approval, direct write never touches it"
+        // treatment as heroHeadline/heroSubheadline above.
+        heroImageUrl: currentHomepageContent?.heroImageUrl ?? null,
         primaryCallToAction:
           currentHomepageContent?.primaryCallToAction ?? primaryResult.homepageContent.primaryCallToAction,
         secondaryCallToAction:
