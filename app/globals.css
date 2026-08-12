@@ -1,8 +1,21 @@
 @import "tailwindcss";
 
+/* The workshop floor — "The Workshop and the Light" visual language, pass 1
+   of 2 (2026-08-12). Deliberately the smallest possible change that carries
+   the idea: four values, no layout, no navigation, no interaction, no data.
+   Revert this block alone and the product is exactly as it was.
+
+   #FAFAF8 rather than #FFFFFF, and warm rather than the cold #F8F9FA every
+   SaaS dashboard defaults to. Surfaces stay pure white, so cards and sheets
+   now sit ON the ground instead of dissolving into it — the page gets real
+   depth without a single shadow being added. Ink is #16171A, never pure
+   black, for the same reason paper is never pure white.
+
+   Dark keeps the same relationship: a near-black ground that is not #000,
+   with a warm off-white ink rather than a blue-grey one. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafaf8;
+  --foreground: #16171a;
 }
 
 @theme inline {
@@ -14,8 +27,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #0c0d10;
+    --foreground: #ecebe6;
   }
 }
 
