@@ -1544,27 +1544,29 @@ export function J4Workspace({
             // deliberately not the thing the eye lands on, because ordinary
             // conversation is finished without ever using it.
             //
-            // The wording, reconsidered on Sean's own call (2026-08-14): "I
-            // want the user to understand that this opens the full J4
-            // workspace rather than simply navigating somewhere else."
-            // "Everything" failed that — it named a pile, not a place, and
-            // read like a menu. "Full workspace" is Sean's own phrase, and
-            // "full" is the word carrying the meaning: what is through here
-            // is MORE of what the owner already has open, not a different
-            // screen. The chevron is gone for the same reason. A chevron is
-            // the navigation affordance, and this is deliberately not
-            // presented as going somewhere.
+            // "Office", superseding "Full workspace" (2026-08-14, second
+            // pass). Sean, on seeing it in place: "the screenshot showing
+            // 'Full workspace' at the top of the J4 layer is still pulling
+            // the architecture backward. J4 is not a workspace that I
+            // navigate into. J4 is my persistent business partner."
             //
-            // Not "Open J4" or "J4 Portal", both of which are frozen out for
-            // a reason that now cuts even harder: the owner is already
-            // talking to J4. There is no J4 to open.
+            // He was right, and the earlier reasoning for "Full workspace"
+            // was the flaw: calling it MORE of the same thing implies the
+            // layer is a lesser version of it, which is exactly backward.
+            // The layer is J4. Office is a different place, holding the
+            // accumulated material — documents, goals, history, summaries —
+            // and naming it after that material is what stops it competing
+            // with the conversation. See GENESIS_SURFACES.md decision 1.
+            //
+            // No chevron, for the reason that has not changed: a chevron is
+            // the navigation affordance and this is quiet on purpose.
             <button
               type="button"
               onClick={enterRoom}
               title="Open J4's full workspace: the whole conversation, plus tasks, ideas, decisions and information"
               className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
             >
-              Full workspace
+              Office
             </button>
           ) : (
             <button
@@ -1623,6 +1625,18 @@ export function J4Workspace({
         ref={messageListRef}
         className="min-h-0 w-full min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-5 py-4"
       >
+        {/* The proposal, inline at the end of the conversation (2026-08-14).
+            It lived between the message list and the composer for one build,
+            in a shrink-0 box outside every scroll container — so a tall
+            comparison pushed "Apply this" and "Not this" past the bottom of
+            the sheet with no way to reach them. A decision the owner cannot
+            reach is not a decision.
+            Here it scrolls with everything else, and it is also simply where
+            it belongs: Sean's own shape is "conversation message -> proposal
+            appears -> owner inspects -> owner responds", which is one thread,
+            not a panel bolted underneath one. Rendered after the whole
+            conversation branch rather than inside the has-messages case, so a
+            proposal raised without any chat turn still appears. */}
         {shownCategory === "conversation" ? (
           localMessages.length === 0 ? (
             <div className="text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
@@ -1800,12 +1814,8 @@ export function J4Workspace({
             ))}
           </div>
         )}
+        {shownCategory === "conversation" && proposal}
       </div>
-
-      {/* Between the conversation and the composer, deliberately: the owner
-          reads the proposal, then answers it in the field directly below.
-          Nothing to navigate to, and nothing to dismiss first. */}
-      {proposal && <div className="shrink-0 px-5">{proposal}</div>}
 
       {showConfirmCeiling && previousUserMessage && (
         <div className="shrink-0 border-t px-5 pt-3" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
