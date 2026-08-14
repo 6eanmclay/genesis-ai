@@ -88,10 +88,15 @@ export function J4Summon({
       // the field's top edge.
       style={{ bottom: "calc(env(safe-area-inset-bottom) + 3.75rem)" }}
     >
-      {/* The orb overlaps the field's top edge rather than sitting beside it,
-          which is what makes J4 read as present in the page rather than as a
-          control belonging to a toolbar. -mb-5 pulls the field up under him;
-          the field's own left padding keeps text clear of the circle. */}
+      {/* Half in, half out (2026-08-14). Sean: "I want the J4 orb to feel like
+          it's half-in/half-out of the interaction bar rather than looking like
+          another standalone page element."
+          So the orb is pulled down by exactly half its own height (88px orb,
+          -mb-11 = 44px) into the bar's top edge, and the bar's top padding
+          makes room for the half that sits above it. That overlap is the
+          entire visual argument for "J4 is here": something parked above a
+          field is a control, something breaking the field's own edge is
+          attached to it. */}
       <div className="pointer-events-auto relative mx-auto flex max-w-lg flex-col items-center">
         <button
           type="button"
@@ -99,7 +104,7 @@ export function J4Summon({
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-label="J4"
-          className="relative z-10 -mb-5 flex items-center justify-center rounded-full p-1 transition-transform duration-200 active:scale-95"
+          className="relative z-10 -mb-11 flex items-center justify-center rounded-full p-1 transition-transform duration-200 active:scale-95"
         >
           {/* Halo, deliberately larger than the orb — J4's presence should
               extend past his own edge, which is what stops a circle from
@@ -117,7 +122,7 @@ export function J4Summon({
             e.preventDefault();
             submit();
           }}
-          className="flex w-full items-center gap-2 rounded-2xl border border-black/[.09] bg-white/95 px-3 py-2 pt-6 shadow-lg backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95"
+          className="flex w-full items-center gap-2 rounded-2xl border border-black/[.09] bg-white/95 px-3 pb-2 pt-12 shadow-lg backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95"
         >
           <input
             type="text"

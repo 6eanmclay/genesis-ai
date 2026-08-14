@@ -68,6 +68,14 @@ The rule this encodes: *J4 doesn't take me somewhere to talk to J4. J4 comes to 
 
 **One composer, not two.** The inline field is an entry point to the single conversation's composer, never a second send path. A second place to type is a second conversation, which is the thing this whole architecture rules out.
 
+**Two states, one conversation.** The presence is the lightweight default and does not show history — most exchanges do not need it. Expanding reveals the history, and it is the *same* conversation expanded, never a second surface opening. Collapsing hides the reading of it, not the having of it.
+
+**The orb sits half in, half out of the interaction bar.** Not a standalone element parked above a field: it breaks the bar's own edge so J4 reads as physically attached to the page rather than floating on it. That overlap is the whole visual argument for "J4 is here", and it is why the orb is not simply another control in a row.
+
+**Tapping the orb activates J4's live interaction in place.** When voice is the active mode, this is where J4 listens and speaks. The conversation stays on the current page either way. Nothing navigates, ever.
+
+**Never two J4 presences on one screen.** If the persistent presence is on a page, that page does not also carry a large J4 of its own. This mistake has now been made three times — a business-area icon grid, permanent observation cards, and a home hero duplicating the presence — and each time the fix was deleting the duplicate, never arranging it better.
+
 **What belongs in the layer:** the conversation and the composer. That is all.
 
 **What must never be in the layer:** queues, lists, records, history, tabs. Those are Office. The test for any future addition is whether it is part of *this* conversation. If it is a collection of things, it belongs in Office, and putting it here rebuilds the trip the layer exists to remove.

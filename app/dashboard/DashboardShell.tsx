@@ -820,7 +820,6 @@ export function DashboardShell({
                     curiosityItems={curiosityItems}
                     ownerBriefingSummary={ownerBriefingSummary}
                     justArrived={justArrived}
-                    onSummon={() => setJ4Open(true)}
                   />
                 </div>
               )}
