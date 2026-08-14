@@ -479,6 +479,10 @@ export function J4Room({
           <VoiceMemoButton
             uploadVoiceMemo={uploadVoiceMemo}
             currentPath={currentPath}
+            // The immersive Room is a destination the owner entered on
+            // purpose, so it keeps the redirecting completion it has always
+            // had. Only the persistent layer must never move anyone.
+            surface="room"
             onStart={handleVoiceMemoStart}
             onFailure={(message) => {
               clearVoiceMemoPlaceholder();

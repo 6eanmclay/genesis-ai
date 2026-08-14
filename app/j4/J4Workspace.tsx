@@ -230,6 +230,7 @@ function UploadAssetButton({
   uploadAsset,
   uploadAssetBatch,
   currentPath,
+  surface,
   onFailure,
 }: {
   label: string;
@@ -246,6 +247,10 @@ function UploadAssetButton({
   // sequential loop.
   uploadAssetBatch?: (formData: FormData) => void;
   currentPath: string;
+  // Travels with currentPath everywhere a chat turn is submitted: together
+  // they are "where the owner is" and "whether finishing there is allowed to
+  // move them." See ai-actions.ts's redirectKeepingChatOpen.
+  surface: J4Surface;
   onFailure: (message: string) => void;
 }) {
   const [isPending, startTransition] = useTransition();
@@ -333,6 +338,7 @@ function UploadAssetButton({
       const formData = new FormData();
       formData.set("files", JSON.stringify(files));
       formData.set("currentPath", currentPath);
+      formData.set("surface", surface);
       return uploadAssetBatch!(formData);
     });
     if (!result.ok) onFailure(result.message);
@@ -447,6 +453,7 @@ function UploadAssetButton({
                 formData.set("originalFilename", entry.file.name);
                 formData.set("contentType", entry.contentType);
                 formData.set("currentPath", currentPath);
+                formData.set("surface", surface);
                 // Only the batch's last file redirects/reopens the
                 // conversation — see uploadBusinessAssetFromChat's own
                 // comment on why every earlier one must not (Next only
@@ -637,11 +644,13 @@ function ConfirmCeilingOverride({
   sendMessage,
   previousUserMessage,
   currentPath,
+  surface,
   onFailure,
 }: {
   sendMessage: (formData: FormData) => void;
   previousUserMessage: string;
   currentPath: string;
+  surface: J4Surface;
   onFailure: (message: string) => void;
 }) {
   const [isPending, startTransition] = useTransition();
@@ -654,6 +663,7 @@ function ConfirmCeilingOverride({
         formData.set("message", previousUserMessage);
         formData.set("confirmedOverride", "true");
         formData.set("currentPath", currentPath);
+        formData.set("surface", surface);
         startTransition(async () => {
           const result = await callGenesisAction(() => Promise.resolve(sendMessage(formData)));
           if (!result.ok) onFailure(result.message);
@@ -981,18 +991,29 @@ export function J4Workspace({
 
   async function sendViaServerAction(formData: FormData, rollBackOptimisticEntries: () => void) {
     const result = await callGenesisAction(() => Promise.resolve(sendMessage(formData)));
-    // ok:true is never actually reached here for the real redirecting
-    // action (sendStoreMessage ends in redirect(), thrown as Next's own
-    // NEXT_REDIRECT and re-thrown past this by callGenesisAction's own
-    // unstable_rethrow) — this only fires for a genuine, non-redirecting
-    // failure, which is the only case that should roll back the
-    // optimistic entries now (see handleSend's own comment on why the
-    // fallback path itself no longer does).
     if (!result.ok) {
+      // A genuine, non-redirecting failure — the only case that should roll
+      // back the optimistic entries (see handleSend's own comment on why the
+      // fallback path itself no longer does).
       setStreamingStatus(null);
       setSendError(result.message);
       rollBackOptimisticEntries();
+      return;
     }
+    // Success without a redirect, which only the layer produces (2026-08-14).
+    // For the room this line is still unreachable, exactly as the comment
+    // that used to sit here said: sendStoreMessage ends in redirect(), thrown
+    // as Next's own NEXT_REDIRECT and re-thrown past this by
+    // callGenesisAction's unstable_rethrow, and the page re-render is what
+    // cleared the status.
+    //
+    // The layer has no re-render to hide behind. It finishes in place, so the
+    // status has to be taken down here or the owner is left reading "J4 is
+    // working on a complete response" over a reply that already arrived. The
+    // optimistic entries are deliberately left alone: the revalidation this
+    // turn triggered delivers the real messages, and the resync above swaps
+    // them in without a flicker.
+    setStreamingStatus(null);
   }
 
   // The reconciliation check. Per the already-shipped server-side fix
@@ -1423,6 +1444,9 @@ export function J4Workspace({
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
     >
       <input type="hidden" name="currentPath" value={currentPath} />
+      {/* Tells the server whether finishing this turn is allowed to move the
+          owner. The layer's answer is no, always. */}
+      <input type="hidden" name="surface" value={surface} />
       <input type="hidden" name="audioUrl" ref={audioUrlInputRef} />
 
       {/* Identity strip — "J4 identity should be prominent and official at
@@ -1779,6 +1803,7 @@ export function J4Workspace({
             sendMessage={sendMessage}
             previousUserMessage={previousUserMessage}
             currentPath={currentPath}
+            surface={surface}
             onFailure={setSendError}
           />
         </div>
@@ -1825,6 +1850,7 @@ export function J4Workspace({
                 uploadAsset={uploadAsset}
                 uploadAssetBatch={uploadPhotoBatch}
                 currentPath={currentPath}
+                surface={surface}
                 onFailure={setSendError}
               />
               <UploadAssetButton
@@ -1833,6 +1859,7 @@ export function J4Workspace({
                 accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 uploadAsset={uploadAsset}
                 currentPath={currentPath}
+                surface={surface}
                 onFailure={setSendError}
               />
             </>
@@ -1840,6 +1867,7 @@ export function J4Workspace({
           <VoiceMemoButton
             uploadVoiceMemo={uploadVoiceMemo}
             currentPath={currentPath}
+            surface={surface}
             onStart={handleVoiceMemoStart}
             onFailure={(message) => {
               clearVoiceMemoPlaceholder();

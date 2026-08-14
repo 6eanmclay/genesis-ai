@@ -17,6 +17,8 @@ import { generateProductContentChanges } from "@/lib/execution/productContentGen
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { J4Surface } from "@/app/j4/J4Workspace";
 import { Prisma } from "@prisma/client";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
@@ -2058,6 +2060,47 @@ function diffStoreChanges(before: StoreState, after: StoreState): string[] {
   return changes;
 }
 
+// Which J4 surface this chat turn came from, carried for the life of the
+// turn (2026-08-14). Ambient rather than a parameter on purpose: the answer
+// is needed only at the ~25 exits of one very large function, and threading
+// an argument through every one of them would be a large mechanical diff
+// across this codebase's most complex write path for a value that is
+// genuinely a property of the whole request. AsyncLocalStorage is safe under
+// concurrent requests in a way a module-level variable would not be, since
+// each turn gets its own store.
+const chatSurface = new AsyncLocalStorage<J4Surface>();
+
+// Not an error. The layer's own way of saying the turn is over, thrown so it
+// can unwind from any of the exits that used to redirect. It never escapes
+// runChatTurn.
+class ChatTurnFinished extends Error {}
+
+/**
+ * Runs a chat turn on behalf of a known surface.
+ *
+ * The room keeps the behaviour it has always had, redirect and all. The layer
+ * finishes where the room would have navigated, so the owner stays exactly
+ * where they were standing, mid page, mid scroll, still reading whatever
+ * prompted the question.
+ */
+async function runChatTurn<T>(surface: J4Surface, turn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await chatSurface.run(surface, turn);
+  } catch (error) {
+    if (error instanceof ChatTurnFinished) return undefined;
+    throw error;
+  }
+}
+
+/**
+ * Which surface asked. Anything unrecognised is treated as the room, so the
+ * long-standing redirecting behaviour stays the default and only a caller
+ * that explicitly says "layer" opts into finishing in place.
+ */
+function readChatSurface(formData: FormData): J4Surface {
+  return formData.get("surface") === "layer" ? "layer" : "room";
+}
+
 // Real production bug (2026-08-07, reported as "chat freezing" during a
 // second real user's dogfooding): GenesisAssistant.tsx keeps the panel's
 // open/closed state as local React state (`userOverride`), which a same-page
@@ -2072,6 +2115,32 @@ function diffStoreChanges(before: StoreState, after: StoreState): string[] {
 // exact fix for one flow (startTaskConversation's own final redirect,
 // below); applied everywhere a chat-panel turn completes.
 function redirectKeepingChatOpen(returnTo: string): never {
+  // The persistent J4 layer never navigates, not even to the page it is
+  // already on (2026-08-14).
+  //
+  // Sean's model, stated plainly enough that this became a bug rather than a
+  // preference: "the owner must be able to summon J4 from any point in the
+  // business, ask a question, receive a response, and continue scrolling
+  // through the current page without leaving that workspace."
+  //
+  // The streaming path already honoured that — it calls router.refresh() and
+  // never moves. This slower path did not. Every one of its ~25 exits ends
+  // here, and a redirect() is a real router navigation even when the
+  // destination is the URL the owner is already on: the App Router scrolls
+  // to top, so the owner lost their place. And this is not a rare path. Any
+  // turn that edits real store content deliberately falls back to it, which
+  // is exactly what "summon J4 on Website and ask for a bolder hero" is.
+  //
+  // So for the layer the turn simply finishes. revalidatePath has the client
+  // pick up the new server data in place, with scroll position and every
+  // piece of client state untouched, which is what a redirect could never
+  // do. Thrown rather than returned because this function's ~25 callers are
+  // all written against `never` and each one is a real early exit; runChatTurn
+  // below is the single place that catches it.
+  if (chatSurface.getStore() === "layer") {
+    revalidatePath(returnTo);
+    throw new ChatTurnFinished();
+  }
   redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}openChat=1`);
 }
 
@@ -3901,13 +3970,15 @@ export async function sendStoreMessage(formData: FormData) {
   // classification silently disagreeing with the first one).
   const preClassifiedTool = formData.get("preClassifiedTool") === "edit_store_content" ? "edit_store_content" : undefined;
 
-  await applyGenesisMessageToStore(
-    session.user.id,
-    userMessage,
-    returnTo,
-    confirmedOverride,
-    audioUrl ? { audioUrl } : undefined,
-    preClassifiedTool
+  await runChatTurn(readChatSurface(formData), () =>
+    applyGenesisMessageToStore(
+      session.user.id,
+      userMessage,
+      returnTo,
+      confirmedOverride,
+      audioUrl ? { audioUrl } : undefined,
+      preClassifiedTool
+    )
   );
 }
 
@@ -3922,6 +3993,10 @@ export async function sendStoreMessage(formData: FormData) {
 // business information"). Classification into a real assistant reply
 // (M3/M4) still lands as further StoreMessage rows in the same thread.
 export async function uploadBusinessAssetFromChat(formData: FormData) {
+  return runChatTurn(readChatSurface(formData), () => uploadBusinessAssetFromChatTurn(formData));
+}
+
+async function uploadBusinessAssetFromChatTurn(formData: FormData) {
   const session = await auth();
   if (!session?.user) {
     redirect("/login");
@@ -4100,6 +4175,10 @@ export async function uploadBusinessAssetFromChat(formData: FormData) {
 // parallel "interpret the memo" pipeline — and, unlike the older
 // applyGenesisMessageToStore route, one that can actually stream.
 export async function uploadVoiceMemo(formData: FormData) {
+  return runChatTurn(readChatSurface(formData), () => uploadVoiceMemoTurn(formData));
+}
+
+async function uploadVoiceMemoTurn(formData: FormData) {
   const session = await auth();
   if (!session?.user) {
     redirect("/login");
@@ -4188,6 +4267,10 @@ export async function uploadVoiceMemo(formData: FormData) {
 // messages, since the batch reply doesn't need a guess at each photo's
 // purpose before the owner has said what it even is.
 export async function uploadPhotoBatchFromChat(formData: FormData) {
+  return runChatTurn(readChatSurface(formData), () => uploadPhotoBatchFromChatTurn(formData));
+}
+
+async function uploadPhotoBatchFromChatTurn(formData: FormData) {
   const session = await auth();
   if (!session?.user) {
     redirect("/login");

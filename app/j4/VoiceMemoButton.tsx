@@ -8,6 +8,7 @@
 // permission recovery, stream-reuse fix, Priority 3 responsiveness).
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import type { J4Surface } from "./J4Workspace";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
@@ -62,6 +63,7 @@ function describeMicPermissionFix(): string {
 export function VoiceMemoButton({
   uploadVoiceMemo,
   currentPath,
+  surface,
   onStart,
   onFailure,
   onTranscribed,
@@ -69,6 +71,10 @@ export function VoiceMemoButton({
 }: {
   uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
   currentPath: string;
+  // Travels with currentPath: where the owner is, and whether finishing the
+  // turn there is allowed to move them. See ai-actions.ts's
+  // redirectKeepingChatOpen — from the layer, the answer is never.
+  surface: J4Surface;
   // Priority 3 — J4 Voice Responsiveness (2026-08-08). Fires the instant
   // recording stops, before the blob upload or transcription call even
   // begins — this is the real "immediate acknowledgment" moment Sean's
@@ -291,6 +297,7 @@ export function VoiceMemoButton({
         formData.set("originalFilename", `voice-memo.${extension}`);
         formData.set("contentType", contentType);
         formData.set("currentPath", currentPath);
+        formData.set("surface", surface);
         return uploadVoiceMemo(formData);
       });
       if (!result.ok) {
