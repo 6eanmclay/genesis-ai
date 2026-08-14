@@ -155,8 +155,18 @@ export function J4Overlay({
         }`}
       />
 
+      {/* 68% on a phone, which is the figure the approved direction froze:
+          "the composer is never a blank full-screen input... capped so the
+          screen you summoned from stays visible." That cap is not decoration.
+          It is the difference between talking to J4 about the thing in front
+          of you and being taken somewhere to talk about it, and it is what
+          makes "J4 comes to where I am" visible rather than merely true.
+          Desktop is still edge to edge, and is wrong for the same reason, but
+          desktop was explicitly held for its own design pass and inventing a
+          layout for it here would be exactly the kind of decision that pass
+          exists to make. */}
       <div
-        className={`absolute inset-x-0 bottom-0 top-24 flex origin-bottom touch-auto flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 md:top-0 md:rounded-none ${
+        className={`absolute inset-x-0 bottom-0 top-[32%] flex origin-bottom touch-auto flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 md:top-0 md:rounded-none ${
           visible
             ? "translate-y-0 scale-100 opacity-100"
             : "pointer-events-none translate-y-8 scale-[0.96] opacity-0"

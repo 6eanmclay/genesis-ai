@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { unstable_rethrow, usePathname, useRouter } from "next/navigation";
 import { useFormStatus, flushSync } from "react-dom";
@@ -70,6 +70,23 @@ interface J4Signals {
 // rows (both are things J4 has concluded and wants the owner to know,
 // distinct from an opportunity or a thing needing approval).
 type Category = "conversation" | "tasks" | "ideas" | "decisions" | "information";
+
+// Where this conversation is being rendered. "layer" is the persistent J4
+// over the business workspace (app/dashboard/J4Overlay.tsx); "room" is the
+// full /j4 destination. See J4Workspace's own comment for what separates
+// them and why it is one component rather than two.
+export type J4Surface = "layer" | "room";
+
+// Remembers that the owner entered the room from their own business, so the
+// way back can be a real history step rather than a fresh navigation to
+// /dashboard. That distinction is the whole of Sean's requirement: "if a
+// user intentionally enters the full J4 room and later returns to the
+// business, the original workspace and scroll position should be preserved."
+// Going back restores both, because the App Router restores scroll on a
+// history traversal; pushing /dashboard would land them at the top of a page
+// they were not on. sessionStorage rather than a query param so a refresh
+// inside the room keeps working and the URL stays clean.
+const ROOM_ENTERED_FROM_KEY = "j4:enteredFrom";
 
 interface TaskItem {
   id: string;
@@ -739,6 +756,7 @@ export function J4Workspace({
   decisions,
   ideas,
   information,
+  surface,
 }: {
   storeName: string;
   messages: Message[];
@@ -750,7 +768,24 @@ export function J4Workspace({
   decisions: DecisionItem[];
   ideas: IdeaItem[];
   information: InformationItem[];
+  surface: J4Surface;
 } & J4Signals) {
+  // Two surfaces, one conversation (2026-08-14). Sean's clarification:
+  // "the persistent J4 summon is not a shortcut to the J4 page. It is the
+  // primary way users converse with J4 while working inside their business."
+  //
+  // So the layer is the conversation and nothing else. Tasks, Ideas,
+  // Decisions and Information are real, and they are exactly what the room
+  // is for — reading the record, reviewing what is queued, doing deliberate
+  // deep work. Putting them in the layer would rebuild the destination the
+  // layer exists to make unnecessary, and would answer "I have a quick
+  // question" with a management console.
+  //
+  // Neither surface owns the conversation. Both read the same StoreMessage
+  // rows and write through the same actions, so asking in the layer and then
+  // opening the room shows the same exchange, and this stayed a prop rather
+  // than a second component precisely so the two can never drift.
+  const isLayer = surface === "layer";
   // Where the owner actually is (2026-08-14), not where J4 lives. This was
   // hardcoded to "/j4" back when J4 was a route, and the hardcoding survived
   // the move to a persistent layer as a real bug: this same conversation now
@@ -770,7 +805,37 @@ export function J4Workspace({
   // per Sean's own explicit calls on both open questions from the frozen
   // scope doc.
   const [justTalk, setJustTalk] = useState(false);
+  // Both modes are room-only, and derived rather than guarded at each use so
+  // there is exactly one place either can be true. The layer has no rail to
+  // step away from, so Just Talk has nothing to mean there, and it has no
+  // categories to switch between.
+  const talkingOnly = justTalk && !isLayer;
+  const shownCategory: Category = isLayer ? "conversation" : activeCategory;
   const overallState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
+
+  // Leaving the room. Back when the owner came from their own business (the
+  // layer pushed us here), so the workspace and its scroll position come
+  // back exactly as they were; a plain navigation only for someone who
+  // arrived at /j4 cold, from a link or a bookmark, and has nothing to
+  // return to.
+  const leaveRoom = useCallback(() => {
+    const enteredFrom = typeof window === "undefined" ? null : window.sessionStorage.getItem(ROOM_ENTERED_FROM_KEY);
+    if (enteredFrom) {
+      window.sessionStorage.removeItem(ROOM_ENTERED_FROM_KEY);
+      router.back();
+      return;
+    }
+    router.push("/dashboard");
+  }, [router]);
+
+  // Entering the room, deliberately. Recording where the owner was is what
+  // makes the return above a real step back rather than a guess.
+  const enterRoom = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(ROOM_ENTERED_FROM_KEY, currentPath);
+    }
+    router.push("/j4");
+  }, [currentPath, router]);
 
   // Server-persisted StoreMessage rows stay the one source of truth;
   // localMessages is a working cache that appends the optimistic turn and
@@ -1334,8 +1399,8 @@ export function J4Workspace({
     // plain browsable lists, not a live feed — switching into one of them
     // should land at the top, not wherever Conversation's scroll happened
     // to be (they share one scroll container across category switches).
-    el.scrollTop = activeCategory === "conversation" ? el.scrollHeight : 0;
-  }, [localMessages.length, lastMessageContentLength, activeCategory]);
+    el.scrollTop = shownCategory === "conversation" ? el.scrollHeight : 0;
+  }, [localMessages.length, lastMessageContentLength, shownCategory]);
 
   const categoryTabs: { key: Category; label: string; count: number }[] = [
     { key: "conversation", label: "Conversation", count: 0 },
@@ -1349,7 +1414,12 @@ export function J4Workspace({
     <form
       ref={formRef}
       action={handleSend}
-      className="fixed inset-0 z-[100] flex w-full flex-col overflow-x-hidden text-[#f4f2fb]"
+      // The room owns the screen. The layer fills whatever the overlay gives
+      // it and nothing more — a fixed element here would break out of the
+      // sheet and cover the workspace it is supposed to sit over.
+      className={`flex w-full flex-col overflow-x-hidden text-[#f4f2fb] ${
+        isLayer ? "h-full" : "fixed inset-0 z-[100]"
+      }`}
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
     >
       <input type="hidden" name="currentPath" value={currentPath} />
@@ -1379,7 +1449,7 @@ export function J4Workspace({
                 framing this mode exists to step away from. Nothing about
                 the underlying state stops being tracked; it just isn't
                 shown here while the owner is just talking. */}
-            {overallState !== "idle" && !justTalk && (
+            {overallState !== "idle" && !talkingOnly && (
               <span
                 className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ${GENESIS_STATE_META[overallState].dotClassName}`}
                 style={{ boxShadow: `0 0 0 2px ${GENESIS_ATMOSPHERE.bgElevated}` }}
@@ -1404,7 +1474,7 @@ export function J4Workspace({
               approval UI still lives exactly where it already does
               (Decisions tab / the relevant dashboard page) once the owner
               exits. */}
-          {justTalk && decisions.length > 0 && (
+          {talkingOnly && decisions.length > 0 && (
             <span
               className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
               style={{ backgroundColor: "rgba(251,191,36,0.12)", color: "#fbbf24" }}
@@ -1414,35 +1484,56 @@ export function J4Workspace({
               {decisions.length} waiting for you
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              // Real edge case: the rail this toggle hides is the only way
-              // to switch categories — if the owner was on Tasks/Ideas/
-              // Decisions/Information when toggling Just Talk on, they'd be
-              // stranded there with no rail to get back to Conversation.
-              // Forcing Conversation on every toggle (both directions)
-              // sidesteps that entirely rather than tracking "whichever tab
-              // was active before."
-              setJustTalk((v) => !v);
-              setActiveCategory("conversation");
-            }}
-            aria-pressed={justTalk}
-            className={
-              justTalk
-                ? "shrink-0 rounded-full bg-[#8b7cf6] px-3 py-1.5 text-xs font-medium text-white"
-                : "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
-            }
-          >
-            {justTalk ? "Workspace" : "Just Talk"}
-          </button>
-          <Link
-            href="/dashboard"
-            aria-label="Return to dashboard"
-            className="-m-2 shrink-0 p-2 text-[rgba(244,242,251,0.62)] hover:text-[#f4f2fb]"
-          >
-            ✕
-          </Link>
+          {!isLayer && (
+            <button
+              type="button"
+              onClick={() => {
+                // Real edge case: the rail this toggle hides is the only way
+                // to switch categories — if the owner was on Tasks/Ideas/
+                // Decisions/Information when toggling Just Talk on, they'd be
+                // stranded there with no rail to get back to Conversation.
+                // Forcing Conversation on every toggle (both directions)
+                // sidesteps that entirely rather than tracking "whichever tab
+                // was active before."
+                setJustTalk((v) => !v);
+                setActiveCategory("conversation");
+              }}
+              aria-pressed={justTalk}
+              className={
+                justTalk
+                  ? "shrink-0 rounded-full bg-[#8b7cf6] px-3 py-1.5 text-xs font-medium text-white"
+                  : "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
+              }
+            >
+              {justTalk ? "Workspace" : "Just Talk"}
+            </button>
+          )}
+          {isLayer ? (
+            // The layer's only way out is the overlay's own close control,
+            // which returns the owner to exactly where they were standing.
+            // What sits here instead is the door to the room: quiet, and
+            // deliberately not the thing the eye lands on, because ordinary
+            // conversation is finished without ever using it. It says
+            // "Everything" rather than "Open J4" because the owner is
+            // already talking to J4 — what is through it is the record, the
+            // queue, and the deep work.
+            <button
+              type="button"
+              onClick={enterRoom}
+              className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
+            >
+              Everything ›
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={leaveRoom}
+              aria-label="Back to your business"
+              className="-m-2 shrink-0 p-2 text-[rgba(244,242,251,0.62)] hover:text-[#f4f2fb]"
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
@@ -1456,8 +1547,11 @@ export function J4Workspace({
           Portal, present even while just talking. The toggle button
           itself forces activeCategory back to "conversation" on every
           switch (see its own comment) so there's never a state where this
-          rail is hidden but a non-Conversation tab is showing. */}
-      {!justTalk && (
+          rail is hidden but a non-Conversation tab is showing.
+          The layer never shows it at all: those four categories are what the
+          room is for, and rebuilding them over the workspace would answer a
+          quick question with a console. */}
+      {!talkingOnly && !isLayer && (
         <div
           className="flex shrink-0 gap-1 overflow-x-auto border-b px-5 py-2"
           style={{ borderColor: GENESIS_ATMOSPHERE.border }}
@@ -1487,7 +1581,7 @@ export function J4Workspace({
         ref={messageListRef}
         className="min-h-0 w-full min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-5 py-4"
       >
-        {activeCategory === "conversation" ? (
+        {shownCategory === "conversation" ? (
           localMessages.length === 0 ? (
             <div className="text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
               <p className="font-medium text-[#f4f2fb]">Your business partner, always paying attention.</p>
@@ -1625,7 +1719,7 @@ export function J4Workspace({
               })}
             </div>
           )
-        ) : activeCategory === "tasks" ? (
+        ) : shownCategory === "tasks" ? (
           tasks.length === 0 ? (
             <CategoryEmptyState label="Tasks" />
           ) : (
@@ -1635,7 +1729,7 @@ export function J4Workspace({
               ))}
             </div>
           )
-        ) : activeCategory === "ideas" ? (
+        ) : shownCategory === "ideas" ? (
           ideas.length === 0 ? (
             <CategoryEmptyState label="Ideas" />
           ) : (
@@ -1645,7 +1739,7 @@ export function J4Workspace({
               ))}
             </div>
           )
-        ) : activeCategory === "decisions" ? (
+        ) : shownCategory === "decisions" ? (
           decisions.length === 0 ? (
             <CategoryEmptyState label="Decisions" />
           ) : (
@@ -1705,8 +1799,8 @@ export function J4Workspace({
             unmount/remount it on every toggle, silently dropping the
             cached getUserMedia() stream (see streamRef's own comment) and,
             worse, truncating a real recording if toggled mid-recording. */}
-        <div className={justTalk ? "mb-2 flex items-center justify-center" : "mb-1.5 flex items-center gap-1.5"}>
-          {!justTalk && (
+        <div className={talkingOnly ? "mb-2 flex items-center justify-center" : "mb-1.5 flex items-center gap-1.5"}>
+          {!talkingOnly && (
             <>
               <span className="pl-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                 Add to J4
@@ -1739,7 +1833,7 @@ export function J4Workspace({
               setSendError(message);
             }}
             onTranscribed={sendVoiceMemo}
-            size={justTalk ? "large" : "default"}
+            size={talkingOnly ? "large" : "default"}
           />
         </div>
         <div className="flex min-w-0 w-full max-w-full items-end gap-2">
@@ -1752,16 +1846,23 @@ export function J4Workspace({
               lines to make room for it, per the frozen design. Just Talk
               (justTalk state, header toggle, mic-primary row above) stays
               completely untouched — both entry points coexist until Room
-              fully replaces Just Talk in a later cleanup pass. */}
-          <Link
-            href="/j4/room"
-            aria-label="Enter J4 Room"
-            title="Enter J4 Room"
-            className="flex h-[4.5rem] w-[4.5rem] shrink-0 items-center justify-center rounded-2xl border-2 transition hover:opacity-90"
-            style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
-          >
-            <GenesisAvatar className={GENESIS_AVATAR_SIZE.header} />
-          </Link>
+              fully replaces Just Talk in a later cleanup pass.
+              Room only. The immersive Room is deep work by definition, and a
+              door out of the business does not belong in the layer whose
+              entire point is that the owner never has to leave it to talk.
+              It stays reachable exactly where deliberate destinations
+              belong: one step in, through the room. */}
+          {!isLayer && (
+            <Link
+              href="/j4/room"
+              aria-label="Enter J4 Room"
+              title="Enter J4 Room"
+              className="flex h-[4.5rem] w-[4.5rem] shrink-0 items-center justify-center rounded-2xl border-2 transition hover:opacity-90"
+              style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
+            >
+              <GenesisAvatar className={GENESIS_AVATAR_SIZE.header} />
+            </Link>
+          )}
           <div
             className="flex min-w-0 flex-1 max-w-full items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
             style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}

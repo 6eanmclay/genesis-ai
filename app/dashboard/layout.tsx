@@ -11,7 +11,7 @@ import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { signOutOfGenesis } from "./actions";
 import { DashboardShell } from "./DashboardShell";
-import J4Page from "@/app/j4/page";
+import { J4Surface } from "@/app/j4/J4Surface";
 
 // Reliability hardening — Server Actions can only have their execution
 // timeout raised at the PAGE/LAYOUT level (Next.js's own maxDuration route
@@ -57,17 +57,18 @@ export const maxDuration = 300;
 // with one. See app/dashboard/J4Overlay.tsx for the four bugs that all traced
 // back to it.
 //
-// So J4's real workspace is rendered here, once, and passed down as a prop.
-// It is still app/j4/page.tsx itself, so there remains exactly one J4
-// workspace, one set of server actions, and one Request → Execute → Verify →
-// Record → Display path.
+// So J4's real conversation is rendered here, once, and passed down as a
+// prop. It is the same component /j4 renders (app/j4/J4Surface.tsx), so
+// there remains exactly one J4 conversation, one set of server actions, and
+// one Request → Execute → Verify → Record → Display path.
 //
-// WHAT IT COSTS, honestly. Every dashboard page now also renders J4Page,
+// WHAT IT COSTS, honestly. Every dashboard page now also renders J4Surface,
 // which is not free: it repeats this layout's own auth/store resolution and
 // three of its reads (pending approvals, observations, explanations), and
-// adds two genuinely new ones — the last 50 StoreMessages and the open
-// Tasks. All of them are indexed reads on one store and none is an AI call,
-// so it is a real but small cost, paid on every dashboard navigation.
+// adds one genuinely new one — the last 50 StoreMessages. All indexed reads
+// on one store, none an AI call, so it is a real but small cost paid on
+// every dashboard navigation. Open Tasks are deliberately not among them:
+// the layer never shows them, so the layer never reads them.
 //
 // It is the right trade because it is the whole feature: a partner who has
 // to be loaded before he can be spoken to is a page, and this correction was
@@ -336,9 +337,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   return (
     <DashboardShell
-      // J4's real workspace, rendered on the server and handed down as
-      // content. The shell shows and hides it; nothing navigates.
-      j4={<J4Page />}
+      // J4's real conversation, rendered on the server and handed down as
+      // content. The shell shows and hides it; nothing navigates. The layer
+      // surface is the conversation only — Tasks, Ideas, Decisions and
+      // Information are what the /j4 room is for.
+      j4={<J4Surface surface="layer" />}
       sections={sections}
       secondarySections={secondarySections}
       storeId={store.id}
