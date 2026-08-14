@@ -16,6 +16,7 @@ import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
 import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { J4MobileHero } from "./J4MobileHero";
 import { J4Overlay } from "./J4Overlay";
+import { J4Summon } from "./J4Summon";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -871,41 +872,19 @@ export function DashboardShell({
           </Link>
         ))}
 
-        {/* The one blue element in the bar, and it is blue because it is J4 —
-            not because it is important. Everything else here is monochrome
-            line work, so the accent can only ever mean one thing. */}
-        {/* Wider than the other four slots so an 88px orb has real clearance
-            on both sides. Five equal slots on a 360px phone are ~72px each,
-            which the orb alone would overflow into its neighbours. */}
-        <div className="flex flex-[1.5] flex-col items-center justify-end">
-          {/* A control, not a link (2026-08-14). Summoning J4 no longer
-              navigates anywhere: the workspace stays mounted, keeps its exact
-              scroll position, and J4 opens over it. That removes an entire
-              class of bug rather than defending against it — see
-              J4Overlay.tsx for the four that all traced back to routing. */}
-          <button
-            type="button"
-            onClick={() => setJ4Open(true)}
-            aria-haspopup="dialog"
-            aria-expanded={j4Open}
-            aria-label="J4"
-            // Lifted out of the bar rather than sitting in it. At tab-icon
-            // scale J4 read as a fifth navigation item; at 64px breaking the
-            // bar's own top edge he reads as the control the bar is arranged
-            // around, which is the actual claim this design is making.
-            className="relative -mt-12 mb-0.5 flex items-center justify-center rounded-full transition-transform duration-200 active:scale-95"
-          >
-            {/* Halo, deliberately larger than the orb — J4's presence should
-                extend past his own edge, which is also what stops a 76px
-                circle from reading as a button and starts it reading as a
-                light source. Blue, because only J4 is ever the light. */}
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute -inset-4 rounded-full bg-[#2563eb]/25 blur-xl"
-            />
-            <GenesisAvatar className={`relative ${GENESIS_AVATAR_SIZE.summon}`} />
-          </button>
-        </div>
+        {/* J4's slot, now empty on purpose (2026-08-14).
+            The control itself moved out of this bar entirely — see
+            J4Summon.tsx. It could not be made untouchable from in here: this
+            nav carries backdrop-blur, a backdrop-filter creates a stacking
+            context, and everything inside one is capped at that context's own
+            z-index no matter what it asks for. So the orb was permanently
+            trapped at the bar's z-40 and the More menu's z-50 backdrop
+            covered it.
+            What stays is the gap it needs. Wider than the other four slots so
+            an 88px orb has real clearance on both sides: five equal slots on
+            a 360px phone are ~72px each, which the orb alone would overflow
+            into its neighbours. */}
+        <div className="flex-[1.5]" aria-hidden="true" />
 
         {mobileRightTabs.map((section) => (
           <Link
@@ -1052,6 +1031,11 @@ export function DashboardShell({
       {/* J4 himself, over the workspace. Rendered last so he sits above
           everything, and mounted for the life of the dashboard so closing him
           is genuinely closing rather than discarding. */}
+      {/* The summon, on its own layer above everything the shell renders.
+          Rendered here rather than inside the tab bar so that no ancestor
+          can contain it — see J4Summon.tsx. */}
+      <J4Summon open={j4Open} onSummon={() => setJ4Open(true)} />
+
       <J4Overlay open={j4Open} onClose={() => setJ4Open(false)}>
         {j4}
       </J4Overlay>
