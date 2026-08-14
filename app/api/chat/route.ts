@@ -22,7 +22,9 @@ import {
   getOpenProposal,
   reviseProposal,
   openProposal as openProposalRecord,
+  type ProposalDirection,
 } from "@/lib/storefront/proposals";
+import { RefineStorefrontToolInputSchema } from "@/lib/execution/genesisTools";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
@@ -914,6 +916,33 @@ export async function POST(request: Request) {
           }
           const refineInput = parsed.data as RefineStorefrontInput;
 
+          // Directions, if J4 offered a real choice (2026-08-14).
+          //
+          // Read from the RAW tool call, not from parsed.data: the action
+          // registry's inputSchema is the security boundary for what will be
+          // EXECUTED, and it deliberately knows nothing about directions, so
+          // it strips them. That separation is the point — approving a
+          // proposal that offered a choice executes exactly the same shape as
+          // one that did not, and the executable's contract is untouched.
+          //
+          // Validated on its own terms against the tool schema, so a
+          // malformed or single-item directions array becomes no directions
+          // rather than a broken chooser.
+          const rawDirections = (chosenTool.input as { directions?: unknown })?.directions;
+          const parsedDirections = RefineStorefrontToolInputSchema.shape.directions.safeParse(rawDirections);
+          const offeredDirections: ProposalDirection[] =
+            parsedDirections.success && parsedDirections.data
+              ? parsedDirections.data.map((d, i) => ({
+                  // Positional ids. The model is never asked to invent one,
+                  // which is one less thing it can return inconsistently
+                  // between the label it shows and the id a button submits.
+                  id: `d${i + 1}`,
+                  label: d.label,
+                  rationale: d.reason,
+                  changes: d.changes,
+                }))
+              : [];
+
           // The real stored theme, never the model's restatement of it —
           // the same rule every other getCurrentValues in the registry
           // follows, so the approval card diffs against ground truth.
@@ -955,6 +984,7 @@ export async function POST(request: Request) {
               rationale: refineInput.reason,
               target: refineInput.target,
               input: refineInput as unknown as Record<string, unknown>,
+              directions: offeredDirections,
             });
           } else {
             await openProposalRecord(store.id, {
@@ -966,6 +996,7 @@ export async function POST(request: Request) {
               previousValues: previousValues as Record<string, unknown>,
               authorizationTier: GENESIS_ACTIONS.refine_storefront.authorizationTier,
               groupId: randomUUID(),
+              directions: offeredDirections,
             });
           }
 
@@ -976,9 +1007,11 @@ export async function POST(request: Request) {
           // persistent layer exists to remove.
           const finalReply = [
             conversationalReply || refineInput.summary,
-            isRevision
-              ? "I've revised it below. Have a look and tell me if that's closer."
-              : "Have a look below. Tell me what you think, or tell me to change it.",
+            offeredDirections.length > 1
+              ? "Have a look below. Flip between them and tell me which way you want to go."
+              : isRevision
+                ? "I've revised it below. Have a look and tell me if that's closer."
+                : "Have a look below. Tell me what you think, or tell me to change it.",
           ].join(" ");
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });

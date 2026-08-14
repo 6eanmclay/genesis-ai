@@ -258,6 +258,13 @@ export interface ProposalDraft {
   previousValues: Record<string, unknown>;
   authorizationTier: string;
   groupId?: string | null;
+  /**
+   * Alternatives this revision is asking the owner to choose between. Stored
+   * in their own column, never inside `input` — the executable's contract is
+   * unchanged, so approving a proposal with directions executes exactly the
+   * same shape as one without.
+   */
+  directions?: ProposalDirection[];
 }
 
 /**
@@ -286,6 +293,7 @@ export async function openProposal(storeId: string, draft: ProposalDraft): Promi
       groupId: draft.groupId ?? null,
       revision: 1,
       status: PROPOSAL_STATUS.pending,
+      directions: draft.directions && draft.directions.length >= 2 ? (draft.directions as never) : undefined,
     },
     select: { id: true },
   });
@@ -319,7 +327,14 @@ export async function openProposal(storeId: string, draft: ProposalDraft): Promi
 export async function reviseProposal(
   storeId: string,
   proposalId: string,
-  revision: { summary: string; rationale: string; target?: string | null; input: Record<string, unknown> }
+  revision: {
+    summary: string;
+    rationale: string;
+    target?: string | null;
+    input: Record<string, unknown>;
+    /** Fresh alternatives, if this revision is again offering a choice. */
+    directions?: ProposalDirection[];
+  }
 ): Promise<Proposal | null> {
   const existing = await getProposal(storeId, proposalId);
   if (!existing) return null;
@@ -361,6 +376,11 @@ export async function reviseProposal(
         scope,
         input: revision.input as never,
         previousValues: first.previousValues as never,
+        // Deliberately not carried forward from the superseded revision: a
+        // choice already made must not be re-offered as though it were still
+        // open.
+        directions:
+          revision.directions && revision.directions.length >= 2 ? (revision.directions as never) : undefined,
         status: PROPOSAL_STATUS.pending,
       },
     }),

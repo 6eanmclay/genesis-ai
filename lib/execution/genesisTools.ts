@@ -98,19 +98,42 @@ export type RequestProductContentChangeInput = z.infer<typeof RequestProductCont
 // values are validated again by GENESIS_ACTIONS.refine_storefront.inputSchema
 // after the call returns, and a third time inside the executable — the tool
 // schema is a guide for the model, never the security boundary.
+const RefineChangeSchema = z.object({
+  dimension: z.enum(REFINABLE_DIMENSION_KEYS as [string, ...string[]]),
+  value: z.string(),
+});
+
+// At most three directions. Two is the shape Sean described ("I see two
+// strong directions"); three is the outer limit before a chooser stops being
+// a choice and becomes a menu. Also kept deliberately small because this
+// codebase has a recorded API ceiling on tool schema size — see
+// lib/intelligence/cognitiveLayer.ts, where a union of nine full input shapes
+// returned "compiled grammar is too large". Reusing RefineChangeSchema rather
+// than restating it keeps the compiled grammar as small as this can be.
+const MAX_DIRECTIONS = 3;
+
 export const RefineStorefrontToolInputSchema = z.object({
   target: z.enum(STOREFRONT_TARGET_KEYS as [string, ...string[]]),
-  changes: z
-    .array(
-      z.object({
-        dimension: z.enum(REFINABLE_DIMENSION_KEYS as [string, ...string[]]),
-        value: z.string(),
-      })
-    )
-    .min(1)
-    .max(MAX_MUTATIONS_PER_IMPROVEMENT),
+  changes: z.array(RefineChangeSchema).min(1).max(MAX_MUTATIONS_PER_IMPROVEMENT),
   reason: z.string(),
   summary: z.string(),
+  // Optional, and genuinely optional: most requests have one right answer and
+  // offering a choice for its own sake is worse than proposing one. Set only
+  // when there are real, meaningfully different ways to satisfy the request.
+  // When present, `changes` above must be the FIRST direction's change set, so
+  // every existing reader that knows nothing about directions still sees a
+  // complete, valid proposal.
+  directions: z
+    .array(
+      z.object({
+        label: z.string(),
+        reason: z.string(),
+        changes: z.array(RefineChangeSchema).min(1).max(MAX_MUTATIONS_PER_IMPROVEMENT),
+      })
+    )
+    .min(2)
+    .max(MAX_DIRECTIONS)
+    .optional(),
 });
 export type RefineStorefrontToolInput = z.infer<typeof RefineStorefrontToolInputSchema>;
 
@@ -208,7 +231,7 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
     {
       name: "refine_storefront",
       description:
-        "Call this when the merchant asks you to improve how one part of their storefront LOOKS or is STRUCTURED, rather than what it says — e.g. 'make the hero feel more premium', 'the product grid feels cramped', 'this looks too plain', 'give the headings more presence'. You are changing structure and presentation only: hero layout, type scale, section layout, background treatment, image treatment, call to action emphasis, card style, button style, shadow style, and spacing. Pick target as the part of the page they mean, and changes as the one to four adjustments that together achieve that single improvement — four is the implementation detail of ONE idea, never a way to bundle several separate requests or quietly redesign the store. reason must state the real evidence behind it in your own words. summary is one plain sentence the merchant will read on the approval card. Do NOT use this for copy or wording (that's edit_store_content), for colours or fonts (that's edit_store_content, which reaches the full theme), or for product photos (that's request_image_change). This only PROPOSES the improvement for the merchant's approval; it never changes the storefront immediately.",
+        "Call this when the merchant asks you to improve how one part of their storefront LOOKS or is STRUCTURED, rather than what it says — e.g. 'make the hero feel more premium', 'the product grid feels cramped', 'this looks too plain', 'give the headings more presence'. You are changing structure and presentation only: hero layout, type scale, section layout, background treatment, image treatment, call to action emphasis, card style, button style, shadow style, and spacing. Pick target as the part of the page they mean, and changes as the one to four adjustments that together achieve that single improvement — four is the implementation detail of ONE idea, never a way to bundle several separate requests or quietly redesign the store. reason must state the real evidence behind it in your own words. summary is one plain sentence the merchant will read on the approval card. Do NOT use this for copy or wording (that's edit_store_content), for colours or fonts (that's edit_store_content, which reaches the full theme), or for product photos (that's request_image_change). This only PROPOSES the improvement for the merchant's approval; it never changes the storefront immediately. The merchant sees your proposal rendered as their real storefront, side by side with how it looks now, so describe the change plainly and let the picture do the arguing. OPTIONALLY, when a request genuinely has two or three meaningfully different good answers — usually an open-ended one like 'make this feel more alive' rather than a specific one like 'the buttons are too round' — set directions to those alternatives, each with a short label the merchant would recognise ('Warm editorial', 'Bolder and more expressive'), the reason it is worth considering, and its own changes. Only do this when you would genuinely struggle to pick between them yourself; a merchant asked to choose between two options you do not really rate equally is being given work, not help. Most requests should have no directions at all. When you do set directions, changes must repeat the FIRST direction's change set.",
       input_schema: z.toJSONSchema(RefineStorefrontToolInputSchema) as Anthropic.Tool.InputSchema,
     },
   ];
