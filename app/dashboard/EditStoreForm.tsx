@@ -52,8 +52,13 @@ export function EditStoreForm({
               : (store.description ?? "")
           }
           placeholder="Description (optional)"
-          rows={3}
-          className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+          // 3 rows was shorter than what an owner actually writes about their
+          // own business, so the field scrolled internally while editing —
+          // you could not see what you had already written. 8 rows fits a
+          // real description without scrolling; resize-y lets it grow further
+          // rather than capping anyone who writes more.
+          rows={8}
+          className="resize-y rounded-lg border border-black/[.08] px-4 py-2 leading-relaxed dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
         />
       </div>
       <SubmitButton pendingText="Saving..." className={`mt-2 self-start px-5 py-2 ${ACCENT_BUTTON}`}>

@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
@@ -361,7 +362,13 @@ export async function POST(request: Request) {
             model: "claude-opus-4-8",
             max_tokens: 1500,
             thinking: { type: "adaptive" },
-            system: [{ type: "text", text: STORE_CHAT_UNIFIED_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+            system: [
+              {
+                type: "text",
+                text: withJ4CopyRules(STORE_CHAT_UNIFIED_SYSTEM_PROMPT),
+                cache_control: { type: "ephemeral" },
+              },
+            ],
             messages: unifiedRequestMessages,
             tools: buildStoreChatUnifiedTools(),
             tool_choice: { type: "auto" },
@@ -469,7 +476,7 @@ export async function POST(request: Request) {
               model: "claude-opus-4-8",
               max_tokens: 1500,
               thinking: { type: "adaptive" },
-              system: STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
+              system: withJ4CopyRules(STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT),
               messages: [
                 {
                   role: "user",

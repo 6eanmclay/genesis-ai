@@ -29,7 +29,16 @@ export const GENESIS_AVATAR_SIZE = {
   // it without inflating the bar that contains it. Added 2026-08-12 after
   // real-device feedback that 44px, then 64px, both still read as "a fifth
   // nav icon" rather than as the control the bar is arranged around.
-  summon: "h-[76px] w-[76px] shrink-0",
+  // Raised 76px -> 88px (2026-08-12) on real-device feedback. Three sizes
+  // have now been tried here (44, 64, 76) and each still read as "another
+  // navigation icon"; at 88px it reads as the app's central presence, which
+  // is the actual claim. The tab bar's centre slot is widened to match (see
+  // DashboardShell) so the orb never crowds its neighbours — five equal
+  // slots on a 360px phone are only ~72px wide, narrower than the orb itself.
+  // This size also gives the future listening/thinking/speaking pulse
+  // somewhere to happen: at 44px an ambient animation is invisible, at 88px
+  // it reads without needing to be loud.
+  summon: "h-[88px] w-[88px] shrink-0",
   // GenesisDomicile's own ambient orb — sized relative to its own frame,
   // not a fixed pixel value, kept as its own real token rather than
   // forced onto the fixed-pixel scale above. Bumped 78% -> 85% (2026-08-09,

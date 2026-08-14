@@ -681,10 +681,6 @@ export function DashboardShell({
           stays ambient. */}
       {!isHome && (
         <MobileGenesisPresence
-          hasUrgentIssue={hasUrgentIssue}
-          hasPendingDecision={hasPendingDecision}
-          hasOpportunity={hasOpportunity}
-          hasCuriosity={hasCuriosity}
           focusableApprovals={focusableApprovals}
           liveObservations={liveObservations}
           curiosityItems={curiosityItems}
@@ -865,7 +861,10 @@ export function DashboardShell({
         {/* The one blue element in the bar, and it is blue because it is J4 —
             not because it is important. Everything else here is monochrome
             line work, so the accent can only ever mean one thing. */}
-        <div className="flex flex-1 flex-col items-center justify-end">
+        {/* Wider than the other four slots so an 88px orb has real clearance
+            on both sides. Five equal slots on a 360px phone are ~72px each,
+            which the orb alone would overflow into its neighbours. */}
+        <div className="flex flex-[1.5] flex-col items-center justify-end">
           <Link
             href="/j4"
             aria-label="J4"
@@ -873,7 +872,7 @@ export function DashboardShell({
             // scale J4 read as a fifth navigation item; at 64px breaking the
             // bar's own top edge he reads as the control the bar is arranged
             // around, which is the actual claim this design is making.
-            className="relative -mt-10 mb-0.5 flex items-center justify-center rounded-full transition-transform duration-200 active:scale-95"
+            className="relative -mt-12 mb-0.5 flex items-center justify-center rounded-full transition-transform duration-200 active:scale-95"
           >
             {/* Halo, deliberately larger than the orb — J4's presence should
                 extend past his own edge, which is also what stops a 76px

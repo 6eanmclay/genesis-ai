@@ -12,6 +12,7 @@ import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS, type BlueprintContextSubset, type GenesisActionType } from "@/lib/execution/genesisActions";
 import { tryExecuteAutonomousAction, communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
+import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import {
   canSuggestStorefrontImprovement,
   recordStorefrontSuggestionMade,
@@ -566,7 +567,7 @@ export async function runCognitiveReview(params: {
     model: "claude-opus-4-8",
     max_tokens: 4000,
     thinking: { type: "adaptive" },
-    system: SYSTEM_PROMPT,
+    system: withJ4CopyRules(SYSTEM_PROMPT),
     messages: [
       {
         role: "user",

@@ -1,4 +1,5 @@
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getRevenue } from "@/lib/businessModel/reasoning";
@@ -121,7 +122,7 @@ export async function composeOwnerBriefing(
       model: "claude-opus-4-8",
       max_tokens: 1200,
       thinking: { type: "adaptive" },
-      system: OWNER_BRIEFING_SYSTEM_PROMPT,
+      system: withJ4CopyRules(OWNER_BRIEFING_SYSTEM_PROMPT),
       messages: [
         {
           role: "user",

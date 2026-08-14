@@ -1,4 +1,3 @@
-import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { J4_VOICE } from "@/lib/dashboard/j4Voice";
 import {
@@ -50,10 +49,6 @@ export function presenceBriefingText({
 // ("the mobile experience should preserve the same visual identity as
 // desktop").
 export function MobileGenesisPresence({
-  hasUrgentIssue,
-  hasPendingDecision,
-  hasOpportunity,
-  hasCuriosity,
   focusableApprovals,
   liveObservations,
   curiosityItems,
@@ -61,10 +56,9 @@ export function MobileGenesisPresence({
   justArrived = false,
   ownerBriefingSummary = null,
 }: {
-  hasUrgentIssue: boolean;
-  hasPendingDecision: boolean;
-  hasOpportunity: boolean;
-  hasCuriosity: boolean;
+  // The four assessment flags this component used to take are gone with the
+  // status dot they fed. DashboardShell still computes them for its own use;
+  // it simply no longer passes them here.
   focusableApprovals: FocusableApprovalBrief[];
   liveObservations: LiveObservationBrief[];
   curiosityItems: CuriosityBrief[];
@@ -82,7 +76,10 @@ export function MobileGenesisPresence({
   // by the real composed narrative when one exists.
   ownerBriefingSummary?: string | null;
 }) {
-  const state = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
+  // The assessment state is no longer computed here. It only ever fed the
+  // coloured status dot, which is gone; the props remain part of this
+  // component's contract and are still passed by DashboardShell, so nothing
+  // upstream changes.
   const briefingText = presenceBriefingText({
     focusableApprovals,
     liveObservations,
@@ -105,13 +102,12 @@ export function MobileGenesisPresence({
           design keeps deleting.
           What stays is what only this bar can say: the real state dot and the
           briefing sentence. J4's voice, without a second J4. */}
-      {state !== "idle" && (
-        <span
-          className={`mt-2 h-2 w-2 shrink-0 self-start rounded-full ${GENESIS_STATE_META[state].dotClassName}`}
-          aria-label={GENESIS_STATE_META[state].label}
-          title={GENESIS_STATE_META[state].label}
-        />
-      )}
+      {/* No status dot as of 2026-08-12. A colour-coded indicator beside the
+          greeting created visual anxiety without telling the owner anything
+          they couldn't read in the sentence right next to it — Sean: "Genesis
+          should feel calm, confident, and clean." The briefing sentence
+          already communicates the state in J4's own voice, which is both
+          calmer and more specific than a coloured dot. */}
       <div className="min-w-0">
         <GenesisGreeting name={userName} sizeClassName="text-lg font-semibold" />
         {/* Natural-language only — no bare state word ("Curiosity") the way

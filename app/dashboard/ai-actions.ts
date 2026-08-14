@@ -61,6 +61,7 @@ import { completeTasksForAction } from "@/lib/dashboard/tasks";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { transcribeVoiceMemo } from "@/lib/voice/j4VoiceMemo";
+import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import {
@@ -2447,7 +2448,7 @@ async function applyGenesisMessageToStore(
       model: "claude-opus-4-8",
       max_tokens: 1500,
       thinking: { type: "adaptive" },
-      system: STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
+      system: withJ4CopyRules(STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT),
       messages: [
         {
           role: "user",
