@@ -173,9 +173,16 @@ export function J4Overlay({
         }`}
         style={{ transitionTimingFunction: "cubic-bezier(0.32, 0.72, 0, 1)" }}
       >
-        <div className="relative flex shrink-0 items-center justify-end px-3 pt-2 md:hidden">
+        {/* The close row is NOT mobile only, though the grab handle in it is
+            (2026-08-14). It was, briefly, and that was a real bug rather than
+            a deferred desktop decision: on a wide viewport this panel is
+            md:top-0, so it covers the backdrop that would otherwise dismiss
+            it, and hiding the button left Escape as the only way out of J4.
+            Desktop's composition is still held for its own pass; being able
+            to close something is not composition. */}
+        <div className="relative flex shrink-0 items-center justify-end px-3 pt-2">
           <span
-            className="absolute left-1/2 top-2.5 h-1 w-9 -translate-x-1/2 rounded-full bg-black/[.15] dark:bg-white/[.2]"
+            className="absolute left-1/2 top-2.5 h-1 w-9 -translate-x-1/2 rounded-full bg-black/[.15] dark:bg-white/[.2] md:hidden"
             aria-hidden="true"
           />
           {/* 44px, the platform minimum. The icon stays 20px; only the hit
@@ -192,9 +199,14 @@ export function J4Overlay({
           </button>
         </div>
 
-        {/* overscroll-contain stops a scroll reaching the end of J4's own
-            content from chaining into the workspace underneath. */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
+        {/* Deliberately not scrollable. The conversation inside manages its
+            own scrolling (and its own overscroll-contain, which is what stops
+            a scroll reaching the end of the messages from chaining into the
+            workspace underneath). A second scroll container wrapped around
+            one is the classic phone failure where a drag moves the sheet
+            instead of the messages, and it can only ever fight the one that
+            actually holds the content. */}
+        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       </div>
     </div>,
     document.body
