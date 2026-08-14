@@ -1,4 +1,4 @@
-import { approveGenesisAction, rejectGenesisAction } from "@/app/dashboard/ai-actions";
+import { approveProposalInConversation, rejectProposalInConversation } from "./proposal-actions";
 import { ProposalComparison } from "@/app/dashboard/ProposalComparison";
 import { ActionDiffRows } from "@/lib/execution/ActionDiff";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
@@ -16,6 +16,15 @@ import type { Proposal } from "@/lib/storefront/proposals";
 // So this renders in the persistent layer, over whatever page the owner is on.
 // It is not a link to the Website tab, and approving it does not move them.
 //
+// THE PROPOSAL IS NOT A CHAT. IT IS A VISUAL TOOL INSIDE THE CHAT.
+// Sean's own sentence, and the rule this file is built to. There is exactly
+// one J4 conversation; this card is a view into it, never a second thread.
+// So it deliberately has no message list, no composer, and no history of its
+// own — an earlier version of this card kept a "how we got here" list of
+// revisions, which was a second telling of events the conversation directly
+// above it already contains. The version number is all that remains, because
+// "version 2" is a label, not a history.
+//
 // WHAT IT DELIBERATELY DOES NOT HAVE: a "discuss" or "refine" button. The
 // rebuttal is the composer directly underneath it. The owner types "I don't
 // like that, keep the handmade feel" the same way they said anything else,
@@ -26,10 +35,13 @@ export function J4Proposal({
   proposal,
   storefrontUrl,
   storeName,
+  otherPendingCount = 0,
 }: {
   proposal: Proposal;
   storefrontUrl: string;
   storeName: string;
+  /** Other proposals still waiting. Named, never rendered as rival threads. */
+  otherPendingCount?: number;
 }) {
   const current = proposal.current;
 
@@ -68,12 +80,6 @@ export function J4Proposal({
       proposedUrl = `${storefrontUrl}${separator}previewOrder=${encodeURIComponent(order.join(","))}`;
     }
   }
-
-  // Everything before the newest revision. Shown because "here's what I
-  // proposed, here's what you said, here's what I changed" is the product,
-  // and an owner who says "go back to your first idea" needs it to still
-  // exist on screen.
-  const earlier = proposal.revisions.slice(0, -1);
 
   return (
     <div
@@ -114,30 +120,12 @@ export function J4Proposal({
         </div>
       )}
 
-      {earlier.length > 0 && (
-        <details className="mt-2">
-          <summary
-            className="cursor-pointer text-[11px] font-medium"
-            style={{ color: GENESIS_ATMOSPHERE.textSecondary }}
-          >
-            How we got here ({earlier.length} earlier {earlier.length === 1 ? "version" : "versions"})
-          </summary>
-          <ol className="mt-1.5 space-y-1.5">
-            {earlier.map((r) => (
-              <li key={r.id} className="text-[12px] leading-snug" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-                <span className="font-medium">v{r.revision}</span> {r.summary}
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
-
       {/* Approve and reject only. The third option, "argue with it", is the
           composer below this — see the component comment. */}
       <div className="mt-3 flex items-center gap-2">
         {/* Plain forms bound to the real Server Actions, the same shape
             VisualProposal already uses for these exact two actions. */}
-        <form action={approveGenesisAction.bind(null, current.id)}>
+        <form action={approveProposalInConversation.bind(null, current.id)}>
           <button
             type="submit"
             className="rounded-full bg-[#2563eb] px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
@@ -145,7 +133,7 @@ export function J4Proposal({
             Apply this
           </button>
         </form>
-        <form action={rejectGenesisAction.bind(null, current.id)}>
+        <form action={rejectProposalInConversation.bind(null, current.id)}>
           <button
             type="submit"
             className="rounded-full px-4 py-2 text-xs font-medium transition-colors hover:bg-white/[.06]"
@@ -158,6 +146,13 @@ export function J4Proposal({
           or tell J4 what to change
         </p>
       </div>
+
+      {otherPendingCount > 0 && (
+        <p className="mt-2 text-[11px]" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+          {otherPendingCount} other {otherPendingCount === 1 ? "idea is" : "ideas are"} waiting. Ask me about
+          {otherPendingCount === 1 ? " it" : " them"} whenever you want.
+        </p>
+      )}
     </div>
   );
 }

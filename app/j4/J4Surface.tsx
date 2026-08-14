@@ -84,12 +84,22 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
     isRoom ? getOpenTasks(store.id) : Promise.resolve([]),
   ]);
 
-  // The proposal currently on the table, if J4 has made one (2026-08-14).
+  // THE proposal on the table — one, never a stack (2026-08-14).
+  //
+  // Sean: "there must only be ONE J4 conversation." Several proposal cards
+  // above one composer read as several parallel threads, which is exactly the
+  // fragmentation being ruled out. So the layer shows the one currently under
+  // discussion (newest first) and says plainly that others are waiting rather
+  // than rendering them as competing conversations. Those others are
+  // accumulated work, which is what Office is for once it exists.
+  //
   // Layer only, and deliberately: a proposal belongs to the conversation that
   // produced it, shown where the owner is standing, never on a page they have
   // to go and find. See GENESIS_SURFACES.md decision 4.
   const openProposals = isRoom ? [] : await getOpenProposals(store.id);
-  const storefrontUrl = openProposals.length > 0 ? `${await getBaseUrl()}/store/${store.slug}` : null;
+  const proposalOnTable = openProposals[0] ?? null;
+  const otherPendingCount = Math.max(0, openProposals.length - 1);
+  const storefrontUrl = proposalOnTable ? `${await getBaseUrl()}/store/${store.slug}` : null;
 
   const messages = recentMessages.reverse();
   const urgentObservations = observations.filter((o) => o.genesisState === "urgent");
@@ -128,11 +138,14 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
       // Rendered on the server and handed down, so the layer stays a client
       // component without needing to fetch or know about proposals itself.
       proposal={
-        storefrontUrl
-          ? openProposals.map((p) => (
-              <J4Proposal key={p.proposalId} proposal={p} storefrontUrl={storefrontUrl} storeName={store.name} />
-            ))
-          : null
+        proposalOnTable && storefrontUrl ? (
+          <J4Proposal
+            proposal={proposalOnTable}
+            storefrontUrl={storefrontUrl}
+            storeName={store.name}
+            otherPendingCount={otherPendingCount}
+          />
+        ) : null
       }
     />
   );
