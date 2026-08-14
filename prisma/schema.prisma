@@ -173,6 +173,20 @@ model Store {
   // OWNER asks for in chat is never gated by this, because being asked is
   // not the same as volunteering. See lib/dashboard/storefrontSuggestionGate.ts.
   lastStorefrontSuggestionAt DateTime?
+  // Storefront Canvas, step 1 of 6 (2026-08-12) — which audience this
+  // business actually serves, asked once during creation and changeable by
+  // asking J4 later. "mobile" | "desktop" | "balanced"; null is treated as
+  // balanced, so every existing store is already valid.
+  //
+  // Deliberately on Store rather than Theme: this is a fact about the
+  // owner's customers, not a design token, and putting it on the theme
+  // would imply it changes whenever the theme does.
+  //
+  // It influences J4's DECISIONS and never branches the renderer. That is
+  // the whole reason one composition was chosen over separate desktop and
+  // mobile compositions — the owner should never have to manage two
+  // websites. Inert until step 4 reads it.
+  priorityAudience String?
   // Growth Points Economy (Chapter 2) — the store's real, spendable balance.
   // Debited by execute() when an approved GENESIS_ACTIONS action has a real
   // catalog cost (lib/growthPoints/catalog.ts), credited by the monthly
@@ -748,6 +762,17 @@ model ApprovalRequest {
   // independently optional — an approval only ever has at most one set.
   cognitiveOutputId    String?
   actionType           String
+  // Storefront Canvas, step 1 of 6 (2026-08-12) — which part of the
+  // storefront this proposal concerns, so the Website preview can highlight
+  // it while the owner decides. A key of STOREFRONT_TARGETS
+  // ("hero", "hero.headline", "products", ...), validated against that
+  // registry rather than free text: a target with no action behind it must
+  // be unaddressable, so J4 can never point confidently at something he
+  // cannot then change.
+  // Null means store-wide, which is every proposal that exists today. This
+  // column is inert until the registry and refine_storefront land in steps
+  // 2 and 3.
+  target               String?
   input                Json
   previousValues       Json
   summary              String
