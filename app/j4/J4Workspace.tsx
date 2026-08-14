@@ -898,6 +898,7 @@ export function J4Workspace({
   const j4Handoff = useContext(J4HandoffContext);
   const handoffText = j4Handoff.text;
   const handoffFocus = j4Handoff.focusComposer;
+  const handoffAudioUrl = j4Handoff.audioUrl ?? null;
   useEffect(() => {
     if (!handoffText && !handoffFocus) return;
     const field = messageInputRef.current;
@@ -906,6 +907,14 @@ export function J4Workspace({
     if (!field) return;
 
     if (handoffText && form) {
+      // A memo recorded at the presence goes through sendVoiceMemo, the exact
+      // function the microphone inside this conversation already uses, so the
+      // persisted message renders as playable audio rather than bare text and
+      // there is still only one way a memo is sent.
+      if (handoffAudioUrl) {
+        sendVoiceMemo(handoffText, handoffAudioUrl);
+        return;
+      }
       field.value = handoffText;
       form.requestSubmit();
       return;
@@ -916,7 +925,13 @@ export function J4Workspace({
     // Kept in the same task as the original focus event so a phone keeps the
     // keyboard up rather than closing and reopening it.
     field.focus();
-  }, [handoffText, handoffFocus, j4Handoff]);
+    // sendVoiceMemo is deliberately not a dependency. It is a hoisted
+    // declaration recreated each render, so listing it would re-run this
+    // effect on every render, and a stale closure cannot bite here: it only
+    // touches refs, which are always current, and this effect clears the
+    // handoff synchronously before calling anything.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handoffText, handoffFocus, handoffAudioUrl, j4Handoff]);
   // Defense-in-depth for the same "typed text disappears while attachments
   // upload" bug the narrowed visibilitychange refresh above targets — this
   // guards the composer regardless of what actually causes a stray
@@ -1441,6 +1456,9 @@ export function J4Workspace({
   // call into handleSend), with the transcript's real audioUrl carried
   // through the hidden field so the turn's user message renders as a
   // playable memo, not plain text, from the very first optimistic paint.
+  // Two callers now: the mic in this composer, and a memo recorded at J4's
+  // persistent presence and handed down. One way a memo is sent, reached from
+  // two places.
   function sendVoiceMemo(transcript: string, audioUrl: string) {
     clearVoiceMemoPlaceholder();
     if (messageInputRef.current) messageInputRef.current.value = transcript;

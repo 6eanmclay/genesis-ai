@@ -23,6 +23,13 @@ import { createContext } from "react";
 export interface J4Handoff {
   text: string | null;
   /**
+   * Set when the text came from a voice memo recorded at the presence, so the
+   * persisted message renders as a playable recording rather than as plain
+   * text. Travels with the transcript because the conversation sends both
+   * through one form, exactly as its own microphone already does.
+   */
+  audioUrl?: string | null;
+  /**
    * Whether the conversation should put the cursor in its composer as it
    * expands.
    *
@@ -41,6 +48,7 @@ export interface J4Handoff {
 
 export const J4HandoffContext = createContext<J4Handoff>({
   text: null,
+  audioUrl: null,
   focusComposer: false,
   clear: () => {},
 });

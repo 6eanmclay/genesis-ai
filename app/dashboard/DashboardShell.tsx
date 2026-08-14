@@ -119,6 +119,7 @@ export function DashboardShell({
   hasCuriosity,
   children,
   j4,
+  uploadVoiceMemo,
 }: {
   sections: NavSection[];
   secondarySections: NavSection[];
@@ -153,6 +154,10 @@ export function DashboardShell({
   hasOpportunity: boolean;
   hasCuriosity: boolean;
   children: React.ReactNode;
+  // The real voice action, handed down by layout.tsx so J4's presence can
+  // record without expanding. The same one the conversation's own microphone
+  // uses — one action, two places it can be started from.
+  uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
   // J4's real server-rendered workspace, handed down by layout.tsx. Mounted
   // for the life of the dashboard and shown or hidden by J4Overlay, so an
   // in-flight conversation survives being closed and reopened.
@@ -282,6 +287,9 @@ export function DashboardShell({
   // exactly one send path. Cleared by the conversation once it has taken it,
   // so reopening J4 later never resends an old message.
   const [j4Handoff, setJ4Handoff] = useState<string | null>(null);
+  // A recording made at the presence travels with its transcript, so the
+  // persisted message renders as playable audio rather than bare text.
+  const [j4HandoffAudioUrl, setJ4HandoffAudioUrl] = useState<string | null>(null);
   // Whether the conversation should take the cursor as it expands. Set only
   // when the owner expanded it by typing, never by tapping the orb.
   const [j4FocusComposer, setJ4FocusComposer] = useState(false);
@@ -1047,7 +1055,18 @@ export function DashboardShell({
         }}
         onSend={(text) => {
           setJ4Handoff(text);
+          setJ4HandoffAudioUrl(null);
           setJ4FocusComposer(true);
+          setJ4Open(true);
+        }}
+        uploadVoiceMemo={uploadVoiceMemo}
+        currentPath={pathname}
+        onVoiceMemo={(transcript, audioUrl) => {
+          // Straight down the one send path, exactly like typed text. The
+          // conversation expands because a reply needs somewhere to be read.
+          setJ4Handoff(transcript);
+          setJ4HandoffAudioUrl(audioUrl);
+          setJ4FocusComposer(false);
           setJ4Open(true);
         }}
       />
@@ -1056,9 +1075,11 @@ export function DashboardShell({
         <J4HandoffContext.Provider
           value={{
             text: j4Handoff,
+            audioUrl: j4HandoffAudioUrl,
             focusComposer: j4FocusComposer,
             clear: () => {
               setJ4Handoff(null);
+              setJ4HandoffAudioUrl(null);
               setJ4FocusComposer(false);
             },
           }}

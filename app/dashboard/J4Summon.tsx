@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { J4Icon } from "./J4Icon";
+import { VoiceMemoButton } from "@/app/j4/VoiceMemoButton";
 
 // J4's persistent presence: one continuous surface (2026-08-14).
 //
@@ -61,6 +62,9 @@ export function J4Summon({
   open,
   onExpand,
   onSend,
+  uploadVoiceMemo,
+  currentPath,
+  onVoiceMemo,
 }: {
   /** Whether the conversation is already expanded. */
   open: boolean;
@@ -68,6 +72,15 @@ export function J4Summon({
   onExpand: () => void;
   /** Hands typed text to the one real composer. This never sends. */
   onSend: (text: string) => void;
+  /**
+   * The real voice action, handed down from the dashboard layout. The same
+   * one the conversation's own microphone uses — not a second recorder.
+   */
+  uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
+  /** Where the owner is. Travels with every turn; see workspaceContext. */
+  currentPath: string;
+  /** A finished memo, handed to the one composer exactly like typed text. */
+  onVoiceMemo: (transcript: string, audioUrl: string) => void;
 }) {
   const mounted = useSyncExternalStore(subscribeToNothing, onClient, onServer);
   const [draft, setDraft] = useState("");
@@ -164,14 +177,36 @@ export function J4Summon({
               aria-label="Talk to J4"
               className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-black placeholder:text-zinc-400 focus:outline-none dark:text-zinc-50 dark:placeholder:text-zinc-500"
             />
-            <button
-              type="submit"
-              disabled={!draft.trim()}
-              aria-label="Send to J4"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#2563eb] text-white transition-opacity disabled:bg-transparent disabled:text-zinc-300 dark:disabled:text-zinc-600"
-            >
-              <J4Icon name="send" size={15} />
-            </button>
+            {/* Voice, in the compact surface (2026-08-14). Sean: "I don't
+                want someone to have to expand the conversation just to access
+                the microphone." Its own control, deliberately separate from
+                the orb — tapping J4 activates him, tapping this records, and
+                merging the two would let a tap start a recording nobody asked
+                for.
+                The SAME VoiceMemoButton the conversation uses, not a second
+                recorder: it already carries the stream reuse, the Android
+                permission recovery and the immediate-acknowledgement
+                behaviour, all of which a reimplementation would silently
+                lose. Shown only when there is nothing typed, so the row never
+                offers send and record in the same 8px of space. */}
+            {draft.trim() ? (
+              <button
+                type="submit"
+                aria-label="Send to J4"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#2563eb] text-white transition-opacity"
+              >
+                <J4Icon name="send" size={15} />
+              </button>
+            ) : (
+              <VoiceMemoButton
+                uploadVoiceMemo={uploadVoiceMemo}
+                currentPath={currentPath}
+                surface="layer"
+                onStart={() => setActive(true)}
+                onFailure={() => setActive(false)}
+                onTranscribed={onVoiceMemo}
+              />
+            )}
           </form>
         </div>
       </div>
