@@ -22,7 +22,25 @@ import { createContext } from "react";
 // take the value exactly once.
 export interface J4Handoff {
   text: string | null;
+  /**
+   * Whether the conversation should put the cursor in its composer as it
+   * expands.
+   *
+   * True only when the owner expanded BY typing — focusing the presence field
+   * opens the conversation, and focus has to follow them to the one real
+   * composer or they would be typing into a field that just got covered.
+   *
+   * False when the orb expanded it. Sean's decision: "tapping the J4 orb
+   * expands J4 in place; it does not immediately start listening." Popping a
+   * keyboard would be the typing equivalent of that, and it would sit on top
+   * of the microphone they may have been reaching for.
+   */
+  focusComposer: boolean;
   clear: () => void;
 }
 
-export const J4HandoffContext = createContext<J4Handoff>({ text: null, clear: () => {} });
+export const J4HandoffContext = createContext<J4Handoff>({
+  text: null,
+  focusComposer: false,
+  clear: () => {},
+});

@@ -282,6 +282,9 @@ export function DashboardShell({
   // exactly one send path. Cleared by the conversation once it has taken it,
   // so reopening J4 later never resends an old message.
   const [j4Handoff, setJ4Handoff] = useState<string | null>(null);
+  // Whether the conversation should take the cursor as it expands. Set only
+  // when the owner expanded it by typing, never by tapping the orb.
+  const [j4FocusComposer, setJ4FocusComposer] = useState(false);
 
   // Secondary nav only renders while the current route is genuinely one of
   // Your Business's own workspaces (Overview/Identity/Website/Products) —
@@ -1035,15 +1038,34 @@ export function DashboardShell({
           can contain it — see J4Summon.tsx. */}
       <J4Summon
         open={j4Open}
-        onSummon={() => setJ4Open(true)}
+        onSummon={() => {
+          setJ4FocusComposer(false);
+          setJ4Open(true);
+        }}
         onSend={(text) => {
           setJ4Handoff(text);
+          setJ4FocusComposer(true);
+          setJ4Open(true);
+        }}
+        onStartTyping={() => {
+          // Sean: "when I focus/type in the J4 field, expand the conversation
+          // automatically so I can see the exchange I'm participating in."
+          setJ4FocusComposer(true);
           setJ4Open(true);
         }}
       />
 
       <J4Overlay open={j4Open} onClose={() => setJ4Open(false)}>
-        <J4HandoffContext.Provider value={{ text: j4Handoff, clear: () => setJ4Handoff(null) }}>
+        <J4HandoffContext.Provider
+          value={{
+            text: j4Handoff,
+            focusComposer: j4FocusComposer,
+            clear: () => {
+              setJ4Handoff(null);
+              setJ4FocusComposer(false);
+            },
+          }}
+        >
           {j4}
         </J4HandoffContext.Provider>
       </J4Overlay>

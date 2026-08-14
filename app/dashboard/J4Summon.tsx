@@ -49,6 +49,7 @@ export function J4Summon({
   open,
   onSummon,
   onSend,
+  onStartTyping,
 }: {
   /** Whether the conversation is already up. */
   open: boolean;
@@ -59,6 +60,12 @@ export function J4Summon({
    * This component never sends anything itself.
    */
   onSend: (text: string) => void;
+  /**
+   * The owner started typing. Expands the conversation so they can see the
+   * exchange they are joining — Sean's decision, and the reason this field is
+   * a real entry point rather than a shortcut to one.
+   */
+  onStartTyping: () => void;
 }) {
   const mounted = useSyncExternalStore(subscribeToNothing, onClient, onServer);
   const [draft, setDraft] = useState("");
@@ -128,6 +135,7 @@ export function J4Summon({
             type="text"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onFocus={onStartTyping}
             placeholder="Ask J4, or tell J4 what you're working on…"
             aria-label="Talk to J4"
             className="min-w-0 flex-1 bg-transparent text-[15px] text-black placeholder:text-zinc-400 focus:outline-none dark:text-zinc-50 dark:placeholder:text-zinc-500"

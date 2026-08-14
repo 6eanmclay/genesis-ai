@@ -72,7 +72,9 @@ The rule this encodes: *J4 doesn't take me somewhere to talk to J4. J4 comes to 
 
 **The orb sits half in, half out of the interaction bar.** Not a standalone element parked above a field: it breaks the bar's own edge so J4 reads as physically attached to the page rather than floating on it. That overlap is the whole visual argument for "J4 is here", and it is why the orb is not simply another control in a row.
 
-**Tapping the orb activates J4's live interaction in place.** When voice is the active mode, this is where J4 listens and speaks. The conversation stays on the current page either way. Nothing navigates, ever.
+**Tapping the orb expands J4 in place. It does not start listening.** Voice is activated from the conversation's own microphone control. That keeps the orb as the one universal "bring J4 here" gesture, and means it can never trigger a recording the owner did not ask for. The conversation stays on the current page either way. Nothing navigates, ever.
+
+**Focusing the field expands the conversation too.** Someone who has started typing is participating, and should be able to see the exchange they are joining. The cursor follows them into the one composer, because the field they started in is now behind the conversation. Tapping the orb does NOT take the cursor: a keyboard appearing unasked is the typing equivalent of listening unasked, and it would cover the microphone they might have been reaching for. The lightweight collapsed state is what they get back when they are not interacting.
 
 **Never two J4 presences on one screen.** If the persistent presence is on a page, that page does not also carry a large J4 of its own. This mistake has now been made three times — a business-area icon grid, permanent observation cards, and a home hero duplicating the presence — and each time the fix was deleting the duplicate, never arranging it better.
 

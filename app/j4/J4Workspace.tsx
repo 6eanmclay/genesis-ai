@@ -897,15 +897,26 @@ export function J4Workspace({
   // never resend it.
   const j4Handoff = useContext(J4HandoffContext);
   const handoffText = j4Handoff.text;
+  const handoffFocus = j4Handoff.focusComposer;
   useEffect(() => {
-    if (!handoffText) return;
+    if (!handoffText && !handoffFocus) return;
     const field = messageInputRef.current;
     const form = formRef.current;
     j4Handoff.clear();
-    if (!field || !form) return;
-    field.value = handoffText;
-    form.requestSubmit();
-  }, [handoffText, j4Handoff]);
+    if (!field) return;
+
+    if (handoffText && form) {
+      field.value = handoffText;
+      form.requestSubmit();
+      return;
+    }
+
+    // Expanded by typing rather than by sending: the owner is mid-thought in
+    // a field that just got covered by this one, so the cursor follows them.
+    // Kept in the same task as the original focus event so a phone keeps the
+    // keyboard up rather than closing and reopening it.
+    field.focus();
+  }, [handoffText, handoffFocus, j4Handoff]);
   // Defense-in-depth for the same "typed text disappears while attachments
   // upload" bug the narrowed visibilitychange refresh above targets — this
   // guards the composer regardless of what actually causes a stray
