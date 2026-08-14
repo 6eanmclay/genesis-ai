@@ -18,6 +18,11 @@ import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/fac
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
+import {
+  getOpenProposal,
+  reviseProposal,
+  openProposal as openProposalRecord,
+} from "@/lib/storefront/proposals";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
@@ -304,6 +309,22 @@ export async function POST(request: Request) {
         const workspaceLine = describeWorkspaceForJ4(body?.workspacePath);
         if (workspaceLine) {
           unifiedContextParts.push(workspaceLine);
+        }
+        // The proposal currently on the table, if any (2026-08-14). Without
+        // this, J4 answers "I don't like that, keep it handmade" as though it
+        // were a brand new request, having no idea there is a specific
+        // proposal being argued with. The revision itself is decided in code
+        // from the target, not here — this exists so J4's own words are those
+        // of someone revising their own idea rather than proposing a fresh
+        // one at a person who just pushed back.
+        const proposalOnTable = await getOpenProposal(store.id);
+        if (proposalOnTable && !proposalOnTable.settled) {
+          const c = proposalOnTable.current;
+          unifiedContextParts.push(
+            `(You have a proposal on the table right now, version ${c.revision}, which the merchant can see below this conversation: "${c.summary}"${
+              c.rationale ? ` Your reasoning was: "${c.rationale}"` : ""
+            } If they are pushing back on it, refine THIS proposal rather than starting a new one: call refine_storefront again for the same target ("${c.target ?? "the storefront"}") with the change they asked for, and speak as someone improving their own idea, not proposing a new one.)`
+          );
         }
         if (pending) {
           unifiedContextParts.push(`(You previously proposed this change, awaiting confirmation: "${pending.summary}")`);
@@ -905,37 +926,59 @@ export async function POST(request: Request) {
             theme: (themeRow?.theme as Theme | null) ?? null,
           });
 
-          // A fresh proposal supersedes an earlier still-pending one for the
-          // same part of the page — same dedupe rule the two loops above
-          // follow, scoped by target so a pending hero idea and a pending
-          // products idea can coexist.
-          await prisma.approvalRequest.deleteMany({
-            where: {
-              storeId: store.id,
-              actionType: "refine_storefront",
-              status: "PENDING_APPROVAL",
-              input: { path: ["target"], equals: refineInput.target },
-            },
-          });
-          await prisma.approvalRequest.create({
-            data: {
-              storeId: store.id,
-              recommendationId: null,
-              actionType: "refine_storefront",
-              // Stored on the column added in step 1. Nothing reads it yet;
-              // the preview highlighting that will is step 5.
-              target: refineInput.target,
-              input: refineInput as object,
-              previousValues: previousValues as object,
+          // A rebuttal revises the proposal already on the table; it does not
+          // start a new one (2026-08-14). Sean's requirement, and the reason
+          // this replaced a deleteMany: "if the owner disagrees with the first
+          // idea, J4 should refine the same proposal rather than treating the
+          // rebuttal as a new unrelated request."
+          //
+          // The old code already recognised "same target, still pending" as
+          // the same subject — it just resolved it by deleting the earlier
+          // row, which answered the rebuttal and destroyed the evidence of it
+          // in one operation. An owner saying "go back to your first idea" was
+          // talking about something that no longer existed.
+          //
+          // Same target plus an open proposal means revision, decided in code
+          // rather than asked of the model. The model has no extra field to
+          // get wrong, and a genuinely different target still opens its own
+          // proposal, so a pending hero idea and a pending products idea
+          // coexist exactly as before.
+          const openProposal = await getOpenProposal(store.id);
+          const isRevision =
+            openProposal !== null &&
+            openProposal.current.target === refineInput.target &&
+            !openProposal.settled;
+
+          if (isRevision) {
+            await reviseProposal(store.id, openProposal.proposalId, {
               summary: refineInput.summary,
+              rationale: refineInput.reason,
+              target: refineInput.target,
+              input: refineInput as unknown as Record<string, unknown>,
+            });
+          } else {
+            await openProposalRecord(store.id, {
+              actionType: "refine_storefront",
+              summary: refineInput.summary,
+              rationale: refineInput.reason,
+              target: refineInput.target,
+              input: refineInput as unknown as Record<string, unknown>,
+              previousValues: previousValues as Record<string, unknown>,
               authorizationTier: GENESIS_ACTIONS.refine_storefront.authorizationTier,
               groupId: randomUUID(),
-            },
-          });
+            });
+          }
 
+          // The proposal is rendered directly beneath this conversation, in
+          // the same layer the owner is already reading — so it must never be
+          // described as waiting somewhere else. The previous copy sent them
+          // to the dashboard to find it, which is the exact trip the
+          // persistent layer exists to remove.
           const finalReply = [
             conversationalReply || refineInput.summary,
-            "You'll find it waiting for your review on your dashboard. Approve it and I'll make the change.",
+            isRevision
+              ? "I've revised it below. Have a look and tell me if that's closer."
+              : "Have a look below. Tell me what you think, or tell me to change it.",
           ].join(" ");
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
