@@ -316,44 +316,43 @@ export default async function WebsitePage({
   }
 
   return (
-    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
-      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Website</h1>
+    // Tighter padding on mobile than the p-8 this used to carry everywhere.
+    // This is the most space-constrained screen in the product, and every
+    // pixel of horizontal padding is a pixel the storefront does not get.
+    <div style={themeCssVars(theme)} className="min-h-screen p-4 sm:p-8 lg:min-h-0">
+      {/* No "Website" heading (2026-08-12). The owner just tapped Website to
+          get here, so the word only repeated what the navigation already
+          said, and on mobile that line cost real estate this screen cannot
+          spare. This is becoming the place you edit the website with J4, not
+          a page that announces itself. */}
 
-      {/* The storefront itself — the unmistakable visual center of the
-          workspace. The toolbar above the iframe is part of this one
-          preview frame, not a separate dashboard section: status and
-          "open in a new tab" read like browser chrome, not page controls. */}
-      <div className="mt-6 max-w-4xl overflow-hidden rounded-2xl border border-black/[.08] shadow-sm dark:border-white/[.145]">
-        <div className="flex items-center justify-between border-b border-black/[.08] bg-black/[.02] px-4 py-2 dark:border-white/[.145] dark:bg-white/[.03]">
-          <span className="flex items-center gap-2 text-xs">
-            <span
-              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                store.published ? "bg-emerald-500" : "bg-zinc-400 dark:bg-zinc-600"
-              }`}
-            />
-            <span
-              className={
-                store.published
-                  ? "font-medium text-emerald-600 dark:text-emerald-400"
-                  : "text-zinc-500"
-              }
-            >
-              {store.published ? "Live" : "Not Live"}
-            </span>
+      {/* The storefront itself, and deliberately the only thing competing for
+          attention. "Open in new tab" is gone: this screen is for working on
+          the site, and View Store in the shell remains the intentional way to
+          go experience the real storefront as a customer. The live/not-live
+          status stays, because whether the thing you are editing is public is
+          genuinely part of editing it. */}
+      <div className="overflow-hidden rounded-2xl border border-black/[.08] shadow-sm dark:border-white/[.145] lg:max-w-5xl">
+        <div className="flex items-center gap-2 border-b border-black/[.08] bg-black/[.02] px-3 py-1.5 text-xs dark:border-white/[.145] dark:bg-white/[.03]">
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+              store.published ? "bg-emerald-500" : "bg-zinc-400 dark:bg-zinc-600"
+            }`}
+          />
+          <span className={store.published ? "font-medium text-emerald-600 dark:text-emerald-400" : "text-zinc-500"}>
+            {store.published ? "Live" : "Not Live"}
           </span>
-          <a
-            href={storeUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-zinc-500 transition-colors hover:text-black dark:hover:text-zinc-50"
-          >
-            Open in new tab ↗
-          </a>
         </div>
+        {/* Viewport-relative rather than a fixed 640px. On a phone that fixed
+            height left the storefront in a small window inside a large empty
+            page; on a tall desktop it wasted the bottom half of the screen.
+            Now it fills what is actually available, minus the shell's own
+            fixed chrome, with a floor so it never collapses on a short
+            window. */}
         <iframe
           src={storeUrl}
           title={`${store.name} storefront preview`}
-          className="h-[640px] w-full bg-white"
+          className="h-[calc(100svh-13rem)] min-h-[420px] w-full bg-white lg:h-[calc(100vh-11rem)]"
         />
       </div>
 
