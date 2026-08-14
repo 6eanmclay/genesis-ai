@@ -99,12 +99,20 @@ export default async function WebsitePage({
   // grouping is presentational only, never a combined decision (see the
   // Phase 3A/4 plans for why that's a real, deliberate limit, not an
   // oversight).
-  const WEBSITE_ACTION_TYPES = [
-    "update_hero",
-    "update_theme",
-    "update_homepage_content",
-    "update_section_order",
-  ];
+  // Empty on purpose (2026-08-14). These four used to render their proposals
+  // at the bottom of this page, and Sean's rule retires that placement:
+  // "never put an approval somewhere else just because the underlying target
+  // belongs to Website, Products, Identity... the conversation about changing
+  // it belongs to the active J4 interaction."
+  //
+  // So every one of them now renders inside the persistent J4 layer, above the
+  // composer, where the owner can argue with it (app/j4/J4Proposal.tsx). The
+  // target still belongs to this page; the decision about it does not. Kept as
+  // an empty list rather than deleting the machinery below, because the
+  // grouping, focus-deep-linking and per-actionType renderers underneath are
+  // real work that a future in-page use may want back — and because an empty
+  // filter makes the change obvious to read rather than hidden in a diff.
+  const WEBSITE_ACTION_TYPES: string[] = [];
   const websiteApprovals: PendingApproval[] = pendingApprovals.filter((a) =>
     WEBSITE_ACTION_TYPES.includes(a.actionType)
   );

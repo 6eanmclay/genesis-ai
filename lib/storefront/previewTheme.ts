@@ -48,30 +48,51 @@ export async function resolvePreviewTheme({
 
   // storeId is in the query, not checked after it, so one store's proposal can
   // never render on another store's page.
+  // Matches on either the proposal chain id or a bare ApprovalRequest id, so
+  // a proposal predating the revision chain (every approval written before
+  // 2026-08-14) previews the same way as one created after it. Same store in
+  // the query, never checked afterwards, so one store's proposal can never
+  // render on another store's page.
   const row = await prisma.approvalRequest.findFirst({
     where: {
       storeId,
-      proposalId,
       status: PROPOSAL_STATUS.pending,
+      OR: [{ proposalId }, { id: proposalId }],
     },
     orderBy: { revision: "desc" },
     select: { actionType: true, input: true },
   });
   if (!row) return null;
 
-  // Only refine_storefront has a theme-shaped proposal today. Other action
-  // types are previewed by their own means (update_section_order already has
-  // previewOrder) or not yet at all, and must not be guessed at here.
-  if (row.actionType !== "refine_storefront") return null;
-
-  const changes = (row.input as { changes?: unknown })?.changes;
-  if (!Array.isArray(changes)) return null;
-
   try {
-    // applyRefinementsToTheme validates every dimension and value itself, and
-    // throws on anything it does not recognise. Stored input is read back long
-    // after it was written, so it gets the same gate a fresh tool call does.
-    return applyRefinementsToTheme(currentTheme, changes as RefineStorefrontChange[]);
+    // update_theme's input IS the theme — see its executable, which writes
+    // `data: { theme: input }` unchanged. So the preview is the input, and
+    // there is no transform that could drift.
+    if (row.actionType === "update_theme") {
+      const proposed = row.input as Theme | null;
+      // A theme needs at least the shape the renderer reads. Anything else
+      // falls back rather than rendering a half-themed shop.
+      if (!proposed || typeof proposed !== "object") return null;
+      return proposed;
+    }
+
+    if (row.actionType === "refine_storefront") {
+      const changes = (row.input as { changes?: unknown })?.changes;
+      if (!Array.isArray(changes)) return null;
+      // applyRefinementsToTheme validates every dimension and value itself,
+      // and throws on anything it does not recognise. Stored input is read
+      // back long after it was written, so it gets the same gate a fresh tool
+      // call does.
+      return applyRefinementsToTheme(currentTheme, changes as RefineStorefrontChange[]);
+    }
+
+    // Everything else writes the blueprint rather than the theme, and is
+    // previewed by its own means: update_section_order through the
+    // longstanding previewOrder parameter, the rest through a field-level
+    // comparison in the conversation. Deliberately not guessed at here — a
+    // preview that silently shows the unchanged storefront while claiming to
+    // show a proposal is worse than no preview.
+    return null;
   } catch {
     // A proposal whose input no longer validates is shown as the real
     // storefront rather than as an error page. The owner is looking at their

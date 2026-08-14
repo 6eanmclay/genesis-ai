@@ -1,5 +1,6 @@
 import { approveGenesisAction, rejectGenesisAction } from "@/app/dashboard/ai-actions";
 import { ProposalComparison } from "@/app/dashboard/ProposalComparison";
+import { ActionDiffRows } from "@/lib/execution/ActionDiff";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { resolveProposalScope, type ProposalScope } from "@/lib/storefront/proposalScope";
 import type { Proposal } from "@/lib/storefront/proposals";
@@ -44,8 +45,29 @@ export function J4Proposal({
           : 1,
     });
 
+  // Which proposals can honestly be shown as a storefront, and how.
+  //
+  // Sean: "a textual description like 'I changed the font' is not enough. J4
+  // needs to show the owner what changed." Where a real storefront preview is
+  // possible, that is what appears. Where it is not, a field-level comparison
+  // appears instead — never an iframe of the unchanged shop dressed up as a
+  // proposal, which would be a preview that lies about having previewed
+  // anything.
   const separator = storefrontUrl.includes("?") ? "&" : "?";
-  const proposedUrl = `${storefrontUrl}${separator}previewProposal=${encodeURIComponent(proposal.proposalId)}`;
+  const actionType = current.actionType;
+
+  let proposedUrl: string | null = null;
+  if (actionType === "refine_storefront" || actionType === "update_theme") {
+    // Both end in a theme; resolvePreviewTheme renders the real storefront
+    // with it applied.
+    proposedUrl = `${storefrontUrl}${separator}previewProposal=${encodeURIComponent(proposal.proposalId)}`;
+  } else if (actionType === "update_section_order") {
+    // The longstanding previewOrder parameter, reused rather than replaced.
+    const order = (current.input as { sectionOrder?: unknown })?.sectionOrder;
+    if (Array.isArray(order) && order.length > 0) {
+      proposedUrl = `${storefrontUrl}${separator}previewOrder=${encodeURIComponent(order.join(","))}`;
+    }
+  }
 
   // Everything before the newest revision. Shown because "here's what I
   // proposed, here's what you said, here's what I changed" is the product,
@@ -75,12 +97,22 @@ export function J4Proposal({
         </p>
       )}
 
-      <ProposalComparison
-        currentUrl={storefrontUrl}
-        proposedUrl={proposedUrl}
-        scope={scope}
-        storeName={storeName}
-      />
+      {proposedUrl ? (
+        <ProposalComparison
+          currentUrl={storefrontUrl}
+          proposedUrl={proposedUrl}
+          scope={scope}
+          storeName={storeName}
+        />
+      ) : (
+        // No storefront preview exists for this kind of change, so the owner
+        // gets the real field values instead — the same honest Current ->
+        // Proposed diff the dashboard already uses, moved into the
+        // conversation rather than left on a page to be found.
+        <div className="mt-3">
+          <ActionDiffRows input={current.input as Record<string, unknown>} previousValues={current.previousValues as Record<string, unknown>} />
+        </div>
+      )}
 
       {earlier.length > 0 && (
         <details className="mt-2">

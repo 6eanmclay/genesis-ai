@@ -40,6 +40,8 @@ export const PROPOSAL_STATUS = {
 
 export interface ProposalRevision {
   id: string;
+  /** Which executable will run on approval. Decides how this can be previewed. */
+  actionType: string;
   revision: number;
   summary: string;
   rationale: string | null;
@@ -64,6 +66,7 @@ export interface Proposal {
 
 function toRevision(row: {
   id: string;
+  actionType: string;
   revision: number;
   summary: string;
   rationale: string | null;
@@ -76,6 +79,7 @@ function toRevision(row: {
 }): ProposalRevision {
   return {
     id: row.id,
+    actionType: row.actionType,
     revision: row.revision,
     summary: row.summary,
     rationale: row.rationale,
@@ -93,6 +97,7 @@ function toRevision(row: {
 
 const REVISION_SELECT = {
   id: true,
+  actionType: true,
   revision: true,
   summary: true,
   rationale: true,
@@ -147,6 +152,53 @@ export async function getOpenProposal(storeId: string): Promise<Proposal | null>
   });
   if (!newest?.proposalId) return null;
   return getProposal(storeId, newest.proposalId);
+}
+
+/**
+ * Every proposal awaiting the owner's decision, newest first.
+ *
+ * Includes rows written before the revision chain existed (proposalId null),
+ * which is every update_hero / update_theme / update_homepage_content /
+ * update_section_order proposal. Those used to render at the bottom of the
+ * Website page — Sean: "never put an approval somewhere else just because the
+ * underlying target belongs to Website, Products, Identity... the conversation
+ * about changing it belongs to the active J4 interaction." So they are read
+ * here, to be shown where the conversation is.
+ *
+ * A chainless row is presented as a single-revision proposal whose identity is
+ * its own id, so one renderer handles both without asking which kind it has.
+ */
+export async function getOpenProposals(storeId: string, limit = 5): Promise<Proposal[]> {
+  const rows = await prisma.approvalRequest.findMany({
+    where: { storeId, status: PROPOSAL_STATUS.pending },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: { ...REVISION_SELECT, proposalId: true },
+  });
+
+  const chainIds = new Set<string>();
+  const proposals: Proposal[] = [];
+
+  for (const row of rows) {
+    if (row.proposalId) {
+      // One chain contributes one proposal however many revisions are pending.
+      if (chainIds.has(row.proposalId)) continue;
+      chainIds.add(row.proposalId);
+      const full = await getProposal(storeId, row.proposalId);
+      if (full) proposals.push(full);
+      continue;
+    }
+    const revision = toRevision(row);
+    proposals.push({
+      proposalId: row.id,
+      storeId,
+      revisions: [revision],
+      current: revision,
+      settled: false,
+    });
+  }
+
+  return proposals;
 }
 
 export interface ProposalDraft {

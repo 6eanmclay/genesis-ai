@@ -8,7 +8,7 @@ import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { sendStoreMessage, uploadBusinessAssetFromChat, uploadPhotoBatchFromChat, uploadVoiceMemo } from "@/app/dashboard/ai-actions";
 import { J4Workspace, type J4Surface as J4SurfaceKind } from "./J4Workspace";
 import { J4Proposal } from "./J4Proposal";
-import { getOpenProposal } from "@/lib/storefront/proposals";
+import { getOpenProposals } from "@/lib/storefront/proposals";
 import { getBaseUrl } from "@/lib/integrations/util";
 
 // J4's real conversation, rendered on either of its two surfaces
@@ -88,8 +88,8 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
   // Layer only, and deliberately: a proposal belongs to the conversation that
   // produced it, shown where the owner is standing, never on a page they have
   // to go and find. See GENESIS_SURFACES.md decision 4.
-  const openProposal = isRoom ? null : await getOpenProposal(store.id);
-  const storefrontUrl = openProposal ? `${await getBaseUrl()}/store/${store.slug}` : null;
+  const openProposals = isRoom ? [] : await getOpenProposals(store.id);
+  const storefrontUrl = openProposals.length > 0 ? `${await getBaseUrl()}/store/${store.slug}` : null;
 
   const messages = recentMessages.reverse();
   const urgentObservations = observations.filter((o) => o.genesisState === "urgent");
@@ -128,9 +128,11 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
       // Rendered on the server and handed down, so the layer stays a client
       // component without needing to fetch or know about proposals itself.
       proposal={
-        openProposal && storefrontUrl ? (
-          <J4Proposal proposal={openProposal} storefrontUrl={storefrontUrl} storeName={store.name} />
-        ) : null
+        storefrontUrl
+          ? openProposals.map((p) => (
+              <J4Proposal key={p.proposalId} proposal={p} storefrontUrl={storefrontUrl} storeName={store.name} />
+            ))
+          : null
       }
     />
   );
