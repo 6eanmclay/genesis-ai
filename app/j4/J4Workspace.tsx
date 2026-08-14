@@ -1513,16 +1513,29 @@ export function J4Workspace({
             // which returns the owner to exactly where they were standing.
             // What sits here instead is the door to the room: quiet, and
             // deliberately not the thing the eye lands on, because ordinary
-            // conversation is finished without ever using it. It says
-            // "Everything" rather than "Open J4" because the owner is
-            // already talking to J4 — what is through it is the record, the
-            // queue, and the deep work.
+            // conversation is finished without ever using it.
+            //
+            // The wording, reconsidered on Sean's own call (2026-08-14): "I
+            // want the user to understand that this opens the full J4
+            // workspace rather than simply navigating somewhere else."
+            // "Everything" failed that — it named a pile, not a place, and
+            // read like a menu. "Full workspace" is Sean's own phrase, and
+            // "full" is the word carrying the meaning: what is through here
+            // is MORE of what the owner already has open, not a different
+            // screen. The chevron is gone for the same reason. A chevron is
+            // the navigation affordance, and this is deliberately not
+            // presented as going somewhere.
+            //
+            // Not "Open J4" or "J4 Portal", both of which are frozen out for
+            // a reason that now cuts even harder: the owner is already
+            // talking to J4. There is no J4 to open.
             <button
               type="button"
               onClick={enterRoom}
+              title="Open J4's full workspace: the whole conversation, plus tasks, ideas, decisions and information"
               className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
             >
-              Everything ›
+              Full workspace
             </button>
           ) : (
             <button
