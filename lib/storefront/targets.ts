@@ -46,15 +46,23 @@ const SECTION_TARGETS: { [K in SectionKey]: ActionsFor } = SECTION_KEYS.reduce(
 // storefrontSections.ts documents that it renders unconditionally, outside the
 // reorderable list, so it is not a SectionKey and must be named explicitly.
 const EXTRA_TARGETS = {
-  hero: ["update_hero"],
+  hero: ["update_hero", "refine_storefront"],
   "hero.headline": ["update_hero"],
   "hero.subheadline": ["update_hero"],
+  // Step 3 additions — targets that only became addressable once
+  // refine_storefront existed to change them. Registered with the action, not
+  // before it, so the "every target has a real verb" invariant held at every
+  // commit in this series rather than only at the end.
+  "hero.layout": ["refine_storefront"],
+  "products.layout": ["refine_storefront"],
+  spacing: ["refine_storefront"],
+  presentation: ["refine_storefront"],
   // The order of the sections, as opposed to the content of any one of them.
   sectionOrder: ["update_section_order"],
   // Whole-theme concerns. Both currently resolve to update_theme, which is
   // exactly the bluntness step 3 exists to fix.
   palette: ["update_theme"],
-  typography: ["update_theme"],
+  typography: ["update_theme", "refine_storefront"],
   // Store-level copy and positioning, distinct from any single section.
   storeContent: ["update_store_content"],
   storeIdentity: ["update_store_identity"],
@@ -101,6 +109,10 @@ const EXTRA_LABELS: Record<keyof typeof EXTRA_TARGETS | "customSection", string>
   hero: "Hero",
   "hero.headline": "Hero headline",
   "hero.subheadline": "Hero subheadline",
+  "hero.layout": "Hero layout",
+  "products.layout": "Product layout",
+  spacing: "Spacing",
+  presentation: "Cards and buttons",
   sectionOrder: "Section order",
   palette: "Colour palette",
   typography: "Typography",

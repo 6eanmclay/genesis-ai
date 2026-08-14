@@ -45,6 +45,10 @@ export const EXECUTION_ACTIONS = {
   STORE_UPDATE_SECTION_ORDER: "store.update_section_order",
   STORE_UPDATE_STORE_CONTENT: "store.update_store_content",
   STORE_UPDATE_DESIGN_DIRECTION: "store.update_design_direction",
+  // Storefront Canvas, step 3 of 6 (2026-08-12) — one small, reasoned
+  // improvement to the storefront's structure or presentation, as opposed to
+  // update_theme's all-or-nothing rewrite.
+  STORE_REFINE_STOREFRONT: "store.refine_storefront",
   STORE_UPDATE_MARKETING_ASSETS: "store.update_marketing_assets",
   // Phase 3 Milestone 6 (J4 Cognitive Layer) — the first two "operations"-
   // category actions, deliberately not "store."-prefixed like everything

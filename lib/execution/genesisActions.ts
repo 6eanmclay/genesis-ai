@@ -9,6 +9,9 @@ import {
   type UpdateProductImageInput,
 } from "./executables/updateProductImage";
 import { updateThemeExecutable, type UpdateThemeInput } from "./executables/updateTheme";
+import { refineStorefrontExecutable, type RefineStorefrontInput } from "./executables/refineStorefront";
+import { REFINABLE_DIMENSION_KEYS, MAX_MUTATIONS_PER_IMPROVEMENT } from "@/lib/storefront/dimensions";
+import { STOREFRONT_TARGET_KEYS } from "@/lib/storefront/targets";
 import {
   updateBrandIdentityExecutable,
   type UpdateBrandIdentityInput,
@@ -289,6 +292,7 @@ export const GENESIS_ACTIONS: Record<
     | UpdateHeroInput
     | UpdateProductImageInput
     | UpdateThemeInput
+    | RefineStorefrontInput
     | UpdateBrandIdentityInput
     | UpdateStoreIdentityInput
     | UpdateHomepageContentInput
@@ -431,6 +435,46 @@ export const GENESIS_ACTIONS: Record<
     inputSchema: ThemeInputSchema,
     getCurrentValues: ({ theme }) => theme ?? DEFAULT_THEME,
     category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  // Storefront Canvas, step 3 of 6 (2026-08-12) — the finer-grained twin of
+  // update_theme above. Same enum vocabulary, same hand-built variants, but
+  // one improvement at a time with a required reason, rather than replacing
+  // the whole theme. See lib/execution/executables/refineStorefront.ts for
+  // why one approval is one charge regardless of how many mutations it took.
+  refine_storefront: {
+    executable: refineStorefrontExecutable,
+    inputSchema: z.object({
+      // Both vocabularies are closed at the schema boundary, so an invalid
+      // target or dimension is rejected before it ever reaches an executable.
+      target: z.enum(STOREFRONT_TARGET_KEYS as [string, ...string[]]),
+      changes: z
+        .array(
+          z.object({
+            dimension: z.enum(REFINABLE_DIMENSION_KEYS as [string, ...string[]]),
+            value: z.string(),
+          })
+        )
+        .min(1)
+        .max(MAX_MUTATIONS_PER_IMPROVEMENT),
+      // Required, and required for a reason: an improvement without one is a
+      // redesign with better manners. Enforced by the schema rather than
+      // requested in a prompt.
+      reason: z.string().min(1),
+      summary: z.string().min(1),
+    }),
+    // The store's real current theme, never the model's restatement of it —
+    // same source update_theme uses, so both actions diff against identical
+    // ground truth. Returning the whole Theme rather than just the changed
+    // dimensions keeps this inside the registry's own input union; presenting
+    // that diff more narrowly on the approval card is a UI concern for a
+    // later step, not a reason to weaken the type here.
+    getCurrentValues: ({ theme }) => theme ?? DEFAULT_THEME,
+    category: "content",
+    // Always ask, and deliberately capped there. This changes how the
+    // storefront looks; it is exactly the kind of thing an owner should see
+    // before it happens, no matter how much delegated authority J4 earns.
     authorizationTier: "always_ask",
     maxAuthorityTier: "always_ask",
   },

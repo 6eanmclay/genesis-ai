@@ -43,6 +43,19 @@ const GROWTH_POINT_CATALOG: Partial<Record<GenesisActionType, number>> = {
   update_section_order: 1,
   // 2pt — real creation or a moderate content change.
   create_product: 2,
+  // Storefront Canvas (2026-08-12) — one meaningful improvement to how the
+  // storefront looks, regardless of how many internal mutations it took to
+  // accomplish. Sean's rule: a Growth Point represents one business
+  // improvement the owner approved, never the CSS, spacing or typography
+  // changes underneath it. The engine charges once per execute(), so that
+  // rule is satisfied by the action's shape rather than by billing code.
+  //
+  // Deliberately 2 and not update_theme's 5: this exists precisely because
+  // nudging one dimension should not cost what a rebrand costs. Sitting at
+  // exactly Business Partner's unlimitedActionCostCeiling of 2 is also
+  // intended — that tier gets conversational refinement for free, waived at
+  // the entitlement layer while this price stays honest for everyone else.
+  refine_storefront: 2,
   update_hero: 2,
   update_homepage_content: 2,
   update_store_content: 2,
