@@ -4,7 +4,7 @@ import {
   applyRefinementsToTheme,
   type RefineStorefrontChange,
 } from "@/lib/execution/executables/refineStorefront";
-import { PROPOSAL_STATUS } from "./proposals";
+import { PROPOSAL_STATUS, parseDirections } from "./proposals";
 
 // Rendering the storefront as a proposal would leave it (2026-08-14).
 //
@@ -36,11 +36,17 @@ export async function resolvePreviewTheme({
   storeId,
   currentTheme,
   proposalId,
+  directionId,
   viewerIsStaff,
 }: {
   storeId: string;
   currentTheme: Theme;
   proposalId: string | undefined;
+  /**
+   * Which of the revision's directions to render. Absent renders the
+   * revision's own change set, which is the normal single-direction case.
+   */
+  directionId?: string;
   /** Owner or employee. Anyone else must never see unapplied proposals. */
   viewerIsStaff: boolean;
 }): Promise<Theme | null> {
@@ -60,7 +66,7 @@ export async function resolvePreviewTheme({
       OR: [{ proposalId }, { id: proposalId }],
     },
     orderBy: { revision: "desc" },
-    select: { actionType: true, input: true },
+    select: { actionType: true, input: true, directions: true },
   });
   if (!row) return null;
 
@@ -77,7 +83,18 @@ export async function resolvePreviewTheme({
     }
 
     if (row.actionType === "refine_storefront") {
-      const changes = (row.input as { changes?: unknown })?.changes;
+      // A named direction renders that direction's change set; anything else
+      // renders the revision's own. An unknown direction id falls back rather
+      // than rendering a different direction than the one asked for, which
+      // would be the worst possible failure for a chooser.
+      let changes: unknown;
+      if (directionId) {
+        const chosen = parseDirections(row.directions).find((d) => d.id === directionId);
+        if (!chosen) return null;
+        changes = chosen.changes;
+      } else {
+        changes = (row.input as { changes?: unknown })?.changes;
+      }
       if (!Array.isArray(changes)) return null;
       // applyRefinementsToTheme validates every dimension and value itself,
       // and throws on anything it does not recognise. Stored input is read

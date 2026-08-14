@@ -111,6 +111,7 @@ export default async function StorefrontPage({
     // privileged-preview contract as previewOrder above: owner/employee only,
     // never persisted, silently ignored when absent or invalid.
     previewProposal?: string;
+    previewDirection?: string;
     payment_pending?: string;
     ref?: string;
   }>;
@@ -120,6 +121,7 @@ export default async function StorefrontPage({
     subscribed,
     previewOrder,
     previewProposal,
+    previewDirection,
     payment_pending: paymentPending,
     ref: paymentRef,
   } = await searchParams;
@@ -170,6 +172,7 @@ export default async function StorefrontPage({
     storeId: store.id,
     currentTheme: storedTheme,
     proposalId: previewProposal,
+    directionId: previewDirection,
     viewerIsStaff: viewerRole !== null,
   });
   const theme = proposedTheme ?? storedTheme;

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
 import { performApproveGenesisAction, performRejectGenesisAction } from "@/app/dashboard/ai-actions";
 import { withJ4CopyRules } from "@/lib/j4CopyRules";
+import { PROPOSAL_STATUS, parseDirections, reviseProposal } from "@/lib/storefront/proposals";
 
 // Deciding a proposal without leaving the conversation (2026-08-14).
 //
@@ -67,6 +68,65 @@ export async function approveProposalInConversation(approvalRequestId: string) {
 
   // Revalidate rather than redirect. The layer picks up both the new message
   // and the now-settled proposal exactly where the owner is standing.
+  revalidatePath("/dashboard");
+}
+
+/**
+ * Picks one of the directions a revision offered.
+ *
+ * This does NOT mutate the revision. It writes the next revision carrying only
+ * the chosen direction's changes, which keeps revisions immutable and makes
+ * "I like B, but warmer" an ordinary refinement of B rather than a special
+ * case. Sean: "a single revision can contain a visual comparison... that does
+ * not mean we need two independent proposal chains."
+ *
+ * The choice is spoken into the conversation too, because a decision the owner
+ * made is part of the exchange and Office must be able to show it later.
+ */
+export async function chooseDirectionInConversation(approvalRequestId: string, directionId: string) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+
+  const row = await prisma.approvalRequest.findFirst({
+    where: { storeId, id: approvalRequestId, status: PROPOSAL_STATUS.pending },
+    select: { proposalId: true, id: true, target: true, directions: true, summary: true },
+  });
+  if (!row) {
+    await recordOutcome(storeId, "That proposal is no longer open.");
+    revalidatePath("/dashboard");
+    return;
+  }
+
+  const chosen = parseDirections(row.directions).find((d) => d.id === directionId);
+  if (!chosen) {
+    await recordOutcome(storeId, "I could not find that direction any more. Tell me which one you meant.");
+    revalidatePath("/dashboard");
+    return;
+  }
+
+  // A chainless row (written before revision lineage existed) is adopted into
+  // a chain of one before being revised. Without this, reviseProposal's own
+  // lookup by proposalId finds nothing and returns null, and this action would
+  // announce a choice it never actually recorded.
+  let chainId = row.proposalId;
+  if (!chainId) {
+    await prisma.approvalRequest.update({ where: { id: row.id }, data: { proposalId: row.id } });
+    chainId = row.id;
+  }
+
+  const revised = await reviseProposal(storeId, chainId, {
+    summary: `${row.summary} (${chosen.label})`,
+    rationale: chosen.rationale ?? `You chose ${chosen.label}.`,
+    target: row.target,
+    input: { target: row.target, summary: row.summary, reason: chosen.rationale ?? "", changes: chosen.changes },
+  });
+
+  // Never claim a choice was recorded when it was not.
+  await recordOutcome(
+    storeId,
+    revised
+      ? `${chosen.label} it is. I have it ready below. Tell me if you want anything adjusted, or apply it as it stands.`
+      : "Something went wrong recording that choice and nothing has changed. Tell me which direction you wanted and I will set it up again."
+  );
   revalidatePath("/dashboard");
 }
 

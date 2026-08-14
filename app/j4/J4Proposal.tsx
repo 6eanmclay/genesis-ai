@@ -1,5 +1,9 @@
-import { approveProposalInConversation, rejectProposalInConversation } from "./proposal-actions";
-import { ProposalComparison } from "@/app/dashboard/ProposalComparison";
+import {
+  approveProposalInConversation,
+  rejectProposalInConversation,
+  chooseDirectionInConversation,
+} from "./proposal-actions";
+import { ProposalComparison, type ComparisonSide } from "@/app/dashboard/ProposalComparison";
 import { ActionDiffRows } from "@/lib/execution/ActionDiff";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { resolveProposalScope, type ProposalScope } from "@/lib/storefront/proposalScope";
@@ -68,16 +72,35 @@ export function J4Proposal({
   const separator = storefrontUrl.includes("?") ? "&" : "?";
   const actionType = current.actionType;
 
-  let proposedUrl: string | null = null;
+  const previewBase = `${storefrontUrl}${separator}previewProposal=${encodeURIComponent(proposal.proposalId)}`;
+
+  const sides: ComparisonSide[] = [];
   if (actionType === "refine_storefront" || actionType === "update_theme") {
     // Both end in a theme; resolvePreviewTheme renders the real storefront
-    // with it applied.
-    proposedUrl = `${storefrontUrl}${separator}previewProposal=${encodeURIComponent(proposal.proposalId)}`;
+    // with it applied. When the revision offers directions, each becomes its
+    // own side of the same toggle rather than its own proposal.
+    sides.push({ id: "current", label: "Current", url: storefrontUrl });
+    if (current.directions.length > 0) {
+      for (const d of current.directions) {
+        sides.push({
+          id: d.id,
+          label: d.label,
+          url: `${previewBase}&previewDirection=${encodeURIComponent(d.id)}`,
+        });
+      }
+    } else {
+      sides.push({ id: "proposed", label: "J4's proposal", url: previewBase });
+    }
   } else if (actionType === "update_section_order") {
     // The longstanding previewOrder parameter, reused rather than replaced.
     const order = (current.input as { sectionOrder?: unknown })?.sectionOrder;
     if (Array.isArray(order) && order.length > 0) {
-      proposedUrl = `${storefrontUrl}${separator}previewOrder=${encodeURIComponent(order.join(","))}`;
+      sides.push({ id: "current", label: "Current", url: storefrontUrl });
+      sides.push({
+        id: "proposed",
+        label: "J4's proposal",
+        url: `${storefrontUrl}${separator}previewOrder=${encodeURIComponent(order.join(","))}`,
+      });
     }
   }
 
@@ -103,13 +126,8 @@ export function J4Proposal({
         </p>
       )}
 
-      {proposedUrl ? (
-        <ProposalComparison
-          currentUrl={storefrontUrl}
-          proposedUrl={proposedUrl}
-          scope={scope}
-          storeName={storeName}
-        />
+      {sides.length > 1 ? (
+        <ProposalComparison sides={sides} scope={scope} storeName={storeName} />
       ) : (
         // No storefront preview exists for this kind of change, so the owner
         // gets the real field values instead — the same honest Current ->
@@ -117,6 +135,25 @@ export function J4Proposal({
         // conversation rather than left on a page to be found.
         <div className="mt-3">
           <ActionDiffRows input={current.input as Record<string, unknown>} previousValues={current.previousValues as Record<string, unknown>} />
+        </div>
+      )}
+
+      {current.directions.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {current.directions.map((d) => (
+            <form key={d.id} action={chooseDirectionInConversation.bind(null, current.id, d.id)}>
+              <button
+                type="submit"
+                className="rounded-full border px-3 py-1.5 text-xs font-medium text-[#f4f2fb] transition-opacity hover:opacity-90"
+                style={{ borderColor: GENESIS_ATMOSPHERE.violet }}
+              >
+                Go with {d.label}
+              </button>
+            </form>
+          ))}
+          <p className="text-[11px]" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+            or describe what you would take from each
+          </p>
         </div>
       )}
 

@@ -38,6 +38,48 @@ export const PROPOSAL_STATUS = {
   superseded: "SUPERSEDED",
 } as const;
 
+/**
+ * One visual direction offered by a revision.
+ *
+ * Sean: "I see two ways to make this feel more alive. [Direction A]
+ * [Direction B]". Directions are alternatives at a single moment, which is a
+ * different shape from revisions over time — so they live inside a revision
+ * rather than forking the chain into rival proposals.
+ */
+export interface ProposalDirection {
+  id: string;
+  label: string;
+  rationale: string | null;
+  /** The change set this direction would apply. Same shape as input.changes. */
+  changes: unknown[];
+}
+
+/**
+ * Reads stored directions back defensively.
+ *
+ * Anything malformed resolves to no directions rather than a half-rendered
+ * chooser: a proposal offering "Direction undefined" is worse than a proposal
+ * offering one direction. Fewer than two is not a choice, so it is treated as
+ * none.
+ */
+export function parseDirections(value: unknown): ProposalDirection[] {
+  if (!Array.isArray(value)) return [];
+  const parsed: ProposalDirection[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") return [];
+    const d = raw as Record<string, unknown>;
+    if (typeof d.id !== "string" || typeof d.label !== "string") return [];
+    if (!Array.isArray(d.changes)) return [];
+    parsed.push({
+      id: d.id,
+      label: d.label,
+      rationale: typeof d.rationale === "string" ? d.rationale : null,
+      changes: d.changes,
+    });
+  }
+  return parsed.length >= 2 ? parsed : [];
+}
+
 export interface ProposalRevision {
   id: string;
   /** Which executable will run on approval. Decides how this can be previewed. */
@@ -50,6 +92,8 @@ export interface ProposalRevision {
   scope: ProposalScope | null;
   input: unknown;
   previousValues: unknown;
+  /** Empty unless this revision is asking the owner to choose. */
+  directions: ProposalDirection[];
   createdAt: Date;
 }
 
@@ -75,6 +119,7 @@ function toRevision(row: {
   scope: string | null;
   input: unknown;
   previousValues: unknown;
+  directions: unknown;
   createdAt: Date;
 }): ProposalRevision {
   return {
@@ -91,6 +136,7 @@ function toRevision(row: {
     scope: isProposalScope(row.scope) ? row.scope : null,
     input: row.input,
     previousValues: row.previousValues,
+    directions: parseDirections(row.directions),
     createdAt: row.createdAt,
   };
 }
@@ -106,6 +152,7 @@ const REVISION_SELECT = {
   scope: true,
   input: true,
   previousValues: true,
+  directions: true,
   createdAt: true,
 } as const;
 

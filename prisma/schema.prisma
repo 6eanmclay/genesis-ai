@@ -809,6 +809,18 @@ model ApprovalRequest {
   // when they push back. Losing it across a revision would make "I don't like
   // that, keep the handmade feel" unanswerable.
   rationale            String?
+  // Two or more visual directions offered by ONE revision (2026-08-14).
+  //
+  // Sean: "a single revision can contain a visual comparison when J4 is
+  // asking me to choose between directions... that does not mean we need two
+  // independent proposal chains."
+  //
+  // So directions live inside a revision rather than forking the chain. Shape:
+  // [{ id, label, rationale, changes }]. Choosing one does not mutate this
+  // row; it writes the NEXT revision carrying only the chosen changes, so
+  // revisions stay immutable and "I like B, but warmer" is an ordinary
+  // refinement of B. Null is the normal case: one revision, one direction.
+  directions           Json?
   status               String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | EXECUTED | REJECTED | SUPERSEDED
   authorizationTier    String    @default("always_ask") // always_ask | auto_below_limit | auto — frozen snapshot of the tier that governed this request at creation time, see lib/execution/genesisActions.ts
   groupId              String? // shared across every ApprovalRequest created from one Genesis "thought" (one chat turn, or one recommendation-review run) — Phase 4 — presentational grouping only; never merges the underlying decision or execution
