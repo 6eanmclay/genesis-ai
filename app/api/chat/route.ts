@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
 import { withJ4CopyRules } from "@/lib/j4CopyRules";
+import type { Theme } from "@/lib/theme";
+import type { RefineStorefrontInput } from "@/lib/execution/executables/refineStorefront";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
@@ -844,6 +846,105 @@ export async function POST(request: Request) {
           emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "product_removal_request" });
+          controller.close();
+          return;
+        }
+
+        // Storefront Canvas, step 3 reachability (2026-08-12) — the merchant
+        // asking for one small structural or presentational improvement.
+        //
+        // Its own fast path, exactly like request_image_change and
+        // request_product_removal above and for the same stated reason: this
+        // is a discrete, enum-bounded change, so it never needs the PRIMARY
+        // content pipeline that edit_store_content falls back to.
+        //
+        // This bridge only PROPOSES. Execution, verification, Growth Point
+        // charging and the Business Partner waiver all happen later, on the
+        // owner's own approval, through the unchanged engine path.
+        if (chosenTool?.name === "refine_storefront") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "refine_storefront" });
+
+          // Validated against the ACTION's own schema, not the tool's. The
+          // tool schema guides the model; this is the boundary that decides
+          // whether a real ApprovalRequest gets written.
+          const parsed = GENESIS_ACTIONS.refine_storefront.inputSchema.safeParse(chosenTool.input);
+          if (!parsed.success) {
+            const clarification =
+              conversationalReply ||
+              "I couldn't work out which part of your storefront you meant. Tell me which section and what feels off about it.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
+            if (!streamedAnyText) emit({ type: "token", delta: clarification });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "refine_storefront" });
+            controller.close();
+            return;
+          }
+          const refineInput = parsed.data as RefineStorefrontInput;
+
+          // The real stored theme, never the model's restatement of it —
+          // the same rule every other getCurrentValues in the registry
+          // follows, so the approval card diffs against ground truth.
+          const themeRow = await prisma.store.findUnique({
+            where: { id: store.id },
+            select: { theme: true },
+          });
+          const previousValues = GENESIS_ACTIONS.refine_storefront.getCurrentValues({
+            blueprint: null,
+            theme: (themeRow?.theme as Theme | null) ?? null,
+          });
+
+          // A fresh proposal supersedes an earlier still-pending one for the
+          // same part of the page — same dedupe rule the two loops above
+          // follow, scoped by target so a pending hero idea and a pending
+          // products idea can coexist.
+          await prisma.approvalRequest.deleteMany({
+            where: {
+              storeId: store.id,
+              actionType: "refine_storefront",
+              status: "PENDING_APPROVAL",
+              input: { path: ["target"], equals: refineInput.target },
+            },
+          });
+          await prisma.approvalRequest.create({
+            data: {
+              storeId: store.id,
+              recommendationId: null,
+              actionType: "refine_storefront",
+              // Stored on the column added in step 1. Nothing reads it yet;
+              // the preview highlighting that will is step 5.
+              target: refineInput.target,
+              input: refineInput as object,
+              previousValues: previousValues as object,
+              summary: refineInput.summary,
+              authorizationTier: GENESIS_ACTIONS.refine_storefront.authorizationTier,
+              groupId: randomUUID(),
+            },
+          });
+
+          const finalReply = [
+            conversationalReply || refineInput.summary,
+            "You'll find it waiting for your review on your dashboard. Approve it and I'll make the change.",
+          ].join(" ");
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "PENDING",
+            verified: false,
+            message: `Proposed refining ${refineInput.target}`,
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: {
+              target: refineInput.target,
+              changes: refineInput.changes,
+              reason: refineInput.reason,
+            },
+          });
+          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "refine_storefront" });
           controller.close();
           return;
         }

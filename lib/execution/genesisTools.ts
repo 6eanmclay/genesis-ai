@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import { GoalCaptureSchema, ChallengeCaptureSchema, EmployeeCaptureSchema, LocationCaptureSchema } from "@/lib/businessModel/factCapture";
+import { STOREFRONT_TARGET_KEYS } from "@/lib/storefront/targets";
+import { REFINABLE_DIMENSION_KEYS, MAX_MUTATIONS_PER_IMPROVEMENT } from "@/lib/storefront/dimensions";
 
 // Response Modes plan (2026-08-07), Phase 1 — replaces four sequential
 // classifier calls (data-question, business-fact, campaign-request,
@@ -82,6 +84,36 @@ export const RequestProductContentChangeInputSchema = z.object({
 });
 export type RequestProductContentChangeInput = z.infer<typeof RequestProductContentChangeInputSchema>;
 
+// Storefront Canvas, step 3 reachability (2026-08-12) — the tool that lets a
+// merchant ask for one small storefront improvement in conversation.
+//
+// Its own tool rather than folded into edit_store_content, for exactly the
+// reason RequestProductRemovalInputSchema above already documents for itself:
+// this is a discrete, enum-bounded structural change, not a content-generation
+// request. It never needs the PRIMARY content pipeline, so it is handled as
+// its own fast path like request_image_change and request_product_removal.
+//
+// Both vocabularies are closed at the tool boundary, so the model picks from
+// real targets and real dimensions rather than inventing either. The same
+// values are validated again by GENESIS_ACTIONS.refine_storefront.inputSchema
+// after the call returns, and a third time inside the executable — the tool
+// schema is a guide for the model, never the security boundary.
+export const RefineStorefrontToolInputSchema = z.object({
+  target: z.enum(STOREFRONT_TARGET_KEYS as [string, ...string[]]),
+  changes: z
+    .array(
+      z.object({
+        dimension: z.enum(REFINABLE_DIMENSION_KEYS as [string, ...string[]]),
+        value: z.string(),
+      })
+    )
+    .min(1)
+    .max(MAX_MUTATIONS_PER_IMPROVEMENT),
+  reason: z.string(),
+  summary: z.string(),
+});
+export type RefineStorefrontToolInput = z.infer<typeof RefineStorefrontToolInputSchema>;
+
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
@@ -113,6 +145,7 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "approve_pending_changes",
   "edit_store_content",
   "manage_business_asset",
+  "refine_storefront",
 ] as const;
 export type StoreChatUnifiedToolName = (typeof STORE_CHAT_UNIFIED_TOOL_NAMES)[number];
 
@@ -171,6 +204,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant asks you to save, keep, hold onto, or designate a file they've already uploaded — e.g. 'save this', 'keep this for later', 'save this as my logo', 'use this as the product photo', 'remember this as our supplier agreement'. This ALWAYS refers to the most recently uploaded photo or document in this conversation, never something never uploaded. If the merchant names a specific role or purpose for it (a logo, a product photo, a brand guide, an agreement — their own words, don't invent one), set role to that; if they just say 'save this' / 'keep this' with no stated purpose, set role to null.",
       input_schema: z.toJSONSchema(ManageBusinessAssetInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "refine_storefront",
+      description:
+        "Call this when the merchant asks you to improve how one part of their storefront LOOKS or is STRUCTURED, rather than what it says — e.g. 'make the hero feel more premium', 'the product grid feels cramped', 'this looks too plain', 'give the headings more presence'. You are changing structure and presentation only: hero layout, type scale, section layout, background treatment, image treatment, call to action emphasis, card style, button style, shadow style, and spacing. Pick target as the part of the page they mean, and changes as the one to four adjustments that together achieve that single improvement — four is the implementation detail of ONE idea, never a way to bundle several separate requests or quietly redesign the store. reason must state the real evidence behind it in your own words. summary is one plain sentence the merchant will read on the approval card. Do NOT use this for copy or wording (that's edit_store_content), for colours or fonts (that's edit_store_content, which reaches the full theme), or for product photos (that's request_image_change). This only PROPOSES the improvement for the merchant's approval; it never changes the storefront immediately.",
+      input_schema: z.toJSONSchema(RefineStorefrontToolInputSchema) as Anthropic.Tool.InputSchema,
     },
   ];
 }
