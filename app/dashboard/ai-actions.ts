@@ -16,6 +16,7 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
+import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { Prisma } from "@prisma/client";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
@@ -2317,6 +2318,16 @@ async function applyGenesisMessageToStore(
   // requires store:manage and only runs after that gate.
   const activeProductNames = currentProducts.map((p) => p.name).join(", ") || "none";
   const unifiedContextParts = [userMessage, `(Active products: ${activeProductNames})`];
+  // What the owner is looking at (2026-08-14) — mirrors route.ts's own
+  // identical addition, for the same reason the pending-approval signal is
+  // duplicated below: this path runs both as the streaming route's fallback
+  // and genuinely fresh, and J4 must resolve "this" the same way either
+  // time. Derived from returnTo, which for every caller is the owner's real
+  // current path, so nothing new has to be threaded down.
+  const workspaceLine = describeWorkspaceForJ4(returnTo);
+  if (workspaceLine) {
+    unifiedContextParts.push(workspaceLine);
+  }
   if (pending) {
     unifiedContextParts.push(
       `(You previously proposed this change, awaiting confirmation: "${pending.summary}")`

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { J4Icon } from "./J4Icon";
@@ -34,12 +33,15 @@ export function J4MobileHero({
   curiosityItems,
   ownerBriefingSummary,
   justArrived,
+  onSummon,
 }: {
   focusableApprovals: FocusableApprovalBrief[];
   liveObservations: LiveObservationBrief[];
   curiosityItems: CuriosityBrief[];
   ownerBriefingSummary?: string | null;
   justArrived?: boolean;
+  /** Opens the persistent J4 layer over this workspace. Never navigates. */
+  onSummon: () => void;
 }) {
   // Same real sentence the presence bar speaks everywhere else — shared, not
   // recomputed, so the two can't disagree about the same business.
@@ -67,13 +69,15 @@ export function J4MobileHero({
         </p>
       </div>
 
-      {/* Not a text input — a door into the real J4 workspace. /j4 is
-          intercepted from inside the dashboard (app/dashboard/@j4), so this
-          summons J4 over this page rather than navigating away from it, and
+      {/* Not a text input, and not a link either. This summons the same
+          persistent J4 layer the tab bar control opens. Nothing navigates, so
+          this screen keeps its scroll position and its state underneath, and
           the conversation it opens is the one and only J4 conversation. */}
-      <Link
-        href="/j4"
-        className="mt-5 flex items-center gap-3 rounded-2xl border border-black/[.09] bg-white px-4 py-3.5 text-left transition-colors active:bg-black/[.03] dark:border-white/[.145] dark:bg-zinc-950 dark:active:bg-white/[.05]"
+      <button
+        type="button"
+        onClick={onSummon}
+        aria-haspopup="dialog"
+        className="mt-5 flex w-full items-center gap-3 rounded-2xl border border-black/[.09] bg-white px-4 py-3.5 text-left transition-colors active:bg-black/[.03] dark:border-white/[.145] dark:bg-zinc-950 dark:active:bg-white/[.05]"
       >
         <span className="flex-1 text-[15px] text-zinc-400 dark:text-zinc-500">Ask J4 anything…</span>
         <span className="flex h-8 w-8 items-center justify-center rounded-full border border-black/[.09] text-zinc-500 dark:border-white/[.145] dark:text-zinc-400">
@@ -82,7 +86,7 @@ export function J4MobileHero({
         <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2563eb] text-white">
           <J4Icon name="send" size={15} />
         </span>
-      </Link>
+      </button>
     </div>
   );
 }

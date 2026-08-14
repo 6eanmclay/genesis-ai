@@ -11,6 +11,7 @@ import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { signOutOfGenesis } from "./actions";
 import { DashboardShell } from "./DashboardShell";
+import J4Page from "@/app/j4/page";
 
 // Reliability hardening — Server Actions can only have their execution
 // timeout raised at the PAGE/LAYOUT level (Next.js's own maxDuration route
@@ -46,26 +47,36 @@ export const maxDuration = 300;
 // multi-section app shell. Both branches re-check auth/resolve the store
 // themselves rather than threading data down, matching this codebase's
 // existing per-component-fetches-its-own-data convention.
-// `j4` is a parallel-route slot (app/dashboard/@j4), added 2026-08-12 for the
-// J4 summon. It renders nothing until the owner navigates to /j4 from inside
-// the dashboard, at which point app/dashboard/@j4/(..)j4 intercepts that
-// navigation and renders the REAL /j4 route as a sheet over whatever page
-// they were on — rather than replacing it. That's what makes the center
-// control a summon instead of a destination.
+// J4 is handed to the shell as rendered content, not routed to (2026-08-14).
 //
-// Deliberately an interception rather than a second chat surface: the sheet
-// renders app/j4/page.tsx itself, so there is exactly one J4 workspace, one
-// set of server actions, and one Request → Execute → Verify → Record →
-// Display path. A hard load of /j4 (shared link, refresh) bypasses this
-// entirely and renders the full page, which is the correct behavior for a
-// real URL.
-export default async function DashboardLayout({
-  children,
-  j4,
-}: {
-  children: ReactNode;
-  j4: ReactNode;
-}) {
+// This replaced a parallel-route slot plus an intercepting route. Sean's
+// correction: "J4 is not a destination or a separate page that the user
+// navigates into and out of. J4 is a persistent intelligence layer within the
+// business workspace." Routing could not express that — every summon was a
+// navigation, with the scroll resets, history entries and remounts that come
+// with one. See app/dashboard/J4Overlay.tsx for the four bugs that all traced
+// back to it.
+//
+// So J4's real workspace is rendered here, once, and passed down as a prop.
+// It is still app/j4/page.tsx itself, so there remains exactly one J4
+// workspace, one set of server actions, and one Request → Execute → Verify →
+// Record → Display path.
+//
+// WHAT IT COSTS, honestly. Every dashboard page now also renders J4Page,
+// which is not free: it repeats this layout's own auth/store resolution and
+// three of its reads (pending approvals, observations, explanations), and
+// adds two genuinely new ones — the last 50 StoreMessages and the open
+// Tasks. All of them are indexed reads on one store and none is an AI call,
+// so it is a real but small cost, paid on every dashboard navigation.
+//
+// It is the right trade because it is the whole feature: a partner who has
+// to be loaded before he can be spoken to is a page, and this correction was
+// specifically that J4 is not a page. The conversation has to already be
+// there when the owner summons him, mid-scroll, with a question about what
+// is on screen.
+//
+// /j4 stays a real, directly-reachable route for a shared link or a refresh.
+export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const session = await auth();
   if (!session?.user) {
     redirect("/login");
@@ -325,6 +336,9 @@ export default async function DashboardLayout({
 
   return (
     <DashboardShell
+      // J4's real workspace, rendered on the server and handed down as
+      // content. The shell shows and hides it; nothing navigates.
+      j4={<J4Page />}
       sections={sections}
       secondarySections={secondarySections}
       storeId={store.id}
@@ -353,7 +367,6 @@ export default async function DashboardLayout({
       hasCuriosity={hasCuriosity}
     >
       {children}
-      {j4}
     </DashboardShell>
   );
 }

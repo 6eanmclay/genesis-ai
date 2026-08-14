@@ -17,6 +17,7 @@ import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
+import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
@@ -131,7 +132,7 @@ function diagLog(requestId: string, turnStartedAt: number, event: string, meta?:
 export async function POST(request: Request) {
   const turnStartedAt = Date.now();
   const body = (await request.json().catch(() => null)) as
-    | { message?: string; requestId?: string; audioUrl?: string }
+    | { message?: string; requestId?: string; audioUrl?: string; workspacePath?: string }
     | null;
   const requestId = body?.requestId ?? "unknown";
   diagLog(requestId, turnStartedAt, "request_received");
@@ -294,6 +295,16 @@ export async function POST(request: Request) {
         const pending = store.pendingChange as { summary: string } | null;
         const activeProductNames = currentProducts.map((p) => p.name).join(", ") || "none";
         const unifiedContextParts = [userMessage, `(Active products: ${activeProductNames})`];
+        // What the owner is looking at while asking (2026-08-14). J4 opens
+        // over the workspace now rather than replacing it, so "make this
+        // bolder" is a complete sentence — but only if J4 is told what
+        // "this" is. Resolved through a closed registry
+        // (lib/j4/workspaceContext.ts): an unrecognised path adds nothing,
+        // and the browser's own string never reaches the prompt.
+        const workspaceLine = describeWorkspaceForJ4(body?.workspacePath);
+        if (workspaceLine) {
+          unifiedContextParts.push(workspaceLine);
+        }
         if (pending) {
           unifiedContextParts.push(`(You previously proposed this change, awaiting confirmation: "${pending.summary}")`);
         }

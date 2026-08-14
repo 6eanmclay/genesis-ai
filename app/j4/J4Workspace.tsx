@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { unstable_rethrow, useRouter } from "next/navigation";
+import { unstable_rethrow, usePathname, useRouter } from "next/navigation";
 import { useFormStatus, flushSync } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
@@ -751,7 +751,14 @@ export function J4Workspace({
   ideas: IdeaItem[];
   information: InformationItem[];
 } & J4Signals) {
-  const currentPath = "/j4";
+  // Where the owner actually is (2026-08-14), not where J4 lives. This was
+  // hardcoded to "/j4" back when J4 was a route, and the hardcoding survived
+  // the move to a persistent layer as a real bug: this same conversation now
+  // usually renders over /dashboard/website or /dashboard/products, and the
+  // heavy fallback path would have redirected the owner to a bare /j4 page
+  // they never asked to be on. It also becomes the one thing that lets J4
+  // resolve "this" — see lib/j4/workspaceContext.ts.
+  const currentPath = usePathname();
   const router = useRouter();
   const [activeCategory, setActiveCategory] = useState<Category>("conversation");
   // Priority 4 — Just Talk (2026-08-08, scope frozen). A presentation-only
@@ -1015,7 +1022,10 @@ export function J4Workspace({
       response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, requestId, audioUrl: audioUrl ?? undefined }),
+        // workspacePath is what the owner is looking at while asking. The
+        // server matches it against a closed registry and ignores anything
+        // it does not recognise, so this is a hint, never a channel.
+        body: JSON.stringify({ message: text, requestId, audioUrl: audioUrl ?? undefined, workspacePath: currentPath }),
       });
     } catch (err) {
       reportDiag(requestId, tStart, "client_fetch_threw", { message: err instanceof Error ? err.message : String(err) });

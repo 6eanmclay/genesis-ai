@@ -15,6 +15,7 @@ import { LiveIntelligence } from "./LiveIntelligence";
 import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
 import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { J4MobileHero } from "./J4MobileHero";
+import { J4Overlay } from "./J4Overlay";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -115,6 +116,7 @@ export function DashboardShell({
   hasOpportunity,
   hasCuriosity,
   children,
+  j4,
 }: {
   sections: NavSection[];
   secondarySections: NavSection[];
@@ -149,6 +151,10 @@ export function DashboardShell({
   hasOpportunity: boolean;
   hasCuriosity: boolean;
   children: React.ReactNode;
+  // J4's real server-rendered workspace, handed down by layout.tsx. Mounted
+  // for the life of the dashboard and shown or hidden by J4Overlay, so an
+  // in-flight conversation survives being closed and reopened.
+  j4: React.ReactNode;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -263,6 +269,12 @@ export function DashboardShell({
   // one route where J4 is the hero rather than an ambient bar, so it's also
   // the one route whose fixed-chrome offsets differ.
   const isHome = pathname === "/dashboard";
+
+  // J4 is a layer over this workspace, never a page the owner is sent to.
+  // Holding the state here rather than in the URL is the whole correction:
+  // the workspace stays mounted and keeps its scroll position because
+  // literally nothing about it changes when J4 opens.
+  const [j4Open, setJ4Open] = useState(false);
 
   // Secondary nav only renders while the current route is genuinely one of
   // Your Business's own workspaces (Overview/Identity/Website/Products) —
@@ -801,6 +813,7 @@ export function DashboardShell({
                     curiosityItems={curiosityItems}
                     ownerBriefingSummary={ownerBriefingSummary}
                     justArrived={justArrived}
+                    onSummon={() => setJ4Open(true)}
                   />
                 </div>
               )}
@@ -865,14 +878,16 @@ export function DashboardShell({
             on both sides. Five equal slots on a 360px phone are ~72px each,
             which the orb alone would overflow into its neighbours. */}
         <div className="flex flex-[1.5] flex-col items-center justify-end">
-          <Link
-            href="/j4"
-            // Next's App Router scrolls to top on navigation by default, so
-            // summoning J4 was silently scrolling the workspace underneath
-            // before the sheet even covered it — the owner then closed J4 and
-            // found their page at the top. A summon must not move the page it
-            // is opening over.
-            scroll={false}
+          {/* A control, not a link (2026-08-14). Summoning J4 no longer
+              navigates anywhere: the workspace stays mounted, keeps its exact
+              scroll position, and J4 opens over it. That removes an entire
+              class of bug rather than defending against it — see
+              J4Overlay.tsx for the four that all traced back to routing. */}
+          <button
+            type="button"
+            onClick={() => setJ4Open(true)}
+            aria-haspopup="dialog"
+            aria-expanded={j4Open}
             aria-label="J4"
             // Lifted out of the bar rather than sitting in it. At tab-icon
             // scale J4 read as a fifth navigation item; at 64px breaking the
@@ -889,7 +904,7 @@ export function DashboardShell({
               className="pointer-events-none absolute -inset-4 rounded-full bg-[#2563eb]/25 blur-xl"
             />
             <GenesisAvatar className={`relative ${GENESIS_AVATAR_SIZE.summon}`} />
-          </Link>
+          </button>
         </div>
 
         {mobileRightTabs.map((section) => (
@@ -1010,12 +1025,16 @@ export function DashboardShell({
           capability the Portal offers, not its definition — future
           capabilities (task work, planning, captured ideas) live inside the
           same dedicated environment this links to, not a second surface. */}
-      <Link
-        href="/j4"
-        // Same reason as the summon control above: this also opens J4 as an
-        // overlay via the intercepting route, so it must not scroll the page
-        // it is opening over.
-        scroll={false}
+      {/* A control, not a link (2026-08-14), for the same reason the mobile
+          center slot stopped being one: this summons J4 over the workspace
+          the owner is already in. Desktop had been navigating to /j4, which
+          unmounted the workspace and lost its scroll position — the very
+          thing the persistent layer exists to prevent. */}
+      <button
+        type="button"
+        onClick={() => setJ4Open(true)}
+        aria-haspopup="dialog"
+        aria-expanded={j4Open}
         // Desktop only as of 2026-08-12. On mobile the J4 center slot in the
         // tab bar above is now the single entry point — keeping this floating
         // pill as well would put two J4 doorways on one screen, the same
@@ -1028,7 +1047,14 @@ export function DashboardShell({
           aria-hidden="true"
         />
         J4 Portal
-      </Link>
+      </button>
+
+      {/* J4 himself, over the workspace. Rendered last so he sits above
+          everything, and mounted for the life of the dashboard so closing him
+          is genuinely closing rather than discarding. */}
+      <J4Overlay open={j4Open} onClose={() => setJ4Open(false)}>
+        {j4}
+      </J4Overlay>
     </div>
   );
 }
