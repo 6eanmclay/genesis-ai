@@ -56,11 +56,25 @@ IDEA → DISCUSSION → REBUTTAL → REFINEMENT → CONCLUSION → IMPLEMENTATIO
 
 Not `QUESTION → CHAT ROOM → ANSWER → EXIT`. The first is a business partner. The second is a chatbot. The worked example Sean gave — *"I don't like this mission statement"* → J4 proposes → *"too corporate"* → J4 refines → *"yeah, that's better"* → J4 applies it — never leaves Identity, and never requires the owner to remember where they were.
 
+### The presence is the composer (locked 2026-08-14, second pass)
+
+Sean's refinement, replacing "a button that opens J4": **the composer lives with the orb, permanently, just above the bottom navigation, with the orb overlapping the boundary so J4 reads as present in the current surface rather than waiting behind a door.**
+
+- The owner can **type straight into it** without opening anything first. Someone who does not want to talk never has to.
+- **Voice activates from the same presence.** Speaking and typing are input modes, not different conversations.
+- Sending from it opens the conversation **in place**, showing J4's reply over the current page. Nothing navigates.
+
+The rule this encodes: *J4 doesn't take me somewhere to talk to J4. J4 comes to wherever I already am.*
+
+**One composer, not two.** The inline field is an entry point to the single conversation's composer, never a second send path. A second place to type is a second conversation, which is the thing this whole architecture rules out.
+
 **What belongs in the layer:** the conversation and the composer. That is all.
 
 **What must never be in the layer:** queues, lists, records, history, tabs. Those are Office. The test for any future addition is whether it is part of *this* conversation. If it is a collection of things, it belongs in Office, and putting it here rebuilds the trip the layer exists to remove.
 
 **The morning briefing belongs to J4, not Office.** It is J4's proactive daily briefing, not a document filed somewhere. J4 says what matters today, offers the owner a chance to respond or add something, and then gets out of the way. It must support **Listen** as well as reading — the owner should be able to hear their briefing while looking at their dashboard rather than parsing a wall of prose. Brief → respond if necessary → go run the business.
+
+**A recommendation appears where the conversation is, wherever that is.** If J4 proposes something visual, the `Current ↔ J4's proposal` comparison renders inline in the conversation with **Apply this / Not this / Tell J4 what to change**. The owner never navigates to approve something J4 proposed. This holds on every surface the conversation appears on, which was got wrong once by making proposals layer-only while the room showed the same conversation.
 
 ## 3. Office — "I'm reviewing what J4 and I have been doing"
 

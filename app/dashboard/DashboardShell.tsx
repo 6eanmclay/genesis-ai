@@ -17,6 +17,7 @@ import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { J4MobileHero } from "./J4MobileHero";
 import { J4Overlay } from "./J4Overlay";
 import { J4Summon } from "./J4Summon";
+import { J4HandoffContext } from "./J4HandoffContext";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -276,6 +277,11 @@ export function DashboardShell({
   // the workspace stays mounted and keeps its scroll position because
   // literally nothing about it changes when J4 opens.
   const [j4Open, setJ4Open] = useState(false);
+  // Text typed into the persistent presence, handed to the conversation's own
+  // composer to send. Never sent from here — see J4Summon.tsx on why there is
+  // exactly one send path. Cleared by the conversation once it has taken it,
+  // so reopening J4 later never resends an old message.
+  const [j4Handoff, setJ4Handoff] = useState<string | null>(null);
 
   // Secondary nav only renders while the current route is genuinely one of
   // Your Business's own workspaces (Overview/Identity/Website/Products) —
@@ -796,7 +802,7 @@ export function DashboardShell({
             {secondaryNav}
 
             <main
-              className={`pb-20 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
+              className={`pb-44 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
                 // Home clears only the 64px header + 40px secondary nav; the
                 // other routes also clear MobileGenesisPresence's 76px bar.
                 isHome
@@ -872,19 +878,13 @@ export function DashboardShell({
           </Link>
         ))}
 
-        {/* J4's slot, now empty on purpose (2026-08-14).
-            The control itself moved out of this bar entirely — see
-            J4Summon.tsx. It could not be made untouchable from in here: this
-            nav carries backdrop-blur, a backdrop-filter creates a stacking
-            context, and everything inside one is capped at that context's own
-            z-index no matter what it asks for. So the orb was permanently
-            trapped at the bar's z-40 and the More menu's z-50 backdrop
-            covered it.
-            What stays is the gap it needs. Wider than the other four slots so
-            an 88px orb has real clearance on both sides: five equal slots on
-            a 360px phone are ~72px each, which the orb alone would overflow
-            into its neighbours. */}
-        <div className="flex-[1.5]" aria-hidden="true" />
+        {/* No J4 slot at all any more (2026-08-14, second pass).
+            The orb first left this bar because backdrop-blur creates a
+            stacking context that trapped it at the bar's z-40; an empty
+            widened gap stayed behind to hold its place. Now that J4's
+            presence is a composer sitting ABOVE the bar rather than in it,
+            even the gap is wrong — it left a hole in the middle of four tabs
+            with nothing to fill it. The tabs simply share the bar. */}
 
         {mobileRightTabs.map((section) => (
           <Link
@@ -1034,10 +1034,19 @@ export function DashboardShell({
       {/* The summon, on its own layer above everything the shell renders.
           Rendered here rather than inside the tab bar so that no ancestor
           can contain it — see J4Summon.tsx. */}
-      <J4Summon open={j4Open} onSummon={() => setJ4Open(true)} />
+      <J4Summon
+        open={j4Open}
+        onSummon={() => setJ4Open(true)}
+        onSend={(text) => {
+          setJ4Handoff(text);
+          setJ4Open(true);
+        }}
+      />
 
       <J4Overlay open={j4Open} onClose={() => setJ4Open(false)}>
-        {j4}
+        <J4HandoffContext.Provider value={{ text: j4Handoff, clear: () => setJ4Handoff(null) }}>
+          {j4}
+        </J4HandoffContext.Provider>
       </J4Overlay>
     </div>
   );

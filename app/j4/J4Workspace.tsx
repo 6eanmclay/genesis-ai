@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useContext, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { unstable_rethrow, usePathname, useRouter } from "next/navigation";
 import { useFormStatus, flushSync } from "react-dom";
@@ -18,6 +18,7 @@ import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { extractAudioUrl, extractChangeList, extractImageUrl, extractImageUrls, extractQuickReplies } from "./messageChanges";
 import { VoiceMemoButton } from "./VoiceMemoButton";
 import { J4SpeakButton } from "./J4SpeakButton";
+import { J4HandoffContext } from "@/app/dashboard/J4HandoffContext";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
 // (app/j4/page.tsx), replacing the floating GenesisAssistant panel for the
@@ -881,6 +882,30 @@ export function J4Workspace({
   // typing and pressing send already does, not a shortcut around it.
   const formRef = useRef<HTMLFormElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Text typed into J4's persistent presence, taken exactly once (2026-08-14).
+  //
+  // The presence has a field so the owner can type without opening anything,
+  // but it never sends. It hands the text here, and this submits it through
+  // the one real form — the same path a message typed in this composer takes,
+  // so streaming, the slower fallback, failure recovery and everything else
+  // behave identically no matter where the owner started typing.
+  //
+  // requestSubmit rather than calling handleSend directly, matching how quick
+  // replies already dispatch: one real form, one real action, never a second
+  // parallel call path. Cleared immediately so a remount or re-render can
+  // never resend it.
+  const j4Handoff = useContext(J4HandoffContext);
+  const handoffText = j4Handoff.text;
+  useEffect(() => {
+    if (!handoffText) return;
+    const field = messageInputRef.current;
+    const form = formRef.current;
+    j4Handoff.clear();
+    if (!field || !form) return;
+    field.value = handoffText;
+    form.requestSubmit();
+  }, [handoffText, j4Handoff]);
   // Defense-in-depth for the same "typed text disappears while attachments
   // upload" bug the narrowed visibilitychange refresh above targets — this
   // guards the composer regardless of what actually causes a stray
