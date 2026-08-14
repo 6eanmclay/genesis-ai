@@ -72,9 +72,13 @@ The rule this encodes: *J4 doesn't take me somewhere to talk to J4. J4 comes to 
 
 **The orb sits half in, half out of the interaction bar.** Not a standalone element parked above a field: it breaks the bar's own edge so J4 reads as physically attached to the page rather than floating on it. That overlap is the whole visual argument for "J4 is here", and it is why the orb is not simply another control in a row.
 
-**Tapping the orb expands J4 in place. It does not start listening.** Voice is activated from the conversation's own microphone control. That keeps the orb as the one universal "bring J4 here" gesture, and means it can never trigger a recording the owner did not ask for. The conversation stays on the current page either way. Nothing navigates, ever.
+**Tapping the orb activates J4 here. It expands nothing and starts no recording.** The orb visibly wakes — a pulse and an active ring — and puts the cursor in the field, leaving the owner on the same screen with the composer still compact. Voice is activated from the conversation's own microphone. The orb is the persistent interaction point, not a door: *"tapping it should activate J4 HERE, not navigate or immediately turn into the pull-out/expanded conversation. The user should see and feel that J4 has been activated."*
 
-**Focusing the field expands the conversation too.** Someone who has started typing is participating, and should be able to see the exchange they are joining. The cursor follows them into the one composer, because the field they started in is now behind the conversation. Tapping the orb does NOT take the cursor: a keyboard appearing unasked is the typing equivalent of listening unasked, and it would cover the microphone they might have been reaching for. The lightweight collapsed state is what they get back when they are not interacting.
+**Activation must be visible.** An orb that responds to a tap with nothing has not communicated anything. Subtle, but it has to actually do something.
+
+**Expansion is its own affordance.** The grab handle pulls the conversation up, and sending expands too, because a reply needs somewhere to be read. Nothing else expands. Compact is the default and expansion is secondary, which is the whole difference between a presence and a panel. Collapsing returns to compact; the conversation underneath is untouched either way.
+
+**The shape of the surface:** presence strip → orb on the seam → compact composer, about one to two lines. The orb bridges the two areas rather than sitting on top of one, and is backed in the panel's own colour so the overlap leaves no visible crack.
 
 **Never two J4 presences on one screen.** If the persistent presence is on a page, that page does not also carry a large J4 of its own. This mistake has now been made three times — a business-area icon grid, permanent observation cards, and a home hero duplicating the presence — and each time the fix was deleting the duplicate, never arranging it better.
 

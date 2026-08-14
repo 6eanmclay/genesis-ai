@@ -39,6 +39,16 @@ export const GENESIS_AVATAR_SIZE = {
   // somewhere to happen: at 44px an ambient animation is invisible, at 88px
   // it reads without needing to be loud.
   summon: "h-[88px] w-[88px] shrink-0",
+  // 60px — the orb inside J4's persistent presence bar (2026-08-14). Its own
+  // tier rather than reusing `summon` above, because the job changed: `summon`
+  // was a control floating over the page with nothing around it, and had to
+  // out-weigh four navigation icons on its own. This one is embedded in a
+  // surface it shares with a text field, bridging the presence strip and the
+  // composer, so it no longer has to shout to be found — Sean: "make the orb
+  // slightly smaller and less visually thick." At 88px in a bar it read as
+  // thick and left visible seams where it broke the edge; at 60px it bridges
+  // the two areas cleanly and still has room for the listening/thinking pulse.
+  presenceOrb: "h-[60px] w-[60px] shrink-0",
   // GenesisDomicile's own ambient orb — sized relative to its own frame,
   // not a fixed pixel value, kept as its own real token rather than
   // forced onto the fixed-pixel scale above. Bumped 78% -> 85% (2026-08-09,

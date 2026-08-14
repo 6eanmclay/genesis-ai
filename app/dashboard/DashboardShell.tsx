@@ -1038,18 +1038,15 @@ export function DashboardShell({
           can contain it — see J4Summon.tsx. */}
       <J4Summon
         open={j4Open}
-        onSummon={() => {
+        // The handle expands; the orb no longer does. Sean's correction:
+        // tapping the orb activates J4 on this screen and leaves the owner
+        // there, so activation is the presence's own state and never this.
+        onExpand={() => {
           setJ4FocusComposer(false);
           setJ4Open(true);
         }}
         onSend={(text) => {
           setJ4Handoff(text);
-          setJ4FocusComposer(true);
-          setJ4Open(true);
-        }}
-        onStartTyping={() => {
-          // Sean: "when I focus/type in the J4 field, expand the conversation
-          // automatically so I can see the exchange I'm participating in."
           setJ4FocusComposer(true);
           setJ4Open(true);
         }}
