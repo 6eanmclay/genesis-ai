@@ -867,6 +867,12 @@ export function DashboardShell({
         <div className="flex flex-[1.5] flex-col items-center justify-end">
           <Link
             href="/j4"
+            // Next's App Router scrolls to top on navigation by default, so
+            // summoning J4 was silently scrolling the workspace underneath
+            // before the sheet even covered it — the owner then closed J4 and
+            // found their page at the top. A summon must not move the page it
+            // is opening over.
+            scroll={false}
             aria-label="J4"
             // Lifted out of the bar rather than sitting in it. At tab-icon
             // scale J4 read as a fifth navigation item; at 64px breaking the
@@ -1006,6 +1012,10 @@ export function DashboardShell({
           same dedicated environment this links to, not a second surface. */}
       <Link
         href="/j4"
+        // Same reason as the summon control above: this also opens J4 as an
+        // overlay via the intercepting route, so it must not scroll the page
+        // it is opening over.
+        scroll={false}
         // Desktop only as of 2026-08-12. On mobile the J4 center slot in the
         // tab bar above is now the single entry point — keeping this floating
         // pill as well would put two J4 doorways on one screen, the same
