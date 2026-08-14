@@ -1,6 +1,12 @@
 # The four surfaces: Business, J4, Office, Creation
 
-**Status: DRAFT, 2026-08-14 — written for Sean's review, and explicitly NOT authorization to build.** Sean's instruction, verbatim: *"stop implementation and lock the architecture first... no more UI implementation until we review and approve that architecture."* Everything below describes a target. The inventory near the end states honestly what exists today, which is much less. Do not implement against this document without an explicit go-ahead, and do not treat any single section of it as approval for the section next to it.
+> ## J4 is not a place I go. J4 is who comes with me.
+>
+> Sean, 2026-08-14, naming this **the governing principle for the entire interface** — not one principle among several. Every decision below is an instance of it, and any future proposal that cannot be squared with it is the wrong proposal regardless of how well it is built.
+
+**Status: ARCHITECTURE LOCKED, 2026-08-14.** Drafted for review the same day; all five open questions answered by Sean and folded in below. The four surfaces, the transitions between them, the confirmation ladder and the build order are now settled and are not to be relitigated by implementation convenience. What remains open is *how* each piece is built, never *what* the model is.
+
+**This is not blanket authorization to build.** The build order at the end is deliberate and sequential. **Office and Creation are explicitly not to be started yet.**
 
 **What this supersedes.** The "J4 Room" and "Full workspace" concepts, including the ones shipped earlier today (`7e30c7e`, `6c7ea05`). There is no Room anymore. Office and Creation replace it. `J4_WORKSPACE_ARCHITECTURE.md` (2026-08-07, never implemented as written) is also superseded: it proposed J4 as a full-window workspace you enter, which is the model this document exists to reject.
 
@@ -60,13 +66,22 @@ Not `QUESTION → CHAT ROOM → ANSWER → EXIT`. The first is a business partne
 
 Where the owner intentionally goes to review, organise and understand accumulated work: conversations, goals, decisions, tasks, ideas, documents, business knowledge, history and briefings.
 
-**One coherent Office, not five destinations.** Today's `Conversation | Tasks | Ideas | Decisions | Information` tab rail is J4's internal filing cabinet exposed as navigation. It asks the owner *"which J4 room do I need to enter?"*, which is the wrong question. Office should answer *"here's everything we've been working on"* — and let J4 retrieve against it conversationally:
+**`/j4` becomes Office.** What was called "Full workspace" is renamed Office. `/j4` may remain temporarily as a compatibility route that resolves to Office, but it is no longer the primary way to talk to J4 and must not be presented as one.
+
+**No permanent sub-navigation. Decided, not open.** Today's `Conversation | Tasks | Ideas | Decisions | Information` rail is J4's internal filing cabinet exposed as navigation, and it does not survive. Those five do not remain as equal destinations.
+
+Office is **one coherent workspace**. Its material may be filtered, grouped, searched, or surfaced contextually — but never in a way that makes the owner feel they are navigating J4's internal database. The test is which sentence the owner thinks:
+
+> ✅ *"I'm going to J4's Office to see what we've been working on."*
+> ❌ *"Which J4 filing tab contains this?"*
+
+And J4 retrieves against it conversationally:
 
 - *"Show me what we've decided about the website."*
 - *"What are the three things we're working on right now?"*
 - *"Show me everything we've discussed about the new brand."*
 
-Those are retrievals, not tabs. Whether any permanent sub-navigation survives is an open question below.
+Those are retrievals, not tabs.
 
 ## 4. Creation — "J4 and I are making something"
 
@@ -74,16 +89,34 @@ The full-screen studio: logos, brand identity, website redesigns, product design
 
 **Creation is one surface with tools inside it, never a growing list of tabs.** A permanent "Logo" destination guarantees that in six months there is also Website Design, Product Design, Images, Merch and Video sitting beside it, and we are back to the icon grid this whole design keeps deleting.
 
+Creation may use the same J4 conversation and context as everywhere else. It is an intentional transition only because the owner needs a larger canvas, never because the conversation changes.
+
+---
+
+## What is retired
+
+**`/j4/room` is obsolete.** The separate immersive voice room is replaced conceptually by Office and Creation, and should ultimately redirect to Office.
+
+**"Just Talk" is not a separate destination.** Ordinary conversation with J4 happens through the persistent layer while the owner is inside Business. Wanting a larger historical or organisational view of that conversation means Office. Wanting to make something means Creation.
+
+There is no reason to make the owner choose between "Just Talk," "Room," and "Full workspace." One model replaces all three:
+
+```
+Business → persistent J4 → Office or Creation, when intentionally needed
+```
+
 ---
 
 ## Transitions
 
 | From | To | When |
 |---|---|---|
-| Business | J4 | Any time. The summon. Never navigates. |
+| Business | J4 | Any time. The summon. **Never navigates.** Opens the layer in place on the current page. |
 | J4 | Office | Intentional. *"Show me what we've decided about the website."* J4 **offers**; the owner accepts. |
 | J4 | Creation | Intentional. *"Redesign this."* J4 **offers**; the owner accepts. |
 | Office / Creation | Business | Returns to the exact page and scroll position they came from. |
+
+Stated as the distinction to hold onto: **J4 summon = talk to J4 here. Office = go look at the accumulated work with J4.**
 
 **J4 offering to open Office or Creation is a suggestion, not a redirect.** These are what the owner does deliberately, not what happens every time they tap the J4 button.
 
@@ -105,9 +138,29 @@ Sean's framing, and it may be one of Genesis's signature experiences: most websi
 
 **A whole-site redesign must never be represented by a small cropped hero preview.** When J4 changes six things and shows a thumbnail, the owner cannot judge the proposal, and "I changed six things" is not the same as showing them what their business now looks like.
 
-**Proposals come to the owner; the owner does not go hunting for them.** A proposal buried at the bottom of the Website tab fails this. If the owner is already looking at the target, the comparison appears in context. If they are elsewhere, J4 brings the relevant visual into view without throwing them into another room.
+**A proposal belongs to J4 first, not to a disconnected page.** This was the real architectural fork, and it is decided: the proposal is part of the conversation. When the owner is looking at the thing being discussed, J4 says *"here's what I'm proposing"* and **shows it without taking the owner away from what they are looking at.**
 
-**Context determines confirmation.** If J4 and the owner are already looking at the thing, J4 should not make them review the same thing twice — the conversational approval already given is the approval. If the request concerns something outside the current viewport (*"let's redo the website"* said from Identity), J4 must bring that target into view and show a proposal, because the owner cannot approve what they cannot see.
+**Proposals come to the owner; the owner does not go hunting for them.** A proposal buried at the bottom of the Website tab fails this. If the owner is elsewhere, J4 brings the relevant visual into view rather than throwing them into another room.
+
+### The confirmation ladder
+
+Confirmation is context-dependent. Not every action needs two confirmations, and demanding one because the architecture is uniform is itself the bug:
+
+| The change | What confirmation looks like |
+|---|---|
+| Conversation | None. Talking is not a change. |
+| Small text or content change | Show it and confirm appropriately |
+| Meaningful visual or design change | Visual comparison |
+| Major redesign | Substantial before and after preview |
+| Execution | The owner approves the actual proposed change |
+
+**If the owner is already looking directly at the target and J4 can modify that same visible target, do not make them perform a redundant confirmation.** The conversational approval they just gave is the approval. Making them review the same thing twice is not safety, it is friction wearing safety's clothes.
+
+The principle underneath the whole ladder:
+
+> **The owner should always be able to see what they are agreeing to when the change is visual or substantial.**
+
+If the request concerns something outside the current viewport (*"let's redo the website"* said from Identity), J4 must bring that target into view and show a proposal, because the owner cannot approve what they cannot see. And if J4 proposes a completely new homepage, showing the first few inches of it is useless — the preview must be proportional to the scope of the change.
 
 ---
 
@@ -168,22 +221,70 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 - Listen on the morning briefing as a first-class control.
 - Design intelligence, in any form.
 
-**Also present and unresolved:** `/j4/room`, a separate immersive voice room, and a `Just Talk` toggle inside the current workspace. Both predate this model and neither has a place in it as written.
+**Present and now retired by decision, still to be removed in code:** `/j4/room`, the separate immersive voice room, and the `Just Talk` toggle inside the current workspace. Both predate this model and neither has a place in it. `/j4` itself survives only as a compatibility route to Office.
 
 ---
 
-## Open questions — these need Sean's decision before anything is built
+## Decisions — answered by Sean 2026-08-14, closed
 
-1. **What happens to `/j4` and the "Full workspace" control shipped today?** Does the room become Office, with Creation added beside it? Does the layer's header control become two? Does `/j4` survive as a route at all, or do Office and Creation get their own?
-2. **Does Office keep any permanent sub-navigation,** or is it purely conversational retrieval with a single landing view? "One coherent Office" rules out five tabs but does not by itself say what replaces them.
-3. **What happens to `/j4/room` and `Just Talk`?** Both are conversation surfaces that this model has no slot for. Fold into Creation, fold into J4, or delete.
-4. **Where does a proposal actually appear** when the owner is looking at the target — inside the layer, or in the page beneath it? This decides whether the comparison UI belongs to J4 or to the Business surface, which is a real architectural fork.
-5. **Build order.** Office, Creation, and scope-matched comparison are three substantial pieces. Comparison is the one with a live complaint behind it and the smallest blast radius.
+1. **`/j4` becomes Office.** "Full workspace" is renamed Office. `/j4` may stay temporarily as a compatibility route resolving to Office, but is no longer the primary way to talk to J4. The summon never navigates to it. `/j4/room` is retired and ultimately redirects to Office.
+2. **Office has no permanent sub-navigation.** The five tabs do not survive as equal destinations. One coherent workspace, with material filtered, grouped, searched or surfaced contextually.
+3. **`/j4/room` and "Just Talk" are both obsolete.** Replaced by the single model: Business → persistent J4 → Office or Creation when intentionally needed.
+4. **A proposal belongs to J4, shown in place.** Not a disconnected page. Scope-matched preview, with the confirmation ladder above.
+5. **Build order is fixed.** See below. Office and Creation are explicitly not to be started yet.
+
+---
+
+## Build order
+
+Sequential and deliberate. Each step is the foundation the next depends on. **Do not skip ahead, and do not start Office or Creation.**
+
+### 1. Persistent J4 layer — *largely built*
+
+Always accessible; never navigates when summoned; never steals or locks the owner's scroll; remains available across every Business page; understands current page context; the conversation continues naturally across pages.
+
+Shipped: the layer itself (`5be9221`), the summon as a topmost layer (`83f78af`), turns finishing in place (`09ffb55`), page-level context (`lib/j4/workspaceContext.ts`). What remains is verification on a real device and removing the retired surfaces named above.
+
+### 2. Visual proposal and comparison — *next*
+
+Current versus proposed. Element, section, page and full-page scope with an appropriately sized preview. Approve, reject or discuss. **J4 can revise the same proposal based on the owner's rebuttal** — this is the `IDEA → DISCUSSION → REBUTTAL → REFINEMENT` loop made real, and it is what separates this from a diff viewer.
+
+### 3. Context model
+
+Page-level first, architected to grow into the actual entity or element being discussed: *"I don't like this headline," "change this product," "show me another version of this logo."* J4 needs to eventually know exactly what "this" means.
+
+### 4. Office
+
+Consolidate the accumulated conversation and work into one coherent workspace.
+
+### 5. Creation
+
+The large-format creative workspace. May use the same J4 conversation and context; intentional only because the owner needs a larger canvas.
+
+### 6. Design intelligence
+
+Its own research and knowledge problem. Not solvable with arbitrary UI rules.
 
 ---
 
 ## How to apply
 
-Check any proposed J4 work against three things before writing code: does it pass the non-negotiable test above; does it put a collection of things into the conversational layer; and does it let the owner accept a visual change they cannot actually see. If a change fails any of those, it is the wrong change regardless of how well it is implemented.
+The architecture in one line each:
+
+```
+BUSINESS  = where I operate my business.
+J4        = the partner who's always with me while I operate it.
+OFFICE    = where I review and organize everything we've worked on.
+CREATION  = where we make things together at full scale.
+```
+
+Check any proposed J4 work against four things before writing code:
+
+1. Does it pass the non-negotiable test — does the owner keep their page and their place?
+2. Does it put a collection of things into the conversational layer? Collections are Office.
+3. Does it let the owner accept a visual or substantial change they cannot actually see?
+4. Does it demand a confirmation the owner already gave conversationally while looking straight at the target?
+
+A change that fails any of those is the wrong change regardless of how well it is implemented. And above all four, the governing principle at the top of this document: **J4 is not a place I go. J4 is who comes with me.**
 
 See also `GENESIS_EXPERIENCE_PRINCIPLES.md` (the governing lens: business partner, never chatbot), `J4_IDENTITY.md`, and `lib/j4CopyRules.ts` for the permanent no-dashes copy rule that applies to everything J4 says on every surface here.
