@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -16,13 +16,18 @@ import { J4Icon } from "./J4Icon";
 // summon and backed by a ring in the panel's own colour, which is what closes
 // the crack an unbacked overlap left around it.
 //
-// THE ORB DOES NOT EXPAND ANYTHING. Sean's correction, and the reason this
-// stopped being a summon button: "tapping it should activate J4 HERE, not
-// navigate or immediately turn into the pull-out/expanded conversation. The
-// user should see and feel that J4 has been activated." So a tap wakes him —
-// a visible pulse, an active ring, and the cursor placed in the field — and
-// leaves the owner exactly where they are, with the compact composer still
-// compact.
+// THE ORB IS ACTIVATION, AND ONLY THAT. Sean's correction, and the reason
+// this stopped being a summon button: "tapping it should activate J4 HERE,
+// not navigate or immediately turn into the pull-out/expanded conversation.
+// The user should see and feel that J4 has been activated." A tap wakes him
+// visibly and leaves the owner exactly where they are.
+//
+// It expands nothing. It focuses nothing — an orb that pops a keyboard has
+// announced the text field rather than J4, and "the orb interaction needs to
+// be treated as J4 activation, not simply as a way to focus the text field."
+// And it is not secretly the microphone: the orb is the persistent presence,
+// the mic is the voice control, and conflating them would let a tap start a
+// recording nobody asked for.
 //
 // EXPANSION IS ITS OWN AFFORDANCE. The grab handle pulls the conversation up.
 // That is the only gesture that expands, apart from sending, which has to
@@ -69,7 +74,6 @@ export function J4Summon({
   // J4 is awake and attending to this screen. Visible, and deliberately not
   // the same thing as the conversation being open.
   const [active, setActive] = useState(false);
-  const fieldRef = useRef<HTMLInputElement>(null);
 
   if (!mounted) return null;
 
@@ -98,16 +102,19 @@ export function J4Summon({
         <div className="flex items-end gap-2 px-3 pb-2">
           {/* The orb on the seam. -mt-7 lifts it by half its own height into
               the strip above, so it bridges the two areas rather than sitting
-              on top of one. */}
+              on top of one.
+              A tap activates J4 and does nothing else. It deliberately does
+              NOT focus the field: Sean's correction is that "the orb
+              interaction needs to be treated as J4 activation, not simply as
+              a way to focus the text field", and an orb that pops a keyboard
+              has announced the field rather than J4. Someone who wants to type
+              taps the field, which is right there. It also does not expand,
+              and it is not secretly the microphone — the orb is the persistent
+              presence, the mic is the voice control, and conflating them would
+              mean a tap could start recording without being asked to. */}
           <button
             type="button"
-            onClick={() => {
-              setActive(true);
-              // Wakes J4 and puts the cursor here. It does NOT expand: the
-              // owner stays on this screen with the composer still compact,
-              // which is the correction this behaviour exists for.
-              fieldRef.current?.focus();
-            }}
+            onClick={() => setActive((v) => !v)}
             aria-pressed={active}
             aria-label={active ? "J4 is active" : "Activate J4"}
             className="relative -mt-7 shrink-0 rounded-full transition-transform duration-200 active:scale-95"
@@ -118,14 +125,16 @@ export function J4Summon({
             {active && (
               <span
                 aria-hidden="true"
-                className="pointer-events-none absolute -inset-1 animate-ping rounded-full bg-[#2563eb]/30"
+                className="pointer-events-none absolute -inset-1.5 animate-ping rounded-full bg-[#2563eb]/40"
                 style={{ animationDuration: "2.2s" }}
               />
             )}
+            {/* A steady glow under the pulse, so the active state is legible
+                between beats rather than only at the moment one fires. */}
             <span
               aria-hidden="true"
-              className={`pointer-events-none absolute -inset-0.5 rounded-full transition-colors duration-300 ${
-                active ? "bg-[#2563eb]/25" : "bg-transparent"
+              className={`pointer-events-none absolute rounded-full transition-all duration-300 ${
+                active ? "-inset-2 bg-[#2563eb]/35 blur-md" : "-inset-0 bg-transparent"
               }`}
             />
             {/* The ring is the panel's own colour, so the circle joins the
@@ -147,12 +156,11 @@ export function J4Summon({
             className="flex min-w-0 flex-1 items-center gap-2 pb-1"
           >
             <input
-              ref={fieldRef}
               type="text"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onFocus={() => setActive(true)}
-              placeholder="Ask J4, or tell J4 what you're working on…"
+              placeholder={active ? "J4 is here. Ask, or tell J4 what you're working on…" : "Ask J4, or tell J4 what you're working on…"}
               aria-label="Talk to J4"
               className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-black placeholder:text-zinc-400 focus:outline-none dark:text-zinc-50 dark:placeholder:text-zinc-500"
             />

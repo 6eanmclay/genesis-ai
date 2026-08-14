@@ -72,7 +72,9 @@ The rule this encodes: *J4 doesn't take me somewhere to talk to J4. J4 comes to 
 
 **The orb sits half in, half out of the interaction bar.** Not a standalone element parked above a field: it breaks the bar's own edge so J4 reads as physically attached to the page rather than floating on it. That overlap is the whole visual argument for "J4 is here", and it is why the orb is not simply another control in a row.
 
-**Tapping the orb activates J4 here. It expands nothing and starts no recording.** The orb visibly wakes — a pulse and an active ring — and puts the cursor in the field, leaving the owner on the same screen with the composer still compact. Voice is activated from the conversation's own microphone. The orb is the persistent interaction point, not a door: *"tapping it should activate J4 HERE, not navigate or immediately turn into the pull-out/expanded conversation. The user should see and feel that J4 has been activated."*
+**Tapping the orb activates J4 here, and does only that.** It expands nothing, focuses nothing, and records nothing. The orb visibly wakes — a pulse and a steady glow — leaving the owner on the same screen with the composer still compact: *"tapping it should activate J4 HERE, not navigate or immediately turn into the pull-out/expanded conversation. The user should see and feel that J4 has been activated."*
+
+**The orb is not the microphone, and must not quietly become it.** The orb is the persistent presence; the mic is the voice control, and it lives with the conversation. Merging them would let a tap start a recording nobody asked for. Equally, the orb is not a shortcut to the text field — an orb that pops a keyboard has announced the field rather than J4. Someone who wants to type taps the field, which is right there.
 
 **Activation must be visible.** An orb that responds to a tap with nothing has not communicated anything. Subtle, but it has to actually do something.
 
