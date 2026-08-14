@@ -5,6 +5,7 @@ import {
 } from "./proposal-actions";
 import { ProposalComparison, type ComparisonSide } from "@/app/dashboard/ProposalComparison";
 import { ActionDiffRows } from "@/lib/execution/ActionDiff";
+import { TellJ4Button } from "./TellJ4Button";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { resolveProposalScope, type ProposalScope } from "@/lib/storefront/proposalScope";
 import type { Proposal } from "@/lib/storefront/proposals";
@@ -151,15 +152,14 @@ export function J4Proposal({
               </button>
             </form>
           ))}
-          <p className="text-[11px]" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-            or describe what you would take from each
-          </p>
+          <TellJ4Button className="rounded-full px-3 py-1.5 text-xs font-medium underline underline-offset-2 transition-colors hover:bg-white/[.06]" />
         </div>
       )}
 
-      {/* Approve and reject only. The third option, "argue with it", is the
-          composer below this — see the component comment. */}
-      <div className="mt-3 flex items-center gap-2">
+      {/* All three decisions, together: apply it, turn it down, or argue with
+          it. The third used to be a sentence rather than a control, which
+          quietly made the most important one the least available. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
         {/* Plain forms bound to the real Server Actions, the same shape
             VisualProposal already uses for these exact two actions. */}
         <form action={approveProposalInConversation.bind(null, current.id)}>
@@ -179,9 +179,7 @@ export function J4Proposal({
             Not this
           </button>
         </form>
-        <p className="ml-1 text-[11px]" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-          or tell J4 what to change
-        </p>
+        <TellJ4Button className="rounded-full px-3 py-2 text-xs font-medium underline underline-offset-2 transition-colors hover:bg-white/[.06]" />
       </div>
 
       {otherPendingCount > 0 && (

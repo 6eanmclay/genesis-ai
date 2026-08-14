@@ -88,15 +88,18 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
   //
   // Sean: "there must only be ONE J4 conversation." Several proposal cards
   // above one composer read as several parallel threads, which is exactly the
-  // fragmentation being ruled out. So the layer shows the one currently under
+  // fragmentation being ruled out. So this shows the one currently under
   // discussion (newest first) and says plainly that others are waiting rather
-  // than rendering them as competing conversations. Those others are
-  // accumulated work, which is what Office is for once it exists.
+  // than rendering them as competing conversations.
   //
-  // Layer only, and deliberately: a proposal belongs to the conversation that
-  // produced it, shown where the owner is standing, never on a page they have
-  // to go and find. See GENESIS_SURFACES.md decision 4.
-  const openProposals = isRoom ? [] : await getOpenProposals(store.id);
+  // BOTH SURFACES, corrected 2026-08-14. This was layer-only for one build,
+  // on the reasoning that the layer is where proposals belong. That was wrong,
+  // and Sean caught it from a screenshot: the room shows the SAME conversation,
+  // so a proposal raised while the owner is reading it there simply never
+  // appeared, and the decision was unreachable from the very place the
+  // discussion was happening. A proposal belongs to the CONVERSATION, and the
+  // conversation is on both surfaces. See GENESIS_SURFACES.md decision 4.
+  const openProposals = await getOpenProposals(store.id);
   const proposalOnTable = openProposals[0] ?? null;
   const otherPendingCount = Math.max(0, openProposals.length - 1);
   const storefrontUrl = proposalOnTable ? `${await getBaseUrl()}/store/${store.slug}` : null;
