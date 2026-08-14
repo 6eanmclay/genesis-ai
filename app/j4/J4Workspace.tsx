@@ -767,6 +767,7 @@ export function J4Workspace({
   ideas,
   information,
   surface,
+  proposal,
 }: {
   storeName: string;
   messages: Message[];
@@ -779,6 +780,10 @@ export function J4Workspace({
   ideas: IdeaItem[];
   information: InformationItem[];
   surface: J4Surface;
+  // J4's current proposal, server-rendered and handed down. Sits directly
+  // above the composer, because the composer is how the owner argues with it
+  // — see J4Proposal.tsx for why there is no "refine" button.
+  proposal?: React.ReactNode;
 } & J4Signals) {
   // Two surfaces, one conversation (2026-08-14). Sean's clarification:
   // "the persistent J4 summon is not a shortcut to the J4 page. It is the
@@ -1796,6 +1801,11 @@ export function J4Workspace({
           </div>
         )}
       </div>
+
+      {/* Between the conversation and the composer, deliberately: the owner
+          reads the proposal, then answers it in the field directly below.
+          Nothing to navigate to, and nothing to dismiss first. */}
+      {proposal && <div className="shrink-0 px-5">{proposal}</div>}
 
       {showConfirmCeiling && previousUserMessage && (
         <div className="shrink-0 border-t px-5 pt-3" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { getStoreRole } from "@/lib/permissions";
 import { createCheckoutSession, subscribeToNewsletter } from "./actions";
+import { resolvePreviewTheme } from "@/lib/storefront/previewTheme";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { ActionForm } from "@/app/dashboard/ActionForm";
 import {
@@ -105,13 +106,23 @@ export default async function StorefrontPage({
   searchParams: Promise<{
     subscribed?: string;
     previewOrder?: string;
+    // Step 2 (2026-08-14) — renders this page as an unapproved proposal would
+    // leave it, so the owner can judge a change before accepting it. Same
+    // privileged-preview contract as previewOrder above: owner/employee only,
+    // never persisted, silently ignored when absent or invalid.
+    previewProposal?: string;
     payment_pending?: string;
     ref?: string;
   }>;
 }) {
   const { slug } = await params;
-  const { subscribed, previewOrder, payment_pending: paymentPending, ref: paymentRef } =
-    await searchParams;
+  const {
+    subscribed,
+    previewOrder,
+    previewProposal,
+    payment_pending: paymentPending,
+    ref: paymentRef,
+  } = await searchParams;
 
   const store = await prisma.store.findUnique({
     where: { slug },
@@ -148,7 +159,20 @@ export default async function StorefrontPage({
   const storeTagline = store.tagline;
   const storeDescription = store.description;
 
-  const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
+  const storedTheme = (store.theme as Theme | null) ?? DEFAULT_THEME;
+  // An owner/employee-only preview of an unapproved proposal, applied through
+  // the exact same transform that executing it would use — see
+  // lib/storefront/previewTheme.ts. Falls back silently to the real stored
+  // theme for every failure mode, because this is a way of looking at the
+  // store, not a feature of it. Customers and logged-out visitors have
+  // viewerRole null and therefore always see the real storefront.
+  const proposedTheme = await resolvePreviewTheme({
+    storeId: store.id,
+    currentTheme: storedTheme,
+    proposalId: previewProposal,
+    viewerIsStaff: viewerRole !== null,
+  });
+  const theme = proposedTheme ?? storedTheme;
   const blueprint = store.blueprint as Blueprint | null;
   const homepage = blueprint?.homepageContent;
   const brandIdentity = blueprint?.brandIdentity;

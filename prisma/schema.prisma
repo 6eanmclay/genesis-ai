@@ -776,7 +776,40 @@ model ApprovalRequest {
   input                Json
   previousValues       Json
   summary              String
-  status               String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | EXECUTED | REJECTED
+  // Step 2 of the surface architecture (2026-08-14) — a proposal survives
+  // being argued with. Sean's requirement: "if the owner disagrees with the
+  // first idea, J4 should refine the same proposal rather than treating the
+  // rebuttal as a new unrelated request."
+  //
+  // Without this, a rebuttal produced a second, unrelated ApprovalRequest and
+  // the conversation's history was lost the moment it mattered most. A
+  // proposal is now a CHAIN of these rows: every revision is a real, separate,
+  // auditable ApprovalRequest (so the execution, approval and verification
+  // pipeline is completely unchanged), linked by a shared proposalId.
+  //
+  // proposalId equals the id of the chain's first row, so the identity is
+  // stable and indexable without walking the chain. Null on every row written
+  // before this existed, which is why it stays optional rather than defaulted.
+  proposalId           String?
+  revision             Int       @default(1)
+  // The row this one revises. Null for a first draft. Kept alongside
+  // proposalId rather than derived from it, because "what changed since the
+  // last version" is a different question from "what is this proposal", and
+  // answering it by sorting revisions is fragile once rows can be deleted.
+  supersedesId         String?
+  // How much of the storefront the owner is being asked to judge, and
+  // therefore how much of it must be shown. A key of PROPOSAL_SCOPES
+  // (element | section | page | site) — see lib/storefront/proposalScope.ts
+  // for why this is derived from what the proposal touches rather than
+  // declared by the model. Null means it predates this and is presented at
+  // its historical size.
+  scope                String?
+  // J4's own reasoning, kept separate from `summary`. Summary says what
+  // changes; this says why, and it is what the owner is actually arguing with
+  // when they push back. Losing it across a revision would make "I don't like
+  // that, keep the handmade feel" unanswerable.
+  rationale            String?
+  status               String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | EXECUTED | REJECTED | SUPERSEDED
   authorizationTier    String    @default("always_ask") // always_ask | auto_below_limit | auto — frozen snapshot of the tier that governed this request at creation time, see lib/execution/genesisActions.ts
   groupId              String? // shared across every ApprovalRequest created from one Genesis "thought" (one chat turn, or one recommendation-review run) — Phase 4 — presentational grouping only; never merges the underlying decision or execution
   // Phase 5 — stable identity of the underlying BUSINESS ISSUE/OPPORTUNITY
@@ -825,6 +858,9 @@ model ApprovalRequest {
 
   @@index([storeId, status])
   @@index([aiUsageEventId])
+  // Every revision of one proposal, newest last. The only access pattern this
+  // chain has: "show me this proposal, including how we got here."
+  @@index([proposalId, revision])
 }
 
 // Phase 6 — the smallest durable representation of "the owner has authorized

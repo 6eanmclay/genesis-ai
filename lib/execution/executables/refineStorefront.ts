@@ -47,6 +47,49 @@ export interface RefineStorefrontInput {
   summary: string;
 }
 
+/**
+ * Applies a set of refinements to a theme. Pure, and deliberately shared.
+ *
+ * Extracted from run() (2026-08-14) so the visual proposal preview can render
+ * the storefront exactly as executing this action would leave it. Two copies
+ * of this transform would be a preview that quietly lies: the owner would
+ * approve one storefront and receive another, and nothing would report an
+ * error. One function, two callers, so any divergence is a compile error
+ * rather than a silent difference the owner discovers after approving.
+ *
+ * Throws on an invalid dimension or value. Validated here rather than only at
+ * the schema boundary, so this holds regardless of how the input arrived —
+ * which now includes a stored ApprovalRequest.input read back much later, not
+ * just a freshly validated tool call.
+ */
+export function applyRefinementsToTheme(current: Theme, changes: RefineStorefrontChange[]): Theme {
+  // Start from the store's real current values, falling back to the defaults
+  // lib/theme.ts documents as reproducing the storefront's original hardcoded
+  // rendering. A store that predates presentation or composition therefore
+  // gains a complete, known-good set rather than a half-populated one.
+  const presentation: Presentation = { ...(current.presentation ?? DEFAULT_THEME.presentation!) };
+  const composition: Composition = { ...(current.composition ?? DEFAULT_THEME.composition!) };
+
+  for (const change of changes) {
+    if (!isRefinableDimension(change.dimension)) {
+      throw new Error(`Not a refinable part of the storefront: ${change.dimension}`);
+    }
+    if (!isValidDimensionValue(change.dimension, change.value)) {
+      throw new Error(`"${change.value}" is not a real option for ${describeDimension(change.dimension)}.`);
+    }
+    if (dimensionGroup(change.dimension) === "presentation") {
+      (presentation as Record<string, string>)[change.dimension] = change.value;
+    } else {
+      (composition as Record<string, string>)[change.dimension] = change.value;
+    }
+  }
+
+  // Colours and typography are deliberately untouched. This action changes
+  // structure and presentation only; a palette or font change remains
+  // update_theme's job, which is the separation that keeps this one small.
+  return { ...current, presentation, composition };
+}
+
 export const refineStorefrontExecutable: Executable<
   RefineStorefrontInput,
   { applied: { dimension: string; value: string }[] }
@@ -61,35 +104,7 @@ export const refineStorefrontExecutable: Executable<
     });
     const current = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
-    // Start from the store's real current values, falling back to the
-    // defaults lib/theme.ts documents as reproducing the storefront's
-    // original hardcoded rendering. A store that predates presentation or
-    // composition therefore gains a complete, known-good set rather than a
-    // half-populated one.
-    const presentation: Presentation = { ...(current.presentation ?? DEFAULT_THEME.presentation!) };
-    const composition: Composition = { ...(current.composition ?? DEFAULT_THEME.composition!) };
-
-    // Validated again here, not only at the schema boundary. The schema is
-    // the first gate; this is the one that runs regardless of how the input
-    // arrived, so an invalid dimension can never be written to a real store.
-    for (const change of input.changes) {
-      if (!isRefinableDimension(change.dimension)) {
-        throw new Error(`Not a refinable part of the storefront: ${change.dimension}`);
-      }
-      if (!isValidDimensionValue(change.dimension, change.value)) {
-        throw new Error(`"${change.value}" is not a real option for ${describeDimension(change.dimension)}.`);
-      }
-      if (dimensionGroup(change.dimension) === "presentation") {
-        (presentation as Record<string, string>)[change.dimension] = change.value;
-      } else {
-        (composition as Record<string, string>)[change.dimension] = change.value;
-      }
-    }
-
-    // Colours and typography are deliberately untouched. This action changes
-    // structure and presentation only; a palette or font change remains
-    // update_theme's job, which is the separation that keeps this one small.
-    const nextTheme: Theme = { ...current, presentation, composition };
+    const nextTheme = applyRefinementsToTheme(current, input.changes);
 
     await prisma.store.update({
       where: { id: ctx.storeId },

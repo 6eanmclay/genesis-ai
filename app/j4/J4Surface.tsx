@@ -7,6 +7,9 @@ import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { sendStoreMessage, uploadBusinessAssetFromChat, uploadPhotoBatchFromChat, uploadVoiceMemo } from "@/app/dashboard/ai-actions";
 import { J4Workspace, type J4Surface as J4SurfaceKind } from "./J4Workspace";
+import { J4Proposal } from "./J4Proposal";
+import { getOpenProposal } from "@/lib/storefront/proposals";
+import { getBaseUrl } from "@/lib/integrations/util";
 
 // J4's real conversation, rendered on either of its two surfaces
 // (2026-08-14). Extracted from app/j4/page.tsx unchanged so that both the
@@ -81,6 +84,13 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
     isRoom ? getOpenTasks(store.id) : Promise.resolve([]),
   ]);
 
+  // The proposal currently on the table, if J4 has made one (2026-08-14).
+  // Layer only, and deliberately: a proposal belongs to the conversation that
+  // produced it, shown where the owner is standing, never on a page they have
+  // to go and find. See GENESIS_SURFACES.md decision 4.
+  const openProposal = isRoom ? null : await getOpenProposal(store.id);
+  const storefrontUrl = openProposal ? `${await getBaseUrl()}/store/${store.slug}` : null;
+
   const messages = recentMessages.reverse();
   const urgentObservations = observations.filter((o) => o.genesisState === "urgent");
   const ideas = observations.filter((o) => o.genesisState === "opportunity");
@@ -115,6 +125,13 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
       }))}
       ideas={ideas.map((o) => ({ id: o.id, summary: o.summary, href: o.actionHref }))}
       information={information}
+      // Rendered on the server and handed down, so the layer stays a client
+      // component without needing to fetch or know about proposals itself.
+      proposal={
+        openProposal && storefrontUrl ? (
+          <J4Proposal proposal={openProposal} storefrontUrl={storefrontUrl} storeName={store.name} />
+        ) : null
+      }
     />
   );
 }
