@@ -107,6 +107,12 @@ export function useJ4Talk({
   // startListening restarts itself, which a const cannot reference from inside
   // its own definition. Held in a ref, assigned once it exists.
   const restartRef = useRef<() => void>(() => {});
+  // Whether Talk Mode is meant to be running, which is NOT the same as the
+  // visible state. On the very first tap the state is still "off" while the
+  // microphone permission prompt is up, so anything that guards on the state
+  // during that await cancels the start it was trying to protect. Intent has
+  // to be its own flag, set the instant the owner taps.
+  const armedRef = useRef(false);
 
   const setBoth = useCallback((next: TalkState) => {
     stateRef.current = next;
@@ -165,8 +171,15 @@ export function useJ4Talk({
         return;
       }
     }
-    // Talk Mode may have been switched off while the permission prompt was up.
-    if (stateRef.current === "off") return;
+    // Switched off while the permission prompt was up. Checked against intent
+    // rather than the visible state: the state is still "off" during the very
+    // first prompt, so guarding on it here silently cancelled every first
+    // start — the permission dialog appeared and then nothing happened.
+    if (!armedRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      return;
+    }
 
     const mimeType = pickMimeType();
     const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
@@ -183,6 +196,11 @@ export function useJ4Talk({
     // which is exactly what happened on the first real iPhone test.
     let meterRunning = false;
     recorder.onstop = () => {
+      // A superseded recorder. teardownRecorder() clears the ref before
+      // stopping, so this fires for recorders that have already been replaced
+      // — acting on them would restart listening from a turn nobody is in,
+      // which is how a teardown becomes an infinite loop.
+      if (recorderRef.current !== recorder) return;
       stopMeter();
       const type = recorder.mimeType || mimeType || "audio/webm";
       const blob = new Blob(chunks, { type });
@@ -292,6 +310,7 @@ export function useJ4Talk({
   }, [startListening]);
 
   const stop = useCallback(() => {
+    armedRef.current = false;
     setBoth("off");
     releaseMic();
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -301,8 +320,13 @@ export function useJ4Talk({
 
   const start = useCallback(() => {
     setError(null);
+    armedRef.current = true;
+    // Shown as listening immediately, before the microphone is even open. A
+    // tap that lights nothing up until permission resolves reads as a dead
+    // control, and on a first run that wait includes a system dialog.
+    setBoth("listening");
     void startListening();
-  }, [startListening]);
+  }, [setBoth, startListening]);
 
   /**
    * Speaks J4's reply, then goes back to listening.
