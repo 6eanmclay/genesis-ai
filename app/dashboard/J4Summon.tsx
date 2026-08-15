@@ -99,7 +99,7 @@ export function J4Summon({
       // Clears the tab bar rather than sitting on it.
       style={{ bottom: "calc(env(safe-area-inset-bottom) + 3.75rem)" }}
     >
-      <div className="pointer-events-auto mx-auto max-w-lg rounded-2xl border border-black/[.09] bg-white/95 shadow-lg backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95">
+      <div className="pointer-events-auto relative mx-auto max-w-lg rounded-2xl border border-black/[.09] bg-white/95 shadow-lg backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95">
         {/* The pull. The only gesture besides sending that expands anything,
             and deliberately a separate target from the orb. */}
         <button
@@ -112,10 +112,23 @@ export function J4Summon({
           <span className="h-1 w-9 rounded-full bg-black/[.15] dark:bg-white/[.2]" aria-hidden="true" />
         </button>
 
-        <div className="flex items-end gap-2 px-3 pb-2">
-          {/* The orb on the seam. -mt-7 lifts it by half its own height into
-              the strip above, so it bridges the two areas rather than sitting
-              on top of one.
+        {/* The seam. A real divider, so the orb has an edge to sit on rather
+            than a notional one. */}
+        <div className="border-t border-black/[.06] dark:border-white/[.08]" aria-hidden="true" />
+
+        {/* The composer, padded left to clear the orb on the seam. */}
+        <div className="flex items-center gap-2 py-2 pl-[4.75rem] pr-3">
+          {/* The orb ON the seam (2026-08-14, second pass). It was a flex item
+              in the composer row, which Sean read exactly as it looked: "the
+              orb coming directly out of the center of the composer makes J4
+              feel like part of the input field rather than a persistent
+              presence." It is now absolutely positioned on the divider itself,
+              centred on it, so half sits in the presence strip and half
+              crosses into the composer. The composer's left padding clears it
+              and the ring is painted in the panel's own colour, so the two
+              areas join around the orb rather than showing a gap where it
+              overlaps. The composer is the interface; the orb is J4, and they
+              must not read as the same object.
               A tap activates J4 and does nothing else. It deliberately does
               NOT focus the field: Sean's correction is that "the orb
               interaction needs to be treated as J4 activation, not simply as
@@ -130,7 +143,7 @@ export function J4Summon({
             onClick={() => setActive((v) => !v)}
             aria-pressed={active}
             aria-label={active ? "J4 is active" : "Activate J4"}
-            className="relative -mt-7 shrink-0 rounded-full transition-transform duration-200 active:scale-95"
+            className="absolute left-4 top-5 z-10 -translate-y-1/2 rounded-full transition-transform duration-200 active:scale-95"
           >
             {/* The active signal. A slow ring rather than a loud one: it has
                 to be noticeable without becoming the brightest thing on a

@@ -142,15 +142,16 @@ export function J4Proposal({
       {current.directions.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {current.directions.map((d) => (
-            <form key={d.id} action={chooseDirectionInConversation.bind(null, current.id, d.id)}>
-              <button
-                type="submit"
-                className="rounded-full border px-3 py-1.5 text-xs font-medium text-[#f4f2fb] transition-opacity hover:opacity-90"
-                style={{ borderColor: GENESIS_ATMOSPHERE.violet }}
-              >
-                Go with {d.label}
-              </button>
-            </form>
+            <button
+              key={d.id}
+              type="submit"
+              formAction={chooseDirectionInConversation.bind(null, current.id, d.id)}
+              formNoValidate
+              className="rounded-full border px-3 py-1.5 text-xs font-medium text-[#f4f2fb] transition-opacity hover:opacity-90"
+              style={{ borderColor: GENESIS_ATMOSPHERE.violet }}
+            >
+              Go with {d.label}
+            </button>
           ))}
           <TellJ4Button className="rounded-full px-3 py-1.5 text-xs font-medium underline underline-offset-2 transition-colors hover:bg-white/[.06]" />
         </div>
@@ -160,25 +161,33 @@ export function J4Proposal({
           it. The third used to be a sentence rather than a control, which
           quietly made the most important one the least available. */}
       <div className="mt-3 flex flex-wrap items-center gap-2" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-        {/* Plain forms bound to the real Server Actions, the same shape
-            VisualProposal already uses for these exact two actions. */}
-        <form action={approveProposalInConversation.bind(null, current.id)}>
-          <button
-            type="submit"
-            className="rounded-full bg-[#2563eb] px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
-          >
-            Apply this
-          </button>
-        </form>
-        <form action={rejectProposalInConversation.bind(null, current.id)}>
-          <button
-            type="submit"
-            className="rounded-full px-4 py-2 text-xs font-medium transition-colors hover:bg-white/[.06]"
-            style={{ color: GENESIS_ATMOSPHERE.textSecondary }}
-          >
-            Not this
-          </button>
-        </form>
+        {/* formAction on the button, NOT a nested <form> (2026-08-14).
+            These were wrapped in their own forms, which silently did nothing:
+            J4Workspace's root element is itself a <form>, nested forms are
+            invalid HTML, and the browser drops the inner one. The result was
+            exactly what Sean reported — the comparison toggles worked, being
+            plain buttons, while every decision control was dead.
+            formAction submits the conversation's own form with this action
+            instead, and formNoValidate is required because that form's message
+            field is `required`: without it, deciding a proposal while the
+            composer is empty would fail validation and, again, do nothing. */}
+        <button
+          type="submit"
+          formAction={approveProposalInConversation.bind(null, current.id)}
+          formNoValidate
+          className="rounded-full bg-[#2563eb] px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
+        >
+          Apply this
+        </button>
+        <button
+          type="submit"
+          formAction={rejectProposalInConversation.bind(null, current.id)}
+          formNoValidate
+          className="rounded-full px-4 py-2 text-xs font-medium transition-colors hover:bg-white/[.06]"
+          style={{ color: GENESIS_ATMOSPHERE.textSecondary }}
+        >
+          Not this
+        </button>
         <TellJ4Button className="rounded-full px-3 py-2 text-xs font-medium underline underline-offset-2 transition-colors hover:bg-white/[.06]" />
       </div>
 
