@@ -19,6 +19,7 @@ import { J4Overlay } from "./J4Overlay";
 import { J4Summon } from "./J4Summon";
 import { J4HandoffContext } from "./J4HandoffContext";
 import { useJ4Talk } from "./useJ4Talk";
+import { upload as blobUpload } from "@vercel/blob/client";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -120,6 +121,7 @@ export function DashboardShell({
   hasCuriosity,
   children,
   j4,
+  uploadVoiceMemo,
 }: {
   sections: NavSection[];
   secondarySections: NavSection[];
@@ -154,6 +156,9 @@ export function DashboardShell({
   hasOpportunity: boolean;
   hasCuriosity: boolean;
   children: React.ReactNode;
+  // Whisper, for Talk Mode. The same action the conversation's own microphone
+  // uses — one transcription path, two places it can be started from.
+  uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
   // J4's real server-rendered workspace, handed down by layout.tsx. Mounted
   // for the life of the dashboard and shown or hidden by J4Overlay, so an
   // in-flight conversation survives being closed and reopened.
@@ -296,6 +301,24 @@ export function DashboardShell({
   // move through the single conversation — this adds a voice to it, never a
   // second one.
   const talk = useJ4Talk({
+    // Whisper, through the exact upload and transcribe path voice memos
+    // already use — one transcription route, reached from two places.
+    transcribe: async (blob, mimeType) => {
+      const extension = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+      const uploaded = await blobUpload(
+        `voice-turns/${crypto.randomUUID()}.${extension}`,
+        blob,
+        { access: "public", handleUploadUrl: "/api/blob/business-asset-upload", contentType: mimeType }
+      );
+      const formData = new FormData();
+      formData.set("blobUrl", uploaded.url);
+      formData.set("originalFilename", `voice-turn.${extension}`);
+      formData.set("contentType", mimeType);
+      formData.set("currentPath", pathname);
+      formData.set("surface", "layer");
+      const result = await uploadVoiceMemo(formData);
+      return result?.transcript ?? "";
+    },
     onUtterance: (text) => {
       setJ4Handoff(text);
       setJ4HandoffAudioUrl(null);
