@@ -932,6 +932,32 @@ export function J4Workspace({
     // handoff synchronously before calling anything.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handoffText, handoffFocus, handoffAudioUrl, j4Handoff]);
+
+  // Talk Mode's return leg (2026-08-14, corrected).
+  //
+  // This first hooked the streaming "done" event, which was wrong in a way
+  // that only showed up on a real device: a turn needing the heavier content
+  // pipeline falls back to the Server Action and never emits "done", so Talk
+  // Mode waited for a reply that was never announced and sat on "Thinking"
+  // forever. Watching the CONVERSATION instead covers both paths, because
+  // every reply lands in these messages however it was produced.
+  //
+  // The id of the last spoken reply is remembered so a re-render, a
+  // revalidation or a reconnect can never speak the same answer twice.
+  const spokenReplyIdRef = useRef<string | null>(null);
+  const lastEntry = localMessages[localMessages.length - 1];
+  const onAssistantReply = j4Handoff.onAssistantReply;
+  useEffect(() => {
+    if (!onAssistantReply) return;
+    if (!lastEntry || lastEntry.role !== "assistant") return;
+    // An optimistic placeholder is empty until content streams in; speaking it
+    // would say nothing and end the turn early.
+    if (!lastEntry.content.trim()) return;
+    if (spokenReplyIdRef.current === lastEntry.id) return;
+    spokenReplyIdRef.current = lastEntry.id;
+    onAssistantReply(lastEntry.content);
+  }, [lastEntry, onAssistantReply]);
+
   // Defense-in-depth for the same "typed text disappears while attachments
   // upload" bug the narrowed visibilitychange refresh above targets — this
   // guards the composer regardless of what actually causes a stray
@@ -1235,9 +1261,6 @@ export function J4Workspace({
       // directly against what querySelector finds in the real DOM a
       // moment later.
       let accumulatedContentLength = 0;
-      // The reply itself, not just its length. Talk Mode speaks this when the
-      // turn finishes; the length above is only instrumentation.
-      let accumulatedContent = "";
 
       readLoop: while (true) {
         const { done, value } = await reader.read();
@@ -1276,7 +1299,6 @@ export function J4Workspace({
             tokenIndex += 1;
             tokensThisRead += 1;
             accumulatedContentLength += event.delta.length;
-            accumulatedContent += event.delta;
             reportDiag(requestId, tStart, "client_token_applied", { i: tokenIndex, readIndex: thisReadIndex, tokensThisRead, len: event.delta.length });
             flushSync(() => {
               setStreamingStatus(null);
@@ -1314,12 +1336,6 @@ export function J4Workspace({
             sawDone = true;
             reportDiag(requestId, tStart, "client_done_event_received");
             setStreamingStatus(null);
-            // Talk Mode's return leg: hand the finished reply up so it can be
-            // spoken. A copy for the voice, never a second conversation — the
-            // reply is already in this history, which is the only one.
-            if (j4Handoff.onAssistantReply && accumulatedContent.trim()) {
-              j4Handoff.onAssistantReply(accumulatedContent);
-            }
             // Real bug (Sean, 2026-08-08): a rename (or any other real
             // store-content change) executed by J4 left the Portal
             // header showing the old business name — page.tsx's own

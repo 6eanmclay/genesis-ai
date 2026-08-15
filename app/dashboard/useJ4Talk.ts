@@ -244,6 +244,23 @@ export function useJ4Talk({
     [setBoth, startListening, teardownRecognition]
   );
 
+  // A turn must never hang silently (2026-08-14). Sean hit "Thinking" that
+  // never ended, twice, from two different causes — a conversation that was
+  // not mounted, then a reply announced only by the streaming path. Both are
+  // fixed, but a voice interface that can wait forever is one bad turn away
+  // from looking broken again, so this is a floor under every future cause:
+  // after a minute with no reply, say so and start listening again rather
+  // than leaving the owner talking to something that stopped answering.
+  useEffect(() => {
+    if (state !== "thinking") return;
+    const timer = window.setTimeout(() => {
+      if (stateRef.current !== "thinking") return;
+      setError("J4 didn't answer that one. Try again.");
+      startListening();
+    }, 60000);
+    return () => window.clearTimeout(timer);
+  }, [state, startListening]);
+
   // Never leave the microphone open behind a closed page.
   useEffect(() => {
     return () => {
