@@ -859,7 +859,7 @@ export function DashboardShell({
             {secondaryNav}
 
             <main
-              className={`pb-44 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
+              className={`pb-24 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
                 // Home clears only the 64px header + 40px secondary nav; the
                 // other routes also clear MobileGenesisPresence's 76px bar.
                 isHome
@@ -933,6 +933,20 @@ export function DashboardShell({
             )}
           </Link>
         ))}
+
+        {/* J4's slot in the bar, restored (2026-08-15).
+            The presence briefly floated above the bar, which put it on top of
+            the storefront preview's scroll surface — the one place the owner
+            swipes to inspect their own site. It is back in the bar, so this
+            gap holds its place: wider than the other slots because a 52px orb
+            plus its label needs real clearance, and four equal slots on a
+            360px phone leave none.
+            Kept as an empty spacer rather than rendering the orb here, because
+            the nav carries backdrop-blur — a backdrop-filter creates a
+            stacking context that would trap the orb at this bar's own z-index,
+            which is the bug that moved it out in the first place. It is
+            portalled and positioned over this gap instead. */}
+        <div className="flex-[1.5]" aria-hidden="true" />
 
         {/* No J4 slot at all any more (2026-08-14, second pass).
             The orb first left this bar because backdrop-blur creates a

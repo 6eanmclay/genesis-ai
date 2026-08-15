@@ -78,12 +78,18 @@ export function J4Summon({
     // area away. pointer-events-none on the wrapper so the space around the
     // orb never steals a tap meant for the page beneath.
     <div
-      className={`pointer-events-none fixed inset-x-0 ${J4_PRESENCE_Z} flex flex-col items-center px-3 md:hidden`}
-      // Clears the tab bar rather than sitting on it.
-      style={{ bottom: "calc(env(safe-area-inset-bottom) + 3.75rem)" }}
+      className={`pointer-events-none fixed inset-x-0 ${J4_PRESENCE_Z} flex flex-col items-center md:hidden`}
+      // IN the tab bar band, not floating above it (2026-08-15).
+      //
+      // This sat 3.75rem up, which put it directly over the bottom of the
+      // storefront preview — exactly where the owner needs to swipe to inspect
+      // their own website. Sean: "J4 must never obstruct the website preview's
+      // scroll surface." So the presence occupies navigation space alongside
+      // the other tabs, and page content is never underneath it.
+      style={{ bottom: "calc(env(safe-area-inset-bottom) + 1px)" }}
     >
       {talkError && (
-        <p className="pointer-events-auto mb-2 max-w-xs rounded-full bg-black/80 px-3 py-1.5 text-center text-[11px] text-white">
+        <p className="pointer-events-none mb-2 max-w-xs rounded-full bg-black/80 px-3 py-1.5 text-center text-[11px] text-white">
           {talkError}
         </p>
       )}
@@ -101,7 +107,7 @@ export function J4Summon({
         onClick={onToggleTalk}
         aria-pressed={talking}
         aria-label={talking ? `J4: ${TALK_LABEL[talkState]}. Tap to stop.` : "Talk to J4"}
-        className="pointer-events-auto relative rounded-full transition-transform duration-200 active:scale-95"
+        className="pointer-events-auto relative -mt-5 rounded-full transition-transform duration-200 active:scale-95"
       >
         {/* Listening pulses outward; speaking glows steadily; thinking sits
             quiet. Subtle, but different enough to read at a glance without
@@ -133,14 +139,17 @@ export function J4Summon({
         />
       </button>
 
-      {/* The way to the conversation, for reading it or for typing. Small and
-          below J4, because it is the secondary path now. */}
+      {/* The way into the conversation, kept as its own control per Sean:
+          "J4 presence = persistent interaction, Conversation = access to the
+          conversation/history. Those don't need to occupy the same physical
+          space." It reads as a tab label because it now sits in the tab bar,
+          which is also what keeps it off the storefront's scroll surface. */}
       <button
         type="button"
         onClick={onExpand}
         aria-expanded={open}
         aria-label="Show the conversation"
-        className="pointer-events-auto mt-1.5 rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-zinc-600 shadow-sm backdrop-blur dark:bg-zinc-900/90 dark:text-zinc-300"
+        className="pointer-events-auto -mt-0.5 px-3 pb-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400"
       >
         Conversation
       </button>
