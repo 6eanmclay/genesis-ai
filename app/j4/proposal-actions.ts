@@ -66,9 +66,19 @@ export async function approveProposalInConversation(approvalRequestId: string) {
     await recordOutcome(storeId, "That proposal is no longer open, so there was nothing for me to apply.");
   }
 
-  // Revalidate rather than redirect. The layer picks up both the new message
-  // and the now-settled proposal exactly where the owner is standing.
-  revalidatePath("/dashboard");
+  // Revalidate rather than redirect, and as a LAYOUT rather than a page.
+  //
+  // The conversation is rendered by app/dashboard/layout.tsx, not by any one
+  // page, so a decision made from /dashboard/website has to invalidate that
+  // layout and everything beneath it. Next's own docs are explicit: a page
+  // path "invalidates the specific page", while a layout path invalidates
+  // "the layout, all nested layouts beneath it, and all pages beneath them".
+  //
+  // With the default page type this call only ever refreshed /dashboard
+  // itself. Deciding a proposal from any other dashboard route left the card
+  // sitting there and the outcome message unwritten on screen — the change
+  // had really happened, and the owner had no way to tell.
+  revalidatePath("/dashboard", "layout");
 }
 
 /**
@@ -92,14 +102,14 @@ export async function chooseDirectionInConversation(approvalRequestId: string, d
   });
   if (!row) {
     await recordOutcome(storeId, "That proposal is no longer open.");
-    revalidatePath("/dashboard");
+    revalidatePath("/dashboard", "layout");
     return;
   }
 
   const chosen = parseDirections(row.directions).find((d) => d.id === directionId);
   if (!chosen) {
     await recordOutcome(storeId, "I could not find that direction any more. Tell me which one you meant.");
-    revalidatePath("/dashboard");
+    revalidatePath("/dashboard", "layout");
     return;
   }
 
@@ -127,7 +137,7 @@ export async function chooseDirectionInConversation(approvalRequestId: string, d
       ? `${chosen.label} it is. I have it ready below. Tell me if you want anything adjusted, or apply it as it stands.`
       : "Something went wrong recording that choice and nothing has changed. Tell me which direction you wanted and I will set it up again."
   );
-  revalidatePath("/dashboard");
+  revalidatePath("/dashboard", "layout");
 }
 
 /** Turns a proposal down from inside the conversation. */
@@ -142,5 +152,5 @@ export async function rejectProposalInConversation(approvalRequestId: string) {
       : "Understood, I have set that aside. Tell me what you would rather do and we can try another direction."
   );
 
-  revalidatePath("/dashboard");
+  revalidatePath("/dashboard", "layout");
 }
