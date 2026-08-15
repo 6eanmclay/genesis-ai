@@ -419,6 +419,9 @@ export function useJ4Talk({
             URL.revokeObjectURL(url);
             resume();
           };
+          // Never resume while audio is still playing. onended is the only
+          // honest signal that J4 has finished; a timer here would reopen the
+          // microphone over his own voice.
           audio.src = url;
           try {
             await audio.play();
@@ -454,7 +457,21 @@ export function useJ4Talk({
       // leaves the orb on "Speaking" forever with nothing coming out — exactly
       // what happened on the first real test. Roughly a word every 350ms, plus
       // a floor, then move on regardless.
-      window.setTimeout(resumeOnce, Math.min(60000, 3000 + spoken.length * 60));
+      // The timeout is a floor against a hang, never a guess at when speech
+      // ends. If the browser is still speaking when it fires, wait and check
+      // again: resuming early reopens the microphone mid-sentence, which is
+      // how J4 ended up hearing a laugh over his own reply — and, worse, how
+      // he would eventually hear himself and answer his own answer.
+      const deadline = Date.now() + Math.min(60000, 3000 + spoken.length * 60);
+      const settle = () => {
+        if (resumed) return;
+        if (window.speechSynthesis.speaking && Date.now() < deadline + 30000) {
+          window.setTimeout(settle, 400);
+          return;
+        }
+        resumeOnce();
+      };
+      window.setTimeout(settle, Math.min(60000, 3000 + spoken.length * 60));
     },
     [setBoth, startListening, teardownRecorder]
   );
