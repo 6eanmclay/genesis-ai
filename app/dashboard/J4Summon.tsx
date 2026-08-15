@@ -91,7 +91,9 @@ export function J4Summon({
       {/* The state, said in a word. An orb that is listening has to say so in
           more than a colour, or the owner is guessing whether to speak. */}
       {talking && (
-        <p className="pointer-events-none mb-1.5 text-[11px] font-medium text-[#2563eb]">{TALK_LABEL[talkState]}</p>
+        <p className="pointer-events-none mb-2 rounded-full bg-[#2563eb] px-3 py-1 text-[12px] font-semibold text-white shadow-lg">
+          {TALK_LABEL[talkState]}
+        </p>
       )}
 
       <button
@@ -104,20 +106,31 @@ export function J4Summon({
         {/* Listening pulses outward; speaking glows steadily; thinking sits
             quiet. Subtle, but different enough to read at a glance without
             looking at the label. */}
+        {/* Unmistakable, deliberately (2026-08-14). The active and resting
+            glows previously differed only by a few pixels of inset and a
+            little opacity, which read as no change at all on a phone — Sean
+            tapped, the state really did change, and he could not see it. A
+            state nobody can see is not a state. */}
         {talkState === "listening" && (
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute -inset-2 animate-ping rounded-full bg-[#2563eb]/40"
-            style={{ animationDuration: "1.6s" }}
+            className="pointer-events-none absolute -inset-3 animate-ping rounded-full bg-[#2563eb]/60"
+            style={{ animationDuration: "1.4s" }}
           />
         )}
         <span
           aria-hidden="true"
           className={`pointer-events-none absolute rounded-full transition-all duration-300 ${
-            talking ? "-inset-3 bg-[#2563eb]/35 blur-md" : "-inset-1 bg-[#2563eb]/20 blur-lg"
+            talking ? "-inset-4 bg-[#2563eb]/70 blur-lg" : "-inset-0 bg-transparent"
           }`}
         />
-        <GenesisAvatar className={`relative ${GENESIS_AVATAR_SIZE.presenceOrb}`} />
+        {/* A hard ring as well as a glow, because a blur alone can vanish
+            against a bright page. */}
+        <GenesisAvatar
+          className={`relative rounded-full transition-all duration-300 ${
+            talking ? "ring-4 ring-[#2563eb] scale-110" : "ring-0"
+          } ${GENESIS_AVATAR_SIZE.presenceOrb}`}
+        />
       </button>
 
       {/* The way to the conversation, for reading it or for typing. Small and
