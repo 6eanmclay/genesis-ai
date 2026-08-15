@@ -217,12 +217,22 @@ export function useJ4Talk({
         try {
           const text = (await transcribeRef.current(blob, type)).trim();
           if (!text) {
+            // Transcription succeeded and returned nothing. Said out loud
+            // rather than looped silently: a turn that quietly restarts looks
+            // identical to one that failed, and that ambiguity has already
+            // cost hours of blind debugging.
+            setError("Recorded " + Math.round(blob.size / 1024) + "KB of " + type + ", got no words back.");
             if (stateRef.current === "thinking") restartRef.current();
             return;
           }
+          setError(null);
           onUtteranceRef.current(text);
-        } catch {
-          setError("Couldn't make out that one. Try again.");
+        } catch (err) {
+          // The real reason, not a generic apology. Whatever failed here is
+          // the only thing between a working loop and a broken one, so it
+          // goes on screen where it can be read.
+          const detail = err instanceof Error ? err.message : String(err);
+          setError("Transcription failed: " + detail.slice(0, 120));
           if (stateRef.current === "thinking") restartRef.current();
         }
       })();
@@ -285,7 +295,11 @@ export function useJ4Talk({
     }
 
     try {
-      recorder.start();
+      // A timeslice, not a bare start(). Without one, ondataavailable only
+      // fires at stop, and some browsers — iOS Safari in particular — hand
+      // back an empty or unplayable blob that way. Emitting a chunk a second
+      // is the well-worn workaround.
+      recorder.start(1000);
       // The backstop that actually ends a turn when the meter is unavailable,
       // and the ceiling when it is. Without this a turn could record until the
       // page was closed.
