@@ -20,6 +20,7 @@ import { J4Summon } from "./J4Summon";
 import { J4HandoffContext } from "./J4HandoffContext";
 import { useJ4Talk } from "./useJ4Talk";
 import { upload as blobUpload } from "@vercel/blob/client";
+import { ALLOWED_VOICE_MEMO_CONTENT_TYPES } from "@/lib/voice/voiceMemoFile";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -304,16 +305,25 @@ export function DashboardShell({
     // Whisper, through the exact upload and transcribe path voice memos
     // already use — one transcription route, reached from two places.
     transcribe: async (blob, mimeType) => {
-      const extension = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+      // MediaRecorder reports its type WITH a codec suffix
+      // ("audio/webm;codecs=opus"), and the upload route only accepts the
+      // plain types in ALLOWED_VOICE_MEMO_CONTENT_TYPES. Passing the raw value
+      // was rejected before the file ever left the browser, which is why a
+      // spoken turn failed in about a second — far too fast to have been
+      // Whisper. Normalised here, and the extension comes from the same map
+      // the rest of the app uses rather than a guess.
+      const baseType = mimeType.split(";")[0].trim().toLowerCase();
+      const contentType = baseType in ALLOWED_VOICE_MEMO_CONTENT_TYPES ? baseType : "audio/webm";
+      const extension = ALLOWED_VOICE_MEMO_CONTENT_TYPES[contentType];
       const uploaded = await blobUpload(
         `voice-turns/${crypto.randomUUID()}.${extension}`,
         blob,
-        { access: "public", handleUploadUrl: "/api/blob/business-asset-upload", contentType: mimeType }
+        { access: "public", handleUploadUrl: "/api/blob/business-asset-upload", contentType }
       );
       const formData = new FormData();
       formData.set("blobUrl", uploaded.url);
       formData.set("originalFilename", `voice-turn.${extension}`);
-      formData.set("contentType", mimeType);
+      formData.set("contentType", contentType);
       formData.set("currentPath", pathname);
       formData.set("surface", "layer");
       const result = await uploadVoiceMemo(formData);
