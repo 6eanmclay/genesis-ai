@@ -394,6 +394,16 @@ export function useJ4Talk({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: spoken }),
         });
+        if (!res.ok) {
+          // Why the real voice was skipped, said plainly. A 503 means
+          // ELEVENLABS_API_KEY is not set in this environment, which is
+          // otherwise indistinguishable from "the audio played silently".
+          const why =
+            res.status === 503
+              ? "ElevenLabs isn't configured (no API key in this environment)"
+              : "speech service returned " + res.status;
+          setError("Using the browser voice: " + why);
+        }
         if (res.ok) {
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
@@ -430,10 +440,21 @@ export function useJ4Talk({
         return;
       }
       const utterance = new SpeechSynthesisUtterance(spoken);
-      utterance.onend = resume;
-      utterance.onerror = resume;
+      let resumed = false;
+      const resumeOnce = () => {
+        if (resumed) return;
+        resumed = true;
+        resume();
+      };
+      utterance.onend = resumeOnce;
+      utterance.onerror = resumeOnce;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
+      // iOS can accept an utterance, stay silent, and never fire onend, which
+      // leaves the orb on "Speaking" forever with nothing coming out — exactly
+      // what happened on the first real test. Roughly a word every 350ms, plus
+      // a floor, then move on regardless.
+      window.setTimeout(resumeOnce, Math.min(60000, 3000 + spoken.length * 60));
     },
     [setBoth, startListening, teardownRecorder]
   );
