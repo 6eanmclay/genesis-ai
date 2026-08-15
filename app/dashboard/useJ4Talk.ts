@@ -113,6 +113,16 @@ export function useJ4Talk({
   // during that await cancels the start it was trying to protect. Intent has
   // to be its own flag, set the instant the owner taps.
   const armedRef = useRef(false);
+  // ONE audio element, unlocked by the owner's own tap.
+  //
+  // iOS and Chrome only allow playback traceable to a user gesture. J4's reply
+  // arrives several async hops later — recorder stop, upload, Whisper, the
+  // model — so an Audio constructed at that moment is refused, silently. The
+  // browser's own speechSynthesis is blocked for the same reason, which is why
+  // the fallback never rescued it either. So the element is created and played
+  // once during the tap, while a gesture is still in scope, then reused for
+  // every reply of the session.
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
 
   const setBoth = useCallback((next: TalkState) => {
     stateRef.current = next;
@@ -325,6 +335,7 @@ export function useJ4Talk({
 
   const stop = useCallback(() => {
     armedRef.current = false;
+    audioElRef.current?.pause();
     setBoth("off");
     releaseMic();
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -335,6 +346,19 @@ export function useJ4Talk({
   const start = useCallback(() => {
     setError(null);
     armedRef.current = true;
+    // Unlock audio HERE, inside the gesture, or J4 can never be heard.
+    // Playing a moment of real silence is what performs the unlock; nothing is
+    // audible, and a refusal is not a reason to stop Talk Mode starting.
+    if (typeof window !== "undefined") {
+      const el = audioElRef.current ?? new Audio();
+      audioElRef.current = el;
+      el.preload = "auto";
+      el.src =
+        "data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCA" +
+        "gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgP////////////////////////" +
+        "//////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAnEaJ1kAAA==";
+      el.play().catch(() => {});
+    }
     // Shown as listening immediately, before the microphone is even open. A
     // tap that lights nothing up until permission resolves reads as a dead
     // control, and on a first run that wait includes a system dialog.
@@ -373,7 +397,10 @@ export function useJ4Talk({
         if (res.ok) {
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
+          // The already-unlocked element, never a new one: a fresh Audio here
+          // carries no gesture and is refused by the autoplay policy.
+          const audio = audioElRef.current ?? new Audio();
+          audioElRef.current = audio;
           audio.onended = () => {
             URL.revokeObjectURL(url);
             resume();
@@ -382,8 +409,17 @@ export function useJ4Talk({
             URL.revokeObjectURL(url);
             resume();
           };
-          await audio.play();
-          return;
+          audio.src = url;
+          try {
+            await audio.play();
+            return;
+          } catch (playErr) {
+            URL.revokeObjectURL(url);
+            const why = playErr instanceof Error ? playErr.name : "blocked";
+            setError("Couldn't play J4's voice (" + why + "). Tap J4 again.");
+            resume();
+            return;
+          }
         }
       } catch {
         // Fall through to the browser's own voice.
