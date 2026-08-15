@@ -39,12 +39,6 @@ export function J4Overlay({
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  // Whether J4 has ever been summoned. Before the first summon there is
-  // nothing to portal, so the workspace pays no DOM cost at all for a layer
-  // the owner has not used yet. After it, this keeps the layer mounted
-  // through close, which is what lets an in-flight conversation survive.
-  const [everOpened, setEverOpened] = useState(false);
-
   // The animation's own state, which is not the same thing as `open`. It
   // trails `open` by one frame on the way in: the panel mounts in its closed
   // position and only then transitions, because an element that mounts
@@ -56,7 +50,6 @@ export function J4Overlay({
   useEffect(() => {
     if (!open) return;
     const frame = window.requestAnimationFrame(() => {
-      setEverOpened(true);
       setVisible(true);
     });
     return () => {
@@ -130,7 +123,20 @@ export function J4Overlay({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, requestClose]);
 
-  if ((!open && !everOpened) || typeof document === "undefined") return null;
+  // Mounted from the first render, not from the first open (2026-08-14).
+  //
+  // This used to return null until the conversation had been expanded once, so
+  // the workspace paid no DOM cost for a layer the owner had not used. Talk
+  // Mode broke that assumption completely: it sends a spoken turn through the
+  // conversation's own composer WITHOUT expanding anything, so on a page where
+  // J4 had never been opened there was no composer to send through. The turn
+  // went nowhere, no reply ever came back, and the orb sat on "Thinking"
+  // forever — which is exactly what Sean hit on the first real voice test.
+  //
+  // The conversation is therefore always mounted and merely hidden. That is
+  // the real cost of a partner who can be spoken to without being opened, and
+  // it is the whole feature rather than an oversight.
+  if (typeof document === "undefined") return null;
 
   return createPortal(
     // touch-none stops browser gesture handling (pull to refresh, rubber
