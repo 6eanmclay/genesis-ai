@@ -38,11 +38,20 @@ export type TalkState = "off" | "listening" | "thinking" | "speaking";
 // talking at all. Deliberately forgiving: cutting someone off mid-sentence is
 // far worse than waiting an extra moment.
 const SILENCE_MS = 1400;
-const SPEECH_RMS = 0.015;
+// Lowered from 0.015 after a real device heard nothing at all. A phone mic at
+// arm's length on a quiet desk sits well under the value a laptop mic gives.
+const SPEECH_RMS = 0.006;
 // A hard ceiling, so a noisy room can never record forever.
 const MAX_TURN_MS = 30000;
+// If the meter is running and still hears nothing this long, the threshold or
+// the microphone is wrong, and saying so beats listening forever in silence.
+const NOTHING_HEARD_MS = 12000;
 // Below this, whatever was captured is not speech worth sending.
 const MIN_TURN_BYTES = 2000;
+// When the meter never starts there is nothing to detect silence with, so a
+// turn is a fixed window instead. Long enough for a real sentence, short
+// enough that the loop still feels like a conversation.
+const NO_METER_TURN_MS = 6000;
 
 function pickMimeType(): string | undefined {
   if (typeof MediaRecorder === "undefined") return undefined;
@@ -91,6 +100,10 @@ export function useJ4Talk({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number | null>(null);
+  // A real timer as well as the animation frame. requestAnimationFrame stops
+  // firing when the screen sleeps or the tab is backgrounded, which would
+  // leave a turn recording with nothing left to end it.
+  const turnTimerRef = useRef<number | null>(null);
   // startListening restarts itself, which a const cannot reference from inside
   // its own definition. Held in a ref, assigned once it exists.
   const restartRef = useRef<() => void>(() => {});
@@ -104,6 +117,10 @@ export function useJ4Talk({
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
+    }
+    if (turnTimerRef.current !== null) {
+      window.clearTimeout(turnTimerRef.current);
+      turnTimerRef.current = null;
     }
   }, []);
 
@@ -160,13 +177,20 @@ export function useJ4Talk({
     };
 
     let heardSpeech = false;
+    // Whether the RMS meter actually started. Without this, a browser that
+    // refuses an AudioContext leaves heardSpeech permanently false, every turn
+    // is discarded as silence, and Talk Mode sits on "Listening" forever —
+    // which is exactly what happened on the first real iPhone test.
+    let meterRunning = false;
     recorder.onstop = () => {
       stopMeter();
       const type = recorder.mimeType || mimeType || "audio/webm";
       const blob = new Blob(chunks, { type });
-      // Nothing said, or the turn ended before any speech: listen again rather
-      // than sending silence to Whisper.
-      if (!heardSpeech || blob.size < MIN_TURN_BYTES) {
+      // With no meter there is no way to know whether speech happened, so the
+      // recording is sent and Whisper decides. Silently discarding it is what
+      // made this hang.
+      const worthSending = meterRunning ? heardSpeech : blob.size >= MIN_TURN_BYTES;
+      if (!worthSending || blob.size < MIN_TURN_BYTES) {
         if (stateRef.current === "listening") restartRef.current();
         return;
       }
@@ -221,12 +245,20 @@ export function useJ4Talk({
               return;
             }
           }
+          // Heard nothing at all for long enough that something is wrong.
+          // Say so rather than listening silently forever.
+          if (!heardSpeech && Date.now() - startedAt > NOTHING_HEARD_MS) {
+            setError("I can't hear anything. Check the microphone, then tap J4 again.");
+            recorder.stop();
+            return;
+          }
           if (Date.now() - startedAt > MAX_TURN_MS) {
             recorder.stop();
             return;
           }
           rafRef.current = requestAnimationFrame(tick);
         };
+        meterRunning = true;
         rafRef.current = requestAnimationFrame(tick);
       }
     } catch {
@@ -236,6 +268,15 @@ export function useJ4Talk({
 
     try {
       recorder.start();
+      // The backstop that actually ends a turn when the meter is unavailable,
+      // and the ceiling when it is. Without this a turn could record until the
+      // page was closed.
+      turnTimerRef.current = window.setTimeout(
+        () => {
+          if (recorderRef.current === recorder && recorder.state === "recording") recorder.stop();
+        },
+        meterRunning ? MAX_TURN_MS : NO_METER_TURN_MS
+      );
       setError(null);
       setBoth("listening");
     } catch {
