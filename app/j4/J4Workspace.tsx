@@ -1235,6 +1235,9 @@ export function J4Workspace({
       // directly against what querySelector finds in the real DOM a
       // moment later.
       let accumulatedContentLength = 0;
+      // The reply itself, not just its length. Talk Mode speaks this when the
+      // turn finishes; the length above is only instrumentation.
+      let accumulatedContent = "";
 
       readLoop: while (true) {
         const { done, value } = await reader.read();
@@ -1273,6 +1276,7 @@ export function J4Workspace({
             tokenIndex += 1;
             tokensThisRead += 1;
             accumulatedContentLength += event.delta.length;
+            accumulatedContent += event.delta;
             reportDiag(requestId, tStart, "client_token_applied", { i: tokenIndex, readIndex: thisReadIndex, tokensThisRead, len: event.delta.length });
             flushSync(() => {
               setStreamingStatus(null);
@@ -1310,6 +1314,12 @@ export function J4Workspace({
             sawDone = true;
             reportDiag(requestId, tStart, "client_done_event_received");
             setStreamingStatus(null);
+            // Talk Mode's return leg: hand the finished reply up so it can be
+            // spoken. A copy for the voice, never a second conversation — the
+            // reply is already in this history, which is the only one.
+            if (j4Handoff.onAssistantReply && accumulatedContent.trim()) {
+              j4Handoff.onAssistantReply(accumulatedContent);
+            }
             // Real bug (Sean, 2026-08-08): a rename (or any other real
             // store-content change) executed by J4 left the Portal
             // header showing the old business name — page.tsx's own

@@ -18,6 +18,7 @@ import { J4MobileHero } from "./J4MobileHero";
 import { J4Overlay } from "./J4Overlay";
 import { J4Summon } from "./J4Summon";
 import { J4HandoffContext } from "./J4HandoffContext";
+import { useJ4Talk } from "./useJ4Talk";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -119,7 +120,6 @@ export function DashboardShell({
   hasCuriosity,
   children,
   j4,
-  uploadVoiceMemo,
 }: {
   sections: NavSection[];
   secondarySections: NavSection[];
@@ -154,10 +154,6 @@ export function DashboardShell({
   hasOpportunity: boolean;
   hasCuriosity: boolean;
   children: React.ReactNode;
-  // The real voice action, handed down by layout.tsx so J4's presence can
-  // record without expanding. The same one the conversation's own microphone
-  // uses — one action, two places it can be started from.
-  uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
   // J4's real server-rendered workspace, handed down by layout.tsx. Mounted
   // for the life of the dashboard and shown or hidden by J4Overlay, so an
   // in-flight conversation survives being closed and reopened.
@@ -293,6 +289,23 @@ export function DashboardShell({
   // Whether the conversation should take the cursor as it expands. Set only
   // when the owner expanded it by typing, never by tapping the orb.
   const [j4FocusComposer, setJ4FocusComposer] = useState(false);
+
+  // Talk Mode. A spoken turn goes down through the same handoff a typed one
+  // uses, so it is sent by the one composer through the one pipeline; J4's
+  // reply comes back up through onAssistantReply to be spoken. Both halves
+  // move through the single conversation — this adds a voice to it, never a
+  // second one.
+  const talk = useJ4Talk({
+    onUtterance: (text) => {
+      setJ4Handoff(text);
+      setJ4HandoffAudioUrl(null);
+      setJ4FocusComposer(false);
+      // Deliberately does NOT expand. Talk Mode is a conversation happening
+      // on the page the owner is already looking at; throwing the history
+      // over their screen the moment they speak is the trip this whole design
+      // exists to remove.
+    },
+  });
 
   // Secondary nav only renders while the current route is genuinely one of
   // Your Business's own workspaces (Overview/Identity/Website/Products) —
@@ -1046,29 +1059,13 @@ export function DashboardShell({
           can contain it — see J4Summon.tsx. */}
       <J4Summon
         open={j4Open}
-        // The handle expands; the orb no longer does. Sean's correction:
-        // tapping the orb activates J4 on this screen and leaves the owner
-        // there, so activation is the presence's own state and never this.
         onExpand={() => {
           setJ4FocusComposer(false);
           setJ4Open(true);
         }}
-        onSend={(text) => {
-          setJ4Handoff(text);
-          setJ4HandoffAudioUrl(null);
-          setJ4FocusComposer(true);
-          setJ4Open(true);
-        }}
-        uploadVoiceMemo={uploadVoiceMemo}
-        currentPath={pathname}
-        onVoiceMemo={(transcript, audioUrl) => {
-          // Straight down the one send path, exactly like typed text. The
-          // conversation expands because a reply needs somewhere to be read.
-          setJ4Handoff(transcript);
-          setJ4HandoffAudioUrl(audioUrl);
-          setJ4FocusComposer(false);
-          setJ4Open(true);
-        }}
+        talkState={talk.state}
+        talkError={talk.error}
+        onToggleTalk={() => (talk.state === "off" ? talk.start() : talk.stop())}
       />
 
       <J4Overlay open={j4Open} onClose={() => setJ4Open(false)}>
@@ -1077,6 +1074,9 @@ export function DashboardShell({
             text: j4Handoff,
             audioUrl: j4HandoffAudioUrl,
             focusComposer: j4FocusComposer,
+            onAssistantReply: (reply: string) => {
+              void talk.speak(reply);
+            },
             clear: () => {
               setJ4Handoff(null);
               setJ4HandoffAudioUrl(null);

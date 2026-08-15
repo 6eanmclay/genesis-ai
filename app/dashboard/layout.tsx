@@ -10,7 +10,6 @@ import { getNewCustomerCount } from "@/lib/dashboard/customers";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { signOutOfGenesis } from "./actions";
-import { uploadVoiceMemo } from "./ai-actions";
 import { DashboardShell } from "./DashboardShell";
 import { J4Surface } from "@/app/j4/J4Surface";
 
@@ -343,9 +342,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       // surface is the conversation only — Tasks, Ideas, Decisions and
       // Information are what the /j4 room is for.
       j4={<J4Surface surface="layer" />}
-      // Voice from the compact presence, without expanding first. The same
-      // action J4's own conversation uses.
-      uploadVoiceMemo={uploadVoiceMemo}
       sections={sections}
       secondarySections={secondarySections}
       storeId={store.id}

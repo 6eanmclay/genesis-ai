@@ -1,47 +1,33 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
-import { J4Icon } from "./J4Icon";
-import { VoiceMemoButton } from "@/app/j4/VoiceMemoButton";
+import type { TalkState } from "./useJ4Talk";
 
-// J4's persistent presence: one continuous surface (2026-08-14).
+// J4's persistent presence: the orb, and Talk Mode (2026-08-14, third pass).
 //
-// Sean's shape, exactly: "J4 presence → orb → compact composer, with the orb
-// visually bridging the two." So this is a single panel, not a control
-// floating above a field. The orb sits ON the seam between the presence strip
-// and the composer, half in each, which is what makes the two read as one
-// surface rather than two things stacked. It is also smaller than the old
-// summon and backed by a ring in the panel's own colour, which is what closes
-// the crack an unbacked overlap left around it.
+// Sean took this back to the original concept: "the goal is not to create a
+// smaller text chat... Remove the placeholder text from the compact J4
+// presence. Keep the orb. The orb is J4."
 //
-// THE ORB IS ACTIVATION, AND ONLY THAT. Sean's correction, and the reason
-// this stopped being a summon button: "tapping it should activate J4 HERE,
-// not navigate or immediately turn into the pull-out/expanded conversation.
-// The user should see and feel that J4 has been activated." A tap wakes him
-// visibly and leaves the owner exactly where they are.
+// So the compact surface is J4 himself and nothing else. The text field is
+// gone — not moved, gone — because a field beside the orb made this a small
+// chat box with a mascot attached, which is the thing that was drifting away
+// from the point. Text is still available in the expanded conversation, for
+// anyone who prefers it.
 //
-// It expands nothing. It focuses nothing — an orb that pops a keyboard has
-// announced the text field rather than J4, and "the orb interaction needs to
-// be treated as J4 activation, not simply as a way to focus the text field."
-// And it is not secretly the microphone: the orb is the persistent presence,
-// the mic is the voice control, and conflating them would let a tap start a
-// recording nobody asked for.
+// TAPPING THE ORB STARTS A CONVERSATION, NOT A RECORDING. Sean, exactly:
+// "This is NOT a voice memo interaction. It must NOT be tap → record → send."
+// It is: tap → J4 listens → the owner speaks → J4 answers aloud → J4 listens
+// again. See useJ4Talk.ts for the turn-taking. The microphone inside the
+// expanded conversation stays what it always was, an explicit voice MESSAGE
+// control, and the two must not be confused.
 //
-// EXPANSION IS ITS OWN AFFORDANCE. The grab handle pulls the conversation up.
-// That is the only gesture that expands, apart from sending, which has to
-// because a reply needs somewhere to be read. Compact is the default and
-// expansion is secondary, which is the entire point of a presence rather than
-// a panel.
-//
-// ONE COMPOSER, NOT TWO. This field does not send. It hands the text to the
-// conversation's real composer, which owns the whole pipeline: optimistic
-// messages, streaming, the slower fallback, voice, uploads, recovery. A second
-// send path would be a second conversation, and it would silently miss every
-// one of those behaviours. Compact and expanded are the same conversation with
-// the same history; only the presentation differs.
+// Nothing here navigates, expands, or opens anything. The owner stays on the
+// exact page they were on: "J4 shouldn't make the user go somewhere to talk to
+// J4. J4 should be able to talk to them wherever they already are."
 //
 // WHY IT IS PORTALLED. The mobile nav carries backdrop-blur, and a
 // backdrop-filter creates a stacking context that caps everything inside it at
@@ -58,171 +44,93 @@ const subscribeToNothing = () => () => {};
 const onClient = () => true;
 const onServer = () => false;
 
+// What J4 is doing, in the owner's words rather than the state machine's.
+const TALK_LABEL: Record<TalkState, string> = {
+  off: "Talk to J4",
+  listening: "Listening",
+  thinking: "Thinking",
+  speaking: "Speaking",
+};
+
 export function J4Summon({
   open,
   onExpand,
-  onSend,
-  uploadVoiceMemo,
-  currentPath,
-  onVoiceMemo,
+  talkState,
+  talkError,
+  onToggleTalk,
 }: {
   /** Whether the conversation is already expanded. */
   open: boolean;
-  /** Pulls the conversation up. The handle and sending, never the orb. */
+  /** Pulls the conversation up. The handle, never the orb. */
   onExpand: () => void;
-  /** Hands typed text to the one real composer. This never sends. */
-  onSend: (text: string) => void;
-  /**
-   * The real voice action, handed down from the dashboard layout. The same
-   * one the conversation's own microphone uses — not a second recorder.
-   */
-  uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
-  /** Where the owner is. Travels with every turn; see workspaceContext. */
-  currentPath: string;
-  /** A finished memo, handed to the one composer exactly like typed text. */
-  onVoiceMemo: (transcript: string, audioUrl: string) => void;
+  talkState: TalkState;
+  talkError: string | null;
+  /** Starts or ends Talk Mode. The orb's only job. */
+  onToggleTalk: () => void;
 }) {
   const mounted = useSyncExternalStore(subscribeToNothing, onClient, onServer);
-  const [draft, setDraft] = useState("");
-  // J4 is awake and attending to this screen. Visible, and deliberately not
-  // the same thing as the conversation being open.
-  const [active, setActive] = useState(false);
-
   if (!mounted) return null;
+
+  const talking = talkState !== "off";
 
   return createPortal(
     // Fixed to the viewport, so scrolling can never move it or take its hit
-    // area away. pointer-events-none on the wrapper so the padding around the
-    // panel never steals a tap meant for the page beneath.
+    // area away. pointer-events-none on the wrapper so the space around the
+    // orb never steals a tap meant for the page beneath.
     <div
-      className={`pointer-events-none fixed inset-x-0 ${J4_PRESENCE_Z} px-3 md:hidden`}
+      className={`pointer-events-none fixed inset-x-0 ${J4_PRESENCE_Z} flex flex-col items-center px-3 md:hidden`}
       // Clears the tab bar rather than sitting on it.
       style={{ bottom: "calc(env(safe-area-inset-bottom) + 3.75rem)" }}
     >
-      <div className="pointer-events-auto relative mx-auto max-w-lg rounded-2xl border border-black/[.09] bg-white/95 shadow-lg backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95">
-        {/* The pull. The only gesture besides sending that expands anything,
-            and deliberately a separate target from the orb. */}
-        <button
-          type="button"
-          onClick={onExpand}
-          aria-expanded={open}
-          aria-label="Show the conversation"
-          className="flex w-full items-center justify-center rounded-t-2xl py-2 active:bg-black/[.03] dark:active:bg-white/[.05]"
-        >
-          <span className="h-1 w-9 rounded-full bg-black/[.15] dark:bg-white/[.2]" aria-hidden="true" />
-        </button>
+      {talkError && (
+        <p className="pointer-events-auto mb-2 max-w-xs rounded-full bg-black/80 px-3 py-1.5 text-center text-[11px] text-white">
+          {talkError}
+        </p>
+      )}
 
-        {/* The seam. A real divider, so the orb has an edge to sit on rather
-            than a notional one. */}
-        <div className="border-t border-black/[.06] dark:border-white/[.08]" aria-hidden="true" />
+      {/* The state, said in a word. An orb that is listening has to say so in
+          more than a colour, or the owner is guessing whether to speak. */}
+      {talking && (
+        <p className="pointer-events-none mb-1.5 text-[11px] font-medium text-[#2563eb]">{TALK_LABEL[talkState]}</p>
+      )}
 
-        {/* The composer, padded left to clear the orb on the seam. */}
-        <div className="flex items-center gap-2 py-2 pl-[4.75rem] pr-3">
-          {/* The orb ON the seam (2026-08-14, second pass). It was a flex item
-              in the composer row, which Sean read exactly as it looked: "the
-              orb coming directly out of the center of the composer makes J4
-              feel like part of the input field rather than a persistent
-              presence." It is now absolutely positioned on the divider itself,
-              centred on it, so half sits in the presence strip and half
-              crosses into the composer. The composer's left padding clears it
-              and the ring is painted in the panel's own colour, so the two
-              areas join around the orb rather than showing a gap where it
-              overlaps. The composer is the interface; the orb is J4, and they
-              must not read as the same object.
-              A tap activates J4 and does nothing else. It deliberately does
-              NOT focus the field: Sean's correction is that "the orb
-              interaction needs to be treated as J4 activation, not simply as
-              a way to focus the text field", and an orb that pops a keyboard
-              has announced the field rather than J4. Someone who wants to type
-              taps the field, which is right there. It also does not expand,
-              and it is not secretly the microphone — the orb is the persistent
-              presence, the mic is the voice control, and conflating them would
-              mean a tap could start recording without being asked to. */}
-          <button
-            type="button"
-            onClick={() => setActive((v) => !v)}
-            aria-pressed={active}
-            aria-label={active ? "J4 is active" : "Activate J4"}
-            className="absolute left-4 top-5 z-10 -translate-y-1/2 rounded-full transition-transform duration-200 active:scale-95"
-          >
-            {/* The active signal. A slow ring rather than a loud one: it has
-                to be noticeable without becoming the brightest thing on a
-                screen the owner is trying to read. */}
-            {active && (
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute -inset-1.5 animate-ping rounded-full bg-[#2563eb]/40"
-                style={{ animationDuration: "2.2s" }}
-              />
-            )}
-            {/* A steady glow under the pulse, so the active state is legible
-                between beats rather than only at the moment one fires. */}
-            <span
-              aria-hidden="true"
-              className={`pointer-events-none absolute rounded-full transition-all duration-300 ${
-                active ? "-inset-2 bg-[#2563eb]/35 blur-md" : "-inset-0 bg-transparent"
-              }`}
-            />
-            {/* The ring is the panel's own colour, so the circle joins the
-                surface instead of leaving a visible crack where it overlaps. */}
-            <GenesisAvatar
-              className={`relative rounded-full ring-4 ring-white/95 dark:ring-zinc-950/95 ${GENESIS_AVATAR_SIZE.presenceOrb}`}
-            />
-          </button>
+      <button
+        type="button"
+        onClick={onToggleTalk}
+        aria-pressed={talking}
+        aria-label={talking ? `J4: ${TALK_LABEL[talkState]}. Tap to stop.` : "Talk to J4"}
+        className="pointer-events-auto relative rounded-full transition-transform duration-200 active:scale-95"
+      >
+        {/* Listening pulses outward; speaking glows steadily; thinking sits
+            quiet. Subtle, but different enough to read at a glance without
+            looking at the label. */}
+        {talkState === "listening" && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -inset-2 animate-ping rounded-full bg-[#2563eb]/40"
+            style={{ animationDuration: "1.6s" }}
+          />
+        )}
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute rounded-full transition-all duration-300 ${
+            talking ? "-inset-3 bg-[#2563eb]/35 blur-md" : "-inset-1 bg-[#2563eb]/20 blur-lg"
+          }`}
+        />
+        <GenesisAvatar className={`relative ${GENESIS_AVATAR_SIZE.presenceOrb}`} />
+      </button>
 
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const text = draft.trim();
-              if (!text) return;
-              setDraft("");
-              // Sending expands, because a reply needs somewhere to be read.
-              onSend(text);
-            }}
-            className="flex min-w-0 flex-1 items-center gap-2 pb-1"
-          >
-            <input
-              type="text"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onFocus={() => setActive(true)}
-              placeholder={active ? "J4 is here. Ask, or tell J4 what you're working on…" : "Ask J4, or tell J4 what you're working on…"}
-              aria-label="Talk to J4"
-              className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-black placeholder:text-zinc-400 focus:outline-none dark:text-zinc-50 dark:placeholder:text-zinc-500"
-            />
-            {/* Voice, in the compact surface (2026-08-14). Sean: "I don't
-                want someone to have to expand the conversation just to access
-                the microphone." Its own control, deliberately separate from
-                the orb — tapping J4 activates him, tapping this records, and
-                merging the two would let a tap start a recording nobody asked
-                for.
-                The SAME VoiceMemoButton the conversation uses, not a second
-                recorder: it already carries the stream reuse, the Android
-                permission recovery and the immediate-acknowledgement
-                behaviour, all of which a reimplementation would silently
-                lose. Shown only when there is nothing typed, so the row never
-                offers send and record in the same 8px of space. */}
-            {draft.trim() ? (
-              <button
-                type="submit"
-                aria-label="Send to J4"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#2563eb] text-white transition-opacity"
-              >
-                <J4Icon name="send" size={15} />
-              </button>
-            ) : (
-              <VoiceMemoButton
-                uploadVoiceMemo={uploadVoiceMemo}
-                currentPath={currentPath}
-                surface="layer"
-                onStart={() => setActive(true)}
-                onFailure={() => setActive(false)}
-                onTranscribed={onVoiceMemo}
-              />
-            )}
-          </form>
-        </div>
-      </div>
+      {/* The way to the conversation, for reading it or for typing. Small and
+          below J4, because it is the secondary path now. */}
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-expanded={open}
+        aria-label="Show the conversation"
+        className="pointer-events-auto mt-1.5 rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-zinc-600 shadow-sm backdrop-blur dark:bg-zinc-900/90 dark:text-zinc-300"
+      >
+        Conversation
+      </button>
     </div>,
     document.body
   );

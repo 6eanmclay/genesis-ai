@@ -44,6 +44,16 @@ export interface J4Handoff {
    */
   focusComposer: boolean;
   clear: () => void;
+  /**
+   * Called by the conversation when a turn finishes, with J4's reply.
+   *
+   * The return leg of Talk Mode. What the owner says goes down through `text`
+   * and is sent by the one composer; what J4 answers comes back up through
+   * here to be spoken aloud. Both halves move through the single conversation
+   * — this carries a copy of the reply for the voice, never a second
+   * conversation or a second history.
+   */
+  onAssistantReply?: (text: string) => void;
 }
 
 export const J4HandoffContext = createContext<J4Handoff>({
