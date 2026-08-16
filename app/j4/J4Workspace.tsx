@@ -821,12 +821,17 @@ export function J4Workspace({
   // per Sean's own explicit calls on both open questions from the frozen
   // scope doc.
   const [justTalk, setJustTalk] = useState(false);
-  // Both modes are room-only, and derived rather than guarded at each use so
-  // there is exactly one place either can be true. The layer has no rail to
-  // step away from, so Just Talk has nothing to mean there, and it has no
-  // categories to switch between.
+  // Just Talk stays room-only: it means "step away from the rail", and it is
+  // derived rather than guarded at each use so there is exactly one place it
+  // can be true.
   const talkingOnly = justTalk && !isLayer;
-  const shownCategory: Category = isLayer ? "conversation" : activeCategory;
+  // THE LAYER SWITCHES CATEGORIES NOW (2026-08-15). This read
+  // `isLayer ? "conversation" : activeCategory`, which was correct while the
+  // layer had no rail — and became a bug the moment the rail was shown there,
+  // because the tabs rendered, highlighted on tap, and changed nothing. The
+  // Office is the layer, so the layer honours the selection like the room
+  // always did. Just Talk still pins the view, which is what it is for.
+  const shownCategory: Category = talkingOnly ? "conversation" : activeCategory;
   const overallState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
 
   // Leaving the room. Back when the owner came from their own business (the
