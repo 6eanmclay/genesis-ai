@@ -180,10 +180,12 @@ Sean's shape, exactly: *"If I ask, 'What would this heading look like in three d
 
 - **The real storefront stays the canvas.** Not a settings panel, not a mock, not three rendered pages side by side.
 - **The preview scrolls to the target element** rather than showing the page from the top, so the owner is looking at the thing they asked about.
-- **The variants are compact and in place** — stacked or side by side at the element, in its real surroundings.
-- **Choosing applies it** to the real storefront through the existing execution path.
+- **All variants are shown at once, anchored to that element** — a comparison overlay or card pinned to it, or the labelled options laid out immediately around it. Simultaneous, not one at a time: *"I want to be able to look at the actual webpage and immediately understand the difference between the options."* A toggle makes the owner hold two things in memory; showing them together does not.
+- **Nothing is applied until a variant is chosen.** The preview is temporary and changes nothing. Only selection reaches the real storefront, through the existing execution path.
 
 **This is not a design editor.** Sean: *"Don't build a separate generic design editor. The storefront itself should become J4's visual canvas."* Every variant is a real value from the existing closed vocabularies, rendered by the real storefront renderer.
+
+**An extension, not a replacement.** `Current ↔ Proposed` stays exactly as it is for whole-storefront judgements. This is the localized case: one element, several possibilities, compared at a glance.
 
 **It generalises beyond fonts.** Colours, buttons, product grid layouts, image treatments, section layouts, spacing, hero treatments, product cards. The mechanism is the same in every case: one element, several real possibilities, shown where the change will actually live.
 
