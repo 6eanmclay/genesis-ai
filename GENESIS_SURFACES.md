@@ -114,7 +114,26 @@ That is also why the room is **Office**, not "J4 Office." The Office holds the a
 
 ## The visual principle
 
-**The navigation must not resemble a conventional SaaS tab bar.** Treat it as a spatial control deck — a portal system the owner moves through, not a row of labels they click. The active room may express itself through **elevation, illumination, motion or material distinction**.
+### The navigation stays simple. The rooms carry the character. (locked 2026-08-15)
+
+**This corrects the earlier framing in this same section.** "Spatial control deck" and "portal system" were the right instinct about *ambition* and the wrong instruction for *navigation*. Sean, closing it:
+
+> *"Don't introduce a complicated spatial navigation system just because we call them rooms. The user should never have to learn a new navigation system just to understand where they are."*
+
+The current bar already has a quality worth protecting: **everything is visible, understandable, and one tap away.** Genesis is meant to be simpler than conventional business software, and a navigation system that has to be learned is the opposite of that no matter how good it looks.
+
+So the rule is a division of labour:
+
+| | |
+|---|---|
+| **Navigation** | Familiar, legible, boring on purpose. Four labels, always visible, always in the same place. |
+| **Rooms** | Distinct character, specialised experience, real difference once you are inside. |
+
+**Distinctiveness lives inside the rooms, never in the mechanism for reaching them.** A room may look and behave like nothing else in Genesis. Getting there is always four labels and a tap.
+
+The active room still needs to be unmistakable — an owner must never wonder which room they are in — but it earns that with ordinary, readable emphasis rather than with motion, depth or spatial metaphor. **Legibility is the requirement; theatre is not.**
+
+This is the standing "preserve simplicity" rule applied to navigation: polish it, never add to it.
 
 **Blue illumination remains exclusive to J4.** This is a constraint on the whole treatment, not a preference. J4 is the only blue thing on screen, and a room that glows blue steals the one signal the owner has learned to read. Rooms get light without colour: a lit surface, a raised edge, depth, material — never J4's blue.
 
@@ -122,7 +141,11 @@ The orb stays centred between the four rooms, present in all of them, and is nev
 
 ## Still open — the next design discussion
 
-**How the rooms actually feel different from one another while remaining one Genesis.** Not decided here, and not to be settled by implementation. Rooms that look identical are tabs with better names, and rooms that look unrelated are separate products. That conversation comes before any code, and it now includes the Office, which has to feel like J4's own space without becoming a sixth style.
+**How the rooms actually feel different from one another while remaining one Genesis.** Not decided here, and not to be settled by implementation. Rooms that look identical are tabs with better names, and rooms that look unrelated are separate products.
+
+The constraint that shapes this discussion: **the difference has to come from what each room is for, not from how the owner gets there.** Storefront is a canvas, Orders is a ledger, Studio is a workbench, Products is a catalogue — those are genuinely different kinds of work and can look it. The bar above them stays the same four labels in the same place, every time.
+
+The Office is included, and is the harder half: it has to feel like J4's own space without becoming a fifth visual style, and it is the only surface that appears *on top of* a room rather than beside it.
 
 ---
 
