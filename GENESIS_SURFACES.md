@@ -518,6 +518,23 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 - **J4 at 88px**, permanent and unmistakable on every workspace, rendered globally through `DashboardShell`. Not Overview only, and correct as it stands.
 - The four interactions stay distinct and must never be merged: **orb = continuous Talk mode · mic = voice message · text = typed message · expand = conversation and history**.
 
+## ▶ START HERE: Understanding → Office (specified, deliberately not started)
+
+Verified by reading the code, not guessed. Do these in order; **step 6 is last**, because doing it earlier orphans the only route to this content.
+
+1. `app/j4/J4Workspace.tsx:73` — add `"understanding"` to the `Category` union.
+2. `categoryTabs` (~line 1511) — add `{ key: "understanding", label: "Understanding", count: 0 }`. Count stays 0: it is a reference view, not a queue to clear, same as Conversation.
+3. `app/j4/J4Surface.tsx` (~110–140) — call `getBusinessUnderstanding(storeId)` from `lib/businessModel/understanding.ts:72` and thread it down exactly as `information` is.
+4. `J4Workspace` props interface (~782) — accept it beside `information`.
+5. Render branch (~1715, the `shownCategory === "conversation" ? …` chain) — add the branch, with a `CategoryEmptyState` for a store J4 does not know yet.
+6. `lib/dashboard/navConfig.ts` — remove the `understanding` entry from `NAV_SECTIONS`. It is marked in-code as a staging post.
+
+**Then open the Office and tap all six views.** `tsc` passes whether or not the wiring is right — that is the entire lesson of `6b68cff`, where the category rail rendered, highlighted on tap, and changed nothing because one line upstream still pinned the view. Rendering is not working.
+
+Nothing about the architecture, navigation, Office, J4 or the rooms is in scope while doing this. After it is verified: the four rooms — canvas, ledger, catalog, workbench.
+
+---
+
 **THE NAVIGATION IS BUILT AND LOCKED, 2026-08-15.** It is no longer a design question. Shipped:
 
 - `df27b8c` — the control beneath J4 reads **Office** and opens it.
