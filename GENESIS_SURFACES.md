@@ -518,11 +518,39 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 - **J4 at 88px**, permanent and unmistakable on every workspace, rendered globally through `DashboardShell`. Not Overview only, and correct as it stands.
 - The four interactions stay distinct and must never be merged: **orb = continuous Talk mode · mic = voice message · text = typed message · expand = conversation and history**.
 
+**THE NAVIGATION IS BUILT AND LOCKED, 2026-08-15.** It is no longer a design question. Shipped:
+
+- `df27b8c` — the control beneath J4 reads **Office** and opens it.
+- `41f648c` — rooms in the bar; Identity absorbed into Storefront; More became Account.
+- `7790808` — bar order `Storefront | Orders | (J4 · Office) | Products | Account`; the Office opens **full screen**.
+- `5ba34b4` — **the nesting is gone.** There is one Office, and Conversation, Tasks, Ideas, Decisions and Information are **views inside it**, never separate layers.
+
+The confirmed behaviour, which is what any future change has to preserve:
+
+```
+Tap the orb → talk to J4          (Talk Mode, untouched)
+Tap Office  → the Office, full screen, nothing behind it
+Inside      → filter the one stream by view
+Close       → back to the exact room they came from
+```
+
+**Closing the Office returns the owner to the exact room and scroll position they left.** Structural, not incidental: the room underneath is never unmounted, because the Office is an overlay rather than a route.
+
+**Still untouchable:** the orb, Talk Mode, the voice architecture, `useJ4Talk.ts`, and 88px.
+
+**Known loose end, deliberately left:** `/j4` still exists as a real route and still renders the older non-layer version. Nothing links to it. Retiring or redirecting it is a separate change, on Sean's explicit call.
+
+---
+
 **The navigation architecture is LOCKED, confirmed by Sean 2026-08-15.** Arrival screen, four rooms, J4 centred, the Office behind the control beneath him. See *The rooms* and *The Office doorway*.
 
 **No further navigation changes are to be designed or proposed until this one is built.** The architecture has been revised across several passes in a single day and is now settled; continuing to refine it instead of building it is the failure mode to avoid here.
 
 What is still a design question, and only this: **how the four rooms feel distinct while remaining one Genesis.** Different layouts because the work is different — never a different navigation.
+
+**This is now the active piece of work.** Sean, 2026-08-15: *"Move on to making the four rooms feel distinct through their content/layout, not by adding more navigation layers."* Nothing about the bar, the Office, or the orb is in scope for it.
+
+The nesting bug is the lesson to carry into it. That bug was not caused by a bad layer — it was caused by material having exactly one home, and that home not being the surface the owner reached first. **A room that has to grow a door to reach its own content is the wrong shape**, and the fix is always to bring the content into the room rather than to add a way out of it.
 
 **1. Contextual J4 surface on every workspace.** The same compact presence everywhere, with the controls around it changing by location:
 
