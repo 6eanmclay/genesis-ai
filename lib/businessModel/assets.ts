@@ -189,6 +189,12 @@ export async function recordGeneratedAsset(params: {
   generationPrompt?: string | null;
   aiUsageEventId?: string | null;
   originalFilename?: string;
+  // Defaults to "generated" because that is what this function is for.
+  // Overridable so a backfill can say "backfilled" instead of claiming a
+  // provenance it cannot actually know — an existing Store.logoUrl might have
+  // been generated, or might have come from a creative direction, and
+  // recording a guess as fact is worse than recording the truth.
+  origin?: string;
 }): Promise<string | null> {
   const data: Asset = {
     fileType: params.fileType ?? "photo",
@@ -200,7 +206,7 @@ export async function recordGeneratedAsset(params: {
     relatedRecordId: null,
     relatedEntityType: null,
     role: params.role,
-    origin: "generated",
+    origin: params.origin ?? "generated",
     supersedesAssetId: null,
     supersededByAssetId: null,
     generationPrompt: params.generationPrompt ?? null,
