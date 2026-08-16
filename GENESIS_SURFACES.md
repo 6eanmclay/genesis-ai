@@ -94,7 +94,7 @@ That is also why the room is **Office**, not "J4 Office." The Office holds the a
 
 | Today | Becomes | Why |
 |---|---|---|
-| Your Business (Overview) | **Removed** | A lobby. Its content is J4's briefing, which belongs to J4 and can appear anywhere. |
+| Your Business (Overview) | **The opening screen** | Kept, but not a room. See *Arrival* below. |
 | Website | Storefront | |
 | Identity | Storefront | Brand *is* the storefront's appearance |
 | Products | Products | |
@@ -110,7 +110,17 @@ That is also why the room is **Office**, not "J4 Office." The Office holds the a
 | Settings | **Outside the room navigation** | Reached from the account, never a room |
 | More | **Removed** | It exists only because there are too many tabs |
 
-**Fifteen destinations become four rooms, the Office behind J4, and a settings area.** The two removals are the substance of the change, not tidying: *Overview* and *More* both exist only because the current navigation is a list of features rather than a set of places. Keeping either one would mean the rethink did not happen.
+**Fifteen destinations become four rooms, the Office behind J4, an arrival screen, and a settings area.**
+
+*More* is the one outright removal, and it is the substance of the change rather than tidying: it exists only because the current navigation is a list of features rather than a set of places. A four-room bar has nothing to overflow.
+
+## Arrival (corrected 2026-08-15)
+
+**The opening screen stays.** When the owner first enters Genesis they land on the business overview and J4's briefing: the current state of the business, what changed, what needs attention.
+
+An earlier draft of this document had it removed as "a lobby." Sean corrected that, and the correction is right — **arrival is a third kind of surface, neither a room nor a tab.** It is where J4 tells the owner what happened while they were away, and it is the natural first thing to see. What it is *not* is a permanent destination competing with the rooms, which is what "Your Business" was when it sat in the tab bar.
+
+So: **the owner arrives there. They do not navigate back to it.** Once they are working, the rooms and J4 are the whole surface. If they want the briefing again, they ask J4 — it is J4's material.
 
 ## The visual principle
 
