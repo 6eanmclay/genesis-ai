@@ -149,30 +149,39 @@ export function J4Overlay({
       role="dialog"
       aria-modal={visible}
       aria-hidden={!visible}
-      aria-label="J4"
+      aria-label="J4's Office"
     >
-      <button
-        type="button"
-        aria-label="Close J4"
-        onClick={requestClose}
-        tabIndex={visible ? 0 : -1}
+      {/* Kept even though the Office now covers it. It is what the panel
+          animates in over, so removing it would show the workspace sliding
+          about behind a translucent edge for the length of the transition. */}
+      <div
+        aria-hidden="true"
         className={`absolute inset-0 bg-black/30 transition-opacity duration-300 md:bg-black/50 ${
           visible ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
       />
 
-      {/* 68% on a phone, which is the figure the approved direction froze:
-          "the composer is never a blank full-screen input... capped so the
-          screen you summoned from stays visible." That cap is not decoration.
-          It is the difference between talking to J4 about the thing in front
-          of you and being taken somewhere to talk about it, and it is what
-          makes "J4 comes to where I am" visible rather than merely true.
-          Desktop is still edge to edge, and is wrong for the same reason, but
-          desktop was explicitly held for its own design pass and inventing a
-          layout for it here would be exactly the kind of decision that pass
-          exists to make. */}
+      {/* FULL SCREEN. This is the Office, and entering it is the point.
+          Sean, 2026-08-15: "don't open it as a half-height sheet, drawer, or
+          partial overlay... It should feel like I've actually entered that
+          workspace."
+
+          WHY THE 68% CAP IS GONE, since it was frozen deliberately and its
+          reasoning was good. The cap existed because this panel used to be the
+          COMPOSER — "capped so the screen you summoned from stays visible,"
+          which was the difference between talking to J4 about the thing in
+          front of you and being taken somewhere to talk about it.
+
+          That job moved. Talking to J4 about what is in front of you is Talk
+          Mode now: tap the orb, speak, and this panel never opens at all. The
+          principle the cap was protecting is better served by the thing that
+          replaced it, and holding a sheet at 68% would now only mean the
+          Office can never look like a room.
+
+          So the two are cleanly split. The orb brings J4 to where the owner
+          is. This brings the owner to where the work is. */}
       <div
-        className={`absolute inset-x-0 bottom-0 top-[32%] flex origin-bottom touch-auto flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 md:top-0 md:rounded-none ${
+        className={`absolute inset-0 flex origin-bottom touch-auto flex-col overflow-hidden bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 ${
           visible
             ? "translate-y-0 scale-100 opacity-100"
             : "pointer-events-none translate-y-8 scale-[0.96] opacity-0"
@@ -186,18 +195,26 @@ export function J4Overlay({
             it, and hiding the button left Escape as the only way out of J4.
             Desktop's composition is still held for its own pass; being able
             to close something is not composition. */}
-        <div className="relative flex shrink-0 items-center justify-end px-3 pt-2">
-          <span
-            className="absolute left-1/2 top-2.5 h-1 w-9 -translate-x-1/2 rounded-full bg-black/[.15] dark:bg-white/[.2] md:hidden"
-            aria-hidden="true"
-          />
+        {/* The grab handle is gone with the sheet it belonged to. A pill at
+            the top edge is the universal sign for "drag me down," and on a
+            surface that no longer behaves like a sheet it would be promising a
+            gesture that does nothing. What is left names the room, so entering
+            it is unambiguous. Safe-area padding because this now reaches the
+            top of the screen and would otherwise sit under the notch. */}
+        <div
+          className="relative flex shrink-0 items-center justify-between px-3 pt-2"
+          style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)" }}
+        >
+          <span className="pl-1.5 text-[15px] font-semibold text-black dark:text-zinc-50">
+            Office
+          </span>
           {/* 44px, the platform minimum. The icon stays 20px; only the hit
               area grew, after a real report that the close control was hard
               to hit on a phone. */}
           <button
             type="button"
             onClick={requestClose}
-            aria-label="Close J4"
+            aria-label="Leave the Office"
             tabIndex={visible ? 0 : -1}
             className="-mr-1.5 flex h-11 w-11 items-center justify-center rounded-full text-zinc-500 active:bg-black/[.06] dark:text-zinc-400 dark:active:bg-white/[.08]"
           >

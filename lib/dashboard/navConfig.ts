@@ -78,9 +78,17 @@ export const NAV_SECTIONS: NavSection[] = [
   // destination an owner asked for, it is how the storefront looks. The route
   // stays /dashboard/website; /dashboard/brand becomes a section inside this
   // room rather than a peer of it.
+  // Order matters and is Sean's (2026-08-15):
+  //
+  //     Storefront | Orders | (J4 / Office) | Products | Account
+  //
+  // The centre slot is not in this list and never will be — it is J4 himself,
+  // rendered by J4Summon, with the Office door beneath him. Orders sits to his
+  // left because it is the room with live, time-sensitive material in it, and
+  // Products to his right.
   { key: "website", label: "Storefront", href: "/dashboard/website", permission: "store:manage" },
-  { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
   { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
+  { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
 
   // ---- account area, below the fold. Not rooms. ----
   { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
