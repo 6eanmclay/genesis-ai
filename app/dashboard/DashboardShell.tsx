@@ -859,7 +859,7 @@ export function DashboardShell({
             {secondaryNav}
 
             <main
-              className={`pb-24 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
+              className={`pb-28 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
                 // Home clears only the 64px header + 40px secondary nav; the
                 // other routes also clear MobileGenesisPresence's 76px bar.
                 isHome

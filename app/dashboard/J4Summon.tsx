@@ -107,7 +107,7 @@ export function J4Summon({
         onClick={onToggleTalk}
         aria-pressed={talking}
         aria-label={talking ? `J4: ${TALK_LABEL[talkState]}. Tap to stop.` : "Talk to J4"}
-        className="pointer-events-auto relative -mt-5 rounded-full transition-transform duration-200 active:scale-95"
+        className="pointer-events-auto relative -mt-9 rounded-full transition-transform duration-200 active:scale-95"
       >
         {/* Listening pulses outward; speaking glows steadily; thinking sits
             quiet. Subtle, but different enough to read at a glance without
