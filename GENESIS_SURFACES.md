@@ -1,10 +1,10 @@
-# The five rooms, and the partner who is in all of them
+# Four rooms, the partner who is in all of them, and the Office he keeps
 
 > ## J4 is not a place I go. J4 is who comes with me.
 >
 > Sean, 2026-08-14, naming this **the governing principle for the entire interface** — not one principle among several. Every decision below is an instance of it, and any future proposal that cannot be squared with it is the wrong proposal regardless of how well it is built.
 
-**The rooms model is locked, 2026-08-15.** It does not replace the surface model below; it resolves it. What was called *Business* was never one surface — it was four rooms wearing a single name. See **The five rooms** immediately after the non-negotiable test. The rest of this document, written the day before, is unchanged and still governs: only the naming of Creation → Studio has moved.
+**The rooms model is locked, 2026-08-15.** It does not replace the surface model below; it resolves it. What was called *Business* was never one surface — it was four rooms wearing a single name. See **The rooms** immediately after the non-negotiable test. The rest of this document, written the day before, is unchanged and still governs: only the naming of Creation → Studio has moved.
 
 **Status: ARCHITECTURE LOCKED, 2026-08-14.** Drafted for review the same day; all five open questions answered by Sean and folded in below. The four surfaces, the transitions between them, the confirmation ladder and the build order are now settled and are not to be relitigated by implementation convenience. What remains open is *how* each piece is built, never *what* the model is.
 
@@ -31,33 +31,44 @@ Sean made this the period at the end of the argument. It is a structural test, n
 
 ---
 
-# The five rooms
+# The rooms
 
 **Locked by Sean, 2026-08-15.** Design only — nothing here is authorization to build.
 
-Genesis is not a dashboard full of tabs. It is a set of **places the owner goes to do things**, and the interface itself is what communicates that. In Sean's framing:
+Genesis is not a dashboard full of tabs. It is a set of **places the owner goes to do things**, and the interface itself is what communicates that.
+
+**Four business rooms carry the navigation. The Office is entered through J4.**
 
 ```
-Storefront → See the business
-Products   → Sell the business
-Orders     → Handle the business
-Studio     → Create the business
-Office     → Run the business
+┌────────────────────────────────────────────────┐
+│  Storefront   Products  ( J4 )  Orders  Studio  │
+│                         Office                  │
+└────────────────────────────────────────────────┘
 ```
 
-| Room | The question it answers |
-|---|---|
-| **Storefront** | What does my business look like? |
-| **Products** | What am I selling? |
-| **Orders** | What's happening right now? |
-| **Studio** | What am I making? |
-| **Office** | What are we working on? |
+Two rooms, the partner, two rooms. **The navigation holds the business. J4 holds the work done on it.**
 
-## J4 is not a sixth room
+| Room | The question it answers | Entered by |
+|---|---|---|
+| **Storefront** | What does my business look like? | Navigation |
+| **Products** | What am I selling? | Navigation |
+| **Orders** | What's happening right now? | Navigation |
+| **Studio** | What am I making? | Navigation |
+| **Office** | What have we been working on? | **J4's presence** |
+
+## Why the Office leaves the navigation (locked 2026-08-15)
+
+Two doors into one room is not a problem. **An "Office" tab sitting in the room bar is** — because it is the tab every owner would read as *the J4 tab*, which is the one thing this architecture forbids, reintroduced through the back door.
+
+Removing it makes the division honest: the bar is the business, and the partner keeps the work. It also gives the bar its physical symmetry, two rooms either side of the orb, which is what a control deck should look like and what a five-item bar could never be.
+
+**Office is still a room.** It has a stable name, a place, and a door. It is simply not a tab.
+
+## J4 is not a room
 
 **The hard rule.** J4 must never appear in the room navigation and must never be presented as a destination. J4 is the persistent partner who accompanies the owner into every room. This is the governing principle at the top of this document, applied to the one place most likely to break it — because a bottom bar is exactly where a "J4" tab would look natural and be wrong.
 
-That is also why the room is **Office**, not "J4 Office." The Office holds the accumulated *work*; J4 himself is the orb, present in all five. The owner goes to the Office to look at what they and J4 have done. They never go to *J4*.
+That is also why the room is **Office**, not "J4 Office." The Office holds the accumulated *work*; J4 himself is the orb, present in every room. The owner goes to the Office to look at what they and J4 have done. They never go to *J4*.
 
 **Voice is available in every room. No exceptions.** The owner must never have to leave a space in order to talk to their business partner. Any room that cannot be talked to from where the owner is standing is not finished.
 
@@ -73,7 +84,7 @@ That is also why the room is **Office**, not "J4 Office." The Office holds the a
 
 **Studio** — the visual creation space: logos, product imagery, merchandise, layouts, brand exploration, marketing creative. Where *"put this logo on the shirt"* and *"show me three versions"* live.
 
-**Office** — conversations, decisions, tasks, ideas, documents, business knowledge, history and briefings.
+**Office** — conversations, decisions, tasks, ideas, documents, business knowledge, briefings and history, as **one continuous stream** rather than eight collections. Entered through J4's presence. See *The Office doorway* under section 3.
 
 ## Naming
 
@@ -99,7 +110,7 @@ That is also why the room is **Office**, not "J4 Office." The Office holds the a
 | Settings | **Outside the room navigation** | Reached from the account, never a room |
 | More | **Removed** | It exists only because there are too many tabs |
 
-**Fifteen destinations become five rooms plus a settings area.** The two removals are the substance of the change, not tidying: *Overview* and *More* both exist only because the current navigation is a list of features rather than a set of places. Keeping either one would mean the rethink did not happen.
+**Fifteen destinations become four rooms, the Office behind J4, and a settings area.** The two removals are the substance of the change, not tidying: *Overview* and *More* both exist only because the current navigation is a list of features rather than a set of places. Keeping either one would mean the rethink did not happen.
 
 ## The visual principle
 
@@ -107,17 +118,17 @@ That is also why the room is **Office**, not "J4 Office." The Office holds the a
 
 **Blue illumination remains exclusive to J4.** This is a constraint on the whole treatment, not a preference. J4 is the only blue thing on screen, and a room that glows blue steals the one signal the owner has learned to read. Rooms get light without colour: a lit surface, a raised edge, depth, material — never J4's blue.
 
-The orb stays centred, present in all five rooms, and is never one of them.
+The orb stays centred between the four rooms, present in all of them, and is never one of them.
 
 ## Still open — the next design discussion
 
-**How the five rooms actually feel different from one another while remaining one Genesis.** Not decided here, and not to be settled by implementation. Five rooms that look identical are five tabs with better names, and five rooms that look unrelated are five products. That conversation comes before any code.
+**How the rooms actually feel different from one another while remaining one Genesis.** Not decided here, and not to be settled by implementation. Rooms that look identical are tabs with better names, and rooms that look unrelated are separate products. That conversation comes before any code, and it now includes the Office, which has to feel like J4's own space without becoming a sixth style.
 
 ---
 
 ## 1. Business — "I'm looking at my business"
 
-> **Superseded in structure by the five rooms above, 2026-08-15.** *Business* turned out to be four rooms — Storefront, Products, Orders, Studio — sharing one name. Everything below about the owner's page and scroll position being the primary state is unchanged and applies to every room.
+> **Superseded in structure by the rooms above, 2026-08-15.** *Business* turned out to be four rooms — Storefront, Products, Orders, Studio — sharing one name. Everything below about the owner's page and scroll position being the primary state is unchanged and applies to every room.
 
 The business itself: Overview, Identity, Website, Products, Understanding, Customers, Orders, and whatever comes later. This is where the owner spends their time. It is the primary workspace, and it is the thing every other surface is in service of.
 
@@ -184,6 +195,71 @@ The rule this encodes: *J4 doesn't take me somewhere to talk to J4. J4 comes to 
 
 Where the owner intentionally goes to review, organise and understand accumulated work: conversations, goals, decisions, tasks, ideas, documents, business knowledge, history and briefings.
 
+### The Office doorway (locked 2026-08-15)
+
+**The control beneath J4's presence is the door to the Office.** It reads **Office**. It does not read "Conversation" — that word named one artifact and made the other seven feel like they lived somewhere else.
+
+```
+        ╭─────────╮
+        │   ORB   │   tap → Talk Mode
+        ╰─────────╯
+          Office       tap → J4's Office
+```
+
+It does not need to say "J4's Office." The orb directly above it supplies that, and the owner reads the pair as one thing: *J4, and the place J4 keeps our work.*
+
+**The name is stable and never changes dynamically.** A small contextual badge is fine where it earns its place — *3 waiting*, *2 new* — but the destination is always Office. A door that renames itself is a door the owner has to re-learn every time they look at it.
+
+**Sean's test for the whole design:** *"A user who wants to remember something they told J4 should not have to understand our navigation architecture. They see J4, tap J4, and naturally find the conversation and history there."*
+
+### It opens over the room, it does not navigate
+
+The Office opens as a full-height surface **above** the current room, the way the conversation already does. This is structural, not a rendering preference:
+
+- A mis-tap on a small label sitting directly beneath an 88px orb would otherwise cost the owner their page and their scroll position. The previous worst case for a mis-tap was starting Talk Mode in place, which is recoverable by tapping again.
+- As an overlay, the room underneath is never unmounted, so *return to exactly where you were* costs nothing and needs no restoration logic. Free is the only version of that guarantee that cannot regress.
+- It keeps the non-negotiable test literally true: **nothing ever navigates from J4's presence.**
+
+### The four interactions, unchanged
+
+| Where | Does |
+|---|---|
+| **Orb** | Talk Mode, continuous voice |
+| **Office**, beneath the orb | Opens the Office |
+| **Mic**, inside | One voice message |
+| **Text**, inside | One typed message |
+
+The same four that were locked on 2026-08-14. The fourth simply grew from *the conversation* into *everything we have made together*, which is what it should have been.
+
+### One stream, not eight collections
+
+The eight things the Office holds are **typed objects inside one continuous stream**, never parallel archives and never destinations.
+
+This matters because those eight are very nearly the five-tab rail this document already retired as *J4's filing cabinet exposed as navigation*. The reason they are not the same mistake: every decision, task and idea **happened in a conversation**. They are things that surfaced while the owner and J4 were talking, and they keep their place in that history. A decision renders as a decision, inline, where it was made. A document renders where it was uploaded.
+
+So the Office opens on **what is being worked on now** — open threads, live decisions, recent work — with history running continuously beneath it. Not an index. Not eight cards.
+
+**The owner must never need to know what type an object was in order to find it.** Three ways in, all equal:
+
+1. **Ask J4.** *"What did I tell you about the shirt sizing?"* Retrieval is J4's job, not the navigation's.
+2. **A lens**, where one genuinely helps. A filter over the single stream.
+3. **Scroll.** The history is there, in order.
+
+The line between a lens and a rail is which sentence the owner thinks:
+
+> ✅ *"Show me just the decisions."* — a lens over one stream
+> ❌ *"Which tab is that in?"* — a rail, forbidden
+
+### One conversation, always
+
+**The compact presence and the full Office show the same conversation and the same history. There is never a second thread.** This is the load-bearing rule of the whole design: the Office is a larger view of the relationship the owner already has with J4, not a separate place where a different J4 keeps different notes.
+
+Three continuities make it read as one system rather than a section of an app:
+
+1. **One conversation**, compact and full.
+2. **The same J4.** Talking inside the Office is talking to the partner who was just in Storefront.
+3. **Dismissing returns the owner exactly where they stood** — same room, same scroll, mid-sentence if that is where they were.
+
 **`/j4` becomes Office.** What was called "Full workspace" is renamed Office. `/j4` may remain temporarily as a compatibility route that resolves to Office, but it is no longer the primary way to talk to J4 and must not be presented as one.
 
 **No permanent sub-navigation. Decided, not open.** Today's `Conversation | Tasks | Ideas | Decisions | Information` rail is J4's internal filing cabinet exposed as navigation, and it does not survive. Those five do not remain as equal destinations.
@@ -231,10 +307,11 @@ Business → persistent J4 → Office or Creation, when intentionally needed
 
 | From | To | When |
 |---|---|---|
-| Business | J4 | Any time. The summon. **Never navigates.** Opens the layer in place on the current page. |
-| J4 | Office | Intentional. *"Show me what we've decided about the website."* J4 **offers**; the owner accepts. |
-| J4 | Creation | Intentional. *"Redesign this."* J4 **offers**; the owner accepts. |
-| Office / Creation | Business | Returns to the exact page and scroll position they came from. |
+| Any room | J4 | Any time. The summon. **Never navigates.** Opens the layer in place on the current page. |
+| Any room | Office | The permanent door beneath J4's presence. Opens **over** the room; the room is never unmounted. |
+| J4 | Office | Also offered conversationally. *"Show me what we've decided about the website."* J4 **offers**; the owner accepts. |
+| J4 | Studio | Intentional. *"Redesign this."* J4 **offers**; the owner accepts. |
+| Office / Studio | The room they came from | Returns to the exact page and scroll position. |
 
 Stated as the distinction to hold onto: **J4 summon = talk to J4 here. Office = go look at the accumulated work with J4.**
 
@@ -383,7 +460,7 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 - **J4 at 88px**, permanent and unmistakable on every workspace, rendered globally through `DashboardShell`. Not Overview only, and correct as it stands.
 - The four interactions stay distinct and must never be merged: **orb = continuous Talk mode · mic = voice message · text = typed message · expand = conversation and history**.
 
-**Design work in flight, ahead of all of it: the five rooms.** The information architecture is locked (see *The five rooms*). **The next step is a design discussion, not code** — how the rooms feel distinct while remaining one Genesis. Nothing about the bottom navigation is authorized to be built until that is settled and written down here.
+**Design work in flight, ahead of all of it: the rooms.** The information architecture is locked (see *The rooms*), including the Office doorway beneath J4's presence. **The next step is a design discussion, not code** — how the rooms feel distinct while remaining one Genesis. Nothing about the bottom navigation or the Office is authorized to be built until that is settled and written down here.
 
 **1. Contextual J4 surface on every workspace.** The same compact presence everywhere, with the controls around it changing by location:
 
@@ -439,12 +516,13 @@ Its own research and knowledge problem. Not solvable with arbitrary UI rules.
 The architecture in one line each:
 
 ```
-STOREFRONT = what my business looks like.
-PRODUCTS   = what I'm selling.
-ORDERS     = what's happening right now.
-STUDIO     = what we're making, together, at full scale.
-OFFICE     = what we've been working on.
-J4         = the partner who is in all five, and is never one of them.
+STOREFRONT = what my business looks like.  ┐
+PRODUCTS   = what I'm selling.             │ the navigation
+ORDERS     = what's happening right now.   │ four rooms
+STUDIO     = what we're making.            ┘
+
+J4         = the partner who is in all four, and is never one of them.
+OFFICE     = what we've been working on. Behind J4, not in the bar.
 ```
 
 Check any proposed J4 work against five things before writing code:
