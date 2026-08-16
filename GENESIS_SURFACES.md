@@ -172,6 +172,23 @@ Sean's framing, and it may be one of Genesis's signature experiences: most websi
 
 **Proposals come to the owner; the owner does not go hunting for them.** A proposal buried at the bottom of the Website tab fails this. If the owner is elsewhere, J4 brings the relevant visual into view rather than throwing them into another room.
 
+### Localized variant previews (locked 2026-08-15)
+
+A second, narrower shape alongside `Current ↔ Proposed`. That one answers *"do I prefer this version of my storefront?"*; this one answers *"which of these should it be?"*
+
+Sean's shape, exactly: *"If I ask, 'What would this heading look like in three different fonts?', J4 should stay on the actual webpage, scroll to that heading, and show the three font variations there... I don't want three separate storefronts. I want to see the actual element in its actual context with the different possibilities."*
+
+- **The real storefront stays the canvas.** Not a settings panel, not a mock, not three rendered pages side by side.
+- **The preview scrolls to the target element** rather than showing the page from the top, so the owner is looking at the thing they asked about.
+- **The variants are compact and in place** — stacked or side by side at the element, in its real surroundings.
+- **Choosing applies it** to the real storefront through the existing execution path.
+
+**This is not a design editor.** Sean: *"Don't build a separate generic design editor. The storefront itself should become J4's visual canvas."* Every variant is a real value from the existing closed vocabularies, rendered by the real storefront renderer.
+
+**It generalises beyond fonts.** Colours, buttons, product grid layouts, image treatments, section layouts, spacing, hero treatments, product cards. The mechanism is the same in every case: one element, several real possibilities, shown where the change will actually live.
+
+**The principle underneath both shapes:** J4 shows what a proposed change will actually look like before it changes the owner's website.
+
 ### The confirmation ladder
 
 Confirmation is context-dependent. Not every action needs two confirmations, and demanding one because the architecture is uniform is itself the bug:
