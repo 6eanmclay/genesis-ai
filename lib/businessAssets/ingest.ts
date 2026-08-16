@@ -26,6 +26,18 @@ export async function ingestBusinessAsset(
     extractionConfidence: null,
     relatedRecordId: null,
     relatedEntityType: null,
+    // Designation (2026-08-16). An upload arrives undesignated on purpose:
+    // nobody has said what it is FOR yet, and guessing a role from a filename
+    // would be exactly the fabrication this codebase avoids elsewhere.
+    // Classification, or the owner, gives it one later via designateAsset —
+    // see lib/businessModel/assets.ts. `origin` is knowable now, so it is set.
+    role: null,
+    origin: "uploaded",
+    supersedesAssetId: null,
+    supersededByAssetId: null,
+    generationPrompt: null,
+    aiUsageEventId: null,
+    createdAt: new Date().toISOString(),
   };
 
   const result = await persistSyncedRecords(storeId, SOURCE_PROVIDER, [

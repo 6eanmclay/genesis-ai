@@ -59,6 +59,7 @@ import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
+import { ASSET_ROLES, recordGeneratedAsset } from "@/lib/businessModel/assets";
 import { buildTaskSeedMessage, buildTaskUserMessage, buildTaskRecapMessage } from "@/lib/dashboard/taskConversation";
 import { completeTasksForAction } from "@/lib/dashboard/tasks";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
@@ -4932,6 +4933,37 @@ export async function confirmStoreDraftCore(
         timestamp: new Date(),
         metadata: { provider: fulfillmentSelection.candidate.provider },
       });
+    }
+  }
+
+  // The brand logo becomes a real, designated Asset (2026-08-16).
+  //
+  // Until now the logo existed only as Store.logoUrl — a column, which is
+  // enough to render it and not enough to refer to it. "Put that logo on a
+  // T-shirt" needs an object with an id, a role and a history, so this is
+  // where a generated image stops being a URL and starts being a business
+  // asset. Recorded here rather than at generation time for a real reason:
+  // generateBusinessIcon runs during the draft phase, before any storeId
+  // exists to attach a BusinessRecord to.
+  //
+  // Non-fatal, same posture as the fulfillment registration directly above:
+  // a store that launched successfully must not fail because a secondary
+  // record could not be written.
+  const brandLogoUrl = opts.logoUrl ?? creativeDirection?.logoUrl ?? null;
+  if (brandLogoUrl) {
+    try {
+      await recordGeneratedAsset({
+        storeId: store.id,
+        url: brandLogoUrl,
+        role: ASSET_ROLES.brandLogo,
+        category: "brand_logo",
+        summary: `Brand logo for ${store.name}`,
+        originalFilename: "brand-logo.png",
+      });
+    } catch {
+      // Deliberately swallowed. The logo is still on the Store row and still
+      // renders; what is lost is the ability to refer to it by role until
+      // something records it again.
     }
   }
 

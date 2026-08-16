@@ -58,7 +58,7 @@ function trendArrow(direction: "up" | "down" | "flat" | undefined): string {
 // information about the state of J4's understanding — dropping empty groups
 // would quietly overstate how much it knows.
 function toUnderstandingGroups(u: BusinessUnderstanding): UnderstandingGroup[] {
-  const { profile, beliefs, recentDecisions, activeThoughts, platformRelationship } = u;
+  const { profile, beliefs, recentDecisions, activeThoughts, platformRelationship, currentAssets } = u;
 
   const identity: string[] = [];
   identity.push(profile.identity.tagline ? `${profile.identity.name} — ${profile.identity.tagline}` : profile.identity.name);
@@ -91,6 +91,18 @@ function toUnderstandingGroups(u: BusinessUnderstanding): UnderstandingGroup[] {
 
   return [
     { key: "identity", label: "Identity", lines: identity, empty: "I don't have your business identity yet." },
+    {
+      // What J4 can point at by name. This is the visible proof that a
+      // designated asset resolves to a real record rather than a URL on a
+      // column — if "brand.logo" appears here, "that logo" has something to
+      // mean.
+      key: "assets",
+      label: "Assets I can use",
+      lines: Object.entries(currentAssets).map(
+        ([role, asset]) => `${role} — ${asset.summary ?? asset.originalFilename}${asset.origin ? ` (${asset.origin})` : ""}`
+      ),
+      empty: "Nothing designated yet. Generated and uploaded files become usable assets once they have a role.",
+    },
     { key: "offerings", label: "What you sell", lines: offerings, empty: "Nothing in the catalog yet." },
     {
       key: "revenue",

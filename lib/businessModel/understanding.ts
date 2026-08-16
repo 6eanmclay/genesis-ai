@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getBusinessProfile, type BusinessProfile } from "./profile";
 import { getBeliefs } from "@/lib/intelligence/learn";
 import { getRecentDecisionOutcomes, type RecentDecisionOutcome } from "./reasoning";
+import { currentAssetsByRole, type DesignatedAsset } from "./assets";
 
 // J4 Foundation — the canonical representation of what J4 knows about a
 // business at any point in time (J4_FOUNDATION.md, Gap A). Combines the
@@ -66,11 +67,19 @@ export interface BusinessUnderstanding {
   // ever-growing unbounded history for a long-lived store.
   activeThoughts: ActiveThought[];
   platformRelationship: PlatformRelationship;
+  // What J4 can point at (2026-08-16) — the asset currently holding each
+  // role, keyed by role. This is what makes "that logo" resolvable: before
+  // it, the only real answer to "what is the brand logo" was Store.logoUrl,
+  // a column that renders but cannot be referred to, versioned, or handed to
+  // a design step. Part of Understand rather than a separate lookup for the
+  // reason stated at the top of this file — there is one answer to "what
+  // does J4 know", and a designated asset is part of that answer.
+  currentAssets: Record<string, DesignatedAsset>;
   asOf: string;
 }
 
 export async function getBusinessUnderstanding(storeId: string): Promise<BusinessUnderstanding> {
-  const [profile, beliefs, recentDecisions, activeOutputs, store] = await Promise.all([
+  const [profile, beliefs, recentDecisions, activeOutputs, store, currentAssets] = await Promise.all([
     getBusinessProfile(storeId),
     getBeliefs(storeId),
     getRecentDecisionOutcomes(storeId),
@@ -90,12 +99,14 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
         plan: { select: { name: true } },
       },
     }),
+    currentAssetsByRole(storeId),
   ]);
 
   return {
     profile,
     beliefs,
     recentDecisions,
+    currentAssets,
     activeThoughts: activeOutputs.map((o) => ({
       id: o.id,
       kind: o.kind,

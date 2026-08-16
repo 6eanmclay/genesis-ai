@@ -215,6 +215,46 @@ export const AssetSchema = z.object({
   // xxxId/xxxIds convention every other entity already uses.
   relatedRecordId: z.string().nullable(),
   relatedEntityType: z.string().nullable(),
+
+  // ---- Designation (2026-08-16) ----
+  //
+  // What this asset is FOR, as opposed to what it IS. `category` already
+  // says "this file is a logo"; `role` says "this is the logo the brand
+  // currently uses." That distinction is the whole point: without it, an
+  // asset is a file in a list and "put THAT logo on a shirt" has nothing to
+  // resolve against, because the only real answer lived in Store.logoUrl —
+  // a column, not a referenceable object.
+  //
+  // Open vocabulary, same discipline as every other categorical field here:
+  // "brand.logo" | "brand.mark" | "product.artwork" | "product.photo" |
+  // "document" | ... Deliberately dotted and general — this is not a logo
+  // feature, it is the designation layer every future creative asset uses.
+  // Null means "held, but not designated for anything yet", which is the
+  // honest state of most uploads until something classifies them.
+  role: z.string().nullable().default(null),
+
+  // "uploaded" | "generated" — where the file came from. Kept separate from
+  // sourceProvider (which records WHICH system supplied it) because a
+  // generated asset needs different handling downstream: it has a prompt, a
+  // cost, and no original filename worth showing.
+  origin: z.string().nullable().default(null),
+
+  // Supersession. A new brand logo does not delete the old one — it takes
+  // over the role, and the previous holder keeps its history and points
+  // forward. So "the current logo" is a real query (role held, not
+  // superseded) rather than "whatever row happens to be newest", and J4 can
+  // still answer "what did the logo look like before?".
+  supersedesAssetId: z.string().nullable().default(null),
+  supersededByAssetId: z.string().nullable().default(null),
+
+  // Provenance for generated assets — the exact prompt, and the real
+  // AiUsageEvent row this generation cost. Same correlation ImageSourceResult
+  // already carries; this is where it stops being discarded once the URL is
+  // in hand.
+  generationPrompt: z.string().nullable().default(null),
+  aiUsageEventId: z.string().nullable().default(null),
+
+  createdAt: z.string().nullable().default(null), // ISO date
 });
 export type Asset = z.infer<typeof AssetSchema>;
 
