@@ -840,6 +840,17 @@ export function J4Workspace({
   // per Sean's own explicit calls on both open questions from the frozen
   // scope doc.
   const [justTalk, setJustTalk] = useState(false);
+  // The "+" tray (2026-08-16). Sean: the camera, document and voice controls
+  // sitting out beside the composer read as clutter, so they fold behind one
+  // control and the default composer is `+ → Talk to J4… → Send`.
+  //
+  // This is open/closed state, NOT mount/unmount state, and the difference is
+  // load-bearing: VoiceMemoButton caches a getUserMedia() stream and must stay
+  // exactly one instance at one position (see its own comment below). Rendering
+  // the tray conditionally would drop that stream on every toggle and truncate
+  // a recording in progress. The row is therefore always mounted and merely
+  // hidden, which is the same reason J4Overlay stays mounted while closed.
+  const [addOpen, setAddOpen] = useState(false);
   // Just Talk stays room-only: it means "step away from the rail", and it is
   // derived rather than guarded at each use so there is exactly one place it
   // can be true.
@@ -2011,7 +2022,19 @@ export function J4Workspace({
             unmount/remount it on every toggle, silently dropping the
             cached getUserMedia() stream (see streamRef's own comment) and,
             worse, truncating a real recording if toggled mid-recording. */}
-        <div className={talkingOnly ? "mb-2 flex items-center justify-center" : "mb-1.5 flex items-center gap-1.5"}>
+        {/* Hidden, never unmounted, when the tray is closed — see addOpen's
+            own comment. Just Talk keeps its mic-primary row on screen
+            unconditionally: that mode exists to put the microphone front and
+            centre, so folding it behind a "+" would defeat it. */}
+        <div
+          className={
+            talkingOnly
+              ? "mb-2 flex items-center justify-center"
+              : addOpen
+                ? "mb-1.5 flex items-center gap-1.5"
+                : "hidden"
+          }
+        >
           {!talkingOnly && (
             <>
               <span className="pl-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
@@ -2079,13 +2102,41 @@ export function J4Workspace({
             </Link>
           )}
           <div
-            className="flex min-w-0 flex-1 max-w-full items-end gap-2 rounded-2xl border-2 p-1.5 pl-4"
+            className="flex min-w-0 flex-1 max-w-full items-end gap-2 rounded-2xl border-2 p-1.5"
             style={{ borderColor: GENESIS_ATMOSPHERE.violet, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
           >
+            {/* The one control that opens everything else. Deliberately quiet
+                — outlined rather than filled — so the eye still lands on the
+                field and the send arrow, which is what the two-row design was
+                protecting when it labelled the icons "Add to J4" instead of
+                letting them compete with the composer. Same 44px hit area as
+                send. Hidden in Just Talk, where the mic is already primary. */}
+            {!talkingOnly && (
+              <button
+                type="button"
+                onClick={() => setAddOpen((open) => !open)}
+                aria-expanded={addOpen}
+                aria-label={addOpen ? "Hide what you can add to J4" : "Add photos, documents or a voice message"}
+                title="Add to J4"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border text-xl leading-none transition"
+                style={{
+                  borderColor: GENESIS_ATMOSPHERE.border,
+                  color: GENESIS_ATMOSPHERE.textSecondary,
+                  backgroundColor: addOpen ? GENESIS_ATMOSPHERE.bg : "transparent",
+                }}
+              >
+                <span aria-hidden="true" className={`transition-transform duration-200 ${addOpen ? "rotate-45" : ""}`}>
+                  +
+                </span>
+              </button>
+            )}
             <textarea
               ref={messageInputRef}
               name="message"
-              placeholder="Talk to J4 — ask, instruct, or tell J4 what you're working on…"
+              // Shortened with the tray change (2026-08-16). The long version
+              // was carrying instructions the composer no longer has to give
+              // now that "+" says where everything else lives.
+              placeholder="Talk to J4…"
               rows={2}
               required
               onFocus={() => setGenesisComposing(true)}
@@ -2098,7 +2149,7 @@ export function J4Workspace({
                   window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
                 }
               }}
-              className="min-w-0 max-h-40 min-h-[4.5rem] flex-1 resize-none bg-transparent py-2.5 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
+              className="min-w-0 max-h-40 min-h-[4.5rem] flex-1 resize-none bg-transparent py-2.5 pl-2 text-[15px] text-[#f4f2fb] placeholder:text-[rgba(244,242,251,0.45)] focus:outline-none"
             />
             <SubmitButton
               // Real bug (Sean, 2026-08-08, from a real screenshot): "…" here
