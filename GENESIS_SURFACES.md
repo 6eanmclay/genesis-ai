@@ -286,6 +286,32 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 
 ## Build order
 
+**Current priorities, locked 2026-08-15.** These supersede the ordering below for what happens next.
+
+**0. Done and locked. Do not change.**
+- The **voice loop**: tap the orb, Whisper listens, J4's own brain answers, ElevenLabs speaks, listening resumes. Working end to end on a real phone. `useJ4Talk.ts` and the speak path are not to be modified.
+- **J4 at 88px**, permanent and unmistakable on every workspace, rendered globally through `DashboardShell`. Not Overview only, and correct as it stands.
+- The four interactions stay distinct and must never be merged: **orb = continuous Talk mode · mic = voice message · text = typed message · expand = conversation and history**.
+
+**1. Contextual J4 surface on every workspace.** The same compact presence everywhere, with the controls around it changing by location:
+
+| Workspace | Controls |
+|---|---|
+| Office | Photos · Documents · Files · Ideas |
+| Products | Products · Photos · Edit · Ideas |
+| Website | Design · Photos · Content · Preview |
+| Identity | Brand · Photos · Copy · Ideas |
+
+**These are ways of giving J4 context or asking J4 to work on something. They are not navigation tabs**, and they must not become the old generic chat UI rebuilt per page.
+
+**2. Test the existing proposal controls, on the deployed build, before extending them.** Apply this, Not this, and Tell J4 what to change have never been exercised by hand. Two real bugs already hid in that path — nested forms that silently swallowed every click, and a page-scoped revalidation that refreshed a route the owner was not on. Sean's rule, and it is the right one: *do not consider that feature complete based on code inspection alone.*
+
+**3. Three-option visual proposals.** `Current + J4's Pick + Alternative`, shown simultaneously against the real storefront element. Selecting one lets the owner ask for **two more variations based on that choice**, so the comparison narrows rather than restarting. See the localized variant preview section above for the shape.
+
+---
+
+## Build order (original, superseded above for sequencing)
+
 Sequential and deliberate. Each step is the foundation the next depends on. **Do not skip ahead, and do not start Office or Creation.**
 
 ### 1. Persistent J4 layer — *largely built*
