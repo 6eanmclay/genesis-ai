@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
-import { NAV_SECTIONS, STOREFRONT_SECTIONS } from "@/lib/dashboard/navConfig";
+import { NAV_SECTIONS, ROOM_SECTIONS, STOREFRONT_SECTIONS } from "@/lib/dashboard/navConfig";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOrderSummary, getRevenueTrend } from "@/lib/dashboard/whatHappened";
 import { getNewCustomerCount } from "@/lib/dashboard/customers";
@@ -110,9 +110,12 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const sections = NAV_SECTIONS.filter(
     (section) => !section.permission || hasPermission(role, section.permission)
   );
-  const secondarySections = STOREFRONT_SECTIONS.filter(
-    (section) => !section.permission || hasPermission(role, section.permission)
-  );
+  // Each room's own sections, permission-filtered the same way the rooms are.
+  // A room whose sections all filter away simply has none, which the shell
+  // already handles — it shows no section row rather than an empty one.
+  const roomSections = ROOM_SECTIONS.map((list) =>
+    list.filter((section) => !section.permission || hasPermission(role, section.permission))
+  ).filter((list) => list.length > 0);
 
   // Live Intelligence's Business Pulse widget — same permission pattern
   // Home already uses (app/dashboard/page.tsx): revenue is never fetched at
@@ -354,7 +357,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       j4={<J4Surface surface="layer" />}
       uploadVoiceMemo={uploadVoiceMemo}
       sections={sections}
-      secondarySections={secondarySections}
+      roomSections={roomSections}
       storeId={store.id}
       storeName={store.name}
       storefrontUrl={storefrontUrl}

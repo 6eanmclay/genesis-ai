@@ -98,7 +98,7 @@ interface LiveObservation {
 // client component wrapping server-rendered children.
 export function DashboardShell({
   sections,
-  secondarySections,
+  roomSections,
   storeId,
   storeName,
   storefrontUrl,
@@ -125,7 +125,8 @@ export function DashboardShell({
   uploadVoiceMemo,
 }: {
   sections: NavSection[];
-  secondarySections: NavSection[];
+  /** One list per room that has sections; the shell picks by current route. */
+  roomSections: NavSection[][];
   storeId: string;
   storeName: string;
   storefrontUrl: string | null;
@@ -340,10 +341,16 @@ export function DashboardShell({
     },
   });
 
-  // Secondary nav only renders while the current route is genuinely one of
-  // Your Business's own workspaces (Overview/Identity/Website/Products) —
-  // never on Customers or anything under More.
-  const isInYourBusiness = secondarySections.some((s) => isActive(s.href));
+  // Which room's sections to show (2026-08-15). This used to be one fixed
+  // list, which worked while only Your Business had sections. Rooms each have
+  // their own now — Storefront is website + identity, Orders is orders +
+  // customers + revenue — so the shell resolves the list from where the owner
+  // is actually standing. A room whose sections don't match the route shows
+  // none, which is what keeps Storefront's sections out of Orders.
+  const secondarySections = roomSections.find((list) => list.some((s) => isActive(s.href))) ?? [];
+
+  // Whether the current route is inside a room that has sections at all.
+  const isInYourBusiness = secondarySections.length > 0;
 
   // Contextual-review connection layer: a "?focus=<id>" is only honored
   // when it names a still-pending approval OR real observation (either

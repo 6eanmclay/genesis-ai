@@ -91,10 +91,12 @@ export const NAV_SECTIONS: NavSection[] = [
   { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
 
   // ---- account area, below the fold. Not rooms. ----
-  { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
+  // Customers and Analytics used to sit here as staging posts. They are
+  // sections inside the Orders room now (see ORDERS_SECTIONS), which is where
+  // the architecture always put them: an owner meets a customer by way of an
+  // order, and revenue is what orders mean.
   { key: "marketing", label: "Marketing", href: "/dashboard/marketing", permission: "store:manage" },
   { key: "payments", label: "Payments", href: "/dashboard/payments", permission: "payments:manage" },
-  { key: "analytics", label: "Analytics", href: "/dashboard/analytics", permission: "analytics:view" },
   // Phase 3 Milestone 2 — connecting third-party business software.
   // Deliberately separate from Payments: Payments is "how you get paid,"
   // already shipped and stable; Connections covers everything else
@@ -162,3 +164,29 @@ export const STOREFRONT_SECTIONS: NavSection[] = [
   { key: "website", label: "Storefront", href: "/dashboard/website", permission: "store:manage" },
   { key: "brand", label: "Identity", href: "/dashboard/brand", permission: "store:manage" },
 ];
+
+// Sections INSIDE the Orders room — the business ledger (2026-08-15).
+//
+// Orders, the customers those orders came from, and what they add up to. These
+// were three peers in a flat feature list, which is how software organises
+// itself rather than how an owner thinks: nobody opens a customer table cold,
+// they wonder who bought something. Revenue is likewise not a separate
+// discipline, it is what orders mean once you total them.
+//
+// Fulfillment is deliberately absent. It is not a page — it is what you do TO
+// an order, and it already lives on the order itself (buy a label, mark it
+// shipped). Giving it a section would be inventing a destination to make the
+// list look symmetrical.
+export const ORDERS_SECTIONS: NavSection[] = [
+  { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
+  { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
+  { key: "analytics", label: "Revenue", href: "/dashboard/analytics", permission: "analytics:view" },
+];
+
+// Which sections belong to which room. The shell picks the list for whichever
+// room the owner is standing in — a room shows its own sections and no others.
+//
+// A room with one section shows no section row at all, which is correct:
+// Products is a catalogue and Studio is a workbench, and neither is improved
+// by a row containing its own name.
+export const ROOM_SECTIONS: NavSection[][] = [STOREFRONT_SECTIONS, ORDERS_SECTIONS];
