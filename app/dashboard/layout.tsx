@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
-import { NAV_SECTIONS, YOUR_BUSINESS_SECTIONS } from "@/lib/dashboard/navConfig";
+import { NAV_SECTIONS, STOREFRONT_SECTIONS } from "@/lib/dashboard/navConfig";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOrderSummary, getRevenueTrend } from "@/lib/dashboard/whatHappened";
 import { getNewCustomerCount } from "@/lib/dashboard/customers";
@@ -110,7 +110,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const sections = NAV_SECTIONS.filter(
     (section) => !section.permission || hasPermission(role, section.permission)
   );
-  const secondarySections = YOUR_BUSINESS_SECTIONS.filter(
+  const secondarySections = STOREFRONT_SECTIONS.filter(
     (section) => !section.permission || hasPermission(role, section.permission)
   );
 
@@ -257,8 +257,17 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // Overview deliberately never "owns" anything: no approval or
   // observation's real destination is ever plain "/dashboard" (confirmed
   // by direct audit of ACTION_SECTIONS and every observation source).
+  // Rooms-model correction (2026-08-15). This used to read only from the
+  // secondary nav, which was safe while Identity/Website/Products were all
+  // siblings inside Your Business. They are not any more: Products is its own
+  // room and Identity is a section inside Storefront, so the lookup is built
+  // from both lists. Doing it any other way reintroduces the exact bug this
+  // replaced — a hand-written table silently drifting from the real nav — and
+  // the `!` on the find below would then be a crash rather than a type
+  // assertion.
+  const badgeableSections = [...NAV_SECTIONS, ...STOREFRONT_SECTIONS];
   const sectionKeyByHref = new Map(
-    YOUR_BUSINESS_SECTIONS.filter((s) => s.key !== "overview").map((s) => [s.href, s.key])
+    badgeableSections.filter((s) => s.href !== "/dashboard").map((s) => [s.href, s.key])
   );
   const YOUR_BUSINESS_OWNED_KEYS = ["brand", "website", "products"] as const;
   const SECTION_STATE_PRIORITY = { urgent: 0, needs_decision: 1, opportunity: 2, idle: 3 } as const;
@@ -266,7 +275,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   const sectionNavState: Record<string, { state: SectionState; count: number; focusHref: string }> = {};
   for (const key of YOUR_BUSINESS_OWNED_KEYS) {
-    const sectionHref = YOUR_BUSINESS_SECTIONS.find((s) => s.key === key)!.href;
+    const sectionHref = badgeableSections.find((s) => s.key === key)!.href;
     const urgentObs = liveObservations.filter(
       (o) => o.genesisState === "urgent" && o.actionHref && sectionKeyByHref.get(o.actionHref) === key
     );

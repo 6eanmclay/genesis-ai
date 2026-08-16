@@ -19,6 +19,37 @@ export interface NavSection {
   permission: Permission | null;
 }
 
+// ROOMS, NOT TABS (2026-08-15). The primary navigation is the four business
+// rooms, with J4 permanently in the centre. See GENESIS_SURFACES.md, which is
+// the locked architecture and the reason this file looks the way it does.
+//
+//     Storefront | Products | (J4) | Orders | Studio
+//
+// J4 IS NOT IN THIS LIST AND MUST NEVER BE ADDED TO IT. J4 is the partner who
+// comes with the owner, not a place they go. The orb is rendered by
+// DashboardShell/J4Summon, not by the nav registry, and the Office is reached
+// through the control beneath the orb — never through a tab. An "Office" entry
+// here is the single most likely way to break the architecture, because it is
+// the tab every owner would read as "the J4 tab."
+//
+// Arrival is not a room either. /dashboard stays the opening screen — the
+// business overview and J4's briefing — and the owner lands there rather than
+// navigating back to it. That is why "Your Business" is gone from this list
+// while its route is very much alive.
+//
+// STUDIO IS NOT HERE YET, deliberately. It has no route: Creation was designed
+// and never built. Adding a Studio tab now would mean shipping a tab that
+// leads to a screen with nothing real behind it, which is the one thing Sean
+// has ruled out repeatedly ("no prototype screens"). It joins this list when
+// there is a real creation surface for it to open.
+//
+// Everything after PRIMARY_TAB_COUNT is the account area, not a business room:
+// settings, billing, and the provider connections. These are configured, not
+// visited. Customers and Analytics are here only until the Orders room absorbs
+// them as sections inside it — per the architecture they belong to Orders, and
+// their presence in the overflow is a staging post, not a decision.
+//
+// ---- history, kept because it explains the shape this replaced ----
 // Product Vision navigation correction — two levels, not one flat list.
 // Primary nav stays intentionally small and durable: it represents broad,
 // permanent business concepts the owner actually thinks about (or, for
@@ -40,9 +71,19 @@ export interface NavSection {
 // else here was reordered or promoted — see PRIMARY_TAB_COUNT's own
 // comment for why Marketing/Analytics/etc. stay in More for now.
 export const NAV_SECTIONS: NavSection[] = [
-  { key: "home", label: "Your Business", href: "/dashboard", permission: null },
-  { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
+  // The rooms. The first PRIMARY_TAB_COUNT entries, and the only entries the
+  // owner should ever think of as places in their business.
+  //
+  // Storefront is the live website AND brand identity: "Identity" was never a
+  // destination an owner asked for, it is how the storefront looks. The route
+  // stays /dashboard/website; /dashboard/brand becomes a section inside this
+  // room rather than a peer of it.
+  { key: "website", label: "Storefront", href: "/dashboard/website", permission: "store:manage" },
+  { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
   { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
+
+  // ---- account area, below the fold. Not rooms. ----
+  { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
   { key: "marketing", label: "Marketing", href: "/dashboard/marketing", permission: "store:manage" },
   { key: "payments", label: "Payments", href: "/dashboard/payments", permission: "payments:manage" },
   { key: "analytics", label: "Analytics", href: "/dashboard/analytics", permission: "analytics:view" },
@@ -55,6 +96,11 @@ export const NAV_SECTIONS: NavSection[] = [
   // usage/referral view. analytics:view, matching what kind of information
   // this is (read-mostly, financial-ish), same permission as Analytics.
   { key: "growth-points", label: "Growth Points", href: "/dashboard/growth-points", permission: "analytics:view" },
+  // Understanding belongs to the Office — it is J4's accumulated knowledge of
+  // the business, which is exactly what the Office holds. It sits here only so
+  // the route is not orphaned while the Office is still just the conversation
+  // stream. Move it, do not leave it here.
+  { key: "understanding", label: "Understanding", href: "/dashboard/understanding", permission: "store:manage" },
   // Chapter 5 (Payments) — the owner's OWN account/subscription with
   // Genesis, deliberately named "Billing" not "Payments": that name is
   // already taken by the merchant's own outbound payment-provider
@@ -75,6 +121,9 @@ export const NAV_SECTIONS: NavSection[] = [
 // to admit Orders — Marketing/Payments/Analytics/Connections/Growth
 // Points/Billing/Settings all stay under More by deliberate choice, not
 // yet revisited.
+// The rooms are the first three entries above. Studio makes four when it
+// exists (see the STUDIO note at the top of this file); raising this number is
+// how it gets promoted, once its route is real.
 export const PRIMARY_TAB_COUNT = 3;
 
 // Secondary navigation, shown only while inside Your Business — only the
@@ -85,15 +134,23 @@ export const PRIMARY_TAB_COUNT = 3;
 // further changes. "Overview" shares Your Business's own href — clicking
 // either lands on the same page, matching "the primary tab always returns
 // you to Overview."
-export const YOUR_BUSINESS_SECTIONS: NavSection[] = [
-  { key: "overview", label: "Overview", href: "/dashboard", permission: null },
+// Sections INSIDE the Storefront room (2026-08-15, renamed from
+// YOUR_BUSINESS_SECTIONS now that Your Business is not a destination).
+//
+// The Storefront room is the live website and the brand identity together,
+// because identity is how the storefront looks — splitting them was an
+// administrative distinction, never an owner's. These two are sections of one
+// room, not peers in the navigation.
+//
+// What left this list and why:
+//   Overview      → the arrival screen. Not a section, not a room.
+//   Products      → its own room now.
+//   Understanding → belongs to the Office; parked in the account overflow
+//                   above until the Office can hold it.
+//
+// This is a room's contents, so keep it that way: a new *capability* inside
+// the storefront may earn a section here. A new destination does not.
+export const STOREFRONT_SECTIONS: NavSection[] = [
+  { key: "website", label: "Storefront", href: "/dashboard/website", permission: "store:manage" },
   { key: "brand", label: "Identity", href: "/dashboard/brand", permission: "store:manage" },
-  { key: "website", label: "Website", href: "/dashboard/website", permission: "store:manage" },
-  { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
-  // Beta Readiness P4 — the first real, owner-facing view of
-  // getBusinessUnderstanding() (J4_FOUNDATION.md). Read-only by design (see
-  // app/dashboard/understanding/page.tsx's own comment); intentionally not
-  // added to layout.tsx's YOUR_BUSINESS_OWNED_KEYS — it owns no actions or
-  // observations to roll a badge state up from.
-  { key: "understanding", label: "Understanding", href: "/dashboard/understanding", permission: "store:manage" },
 ];

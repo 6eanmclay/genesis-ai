@@ -558,7 +558,12 @@ export function DashboardShell({
                   : "text-zinc-600 hover:bg-black/[.03] dark:text-zinc-400 dark:hover:bg-white/[.05]"
               }`}
             >
-              More
+              {/* "Account", not "More" (2026-08-15). Under the rooms model
+                  what overflows here is not "the rest of the navigation" —
+                  it is settings, billing and provider connections, which are
+                  configured once rather than visited. Naming it Account says
+                  what is inside; "More" only said that the bar ran out. */}
+              Account
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="h-3.5 w-3.5">
                 <path d="M6 9l6 6 6-6" />
               </svg>
@@ -984,7 +989,7 @@ export function DashboardShell({
             {/* Was a "•••" text glyph, which couldn't hold the system's
                 stroke weight or inherit color like every other icon here. */}
             <J4Icon name="more" size={20} />
-            More
+            Account
             {hasHiddenBadge && (
               <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
             )}
