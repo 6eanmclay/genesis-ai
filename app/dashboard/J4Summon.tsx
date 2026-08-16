@@ -139,19 +139,31 @@ export function J4Summon({
         />
       </button>
 
-      {/* The way into the conversation, kept as its own control per Sean:
-          "J4 presence = persistent interaction, Conversation = access to the
-          conversation/history. Those don't need to occupy the same physical
-          space." It reads as a tab label because it now sits in the tab bar,
-          which is also what keeps it off the storefront's scroll surface. */}
+      {/* THE DOOR TO THE OFFICE (2026-08-15). Kept as its own control per
+          Sean: "J4 presence = persistent interaction... Those don't need to
+          occupy the same physical space."
+
+          It used to say "Conversation." That word named one artifact and made
+          the other seven — decisions, tasks, ideas, documents, knowledge,
+          briefings, history — feel like they lived somewhere else. They don't.
+          They live here, as typed objects in one continuous stream, and the
+          door is named after the room rather than after one thing inside it.
+
+          It does not need to say "J4's Office": the orb directly above supplies
+          that, and the owner reads the pair as one thing.
+
+          THE ORB AND THIS CONTROL ARE DIFFERENT INTERACTIONS AND MUST STAY
+          THAT WAY. Tapping the orb starts Talk Mode. Tapping this opens the
+          Office. "Tap J4 to open the Office" is the wrong model and would
+          destroy the working voice loop. See GENESIS_SURFACES.md. */}
       <button
         type="button"
         onClick={onExpand}
         aria-expanded={open}
-        aria-label="Show the conversation"
+        aria-label="Open J4's Office"
         className="pointer-events-auto -mt-0.5 px-3 pb-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400"
       >
-        Conversation
+        Office
       </button>
     </div>,
     document.body
