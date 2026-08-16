@@ -43,6 +43,69 @@ Deliberately separate from `IntegrationConnector` (read-only sync into `Business
 
 ---
 
+# Locked requirement: conversational branching
+
+**Sean, 2026-08-16, mid-build. This is a general creative interaction pattern — logos, website layouts, product designs, hero sections, and eventually all of Work Studio.**
+
+J4 makes its own informed first recommendation from Business Understanding. After the owner sees it, J4 can offer: *"I can show you a couple of other directions based on this if you'd like."* If the owner accepts, **the original is preserved** and the variations are generated as distinct creative directions.
+
+> **They are not unrelated generations.** The owner must be able to say *"keep the symbol from the original but use the typography from option two"* and have J4 understand the relationship between those versions.
+
+The fixed three-choice selector can still exist where it fits. It is one presentation, never the model.
+
+**The owner remains the final creative authority.** J4 provides informed direction, alternatives, and refinement.
+
+## The behavioural rule that governs all of it (locked 2026-08-16)
+
+> **J4 must never pressure the owner into creating or changing a logo, design, or brand asset.**
+
+- **If the owner already has a logo they want to use, accept it and work with that logo.** Never suggest replacing it merely because J4 *could* make something else. Capability is not a reason.
+- **If the owner has no logo,** creation is offered as an optional capability.
+- **If the owner seems uncertain,** J4 may gently offer alternatives — *"if you're not sure yet, I can show you a couple of other directions based on this."*
+- **The offer is always optional, and a decline ends it immediately.** Not softened, not re-offered later in the same conversation.
+
+> **J4's role is to be a creative business partner, not a salesperson. It should help the owner make decisions without creating pressure to make more decisions.**
+
+This directly constrains the branching offer above: *"I can show you a couple of other directions"* is an offer, not a funnel. It is appropriate when the owner is genuinely undecided and inappropriate as a default follow-up to every generation. An offer that always fires is not an offer, it is a step in a flow.
+
+It also constrains the asset layer. An existing designated `brand.logo` — uploaded, backfilled, or generated — is **the answer**, not an opening position. Same family as [[project_j4_trusted_advisor]]: recommend what fits what is actually there, never what produces more activity.
+
+## The design consequence, found while building the logo action
+
+This is why the requirement arriving mid-build mattered rather than being a note for later.
+
+Every existing proposal path in this codebase **replaces**. `app/api/chat/route.ts` deletes the pending `update_product_image` approval before writing a new one; `lib/storefront/proposals.ts` marks the previous proposal `superseded`. Both are correct for "here is my current answer" and both **destroy exactly what branching needs**: after a revision, there is no "option two" left to refer back to.
+
+So a creative generation cannot be modelled as a single pending approval that gets overwritten. It needs:
+
+1. **Siblings that coexist.** Several live candidates at once, not one current answer.
+2. **Lineage.** Each candidate knows what it was derived from and what changed — the original, the refinement that produced it, or the two parents it combines.
+3. **Named directions.** A candidate carries a label and a reason the owner would recognise, because "option two" has to mean something in conversation.
+4. **Composition across siblings.** "The symbol from one, the typography from another" is a real operation on two existing candidates, not a fresh prompt.
+
+Point 4 is the hard one and the reason this is recorded rather than assumed: it means a candidate's *parts* eventually need to be addressable, not just the image as a whole.
+
+**This shares a shape with the Design layer.** `asset(s) + surface + arrangement` already says a design holds several assets; branching says a creative step holds several candidates with lineage between them. Building either one without the other in mind produces two systems that both nearly work.
+
+## Status
+
+**Not built. Implementation paused here deliberately** — see the logo capability below, which was in flight when this arrived and stopped rather than shipping the replace-shaped version this requirement rules out.
+
+---
+
+# In flight: J4 generates a brand logo
+
+**Partially built, not reachable, not finished.** Landed so far:
+
+- `lib/brand/logoDirection.ts` — builds the prompt from Business Understanding (tagline, description, category, catalog, stated goals), returns the prompt plus a plain-English rationale and the list of what it was grounded in. Honest when it knows nothing: says so rather than implying insight. Takes the owner's `refinement` last so their words outrank anything inferred.
+- `EXECUTION_ACTIONS.STORE_UPDATE_BRAND_LOGO` — the action constant.
+
+**Still missing:** the executable that writes `Store.logoUrl` and designates the `brand.logo` Asset, the `GENESIS_ACTIONS` registry entry, the tool declaration in `genesisTools.ts`, and the handler branch in `app/api/chat/route.ts`. Until the last two exist, *"Make me a logo"* routes nowhere — the capability is not real.
+
+**Do not finish it in the replace shape.** The proposal storage has to hold coexisting siblings with lineage first, or the branching requirement above has to be retrofitted through the same code twice.
+
+---
+
 # Recorded future requirement: composition intelligence
 
 **Sean, 2026-08-16. Recorded so we do not design ourselves into a corner. Not scheduled, not authorized, not to be started.**

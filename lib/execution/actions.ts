@@ -40,6 +40,11 @@ export const EXECUTION_ACTIONS = {
   STORE_UPDATE_HERO: "store.update_hero",
   STORE_UPDATE_THEME: "store.update_theme",
   STORE_UPDATE_BRAND_IDENTITY: "store.update_brand_identity",
+  // The brand logo, as a real action rather than a one-off during onboarding
+  // (2026-08-16). Distinct from STORE_UPDATE_BRAND_IDENTITY, which is the
+  // written identity — this one produces a file, designates it as the
+  // brand.logo Asset, and is the first step of Asset -> Design -> Product.
+  STORE_UPDATE_BRAND_LOGO: "store.update_brand_logo",
   STORE_UPDATE_STORE_IDENTITY: "store.update_store_identity",
   STORE_UPDATE_HOMEPAGE_CONTENT: "store.update_homepage_content",
   STORE_UPDATE_SECTION_ORDER: "store.update_section_order",
