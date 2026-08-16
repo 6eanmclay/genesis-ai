@@ -70,7 +70,12 @@ interface J4Signals {
 // state GenesisObservation rows plus "explanation"-kind CognitiveOutput
 // rows (both are things J4 has concluded and wants the owner to know,
 // distinct from an opportunity or a thing needing approval).
-type Category = "conversation" | "tasks" | "ideas" | "decisions" | "information";
+// Understanding joined them 2026-08-16. It is the same kind of thing as the
+// other four — real material J4 holds about the business — and it was living
+// as its own nav destination, which made the Office an incomplete picture of
+// what J4 knows. It is a reference view rather than a queue, so it carries no
+// count: there is nothing to clear.
+type Category = "conversation" | "tasks" | "ideas" | "decisions" | "information" | "understanding";
 
 // Where this conversation is being rendered. "layer" is the persistent J4
 // over the business workspace (app/dashboard/J4Overlay.tsx); "room" is the
@@ -106,6 +111,18 @@ interface IdeaItem {
   id: string;
   summary: string;
   href: string | null;
+}
+// One heading's worth of what J4 understands, already shaped and formatted on
+// the server (J4Surface). Deliberately plain strings: this crosses into a
+// client component, so no Dates, no Prisma rows, and no nested model objects
+// that would need re-deriving here. The Understanding page owns the full,
+// linkable version; this is the same material read as a briefing.
+export interface UnderstandingGroup {
+  key: string;
+  label: string;
+  lines: string[];
+  /** Shown in place of the lines when J4 genuinely knows nothing here yet. */
+  empty: string;
 }
 interface InformationItem {
   id: string;
@@ -767,6 +784,7 @@ export function J4Workspace({
   decisions,
   ideas,
   information,
+  understanding,
   surface,
   proposal,
 }: {
@@ -780,6 +798,7 @@ export function J4Workspace({
   decisions: DecisionItem[];
   ideas: IdeaItem[];
   information: InformationItem[];
+  understanding: UnderstandingGroup[];
   surface: J4Surface;
   // J4's current proposal, server-rendered and handed down. Sits directly
   // above the composer, because the composer is how the owner argues with it
@@ -1517,6 +1536,10 @@ export function J4Workspace({
     { key: "ideas", label: "Ideas", count: ideas.length },
     { key: "decisions", label: "Decisions", count: decisions.length },
     { key: "information", label: "Information", count: information.length },
+    // No count, deliberately. The four above are queues an owner works down;
+    // Understanding is a standing picture of what J4 knows, and a number
+    // beside it would read as "14 things to deal with."
+    { key: "understanding", label: "Understanding", count: 0 },
   ];
 
   return (
@@ -1885,14 +1908,65 @@ export function J4Workspace({
               ))}
             </div>
           )
-        ) : information.length === 0 ? (
-          <CategoryEmptyState label="Information" />
+        ) : shownCategory === "information" ? (
+          // Made an explicit branch (2026-08-16). Information used to be the
+          // final `else`, which quietly meant "any category that isn't one of
+          // the four above" — so adding Understanding to the union would have
+          // rendered Information under it, with no type error to say so. Each
+          // category now names itself.
+          information.length === 0 ? (
+            <CategoryEmptyState label="Information" />
+          ) : (
+            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
+              {information.map((i) => (
+                <CategoryRow key={i.id} summary={i.summary} href={i.href} dotClassName={i.kind === "urgent" ? "bg-red-500" : "bg-teal-400"} />
+              ))}
+            </div>
+          )
         ) : (
-          <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
-            {information.map((i) => (
-              <CategoryRow key={i.id} summary={i.summary} href={i.href} dotClassName={i.kind === "urgent" ? "bg-red-500" : "bg-teal-400"} />
+          // Understanding. Grouped rather than listed, because it is the one
+          // category that is not a queue of comparable items — "revenue" and
+          // "who works here" are different kinds of fact and reading them as
+          // one flat list would flatten that.
+          //
+          // Every group renders, including the ones J4 knows nothing about
+          // yet, and each says so in its own words. That is the point rather
+          // than an oversight: "I don't know your suppliers yet" is real
+          // information about what J4 understands, and hiding empty groups
+          // would quietly overstate how much it knows.
+          understanding.length === 0 ? (
+            // No groups at all means the caller could not read them — a role
+            // without store:manage, matching what the Understanding page has
+            // always required. Not the same as J4 knowing nothing, which is
+            // what the per-group empty lines say.
+            <CategoryEmptyState label="Understanding" />
+          ) : (
+          <div className="flex w-full min-w-0 max-w-full flex-col gap-5">
+            {understanding.map((group) => (
+              <div key={group.key} className="min-w-0">
+                <p
+                  className="text-[11px] font-semibold uppercase tracking-wide"
+                  style={{ color: GENESIS_ATMOSPHERE.textSecondary }}
+                >
+                  {group.label}
+                </p>
+                {group.lines.length === 0 ? (
+                  <p className="mt-1 text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                    {group.empty}
+                  </p>
+                ) : (
+                  <div className="mt-1 flex flex-col gap-1">
+                    {group.lines.map((line, i) => (
+                      <p key={i} className="min-w-0 break-words text-sm text-[#f4f2fb]">
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
+          )
         )}
         {shownCategory === "conversation" && proposal}
       </div>

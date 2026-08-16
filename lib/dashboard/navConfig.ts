@@ -106,11 +106,11 @@ export const NAV_SECTIONS: NavSection[] = [
   // usage/referral view. analytics:view, matching what kind of information
   // this is (read-mostly, financial-ish), same permission as Analytics.
   { key: "growth-points", label: "Growth Points", href: "/dashboard/growth-points", permission: "analytics:view" },
-  // Understanding belongs to the Office — it is J4's accumulated knowledge of
-  // the business, which is exactly what the Office holds. It sits here only so
-  // the route is not orphaned while the Office is still just the conversation
-  // stream. Move it, do not leave it here.
-  { key: "understanding", label: "Understanding", href: "/dashboard/understanding", permission: "store:manage" },
+  // Understanding is gone from here (2026-08-16). It is a view inside the
+  // Office now, which is where J4's accumulated knowledge of the business
+  // belongs. /dashboard/understanding remains a real route — nothing links to
+  // it, and the Office reads the same getBusinessUnderstanding() call, so
+  // there is one answer to "what does J4 know" rather than two that can drift.
   // Chapter 5 (Payments) — the owner's OWN account/subscription with
   // Genesis, deliberately named "Billing" not "Payments": that name is
   // already taken by the merchant's own outbound payment-provider

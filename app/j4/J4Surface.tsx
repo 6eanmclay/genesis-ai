@@ -6,7 +6,8 @@ import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { sendStoreMessage, uploadBusinessAssetFromChat, uploadPhotoBatchFromChat, uploadVoiceMemo } from "@/app/dashboard/ai-actions";
-import { J4Workspace, type J4Surface as J4SurfaceKind } from "./J4Workspace";
+import { getBusinessUnderstanding, type BusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { J4Workspace, type J4Surface as J4SurfaceKind, type UnderstandingGroup } from "./J4Workspace";
 import { J4Proposal } from "./J4Proposal";
 import { getOpenProposals } from "@/lib/storefront/proposals";
 import { getBaseUrl } from "@/lib/integrations/util";
@@ -30,8 +31,160 @@ import { getBaseUrl } from "@/lib/integrations/util";
 // show. That matters because the layer is rendered by app/dashboard/
 // layout.tsx on every dashboard page, so anything fetched here is fetched on
 // every navigation the owner makes.
+function formatCents(cents: number): string {
+  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatDate(value: string | Date): string {
+  return new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function trendArrow(direction: "up" | "down" | "flat" | undefined): string {
+  return direction === "up" ? "↑" : direction === "down" ? "↓" : "—";
+}
+
+// What J4 understands, flattened into headings and plain lines for the Office
+// (2026-08-16).
+//
+// This is the same material as /dashboard/understanding and reads from the
+// same getBusinessUnderstanding() call, deliberately: there is one answer to
+// "what does J4 know," and a second assembly of the same facts would be free
+// to drift from it. The page keeps the full version with its links out to
+// brand, catalog, customers and connections; this is that picture read as a
+// briefing, inside the Office where the rest of J4's material already lives.
+//
+// Every group is returned even when it is empty, and each carries its own
+// sentence for that case. "I don't know your suppliers yet" is real
+// information about the state of J4's understanding — dropping empty groups
+// would quietly overstate how much it knows.
+function toUnderstandingGroups(u: BusinessUnderstanding): UnderstandingGroup[] {
+  const { profile, beliefs, recentDecisions, activeThoughts, platformRelationship } = u;
+
+  const identity: string[] = [];
+  identity.push(profile.identity.tagline ? `${profile.identity.name} — ${profile.identity.tagline}` : profile.identity.name);
+  if (profile.identity.description) identity.push(profile.identity.description);
+  const classification = [
+    ...profile.classification.businessCategories.map((c) => c.label),
+    ...profile.classification.revenueStreams.map((r) => r.label),
+  ];
+  if (classification.length > 0) identity.push(classification.join(" · "));
+
+  const offerings: string[] = [
+    `${profile.offerings.activeCount} active product${profile.offerings.activeCount === 1 ? "" : "s"}`,
+    ...profile.offerings.trends
+      .filter((t) => t.trend !== null)
+      .slice(0, 3)
+      .map((t) => `${trendArrow(t.trend?.direction)} ${t.item.data.name} — ${Math.round((t.trend?.changeRatio ?? 0) * 100)}%`),
+  ];
+
+  const people: string[] = [];
+  if (profile.people.owner) people.push(`${profile.people.owner.name ?? profile.people.owner.email} — Owner`);
+  for (const m of profile.people.members) people.push(`${m.name ?? m.email} — ${m.role}`);
+  for (const e of profile.people.employees) {
+    people.push(`${e.data.name}${e.data.title ? ` — ${e.data.title}` : ""}${e.data.status === "former" ? " (former)" : ""}`);
+  }
+
+  const goals: string[] = [
+    ...profile.goals.map((g) => `Goal (${g.data.status}) — ${g.data.description}`),
+    ...profile.challenges.map((c) => `Challenge (${c.data.status}) — ${c.data.description}`),
+  ];
+
+  return [
+    { key: "identity", label: "Identity", lines: identity, empty: "I don't have your business identity yet." },
+    { key: "offerings", label: "What you sell", lines: offerings, empty: "Nothing in the catalog yet." },
+    {
+      key: "revenue",
+      label: "Revenue",
+      lines: [
+        `Last 30 days — ${formatCents(profile.revenue.last30DaysInCents)}`,
+        `All time — ${formatCents(profile.revenue.allTimeInCents)}`,
+      ],
+      empty: "No revenue recorded yet.",
+    },
+    {
+      key: "customers",
+      label: "Customers",
+      lines: [
+        `${profile.customers.totalContactCount} known contact${profile.customers.totalContactCount === 1 ? "" : "s"}`,
+        `Repeat ${profile.customers.segments.repeatCustomers.length} ${trendArrow(profile.customers.segmentTrends.repeatCustomers?.direction)} · ` +
+          `High-value ${profile.customers.segments.highValueCustomers.length} ${trendArrow(profile.customers.segmentTrends.highValueCustomers?.direction)} · ` +
+          `Lapsed ${profile.customers.segments.lapsedCustomers.length} ${trendArrow(profile.customers.segmentTrends.lapsedCustomers?.direction)} · ` +
+          `New ${profile.customers.segments.newCustomers.length} ${trendArrow(profile.customers.segmentTrends.newCustomers?.direction)}`,
+      ],
+      empty: "No customers yet.",
+    },
+    { key: "people", label: "People", lines: people, empty: "Just you so far." },
+    {
+      key: "suppliers",
+      label: "Suppliers",
+      lines: profile.suppliers.map((s) => `${s.data.name}${s.data.email ? ` — ${s.data.email}` : ""}`),
+      empty: "None known yet. Mention one in conversation and I'll remember it.",
+    },
+    {
+      key: "locations",
+      label: "Locations",
+      lines: profile.locations.map(
+        (l) => `${l.data.name}${l.data.city ? ` — ${l.data.city}${l.data.state ? `, ${l.data.state}` : ""}` : ""}`
+      ),
+      empty: "None known yet.",
+    },
+    { key: "goals", label: "Goals and challenges", lines: goals, empty: "Nothing stated yet. Tell me a goal and I'll hold onto it." },
+    {
+      key: "assets",
+      label: "Business assets",
+      lines: profile.assets.map(
+        (a) =>
+          `${a.data.originalFilename}${a.data.category === "unclassified" ? " — not yet reviewed" : ` — ${a.data.category.replace(/_/g, " ")}`}` +
+          `${a.data.summary ? `: ${a.data.summary}` : ""}`
+      ),
+      empty: "Nothing uploaded yet.",
+    },
+    {
+      key: "systems",
+      label: "Connected systems",
+      lines: profile.connectedSystems.map(
+        (s) => `${s.displayName} — ${s.status}${s.syncedAgoLabel ? ` — synced ${s.syncedAgoLabel}${s.isStale ? " (stale)" : ""}` : ""}`
+      ),
+      empty: "Nothing connected yet.",
+    },
+    {
+      key: "beliefs",
+      label: "What I've learned",
+      lines: beliefs.map((b) => `${b.claim} — ${Math.round(b.confidence * 100)}% confidence, ${b.maturity.replace(/_/g, " ")}`),
+      empty: "Nothing yet. Beliefs form once a real pattern repeats.",
+    },
+    {
+      key: "decisions",
+      label: "Recent decisions",
+      lines: recentDecisions.map((d) => `${d.decision === "executed" ? "✓" : "✕"} ${d.summary} — ${formatDate(d.decidedAt)}`),
+      empty: "Nothing in the last two weeks.",
+    },
+    {
+      key: "open",
+      label: "Still open",
+      lines: activeThoughts.slice(0, 5).map((t) => t.summary),
+      empty: "Nothing open right now.",
+    },
+    {
+      key: "platform",
+      label: "Your relationship with Genesis",
+      lines: [
+        `${platformRelationship.planName ?? "No plan"} — ${platformRelationship.growthPointBalance} Growth Points`,
+        ...(platformRelationship.subscriptionStatus ? [platformRelationship.subscriptionStatus] : []),
+        ...(platformRelationship.businessPartnerTrialEndsAt
+          ? [`Business Partner trial ends ${formatDate(platformRelationship.businessPartnerTrialEndsAt)}`]
+          : []),
+      ],
+      empty: "No plan yet.",
+    },
+  ];
+}
+
 export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
-  const isRoom = surface === "room";
+  // `isRoom` used to live here and gated the Tasks read. Both surfaces now
+  // fetch the same material, because both surfaces show it — see the Promise
+  // .all below. Deleted rather than left unused: a ready-made "the layer is
+  // the lesser surface" flag is what the last two bugs were built on.
 
   const session = await auth();
   if (!session?.user) {
@@ -53,7 +206,7 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
   // into every AI call uncapped) — kept in sync deliberately, not by
   // coincidence.
   const CHAT_HISTORY_WINDOW = 50;
-  const [recentMessages, observations, explanations, pendingApprovals, openTasks] = await Promise.all([
+  const [recentMessages, observations, explanations, pendingApprovals, openTasks, understanding] = await Promise.all([
     prisma.storeMessage.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
@@ -76,12 +229,34 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
       orderBy: { generatedAt: "desc" },
     }),
     hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
-    // Room only. Tasks appear nowhere in the layer, and this is the one read
-    // here that nothing else on a dashboard page already performs — so the
-    // layer simply does not make it. Same permission tier as observations/
-    // explanations above (neither is ANALYTICS_VIEW-gated either): a Task is
-    // operational work, not financial data.
-    isRoom ? getOpenTasks(store.id) : Promise.resolve([]),
+    // BOTH SURFACES NOW (2026-08-16). This was `isRoom ? … : []`, on the
+    // sound reasoning that Tasks appeared nowhere in the layer, so the layer
+    // should not pay for a read it would never show.
+    //
+    // The Office consolidation made that a bug. The layer IS the Office, and
+    // the Office shows Tasks — so the gate meant the Tasks view rendered its
+    // empty state no matter how many open tasks a store had. Exactly the
+    // shape of bug the category rail had: the surface was updated and one
+    // upstream line still assumed the old split. Same permission tier as
+    // observations and explanations: a Task is operational work, not
+    // financial data.
+    getOpenTasks(store.id),
+    // What J4 understands, for the Office's Understanding view. store:manage
+    // matching /dashboard/understanding, which has always required it — a
+    // role without it gets no groups and the view says so, rather than a
+    // half-populated picture.
+    //
+    // COST, honestly: this is the heaviest read here, and the layer renders on
+    // every dashboard page. It sits inside this Promise.all rather than after
+    // it, so it runs concurrently with the five reads already happening and
+    // getBusinessUnderstanding parallelises internally too — the added
+    // wall-clock is the amount by which its slowest query exceeds the current
+    // slowest, not the sum of its parts. If navigation ever feels slower, the
+    // fix is to stream this view rather than to put it back behind a gate:
+    // a gate is what produced the Tasks bug directly above.
+    hasPermission(role, PERMISSIONS.STORE_MANAGE)
+      ? getBusinessUnderstanding(store.id)
+      : Promise.resolve(null),
   ]);
 
   // THE proposal on the table — one, never a stack (2026-08-14).
@@ -138,6 +313,7 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
       }))}
       ideas={ideas.map((o) => ({ id: o.id, summary: o.summary, href: o.actionHref }))}
       information={information}
+      understanding={understanding ? toUnderstandingGroups(understanding) : []}
       // Rendered on the server and handed down, so the layer stays a client
       // component without needing to fetch or know about proposals itself.
       proposal={
