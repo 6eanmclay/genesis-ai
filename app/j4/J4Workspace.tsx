@@ -2090,6 +2090,36 @@ export function J4Workspace({
               entire point is that the owner never has to leave it to talk.
               It stays reachable exactly where deliberate destinations
               belong: one step in, through the room. */}
+          {/* J4, present beside the composer (2026-08-16). Sean: "the J4
+              orb/avatar should remain visible as the conversational presence
+              next to the input... The user should feel like J4 is sitting
+              there with them, not like they are operating a software form."
+              The + consolidation was right and made the row quieter, but it
+              also left the Office reading as `[+] Talk to J4 →`, which is a
+              form. This is what makes it a conversation:
+
+                  J4 = the partner I am talking to
+                  +  = things I can give J4
+                  →  = send what I said
+
+              OUTSIDE the composer's border, deliberately. A 60px avatar was
+              tried INSIDE it once and "made J4 read as part of the input
+              rather than as a presence" (see genesisAvatarSize.ts) — the
+              border is the line between J4 and the thing the owner types
+              into, and putting him inside it dissolves exactly the
+              distinction this is here to draw.
+
+              PRESENCE, NOT A CONTROL. It does not navigate, open, or record.
+              Talking to J4 by voice is the orb in the tab bar (Talk Mode) and
+              a voice message is under +; a third way to start talking, in a
+              third place, is the fragmentation this architecture keeps
+              removing. Marked decorative so a screen reader is not told about
+              a button that does not exist. */}
+          {isLayer && (
+            <div className="flex h-[4.5rem] shrink-0 items-center" aria-hidden="true">
+              <GenesisAvatar className={GENESIS_AVATAR_SIZE.card} />
+            </div>
+          )}
           {!isLayer && (
             <Link
               href="/j4/room"
