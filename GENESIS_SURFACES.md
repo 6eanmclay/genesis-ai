@@ -1,8 +1,10 @@
-# The four surfaces: Business, J4, Office, Creation
+# The five rooms, and the partner who is in all of them
 
 > ## J4 is not a place I go. J4 is who comes with me.
 >
 > Sean, 2026-08-14, naming this **the governing principle for the entire interface** — not one principle among several. Every decision below is an instance of it, and any future proposal that cannot be squared with it is the wrong proposal regardless of how well it is built.
+
+**The rooms model is locked, 2026-08-15.** It does not replace the surface model below; it resolves it. What was called *Business* was never one surface — it was four rooms wearing a single name. See **The five rooms** immediately after the non-negotiable test. The rest of this document, written the day before, is unchanged and still governs: only the naming of Creation → Studio has moved.
 
 **Status: ARCHITECTURE LOCKED, 2026-08-14.** Drafted for review the same day; all five open questions answered by Sean and folded in below. The four surfaces, the transitions between them, the confirmation ladder and the build order are now settled and are not to be relitigated by implementation convenience. What remains open is *how* each piece is built, never *what* the model is.
 
@@ -29,7 +31,93 @@ Sean made this the period at the end of the argument. It is a structural test, n
 
 ---
 
+# The five rooms
+
+**Locked by Sean, 2026-08-15.** Design only — nothing here is authorization to build.
+
+Genesis is not a dashboard full of tabs. It is a set of **places the owner goes to do things**, and the interface itself is what communicates that. In Sean's framing:
+
+```
+Storefront → See the business
+Products   → Sell the business
+Orders     → Handle the business
+Studio     → Create the business
+Office     → Run the business
+```
+
+| Room | The question it answers |
+|---|---|
+| **Storefront** | What does my business look like? |
+| **Products** | What am I selling? |
+| **Orders** | What's happening right now? |
+| **Studio** | What am I making? |
+| **Office** | What are we working on? |
+
+## J4 is not a sixth room
+
+**The hard rule.** J4 must never appear in the room navigation and must never be presented as a destination. J4 is the persistent partner who accompanies the owner into every room. This is the governing principle at the top of this document, applied to the one place most likely to break it — because a bottom bar is exactly where a "J4" tab would look natural and be wrong.
+
+That is also why the room is **Office**, not "J4 Office." The Office holds the accumulated *work*; J4 himself is the orb, present in all five. The owner goes to the Office to look at what they and J4 have done. They never go to *J4*.
+
+**Voice is available in every room. No exceptions.** The owner must never have to leave a space in order to talk to their business partner. Any room that cannot be talked to from where the owner is standing is not finished.
+
+## What belongs in each room
+
+**Storefront** — the live site as the canvas. **Website and Identity both live here**, because brand identity *is* how the storefront looks; separating them was an administrative distinction, never an owner's. Localized variant previews happen here.
+
+**Products** — the catalog and individual products: photos, pricing, descriptions, inventory.
+
+**Orders** — orders, fulfillment, revenue and analytics, and **Customers as a first-class section within the room**, alongside Orders, Fulfillment and Revenue. Analytics belongs here because revenue and trends are what orders *mean*.
+
+> **Customers stays inside Orders for now.** Not a separate room. If Genesis later builds true CRM — segmentation, lifetime value, outreach, relationship management — Customers can earn its own room then. That is a real future possibility, not a placation, and the decision to promote it should be made on that capability existing rather than on the room list feeling unbalanced.
+
+**Studio** — the visual creation space: logos, product imagery, merchandise, layouts, brand exploration, marketing creative. Where *"put this logo on the shirt"* and *"show me three versions"* live.
+
+**Office** — conversations, decisions, tasks, ideas, documents, business knowledge, history and briefings.
+
+## Naming
+
+**The room is Studio.** "Creative Studio" is retired as a user-facing name, and so is **Creation** — section 4 below describes the right surface under the wrong name, and Studio is that name now. Internal identifiers may lag; the owner-facing word is Studio.
+
+## What every current destination becomes
+
+| Today | Becomes | Why |
+|---|---|---|
+| Your Business (Overview) | **Removed** | A lobby. Its content is J4's briefing, which belongs to J4 and can appear anywhere. |
+| Website | Storefront | |
+| Identity | Storefront | Brand *is* the storefront's appearance |
+| Products | Products | |
+| Customers | Orders | A section within the room, not its own room |
+| Orders | Orders | |
+| Analytics | Orders | Revenue and trends are what orders mean |
+| Understanding | Office | J4's accumulated knowledge |
+| Marketing | Studio + Office | Making a campaign is Studio; deciding to run one is a conversation |
+| Payments | Settings | Configured once, not visited |
+| Connections | Settings | Same |
+| Billing | Settings | Your account, not your business |
+| Growth Points | Settings | Same |
+| Settings | **Outside the room navigation** | Reached from the account, never a room |
+| More | **Removed** | It exists only because there are too many tabs |
+
+**Fifteen destinations become five rooms plus a settings area.** The two removals are the substance of the change, not tidying: *Overview* and *More* both exist only because the current navigation is a list of features rather than a set of places. Keeping either one would mean the rethink did not happen.
+
+## The visual principle
+
+**The navigation must not resemble a conventional SaaS tab bar.** Treat it as a spatial control deck — a portal system the owner moves through, not a row of labels they click. The active room may express itself through **elevation, illumination, motion or material distinction**.
+
+**Blue illumination remains exclusive to J4.** This is a constraint on the whole treatment, not a preference. J4 is the only blue thing on screen, and a room that glows blue steals the one signal the owner has learned to read. Rooms get light without colour: a lit surface, a raised edge, depth, material — never J4's blue.
+
+The orb stays centred, present in all five rooms, and is never one of them.
+
+## Still open — the next design discussion
+
+**How the five rooms actually feel different from one another while remaining one Genesis.** Not decided here, and not to be settled by implementation. Five rooms that look identical are five tabs with better names, and five rooms that look unrelated are five products. That conversation comes before any code.
+
+---
+
 ## 1. Business — "I'm looking at my business"
+
+> **Superseded in structure by the five rooms above, 2026-08-15.** *Business* turned out to be four rooms — Storefront, Products, Orders, Studio — sharing one name. Everything below about the owner's page and scroll position being the primary state is unchanged and applies to every room.
 
 The business itself: Overview, Identity, Website, Products, Understanding, Customers, Orders, and whatever comes later. This is where the owner spends their time. It is the primary workspace, and it is the thing every other surface is in service of.
 
@@ -113,7 +201,9 @@ And J4 retrieves against it conversationally:
 
 Those are retrievals, not tabs.
 
-## 4. Creation — "J4 and I are making something"
+## 4. Studio — "J4 and I are making something"
+
+> **Renamed 2026-08-15.** This surface was called *Creation*. The owner-facing name is now **Studio**, and "Creative Studio" was considered and rejected as the longer form. Read every "Creation" below as "Studio."
 
 The full-screen studio: logos, brand identity, website redesigns, product design, apparel, marketing, images, campaigns. Large canvas, zooming, side-by-side comparison, iteration, and real creative tooling.
 
@@ -293,6 +383,8 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 - **J4 at 88px**, permanent and unmistakable on every workspace, rendered globally through `DashboardShell`. Not Overview only, and correct as it stands.
 - The four interactions stay distinct and must never be merged: **orb = continuous Talk mode · mic = voice message · text = typed message · expand = conversation and history**.
 
+**Design work in flight, ahead of all of it: the five rooms.** The information architecture is locked (see *The five rooms*). **The next step is a design discussion, not code** — how the rooms feel distinct while remaining one Genesis. Nothing about the bottom navigation is authorized to be built until that is settled and written down here.
+
 **1. Contextual J4 surface on every workspace.** The same compact presence everywhere, with the controls around it changing by location:
 
 | Workspace | Controls |
@@ -347,19 +439,22 @@ Its own research and knowledge problem. Not solvable with arbitrary UI rules.
 The architecture in one line each:
 
 ```
-BUSINESS  = where I operate my business.
-J4        = the partner who's always with me while I operate it.
-OFFICE    = where I review and organize everything we've worked on.
-CREATION  = where we make things together at full scale.
+STOREFRONT = what my business looks like.
+PRODUCTS   = what I'm selling.
+ORDERS     = what's happening right now.
+STUDIO     = what we're making, together, at full scale.
+OFFICE     = what we've been working on.
+J4         = the partner who is in all five, and is never one of them.
 ```
 
-Check any proposed J4 work against four things before writing code:
+Check any proposed J4 work against five things before writing code:
 
-1. Does it pass the non-negotiable test — does the owner keep their page and their place?
-2. Does it put a collection of things into the conversational layer? Collections are Office.
-3. Does it let the owner accept a visual or substantial change they cannot actually see?
-4. Does it demand a confirmation the owner already gave conversationally while looking straight at the target?
+1. Does it present J4 as somewhere to go? J4 is in every room and is never a room.
+2. Does it pass the non-negotiable test — does the owner keep their page and their place?
+3. Does it put a collection of things into the conversational layer? Collections are Office.
+4. Does it let the owner accept a visual or substantial change they cannot actually see?
+5. Does it demand a confirmation the owner already gave conversationally while looking straight at the target?
 
-A change that fails any of those is the wrong change regardless of how well it is implemented. And above all four, the governing principle at the top of this document: **J4 is not a place I go. J4 is who comes with me.**
+A change that fails any of those is the wrong change regardless of how well it is implemented. And above all five, the governing principle at the top of this document: **J4 is not a place I go. J4 is who comes with me.**
 
 See also `GENESIS_EXPERIENCE_PRINCIPLES.md` (the governing lens: business partner, never chatbot), `J4_IDENTITY.md`, and `lib/j4CopyRules.ts` for the permanent no-dashes copy rule that applies to everything J4 says on every surface here.
