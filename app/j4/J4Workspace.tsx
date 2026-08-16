@@ -844,14 +844,12 @@ export function J4Workspace({
     router.push("/dashboard");
   }, [router]);
 
-  // Entering the room, deliberately. Recording where the owner was is what
-  // makes the return above a real step back rather than a guess.
-  const enterRoom = useCallback(() => {
-    if (typeof window !== "undefined") {
-      window.sessionStorage.setItem(ROOM_ENTERED_FROM_KEY, currentPath);
-    }
-    router.push("/j4");
-  }, [currentPath, router]);
+  // `enterRoom` was here: it recorded where the owner was and pushed /j4, so
+  // the layer could offer a second, deeper Office. Deleted with the button
+  // that called it (2026-08-15) rather than left dead, because a ready-made
+  // "go one level deeper" helper sitting unused is an invitation to rebuild
+  // the nesting it created. The Office is the layer; nothing navigates into
+  // a further one.
 
   // Server-persisted StoreMessage rows stay the one source of truth;
   // localMessages is a working cache that appends the optimistic turn and
@@ -1618,36 +1616,23 @@ export function J4Workspace({
             </button>
           )}
           {isLayer ? (
-            // The layer's only way out is the overlay's own close control,
-            // which returns the owner to exactly where they were standing.
-            // What sits here instead is the door to the room: quiet, and
-            // deliberately not the thing the eye lands on, because ordinary
-            // conversation is finished without ever using it.
+            // NOTHING. There used to be an "Office" button here, and removing
+            // it is the fix for what Sean found in testing (2026-08-15):
+            // "multiple nested J4/Office windows that are effectively
+            // representing the same thing... Room → J4 pull-up → Office →
+            // another Office/workspace layer."
             //
-            // "Office", superseding "Full workspace" (2026-08-14, second
-            // pass). Sean, on seeing it in place: "the screenshot showing
-            // 'Full workspace' at the top of the J4 layer is still pulling
-            // the architecture backward. J4 is not a workspace that I
-            // navigate into. J4 is my persistent business partner."
+            // That is exactly what this button did. The control beneath the
+            // orb opens the Office; this then offered to open the Office
+            // again, one surface deeper, because the deeper one was the only
+            // place the categories lived. Two doors with the same name, one
+            // inside the other.
             //
-            // He was right, and the earlier reasoning for "Full workspace"
-            // was the flaw: calling it MORE of the same thing implies the
-            // layer is a lesser version of it, which is exactly backward.
-            // The layer is J4. Office is a different place, holding the
-            // accumulated material — documents, goals, history, summaries —
-            // and naming it after that material is what stops it competing
-            // with the conversation. See GENESIS_SURFACES.md decision 1.
-            //
-            // No chevron, for the reason that has not changed: a chevron is
-            // the navigation affordance and this is quiet on purpose.
-            <button
-              type="button"
-              onClick={enterRoom}
-              title="Open J4's full workspace: the whole conversation, plus tasks, ideas, decisions and information"
-              className="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06]"
-            >
-              Office
-            </button>
+            // The layer is the Office. There is no second one to go to, so
+            // there is no door here, and the way out is the overlay's own
+            // close control — which returns the owner to exactly the room
+            // they were standing in. Do not put a door back here.
+            null
           ) : (
             <button
               type="button"
@@ -1672,10 +1657,20 @@ export function J4Workspace({
           itself forces activeCategory back to "conversation" on every
           switch (see its own comment) so there's never a state where this
           rail is hidden but a non-Conversation tab is showing.
-          The layer never shows it at all: those four categories are what the
-          room is for, and rebuilding them over the workspace would answer a
-          quick question with a console. */}
-      {!talkingOnly && !isLayer && (
+          THE LAYER SHOWS IT NOW (2026-08-15). It used to be hidden here, on
+          the reasoning that "those four categories are what the room is for,
+          and rebuilding them over the workspace would answer a quick question
+          with a console." That reasoning was sound while the layer was a 68%
+          sheet you summoned over your work — but it is the thing that produced
+          the nesting Sean hit in testing: the categories lived only in a
+          second, deeper surface, so the layer had to grow a door to reach
+          them, and the owner ended up two Offices deep.
+          The layer IS the Office now — full screen, entered on purpose. So the
+          categories are views inside it, which is what the architecture always
+          said they were: "views/filters within the Office, not additional
+          navigation layers." Answering a quick question is Talk Mode's job,
+          and Talk Mode never opens this panel at all. */}
+      {!talkingOnly && (
         <div
           className="flex shrink-0 gap-1 overflow-x-auto border-b px-5 py-2"
           style={{ borderColor: GENESIS_ATMOSPHERE.border }}
