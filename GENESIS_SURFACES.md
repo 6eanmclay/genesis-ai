@@ -228,6 +228,31 @@ The rule this encodes: *J4 doesn't take me somewhere to talk to J4. J4 comes to 
 
 Where the owner intentionally goes to review, organise and understand accumulated work: conversations, goals, decisions, tasks, ideas, documents, business knowledge, history and briefings.
 
+### The whole model in three lines
+
+Sean, confirming the architecture 2026-08-15:
+
+```
+See J4      → talk to J4.
+Tap Office  → see what you and J4 have been working on.
+Tap a room  → work on the business.
+```
+
+That is the entire navigation. If an implementation cannot be described in those three lines, it has added something that does not belong.
+
+### ⚠️ The orb and the control beneath it are two different interactions
+
+**The single most likely thing to be broken by an implementer, so it is stated on its own:**
+
+| Control | Does | Status |
+|---|---|---|
+| **The orb itself** | Starts Talk Mode — voice | **WORKING. DO NOT CHANGE.** The Whisper → J4 → ElevenLabs loop and `useJ4Talk.ts` are locked. |
+| **The control directly beneath it** | Opens the Office | Rename the current *Conversation* label to **Office**. This is the only change. |
+
+"Tap J4 to open the Office" is **wrong** and would destroy the working voice loop. Tapping J4 talks to J4. The Office has its own control, which already exists in the right place and needs only the right name and the right destination.
+
+**J4 stays locked at 88px.**
+
 ### The Office doorway (locked 2026-08-15)
 
 **The control beneath J4's presence is the door to the Office.** It reads **Office**. It does not read "Conversation" — that word named one artifact and made the other seven feel like they lived somewhere else.
@@ -493,7 +518,11 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 - **J4 at 88px**, permanent and unmistakable on every workspace, rendered globally through `DashboardShell`. Not Overview only, and correct as it stands.
 - The four interactions stay distinct and must never be merged: **orb = continuous Talk mode · mic = voice message · text = typed message · expand = conversation and history**.
 
-**Design work in flight, ahead of all of it: the rooms.** The information architecture is locked (see *The rooms*), including the Office doorway beneath J4's presence. **The next step is a design discussion, not code** — how the rooms feel distinct while remaining one Genesis. Nothing about the bottom navigation or the Office is authorized to be built until that is settled and written down here.
+**The navigation architecture is LOCKED, confirmed by Sean 2026-08-15.** Arrival screen, four rooms, J4 centred, the Office behind the control beneath him. See *The rooms* and *The Office doorway*.
+
+**No further navigation changes are to be designed or proposed until this one is built.** The architecture has been revised across several passes in a single day and is now settled; continuing to refine it instead of building it is the failure mode to avoid here.
+
+What is still a design question, and only this: **how the four rooms feel distinct while remaining one Genesis.** Different layouts because the work is different — never a different navigation.
 
 **1. Contextual J4 surface on every workspace.** The same compact presence everywhere, with the controls around it changing by location:
 
