@@ -1,6 +1,7 @@
 import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { currentAssetsByRole } from "@/lib/businessModel/assets";
+import { AssetSchema } from "@/lib/businessModel/entities";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { SURFACES, surfacesByCategory } from "@/lib/design/surfaces";
 import { StudioActions, type StudioCategory } from "./StudioActions";
@@ -37,7 +38,7 @@ import { uploadBusinessAssetFromChat } from "../ai-actions";
 export default async function StudioPage() {
   const { store } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
 
-  const [assetsByRole, designRows] = await Promise.all([
+  const [assetsByRole, designRows, assetRows] = await Promise.all([
     currentAssetsByRole(store.id),
     prisma.businessRecord.findMany({
       where: { storeId: store.id, entityType: "design" },
@@ -45,7 +46,27 @@ export default async function StudioPage() {
       take: 24,
       select: { id: true, data: true, syncedAt: true },
     }),
+    prisma.businessRecord.findMany({
+      where: { storeId: store.id, entityType: "asset" },
+      orderBy: { syncedAt: "desc" },
+      take: 60,
+      select: { id: true, data: true },
+    }),
   ]);
+
+  // THE LIBRARY: what J4 has to work with, split by who made it.
+  //
+  // Sean: "clearly showing what the owner provided versus what J4 created."
+  // That split is already in the data — assets record `origin` — so this is a
+  // read of the existing model rather than anything new. Blank product bases
+  // are excluded: they are scaffolding the compositor generated, not material
+  // the owner would recognise as theirs.
+  const library = assetRows
+    .map((row) => ({ id: row.id, parsed: AssetSchema.safeParse(row.data) }))
+    .flatMap((a) => (a.parsed.success ? [{ id: a.id, ...a.parsed.data }] : []))
+    .filter((a) => a.fileType === "photo" && !a.role?.startsWith("surface.") && !a.supersededByAssetId);
+  const provided = library.filter((a) => a.origin === "uploaded" || a.origin === "backfilled");
+  const madeByJ4 = library.filter((a) => a.origin === "generated");
 
   const designs = designRows
     .map((row) => ({ id: row.id, parsed: DesignSchema.safeParse(row.data) }))
@@ -91,6 +112,16 @@ export default async function StudioPage() {
       label: "Bring your own",
       primary: ["Upload a logo", "Upload product photos", "Upload lifestyle photos"],
       more: ["Upload photos for social", "Upload other business images"],
+      // The owner naming what they are uploading is the whole point of the
+      // chips: ingestBusinessAsset records role null because a chat upload has
+      // nobody saying what it is for, and here somebody has. "Other business
+      // images" carries no role deliberately — they did not say.
+      roles: {
+        "Upload a logo": "logo",
+        "Upload product photos": "product",
+        "Upload lifestyle photos": "lifestyle",
+        "Upload photos for social": "social",
+      },
     },
     {
       key: "logo",
@@ -196,12 +227,15 @@ export default async function StudioPage() {
         {/* What J4 has to work with. One row, not a media library — the asset
             library belongs to the Office, and rebuilding it here would make
             this a file browser with a nicer name. */}
+        {/* WHAT J4 CAN WORK WITH, split by who made it. Roles first, because a
+            designated asset is the one J4 will reach for by name — "put my logo
+            on a hoodie" resolves to whatever holds brand.logo. */}
         <section className="mt-9">
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">What J4 can use</h2>
           {assets.length === 0 ? (
             <p className="mt-3 max-w-lg text-[14px] text-zinc-600 dark:text-zinc-400">
-              Nothing designated yet. Ask J4 to make you a logo, or upload one you already have and
-              tell J4 it&apos;s yours — it will work with that one from then on.
+              Nothing designated yet. Upload a logo above, or ask J4 to make you one, and it will be
+              used everywhere your brand shows up.
             </p>
           ) : (
             <div className="mt-3 flex flex-wrap gap-3">
@@ -221,6 +255,47 @@ export default async function StudioPage() {
             </div>
           )}
         </section>
+
+        {(provided.length > 0 || madeByJ4.length > 0) && (
+          <section className="mt-9">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+              Your library · {library.length}
+            </h2>
+            <div className="mt-3 grid gap-6 sm:grid-cols-2">
+              {[
+                { label: "You provided", items: provided, empty: "Nothing uploaded yet." },
+                { label: "J4 created", items: madeByJ4, empty: "Nothing made yet." },
+              ].map((group) => (
+                <div key={group.label}>
+                  <p className="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">
+                    {group.label} · {group.items.length}
+                  </p>
+                  {group.items.length === 0 ? (
+                    <p className="mt-2 text-[13px] text-zinc-500">{group.empty}</p>
+                  ) : (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {group.items.slice(0, 12).map((asset) => (
+                        <figure
+                          key={asset.id}
+                          className="w-[68px] overflow-hidden rounded-lg border border-black/[.07] bg-white dark:border-white/[.09] dark:bg-white/[.04]"
+                          title={`${asset.summary ?? asset.originalFilename}${asset.role ? ` (${asset.role})` : ""}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={asset.storageUrl} alt={asset.summary ?? asset.originalFilename} className="aspect-square w-full bg-white object-contain" />
+                          {asset.role && (
+                            <figcaption className="truncate px-1.5 py-1 text-[10px] text-zinc-500">
+                              {asset.role.split(".")[1]}
+                            </figcaption>
+                          )}
+                        </figure>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* EVERYTHING EVER MADE, INCLUDING SUPERSEDED DIRECTIONS. Sean:
             "never destroy the original simply because J4 generated another

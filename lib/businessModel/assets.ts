@@ -145,8 +145,18 @@ export async function designateAsset(storeId: string, recordId: string, role: st
   // permanently hide it from resolveCurrentAsset.
   if (previous?.id === recordId) return;
 
+  // storeId in the where clause is required by lib/tenantIsolation.ts, which
+  // refuses an unscoped update on a tenant-owned table — and scoping an update
+  // by tenant is correct regardless.
+  //
+  // THIS PATH WAS NEVER EXERCISED UNTIL AN UPLOAD REACHED IT (2026-08-18).
+  // recordGeneratedAsset creates a row with its role already set, so
+  // resolveCurrentAsset finds it, the early return above fires, and this update
+  // is skipped. Designating an asset that does NOT already hold the role — an
+  // uploaded logo, or "this is our logo" in conversation — is the first thing
+  // that actually runs it, and it threw.
   await prisma.businessRecord.update({
-    where: { id: row.id },
+    where: { id: row.id, storeId },
     data: {
       data: {
         ...parsed.data,
@@ -164,7 +174,7 @@ export async function designateAsset(storeId: string, recordId: string, role: st
     const previousParsed = previousRow ? AssetSchema.safeParse(previousRow.data) : null;
     if (previousParsed?.success) {
       await prisma.businessRecord.update({
-        where: { id: previous.id },
+        where: { id: previous.id, storeId },
         data: { data: { ...previousParsed.data, supersededByAssetId: recordId } satisfies Asset },
       });
     }

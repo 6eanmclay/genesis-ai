@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { useJ4Ask } from "../J4AskContext";
+import { designateUploadedAsset } from "./actions";
 
 // Studio's capability board (2026-08-18).
 //
@@ -30,6 +31,11 @@ export interface StudioCategory {
   primary: string[];
   /** Revealed by "More". */
   more: string[];
+  /**
+   * For the upload category: which asset role each phrase designates. Keyed by
+   * the phrase itself so the label and its meaning cannot drift apart.
+   */
+  roles?: Record<string, string>;
 }
 
 const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/heic,image/heif";
@@ -63,6 +69,12 @@ export function StudioActions({
   // knows whether it is a logo, a product photo or lifestyle imagery. Without
   // it every upload is "here is a file" and J4 has to guess.
   const intentRef = useRef<string>("");
+  // Which role the owner's chosen chip implies. "Upload a logo" is the owner
+  // telling us what the file is, which is the one thing ingestBusinessAsset
+  // cannot know on its own — it records role: null rather than guessing from a
+  // filename. Without carrying this, an uploaded logo stays undesignated and
+  // "put my logo on a hoodie" cannot find the file they just gave us.
+  const roleRef = useRef<string | null>(null);
 
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -81,6 +93,11 @@ export function StudioActions({
         formData.set("currentPath", currentPath);
         if (intentRef.current) formData.set("note", intentRef.current);
         await uploadAsset(formData);
+        if (roleRef.current) {
+          // Same asset, same record — this only gives it the role the owner
+          // already named by choosing the chip.
+          await designateUploadedAsset(blob.url, roleRef.current);
+        }
       }
       // The owner's own words about what they just brought in, sent as a real
       // message so the conversation carries the intent and J4 can designate it.
@@ -90,12 +107,14 @@ export function StudioActions({
     } finally {
       setUploading(false);
       intentRef.current = "";
+      roleRef.current = null;
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
-  function pickFiles(intent: string) {
+  function pickFiles(intent: string, role: string | null) {
     intentRef.current = intent;
+    roleRef.current = role;
     fileInputRef.current?.click();
   }
 
@@ -126,7 +145,7 @@ export function StudioActions({
                   <button
                     type="button"
                     disabled={isUpload ? uploading : !available}
-                    onClick={() => (isUpload ? pickFiles(phrase) : ask(phrase))}
+                    onClick={() => (isUpload ? pickFiles(phrase, category.roles?.[phrase] ?? null) : ask(phrase))}
                     className={chipClass}
                   >
                     {isUpload && uploading ? "Uploading…" : phrase}

@@ -131,7 +131,12 @@ export async function resolveCompositionAssets(params: {
     if (rec) fromProducts.push({ assetId: rec.id, url: p.imageUrl, label: p.name });
   }
 
-  const all = [...fromProducts, ...fromAssets];
+  // ASSETS FIRST, NEWEST FIRST (2026-08-18). Products used to lead, which meant
+  // a photo the owner had just uploaded sat behind every existing product image
+  // and never made it into a four-image collage. Someone who uploads photos and
+  // then asks for a collage means the photos they just gave you. Product images
+  // still fill the rest, so a store with no uploads composes exactly as before.
+  const all = [...fromAssets, ...fromProducts];
   if (!needle) return all.slice(0, limit);
 
   const matched = all.filter((c) => c.label.toLowerCase().includes(needle));
