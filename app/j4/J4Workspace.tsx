@@ -1167,6 +1167,13 @@ export function J4Workspace({
     const text = String(formData.get("message") ?? "").trim();
     if (!text) return;
     if (typeof window !== "undefined") window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+    // Empty the composer here, in the one place every send passes through
+    // (2026-08-18). The draft was already being cleared from sessionStorage but
+    // the field itself was not, so a recommendation tapped in Studio arrived in
+    // the Office, sent correctly, and then SAT IN THE INPUT as though the owner
+    // had typed it and not pressed send. FormData is captured synchronously by
+    // the submit that got us here, so clearing now cannot lose the message.
+    if (messageInputRef.current) messageInputRef.current.value = "";
     // Voice-memo streaming convergence (2026-08-08) — read once, then
     // clear immediately so a voice memo's audioUrl never leaks onto the
     // NEXT, unrelated typed submit; sendVoiceMemo below is the only thing

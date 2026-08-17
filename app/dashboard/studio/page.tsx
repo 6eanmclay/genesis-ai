@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { currentAssetsByRole } from "@/lib/businessModel/assets";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { SURFACES } from "@/lib/design/surfaces";
-import { StudioPrompts } from "./StudioPrompts";
+import { StudioActions, type StudioCategory } from "./StudioActions";
+import { uploadBusinessAssetFromChat } from "../ai-actions";
 
 // The Studio — a creative workshop, not a file manager (2026-08-17).
 //
@@ -57,25 +58,57 @@ export default async function StudioPage() {
   const hasLogo = Boolean(assetsByRole["brand.logo"]);
   const otherSurfaces = Object.values(SURFACES).filter((sf) => sf.key !== latestDesign?.surface);
 
-  // WHAT J4 RECOMMENDS NEXT, from what actually exists (2026-08-17). Sean:
-  // "the Studio should feel like J4 is guiding someone through creating their
-  // business's visual catalog, not presenting a list of arbitrary commands."
+  // WHAT J4 CAN HELP WITH, grouped (2026-08-18). One flat list read as a pile
+  // of commands; grouping by what the merchant is trying to MAKE reads as a
+  // workshop. A few strong ones show, the rest sit behind More.
   //
-  // So the list is derived, never fixed. Before a logo there is one sensible
-  // thing to do; once a logo exists the useful move is putting it on
-  // something; once a design exists the useful moves are refining it, trying
-  // another surface, or selling it. Each phrase is one a person would actually
-  // say, because it is sent verbatim into the conversation.
-  const prompts: string[] = [];
-  if (!hasLogo) {
-    prompts.push("Make me a logo");
-  } else if (!latestDesign) {
-    prompts.push("Put my logo on a t-shirt", "Try it on a hoodie", "Show me a couple of other directions");
-  } else {
-    prompts.push("Make the logo smaller", "Make this more minimal", "Show me a couple of other directions");
-    for (const sf of otherSurfaces.slice(0, 1)) prompts.push(`Try it on a ${sf.label.toLowerCase()} instead`);
-    prompts.push("Add it to my store");
-  }
+  // Still derived from what exists rather than fixed: before a logo the logo
+  // group leads with making one, after a design the product group offers the
+  // next surface from the registry. Each phrase is one a person would say,
+  // because it is sent verbatim into the conversation.
+  const nextSurface = otherSurfaces.find((sf) => sf.kind === "garment");
+  const categories: StudioCategory[] = [
+    {
+      key: "logo",
+      label: "Logo",
+      primary: hasLogo
+        ? ["Make the logo more minimal", "Show me other directions"]
+        : ["Make me a logo"],
+      more: hasLogo
+        ? ["Make me a new logo", "Try a bolder version", "Make it work better at small sizes"]
+        : ["I already have a logo I want to use", "Show me a couple of directions first"],
+    },
+    {
+      key: "products",
+      label: "Products",
+      primary: hasLogo
+        ? ["Put my logo on a t-shirt", nextSurface ? `Try it on a ${nextSurface.label.toLowerCase()}` : "Try it on a hoodie"]
+        : ["Make me a logo first, then put it on a t-shirt"],
+      more: ["Make the logo smaller on it", "Create another product", "Add it to my store"],
+    },
+    {
+      key: "website",
+      label: "Website",
+      primary: ["What would you improve about my store?", "Create a hero section"],
+      more: ["Build a product section", "Group my products into collections", "Make the storefront feel more premium"],
+    },
+    {
+      key: "graphics",
+      label: "Graphics",
+      primary: ["Create a collage", "Make a promotional graphic"],
+      more: ["Create a product image for my storefront", "Make this more minimal", "Show me a couple of other directions"],
+    },
+    {
+      // Upload chips open the file picker and carry their own label through as
+      // the owner's stated intent, so J4 knows whether it just received a logo,
+      // a product photo or lifestyle imagery.
+      key: "upload",
+      label: "Bring your own",
+      primary: ["Upload a logo", "Upload product photos"],
+      more: ["Upload lifestyle photos", "Upload photos for social", "Upload other business images"],
+    },
+  ];
+
   const surfaceLabel = (key: string) => SURFACES[key]?.label ?? key;
 
   return (
@@ -138,9 +171,13 @@ export default async function StudioPage() {
             exists, so J4 is guiding rather than listing commands. */}
         <section className="mt-8">
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            What J4 suggests next
+            What you and J4 can make
           </h2>
-          <StudioPrompts prompts={prompts} />
+          <StudioActions
+            categories={categories}
+            uploadAsset={uploadBusinessAssetFromChat}
+            currentPath="/dashboard/studio"
+          />
         </section>
 
         {/* What J4 has to work with. One row, not a media library — the asset
