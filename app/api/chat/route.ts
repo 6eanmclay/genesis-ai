@@ -29,7 +29,8 @@ import { GenerateBrandLogoInputSchema } from "@/lib/execution/genesisTools";
 import { CreateDesignInputSchema } from "@/lib/execution/genesisTools";
 import { createDesign } from "@/lib/design/createDesign";
 import { getSurface } from "@/lib/design/surfaces";
-import { ASSET_ROLES, resolveCurrentAsset } from "@/lib/businessModel/assets";
+import { ASSET_ROLES, designateAsset, resolveCurrentAsset } from "@/lib/businessModel/assets";
+import { AssetSchema } from "@/lib/businessModel/entities";
 import { branchBrandLogo, hasExistingLogo, proposeBrandLogo } from "@/lib/brand/proposeBrandLogo";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
@@ -1409,10 +1410,42 @@ export async function POST(request: Request) {
             orderBy: { syncedAt: "desc" },
           });
 
+          // Designation is real now (2026-08-17). This used to answer "that's a
+          // capability coming soon", which was honest at the time and is no
+          // longer true: lib/businessModel/assets.ts designates and supersedes
+          // for real. This is the OWNER-BRINGS-THEIR-OWN-LOGO path, and it
+          // matters as much as generating one — an owner who already has a
+          // logo has already answered the question.
+          //
+          // The role vocabulary stays open, matching AssetSchema: whatever the
+          // owner called it is kept, and only the logo case is normalised onto
+          // the canonical brand.logo role that "put my logo on a t-shirt"
+          // resolves against.
+          const requestedRole = input.role?.trim() ?? null;
+          const isLogoRole = Boolean(requestedRole && /logos?|mark/i.test(requestedRole));
+          const roleToAssign = requestedRole ? (isLogoRole ? ASSET_ROLES.brandLogo : requestedRole) : null;
+
+          if (mostRecentAsset && roleToAssign) {
+            await designateAsset(store.id, mostRecentAsset.id, roleToAssign);
+            if (isLogoRole) {
+              // Keep Store.logoUrl in step, exactly as approving a generated
+              // logo does — the column is still what every render path reads.
+              const parsedAsset = AssetSchema.safeParse(mostRecentAsset.data);
+              if (parsedAsset.success) {
+                await prisma.store.update({
+                  where: { id: store.id },
+                  data: { logoUrl: parsedAsset.data.storageUrl },
+                });
+              }
+            }
+          }
+
           const reply = !mostRecentAsset
             ? "I don't see anything uploaded yet to save — share a photo or document and I'll take it from there."
-            : input.role
-              ? `That's already saved as part of your business files. Assigning it specifically as "${input.role}" isn't something I can do yet — that's a capability coming soon. For now it's safely on file and I can pull it back up whenever you need it.`
+            : roleToAssign
+              ? isLogoRole
+                ? "Done — that's your logo now. I'll use it wherever your brand shows up, and you can ask me to put it on a t-shirt or a hoodie whenever you want."
+                : `Done — I've saved that as your ${roleToAssign}. I'll know what you mean when you refer to it.`
               : `That's already saved as part of your business files. Want me to give it a specific role — like your primary logo — or is keeping it on file for now good?`;
 
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
