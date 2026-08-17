@@ -797,6 +797,26 @@ model ApprovalRequest {
   // last version" is a different question from "what is this proposal", and
   // answering it by sorting revisions is fragile once rows can be deleted.
   supersedesId         String?
+  // Sibling creative branches (2026-08-16).
+  //
+  // A proposal chain answers "what is my current answer" — one pending row,
+  // each revision superseding the last. Creative work needs the opposite:
+  // several candidates alive at once, so the owner can say "keep the symbol
+  // from the original but use the typography from option 2" and have both
+  // still exist to refer to.
+  //
+  // So a creative lineage is several CHAINS sharing one groupId. Each chain
+  // is a candidate with its own revisions, and branchOfProposalId names the
+  // candidate it was derived from — null on the original. Deliberately NOT
+  // reusing supersedesId, which means "replaced that revision": overloading
+  // it would make the original's status ambiguous, and the no-pressure rule
+  // depends on nothing being superseded unless the owner actually chooses.
+  //
+  // branchLabel is what "option 2" is called in conversation ("Warm
+  // editorial") — the thing that makes an alternative referable rather than
+  // an unrelated generation.
+  branchOfProposalId   String?
+  branchLabel          String?
   // How much of the storefront the owner is being asked to judge, and
   // therefore how much of it must be shown. A key of PROPOSAL_SCOPES
   // (element | section | page | site) — see lib/storefront/proposalScope.ts

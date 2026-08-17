@@ -298,8 +298,11 @@ export async function openProposal(storeId: string, draft: ProposalDraft): Promi
     select: { id: true },
   });
 
+  // storeId in the where clause is required by lib/tenantIsolation.ts, which
+  // refuses an unscoped update on a tenant-owned table. Scoping an update by
+  // tenant is correct regardless, so this is not a workaround.
   await prisma.approvalRequest.update({
-    where: { id: created.id },
+    where: { id: created.id, storeId },
     data: { proposalId: created.id },
   });
 
@@ -358,7 +361,8 @@ export async function reviseProposal(
 
   await prisma.$transaction([
     prisma.approvalRequest.update({
-      where: { id: previous.id },
+      // storeId required by lib/tenantIsolation.ts, and correct regardless.
+      where: { id: previous.id, storeId },
       data: { status: PROPOSAL_STATUS.superseded },
     }),
     prisma.approvalRequest.create({
@@ -387,4 +391,173 @@ export async function reviseProposal(
   ]);
 
   return getProposal(storeId, proposalId);
+}
+
+// ---------------------------------------------------------------------------
+// Sibling creative branches (2026-08-16)
+// ---------------------------------------------------------------------------
+//
+// Everything above answers "what is my current answer" — one pending row per
+// chain, each revision superseding the last. Creative work needs the opposite
+// shape, and Sean named it exactly:
+//
+//   "The original must remain intact when J4 creates alternatives. Each
+//    alternative needs its own identity and lineage so J4 can understand that
+//    'option 2' came from the original, rather than treating it as an
+//    unrelated generation."
+//
+// So a creative lineage is several CHAINS sharing one groupId. Each candidate
+// keeps its own revisions and can be refined independently through
+// reviseProposal, unchanged — branching is a layer above chains, not a
+// replacement for them.
+//
+// THREE CHOICES IS NOT THE MODEL. n siblings; three is one presentation.
+//
+// THE NO-PRESSURE RULE, IN DATA. Creating alternatives supersedes nothing.
+// The original stays PENDING and stays the preferred candidate until the owner
+// actually chooses something else. That is why branchOfProposalId is its own
+// column rather than a reuse of supersedesId — see schema.prisma.
+
+export interface BranchDraft {
+  /** What the owner will call it. "Warm editorial", not "Option 2". */
+  label: string;
+  summary: string;
+  rationale: string;
+  input: Record<string, unknown>;
+  target?: string | null;
+}
+
+export interface CreativeLineage {
+  groupId: string;
+  /** The first candidate. Never superseded by the act of branching. */
+  original: Proposal;
+  /** Alternatives derived from it, oldest first. */
+  branches: { proposal: Proposal; label: string | null; branchOfProposalId: string | null }[];
+}
+
+/**
+ * Creates alternative candidates from an existing proposal, leaving it intact.
+ *
+ * Each branch is a NEW chain: its own proposalId, revision 1, PENDING, sharing
+ * the original's groupId so the lineage is one thing. previousValues is copied
+ * from the original's first revision for the same reason reviseProposal does
+ * it — "current" means the storefront as it really is, and no candidate has
+ * been applied to it.
+ */
+export async function branchProposal(
+  storeId: string,
+  fromProposalId: string,
+  branches: BranchDraft[]
+): Promise<CreativeLineage | null> {
+  const origin = await getProposal(storeId, fromProposalId);
+  if (!origin || origin.settled || branches.length === 0) return null;
+
+  const source = await prisma.approvalRequest.findFirst({
+    where: { storeId, id: origin.current.id },
+    select: { actionType: true, authorizationTier: true, groupId: true, proposalId: true },
+  });
+  if (!source) return null;
+
+  // Every candidate in one lineage shares a groupId. The original may not have
+  // had one, so it adopts its own proposalId — stable, already unique, and it
+  // makes the original discoverable from any sibling.
+  const groupId = source.groupId ?? origin.proposalId;
+  if (!source.groupId) {
+    await prisma.approvalRequest.updateMany({
+      where: { storeId, proposalId: origin.proposalId },
+      data: { groupId },
+    });
+  }
+
+  const first = origin.revisions[0];
+
+  for (const branch of branches) {
+    const target = branch.target !== undefined ? branch.target : origin.current.target;
+    const created = await prisma.approvalRequest.create({
+      data: {
+        storeId,
+        actionType: source.actionType,
+        authorizationTier: source.authorizationTier,
+        groupId,
+        summary: branch.summary,
+        rationale: branch.rationale,
+        target,
+        scope: resolveProposalScope({ target, mutationCount: Object.keys(branch.input).length }),
+        input: branch.input as never,
+        previousValues: first.previousValues as never,
+        revision: 1,
+        status: PROPOSAL_STATUS.pending,
+        branchOfProposalId: origin.proposalId,
+        branchLabel: branch.label,
+      },
+      select: { id: true },
+    });
+    // Same identity rule as openProposal: a chain is named by its first row.
+    // storeId in the where clause is required by lib/tenantIsolation.ts, which
+    // refuses an unscoped update on a tenant-owned table.
+    await prisma.approvalRequest.update({
+      where: { id: created.id, storeId },
+      data: { proposalId: created.id },
+    });
+  }
+
+  return getCreativeLineage(storeId, groupId);
+}
+
+/** Every candidate in one creative lineage, original first. */
+export async function getCreativeLineage(storeId: string, groupId: string): Promise<CreativeLineage | null> {
+  const rows = await prisma.approvalRequest.findMany({
+    where: { storeId, groupId, revision: 1 },
+    orderBy: { createdAt: "asc" },
+    select: { proposalId: true, branchLabel: true, branchOfProposalId: true },
+  });
+  if (rows.length === 0) return null;
+
+  const originRow = rows.find((r) => !r.branchOfProposalId) ?? rows[0];
+  if (!originRow.proposalId) return null;
+  const original = await getProposal(storeId, originRow.proposalId);
+  if (!original) return null;
+
+  const branches: CreativeLineage["branches"] = [];
+  for (const row of rows) {
+    if (!row.proposalId || row.proposalId === originRow.proposalId) continue;
+    const proposal = await getProposal(storeId, row.proposalId);
+    if (proposal) {
+      branches.push({ proposal, label: row.branchLabel, branchOfProposalId: row.branchOfProposalId });
+    }
+  }
+
+  return { groupId, original, branches };
+}
+
+/**
+ * The owner chose one candidate. Its siblings are set aside.
+ *
+ * SUPERSEDED, not REJECTED, and the distinction is the one this file already
+ * defends: the owner did not turn these down on their merits, they preferred
+ * another. Recording them as refused would poison the suggestion gate's record
+ * of what the owner actually said no to.
+ *
+ * Deliberately does NOT approve anything itself. Execution stays with the
+ * ordinary approval path, so approving a chosen branch remains an ordinary
+ * ApprovalRequest going through the ordinary executable — this only closes the
+ * alternatives, and is called alongside that path rather than replacing it.
+ */
+export async function setAsideSiblings(storeId: string, chosenProposalId: string): Promise<number> {
+  const chosen = await prisma.approvalRequest.findFirst({
+    where: { storeId, proposalId: chosenProposalId, revision: 1 },
+    select: { groupId: true },
+  });
+  if (!chosen?.groupId) return 0;
+
+  const result = await prisma.approvalRequest.updateMany({
+    where: {
+      storeId,
+      groupId: chosen.groupId,
+      status: PROPOSAL_STATUS.pending,
+      proposalId: { not: chosenProposalId },
+    },
+    data: { status: PROPOSAL_STATUS.superseded },
+  });
+  return result.count;
 }
