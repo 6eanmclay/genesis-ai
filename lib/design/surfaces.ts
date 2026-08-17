@@ -53,9 +53,10 @@ export interface Surface {
    * How to render a blank base when one is not cached yet. Garment only, for
    * the same reason: there is no blank storefront section to photograph.
    *
-   * Contains a {color} placeholder. Colour is a real input, not decoration —
-   * an owner who asks for a black hoodie and gets a grey one has been told
-   * something untrue about their own product.
+   * Renders a NEUTRAL light grey product. Colour is applied afterwards, as a
+   * deterministic image operation rather than a word in this prompt — see
+   * recolorProduct in createDesign.ts for why. Asking a model for "black" and
+   * hoping is what produced grey hoodies described as black.
    */
   basePrompt?: string;
   /**
@@ -96,7 +97,7 @@ function apparel(key: string, label: string, item: string, area: Surface["mockup
     // 12in x 16in at 150dpi — the standard DTG print area.
     output: { width: 1800, height: 2400 },
     mockupArea: area,
-    basePrompt: `A plain {color} ${item} laid flat on a clean white background, front view, centered, the garment itself clearly and unmistakably {color}, no graphics, no text, no logo, even lighting, product photography.`,
+    basePrompt: `A plain light grey ${item} laid flat on a pure white background, front view, centered, evenly lit with soft natural shadows and visible fabric texture and seams, no graphics, no text, no logo, product photography.`,
   };
 }
 
@@ -115,7 +116,7 @@ function accessory(
     category,
     output,
     mockupArea: area,
-    basePrompt: `A plain {color} ${item} on a clean white background, centered, the item itself clearly and unmistakably {color}, no graphics, no text, no logo, even lighting, product photography.`,
+    basePrompt: `A plain light grey ${item} on a pure white background, centered, evenly lit with soft natural shadows and visible surface texture, no graphics, no text, no logo, product photography.`,
   };
 }
 
@@ -205,14 +206,28 @@ Object.assign(SURFACES, SECTION_SURFACES);
 // Garment colours J4 can actually produce. A closed list for the same reason
 // the surface registry is closed: a colour that reaches the image model
 // unchecked is a colour nobody verified the result of.
-export const GARMENT_COLORS: Record<string, { label: string; /** Expected mean luminance, 0-255, for verifying the render. */ expect: "dark" | "light" | "mid" }> = {
-  black: { label: "black", expect: "dark" },
-  white: { label: "white", expect: "light" },
-  navy: { label: "navy blue", expect: "dark" },
-  grey: { label: "heather grey", expect: "mid" },
-  sand: { label: "sand", expect: "light" },
-  forest: { label: "forest green", expect: "dark" },
+// Garment colours, as real RGB rather than words for a prompt (2026-08-18).
+//
+// The colour is applied compositionally now, so these are the actual target
+// values the fabric is mapped onto — not adjectives an image model interprets
+// differently every time. `expect` stays as the verification band, because a
+// deterministic step should still be checked rather than assumed.
+//
+// White is deliberately not 255. A pure-white garment on a white backdrop has
+// no edge, so it renders as a very light grey that still reads as white while
+// keeping the silhouette visible.
+export const GARMENT_COLORS: Record<
+  string,
+  { label: string; rgb: { r: number; g: number; b: number }; expect: "dark" | "light" | "mid" }
+> = {
+  black: { label: "black", rgb: { r: 28, g: 28, b: 30 }, expect: "dark" },
+  white: { label: "white", rgb: { r: 238, g: 238, b: 236 }, expect: "light" },
+  navy: { label: "navy blue", rgb: { r: 30, g: 44, b: 82 }, expect: "dark" },
+  grey: { label: "heather grey", rgb: { r: 158, g: 158, b: 160 }, expect: "mid" },
+  sand: { label: "sand", rgb: { r: 208, g: 190, b: 160 }, expect: "light" },
+  forest: { label: "forest green", rgb: { r: 38, g: 68, b: 48 }, expect: "dark" },
 };
+
 export const DEFAULT_GARMENT_COLOR = "grey";
 
 export function getSurface(key: string): Surface | null {

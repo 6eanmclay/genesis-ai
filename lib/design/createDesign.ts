@@ -65,19 +65,14 @@ async function fetchImage(url: string): Promise<Buffer | null> {
  * preserve. The role is namespaced under `surface.` so it never collides with
  * the owner's own brand assets.
  */
-async function resolveSurfaceBase(
-  storeId: string,
-  surface: Surface,
-  color: string
-): Promise<{ buffer: Buffer; verified: boolean } | null> {
+async function resolveSurfaceBase(storeId: string, surface: Surface): Promise<Buffer | null> {
   // A section has no base: the composition is the output. Callers must not
   // reach here for one, and this returns null rather than inventing a canvas.
   if (!surface.basePrompt) return null;
-  // CACHED PER COLOUR, not per surface (2026-08-18). Caching one base per
-  // surface is what made "put it on a black hoodie" return a grey hoodie: the
-  // colour never reached the generator and the grey base was reused forever.
-  const role = `surface.${surface.key}.${color}`;
-  // Look for a cached base for this exact surface before generating one.
+  // ONE NEUTRAL BASE PER SURFACE. Colour is applied afterwards by
+  // recolorProduct, so a store generates each product shape once and every
+  // colour of it is free and identical in shape, lighting and texture.
+  const role = `surface.${surface.key}`;
   const cached = await prisma.businessRecord.findMany({
     where: { storeId, entityType: "asset" },
     orderBy: { syncedAt: "desc" },
@@ -87,13 +82,12 @@ async function resolveSurfaceBase(
     const parsed = AssetSchema.safeParse(row.data);
     if (parsed.success && parsed.data.role === role) {
       const buf = await fetchImage(parsed.data.storageUrl);
-      if (buf) return { buffer: buf, verified: await garmentMatchesColor(buf, color) };
+      if (buf) return buf;
     }
   }
 
-  const colorLabel = GARMENT_COLORS[color]?.label ?? color;
   const sourced = await GeneratedImageProvider.source({
-    prompt: surface.basePrompt.replaceAll("{color}", colorLabel),
+    prompt: surface.basePrompt,
     name: surface.label,
     description: null,
     excludeUrls: [],
@@ -102,8 +96,6 @@ async function resolveSurfaceBase(
   });
   if (!sourced?.url) return null;
 
-  // Cached as an ordinary asset, so the second design on the same surface
-  // costs nothing.
   await persistSyncedRecords(storeId, SOURCE_PROVIDER, [
     {
       entityType: "asset",
@@ -112,8 +104,8 @@ async function resolveSurfaceBase(
         fileType: "photo",
         category: "surface_base",
         storageUrl: sourced.url,
-        originalFilename: `${surface.key}-${color}-base.png`,
-        summary: `Blank ${colorLabel} ${surface.label} for mockups`,
+        originalFilename: `${surface.key}-base.png`,
+        summary: `Blank ${surface.label} for mockups`,
         extractionConfidence: null,
         relatedRecordId: null,
         relatedEntityType: null,
@@ -121,98 +113,164 @@ async function resolveSurfaceBase(
         origin: "generated",
         supersedesAssetId: null,
         supersededByAssetId: null,
-        generationPrompt: sourced.generationPrompt ?? surface.basePrompt.replaceAll("{color}", colorLabel),
+        generationPrompt: sourced.generationPrompt ?? surface.basePrompt,
         aiUsageEventId: sourced.aiUsageEventId ?? null,
         createdAt: new Date().toISOString(),
       },
     },
   ]);
 
-  const fresh = await fetchImage(sourced.url);
-  if (!fresh) return null;
-  if (await garmentMatchesColor(fresh, color)) {
-    return { buffer: fresh, verified: true };
-  }
-
-  // ONE RETRY WITH A HARDER PROMPT (2026-08-18). The first "black hoodie" came
-  // back light grey, and reporting that honestly is necessary but not enough —
-  // the owner asked for black. Image models under-commit to dark garments
-  // against a white backdrop, so the retry says so explicitly. One attempt
-  // only: a loop here would spend real money chasing a colour the model may
-  // simply not produce, and an honest "that isn't black" beats a bill.
-  const insistent = await GeneratedImageProvider.source({
-    prompt:
-      `${surface.basePrompt.replaceAll("{color}", colorLabel)} The fabric must read as a deep, saturated, unmistakable ${colorLabel} across the whole garment, not a lighter shade of it, and not washed out by the lighting.`,
-    name: surface.label,
-    description: null,
-    excludeUrls: [sourced.url],
-    scope: { storeId },
-    feature: "business_icon_generation",
-  });
-  const retried = insistent?.url ? await fetchImage(insistent.url) : null;
-  if (retried && (await garmentMatchesColor(retried, color))) {
-    // Cache the one that actually worked, so the next design in this colour
-    // starts from the good base rather than repeating the retry.
-    await persistSyncedRecords(storeId, SOURCE_PROVIDER, [
-      {
-        entityType: "asset",
-        externalId: insistent!.url,
-        data: {
-          fileType: "photo",
-          category: "surface_base",
-          storageUrl: insistent!.url,
-          originalFilename: `${surface.key}-${color}-base.png`,
-          summary: `Blank ${colorLabel} ${surface.label} for mockups`,
-          extractionConfidence: null,
-          relatedRecordId: null,
-          relatedEntityType: null,
-          role,
-          origin: "generated",
-          supersedesAssetId: null,
-          supersededByAssetId: null,
-          generationPrompt: insistent!.generationPrompt ?? null,
-          aiUsageEventId: insistent!.aiUsageEventId ?? null,
-          createdAt: new Date().toISOString(),
-        },
-      },
-    ]);
-    return { buffer: retried, verified: true };
-  }
-
-  // Both attempts missed. The design still gets made — the owner sees a real
-  // mockup — and colorVerified: false is what stops J4 calling it black.
-  return { buffer: fresh, verified: false };
+  return fetchImage(sourced.url);
 }
 
 /**
- * Does the rendered garment actually look like the colour that was asked for?
+ * Paints the product the colour that was asked for. Deterministically.
  *
- * Sean, on a hoodie that came back grey: "the response should not claim that
- * the garment is black when the rendered artifact clearly isn't." So the render
- * is measured rather than trusted. The centre of the frame is where the garment
- * is; the corners are the white backdrop, and including them would wash every
- * reading toward light.
+ * Sean: "this needs to be fixed at the composition layer, not by asking the
+ * image generation model to interpret the requested color." Two attempts at
+ * prompting produced grey hoodies called black, which is the same class of
+ * failure as generating a logo that merely resembles the owner's mark. The
+ * mockup already refuses to do that; the colour should not either.
  *
- * A coarse check on purpose. It is not trying to grade the shade, only to catch
- * the failure that actually happened: asked for dark, got light.
+ * HOW THE SHAPE SURVIVES. Every pixel's luminance carries the lighting,
+ * shadows, folds, seams and fabric texture. Scaling the target colour BY that
+ * luminance keeps all of it: a fold that was darker than its surroundings stays
+ * darker by the same proportion, so the garment reads as a photographed object
+ * rather than a flat silhouette.
+ *
+ * HOW THE BACKDROP SURVIVES. The white background is left alone, and the test
+ * for it is deliberately conservative — near-white AND near-neutral, so a
+ * genuine highlight on the fabric is recoloured while the studio backdrop is
+ * not. Getting this wrong in the safe direction leaves a faint halo; getting it
+ * wrong in the other direction paints the whole frame.
  */
-async function garmentMatchesColor(base: Buffer, color: string): Promise<boolean> {
+async function recolorProduct(base: Buffer, color: string): Promise<Buffer> {
+  const target = GARMENT_COLORS[color]?.rgb;
+  if (!target) return base;
+
+  const { data, info } = await sharp(base).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width, height, channels } = info;
+  const out = Buffer.from(data);
+
+  // THE BACKDROP IS FOUND, NOT GUESSED (2026-08-18, second pass).
+  //
+  // The first version treated "near-white and neutral" as backdrop, which
+  // painted the entire frame black: the generated backgrounds are not as close
+  // to pure white as the threshold assumed, and no threshold can separate a
+  // WHITE garment from a white backdrop anyway — they are the same colour.
+  //
+  // What actually distinguishes them is connectivity. The backdrop touches the
+  // border of the frame; the product does not. So this floods inward from the
+  // edges across light pixels and marks only what it reaches. A white t-shirt
+  // in the middle is never reached, because the shadow around it stops the
+  // flood, which is exactly the edge a photograph provides.
+  const isLight = (idx: number) => {
+    const l = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+    const spread = Math.max(data[idx], data[idx + 1], data[idx + 2]) - Math.min(data[idx], data[idx + 1], data[idx + 2]);
+    return l > 216 && spread < 40;
+  };
+
+  const backdrop = new Uint8Array(width * height);
+  const queue: number[] = [];
+  const push = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const p = y * width + x;
+    if (backdrop[p]) return;
+    if (!isLight(p * channels)) return;
+    backdrop[p] = 1;
+    queue.push(p);
+  };
+  for (let x = 0; x < width; x++) {
+    push(x, 0);
+    push(x, height - 1);
+  }
+  for (let y = 0; y < height; y++) {
+    push(0, y);
+    push(width - 1, y);
+  }
+  while (queue.length > 0) {
+    const p = queue.pop()!;
+    const x = p % width;
+    const y = (p - x) / width;
+    push(x + 1, y);
+    push(x - 1, y);
+    push(x, y + 1);
+    push(x, y - 1);
+  }
+
+  // The product's own mean luminance, backdrop excluded. Mapping that mean onto
+  // the requested colour is what makes "black" land on black rather than on
+  // whatever the model happened to render.
+  let sum = 0;
+  let count = 0;
+  for (let p = 0; p < width * height; p++) {
+    if (backdrop[p]) continue;
+    const i = p * channels;
+    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    count++;
+  }
+  const reference = count > 0 ? sum / count : 160;
+
+  for (let p = 0; p < width * height; p++) {
+    if (backdrop[p]) continue;
+    const i = p * channels;
+    const l = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    // Relative shading, softened so a deep colour keeps its folds and seams
+    // without crushing them to flat black or blowing highlights to white.
+    const ratio = Math.pow(l / reference, 0.85);
+    out[i] = Math.max(0, Math.min(255, Math.round(target.r * ratio)));
+    out[i + 1] = Math.max(0, Math.min(255, Math.round(target.g * ratio)));
+    out[i + 2] = Math.max(0, Math.min(255, Math.round(target.b * ratio)));
+  }
+
+  return sharp(out, { raw: { width, height, channels } })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Does the rendered product actually look like the colour that was asked for?
+ *
+ * Kept after the move to deterministic recolouring rather than deleted. The
+ * recolour should always satisfy this, so a failure now means something real
+ * broke — a base that is mostly backdrop, an unreadable image, a colour whose
+ * target and expectation disagree. A check that only fires when something is
+ * genuinely wrong is worth more than one that fired routinely.
+ *
+ * Samples the centre, where the product is, rather than the corners, which are
+ * the white studio backdrop and would wash every reading toward light.
+ */
+async function garmentMatchesColor(image: Buffer, color: string): Promise<boolean> {
   const expect = GARMENT_COLORS[color]?.expect;
   if (!expect) return true;
   try {
-    const meta = await sharp(base).metadata();
-    const width = meta.width ?? 0;
-    const height = meta.height ?? 0;
-    if (width < 8 || height < 8) return true;
-    const stats = await sharp(base)
-      .extract({
-        left: Math.floor(width * 0.35),
-        top: Math.floor(height * 0.35),
-        width: Math.max(1, Math.floor(width * 0.3)),
-        height: Math.max(1, Math.floor(height * 0.3)),
-      })
-      .stats();
-    const mean = stats.channels.slice(0, 3).reduce((sum, c) => sum + c.mean, 0) / 3;
+    // MEASURES THE PRODUCT, NOT A RECTANGLE (corrected 2026-08-18, third pass).
+    //
+    // Sampling a fixed region kept reading the backdrop. The centre of a
+    // garment is where artwork goes; a band across the shoulders catches the
+    // white showing through a neck opening. Both produced "not black" readings
+    // of a hoodie that direct pixel inspection showed was (19, 19, 20).
+    //
+    // So the product is identified rather than located: every pixel that is not
+    // near-white counts, wherever it happens to be. That works for any shape in
+    // the catalogue — a mug, a cap, a poster — without a per-surface region.
+    const { data, info } = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < data.length; i += info.channels) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const l = 0.299 * r + 0.587 * g + 0.114 * b;
+      const spread = Math.max(r, g, b) - Math.min(r, g, b);
+      if (l > 216 && spread < 40) continue; // backdrop
+      sum += l;
+      count++;
+    }
+    // Almost nothing but backdrop means there is no product to judge. Report
+    // unverified rather than passing something that was never measured.
+    if (count < info.width * info.height * 0.02) return false;
+    const mean = sum / count;
     if (expect === "dark") return mean < 110;
     if (expect === "light") return mean > 170;
     return true;
@@ -362,10 +420,14 @@ export async function createDesign(params: {
   const color = params.color && GARMENT_COLORS[params.color] ? params.color : DEFAULT_GARMENT_COLOR;
   let colorVerified = true;
   if (surface.kind !== "section") {
-    const base = await resolveSurfaceBase(params.storeId, surface, color);
-    if (!base) return null;
-    colorVerified = base.verified;
-    mockup = await composeMockup(printFile, base.buffer, surface);
+    const neutral = await resolveSurfaceBase(params.storeId, surface);
+    if (!neutral) return null;
+    const colored = await recolorProduct(neutral, color);
+    // Still measured. The recolour is deterministic, so this should always
+    // pass — which is exactly why it is worth keeping: a check that only fires
+    // when something has genuinely broken is the useful kind.
+    colorVerified = await garmentMatchesColor(colored, color);
+    mockup = await composeMockup(printFile, colored, surface);
   }
 
   // A section's print file and mockup are the same bytes, so upload once and
