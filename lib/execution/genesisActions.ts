@@ -9,6 +9,7 @@ import {
   type UpdateProductImageInput,
 } from "./executables/updateProductImage";
 import { updateBrandLogoExecutable, type UpdateBrandLogoInput } from "./executables/updateBrandLogo";
+import { createProductFromDesignExecutable, type CreateProductFromDesignInput } from "./executables/productFromDesign";
 import { updateThemeExecutable, type UpdateThemeInput } from "./executables/updateTheme";
 import { refineStorefrontExecutable, type RefineStorefrontInput } from "./executables/refineStorefront";
 import { REFINABLE_DIMENSION_KEYS, MAX_MUTATIONS_PER_IMPROVEMENT } from "@/lib/storefront/dimensions";
@@ -81,6 +82,9 @@ export interface BlueprintContextSubset {
   homepageContent?: {
     heroHeadline?: string;
     heroSubheadline?: string;
+    // Priority 4 (asset-to-storefront, 2026-08-09) — see updateHero.ts's
+    // own UpdateHeroInput comment for the full architectural reasoning.
+    heroImageUrl?: string | null;
     primaryCallToAction?: string;
     secondaryCallToAction?: string | null;
     aboutUs?: string;
@@ -297,6 +301,7 @@ export const GENESIS_ACTIONS: Record<
     | UpdateHeroInput
     | UpdateProductImageInput
     | UpdateBrandLogoInput
+    | CreateProductFromDesignInput
     | UpdateThemeInput
     | RefineStorefrontInput
     | UpdateBrandIdentityInput
@@ -340,10 +345,15 @@ export const GENESIS_ACTIONS: Record<
   },
   update_hero: {
     executable: updateHeroExecutable,
-    inputSchema: z.object({ heroHeadline: z.string(), heroSubheadline: z.string() }),
+    inputSchema: z.object({
+      heroHeadline: z.string(),
+      heroSubheadline: z.string(),
+      heroImageUrl: z.string().nullable().optional(),
+    }),
     getCurrentValues: ({ blueprint }) => ({
       heroHeadline: blueprint?.homepageContent?.heroHeadline ?? "",
       heroSubheadline: blueprint?.homepageContent?.heroSubheadline ?? "",
+      heroImageUrl: blueprint?.homepageContent?.heroImageUrl ?? null,
     }),
     category: "content",
     authorizationTier: "always_ask",
@@ -371,6 +381,27 @@ export const GENESIS_ACTIONS: Record<
     getCurrentValues: ({ brand }) => ({
       imageUrl: brand?.logoUrl ?? "",
     }),
+    category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  // Approving a Studio creation into a real, sellable product (2026-08-17).
+  //
+  // always_ask, and this is the strongest case for it in the registry: the
+  // owner is putting something in their shop window at a price. The
+  // confirmation ladder's rule that a visual change must be seen before it is
+  // agreed to applies literally — they approve the mockup they are looking at.
+  create_product_from_design: {
+    executable: createProductFromDesignExecutable,
+    inputSchema: z.object({
+      designId: z.string(),
+      name: z.string(),
+      priceInCents: z.number().int().positive(),
+      description: z.string().optional(),
+    }),
+    // Nothing is being replaced — this creates a product that did not exist,
+    // so there is no "current" value to diff against.
+    getCurrentValues: () => ({ designId: "", name: "", priceInCents: 0 }),
     category: "content",
     authorizationTier: "always_ask",
     maxAuthorityTier: "always_ask",
@@ -775,6 +806,7 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_hero: { key: "website", label: "Website", href: "/dashboard/website" },
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
   update_brand_logo: { key: "brand", label: "Identity", href: "/dashboard/brand" },
+  create_product_from_design: { key: "products", label: "Products", href: "/dashboard/products" },
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },
   update_product: { key: "products", label: "Products", href: "/dashboard/products" },
   create_product: { key: "products", label: "Products", href: "/dashboard/products" },
