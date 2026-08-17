@@ -23,7 +23,7 @@ export interface NavSection {
 // rooms, with J4 permanently in the centre. See GENESIS_SURFACES.md, which is
 // the locked architecture and the reason this file looks the way it does.
 //
-//     Storefront | Products | (J4) | Orders | Studio
+//     Storefront | Orders | (J4 / Office) | Products | Studio
 //
 // J4 IS NOT IN THIS LIST AND MUST NEVER BE ADDED TO IT. J4 is the partner who
 // comes with the owner, not a place they go. The orb is rendered by
@@ -37,11 +37,9 @@ export interface NavSection {
 // navigating back to it. That is why "Your Business" is gone from this list
 // while its route is very much alive.
 //
-// STUDIO IS NOT HERE YET, deliberately. It has no route: Creation was designed
-// and never built. Adding a Studio tab now would mean shipping a tab that
-// leads to a screen with nothing real behind it, which is the one thing Sean
-// has ruled out repeatedly ("no prototype screens"). It joins this list when
-// there is a real creation surface for it to open.
+// STUDIO JOINED 2026-08-16. It was held out of this list for exactly as long
+// as it had no route, because a tab that opens nothing is the one thing ruled
+// out here. It has real capability behind it now, verified end to end.
 //
 // Everything after PRIMARY_TAB_COUNT is the account area, not a business room:
 // settings, billing, and the provider connections. These are configured, not
@@ -89,6 +87,12 @@ export const NAV_SECTIONS: NavSection[] = [
   { key: "website", label: "Storefront", href: "/dashboard/website", permission: "store:manage" },
   { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
   { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
+  // Studio is a real room now (2026-08-16). It was deliberately absent while
+  // it had no route — a tab that opens nothing is the one thing ruled out
+  // here. It has one because the capability underneath is real and verified:
+  // an approved brand.logo Asset composed onto a surface into a print file and
+  // a mockup (lib/design/). See WORK_STUDIO.md.
+  { key: "studio", label: "Studio", href: "/dashboard/studio", permission: "store:manage" },
 
   // ---- account area, below the fold. Not rooms. ----
   // Customers and Analytics used to sit here as staging posts. They are
@@ -131,10 +135,9 @@ export const NAV_SECTIONS: NavSection[] = [
 // to admit Orders — Marketing/Payments/Analytics/Connections/Growth
 // Points/Billing/Settings all stay under More by deliberate choice, not
 // yet revisited.
-// The rooms are the first three entries above. Studio makes four when it
-// exists (see the STUDIO note at the top of this file); raising this number is
-// how it gets promoted, once its route is real.
-export const PRIMARY_TAB_COUNT = 3;
+// The four rooms: Storefront, Orders, Products, Studio. Raised from 3 when
+// Studio earned its route.
+export const PRIMARY_TAB_COUNT = 4;
 
 // Secondary navigation, shown only while inside Your Business — only the
 // real, currently-shipped workspaces, nothing speculative (no "Socials"
