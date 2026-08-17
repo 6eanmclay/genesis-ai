@@ -34,11 +34,27 @@ export function J4Overlay({
   open,
   onClose,
   children,
+  mode = "overlay",
 }: {
   open: boolean;
   onClose: () => void;
   children: React.ReactNode;
+  /**
+   * How the one conversation is presented (2026-08-18).
+   *
+   * "overlay" is the Office: full screen, modal, entered on purpose.
+   * "docked" is Studio: a panel beneath the bench, always there, not modal —
+   * the creative session lives in the room the owner is working in.
+   *
+   * ONE INSTANCE, TWO PRESENTATIONS, and that is the whole point. Rendering
+   * the conversation in a second place would create a second J4Workspace with
+   * its own composer and its own message list — a second conversation arrived
+   * at by accident. So this component moves nothing; it changes how the single
+   * mounted conversation is framed.
+   */
+  mode?: "overlay" | "docked";
 }) {
+  const docked = mode === "docked";
   // The animation's own state, which is not the same thing as `open`. It
   // trails `open` by one frame on the way in: the panel mounts in its closed
   // position and only then transitions, because an element that mounts
@@ -85,7 +101,10 @@ export function J4Overlay({
   // and its scroll position is never touched by anything but this — which is
   // what makes "close J4 and you are exactly where you were" structural.
   useEffect(() => {
-    if (!open) return;
+    // Overlay only. Pinning the body in docked mode would freeze the Studio
+    // bench the panel is supposed to sit beneath — the conversation is not
+    // modal there, so nothing behind it should be immobilised.
+    if (!open || docked) return;
     const scrollY = window.scrollY;
     const previous = {
       position: document.body.style.position,
@@ -115,7 +134,8 @@ export function J4Overlay({
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    // Escape closes the Office. In Studio there is nothing to close to.
+    if (!open || docked) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") requestClose();
     };
@@ -145,21 +165,33 @@ export function J4Overlay({
     // hidden layer can never intercept a tap meant for the workspace, which
     // is what made the page feel frozen around the control.
     <div
-      className={`fixed inset-0 z-[60] touch-none ${visible ? "" : "pointer-events-none"}`}
-      role="dialog"
-      aria-modal={visible}
-      aria-hidden={!visible}
-      aria-label="J4's Office"
+      className={
+        docked
+          ? // Above the nav (z-40), below the orb (z-55) so the presence still
+            // reads as the topmost thing. Ends above the tab bar band rather
+            // than behind it.
+            // Not mobile-only: on a wide viewport the Studio chips would otherwise
+            // set a handoff with nothing on screen to receive it, which is a
+            // dead control. Desktop keeps its own Office door as well.
+            "pointer-events-none fixed inset-x-0 bottom-[6.75rem] z-[45] h-[42vh] px-3 md:bottom-6 md:left-auto md:right-6 md:h-[60vh] md:w-[26rem] md:px-0"
+          : `fixed inset-0 z-[60] touch-none ${visible ? "" : "pointer-events-none"}`
+      }
+      role={docked ? "region" : "dialog"}
+      aria-modal={docked ? undefined : visible}
+      aria-hidden={docked ? undefined : !visible}
+      aria-label={docked ? "Your session with J4" : "J4's Office"}
     >
       {/* Kept even though the Office now covers it. It is what the panel
           animates in over, so removing it would show the workspace sliding
           about behind a translucent edge for the length of the transition. */}
-      <div
-        aria-hidden="true"
-        className={`absolute inset-0 bg-black/30 transition-opacity duration-300 md:bg-black/50 ${
-          visible ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      />
+      {!docked && (
+        <div
+          aria-hidden="true"
+          className={`absolute inset-0 bg-black/30 transition-opacity duration-300 md:bg-black/50 ${
+            visible ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+        />
+      )}
 
       {/* FULL SCREEN. This is the Office, and entering it is the point.
           Sean, 2026-08-15: "don't open it as a half-height sheet, drawer, or
@@ -181,12 +213,16 @@ export function J4Overlay({
           So the two are cleanly split. The orb brings J4 to where the owner
           is. This brings the owner to where the work is. */}
       <div
-        className={`absolute inset-0 flex origin-bottom touch-auto flex-col overflow-hidden bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 ${
-          visible
-            ? "translate-y-0 scale-100 opacity-100"
-            : "pointer-events-none translate-y-8 scale-[0.96] opacity-0"
-        }`}
-        style={{ transitionTimingFunction: "cubic-bezier(0.32, 0.72, 0, 1)" }}
+        className={
+          docked
+            ? "pointer-events-auto flex h-full touch-auto flex-col overflow-hidden rounded-2xl border border-black/[.08] bg-white shadow-[0_-2px_24px_-8px_rgba(0,0,0,.22)] dark:border-white/[.1] dark:bg-zinc-950"
+            : `absolute inset-0 flex origin-bottom touch-auto flex-col overflow-hidden bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 ${
+                visible
+                  ? "translate-y-0 scale-100 opacity-100"
+                  : "pointer-events-none translate-y-8 scale-[0.96] opacity-0"
+              }`
+        }
+        style={docked ? undefined : { transitionTimingFunction: "cubic-bezier(0.32, 0.72, 0, 1)" }}
       >
         {/* The close row is NOT mobile only, though the grab handle in it is
             (2026-08-14). It was, briefly, and that was a real bug rather than
@@ -203,23 +239,30 @@ export function J4Overlay({
             top of the screen and would otherwise sit under the notch. */}
         <div
           className="relative flex shrink-0 items-center justify-between px-3 pt-2"
-          style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)" }}
+          style={docked ? { paddingTop: "0.5rem" } : { paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)" }}
         >
           <span className="pl-1.5 text-[15px] font-semibold text-black dark:text-zinc-50">
-            Office
+            {/* Named for the room it is in. In Studio this is the creative
+                session, not a visit to the Office — Office still records every
+                message, because it is literally the same conversation. */}
+            {docked ? "Working with J4" : "Office"}
           </span>
           {/* 44px, the platform minimum. The icon stays 20px; only the hit
               area grew, after a real report that the close control was hard
               to hit on a phone. */}
-          <button
-            type="button"
-            onClick={requestClose}
-            aria-label="Leave the Office"
-            tabIndex={visible ? 0 : -1}
-            className="-mr-1.5 flex h-11 w-11 items-center justify-center rounded-full text-zinc-500 active:bg-black/[.06] dark:text-zinc-400 dark:active:bg-white/[.08]"
-          >
-            <J4Icon name="close" size={20} />
-          </button>
+          {/* No close control when docked: the session belongs to the room,
+              and there is nowhere to close it to. */}
+          {!docked && (
+            <button
+              type="button"
+              onClick={requestClose}
+              aria-label="Leave the Office"
+              tabIndex={visible ? 0 : -1}
+              className="-mr-1.5 flex h-11 w-11 items-center justify-center rounded-full text-zinc-500 active:bg-black/[.06] dark:text-zinc-400 dark:active:bg-white/[.08]"
+            >
+              <J4Icon name="close" size={20} />
+            </button>
+          )}
         </div>
 
         {/* Deliberately not scrollable. The conversation inside manages its

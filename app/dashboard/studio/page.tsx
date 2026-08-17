@@ -78,8 +78,12 @@ export default async function StudioPage() {
   }
   const surfaceLabel = (key: string) => SURFACES[key]?.label ?? key;
 
+  // Bottom padding clears the docked J4 session (42vh) plus the tab bar.
+  // Studio is always docked on a phone, so this is unconditional rather than a
+  // guess — see J4Overlay's "docked" mode. Desktop docks to the side instead,
+  // so it keeps the ordinary padding.
   return (
-    <div className="min-h-screen bg-[#faf9f7] pb-32 text-zinc-900 dark:bg-[#17171a] dark:text-zinc-100">
+    <div className="min-h-screen bg-[#faf9f7] pb-[calc(42vh+9rem)] text-zinc-900 md:pb-32 dark:bg-[#17171a] dark:text-zinc-100">
       <div className="mx-auto max-w-5xl px-5 pt-8 lg:px-8">
         <header>
           <h1 className="text-[28px] font-semibold tracking-tight">Studio</h1>

@@ -328,6 +328,24 @@ export function DashboardShell({
   // the workspace stays mounted and keeps its scroll position because
   // literally nothing about it changes when J4 opens.
   const [j4Open, setJ4Open] = useState(false);
+  // STUDIO OWNS ITS CREATIVE SESSION (2026-08-18).
+  //
+  // Sean: "when the owner is in Studio and taps a recommendation or talks to J4
+  // about creating something, that conversation should remain associated with
+  // Studio." Tapping a chip used to open the Office overlay, which took the
+  // owner out of the room they were working in.
+  //
+  // So on Studio the same conversation renders as a docked panel beneath the
+  // bench instead of a full-screen Office. ONE mounted J4Workspace either way —
+  // this chooses how it is framed, never where it lives. Two mounts would be
+  // two composers and two message lists: a second conversation by accident.
+  //
+  // Office still records everything, because it IS the same conversation
+  // reading the same StoreMessage rows. Studio shows; Office remembers.
+  const inStudio = pathname === "/dashboard/studio";
+  // The Office door still works from Studio: opening it explicitly wins, and
+  // the panel becomes the full-screen room until it is closed again.
+  const j4Docked = inStudio && !j4Open;
   // Text typed into the persistent presence, handed to the conversation's own
   // composer to send. Never sent from here — see J4Summon.tsx on why there is
   // exactly one send path. Cleared by the conversation once it has taken it,
@@ -946,7 +964,10 @@ export function DashboardShell({
                     setJ4Handoff(text);
                     setJ4HandoffAudioUrl(null);
                     setJ4FocusComposer(false);
-                    setJ4Open(true);
+                    // In Studio the conversation is already on screen, docked
+                    // beneath the bench. Opening the Office here is exactly the
+                    // trip out of the room this fix removes.
+                    if (!inStudio) setJ4Open(true);
                   },
                 }}
               >
@@ -1143,7 +1164,7 @@ export function DashboardShell({
         onToggleTalk={() => (talk.state === "off" ? talk.start() : talk.stop())}
       />
 
-      <J4Overlay open={j4Open} onClose={() => setJ4Open(false)}>
+      <J4Overlay open={j4Docked || j4Open} mode={j4Docked ? "docked" : "overlay"} onClose={() => setJ4Open(false)}>
         <J4HandoffContext.Provider
           value={{
             text: j4Handoff,
