@@ -27,6 +27,9 @@ import {
 import { RefineStorefrontToolInputSchema } from "@/lib/execution/genesisTools";
 import { GenerateBrandLogoInputSchema } from "@/lib/execution/genesisTools";
 import { CreateDesignInputSchema } from "@/lib/execution/genesisTools";
+import { ApproveDesignAsProductInputSchema } from "@/lib/execution/genesisTools";
+import { execute } from "@/lib/execution/engine";
+import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
 import { createDesign } from "@/lib/design/createDesign";
 import { getSurface } from "@/lib/design/surfaces";
 import { ASSET_ROLES, designateAsset, resolveCurrentAsset } from "@/lib/businessModel/assets";
@@ -916,6 +919,69 @@ export async function POST(request: Request) {
         // + mockup (lib/design/). J4 resolves the approved asset itself rather
         // than asking the owner to find and upload it again, which is the
         // whole difference between a partner and a design tool.
+        // The end of the Studio chain (2026-08-17): approval with a real
+        // consequence. The owner says yes to a mockup they are looking at and
+        // a product appears in their storefront.
+        //
+        // Executed directly rather than raised as another ApprovalRequest.
+        // The confirmation ladder is explicit that an owner who just approved
+        // something in words, while looking straight at it, must not be asked
+        // to approve it again — a second confirmation here would be the
+        // product asking "are you sure" about the sentence they just said.
+        if (chosenTool?.name === "approve_design_as_product") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "approve_design_as_product" });
+          const parsedApproval = ApproveDesignAsProductInputSchema.safeParse(chosenTool.input);
+
+          // The design they are responding to is the most recent one in this
+          // store. Deliberately not asked for by id: the owner is saying "yes"
+          // to the thing on screen, and making the model carry an id through
+          // the conversation is a way for it to get the wrong one.
+          const latestDesign = await prisma.businessRecord.findFirst({
+            where: { storeId: store.id, entityType: "design" },
+            orderBy: { syncedAt: "desc" },
+            select: { id: true },
+          });
+
+          if (!parsedApproval.success || !latestDesign) {
+            const reply =
+              conversationalReply ||
+              "I don't have a design on the table to add. Ask me to make something first and I'll put it in front of you.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "approve_design_as_product" });
+            controller.close();
+            return;
+          }
+
+          // Through the engine, so this is a recorded, verified execution like
+          // every other real change — not a bare prisma write in a chat route.
+          const result = await execute(createProductFromDesignExecutable, {
+            designId: latestDesign.id,
+            name: parsedApproval.data.name,
+            priceInCents: parsedApproval.data.priceInCents,
+            ...(parsedApproval.data.description ? { description: parsedApproval.data.description } : {}),
+          });
+
+          // execute() never throws for a failure inside run(); it returns a
+          // FAILED result. Discarding it would tell the owner their product
+          // exists when it does not.
+          const succeeded = result.status === "SUCCESS";
+          const reply = succeeded
+            ? `${conversationalReply || `Done — "${parsedApproval.data.name}" is in your store now.`} You'll find it under Commerce, and it's live on your storefront.`
+            : conversationalReply ||
+              "I couldn't add that to your store just then. Nothing has changed — try me again in a moment.";
+
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+          emit({ type: "token", delta: reply.slice((conversationalReply || "").length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: succeeded ? "success" : "failure", likelyRephraseOf, kind: "approve_design_as_product" });
+          controller.close();
+          return;
+        }
+
         if (chosenTool?.name === "create_design") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "create_design" });
           const parsedDesign = CreateDesignInputSchema.safeParse(chosenTool.input);

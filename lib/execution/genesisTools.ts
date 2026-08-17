@@ -156,6 +156,16 @@ export const CreateDesignInputSchema = z.object({
   assetRole: z.string().nullable(),
 });
 
+// "Yes, add it to my store" (2026-08-17). The end of the Studio chain: an
+// approved Design becomes a real Product the storefront sells. name and price
+// come from J4 because the owner should not have to fill in a form to say yes
+// — they can correct either one afterwards the way they would any product.
+export const ApproveDesignAsProductInputSchema = z.object({
+  name: z.string(),
+  priceInCents: z.number().int().positive(),
+  description: z.string().nullable(),
+});
+
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
@@ -258,6 +268,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant asks you to put an existing asset of theirs — usually their logo — ONTO something physical: 'put my logo on a t-shirt', 'can you make a hoodie with our mark on it', 'let's see that on a shirt'. Pick surface from the supported list based on what they said. Set assetRole to 'brand.logo' when they mean their logo (which is almost always), or null if you genuinely cannot tell which asset they mean, in which case ask them in your reply. This composes their REAL approved asset onto the surface and shows them a mockup for approval; it does not create a product to sell yet, and it never invents artwork. Do NOT call this to create the logo itself — that is generate_brand_logo.",
       input_schema: z.toJSONSchema(CreateDesignInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "approve_design_as_product",
+      description:
+        "Call this when the merchant approves a design you have just shown them AND wants it in their store — 'yes', 'approve it', 'add it to my store', 'let's sell that', 'put it on the storefront'. Only call this when there is a design in this conversation they are actually responding to; a bare 'yes' with no design on the table is not this. Set name to a real product name you would put in a shop (their brand plus the item, not 'Design 1'), priceInCents to a sensible retail price for that item, and description to one honest sentence about it, or null. This CREATES a real product the storefront will sell, so never call it speculatively — only on their explicit approval. If they are still deciding, or asking for a change, that is not this tool.",
+      input_schema: z.toJSONSchema(ApproveDesignAsProductInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "refine_storefront",
