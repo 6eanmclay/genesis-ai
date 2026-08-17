@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma migrate deploy && next build",
+    "build": "node scripts/migrate-deploy.mjs && next build",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate",
-    "migrate:deploy": "prisma migrate deploy",
+    "migrate:deploy": "node scripts/migrate-deploy.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {
