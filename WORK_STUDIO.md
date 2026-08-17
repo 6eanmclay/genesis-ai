@@ -93,18 +93,33 @@ Point 4 is the hard one and the reason this is recorded rather than assumed: it 
 
 ---
 
-# In flight: J4 generates a brand logo
+# J4 generates a brand logo — backend complete, conversation not wired
 
-**Partially built, not reachable, not finished.** Landed so far:
+**Verified 7/7 against the real Neon database** (`scripts/verify-brand-logo-flow.ts`).
 
-- `lib/brand/logoDirection.ts` — builds the prompt from Business Understanding (tagline, description, category, catalog, stated goals), returns the prompt plus a plain-English rationale and the list of what it was grounded in. Honest when it knows nothing: says so rather than implying insight. Takes the owner's `refinement` last so their words outrank anything inferred.
-- `EXECUTION_ACTIONS.STORE_UPDATE_BRAND_LOGO` — the action constant.
+Built and working:
 
-**Still missing:** the executable that writes `Store.logoUrl` and designates the `brand.logo` Asset, the `GENESIS_ACTIONS` registry entry, the tool declaration in `genesisTools.ts`, and the handler branch in `app/api/chat/route.ts`. Until the last two exist, *"Make me a logo"* routes nowhere — the capability is not real.
+- `lib/brand/logoDirection.ts` — prompt from Business Understanding (tagline, description, category, real catalog, stated goals), plus a rationale and what it was grounded in. Says so plainly when it knows nothing. **The owner's own words are weighted LAST so they outrank every inference** — verified by asserting their position in the prompt.
+- `lib/brand/proposeBrandLogo.ts` — `proposeBrandLogo` (one informed recommendation, opened as a real proposal), `branchBrandLogo` (named alternatives as siblings via `branchProposal`, original preserved), `hasExistingLogo` (the no-pressure precondition, checking the designated Asset *and* `Store.logoUrl`, so a store predating designation is not treated as logo-less).
+- `lib/execution/executables/updateBrandLogo.ts` — approval writes `Store.logoUrl` **and** designates the `brand.logo` Asset. Asset failure is non-fatal: the owner approved a logo and must get it.
+- `update_brand_logo` in `GENESIS_ACTIONS`, `always_ask`, with `brand.logoUrl` added to `GenesisActionContext`.
 
-**Do not finish it in the replace shape.** The proposal storage has to hold coexisting siblings with lineage first, or the branching requirement above has to be retrofitted through the same code twice.
+Verified for real: direction grounded in live Understanding; owner direction outranks inference; approval updates `logoUrl` and designates the Asset; **`resolveCurrentAsset("brand.logo")` returns it — the Design layer's actual question**; a second logo supersedes the first with history intact.
 
----
+## What remains: two sites, and they must land together
+
+**`"Make me a logo"` routes nowhere today.** Missing:
+
+1. A `generate_brand_logo` tool declaration in `lib/execution/genesisTools.ts` (follow `refine_storefront`'s entry).
+2. A handler branch in `app/api/chat/route.ts` calling `proposeBrandLogo`, following the `update_product_image` block at ~line 700 — except it must **not** delete a prior pending proposal, because branching depends on siblings coexisting.
+
+**Do not declare the tool without the handler.** The model would call it and nothing would happen — a silent failure, worse than the capability not existing.
+
+The handler must enforce the no-pressure rule, which is why `hasExistingLogo` exists: if the store already has a logo, J4 works with it and does not offer to replace it. The alternatives offer fires only when the owner has no logo or is visibly unsure, and a decline ends it.
+
+## Not covered by verification
+
+The image generation call itself. It needs an OpenAI key, which is not in this environment — `.env.livecheck` carries only `DATABASE_URL` and `STRIPE_SECRET_KEY`. Everything either side of that call is exercised for real; a placeholder URL stands in at exactly the boundary the missing credential draws. **That is a genuine external dependency, not a shortcut.**
 
 # Recorded future requirement: composition intelligence
 

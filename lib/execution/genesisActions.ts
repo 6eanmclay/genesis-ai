@@ -8,6 +8,7 @@ import {
   updateProductImageExecutable,
   type UpdateProductImageInput,
 } from "./executables/updateProductImage";
+import { updateBrandLogoExecutable, type UpdateBrandLogoInput } from "./executables/updateBrandLogo";
 import { updateThemeExecutable, type UpdateThemeInput } from "./executables/updateTheme";
 import { refineStorefrontExecutable, type RefineStorefrontInput } from "./executables/refineStorefront";
 import { REFINABLE_DIMENSION_KEYS, MAX_MUTATIONS_PER_IMPROVEMENT } from "@/lib/storefront/dimensions";
@@ -123,6 +124,10 @@ export interface BlueprintContextSubset {
 export interface GenesisActionContext {
   blueprint: BlueprintContextSubset | null;
   product?: { id: string; name: string; imageUrl: string | null; description?: string | null } | null;
+  // The store's current brand logo, so a logo proposal can show what it
+  // replaces. Its own field rather than part of storeIdentity: identity is the
+  // written brand, this is the mark.
+  brand?: { logoUrl: string | null } | null;
   theme?: Theme | null;
   storeIdentity?: { name: string; tagline: string | null; description: string | null } | null;
   // Phase 3 Milestone 6 — same "one context field per record-scoped action
@@ -291,6 +296,7 @@ export const GENESIS_ACTIONS: Record<
     | UpdateSeoInput
     | UpdateHeroInput
     | UpdateProductImageInput
+    | UpdateBrandLogoInput
     | UpdateThemeInput
     | RefineStorefrontInput
     | UpdateBrandIdentityInput
@@ -344,6 +350,29 @@ export const GENESIS_ACTIONS: Record<
     // Phase 6 — locked for now: the storefront's single most visible
     // element. Revisit deliberately once autonomous update_seo has proven
     // the mechanism, per Sean's explicit direction.
+    maxAuthorityTier: "always_ask",
+  },
+  // The brand logo, as a real conversational capability (2026-08-16).
+  //
+  // Distinct from update_store_identity, which is the WRITTEN identity. This
+  // one produces a file and designates it as the brand.logo Asset — the first
+  // link of Asset -> Design -> Product (see WORK_STUDIO.md).
+  //
+  // always_ask: a logo is the most visible thing a business owns, and the
+  // confirmation ladder applies at its strongest. The owner sees it before it
+  // becomes theirs.
+  update_brand_logo: {
+    executable: updateBrandLogoExecutable,
+    inputSchema: z.object({
+      imageUrl: z.string(),
+      generationPrompt: z.string().optional(),
+      aiUsageEventId: z.string().optional(),
+    }),
+    getCurrentValues: ({ brand }) => ({
+      imageUrl: brand?.logoUrl ?? "",
+    }),
+    category: "content",
+    authorizationTier: "always_ask",
     maxAuthorityTier: "always_ask",
   },
   update_product_image: {
@@ -745,6 +774,7 @@ export { FIELD_LABELS } from "./fieldLabels";
 export const ACTION_SECTIONS: Record<string, { key: string; label: string; href: string }> = {
   update_hero: { key: "website", label: "Website", href: "/dashboard/website" },
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
+  update_brand_logo: { key: "brand", label: "Identity", href: "/dashboard/brand" },
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },
   update_product: { key: "products", label: "Products", href: "/dashboard/products" },
   create_product: { key: "products", label: "Products", href: "/dashboard/products" },
