@@ -1,10 +1,10 @@
 # Work Studio: Asset → Design → Product → Provider
 
-**Status: chain defined, first link built.** The audit below is real, taken from the code on 2026-08-16, not from memory. Nothing here authorizes building beyond the step marked as current.
+**Status: the whole chain exists.** Design landed 2026-08-16, verified end to end on the real database and real image pipeline (`lib/design/`). What remains is the Studio surface, Printify as a second connector, and composition intelligence. The audit below is real, taken from the code on 2026-08-16, not from memory. Nothing here authorizes building beyond the step marked as current.
 
 ```
 Asset  →  Design  →  Product  →  Provider  →  Execution  →  Verification  →  Record
-  ✓         ✗          ✓           ✓            ✓              ✓              ✓
+  ✓         ✓          ✓           ✓            ✓              ✓              ✓
 ```
 
 The worked example this exists to make real, in Sean's words:

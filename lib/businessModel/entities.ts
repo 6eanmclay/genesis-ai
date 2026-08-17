@@ -258,6 +258,36 @@ export const AssetSchema = z.object({
 });
 export type Asset = z.infer<typeof AssetSchema>;
 
+// A Design: asset(s) + surface + arrangement, and what that produced
+// (2026-08-16). Sits between Asset and Product in the chain recorded in
+// WORK_STUDIO.md, and is stored as an ordinary BusinessRecord for the same
+// reason assets are — the model is already generic, so this needs no
+// migration and inherits the same validated-upsert path.
+//
+// assetIds is an ARRAY, deliberately, and that is the load-bearing decision:
+// print placement is one asset on one surface, a collage is five. A
+// single-asset shape would foreclose composition entirely and force it to
+// arrive as a second system. Follows the xxxIds convention documented at the
+// top of this file, so findRelated already understands it.
+export const DesignSchema = z.object({
+  // The approved assets this was composed from, in arrangement order.
+  assetIds: z.array(z.string()),
+  // A key from lib/design/surfaces.ts — never a free string.
+  surface: z.string(),
+  // "centered" | "grid" | ... — open vocabulary, same discipline as every
+  // other categorical field here.
+  arrangement: z.string(),
+  arrangementScale: z.number().nullable(),
+  // What the composition actually produced. Both real files, both uploaded.
+  printFileUrl: z.string().nullable(),
+  mockupUrl: z.string().nullable(),
+  // Provenance: what it was made from, so a Product can answer "where did
+  // this artwork come from" without guessing.
+  sourceAssetUrls: z.array(z.string()),
+  createdAt: z.string().nullable().default(null),
+});
+export type Design = z.infer<typeof DesignSchema>;
+
 // Social Connections & Business Intelligence (2026-08-09) — "J4 should be
 // able to interpret the data rather than simply display it... follower/
 // audience size, demographics, geographic distribution, growth, reach/
@@ -349,6 +379,7 @@ export const ENTITY_REGISTRY = {
   employee: { schema: EmployeeSchema, label: "Employee" },
   location: { schema: LocationSchema, label: "Location" },
   asset: { schema: AssetSchema, label: "Asset" },
+  design: { schema: DesignSchema, label: "Design" },
   socialAccount: { schema: SocialAccountSchema, label: "Social Account" },
 } as const;
 
