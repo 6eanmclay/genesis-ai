@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
-import { NAV_SECTIONS, ROOM_SECTIONS, STOREFRONT_SECTIONS } from "@/lib/dashboard/navConfig";
+import { COMMERCE_SECTIONS, NAV_SECTIONS, ROOM_SECTIONS, STOREFRONT_SECTIONS } from "@/lib/dashboard/navConfig";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOrderSummary, getRevenueTrend } from "@/lib/dashboard/whatHappened";
 import { getNewCustomerCount } from "@/lib/dashboard/customers";
@@ -268,7 +268,14 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // replaced — a hand-written table silently drifting from the real nav — and
   // the `!` on the find below would then be a crash rather than a type
   // assertion.
-  const badgeableSections = [...NAV_SECTIONS, ...STOREFRONT_SECTIONS];
+  // Every list a badgeable key can live in. COMMERCE_SECTIONS was missing and
+  // that took production down (2026-08-17): "products" moved out of
+  // NAV_SECTIONS into the Commerce room, the find below returned undefined,
+  // and the non-null assertion turned it into a TypeError on every /dashboard
+  // request. Same bug this comment already warned about one nav change
+  // earlier — so the assertion is gone too, below, rather than left as a
+  // landmine for the next time a key moves rooms.
+  const badgeableSections = [...NAV_SECTIONS, ...STOREFRONT_SECTIONS, ...COMMERCE_SECTIONS];
   const sectionKeyByHref = new Map(
     badgeableSections.filter((s) => s.href !== "/dashboard").map((s) => [s.href, s.key])
   );
@@ -278,7 +285,12 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   const sectionNavState: Record<string, { state: SectionState; count: number; focusHref: string }> = {};
   for (const key of YOUR_BUSINESS_OWNED_KEYS) {
-    const sectionHref = badgeableSections.find((s) => s.key === key)!.href;
+    const owning = badgeableSections.find((s) => s.key === key);
+    // A key with no section is a nav change that has not reached this list. It
+    // means no badge for that section, which is a missing dot; crashing the
+    // whole dashboard is not a proportionate response to a missing dot.
+    if (!owning) continue;
+    const sectionHref = owning.href;
     const urgentObs = liveObservations.filter(
       (o) => o.genesisState === "urgent" && o.actionHref && sectionKeyByHref.get(o.actionHref) === key
     );
