@@ -30,6 +30,7 @@ import { GenerateBrandLogoInputSchema } from "@/lib/execution/genesisTools";
 import { CreateDesignInputSchema } from "@/lib/execution/genesisTools";
 import { CreateCompositionInputSchema, ApproveCompositionInputSchema } from "@/lib/execution/genesisTools";
 import { createComposition, approveCompositionAsAsset } from "@/lib/design/composeForStorefront";
+import { evaluateStorefront } from "@/lib/storefront/evaluate";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { ApproveDesignAsProductInputSchema } from "@/lib/execution/genesisTools";
 import { execute } from "@/lib/execution/engine";
@@ -996,6 +997,95 @@ export async function POST(request: Request) {
         // Storefront compositions (2026-08-18) — collage, hero, featured
         // section. The same Design model as apparel, pointed at a storefront
         // surface. Not a product: see approve_composition below.
+        // J4 forms an opinion about the storefront and shows the fix
+        // (2026-08-18). P2/P3.
+        //
+        // The loop Sean asked for: evaluate -> explain -> generate the proposed
+        // composition -> preview -> approve. Approval is the existing
+        // approve_composition path, so the storefront asset it produces is the
+        // same object collages already produce. No parallel system.
+        //
+        // The evaluation is FACTS; the judgement is J4's, in the reply. That
+        // split is deliberate — "J4 doesn't surface everything he can detect,
+        // he decides what is worth bringing to the owner."
+        if (chosenTool?.name === "improve_storefront") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "improve_storefront" });
+          const evaluation = await evaluateStorefront(store.id);
+
+          // The first finding that a composition would actually address. A
+          // finding without one (missing photos, no logo) is still worth saying
+          // and is included in the reply, but there is nothing to preview —
+          // composing around a gap would hide it.
+          const actionable = evaluation.findings.find((f) => f.composition);
+
+          let composedUrl: string | null = null;
+          let composedFrom: string[] = [];
+          if (actionable?.composition) {
+            const composed = await createComposition({
+              storeId: store.id,
+              surface: actionable.composition.surface,
+              columns: actionable.composition.columns,
+              subject: actionable.composition.subject,
+            });
+            if (composed) {
+              composedUrl = composed.design.mockupUrl;
+              composedFrom = composed.used.map((u) => u.label);
+              revalidatePath("/dashboard/studio");
+            }
+          }
+
+          // J4's own words lead. The findings are appended only when the model
+          // did not already say something substantive, so this never talks over
+          // a good answer with a generated list.
+          const spoken = conversationalReply?.trim() ?? "";
+          const observations = evaluation.findings
+            .slice(0, 3)
+            .map((f) => `${f.observed} ${f.wouldDo}`)
+            .join(" ");
+          const parts: string[] = [];
+          if (spoken) parts.push(spoken);
+          else if (observations) parts.push(observations);
+          else
+            parts.push(
+              "Your storefront is in reasonable shape — nothing structural is standing out to me as worth changing right now."
+            );
+          if (composedUrl) {
+            parts.push(
+              `I've put together a version below using ${composedFrom.slice(0, 3).join(", ")}. Have a look, and tell me to use it or change it.`
+            );
+          }
+          const finalReply = parts.join(" ");
+
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({
+            data: {
+              storeId: store.id,
+              role: "assistant",
+              content: finalReply,
+              ...(composedUrl ? { changes: { imageUrl: composedUrl } } : {}),
+            },
+          });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "PENDING",
+            verified: false,
+            message: "Evaluated the storefront",
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: {
+              findings: evaluation.findings.map((f) => f.key),
+              productsWithImages: evaluation.productsWithImages,
+              proposedComposition: actionable?.composition?.surface ?? null,
+            },
+          });
+          emit({ type: "token", delta: finalReply.slice(spoken.length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "improve_storefront" });
+          controller.close();
+          return;
+        }
+
         if (chosenTool?.name === "create_composition") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "create_composition" });
           const parsedComp = CreateCompositionInputSchema.safeParse(chosenTool.input);

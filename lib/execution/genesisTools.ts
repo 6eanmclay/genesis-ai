@@ -184,6 +184,9 @@ export const ApproveCompositionInputSchema = z.object({
   summary: z.string(),
 });
 
+// Evaluating and improving the storefront (2026-08-18). No input: J4 reads the
+// real structural state itself rather than being told what to look at, which is
+// the whole point of it having an opinion.
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
@@ -304,6 +307,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant approves a composition you just showed them and wants it USED on their storefront — 'yes, put that on my storefront', 'use it as the hero', 'that's the one'. Pick role by where it belongs: storefront.hero for the banner at the top, storefront.feature for a section further down, brand.graphic for something they will reuse elsewhere. summary is one honest sentence describing it. This makes it a storefront asset, NOT a product for sale — if they want to SELL what you made, that is approve_design_as_product instead. Only call this on their explicit approval.",
       input_schema: z.toJSONSchema(ApproveCompositionInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "improve_storefront",
+      description:
+        "Call this when the merchant asks how their store LOOKS overall, or asks you to improve it, or asks what you would change — 'how does my storefront look', 'can you make this better', 'what would you improve', 'make the store feel more premium', 'this looks plain'. You will be given a real structural read of their storefront: how many products have photography, what imagery they have that isn't product photos, whether anything is composed at the top, whether products could be grouped into collections. Use it to say what you would actually change and why, in your own words, and a proposed composition is generated for them to look at. Use refine_storefront instead when they name ONE specific part to adjust ('the hero feels cramped', 'the buttons are too round'); use this when the question is about the whole store or when they are asking for your judgement rather than a specific edit.",
+      input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
     },
     {
       name: "refine_storefront",
