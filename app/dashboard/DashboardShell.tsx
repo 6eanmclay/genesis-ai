@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
-import { OFFICE_SENTINEL_HREF, PRIMARY_TAB_COUNT } from "@/lib/dashboard/navConfig";
+import { ACCOUNT_SENTINEL_HREF, PRIMARY_TAB_COUNT, isSentinelHref } from "@/lib/dashboard/navConfig";
 import { NavIcon } from "./NavIcon";
 import { J4Icon, type J4IconName } from "./J4Icon";
 import { signOutOfGenesis } from "./actions";
@@ -42,6 +42,8 @@ const NAV_ICONS: Record<string, J4IconName> = {
   // job rather than a gap.
   website: "home",
   commerce: "orders",
+  studio: "more",
+  account: "settings",
   customers: "customers",
   orders: "orders",
   marketing: "marketing",
@@ -279,14 +281,14 @@ export function DashboardShell({
   // removed from navigation by this split; desktop keeps rendering
   // tabSections as one uninterrupted row.
 
-  // One mobile tab. The Office is a button rather than a Link because it has
-  // no route — it opens the full-screen overlay over the room the owner is
-  // standing in, which is what makes returning free (see J4Overlay). Giving it
-  // an href would reintroduce navigation into the one surface whose whole
-  // point is that nothing navigates.
+  // One mobile tab. Account is a button rather than a Link: it opens the
+  // account sheet in place, because everything inside it — settings, billing,
+  // connections — is configured rather than visited. The J4/Office room is not
+  // in this list at all; it is the orb and its Office label, rendered by
+  // J4Summon over the centre gap.
   const mobileTab = (section: NavSection) => {
-    const isOffice = section.href === OFFICE_SENTINEL_HREF;
-    const active = isOffice ? j4Open : isActive(section.href);
+    const isAccount = section.href === ACCOUNT_SENTINEL_HREF;
+    const active = isAccount ? moreOpen : isActive(section.href);
     const className = `relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
       active ? "text-black dark:text-zinc-50" : "text-zinc-500 dark:text-zinc-400"
     }`;
@@ -299,9 +301,9 @@ export function DashboardShell({
         )}
       </>
     );
-    if (isOffice) {
+    if (isAccount) {
       return (
-        <button key={section.key} type="button" onClick={() => setJ4Open(true)} aria-expanded={j4Open} className={className}>
+        <button key={section.key} type="button" onClick={() => setMoreOpen((open) => !open)} aria-expanded={moreOpen} className={className}>
           {body}
         </button>
       );
@@ -583,7 +585,7 @@ export function DashboardShell({
       )}
 
       <nav className="flex flex-1 items-center gap-1 overflow-hidden">
-        {tabSections.map(desktopTabLink)}
+        {tabSections.filter((section) => !isSentinelHref(section.href)).map(desktopTabLink)}
         {moreSections.length > 0 && (
           <div className="relative shrink-0">
             <button
@@ -994,22 +996,11 @@ export function DashboardShell({
 
         {mobileRightTabs.map(mobileTab)}
 
-        {moreSections.length > 0 && (
-          <button
-            onClick={() => setMoreOpen((open) => !open)}
-            className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
-              moreOpen ? "text-black dark:text-zinc-50" : "text-zinc-500 dark:text-zinc-400"
-            }`}
-          >
-            {/* Was a "•••" text glyph, which couldn't hold the system's
-                stroke weight or inherit color like every other icon here. */}
-            <J4Icon name="more" size={20} />
-            Account
-            {hasHiddenBadge && (
-              <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
-            )}
-          </button>
-        )}
+        {/* The standalone Account overflow button is gone (2026-08-17).
+            Account is one of the four link tabs now and opens this same
+            sheet, so keeping this rendered it twice and put a fifth control
+            in a bar meant to hold four plus the orb. The sheet is unchanged
+            and still holds settings, billing and connections. */}
       </nav>
 
       {/* Mobile "More" sheet */}

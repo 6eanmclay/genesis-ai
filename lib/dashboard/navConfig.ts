@@ -12,9 +12,12 @@
 // instead — a server component, where that's safe.
 import type { Permission } from "@/lib/permissions";
 
-// The Office has no route — it is an overlay. This marks the entry so the
-// shell renders it as a button instead of a Link.
-export const OFFICE_SENTINEL_HREF = "#office";
+// Entries with no route of their own. The shell renders these as buttons
+// rather than Links: Account opens the account sheet in place.
+export const ACCOUNT_SENTINEL_HREF = "#account";
+export function isSentinelHref(href: string): boolean {
+  return href.startsWith("#");
+}
 
 export interface NavSection {
   key: string;
@@ -27,7 +30,12 @@ export interface NavSection {
 // rooms, with J4 permanently in the centre. See GENESIS_SURFACES.md, which is
 // the locked architecture and the reason this file looks the way it does.
 //
-//     Storefront | Orders | (J4 / Office) | Products | Studio
+//     Storefront | Studio | (J4 / Office) | Commerce | Account
+//
+// FIVE slots. The centre is the J4/Office room — the orb with its Office label
+// beneath it, rendered by J4Summon rather than from this list, which is why
+// there is no "office" entry here and must never be one. Studio sits beside
+// Storefront because it is the workshop that feeds the storefront.
 //
 // J4 IS NOT IN THIS LIST AND MUST NEVER BE ADDED TO IT. J4 is the partner who
 // comes with the owner, not a place they go. The orb is rendered by
@@ -94,14 +102,13 @@ export const NAV_SECTIONS: NavSection[] = [
   // systems", so every route underneath is unchanged and both become sections
   // (see COMMERCE_SECTIONS). Selling and fulfilling are one job to an owner;
   // they were two tabs because they are two tables.
-  { key: "commerce", label: "Commerce", href: "/dashboard/orders", permission: "orders:view" },
-  // OFFICE IS A ROOM AGAIN, on Sean's explicit call (2026-08-17). It has no
-  // route: the Office is a full-screen overlay over the current room, which is
-  // what makes "close it and you are exactly where you were" free. So this
-  // entry is a SENTINEL — DashboardShell renders it as a button that opens the
-  // existing overlay, never as a Link. Do not give it an href.
-  { key: "office", label: "Office", href: OFFICE_SENTINEL_HREF, permission: null },
   { key: "studio", label: "Studio", href: "/dashboard/studio", permission: "store:manage" },
+  { key: "commerce", label: "Commerce", href: "/dashboard/orders", permission: "orders:view" },
+  // Account is a real primary destination (Sean, 2026-08-17), not overflow. A
+  // sentinel because it opens the account sheet in place rather than
+  // navigating: everything inside it — settings, billing, connections,
+  // payments, Growth Points — is configured, not visited.
+  { key: "account", label: "Account", href: ACCOUNT_SENTINEL_HREF, permission: null },
 
   // ---- account area, below the fold. Not rooms. ----
   // Customers and Analytics used to sit here as staging posts. They are
@@ -144,8 +151,8 @@ export const NAV_SECTIONS: NavSection[] = [
 // to admit Orders — Marketing/Payments/Analytics/Connections/Growth
 // Points/Billing/Settings all stay under More by deliberate choice, not
 // yet revisited.
-// The four rooms: Storefront, Commerce, Office, Studio. Four is the number.
-// A new capability earns a section inside a room, never a fifth tab.
+// The four LINK tabs, two either side of the J4/Office centre. A new
+// capability earns a section inside a room, never another tab.
 export const PRIMARY_TAB_COUNT = 4;
 
 // Secondary navigation, shown only while inside Your Business — only the
