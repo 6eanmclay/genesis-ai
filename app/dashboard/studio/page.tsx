@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { currentAssetsByRole } from "@/lib/businessModel/assets";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { SURFACES } from "@/lib/design/surfaces";
+import { StudioPrompts } from "./StudioPrompts";
 
 // The Studio — a creative workshop, not a file manager (2026-08-17).
 //
@@ -22,11 +23,11 @@ import { SURFACES } from "@/lib/design/surfaces";
 // work is the brightest thing in the room — a dark page makes a mockup glow
 // like a screenshot in a viewer instead of a thing sitting on a bench.
 //
-// STILL NO CONTROLS. No toolbar, no handles, no sliders. The owner talks to J4
-// through the orb that is already on every page, and this surface shows the
-// result. The example phrases below are TEXT, not buttons, precisely because a
-// button here that only opened a chat box would be a control pretending to be
-// a capability.
+// NO DESIGN CONTROLS. No toolbar, no handles, no sliders. The suggestion chips
+// are real controls now that the capabilities behind them are real, but each
+// one only SENDS A SENTENCE to J4 — there is no hard-coded "make it smaller"
+// path, and there must never be. The moment a chip calls something the
+// conversation cannot, this is a design editor with a chat box attached.
 //
 // NOT HARD-CODED AROUND T-SHIRTS. Surfaces come from the registry, so a hat or
 // a storefront graphic appears here the day its surface is added, with no
@@ -50,8 +51,31 @@ export default async function StudioPage() {
     .flatMap((d) => (d.parsed.success ? [{ id: d.id, ...d.parsed.data }] : []));
 
   const latest = designs[0] ?? null;
+  const latestDesign = latest;
   const earlier = designs.slice(1);
   const assets = Object.entries(assetsByRole);
+  const hasLogo = Boolean(assetsByRole["brand.logo"]);
+  const otherSurfaces = Object.values(SURFACES).filter((sf) => sf.key !== latestDesign?.surface);
+
+  // WHAT J4 RECOMMENDS NEXT, from what actually exists (2026-08-17). Sean:
+  // "the Studio should feel like J4 is guiding someone through creating their
+  // business's visual catalog, not presenting a list of arbitrary commands."
+  //
+  // So the list is derived, never fixed. Before a logo there is one sensible
+  // thing to do; once a logo exists the useful move is putting it on
+  // something; once a design exists the useful moves are refining it, trying
+  // another surface, or selling it. Each phrase is one a person would actually
+  // say, because it is sent verbatim into the conversation.
+  const prompts: string[] = [];
+  if (!hasLogo) {
+    prompts.push("Make me a logo");
+  } else if (!latestDesign) {
+    prompts.push("Put my logo on a t-shirt", "Try it on a hoodie", "Show me a couple of other directions");
+  } else {
+    prompts.push("Make the logo smaller", "Make this more minimal", "Show me a couple of other directions");
+    for (const sf of otherSurfaces.slice(0, 1)) prompts.push(`Try it on a ${sf.label.toLowerCase()} instead`);
+    prompts.push("Add it to my store");
+  }
   const surfaceLabel = (key: string) => SURFACES[key]?.label ?? key;
 
   return (
@@ -107,29 +131,16 @@ export default async function StudioPage() {
           )}
         </section>
 
-        {/* What the owner can say. TEXT, not buttons — see the file comment.
-            Written as things a person would actually say, and covering more
-            than apparel so the room does not read as a t-shirt printer. */}
+        {/* Real controls now (2026-08-17). Clicking one sends that exact
+            sentence into the conversation; there is no hard-coded design
+            operation behind any of them, which is what keeps this a workshop
+            rather than an editor with a chat box attached. Derived from what
+            exists, so J4 is guiding rather than listing commands. */}
         <section className="mt-8">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Things to ask J4</h2>
-          <ul className="mt-3 flex flex-wrap gap-2">
-            {[
-              "Make me a logo",
-              "Put my logo on a t-shirt",
-              "Try it on a hoodie instead",
-              "Make the logo smaller",
-              "Make this more minimal",
-              "Show me a couple of other directions",
-              "Create a product image for my storefront",
-            ].map((phrase) => (
-              <li
-                key={phrase}
-                className="rounded-full border border-black/[.08] bg-white px-3.5 py-1.5 text-[13px] text-zinc-700 dark:border-white/[.1] dark:bg-white/[.05] dark:text-zinc-300"
-              >
-                &ldquo;{phrase}&rdquo;
-              </li>
-            ))}
-          </ul>
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+            What J4 suggests next
+          </h2>
+          <StudioPrompts prompts={prompts} />
         </section>
 
         {/* What J4 has to work with. One row, not a media library — the asset

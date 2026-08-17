@@ -3,6 +3,7 @@ import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import type { Theme } from "@/lib/theme";
 import type { RefineStorefrontInput } from "@/lib/execution/executables/refineStorefront";
 import { auth } from "@/auth";
+import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
@@ -968,6 +969,13 @@ export async function POST(request: Request) {
           // FAILED result. Discarding it would tell the owner their product
           // exists when it does not.
           const succeeded = result.status === "SUCCESS";
+          if (succeeded) {
+            // The product is real now, so every surface that lists products
+            // has to stop serving a cached page that predates it.
+            revalidatePath("/dashboard/studio");
+            revalidatePath("/dashboard/products");
+            revalidatePath("/dashboard/orders");
+          }
           const reply = succeeded
             ? `${conversationalReply || `Done — "${parsedApproval.data.name}" is in your store now.`} You'll find it under Commerce, and it's live on your storefront.`
             : conversationalReply ||
@@ -1022,6 +1030,12 @@ export async function POST(request: Request) {
             controller.close();
             return;
           }
+
+          // Studio shows the work (2026-08-17). Without this the bench still
+          // reads "nothing on the bench yet" after J4 has just made something,
+          // because the page is cached from before it existed. Office keeps
+          // the record either way; Studio is where it has to be VISIBLE.
+          revalidatePath("/dashboard/studio");
 
           const finalReply = [
             conversationalReply || `Here's your logo on a ${surface.label.toLowerCase()}.`,

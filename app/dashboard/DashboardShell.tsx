@@ -18,6 +18,7 @@ import { J4MobileHero } from "./J4MobileHero";
 import { J4Overlay } from "./J4Overlay";
 import { J4Summon } from "./J4Summon";
 import { J4HandoffContext } from "./J4HandoffContext";
+import { J4AskContext } from "./J4AskContext";
 import { useJ4Talk } from "./useJ4Talk";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { ALLOWED_VOICE_MEMO_CONTENT_TYPES } from "@/lib/voice/voiceMemoFile";
@@ -934,7 +935,23 @@ export function DashboardShell({
                   />
                 </div>
               )}
-              {children}
+              {/* Pages can ask J4 for something (2026-08-17). Studio's
+                  recommendation chips use this: the text goes through the SAME
+                  handoff the presence field uses, so the conversation's own
+                  composer still owns sending. One pipeline, one history. */}
+              <J4AskContext.Provider
+                value={{
+                  available: true,
+                  ask: (text: string) => {
+                    setJ4Handoff(text);
+                    setJ4HandoffAudioUrl(null);
+                    setJ4FocusComposer(false);
+                    setJ4Open(true);
+                  },
+                }}
+              >
+                {children}
+              </J4AskContext.Provider>
             </main>
           </div>
 
