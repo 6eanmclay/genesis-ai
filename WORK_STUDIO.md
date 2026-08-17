@@ -121,6 +121,60 @@ The handler must enforce the no-pressure rule, which is why `hasExistingLogo` ex
 
 The image generation call itself. It needs an OpenAI key, which is not in this environment — `.env.livecheck` carries only `DATABASE_URL` and `STRIPE_SECRET_KEY`. Everything either side of that call is exercised for real; a placeholder URL stands in at exactly the boundary the missing credential draws. **That is a genuine external dependency, not a shortcut.**
 
+# Studio expansion — Sean's spec, 2026-08-17
+
+**Studio is the creative workshop, not a logo page.** The logo is the proof of
+concept, not the product. Someone opening Studio should immediately understand:
+*"this is where I make things for my business with J4."*
+
+## The two logo paths, both first-class
+
+**No logo:** J4 offers to create one from Business Understanding → owner
+approves, refines, or asks for alternatives → approved result becomes the
+designated `brand.logo`. **BUILT and verified.**
+
+**Already has a logo:** the owner uploads it and it becomes their designated
+brand logo. J4 recognises it and works with it. **BUILT 2026-08-17** —
+`manage_business_asset` designates for real and moves `Store.logoUrl` in step.
+
+> **An existing logo is the owner's answer. Capability is not a reason to
+> replace it.** Alternatives may still be offered if the owner seems unsure or
+> asks — never as pressure.
+
+## What the owner should be able to say
+
+*"Make me a logo." · "Put my logo on a T-shirt." · "Make me a hoodie." ·
+"Create a product image for my storefront." · "Make a graphic using my brand." ·
+"Create a collage for my storefront." · "Put this design on a shirt." ·
+"Make another version that's more minimal."*
+
+These are not separate editor workflows to learn. They are requests.
+
+## The critical missing link: creation must feed the Storefront
+
+```
+"Put my logo on a T-shirt" → Design → owner approves
+    → becomes a real product available to the Storefront
+    → the owner can see it is now part of their store
+```
+
+**Studio creates. Storefront presents and sells.** Today a Design is recorded
+and stops there — nothing turns an approved Design into a Product. That is the
+next real gap, and it runs through the existing chain
+(`Product → Provider → Execution → Verification → Record`), never a second one.
+
+## Constraints that do not move
+
+- **Not Photoshop.** The owner describes; J4 does the work. No manual controls.
+- **Branching applies here too:** original → alternatives → revisions →
+  approval, original always preserved. An offer, never a funnel.
+- **Beyond T-shirts:** brand assets → apparel → product imagery → storefront
+  graphics → marketing creative. Surfaces are a registry entry, not a rewrite.
+- **One foundation.** Asset → Design → Product → Provider → Execution →
+  Verification → Record. Never a second creative system.
+
+---
+
 # Recorded future requirement: composition intelligence
 
 **Sean, 2026-08-16. Recorded so we do not design ourselves into a corner. Not scheduled, not authorized, not to be started.**
