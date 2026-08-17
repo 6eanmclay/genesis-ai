@@ -12,6 +12,10 @@
 // instead — a server component, where that's safe.
 import type { Permission } from "@/lib/permissions";
 
+// The Office has no route — it is an overlay. This marks the entry so the
+// shell renders it as a button instead of a Link.
+export const OFFICE_SENTINEL_HREF = "#office";
+
 export interface NavSection {
   key: string;
   label: string;
@@ -85,13 +89,18 @@ export const NAV_SECTIONS: NavSection[] = [
   // left because it is the room with live, time-sensitive material in it, and
   // Products to his right.
   { key: "website", label: "Storefront", href: "/dashboard/website", permission: "store:manage" },
-  { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
-  { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
-  // Studio is a real room now (2026-08-16). It was deliberately absent while
-  // it had no route — a tab that opens nothing is the one thing ruled out
-  // here. It has one because the capability underneath is real and verified:
-  // an approved brand.logo Asset composed onto a surface into a print file and
-  // a mockup (lib/design/). See WORK_STUDIO.md.
+  // Commerce (2026-08-17) — Products and Orders consolidated into one room.
+  // Sean: "the goal is navigation consolidation, not rebuilding those
+  // systems", so every route underneath is unchanged and both become sections
+  // (see COMMERCE_SECTIONS). Selling and fulfilling are one job to an owner;
+  // they were two tabs because they are two tables.
+  { key: "commerce", label: "Commerce", href: "/dashboard/orders", permission: "orders:view" },
+  // OFFICE IS A ROOM AGAIN, on Sean's explicit call (2026-08-17). It has no
+  // route: the Office is a full-screen overlay over the current room, which is
+  // what makes "close it and you are exactly where you were" free. So this
+  // entry is a SENTINEL — DashboardShell renders it as a button that opens the
+  // existing overlay, never as a Link. Do not give it an href.
+  { key: "office", label: "Office", href: OFFICE_SENTINEL_HREF, permission: null },
   { key: "studio", label: "Studio", href: "/dashboard/studio", permission: "store:manage" },
 
   // ---- account area, below the fold. Not rooms. ----
@@ -135,8 +144,8 @@ export const NAV_SECTIONS: NavSection[] = [
 // to admit Orders — Marketing/Payments/Analytics/Connections/Growth
 // Points/Billing/Settings all stay under More by deliberate choice, not
 // yet revisited.
-// The four rooms: Storefront, Orders, Products, Studio. Raised from 3 when
-// Studio earned its route.
+// The four rooms: Storefront, Commerce, Office, Studio. Four is the number.
+// A new capability earns a section inside a room, never a fifth tab.
 export const PRIMARY_TAB_COUNT = 4;
 
 // Secondary navigation, shown only while inside Your Business — only the
@@ -180,6 +189,14 @@ export const STOREFRONT_SECTIONS: NavSection[] = [
 // an order, and it already lives on the order itself (buy a label, mark it
 // shipped). Giving it a section would be inventing a destination to make the
 // list look symmetrical.
+export const COMMERCE_SECTIONS: NavSection[] = [
+  { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
+  { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
+  { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
+  { key: "analytics", label: "Revenue", href: "/dashboard/analytics", permission: "analytics:view" },
+];
+
+/** @deprecated superseded by COMMERCE_SECTIONS; kept until callers move. */
 export const ORDERS_SECTIONS: NavSection[] = [
   { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
   { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
@@ -192,4 +209,4 @@ export const ORDERS_SECTIONS: NavSection[] = [
 // A room with one section shows no section row at all, which is correct:
 // Products is a catalogue and Studio is a workbench, and neither is improved
 // by a row containing its own name.
-export const ROOM_SECTIONS: NavSection[][] = [STOREFRONT_SECTIONS, ORDERS_SECTIONS];
+export const ROOM_SECTIONS: NavSection[][] = [STOREFRONT_SECTIONS, COMMERCE_SECTIONS];

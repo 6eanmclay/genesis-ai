@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
-import { PRIMARY_TAB_COUNT } from "@/lib/dashboard/navConfig";
+import { OFFICE_SENTINEL_HREF, PRIMARY_TAB_COUNT } from "@/lib/dashboard/navConfig";
 import { NavIcon } from "./NavIcon";
 import { J4Icon, type J4IconName } from "./J4Icon";
 import { signOutOfGenesis } from "./actions";
@@ -36,6 +36,12 @@ import { useFreshLaunch, resetFreshLaunch } from "@/lib/dashboard/useFreshLaunch
 // crash the tab bar just because nobody drew its icon.
 const NAV_ICONS: Record<string, J4IconName> = {
   home: "home",
+  // The four rooms (2026-08-17). Commerce reuses the orders glyph because
+  // that is what it is mostly about; office and studio fall through to "more"
+  // until they have drawn icons of their own, which is the fallback doing its
+  // job rather than a gap.
+  website: "home",
+  commerce: "orders",
   customers: "customers",
   orders: "orders",
   marketing: "marketing",
@@ -272,6 +278,40 @@ export function DashboardShell({
   // center slot with real destinations on either side. Nothing is added or
   // removed from navigation by this split; desktop keeps rendering
   // tabSections as one uninterrupted row.
+
+  // One mobile tab. The Office is a button rather than a Link because it has
+  // no route — it opens the full-screen overlay over the room the owner is
+  // standing in, which is what makes returning free (see J4Overlay). Giving it
+  // an href would reintroduce navigation into the one surface whose whole
+  // point is that nothing navigates.
+  const mobileTab = (section: NavSection) => {
+    const isOffice = section.href === OFFICE_SENTINEL_HREF;
+    const active = isOffice ? j4Open : isActive(section.href);
+    const className = `relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
+      active ? "text-black dark:text-zinc-50" : "text-zinc-500 dark:text-zinc-400"
+    }`;
+    const body = (
+      <>
+        <J4Icon name={navIconName(section.key)} size={20} />
+        {section.label}
+        {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
+          <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
+        )}
+      </>
+    );
+    if (isOffice) {
+      return (
+        <button key={section.key} type="button" onClick={() => setJ4Open(true)} aria-expanded={j4Open} className={className}>
+          {body}
+        </button>
+      );
+    }
+    return (
+      <Link key={section.key} href={section.href} className={className}>
+        {body}
+      </Link>
+    );
+  };
   const mobileLeftTabs = tabSections.slice(0, 2);
   const mobileRightTabs = tabSections.slice(2);
 
@@ -928,23 +968,7 @@ export function DashboardShell({
           Mobile only. The lg:+ treatment is untouched, and desktop is its own
           design pass that hasn't happened yet. */}
       <nav className="fixed inset-x-0 bottom-0 z-40 flex items-end border-t border-black/[.08] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden">
-        {mobileLeftTabs.map((section) => (
-          <Link
-            key={section.key}
-            href={section.href}
-            className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
-              isActive(section.href)
-                ? "text-black dark:text-zinc-50"
-                : "text-zinc-500 dark:text-zinc-400"
-            }`}
-          >
-            <J4Icon name={navIconName(section.key)} size={20} />
-            {section.label}
-            {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
-              <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
-            )}
-          </Link>
-        ))}
+        {mobileLeftTabs.map(mobileTab)}
 
         {/* J4's slot in the bar, restored (2026-08-15).
             The presence briefly floated above the bar, which put it on top of
@@ -968,23 +992,7 @@ export function DashboardShell({
             even the gap is wrong — it left a hole in the middle of four tabs
             with nothing to fill it. The tabs simply share the bar. */}
 
-        {mobileRightTabs.map((section) => (
-          <Link
-            key={section.key}
-            href={section.href}
-            className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
-              isActive(section.href)
-                ? "text-black dark:text-zinc-50"
-                : "text-zinc-500 dark:text-zinc-400"
-            }`}
-          >
-            <J4Icon name={navIconName(section.key)} size={20} />
-            {section.label}
-            {(sectionBadgeCounts[section.key] ?? 0) > 0 && (
-              <span className="absolute right-4 top-1 h-2 w-2 rounded-full bg-amber-400" />
-            )}
-          </Link>
-        ))}
+        {mobileRightTabs.map(mobileTab)}
 
         {moreSections.length > 0 && (
           <button
