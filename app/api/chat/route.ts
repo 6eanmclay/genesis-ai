@@ -25,6 +25,8 @@ import {
   type ProposalDirection,
 } from "@/lib/storefront/proposals";
 import { RefineStorefrontToolInputSchema } from "@/lib/execution/genesisTools";
+import { GenerateBrandLogoInputSchema } from "@/lib/execution/genesisTools";
+import { branchBrandLogo, hasExistingLogo, proposeBrandLogo } from "@/lib/brand/proposeBrandLogo";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
@@ -895,6 +897,103 @@ export async function POST(request: Request) {
         // This bridge only PROPOSES. Execution, verification, Growth Point
         // charging and the Business Partner waiver all happen later, on the
         // owner's own approval, through the unchanged engine path.
+        // "Make me a logo" (2026-08-16). The conversational entry point to
+        // the brand-logo slice — see WORK_STUDIO.md for the chain this sits at
+        // the head of: Asset -> Design -> Product -> Provider.
+        //
+        // Deliberately does NOT delete a prior pending proposal, unlike
+        // request_image_change above. Creative work depends on siblings
+        // coexisting: an owner who liked the first logo must still have it
+        // when alternatives appear, and "keep the symbol from the original"
+        // needs the original to still exist.
+        if (chosenTool?.name === "generate_brand_logo") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "generate_brand_logo" });
+          const parsedLogo = GenerateBrandLogoInputSchema.safeParse(chosenTool.input);
+          const ownerDirection = parsedLogo.success ? parsedLogo.data.ownerDirection : null;
+          const wantsAlternatives = parsedLogo.success ? parsedLogo.data.wantsAlternatives : false;
+
+          // THE NO-PRESSURE RULE, enforced here rather than trusted to the
+          // prompt. An owner who already has a logo is finished; J4 being able
+          // to make another is not a reason to raise it. The only thing that
+          // overrides this is the owner explicitly asking, which is what
+          // ownerDirection carries.
+          const alreadyHasLogo = await hasExistingLogo(store.id);
+          if (alreadyHasLogo && !ownerDirection) {
+            const reply =
+              conversationalReply ||
+              "You've already got a logo, and it's yours — I'll work with that one. If you ever want a different direction, say so and I'll put something together.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "generate_brand_logo" });
+            controller.close();
+            return;
+          }
+
+          const proposed = await proposeBrandLogo({ storeId: store.id, ownerDirection });
+          if (!proposed) {
+            // Honest failure, the convention every image path here follows: no
+            // logo was made, and no placeholder is invented to cover it.
+            const reply =
+              conversationalReply ||
+              "I couldn't get a logo generated just then. Try me again in a moment.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "generate_brand_logo" });
+            controller.close();
+            return;
+          }
+
+          // Alternatives ONLY when the owner actually asked. Never automatic —
+          // an offer that always fires is not an offer. Siblings, so the
+          // original survives.
+          let alternativeCount = 0;
+          if (wantsAlternatives) {
+            const lineage = await branchBrandLogo({
+              storeId: store.id,
+              proposalId: proposed.proposal.proposalId,
+              ownerDirection,
+              alternatives: [
+                { label: "Warmer and simpler", intent: "Softer, friendlier, fewer elements. Warmth over polish." },
+                { label: "Bolder and more graphic", intent: "Higher contrast, a stronger single shape, more confident." },
+              ],
+            });
+            alternativeCount = lineage?.branches.length ?? 0;
+          }
+
+          const finalReply = [
+            conversationalReply || proposed.rationale,
+            alternativeCount > 0
+              ? "I've put a couple of other directions beside it. The first one's still there — tell me which way you want to go, or take pieces from more than one."
+              : "Have a look below. Tell me what you'd change, or if you're not sure yet I can show you a couple of other directions.",
+          ].join(" ");
+
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "PENDING",
+            verified: false,
+            message: "Proposed a brand logo",
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: {
+              groundedIn: proposed.groundedIn,
+              ownerDirection,
+              alternatives: alternativeCount,
+            },
+          });
+          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "generate_brand_logo" });
+          controller.close();
+          return;
+        }
+
         if (chosenTool?.name === "refine_storefront") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "refine_storefront" });
 

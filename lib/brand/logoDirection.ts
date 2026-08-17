@@ -99,7 +99,7 @@ export function buildLogoDirection(params: {
 
   const rationaleParts: string[] = [];
   if (refinement) {
-    rationaleParts.push(`Reworked around what you said: ${refinement}`);
+    rationaleParts.push(`Reworked around what you said: ${refinement.replace(/[.\s]+$/, "")}.`);
   } else if (grounded.length === 0) {
     // Honest rather than confident. A store J4 knows nothing about gets a
     // generic mark, and saying so is better than implying insight.

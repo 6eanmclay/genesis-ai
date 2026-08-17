@@ -137,6 +137,17 @@ export const RefineStorefrontToolInputSchema = z.object({
 });
 export type RefineStorefrontToolInput = z.infer<typeof RefineStorefrontToolInputSchema>;
 
+// "Make me a logo" (2026-08-16). ownerDirection carries the merchant's own
+// words when they asked for something specific, and it is weighted LAST in the
+// generation prompt so it outranks everything J4 inferred about the business.
+// wantsAlternatives is ONLY ever true when the merchant actually asked for
+// options — never a default, because an offer that always fires is not an
+// offer (see WORK_STUDIO.md's no-pressure rule).
+export const GenerateBrandLogoInputSchema = z.object({
+  ownerDirection: z.string().nullable(),
+  wantsAlternatives: z.boolean(),
+});
+
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
@@ -227,6 +238,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant asks you to save, keep, hold onto, or designate a file they've already uploaded — e.g. 'save this', 'keep this for later', 'save this as my logo', 'use this as the product photo', 'remember this as our supplier agreement'. This ALWAYS refers to the most recently uploaded photo or document in this conversation, never something never uploaded. If the merchant names a specific role or purpose for it (a logo, a product photo, a brand guide, an agreement — their own words, don't invent one), set role to that; if they just say 'save this' / 'keep this' with no stated purpose, set role to null.",
       input_schema: z.toJSONSchema(ManageBusinessAssetInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "generate_brand_logo",
+      description:
+        "Call this when the merchant asks you to make, design, create or generate a LOGO or brand mark for their business — 'make me a logo', 'can you design a logo', 'I need a mark for the brand'. You will build the direction from what you genuinely know about their business, so do not ask them to describe everything first; one specific question is fine if you truly have nothing to work from. Set ownerDirection to the merchant's OWN words about what they want whenever they gave any ('something with a wave', 'no blue', 'keep it simple') — those words outrank anything you inferred — and null when they just asked for a logo. Set wantsAlternatives ONLY when they actually asked for options or said they are unsure ('show me a few', 'I don't know what I want'); never set it true just because options are possible. IMPORTANT: if the merchant already has a logo they are happy with, do NOT call this and do NOT suggest replacing it — being able to make another is not a reason to raise it. Only call this when they have no logo, or when they have explicitly asked for a new one. This PROPOSES a logo for their approval; it never changes their brand immediately.",
+      input_schema: z.toJSONSchema(GenerateBrandLogoInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "refine_storefront",

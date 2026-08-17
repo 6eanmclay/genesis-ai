@@ -66,7 +66,7 @@ async function main() {
     );
 
     // 4. Approval writes the logo AND designates the Asset.
-    const ctx = { storeId: store.id, actorType: "USER" as const, actorId: null };
+    const ctx = { storeId: store.id, userId: null, actorType: "USER" as const, actorId: null };
     await updateBrandLogoExecutable.run(
       { imageUrl: TEST_URL_A, generationPrompt: direction.prompt },
       ctx as Parameters<typeof updateBrandLogoExecutable.run>[1]
