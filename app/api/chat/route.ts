@@ -1222,6 +1222,7 @@ export async function POST(request: Request) {
             storeId: store.id,
             assetIds: [logo.id],
             surface: surface.key,
+            color: parsedDesign.success ? parsedDesign.data.color : null,
           });
           if (!design) {
             const reply = conversationalReply || "I couldn't put that together just now. Try me again in a moment.";
@@ -1240,9 +1241,17 @@ export async function POST(request: Request) {
           // the record either way; Studio is where it has to be VISIBLE.
           revalidatePath("/dashboard/studio");
 
+          // HONEST ABOUT THE COLOUR (2026-08-18). The render is measured, not
+          // assumed. Sean asked for a black hoodie, got a grey one, and was
+          // told it was black — so when the check fails J4 says so instead of
+          // claiming a colour the artifact plainly is not.
+          const askedColor = parsedDesign.success ? parsedDesign.data.color : null;
+          const colorFailed = Boolean(askedColor) && design.colorVerified === false;
           const finalReply = [
             conversationalReply || `Here's your logo on a ${surface.label.toLowerCase()}.`,
-            "That's your real mark composited onto it, not an impression of it, and the print file is ready at full size. Tell me if you want it bigger, smaller, or somewhere else on the garment.",
+            colorFailed
+              ? `I asked for ${askedColor} and what came back doesn't actually look ${askedColor} to me, so don't take my word for it — have a look. Tell me to try the colour again and I will.`
+              : "That's your real mark composited onto it, not an impression of it, and the print file is ready at full size. Tell me if you want it bigger, smaller, or somewhere else on the garment.",
           ].join(" ");
 
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });

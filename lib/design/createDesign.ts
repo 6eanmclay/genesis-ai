@@ -6,7 +6,7 @@ import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { DesignSchema, type Design } from "@/lib/businessModel/entities";
 import { GeneratedImageProvider } from "@/lib/imageProviders/generatedImageProvider";
 import { AssetSchema } from "@/lib/businessModel/entities";
-import { DEFAULT_ARRANGEMENT, getSurface, type Arrangement, type Surface } from "./surfaces";
+import { DEFAULT_ARRANGEMENT, DEFAULT_GARMENT_COLOR, GARMENT_COLORS, getSurface, type Arrangement, type Surface } from "./surfaces";
 
 // The Design layer: asset(s) + surface + arrangement -> print file + mockup.
 //
@@ -37,6 +37,13 @@ export interface DesignResult {
   mockupUrl: string;
   surface: string;
   sourceAssetUrls: string[];
+  /** The garment colour actually used. */
+  color?: string;
+  /**
+   * Whether the rendered garment measurably matches the colour asked for.
+   * False means J4 must not claim it does.
+   */
+  colorVerified?: boolean;
 }
 
 async function fetchImage(url: string): Promise<Buffer | null> {
@@ -58,11 +65,18 @@ async function fetchImage(url: string): Promise<Buffer | null> {
  * preserve. The role is namespaced under `surface.` so it never collides with
  * the owner's own brand assets.
  */
-async function resolveSurfaceBase(storeId: string, surface: Surface): Promise<Buffer | null> {
+async function resolveSurfaceBase(
+  storeId: string,
+  surface: Surface,
+  color: string
+): Promise<{ buffer: Buffer; verified: boolean } | null> {
   // A section has no base: the composition is the output. Callers must not
   // reach here for one, and this returns null rather than inventing a canvas.
   if (!surface.basePrompt) return null;
-  const role = `surface.${surface.key}`;
+  // CACHED PER COLOUR, not per surface (2026-08-18). Caching one base per
+  // surface is what made "put it on a black hoodie" return a grey hoodie: the
+  // colour never reached the generator and the grey base was reused forever.
+  const role = `surface.${surface.key}.${color}`;
   // Look for a cached base for this exact surface before generating one.
   const cached = await prisma.businessRecord.findMany({
     where: { storeId, entityType: "asset" },
@@ -73,12 +87,13 @@ async function resolveSurfaceBase(storeId: string, surface: Surface): Promise<Bu
     const parsed = AssetSchema.safeParse(row.data);
     if (parsed.success && parsed.data.role === role) {
       const buf = await fetchImage(parsed.data.storageUrl);
-      if (buf) return buf;
+      if (buf) return { buffer: buf, verified: await garmentMatchesColor(buf, color) };
     }
   }
 
+  const colorLabel = GARMENT_COLORS[color]?.label ?? color;
   const sourced = await GeneratedImageProvider.source({
-    prompt: surface.basePrompt,
+    prompt: surface.basePrompt.replaceAll("{color}", colorLabel),
     name: surface.label,
     description: null,
     excludeUrls: [],
@@ -97,8 +112,8 @@ async function resolveSurfaceBase(storeId: string, surface: Surface): Promise<Bu
         fileType: "photo",
         category: "surface_base",
         storageUrl: sourced.url,
-        originalFilename: `${surface.key}-base.png`,
-        summary: `Blank ${surface.label} for mockups`,
+        originalFilename: `${surface.key}-${color}-base.png`,
+        summary: `Blank ${colorLabel} ${surface.label} for mockups`,
         extractionConfidence: null,
         relatedRecordId: null,
         relatedEntityType: null,
@@ -106,14 +121,106 @@ async function resolveSurfaceBase(storeId: string, surface: Surface): Promise<Bu
         origin: "generated",
         supersedesAssetId: null,
         supersededByAssetId: null,
-        generationPrompt: sourced.generationPrompt ?? surface.basePrompt,
+        generationPrompt: sourced.generationPrompt ?? surface.basePrompt.replaceAll("{color}", colorLabel),
         aiUsageEventId: sourced.aiUsageEventId ?? null,
         createdAt: new Date().toISOString(),
       },
     },
   ]);
 
-  return fetchImage(sourced.url);
+  const fresh = await fetchImage(sourced.url);
+  if (!fresh) return null;
+  if (await garmentMatchesColor(fresh, color)) {
+    return { buffer: fresh, verified: true };
+  }
+
+  // ONE RETRY WITH A HARDER PROMPT (2026-08-18). The first "black hoodie" came
+  // back light grey, and reporting that honestly is necessary but not enough —
+  // the owner asked for black. Image models under-commit to dark garments
+  // against a white backdrop, so the retry says so explicitly. One attempt
+  // only: a loop here would spend real money chasing a colour the model may
+  // simply not produce, and an honest "that isn't black" beats a bill.
+  const insistent = await GeneratedImageProvider.source({
+    prompt:
+      `${surface.basePrompt.replaceAll("{color}", colorLabel)} The fabric must read as a deep, saturated, unmistakable ${colorLabel} across the whole garment, not a lighter shade of it, and not washed out by the lighting.`,
+    name: surface.label,
+    description: null,
+    excludeUrls: [sourced.url],
+    scope: { storeId },
+    feature: "business_icon_generation",
+  });
+  const retried = insistent?.url ? await fetchImage(insistent.url) : null;
+  if (retried && (await garmentMatchesColor(retried, color))) {
+    // Cache the one that actually worked, so the next design in this colour
+    // starts from the good base rather than repeating the retry.
+    await persistSyncedRecords(storeId, SOURCE_PROVIDER, [
+      {
+        entityType: "asset",
+        externalId: insistent!.url,
+        data: {
+          fileType: "photo",
+          category: "surface_base",
+          storageUrl: insistent!.url,
+          originalFilename: `${surface.key}-${color}-base.png`,
+          summary: `Blank ${colorLabel} ${surface.label} for mockups`,
+          extractionConfidence: null,
+          relatedRecordId: null,
+          relatedEntityType: null,
+          role,
+          origin: "generated",
+          supersedesAssetId: null,
+          supersededByAssetId: null,
+          generationPrompt: insistent!.generationPrompt ?? null,
+          aiUsageEventId: insistent!.aiUsageEventId ?? null,
+          createdAt: new Date().toISOString(),
+        },
+      },
+    ]);
+    return { buffer: retried, verified: true };
+  }
+
+  // Both attempts missed. The design still gets made — the owner sees a real
+  // mockup — and colorVerified: false is what stops J4 calling it black.
+  return { buffer: fresh, verified: false };
+}
+
+/**
+ * Does the rendered garment actually look like the colour that was asked for?
+ *
+ * Sean, on a hoodie that came back grey: "the response should not claim that
+ * the garment is black when the rendered artifact clearly isn't." So the render
+ * is measured rather than trusted. The centre of the frame is where the garment
+ * is; the corners are the white backdrop, and including them would wash every
+ * reading toward light.
+ *
+ * A coarse check on purpose. It is not trying to grade the shade, only to catch
+ * the failure that actually happened: asked for dark, got light.
+ */
+async function garmentMatchesColor(base: Buffer, color: string): Promise<boolean> {
+  const expect = GARMENT_COLORS[color]?.expect;
+  if (!expect) return true;
+  try {
+    const meta = await sharp(base).metadata();
+    const width = meta.width ?? 0;
+    const height = meta.height ?? 0;
+    if (width < 8 || height < 8) return true;
+    const stats = await sharp(base)
+      .extract({
+        left: Math.floor(width * 0.35),
+        top: Math.floor(height * 0.35),
+        width: Math.max(1, Math.floor(width * 0.3)),
+        height: Math.max(1, Math.floor(height * 0.3)),
+      })
+      .stats();
+    const mean = stats.channels.slice(0, 3).reduce((sum, c) => sum + c.mean, 0) / 3;
+    if (expect === "dark") return mean < 110;
+    if (expect === "light") return mean > 170;
+    return true;
+  } catch {
+    // A measurement that fails must not block a design. Unverified is reported
+    // as unverified, never as a failure.
+    return true;
+  }
 }
 
 /** Lays the artwork out on a transparent canvas of the surface's print size. */
@@ -214,6 +321,8 @@ export async function createDesign(params: {
   /** A key from SURFACES. */
   surface: string;
   arrangement?: Arrangement;
+  /** A key from GARMENT_COLORS. Ignored by section surfaces. */
+  color?: string | null;
 }): Promise<DesignResult | null> {
   const surface = getSurface(params.surface);
   if (!surface || params.assetIds.length === 0) return null;
@@ -250,10 +359,13 @@ export async function createDesign(params: {
   // prints, and they are different images.
   const printFile = composed;
   let mockup = composed;
+  const color = params.color && GARMENT_COLORS[params.color] ? params.color : DEFAULT_GARMENT_COLOR;
+  let colorVerified = true;
   if (surface.kind !== "section") {
-    const base = await resolveSurfaceBase(params.storeId, surface);
+    const base = await resolveSurfaceBase(params.storeId, surface, color);
     if (!base) return null;
-    mockup = await composeMockup(printFile, base, surface);
+    colorVerified = base.verified;
+    mockup = await composeMockup(printFile, base.buffer, surface);
   }
 
   // A section's print file and mockup are the same bytes, so upload once and
@@ -301,5 +413,5 @@ export async function createDesign(params: {
   });
   if (!record) return null;
 
-  return { designId: record.id, printFileUrl, mockupUrl, surface: surface.key, sourceAssetUrls };
+  return { designId: record.id, printFileUrl, mockupUrl, surface: surface.key, sourceAssetUrls, color, colorVerified };
 }

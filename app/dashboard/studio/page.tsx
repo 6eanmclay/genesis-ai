@@ -52,39 +52,59 @@ export default async function StudioPage() {
     .flatMap((d) => (d.parsed.success ? [{ id: d.id, ...d.parsed.data }] : []));
 
   const latest = designs[0] ?? null;
-  const latestDesign = latest;
   const earlier = designs.slice(1);
   const assets = Object.entries(assetsByRole);
   const hasLogo = Boolean(assetsByRole["brand.logo"]);
-  const otherSurfaces = Object.values(SURFACES).filter((sf) => sf.key !== latestDesign?.surface);
 
-  // WHAT J4 CAN HELP WITH, grouped (2026-08-18). One flat list read as a pile
-  // of commands; grouping by what the merchant is trying to MAKE reads as a
-  // workshop. A few strong ones show, the rest sit behind More.
+  // WHAT J4 CAN HELP WITH, grouped and ordered (2026-08-18, second pass).
   //
-  // Still derived from what exists rather than fixed: before a logo the logo
-  // group leads with making one, after a design the product group offers the
-  // next surface from the registry. Each phrase is one a person would say,
-  // because it is sent verbatim into the conversation.
-  const nextSurface = otherSurfaces.find((sf) => sf.kind === "garment");
+  // BRING YOUR OWN LEADS, on Sean's call: "users need to immediately understand
+  // that they can bring their own creative materials into Studio." A workshop
+  // where the first thing offered is "let me make you one" reads as a
+  // generator; one that opens with "bring what you have" reads as a workshop.
+  //
+  // Product suggestions are DERIVED FROM THE SURFACE REGISTRY, one chip per
+  // garment, never the same surface twice. The first version hardcoded a
+  // t-shirt chip and then appended "the next surface", which produced two
+  // t-shirt chips whenever the last design happened to be a hoodie. A
+  // recommendation list that offers the same action twice is not a list of
+  // options, it is a bug with good manners.
+  const garmentSurfaces = Object.values(SURFACES).filter((sf) => sf.kind === "garment");
+  const productPrimary = hasLogo
+    ? garmentSurfaces.slice(0, 2).map((sf) => `Try it on a ${sf.label.toLowerCase()}`)
+    : ["Make me a logo first"];
+  const productMore = [
+    ...garmentSurfaces.slice(2).map((sf) => `Try it on a ${sf.label.toLowerCase()}`),
+    "Put my logo on a product in black",
+    "Make the logo smaller on it",
+    "Add it to my store",
+  ];
+
   const categories: StudioCategory[] = [
+    {
+      // Upload chips carry their own label through as the owner's stated
+      // intent, so J4 knows whether it received a logo, a product photo or
+      // lifestyle imagery rather than just "a file".
+      key: "upload",
+      label: "Bring your own",
+      primary: ["Upload a logo", "Upload product photos", "Upload lifestyle photos"],
+      more: ["Upload photos for social", "Upload other business images"],
+    },
     {
       key: "logo",
       label: "Logo",
       primary: hasLogo
-        ? ["Make the logo more minimal", "Show me other directions"]
-        : ["Make me a logo"],
+        ? ["Refine my logo", "Show me different directions"]
+        : ["Make me a logo", "Show me a couple of directions"],
       more: hasLogo
-        ? ["Make me a new logo", "Try a bolder version", "Make it work better at small sizes"]
-        : ["I already have a logo I want to use", "Show me a couple of directions first"],
+        ? ["Make me a new logo", "Make it more minimal", "Make it work better at small sizes"]
+        : ["I already have a logo I want to use"],
     },
     {
       key: "products",
       label: "Products",
-      primary: hasLogo
-        ? ["Put my logo on a t-shirt", nextSurface ? `Try it on a ${nextSurface.label.toLowerCase()}` : "Try it on a hoodie"]
-        : ["Make me a logo first, then put it on a t-shirt"],
-      more: ["Make the logo smaller on it", "Create another product", "Add it to my store"],
+      primary: productPrimary,
+      more: productMore,
     },
     {
       key: "website",
@@ -96,16 +116,7 @@ export default async function StudioPage() {
       key: "graphics",
       label: "Graphics",
       primary: ["Create a collage", "Make a promotional graphic"],
-      more: ["Create a product image for my storefront", "Make this more minimal", "Show me a couple of other directions"],
-    },
-    {
-      // Upload chips open the file picker and carry their own label through as
-      // the owner's stated intent, so J4 knows whether it just received a logo,
-      // a product photo or lifestyle imagery.
-      key: "upload",
-      label: "Bring your own",
-      primary: ["Upload a logo", "Upload product photos"],
-      more: ["Upload lifestyle photos", "Upload photos for social", "Upload other business images"],
+      more: ["Create a product image for my storefront", "Create social content", "Show me a couple of other directions"],
     },
   ];
 

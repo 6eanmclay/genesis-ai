@@ -36,6 +36,10 @@ export interface Surface {
   /**
    * How to render a blank base when one is not cached yet. Garment only, for
    * the same reason: there is no blank storefront section to photograph.
+   *
+   * Contains a {color} placeholder. Colour is a real input, not decoration —
+   * an owner who asks for a black hoodie and gets a grey one has been told
+   * something untrue about their own product.
    */
   basePrompt?: string;
   /**
@@ -58,7 +62,7 @@ export const SURFACES: Record<string, Surface> = {
     output: { width: 1800, height: 2400 },
     mockupArea: { x: 0.31, y: 0.26, width: 0.38, height: 0.34 },
     basePrompt:
-      "A plain heather-grey t-shirt laid flat on a clean white background, front view, centered, no graphics, no text, no logo, even lighting, product photography.",
+      "A plain {color} t-shirt laid flat on a clean white background, front view, centered, the garment itself clearly and unmistakably {color}, no graphics, no text, no logo, even lighting, product photography.",
   },
   "garment.hoodie": {
     key: "garment.hoodie",
@@ -67,7 +71,7 @@ export const SURFACES: Record<string, Surface> = {
     output: { width: 1800, height: 2400 },
     mockupArea: { x: 0.33, y: 0.32, width: 0.34, height: 0.3 },
     basePrompt:
-      "A plain heather-grey pullover hoodie laid flat on a clean white background, front view, centered, no graphics, no text, no logo, even lighting, product photography.",
+      "A plain {color} pullover hoodie laid flat on a clean white background, front view, centered, the garment itself clearly and unmistakably {color}, no graphics, no text, no logo, even lighting, product photography.",
   },
 };
 
@@ -111,6 +115,19 @@ export const SECTION_SURFACES: Record<string, Surface> = {
 };
 
 Object.assign(SURFACES, SECTION_SURFACES);
+
+// Garment colours J4 can actually produce. A closed list for the same reason
+// the surface registry is closed: a colour that reaches the image model
+// unchecked is a colour nobody verified the result of.
+export const GARMENT_COLORS: Record<string, { label: string; /** Expected mean luminance, 0-255, for verifying the render. */ expect: "dark" | "light" | "mid" }> = {
+  black: { label: "black", expect: "dark" },
+  white: { label: "white", expect: "light" },
+  navy: { label: "navy blue", expect: "dark" },
+  grey: { label: "heather grey", expect: "mid" },
+  sand: { label: "sand", expect: "light" },
+  forest: { label: "forest green", expect: "dark" },
+};
+export const DEFAULT_GARMENT_COLOR = "grey";
 
 export function getSurface(key: string): Surface | null {
   return SURFACES[key] ?? null;

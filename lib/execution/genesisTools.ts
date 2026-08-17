@@ -154,6 +154,9 @@ export const GenerateBrandLogoInputSchema = z.object({
 export const CreateDesignInputSchema = z.object({
   surface: z.enum(["garment.tshirt", "garment.hoodie"]),
   assetRole: z.string().nullable(),
+  // Colour is a real input. Asking for a black hoodie and receiving a grey one
+  // is a wrong answer, not a stylistic near-miss.
+  color: z.enum(["black", "white", "navy", "grey", "sand", "forest"]).nullable(),
 });
 
 // "Yes, add it to my store" (2026-08-17). The end of the Studio chain: an
@@ -287,7 +290,7 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
     {
       name: "create_design",
       description:
-        "Call this when the merchant asks you to put an existing asset of theirs — usually their logo — ONTO something physical: 'put my logo on a t-shirt', 'can you make a hoodie with our mark on it', 'let's see that on a shirt'. Pick surface from the supported list based on what they said. Set assetRole to 'brand.logo' when they mean their logo (which is almost always), or null if you genuinely cannot tell which asset they mean, in which case ask them in your reply. This composes their REAL approved asset onto the surface and shows them a mockup for approval; it does not create a product to sell yet, and it never invents artwork. Do NOT call this to create the logo itself — that is generate_brand_logo.",
+        "Call this when the merchant asks you to put an existing asset of theirs — usually their logo — ONTO something physical: 'put my logo on a t-shirt', 'can you make a hoodie with our mark on it', 'let's see that on a shirt'. Pick surface from the supported list based on what they said. Set assetRole to 'brand.logo' when they mean their logo (which is almost always), or null if you genuinely cannot tell which asset they mean, in which case ask them in your reply. Set color whenever they name one ('a black hoodie', 'on white'), and null when they do not — do not pick a colour they did not ask for. This composes their REAL approved asset onto the surface and shows them a mockup for approval; it does not create a product to sell yet, and it never invents artwork. Do NOT call this to create the logo itself — that is generate_brand_logo.",
       input_schema: z.toJSONSchema(CreateDesignInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
