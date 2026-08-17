@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
 import { performApproveGenesisAction, performRejectGenesisAction } from "@/app/dashboard/ai-actions";
-import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import { PROPOSAL_STATUS, parseDirections, reviseProposal } from "@/lib/storefront/proposals";
 
 // Deciding a proposal without leaving the conversation (2026-08-14).
@@ -36,8 +35,15 @@ import { PROPOSAL_STATUS, parseDirections, reviseProposal } from "@/lib/storefro
 // place. No redirect anywhere.
 
 async function recordOutcome(storeId: string, content: string) {
+  // `content` is finished prose, not a prompt (2026-08-18).
+  //
+  // This used to write withJ4CopyRules(content), which pasted the entire
+  // WRITING STYLE block onto the end of every outcome message the owner reads
+  // — J4 appearing to explain its own punctuation rules after applying a
+  // proposal. withJ4CopyRules wraps a SYSTEM PROMPT so a model follows the
+  // rules; it is not a formatter for text that has already been written.
   await prisma.storeMessage.create({
-    data: { storeId, role: "assistant", content: withJ4CopyRules(content) },
+    data: { storeId, role: "assistant", content },
   });
 }
 
