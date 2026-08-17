@@ -90,19 +90,51 @@ export async function evaluateStorefront(storeId: string): Promise<StorefrontEva
   }
 
   const productsWithImages = products.filter((p) => p.imageUrl).length;
-  // Grouping needs something to group BY. Product names are the only signal
-  // available without a category field, so a shared leading word is the honest
-  // proxy — and it is reported as a possibility, never asserted as a taxonomy.
-  // Stopwords, because the first real run grouped a store on the word "the".
-  // A shared article is not a collection, and reporting it as one would have J4
-  // recommending a "The" section with a straight face.
-  const STOPWORDS = new Set(["the", "a", "an", "our", "my", "your", "new", "and", "of", "for"]);
-  const leadingWords = products
-    .map((p) => p.name.trim().split(/\s+/)[0]?.toLowerCase())
-    .filter((w): w is string => Boolean(w) && !STOPWORDS.has(w) && w.length > 2);
+
+  // WHAT ACTUALLY GROUPS A CATALOG (corrected 2026-08-18 against real data).
+  //
+  // The first version counted LEADING words and, on Cubit & Coil, reported
+  // "sacred" and "177hz". A person looking at that catalog sees bracelets,
+  // necklaces, rings and pyramids — product-type nouns that sit at the END of
+  // names like "Sacred Cubit Copper Tensor Ring Bracelet". Leading words find
+  // the brand's vocabulary; trailing nouns find the collections, which is what
+  // Sean actually asked for.
+  //
+  // So every significant word in every name is counted, wherever it appears,
+  // and the ones shared by several products are the candidate groupings. Still
+  // a proxy reported as a possibility, never asserted as a taxonomy — a real
+  // category field would beat this the day one exists.
+  const STOPWORDS = new Set([
+    "the", "a", "an", "our", "my", "your", "new", "and", "of", "for", "with",
+    "on", "in", "to", "set", "size", "lg", "sm", "mini", "double", "handcrafted",
+  ]);
   const wordCounts = new Map<string, number>();
-  for (const w of leadingWords) wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
-  const categories = [...wordCounts.entries()].filter(([, n]) => n >= 2).map(([w]) => w);
+  for (const p of products) {
+    // Unique per product, so "Ring ... Ring" in one name is not two votes.
+    const words = new Set(
+      p.name
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 3 && !STOPWORDS.has(w))
+    );
+    for (const w of words) wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
+  }
+  // A GROUPING COVERS A SUBSET, NOT THE CATALOGUE (corrected against real
+  // data, second pass). Filtering only words present in EVERY product still
+  // returned "tensor", "ring", "copper" for Cubit & Coil — the brand's own
+  // vocabulary, in 8 to 12 of 14 products. Those describe what the shop sells;
+  // they do not divide it. "necklace" and "bracelet" do, and they are rarer.
+  //
+  // So a candidate grouping has to appear in at least two products and no more
+  // than half of them. That is what makes it a collection rather than a
+  // description of the whole shop.
+  const groupingCeiling = Math.max(2, Math.floor(products.length / 2));
+  const categories = [...wordCounts.entries()]
+    .filter(([, n]) => n >= 2 && n <= groupingCeiling)
+    .sort((a, b) => b[1] - a[1])
+    .map(([w]) => w)
+    .slice(0, 4);
 
   const findings: StorefrontFinding[] = [];
 
@@ -119,10 +151,16 @@ export async function evaluateStorefront(storeId: string): Promise<StorefrontEva
   if (productsWithImages >= 4 && categories.length > 0 && !hasFeatureGraphic) {
     findings.push({
       key: "products_could_be_grouped",
-      observed: `Several products share a name pattern (${categories.slice(0, 3).join(", ")}), which usually means they belong together as a collection rather than sitting in one flat grid.`,
+      observed: `Several products share a word: ${categories.join(", ")}. Some of those are collections worth their own section; others are just how you describe everything you sell.`,
       wouldDo:
-        "Give that group its own featured section, composed as a set, so the catalog reads as collections instead of one long list.",
-      composition: { surface: "section.feature", columns: 2, subject: categories[0] },
+        "Pick the ones that are genuinely a group and give each its own featured section, composed as a set, so the catalog reads as collections instead of one long list.",
+      // DELIBERATELY NO COMPOSITION. Choosing WHICH candidate is a real
+      // collection is a judgement, and the first pass got it wrong: ranked by
+      // frequency it picked "cubit" for Cubit & Coil — a brand term — over
+      // "necklace" and "bracelet", which are the actual collections. A library
+      // counting words cannot tell those apart; J4 reading the list can, and
+      // then calls create_composition with the right subject. Facts here,
+      // judgement in the conversation.
     });
   }
 

@@ -66,7 +66,21 @@ export async function resolveCompositionAssets(params: {
     if (a.fileType !== "photo") continue;
     // A blank garment base is scaffolding, never content.
     if (a.role?.startsWith("surface.")) continue;
-    fromAssets.push({ assetId: row.id, url: a.storageUrl, label: a.summary ?? a.originalFilename });
+    // A PHOTOGRAPHED DOCUMENT IS NOT IMAGERY (2026-08-18, found on real data).
+    //
+    // Subject matching against summaries pulled a photographed packaging
+    // insert for ANOTHER brand into a "bracelet" composition, because its
+    // extracted text mentions bracelets. A long summary is the signature of
+    // document extraction rather than a label, and a hero built from someone
+    // else's packaging is worse than a hero built from fewer images.
+    const summary = a.summary ?? "";
+    if (summary.length > 160) continue;
+    fromAssets.push({
+      assetId: row.id,
+      url: a.storageUrl,
+      // Truncated so matching reads a label, never a paragraph.
+      label: (summary || a.originalFilename).slice(0, 80),
+    });
   }
 
   const products = await prisma.product.findMany({
@@ -209,5 +223,53 @@ export async function approveCompositionAsAsset(params: {
   if (!record) return null;
 
   await designateAsset(params.storeId, record.id, params.role);
+
+  // AND IT ACTUALLY CHANGES THE STORE (2026-08-18).
+  //
+  // Sean: "I need to be able to... approve it before anything changes on the
+  // live storefront" — which only means anything if approval DOES change it.
+  // Designating an asset alone would have been a record with no consequence.
+  //
+  // app/store/[slug]/page.tsx already reads
+  // blueprint.homepageContent.heroImageUrl (committed), so a hero composition
+  // writes that field rather than introducing a second hero path.
+  //
+  // NOTE ON OVERLAP: Sean has uncommitted work on update_hero that writes the
+  // same field from an asset. That is the same destination reached from a
+  // different door, not a competing pipeline — when his work lands, the two
+  // should be consolidated onto one writer rather than left as two.
+  if (params.role === "storefront.hero") {
+    await setStorefrontHeroImage(params.storeId, params.imageUrl);
+  }
+
   return record.id;
+}
+
+/**
+ * Points the live storefront's hero at an image.
+ *
+ * Merges rather than replaces: the blueprint carries every other piece of
+ * homepage content, and overwriting it to set one field would silently drop
+ * headlines, calls to action and section order.
+ */
+export async function setStorefrontHeroImage(storeId: string, imageUrl: string): Promise<void> {
+  const store = await prisma.store.findUnique({ where: { id: storeId }, select: { blueprint: true } });
+  const blueprint =
+    store?.blueprint && typeof store.blueprint === "object" && !Array.isArray(store.blueprint)
+      ? (store.blueprint as Record<string, unknown>)
+      : {};
+  const homepage =
+    blueprint.homepageContent && typeof blueprint.homepageContent === "object" && !Array.isArray(blueprint.homepageContent)
+      ? (blueprint.homepageContent as Record<string, unknown>)
+      : {};
+
+  await prisma.store.update({
+    where: { id: storeId },
+    data: {
+      blueprint: {
+        ...blueprint,
+        homepageContent: { ...homepage, heroImageUrl: imageUrl },
+      } as never,
+    },
+  });
 }
