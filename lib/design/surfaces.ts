@@ -28,9 +28,24 @@ export interface Surface {
    * Fractions rather than pixels so one definition survives a mockup base
    * being re-rendered at a different resolution.
    */
-  mockupArea: { x: number; y: number; width: number; height: number };
-  /** How to render a blank base for this surface when one is not cached yet. */
-  basePrompt: string;
+  /**
+   * Where artwork sits on the mockup. GARMENT SURFACES ONLY — a section
+   * surface has no base to sit on, because the composition IS the output.
+   */
+  mockupArea?: { x: number; y: number; width: number; height: number };
+  /**
+   * How to render a blank base when one is not cached yet. Garment only, for
+   * the same reason: there is no blank storefront section to photograph.
+   */
+  basePrompt?: string;
+  /**
+   * Background behind a section composition. Sections need one because the
+   * artwork does not fill the canvas; garments do not, because the garment
+   * photograph is the background.
+   */
+  background?: { r: number; g: number; b: number };
+  /** Gap between cells in a section composition, as a fraction of cell size. */
+  gutter?: number;
 }
 
 export const SURFACES: Record<string, Surface> = {
@@ -55,6 +70,47 @@ export const SURFACES: Record<string, Surface> = {
       "A plain heather-grey pullover hoodie laid flat on a clean white background, front view, centered, no graphics, no text, no logo, even lighting, product photography.",
   },
 };
+
+// STOREFRONT SURFACES (2026-08-18). The other half of the surface idea, and
+// the reason `surface` was made a first-class input before any of this existed:
+// a T-shirt is a surface whose arrangement is a placement, a storefront section
+// is a surface whose arrangement is a COMPOSITION. Same Design model, same
+// compositor, different canvas — never a second creative system.
+//
+// These are also the first surfaces whose output is not something a customer
+// buys. Sean: "J4 needs to understand the difference between 'this is something
+// the customer can buy' and 'this is something that makes the store look better
+// and tells the brand story.'" A section design becomes a storefront ASSET, not
+// a Product.
+export const SECTION_SURFACES: Record<string, Surface> = {
+  "section.hero": {
+    key: "section.hero",
+    label: "Storefront hero",
+    kind: "section",
+    // 2:1, the shape a full-width hero band actually occupies.
+    output: { width: 2400, height: 1200 },
+    background: { r: 250, g: 249, b: 247 },
+    gutter: 0.03,
+  },
+  "section.collage": {
+    key: "section.collage",
+    label: "Collage",
+    kind: "section",
+    output: { width: 1800, height: 1800 },
+    background: { r: 250, g: 249, b: 247 },
+    gutter: 0.035,
+  },
+  "section.feature": {
+    key: "section.feature",
+    label: "Featured section",
+    kind: "section",
+    output: { width: 2000, height: 1250 },
+    background: { r: 250, g: 249, b: 247 },
+    gutter: 0.03,
+  },
+};
+
+Object.assign(SURFACES, SECTION_SURFACES);
 
 export function getSurface(key: string): Surface | null {
   return SURFACES[key] ?? null;

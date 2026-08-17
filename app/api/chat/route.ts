@@ -28,6 +28,9 @@ import {
 import { RefineStorefrontToolInputSchema } from "@/lib/execution/genesisTools";
 import { GenerateBrandLogoInputSchema } from "@/lib/execution/genesisTools";
 import { CreateDesignInputSchema } from "@/lib/execution/genesisTools";
+import { CreateCompositionInputSchema, ApproveCompositionInputSchema } from "@/lib/execution/genesisTools";
+import { createComposition, approveCompositionAsAsset } from "@/lib/design/composeForStorefront";
+import { DesignSchema } from "@/lib/businessModel/entities";
 import { ApproveDesignAsProductInputSchema } from "@/lib/execution/genesisTools";
 import { execute } from "@/lib/execution/engine";
 import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
@@ -986,6 +989,116 @@ export async function POST(request: Request) {
           emit({ type: "token", delta: reply.slice((conversationalReply || "").length) });
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: succeeded ? "success" : "failure", likelyRephraseOf, kind: "approve_design_as_product" });
+          controller.close();
+          return;
+        }
+
+        // Storefront compositions (2026-08-18) — collage, hero, featured
+        // section. The same Design model as apparel, pointed at a storefront
+        // surface. Not a product: see approve_composition below.
+        if (chosenTool?.name === "create_composition") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "create_composition" });
+          const parsedComp = CreateCompositionInputSchema.safeParse(chosenTool.input);
+          const composed = parsedComp.success
+            ? await createComposition({
+                storeId: store.id,
+                surface: parsedComp.data.surface,
+                columns: parsedComp.data.columns,
+                subject: parsedComp.data.subject,
+              })
+            : null;
+
+          if (!composed) {
+            // Honest about the real reason: composing needs several of the
+            // owner's images, and a store with none cannot have one made up.
+            const reply =
+              conversationalReply ||
+              "I need a few of your images to put a composition together, and I can't find enough yet. Upload some photos or add product images and I'll build it from those.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "create_composition" });
+            controller.close();
+            return;
+          }
+
+          revalidatePath("/dashboard/studio");
+          const used = composed.used.map((u) => u.label).join(", ");
+          const finalReply = [
+            conversationalReply || `Here's a composition using ${composed.used.length} of your images.`,
+            `I used ${used}. Tell me what to change, or say the word and I'll put it on your storefront.`,
+          ].join(" ");
+
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({
+            data: {
+              storeId: store.id,
+              role: "assistant",
+              content: finalReply,
+              changes: { imageUrl: composed.design.mockupUrl, designId: composed.design.designId, surface: composed.design.surface },
+            },
+          });
+          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "create_composition" });
+          controller.close();
+          return;
+        }
+
+        // Approving a composition makes it a STOREFRONT ASSET, never a product.
+        // Sean: J4 has to understand the difference between something a
+        // customer can buy and something that makes the store look better.
+        if (chosenTool?.name === "approve_composition") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "approve_composition" });
+          const parsedApprove = ApproveCompositionInputSchema.safeParse(chosenTool.input);
+
+          // The newest SECTION design — the composition they are looking at.
+          // Garment designs are excluded because approving one of those is a
+          // product, which is a different tool.
+          const recent = await prisma.businessRecord.findMany({
+            where: { storeId: store.id, entityType: "design" },
+            orderBy: { syncedAt: "desc" },
+            take: 10,
+            select: { id: true, data: true },
+          });
+          const sectionDesign = recent
+            .map((r) => ({ id: r.id, parsed: DesignSchema.safeParse(r.data) }))
+            .find((r) => r.parsed.success && r.parsed.data.surface.startsWith("section."));
+
+          if (!parsedApprove.success || !sectionDesign?.parsed.success || !sectionDesign.parsed.data.mockupUrl) {
+            const reply =
+              conversationalReply ||
+              "I don't have a composition on the table to put up. Ask me to make one and I'll show it to you first.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "approve_composition" });
+            controller.close();
+            return;
+          }
+
+          const assetId = await approveCompositionAsAsset({
+            storeId: store.id,
+            designId: sectionDesign.id,
+            role: parsedApprove.data.role,
+            summary: parsedApprove.data.summary,
+            imageUrl: sectionDesign.parsed.data.mockupUrl,
+          });
+
+          revalidatePath("/dashboard/studio");
+          revalidatePath("/dashboard/website");
+
+          const reply = assetId
+            ? `${conversationalReply || "Done."} That's saved as your ${parsedApprove.data.role.split(".")[1]} graphic. It's a storefront asset, not something for sale, so it'll show up in how your store looks rather than in your catalog.`
+            : conversationalReply || "I couldn't save that just then. Nothing has changed — try me again in a moment.";
+
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+          emit({ type: "token", delta: reply.slice((conversationalReply || "").length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: assetId ? "success" : "failure", likelyRephraseOf, kind: "approve_composition" });
           controller.close();
           return;
         }

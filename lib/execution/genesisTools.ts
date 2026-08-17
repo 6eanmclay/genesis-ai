@@ -166,6 +166,24 @@ export const ApproveDesignAsProductInputSchema = z.object({
   description: z.string().nullable(),
 });
 
+// Storefront compositions (2026-08-18). The same Design model as apparel —
+// assets + surface + arrangement — pointed at a storefront surface instead of a
+// garment. subject is the merchant's own words for what to compose from, so J4
+// can pick the right assets rather than guessing from a filename.
+export const CreateCompositionInputSchema = z.object({
+  surface: z.enum(["section.collage", "section.hero", "section.feature"]),
+  columns: z.number().int().min(1).max(4),
+  subject: z.string().nullable(),
+});
+
+// Approving a composition as a STOREFRONT ASSET rather than a product. This is
+// the distinction Sean called huge: "something the customer can buy" versus
+// "something that makes the store look better and tells the brand story."
+export const ApproveCompositionInputSchema = z.object({
+  role: z.enum(["storefront.hero", "storefront.feature", "brand.graphic"]),
+  summary: z.string(),
+});
+
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
@@ -274,6 +292,18 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant approves a design you have just shown them AND wants it in their store — 'yes', 'approve it', 'add it to my store', 'let's sell that', 'put it on the storefront'. Only call this when there is a design in this conversation they are actually responding to; a bare 'yes' with no design on the table is not this. Set name to a real product name you would put in a shop (their brand plus the item, not 'Design 1'), priceInCents to a sensible retail price for that item, and description to one honest sentence about it, or null. This CREATES a real product the storefront will sell, so never call it speculatively — only on their explicit approval. If they are still deciding, or asking for a change, that is not this tool.",
       input_schema: z.toJSONSchema(ApproveDesignAsProductInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "create_composition",
+      description:
+        "Call this when the merchant asks you to compose SEVERAL of their images into one graphic — 'make a collage of these three bracelet photos', 'build me a hero image using my product shots', 'put together a featured section from my candles'. Choose surface by what it is for: section.collage for a square multi-image collage, section.hero for a wide banner across the top of the storefront, section.feature for a section highlighting a group of products. Set columns to how many across the arrangement should read (2 for a pair or a 2x2, 3 for a row of three). Set subject to the merchant's OWN words for what to include ('bracelets', 'the candles', 'lifestyle shots') so the right images are used, or null if they just said 'my products'. This composes their REAL images and shows the result for approval; it is NOT a product and does not go on sale. Use create_design instead for putting one asset onto a garment.",
+      input_schema: z.toJSONSchema(CreateCompositionInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "approve_composition",
+      description:
+        "Call this when the merchant approves a composition you just showed them and wants it USED on their storefront — 'yes, put that on my storefront', 'use it as the hero', 'that's the one'. Pick role by where it belongs: storefront.hero for the banner at the top, storefront.feature for a section further down, brand.graphic for something they will reuse elsewhere. summary is one honest sentence describing it. This makes it a storefront asset, NOT a product for sale — if they want to SELL what you made, that is approve_design_as_product instead. Only call this on their explicit approval.",
+      input_schema: z.toJSONSchema(ApproveCompositionInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "refine_storefront",

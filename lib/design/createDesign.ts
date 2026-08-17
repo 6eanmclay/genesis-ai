@@ -59,6 +59,9 @@ async function fetchImage(url: string): Promise<Buffer | null> {
  * the owner's own brand assets.
  */
 async function resolveSurfaceBase(storeId: string, surface: Surface): Promise<Buffer | null> {
+  // A section has no base: the composition is the output. Callers must not
+  // reach here for one, and this returns null rather than inventing a canvas.
+  if (!surface.basePrompt) return null;
   const role = `surface.${surface.key}`;
   // Look for a cached base for this exact surface before generating one.
   const cached = await prisma.businessRecord.findMany({
@@ -124,8 +127,12 @@ async function composePrintFile(
   const rows = Math.ceil(assets.length / columns);
   const cellWidth = Math.floor(width / columns);
   const cellHeight = Math.floor(height / rows);
-  const artWidth = Math.max(1, Math.floor(cellWidth * arrangement.scale));
-  const artHeight = Math.max(1, Math.floor(cellHeight * arrangement.scale));
+  // A section composition needs breathing room between cells; a print file
+  // does not, because it is one mark on a garment rather than a layout.
+  const gutter = surface.kind === "section" ? (surface.gutter ?? 0.03) : 0;
+  const scale = Math.max(0.05, arrangement.scale - gutter);
+  const artWidth = Math.max(1, Math.floor(cellWidth * scale));
+  const artHeight = Math.max(1, Math.floor(cellHeight * scale));
 
   const layers = [];
   for (let i = 0; i < assets.length; i++) {
@@ -143,9 +150,15 @@ async function composePrintFile(
     });
   }
 
-  return sharp({
-    create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
-  })
+  // Transparent for print (the garment shows through); opaque for a section,
+  // because a storefront graphic with a transparent background would render
+  // differently on every theme it lands on.
+  const background =
+    surface.kind === "section"
+      ? { ...(surface.background ?? { r: 250, g: 249, b: 247 }), alpha: 1 }
+      : { r: 0, g: 0, b: 0, alpha: 0 };
+
+  return sharp({ create: { width, height, channels: 4, background } })
     .composite(layers)
     .png()
     .toBuffer();
@@ -153,11 +166,13 @@ async function composePrintFile(
 
 /** Puts the print file onto the surface base, inside its real print area. */
 async function composeMockup(printFile: Buffer, base: Buffer, surface: Surface): Promise<Buffer> {
+  const area = surface.mockupArea;
+  if (!area) return printFile;
   const baseMeta = await sharp(base).metadata();
   const baseWidth = baseMeta.width ?? 1024;
   const baseHeight = baseMeta.height ?? 1024;
-  const areaWidth = Math.max(1, Math.round(baseWidth * surface.mockupArea.width));
-  const areaHeight = Math.max(1, Math.round(baseHeight * surface.mockupArea.height));
+  const areaWidth = Math.max(1, Math.round(baseWidth * area.width));
+  const areaHeight = Math.max(1, Math.round(baseHeight * area.height));
 
   const artwork = await sharp(printFile)
     .resize(areaWidth, areaHeight, { fit: "inside" })
@@ -169,8 +184,8 @@ async function composeMockup(printFile: Buffer, base: Buffer, surface: Surface):
     .composite([
       {
         input: artwork,
-        left: Math.round(baseWidth * surface.mockupArea.x) + Math.floor((areaWidth - (artMeta.width ?? areaWidth)) / 2),
-        top: Math.round(baseHeight * surface.mockupArea.y) + Math.floor((areaHeight - (artMeta.height ?? areaHeight)) / 2),
+        left: Math.round(baseWidth * area.x) + Math.floor((areaWidth - (artMeta.width ?? areaWidth)) / 2),
+        top: Math.round(baseHeight * area.y) + Math.floor((areaHeight - (artMeta.height ?? areaHeight)) / 2),
       },
     ])
     .png()
@@ -227,15 +242,34 @@ export async function createDesign(params: {
   }
   if (buffers.length === 0) return null;
 
-  const printFile = await composePrintFile(buffers, surface, arrangement);
-  const base = await resolveSurfaceBase(params.storeId, surface);
-  if (!base) return null;
-  const mockup = await composeMockup(printFile, base, surface);
+  const composed = await composePrintFile(buffers, surface, arrangement);
 
-  const [printFileUrl, mockupUrl] = await Promise.all([
-    upload(printFile, `${surface.key}-print`),
-    upload(mockup, `${surface.key}-mockup`),
-  ]);
+  // A SECTION IS ITS OWN MOCKUP. There is no garment to place it on, so the
+  // composition is simultaneously what the owner reviews and what gets used.
+  // Garments keep the two apart deliberately: the mockup sells, the print file
+  // prints, and they are different images.
+  const printFile = composed;
+  let mockup = composed;
+  if (surface.kind !== "section") {
+    const base = await resolveSurfaceBase(params.storeId, surface);
+    if (!base) return null;
+    mockup = await composeMockup(printFile, base, surface);
+  }
+
+  // A section's print file and mockup are the same bytes, so upload once and
+  // point both at it. Uploading twice cost two blobs and two URLs for one
+  // image, which the verification caught by asserting they were equal.
+  let printFileUrl: string;
+  let mockupUrl: string;
+  if (surface.kind === "section") {
+    printFileUrl = await upload(composed, `${surface.key}-composition`);
+    mockupUrl = printFileUrl;
+  } else {
+    [printFileUrl, mockupUrl] = await Promise.all([
+      upload(printFile, `${surface.key}-print`),
+      upload(mockup, `${surface.key}-mockup`),
+    ]);
+  }
 
   const data: Design = {
     assetIds: ordered.map((r) => r.id),
