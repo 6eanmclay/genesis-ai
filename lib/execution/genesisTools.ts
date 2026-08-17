@@ -148,6 +148,14 @@ export const GenerateBrandLogoInputSchema = z.object({
   wantsAlternatives: z.boolean(),
 });
 
+// "Put my logo on a T-shirt" (2026-08-16). surface is a key from
+// lib/design/surfaces.ts, never a free string — the model picks from the real
+// registry, so a garment we do not support cannot reach the compositor.
+export const CreateDesignInputSchema = z.object({
+  surface: z.enum(["garment.tshirt", "garment.hoodie"]),
+  assetRole: z.string().nullable(),
+});
+
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
@@ -244,6 +252,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant asks you to make, design, create or generate a LOGO or brand mark for their business — 'make me a logo', 'can you design a logo', 'I need a mark for the brand'. You will build the direction from what you genuinely know about their business, so do not ask them to describe everything first; one specific question is fine if you truly have nothing to work from. Set ownerDirection to the merchant's OWN words about what they want whenever they gave any ('something with a wave', 'no blue', 'keep it simple') — those words outrank anything you inferred — and null when they just asked for a logo. Set wantsAlternatives ONLY when they actually asked for options or said they are unsure ('show me a few', 'I don't know what I want'); never set it true just because options are possible. IMPORTANT: if the merchant already has a logo they are happy with, do NOT call this and do NOT suggest replacing it — being able to make another is not a reason to raise it. Only call this when they have no logo, or when they have explicitly asked for a new one. This PROPOSES a logo for their approval; it never changes their brand immediately.",
       input_schema: z.toJSONSchema(GenerateBrandLogoInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "create_design",
+      description:
+        "Call this when the merchant asks you to put an existing asset of theirs — usually their logo — ONTO something physical: 'put my logo on a t-shirt', 'can you make a hoodie with our mark on it', 'let's see that on a shirt'. Pick surface from the supported list based on what they said. Set assetRole to 'brand.logo' when they mean their logo (which is almost always), or null if you genuinely cannot tell which asset they mean, in which case ask them in your reply. This composes their REAL approved asset onto the surface and shows them a mockup for approval; it does not create a product to sell yet, and it never invents artwork. Do NOT call this to create the logo itself — that is generate_brand_logo.",
+      input_schema: z.toJSONSchema(CreateDesignInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "refine_storefront",

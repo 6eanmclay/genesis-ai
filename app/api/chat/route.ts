@@ -26,6 +26,10 @@ import {
 } from "@/lib/storefront/proposals";
 import { RefineStorefrontToolInputSchema } from "@/lib/execution/genesisTools";
 import { GenerateBrandLogoInputSchema } from "@/lib/execution/genesisTools";
+import { CreateDesignInputSchema } from "@/lib/execution/genesisTools";
+import { createDesign } from "@/lib/design/createDesign";
+import { getSurface } from "@/lib/design/surfaces";
+import { ASSET_ROLES, resolveCurrentAsset } from "@/lib/businessModel/assets";
 import { branchBrandLogo, hasExistingLogo, proposeBrandLogo } from "@/lib/brand/proposeBrandLogo";
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
@@ -906,6 +910,85 @@ export async function POST(request: Request) {
         // coexisting: an owner who liked the first logo must still have it
         // when alternatives appear, and "keep the symbol from the original"
         // needs the original to still exist.
+        // "Put my logo on a T-shirt" (2026-08-16). The conversational entry
+        // to the Design layer — asset(s) + surface + arrangement -> print file
+        // + mockup (lib/design/). J4 resolves the approved asset itself rather
+        // than asking the owner to find and upload it again, which is the
+        // whole difference between a partner and a design tool.
+        if (chosenTool?.name === "create_design") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "create_design" });
+          const parsedDesign = CreateDesignInputSchema.safeParse(chosenTool.input);
+          const surfaceKey = parsedDesign.success ? parsedDesign.data.surface : null;
+          const surface = surfaceKey ? getSurface(surfaceKey) : null;
+
+          // The asset has to already exist and be approved. J4 never invents
+          // artwork here — if there is no designated logo, say so plainly and
+          // OFFER to make one rather than making one uninvited. That offer is
+          // the no-pressure rule: it is a sentence the owner can ignore.
+          const logo = surface ? await resolveCurrentAsset(store.id, ASSET_ROLES.brandLogo) : null;
+          if (!surface || !logo) {
+            const reply = !surface
+              ? conversationalReply || "I can put your logo on a t-shirt or a hoodie. Which one did you have in mind?"
+              : conversationalReply ||
+                "You don't have a logo saved yet, so there's nothing for me to put on it. I can make one based on what I know about your business if you want.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "create_design" });
+            controller.close();
+            return;
+          }
+
+          const design = await createDesign({
+            storeId: store.id,
+            assetIds: [logo.id],
+            surface: surface.key,
+          });
+          if (!design) {
+            const reply = conversationalReply || "I couldn't put that together just now. Try me again in a moment.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "create_design" });
+            controller.close();
+            return;
+          }
+
+          const finalReply = [
+            conversationalReply || `Here's your logo on a ${surface.label.toLowerCase()}.`,
+            "That's your real mark composited onto it, not an impression of it, and the print file is ready at full size. Tell me if you want it bigger, smaller, or somewhere else on the garment.",
+          ].join(" ");
+
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({
+            data: {
+              storeId: store.id,
+              role: "assistant",
+              content: finalReply,
+              // The mockup rides in `changes` so the conversation renders it
+              // inline, the same channel a product image proposal already uses.
+              changes: { imageUrl: design.mockupUrl, designId: design.designId, surface: surface.key },
+            },
+          });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "PENDING",
+            verified: false,
+            message: `Composed a design on ${surface.label}`,
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: { designId: design.designId, surface: surface.key, assetIds: [logo.id] },
+          });
+          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "create_design" });
+          controller.close();
+          return;
+        }
+
         if (chosenTool?.name === "generate_brand_logo") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "generate_brand_logo" });
           const parsedLogo = GenerateBrandLogoInputSchema.safeParse(chosenTool.input);
