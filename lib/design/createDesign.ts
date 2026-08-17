@@ -44,6 +44,11 @@ export interface DesignResult {
    * False means J4 must not claim it does.
    */
   colorVerified?: boolean;
+  /**
+   * How visible the owner's mark is against this product colour. Null for
+   * section compositions and when the mark cannot be read.
+   */
+  contrast?: ContrastReading | null;
 }
 
 async function fetchImage(url: string): Promise<Buffer | null> {
@@ -281,6 +286,69 @@ async function garmentMatchesColor(image: Buffer, color: string): Promise<boolea
   }
 }
 
+/**
+ * Is the owner's mark actually going to be visible on this product?
+ *
+ * Sean, on a dark logo composed onto a black hoodie: "the result is technically
+ * composable but visually poor... J4 should tell the owner that the contrast is
+ * too low and offer an appropriate alternative." The composition is correct in
+ * every respect and the outcome is still one nobody would put in a shop.
+ *
+ * IT NEVER TOUCHES THE ASSET. Silently lightening someone's logo so it shows up
+ * on black would be altering their brand without asking, which is the thing the
+ * whole asset model exists to prevent. This only measures and reports; changing
+ * the mark is the owner's decision, made in conversation.
+ *
+ * Measures the INK, not the file. A mark is mostly transparent or white space —
+ * the logo here is 1024x1024 with 5% ink — so averaging the whole square would
+ * describe the padding rather than the mark.
+ */
+function relativeLuminance(r: number, g: number, b: number): number {
+  const f = (c: number) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+export interface ContrastReading {
+  /** WCAG-style ratio between the mark's ink and the product colour, 1 to 21. */
+  ratio: number;
+  sufficient: boolean;
+  /** Which way the mark would need to move to be visible. */
+  markIs: "dark" | "light";
+}
+
+async function assessContrast(assets: Buffer[], productRgb: { r: number; g: number; b: number }): Promise<ContrastReading | null> {
+  let r = 0, g = 0, b = 0, n = 0;
+  for (const buffer of assets) {
+    try {
+      const { data, info } = await sharp(buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      for (let i = 0; i < data.length; i += info.channels) {
+        const alpha = info.channels === 4 ? data[i + 3] : 255;
+        if (alpha < 40) continue; // transparent padding is not the mark
+        const l = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        if (l > 232) continue; // white padding is not the mark either
+        r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+      }
+    } catch {
+      return null;
+    }
+  }
+  if (n === 0) return null;
+
+  const inkL = relativeLuminance(r / n, g / n, b / n);
+  const productL = relativeLuminance(productRgb.r, productRgb.g, productRgb.b);
+  const ratio = (Math.max(inkL, productL) + 0.05) / (Math.min(inkL, productL) + 0.05);
+  return {
+    ratio: Math.round(ratio * 10) / 10,
+    // 3:1 is the accepted floor for graphics. Below it the mark is present and
+    // effectively unreadable, which is exactly the case that prompted this.
+    sufficient: ratio >= 3,
+    markIs: inkL < productL ? "dark" : "light",
+  };
+}
+
 /** Lays the artwork out on a transparent canvas of the surface's print size. */
 async function composePrintFile(
   assets: Buffer[],
@@ -419,6 +487,10 @@ export async function createDesign(params: {
   let mockup = composed;
   const color = params.color && GARMENT_COLORS[params.color] ? params.color : DEFAULT_GARMENT_COLOR;
   let colorVerified = true;
+  // Products only. A section composition has no product colour behind the
+  // artwork, so there is nothing to contrast it against.
+  const contrast =
+    surface.kind === "section" ? null : await assessContrast(buffers, GARMENT_COLORS[color].rgb);
   if (surface.kind !== "section") {
     const neutral = await resolveSurfaceBase(params.storeId, surface);
     if (!neutral) return null;
@@ -475,5 +547,5 @@ export async function createDesign(params: {
   });
   if (!record) return null;
 
-  return { designId: record.id, printFileUrl, mockupUrl, surface: surface.key, sourceAssetUrls, color, colorVerified };
+  return { designId: record.id, printFileUrl, mockupUrl, surface: surface.key, sourceAssetUrls, color, colorVerified, contrast };
 }

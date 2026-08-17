@@ -1247,11 +1247,30 @@ export async function POST(request: Request) {
           // claiming a colour the artifact plainly is not.
           const askedColor = parsedDesign.success ? parsedDesign.data.color : null;
           const colorFailed = Boolean(askedColor) && design.colorVerified === false;
+
+          // VISIBILITY IS A JUDGEMENT, NOT A RENDER ERROR (2026-08-18). A dark
+          // mark on a black garment composes perfectly and is still something
+          // nobody would sell. Sean: "J4 should tell the owner that the
+          // contrast is too low and offer an appropriate alternative."
+          //
+          // It OFFERS. The asset is never altered here, and the alternatives
+          // are put as a question rather than applied — changing someone's mark
+          // so it shows up on black is a decision about their brand, and it is
+          // theirs to make.
+          const contrast = design.contrast;
+          const lowContrast = Boolean(contrast && !contrast.sufficient);
+          const colorWord = design.color ? design.color : "that colour";
+          const lighter = contrast?.markIs === "dark";
+
+          const closing = colorFailed
+            ? `I asked for ${askedColor} and what came back doesn't actually look ${askedColor} to me, so don't take my word for it — have a look. Tell me to try the colour again and I will.`
+            : lowContrast
+              ? `Have a look before you decide though. Your mark is ${contrast!.markIs} and so is the ${colorWord}, so it barely reads against it. I can make a ${lighter ? "light" : "dark"} version of the mark for this, or put it on a ${lighter ? "lighter" : "darker"} colour instead. I won't change your logo unless you tell me to.`
+              : "That's your real mark composited onto it, not an impression of it, and the print file is ready at full size. Tell me if you want it bigger, smaller, or somewhere else on the garment.";
+
           const finalReply = [
             conversationalReply || `Here's your logo on a ${surface.label.toLowerCase()}.`,
-            colorFailed
-              ? `I asked for ${askedColor} and what came back doesn't actually look ${askedColor} to me, so don't take my word for it — have a look. Tell me to try the colour again and I will.`
-              : "That's your real mark composited onto it, not an impression of it, and the print file is ready at full size. Tell me if you want it bigger, smaller, or somewhere else on the garment.",
+            closing,
           ].join(" ");
 
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
