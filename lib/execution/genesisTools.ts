@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { productSurfaceKeys } from "@/lib/design/surfaces";
 import type Anthropic from "@anthropic-ai/sdk";
 import { GoalCaptureSchema, ChallengeCaptureSchema, EmployeeCaptureSchema, LocationCaptureSchema } from "@/lib/businessModel/factCapture";
 import { STOREFRONT_TARGET_KEYS } from "@/lib/storefront/targets";
@@ -152,7 +153,11 @@ export const GenerateBrandLogoInputSchema = z.object({
 // lib/design/surfaces.ts, never a free string — the model picks from the real
 // registry, so a garment we do not support cannot reach the compositor.
 export const CreateDesignInputSchema = z.object({
-  surface: z.enum(["garment.tshirt", "garment.hoodie"]),
+  // DERIVED FROM THE REGISTRY, never hand-listed (2026-08-18). This used to
+  // name two garments, which meant adding a mug to the catalogue also meant
+  // remembering to edit this file. Now a new surface is one entry in
+  // surfaces.ts and the model sees it immediately.
+  surface: z.enum(productSurfaceKeys() as [string, ...string[]]),
   assetRole: z.string().nullable(),
   // Colour is a real input. Asking for a black hoodie and receiving a grey one
   // is a wrong answer, not a stylistic near-miss.
@@ -290,7 +295,7 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
     {
       name: "create_design",
       description:
-        "Call this when the merchant asks you to put an existing asset of theirs — usually their logo — ONTO something physical: 'put my logo on a t-shirt', 'can you make a hoodie with our mark on it', 'let's see that on a shirt'. Pick surface from the supported list based on what they said. Set assetRole to 'brand.logo' when they mean their logo (which is almost always), or null if you genuinely cannot tell which asset they mean, in which case ask them in your reply. Set color whenever they name one ('a black hoodie', 'on white'), and null when they do not — do not pick a colour they did not ask for. This composes their REAL approved asset onto the surface and shows them a mockup for approval; it does not create a product to sell yet, and it never invents artwork. Do NOT call this to create the logo itself — that is generate_brand_logo.",
+        "Call this when the merchant asks you to put an existing asset of theirs — usually their logo — ONTO something physical: 'put my logo on a t-shirt', 'can you make a hoodie with our mark on it', 'let's see that on a shirt'. Pick surface from the supported list based on what they said. The catalogue covers apparel, headwear, drinkware, accessories and print, so match their words to the closest real surface rather than refusing. Set assetRole to 'brand.logo' when they mean their logo (which is almost always), or null if you genuinely cannot tell which asset they mean, in which case ask them in your reply. Set color whenever they name one ('a black hoodie', 'on white'), and null when they do not — do not pick a colour they did not ask for. This composes their REAL approved asset onto the surface and shows them a mockup for approval; it does not create a product to sell yet, and it never invents artwork. Do NOT call this to create the logo itself — that is generate_brand_logo.",
       input_schema: z.toJSONSchema(CreateDesignInputSchema) as Anthropic.Tool.InputSchema,
     },
     {

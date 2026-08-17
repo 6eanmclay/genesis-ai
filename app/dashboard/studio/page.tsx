@@ -2,7 +2,7 @@ import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { currentAssetsByRole } from "@/lib/businessModel/assets";
 import { DesignSchema } from "@/lib/businessModel/entities";
-import { SURFACES } from "@/lib/design/surfaces";
+import { SURFACES, surfacesByCategory } from "@/lib/design/surfaces";
 import { StudioActions, type StudioCategory } from "./StudioActions";
 import { uploadBusinessAssetFromChat } from "../ai-actions";
 
@@ -69,16 +69,18 @@ export default async function StudioPage() {
   // t-shirt chips whenever the last design happened to be a hoodie. A
   // recommendation list that offers the same action twice is not a list of
   // options, it is a bug with good manners.
-  const garmentSurfaces = Object.values(SURFACES).filter((sf) => sf.kind === "garment");
+  // PRODUCTS OPENS INTO THE CATALOGUE, not a handful of chips. Sean: "Products
+  // should open into product categories rather than exposing a handful of
+  // hardcoded recommendations." So the visible chips are the CATEGORIES, and
+  // More reveals real surfaces within them — all read from the registry, so a
+  // new product appears here the day it is added with no change to this file.
+  const catalogue = surfacesByCategory();
   const productPrimary = hasLogo
-    ? garmentSurfaces.slice(0, 2).map((sf) => `Try it on a ${sf.label.toLowerCase()}`)
+    ? catalogue.slice(0, 3).map((c) => `Put my logo on ${c.surfaces[0].label.toLowerCase()}`)
     : ["Make me a logo first"];
-  const productMore = [
-    ...garmentSurfaces.slice(2).map((sf) => `Try it on a ${sf.label.toLowerCase()}`),
-    "Put my logo on a product in black",
-    "Make the logo smaller on it",
-    "Add it to my store",
-  ];
+  const productMore = hasLogo
+    ? catalogue.flatMap((c) => c.surfaces.slice(1, 3).map((sf) => `Put my logo on a ${sf.label.toLowerCase()}`)).slice(0, 10)
+    : [];
 
   const categories: StudioCategory[] = [
     {

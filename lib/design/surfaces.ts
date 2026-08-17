@@ -15,12 +15,28 @@
 // for its targets: a caller picks a key from here, never a free string that
 // reaches a renderer. Adding a surface is an entry here, nothing else.
 
-export type SurfaceKind = "garment" | "section";
+// "product" is anything physical the artwork is placed ON and that a customer
+// could buy — apparel, headwear, drinkware, accessories, print. "section" is a
+// storefront composition, which IS its own output. createDesign branches on
+// this and nothing else, so a new product category needs no new code path.
+export type SurfaceKind = "product" | "section";
+
+// How the catalogue is grouped for the owner. Adding a category is an entry
+// here plus surfaces that reference it — never a new system.
+export const SURFACE_CATEGORIES: { key: string; label: string }[] = [
+  { key: "apparel", label: "Apparel" },
+  { key: "headwear", label: "Headwear" },
+  { key: "drinkware", label: "Drinkware" },
+  { key: "accessories", label: "Accessories" },
+  { key: "print", label: "Home and print" },
+];
 
 export interface Surface {
   key: string;
   label: string;
   kind: SurfaceKind;
+  /** A key from SURFACE_CATEGORIES. Absent for section surfaces. */
+  category?: string;
   /** The real output canvas, in pixels. For print, this is the print area. */
   output: { width: number; height: number };
   /**
@@ -52,28 +68,98 @@ export interface Surface {
   gutter?: number;
 }
 
+// THE PRODUCT CATALOGUE (2026-08-18).
+//
+// Sean: "do not treat Products as a small hardcoded list of suggestions... the
+// same asset should be reusable across all of these surfaces." So this is a
+// registry, and every entry is the same four facts: what the print area is,
+// where the artwork sits on the mockup, how to render a blank one, and which
+// category it belongs to. Adding a surface is an entry here and nothing else —
+// no new pipeline, no new tool, no new approval path. createDesign, the tool
+// schema and the Studio UI all read from this.
+//
+// The print areas are real. Where a provider publishes a standard (DTG 12x16in
+// at 150dpi for apparel), that is what is used; where one does not, the
+// dimensions are the sensible print size for the item rather than a decorative
+// number. mockupArea placements are considered estimates — the owner sees the
+// composed result before anything is approved, which is what makes an estimate
+// safe here and would not make it safe in a print file.
+//
+// {color} is substituted at generation time. Colour is a real input; see
+// GARMENT_COLORS and createDesign's own verification of the rendered result.
+function apparel(key: string, label: string, item: string, area: Surface["mockupArea"]): Surface {
+  return {
+    key,
+    label,
+    kind: "product",
+    category: "apparel",
+    // 12in x 16in at 150dpi — the standard DTG print area.
+    output: { width: 1800, height: 2400 },
+    mockupArea: area,
+    basePrompt: `A plain {color} ${item} laid flat on a clean white background, front view, centered, the garment itself clearly and unmistakably {color}, no graphics, no text, no logo, even lighting, product photography.`,
+  };
+}
+
+function accessory(
+  key: string,
+  label: string,
+  category: string,
+  item: string,
+  output: { width: number; height: number },
+  area: Surface["mockupArea"]
+): Surface {
+  return {
+    key,
+    label,
+    kind: "product",
+    category,
+    output,
+    mockupArea: area,
+    basePrompt: `A plain {color} ${item} on a clean white background, centered, the item itself clearly and unmistakably {color}, no graphics, no text, no logo, even lighting, product photography.`,
+  };
+}
+
 export const SURFACES: Record<string, Surface> = {
-  "garment.tshirt": {
-    key: "garment.tshirt",
-    label: "T-shirt",
-    kind: "garment",
-    // 12in x 16in at 150dpi — the standard DTG print area. Real numbers, not
-    // decorative: this is what a fulfillment provider expects to receive.
-    output: { width: 1800, height: 2400 },
-    mockupArea: { x: 0.31, y: 0.26, width: 0.38, height: 0.34 },
-    basePrompt:
-      "A plain {color} t-shirt laid flat on a clean white background, front view, centered, the garment itself clearly and unmistakably {color}, no graphics, no text, no logo, even lighting, product photography.",
-  },
-  "garment.hoodie": {
-    key: "garment.hoodie",
-    label: "Hoodie",
-    kind: "garment",
-    output: { width: 1800, height: 2400 },
-    mockupArea: { x: 0.33, y: 0.32, width: 0.34, height: 0.3 },
-    basePrompt:
-      "A plain {color} pullover hoodie laid flat on a clean white background, front view, centered, the garment itself clearly and unmistakably {color}, no graphics, no text, no logo, even lighting, product photography.",
-  },
+  // Apparel
+  "garment.tshirt": apparel("garment.tshirt", "T-shirt", "t-shirt", { x: 0.31, y: 0.26, width: 0.38, height: 0.34 }),
+  "garment.hoodie": apparel("garment.hoodie", "Hoodie", "pullover hoodie", { x: 0.33, y: 0.32, width: 0.34, height: 0.3 }),
+  "garment.sweatshirt": apparel("garment.sweatshirt", "Sweatshirt", "crewneck sweatshirt", { x: 0.32, y: 0.29, width: 0.36, height: 0.32 }),
+  "garment.tank": apparel("garment.tank", "Tank top", "tank top", { x: 0.34, y: 0.25, width: 0.32, height: 0.34 }),
+  "garment.jacket": apparel("garment.jacket", "Jacket", "zip-up jacket", { x: 0.34, y: 0.3, width: 0.32, height: 0.28 }),
+
+  // Headwear — small print areas, because embroidery panels are small.
+  "headwear.cap": accessory("headwear.cap", "Cap", "headwear", "baseball cap", { width: 1200, height: 600 }, { x: 0.36, y: 0.4, width: 0.28, height: 0.2 }),
+  "headwear.beanie": accessory("headwear.beanie", "Beanie", "headwear", "knit beanie", { width: 1200, height: 600 }, { x: 0.37, y: 0.52, width: 0.26, height: 0.16 }),
+  "headwear.bucket": accessory("headwear.bucket", "Bucket hat", "headwear", "bucket hat", { width: 1200, height: 600 }, { x: 0.38, y: 0.46, width: 0.24, height: 0.16 }),
+
+  // Drinkware — wrap areas, so the artwork sits on the visible face.
+  "drinkware.mug": accessory("drinkware.mug", "Mug", "drinkware", "ceramic mug with the handle to the right", { width: 2250, height: 1125 }, { x: 0.34, y: 0.34, width: 0.3, height: 0.32 }),
+  "drinkware.tumbler": accessory("drinkware.tumbler", "Tumbler", "drinkware", "insulated tumbler", { width: 2000, height: 1400 }, { x: 0.38, y: 0.3, width: 0.24, height: 0.36 }),
+  "drinkware.bottle": accessory("drinkware.bottle", "Water bottle", "drinkware", "stainless steel water bottle", { width: 1800, height: 1400 }, { x: 0.4, y: 0.28, width: 0.2, height: 0.38 }),
+
+  // Accessories
+  "accessory.tote": accessory("accessory.tote", "Tote bag", "accessories", "canvas tote bag", { width: 1800, height: 1800 }, { x: 0.3, y: 0.3, width: 0.4, height: 0.36 }),
+  "accessory.phonecase": accessory("accessory.phonecase", "Phone case", "accessories", "phone case, back view", { width: 1200, height: 2400 }, { x: 0.3, y: 0.28, width: 0.4, height: 0.4 }),
+
+  // Home and print — the artwork is most of the product, so the areas are large.
+  "print.poster": accessory("print.poster", "Poster", "print", "blank framed poster on a wall", { width: 2400, height: 3200 }, { x: 0.22, y: 0.2, width: 0.56, height: 0.6 }),
+  "print.sticker": accessory("print.sticker", "Sticker", "print", "blank die-cut sticker", { width: 1500, height: 1500 }, { x: 0.2, y: 0.2, width: 0.6, height: 0.6 }),
 };
+
+/** Every product surface, grouped for the owner. */
+export function surfacesByCategory(): { key: string; label: string; surfaces: Surface[] }[] {
+  return SURFACE_CATEGORIES.map((c) => ({
+    ...c,
+    surfaces: Object.values(SURFACES).filter((sf) => sf.category === c.key),
+  })).filter((c) => c.surfaces.length > 0);
+}
+
+/** Keys the conversation is allowed to name. Derived, never hand-maintained. */
+export function productSurfaceKeys(): string[] {
+  return Object.values(SURFACES)
+    .filter((sf) => sf.kind === "product")
+    .map((sf) => sf.key);
+}
 
 // STOREFRONT SURFACES (2026-08-18). The other half of the surface idea, and
 // the reason `surface` was made a first-class input before any of this existed:
