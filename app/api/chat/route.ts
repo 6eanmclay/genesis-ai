@@ -33,6 +33,7 @@ import { createComposition, approveCompositionAsAsset } from "@/lib/design/compo
 import { evaluateStorefront } from "@/lib/storefront/evaluate";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { ApproveDesignAsProductInputSchema } from "@/lib/execution/genesisTools";
+import { TakeMeThereInputSchema } from "@/lib/execution/genesisTools";
 import { execute } from "@/lib/execution/engine";
 import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
 import { createDesign } from "@/lib/design/createDesign";
@@ -108,6 +109,11 @@ type StreamEvent =
   // 2026-08-08). Every other fallback (provider failure, unresolved
   // classification) omits it, preserving today's exact client behavior.
   | { type: "fallback"; reason?: "edit_store_content" }
+  // J4 taking the owner somewhere (2026-08-18). Emitted just before "done" so
+  // the reply is on screen before the move; the client pushes the route.
+  // Closed set of hrefs on the server side, so nothing the model invents can
+  // reach the router.
+  | { type: "navigate"; href: string }
   | { type: "error"; message: string };
 
 function encodeEvent(event: StreamEvent): Uint8Array {
@@ -1189,6 +1195,73 @@ export async function POST(request: Request) {
           emit({ type: "token", delta: reply.slice((conversationalReply || "").length) });
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: assetId ? "success" : "failure", likelyRephraseOf, kind: "approve_composition" });
+          controller.close();
+          return;
+        }
+
+        // J4 takes the owner there rather than telling them where it is
+        // (2026-08-18).
+        //
+        // Deliberately LAST among the doing-tools in this file's ordering
+        // sense: every capability that can perform the work has its own
+        // handler, and this one only runs when the right answer is a place.
+        // The tool description carries the rule that keeps it from swallowing
+        // ordinary questions — a question gets an answer, a decision gets a
+        // destination.
+        //
+        // The destination map is closed, so a hallucinated route cannot reach
+        // the router. `intent` rides along as a handoff, which is the same
+        // mechanism a Studio recommendation already uses: the screen arrives
+        // with the request ready instead of blank.
+        if (chosenTool?.name === "take_me_there") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "take_me_there" });
+          const parsedNav = TakeMeThereInputSchema.safeParse(chosenTool.input);
+          const DESTINATIONS: Record<string, { href: string; label: string }> = {
+            studio: { href: "/dashboard/studio", label: "Studio" },
+            "studio.upload": { href: "/dashboard/studio#bring-your-own", label: "Studio" },
+            storefront: { href: "/dashboard/website", label: "your storefront" },
+            commerce: { href: "/dashboard/orders", label: "Commerce" },
+            office: { href: "/dashboard/studio", label: "the Office" },
+            account: { href: "/dashboard/settings", label: "your account" },
+          };
+          const target = parsedNav.success ? DESTINATIONS[parsedNav.data.destination] : null;
+
+          if (!target) {
+            const reply = conversationalReply || "I'm not sure where you want to go. Tell me what you're trying to do and I'll take you there.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "take_me_there" });
+            controller.close();
+            return;
+          }
+
+          const reply =
+            conversationalReply ||
+            (parsedNav.success && parsedNav.data.intent
+              ? `Taking you to ${target.label} for that.`
+              : `Taking you to ${target.label}.`);
+
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "SUCCESS",
+            verified: false,
+            message: `Navigated to ${target.href}`,
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: {
+              destination: parsedNav.success ? parsedNav.data.destination : null,
+              intent: parsedNav.success ? parsedNav.data.intent : null,
+            },
+          });
+          emit({ type: "token", delta: reply.slice((conversationalReply || "").length) });
+          emit({ type: "navigate", href: target.href });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "take_me_there" });
           controller.close();
           return;
         }

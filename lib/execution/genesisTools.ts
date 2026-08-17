@@ -195,6 +195,29 @@ export const ApproveCompositionInputSchema = z.object({
 // Evaluating and improving the storefront (2026-08-18). No input: J4 reads the
 // real structural state itself rather than being told what to look at, which is
 // the whole point of it having an opinion.
+// Taking the owner somewhere (2026-08-18).
+//
+// Sean: "Do not make J4 simply respond with instructions like 'Go to Studio and
+// click...' when J4 can take the user there itself." And the rule that keeps it
+// from becoming a chatbot with links: "Don't make every question trigger
+// navigation." A question gets an answer; a decision gets a destination.
+//
+// Destinations are a closed list matching the real rooms, so a hallucinated
+// route can never reach the router.
+export const TakeMeThereInputSchema = z.object({
+  destination: z.enum([
+    "studio",
+    "studio.upload",
+    "storefront",
+    "commerce",
+    "office",
+    "account",
+  ]),
+  // What they want to do when they get there, in their own words. Carried
+  // through so the destination arrives ready rather than blank.
+  intent: z.string().nullable(),
+});
+
 const EMPTY_INPUT_SCHEMA = z.object({});
 
 // Hard J4 capability requirement (2026-08-08): once an upload succeeds,
@@ -295,7 +318,7 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
     {
       name: "create_design",
       description:
-        "Call this when the merchant asks you to put an existing asset of theirs — usually their logo — ONTO something physical: 'put my logo on a t-shirt', 'can you make a hoodie with our mark on it', 'let's see that on a shirt'. Pick surface from the supported list based on what they said. The catalogue covers apparel, headwear, drinkware, accessories and print, so match their words to the closest real surface rather than refusing. Set assetRole to 'brand.logo' when they mean their logo (which is almost always), or null if you genuinely cannot tell which asset they mean, in which case ask them in your reply. Set color whenever they name one ('a black hoodie', 'on white'), and null when they do not — do not pick a colour they did not ask for. This composes their REAL approved asset onto the surface and shows them a mockup for approval; it does not create a product to sell yet, and it never invents artwork. Do NOT call this to create the logo itself — that is generate_brand_logo.",
+        "Call this when the merchant asks you to MAKE THEM A PRODUCT, or to put an existing asset of theirs — usually their logo — onto something physical. Both are the same job: 'make me a hoodie', 'I want a mug', 'can you do a tote bag' mean their logo on that item unless they name something else, so act rather than asking which asset. Examples: 'put my logo on a t-shirt', 'can you make a hoodie with our mark on it', 'let's see that on a shirt'. Pick surface from the supported list based on what they said. The catalogue covers apparel, headwear, drinkware, accessories and print, so match their words to the closest real surface rather than refusing. Set assetRole to 'brand.logo' when they mean their logo (which is almost always), or null if you genuinely cannot tell which asset they mean, in which case ask them in your reply. Set color whenever they name one ('a black hoodie', 'on white'), and null when they do not — do not pick a colour they did not ask for. This composes their REAL approved asset onto the surface and shows them a mockup for approval; it does not create a product to sell yet, and it never invents artwork. Do NOT call this to create the logo itself — that is generate_brand_logo.",
       input_schema: z.toJSONSchema(CreateDesignInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
@@ -321,6 +344,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant asks how their store LOOKS overall, or asks you to improve it, or asks what you would change — 'how does my storefront look', 'can you make this better', 'what would you improve', 'make the store feel more premium', 'this looks plain'. You will be given a real structural read of their storefront: how many products have photography, what imagery they have that isn't product photos, whether anything is composed at the top, whether products could be grouped into collections. Use it to say what you would actually change and why, in your own words, and a proposed composition is generated for them to look at. Use refine_storefront instead when they name ONE specific part to adjust ('the hero feels cramped', 'the buttons are too round'); use this when the question is about the whole store or when they are asking for your judgement rather than a specific edit.",
       input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "take_me_there",
+      description:
+        "Call this when the merchant wants to GO somewhere or DO something that lives on a particular screen, and no other tool actually performs the work. A question phrased as 'how do I...' or 'where do I...' about reaching a screen or doing something on one is asking to BE TAKEN THERE, not asking for instructions — answering it with directions when you could simply take them is the failure this tool exists to prevent — 'how do I upload my logo', 'take me to my products', 'where do I change my website', 'I want to see my orders', 'how do I make a hoodie' (when they are asking where to start rather than asking you to make one). Pick destination: studio for creating anything visual, studio.upload when they want to bring their OWN file in, storefront for the website and brand presentation, commerce for products and orders, office for the conversation history and business record, account for settings and billing. Put what they actually want into intent, in their words, so the screen arrives ready. DO NOT call this when you can just do the thing — 'make me a logo', 'put it on a hoodie', 'make a collage' all have their own tools and should use them, because taking someone to a screen to do what you could have done yourself is worse than doing it. And DO NOT call this for a question about advice or reasoning: 'what makes a good hoodie design', 'why would I put my logo on a mug', 'what colours work best' all want an answer, not a trip. The line is what the question is ABOUT — a screen or a decision means take them, an opinion or an explanation means answer them.",
+      input_schema: z.toJSONSchema(TakeMeThereInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "refine_storefront",

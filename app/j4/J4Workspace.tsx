@@ -1323,6 +1323,7 @@ export function J4Workspace({
             | { type: "token"; delta: string }
             | { type: "done" }
             | { type: "fallback"; reason?: "edit_store_content" }
+            | { type: "navigate"; href: string }
             | { type: "error"; message: string };
 
           if (event.type === "padding") {
@@ -1389,6 +1390,13 @@ export function J4Workspace({
             // workaround. Every turn refreshes, not just ones that
             // happen to touch the store name, since any turn could.
             router.refresh();
+          } else if (event.type === "navigate") {
+            // J4 takes the owner there rather than telling them where it is.
+            // Pushed rather than replaced, so the back gesture still returns
+            // them to where they were — being moved somewhere is not the same
+            // as losing where you came from.
+            reportDiag(requestId, tStart, "client_navigate_event_received", { href: event.href });
+            router.push(event.href);
           } else if (event.type === "fallback") {
             sawFallback = true;
             fallbackReason = event.reason ?? null;
