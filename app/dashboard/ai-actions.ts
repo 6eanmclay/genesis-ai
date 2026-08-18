@@ -57,6 +57,7 @@ import {
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
 import { ASSET_ROLES, recordGeneratedAsset } from "@/lib/businessModel/assets";
@@ -2520,9 +2521,16 @@ async function applyGenesisMessageToStore(
     // recent decisions, and active thoughts the recommendation engine
     // already reasoned from — one J4, not a shallower one for conversation.
     const dataContextStartedAt = Date.now();
-    const [dataContext, understanding] = await Promise.all([
+    // GAP D RESOLVED (2026-08-18) — same as the streaming route. The owner's
+    // question drives an unbounded search of decisions they actually made, so a
+    // decision from any age is retrievable, ranked by relevance. Both paths get
+    // it, because "a chat answer and a recommendation draw on identical
+    // understanding" is the rule Gap B established and one path having deeper
+    // recall than the other would quietly break it again.
+    const [dataContext, understanding, pastDecisions] = await Promise.all([
       buildChatDataContext(store.id),
       getBusinessUnderstanding(store.id),
+      findRelevantDecisions(store.id, userMessage),
     ]);
     stageDurationsMs.dataContextFetch = Date.now() - dataContextStartedAt;
     const answerOutcome = await callGenesisModel({
@@ -2539,6 +2547,7 @@ async function applyGenesisMessageToStore(
               businessProfile: understanding.profile,
               beliefs: understanding.beliefs,
               recentDecisions: understanding.recentDecisions,
+              pastDecisionsRelevantToThisQuestion: pastDecisions,
               activeThoughts: understanding.activeThoughts,
               // Growth Points Economy — same real signal, same "context
               // only, never a gate" semantics as cognitiveLayer.ts's own

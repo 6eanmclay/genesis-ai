@@ -110,7 +110,7 @@ It doesn't need to plug in — it already is the platform's reasoning layer, and
 
 **Gap C — CLOSED, 2026-08-05, `lib/businessModel/understanding.ts`.** The store's own relationship with the platform — Growth Points balance, current `Plan`, subscription status, Business Partner trial state — is real (the Growth Points economy's pricing froze 2026-08-05, a day after v1 of this document) and is now part of `BusinessUnderstanding`: a new `platformRelationship` field (`planId`/`planName`/`growthPointBalance`/`subscriptionStatus`/`businessPartnerTrialEndsAt`), assembled in the same `Promise.all` as the other four categories, zero new schema (every field already existed on `Store`). `cognitiveLayer.ts`'s and `ai-actions.ts`'s own ad hoc `store.growthPointBalance` fetches are both replaced with this field — the duplication is gone, closed the same way Gap A closed it for facts/beliefs. Verified live against a real store: a temporarily-patched plan/balance/subscription/trial state (reverted after) round-tripped through `getBusinessUnderstanding()` exactly.
 
-**Gap D — STILL OPEN, re-verified 2026-08-18** (`getRecentDecisionOutcomes` still defaults to `days = 14`, confirmed in `lib/businessModel/reasoning.ts`). Found 2026-08-05, corrects an overstated claim. `J4_IDENTITY.md`'s "relationship continuity" principle uses the example *"we ruled this out six months ago because…"* and states this is *"a real, existing fact this system can already answer, not a new capability to build."* That overstates it. `getRecentDecisionOutcomes` — the function that would answer this — defaults to a **14-day window** (§1 above). `getEntityHistory` can pull a specific record's full unbounded timeline, but only if the caller already knows which record; recalling a past *decision by topic*, months back, isn't something `BusinessUnderstanding` supports today. Long-term *pattern* memory (`Belief`) is real and genuinely unbounded — a belief that solidified from evidence six months ago stays real today. Long-term *specific decision* recall is not. `J4_IDENTITY.md` has been corrected to reflect this distinction.
+**Gap D — CLOSED 2026-08-18, `lib/businessModel/reasoning.ts`.** Sean's decision, and it was the open product question rather than an implementation default: specific-decision recall is **topic and context searchable, not windowed**. `findRelevantDecisions(storeId, query)` reads every decided proposal with no date filter, scores it against the owner's own words across summary, rationale, action type, target and topic key, and ranks by relevance with a small recency nudge (up to +0.1, halving about every three months) so a highly relevant decision from a year ago still outranks a barely relevant one from yesterday. Two measurements shaped it: `topicKey` is set on only 5 of 37 decided requests on the real store, so relevance had to come from the summary text rather than the key; and a genuinely irrelevant question returns nothing rather than the newest decision dressed up as an answer. `getRecentDecisionOutcomes` is unchanged and still windowed at 14 days, because "what has been settled lately" and "did we decide about X" are different questions and both are correct. Both conversational paths supply the search, so Gap B's rule holds. Verified end to end with a decision aged 210 days: the window could not see it, the search ranked it first, and J4 answered with the owner's own reasoning. Superseded note, kept for the record: this was re-verified as still open earlier the same day (`getRecentDecisionOutcomes` still defaults to `days = 14`, confirmed in `lib/businessModel/reasoning.ts`). Found 2026-08-05, corrects an overstated claim. `J4_IDENTITY.md`'s "relationship continuity" principle uses the example *"we ruled this out six months ago because…"* and states this is *"a real, existing fact this system can already answer, not a new capability to build."* That overstates it. `getRecentDecisionOutcomes` — the function that would answer this — defaults to a **14-day window** (§1 above). `getEntityHistory` can pull a specific record's full unbounded timeline, but only if the caller already knows which record; recalling a past *decision by topic*, months back, isn't something `BusinessUnderstanding` supports today. Long-term *pattern* memory (`Belief`) is real and genuinely unbounded — a belief that solidified from evidence six months ago stays real today. Long-term *specific decision* recall is not. `J4_IDENTITY.md` has been corrected to reflect this distinction.
 
 ## Coverage gaps — real, named, deliberately not architectural
 
@@ -146,6 +146,45 @@ Checked against the code rather than trusted, because this document was written 
 **Still open, and still Sean's call.** Gap D. The window is verifiably 14 days. The question this document asked in August is unchanged and unanswered: how far back should specific-decision memory reach, and should it be a wider fixed window or a topic-searchable lookup rather than a window at all? Recorded as pending a decision rather than resolved by an implementation default, which is the discipline every other real number in this project has followed.
 
 **Coverage gaps 2, 3 and 4 are unchanged** — profitability blocked on a real accounting connection, inventory on a product decision, and unstructured facts inside asset summaries still not promoted to structured memory. None is an architecture flaw.
+
+## The remaining coverage gaps, as of 2026-08-18
+
+Gaps A through D are closed. What is left is coverage, not architecture — data this
+foundation would carry today if it existed. Listed in the order they would become
+useful, with what each is genuinely blocked on.
+
+**1. Beliefs are empty on real stores.** Measured, not assumed: Cubit & Coil has
+0 beliefs against 44 assets, 15 offerings and 37 decisions. `getBeliefs` reads
+them and `distillBeliefs` writes them, but nothing has ever run the write on a
+real store. So J4 currently understands facts and decisions and has learned no
+patterns. This is the largest honest gap in "what J4 understands", it is not
+architectural, and it is the first thing the Business Intelligence Engine will
+need — a scheduled or triggered distillation pass. Named here rather than fixed,
+because scheduling is that milestone's own work.
+
+**2. Profitability.** Revenue is real and live; cost is not. `Transaction.type:
+"expense"` exists and nothing internal writes one. Blocked on a real accounting
+connection carrying real data, which is an integration verification question, not
+a model question.
+
+**3. Inventory.** `Item.quantityAvailable` exists and nothing populates it. A
+real product decision about owner-controlled data, already named in
+`ARCHITECTURE.md` and `J4_IDENTITY.md`.
+
+**4. Unstructured facts inside asset summaries do not become structured memory.**
+If an uploaded lease says it expires in December, that is a sentence in
+`Asset.summary` and not a date J4 holds anywhere it can act on later. J4 can tell
+you what a document says when asked; it cannot resurface an obligation buried in
+one. Real `lib/businessAssets/` work.
+
+**5. Social understanding is modelled but unpopulated.** `socialAccount` carries
+the full shape — content, reach, engagement, demographics, `unavailableMetrics` —
+and the interpretation path is verified against a synthetic record. No account is
+connected, so the category is empty on every real store. Blocked on credentials
+and platform app review, not on anything here.
+
+None of these is a flaw in how understanding is assembled, represented, or
+delivered to its consumers. Every one is an absence of data.
 
 ## What this document deliberately does not do
 

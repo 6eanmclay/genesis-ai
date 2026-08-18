@@ -13,6 +13,7 @@ import { GENESIS_ACTIONS } from "@/lib/execution/genesisActions";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
@@ -508,9 +509,21 @@ export async function POST(request: Request) {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "look_up_business_data" });
           emit({ type: "status", text: "Reviewing your storefront…" });
           diagLog(requestId, turnStartedAt, "status_reviewing_emitted");
-          const [dataContext, understanding] = await Promise.all([
+          // GAP D RESOLVED (2026-08-18). The owner's own question drives an
+          // unbounded search of decisions they actually made, so "did we ever
+          // decide about renaming the shop" reaches a decision from any age
+          // rather than only the 14-day window `recentDecisions` carries.
+          //
+          // Both are supplied because they answer different questions:
+          // recentDecisions is "what has been settled lately", pastDecisions is
+          // "what bears on what you just asked". An empty pastDecisions is a
+          // real answer — nothing on record matches — and is better than
+          // handing the model the newest decision and letting it improvise a
+          // connection.
+          const [dataContext, understanding, pastDecisions] = await Promise.all([
             buildChatDataContext(store.id),
             getBusinessUnderstanding(store.id),
+            findRelevantDecisions(store.id, userMessage),
           ]);
           diagLog(requestId, turnStartedAt, "data_context_fetched");
           // Real bug found live (2026-08-07) — this call previously used
@@ -543,6 +556,11 @@ export async function POST(request: Request) {
                       businessProfile: understanding.profile,
                       beliefs: understanding.beliefs,
                       recentDecisions: understanding.recentDecisions,
+                      // Searchable, any age, ranked by relevance to the
+                      // question. ageDays is included so J4 can say "you ruled
+                      // that out about seven months ago" rather than reciting a
+                      // date the owner has to do arithmetic on.
+                      pastDecisionsRelevantToThisQuestion: pastDecisions,
                       activeThoughts: understanding.activeThoughts,
                       growthPointBalance: understanding.platformRelationship.growthPointBalance,
                       growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),

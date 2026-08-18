@@ -301,6 +301,147 @@ export interface RecentDecisionOutcome {
 // existed to bound a PATTERN-detection read; a plain "what happened
 // recently" read doesn't need that same defense, just an honest bound on
 // what "recently" means.
+// GAP D, RESOLVED 2026-08-18 — specific-decision recall is searchable, not
+// windowed.
+//
+// Sean's decision: "specific decision recall should be topic/context-searchable
+// rather than constrained by a fixed time window... Keep recency as a ranking
+// signal, not a hard cutoff." J4_IDENTITY.md's continuity promise uses "we ruled
+// this out six months ago", and until now that was overstated: the only
+// store-wide decision read was getRecentDecisionOutcomes, which is windowed at
+// 14 days by design.
+//
+// This does NOT replace that function. The two answer different questions and
+// both are correct:
+//
+//   getRecentDecisionOutcomes  — "what has the owner decided lately", a
+//                                deliberately bounded read that feeds
+//                                recommendations so they do not re-propose
+//                                something just settled.
+//   findRelevantDecisions      — "did we decide about X", unbounded in time,
+//                                ranked by how well it matches the question.
+//
+// RELEVANCE COMES FROM THE SUMMARY, NOT topicKey. Measured on the real store:
+// topicKey is set on 5 of 37 decided requests. A search keyed on it would miss
+// six sevenths of the history, so every text field the decision carries is
+// searched and topicKey is treated as a strong signal when present rather than
+// as the index.
+//
+// RECENCY IS A NUDGE, NOT A FILTER. The boost is deliberately small relative to
+// the relevance range, so a highly relevant decision from a year ago still
+// outranks a barely relevant one from yesterday. That is the whole point of the
+// change: an older, genuinely relevant decision must stay retrievable.
+
+export interface RelevantDecision {
+  id: string;
+  topicKey: string | null;
+  actionType: string;
+  decision: "executed" | "rejected";
+  decidedAt: string;
+  /** How long ago, so J4 can say "six months ago" rather than a bare date. */
+  ageDays: number;
+  summary: string;
+  rationale: string | null;
+  /** 0-1. Why this decision was returned for this question. */
+  relevance: number;
+}
+
+// Words too common to indicate a match. Deliberately small: this is not trying
+// to be a language model, only to stop "the" and "we" scoring a decision.
+const DECISION_STOPWORDS = new Set([
+  "the", "a", "an", "and", "or", "but", "for", "with", "to", "of", "in", "on",
+  "we", "i", "you", "my", "our", "it", "that", "this", "did", "do", "does",
+  "was", "were", "is", "are", "be", "been", "about", "why", "what", "when",
+  "how", "ago", "back", "again", "decide", "decided", "decision", "ever",
+]);
+
+function tokenise(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !DECISION_STOPWORDS.has(w));
+}
+
+/**
+ * Finds decisions the owner actually made that bear on a question, at any age.
+ *
+ * `query` is the owner's own words. Returns the best matches ranked by
+ * relevance with a small recency nudge, or an empty array when nothing genuinely
+ * matches — an empty answer is better than the newest decision dressed up as an
+ * answer to a question it has nothing to do with.
+ */
+export async function findRelevantDecisions(
+  storeId: string,
+  query: string,
+  opts: { limit?: number; minRelevance?: number } = {}
+): Promise<RelevantDecision[]> {
+  const limit = opts.limit ?? 5;
+  const minRelevance = opts.minRelevance ?? 0.12;
+  const queryTokens = tokenise(query);
+  if (queryTokens.length === 0) return [];
+
+  // No date filter — that is the resolution of Gap D. The row cap is a safety
+  // bound for a store with years of history, not a recency window: rows come
+  // newest-first, so the cap can only ever drop the very oldest decisions of a
+  // store with more than this many, and it is stated rather than hidden.
+  const HISTORY_CAP = 1000;
+  const decided = await prisma.approvalRequest.findMany({
+    where: { storeId, status: { in: ["EXECUTED", "REJECTED"] } },
+    orderBy: { decidedAt: "desc" },
+    take: HISTORY_CAP,
+    select: {
+      id: true, topicKey: true, actionType: true, target: true, status: true,
+      decidedAt: true, summary: true, rationale: true,
+    },
+  });
+
+  const now = Date.now();
+  const scored: RelevantDecision[] = [];
+
+  for (const row of decided) {
+    if (!row.decidedAt) continue;
+    const haystack = tokenise(
+      [row.summary, row.rationale ?? "", row.actionType.replace(/_/g, " "), row.target ?? "", row.topicKey ?? ""].join(" ")
+    );
+    if (haystack.length === 0) continue;
+    const haystackSet = new Set(haystack);
+
+    let hits = 0;
+    for (const token of queryTokens) {
+      if (haystackSet.has(token)) { hits += 1; continue; }
+      // Partial credit for a stem match, so "bracelets" finds "bracelet".
+      if (haystack.some((h) => h.startsWith(token) || token.startsWith(h))) hits += 0.5;
+    }
+    const overlap = hits / queryTokens.length;
+    // topicKey matching outright is the strongest signal the record offers,
+    // when it happens to be set.
+    const topicBonus = row.topicKey && queryTokens.some((t) => row.topicKey!.toLowerCase().includes(t)) ? 0.25 : 0;
+    const relevance = Math.min(1, overlap + topicBonus);
+    if (relevance < minRelevance) continue;
+
+    const ageDays = Math.max(0, Math.round((now - row.decidedAt.getTime()) / 86_400_000));
+    // Up to +0.1, halving roughly every three months. Small on purpose: it
+    // breaks ties between comparable matches and cannot promote a weak match
+    // over a strong old one.
+    const recencyNudge = 0.1 / (1 + ageDays / 90);
+
+    scored.push({
+      id: row.id,
+      topicKey: row.topicKey,
+      actionType: row.actionType,
+      decision: row.status === "EXECUTED" ? "executed" : "rejected",
+      decidedAt: row.decidedAt.toISOString().slice(0, 10),
+      ageDays,
+      summary: row.summary,
+      rationale: row.rationale,
+      relevance: Math.round((relevance + recencyNudge) * 100) / 100,
+    });
+  }
+
+  return scored.sort((a, b) => b.relevance - a.relevance).slice(0, limit);
+}
+
 export async function getRecentDecisionOutcomes(
   storeId: string,
   days = 14
