@@ -23,6 +23,8 @@ And a fourth: **what J4 has already said** — active recommendations, explanati
 
 **A fifth category is real as of 2026-08-05 but not yet part of Business Understanding**: the store's own relationship with the platform itself — Growth Points balance, current `Plan`, subscription status, Business Partner trial state. This is a genuinely different axis from the four above — not a fact about the owner's *business*, a fact about the owner's *relationship with Genesis* — but it's real, it exists in the schema today, and at least one already-frozen principle (`J4_IDENTITY.md`'s "J4 is a trusted advisor") depends on J4 being able to see it. See **Gap C** below.
 
+**And a sixth, real as of 2026-08-16 and part of Business Understanding from the start: what J4 can point at.** `currentAssets` — the asset currently holding each role, keyed by role. This is the difference between J4 knowing a logo *exists* and being able to *use* it. Before it, the only real answer to "what is the brand logo" was `Store.logoUrl`: a column that renders and cannot be referred to, versioned, or handed to a design step. Now `resolveCurrentAsset(storeId, "brand.logo")` returns a record with an id, an origin, and a supersession chain, which is what makes "put **that** logo on a hoodie" a resolvable sentence rather than a guess. Deliberately part of `getBusinessUnderstanding` rather than a separate lookup, for the reason stated at the top of `understanding.ts`: there is one answer to "what does J4 know", and what J4 can point at belongs in it.
+
 ## 2. How that knowledge is represented
 
 - **`BusinessRecord`** — one generic, polymorphic table for every real business entity (contact, item, transaction, goal, challenge, employee, location, appointment, campaign, document, asset — see §3 for what each is and where it comes from). Genesis's own internal data (orders, products) is computed live into this same shape on every read, never duplicated into the table.
@@ -36,7 +38,7 @@ And a fourth: **what J4 has already said** — active recommendations, explanati
 
 Business Assets (`lib/businessAssets/`) is what prompted this section, but the questions it answers were already true of the whole foundation — Business Assets is just the first place they all had to be answered precisely at once.
 
-**What entities J4 can currently understand.** `ENTITY_REGISTRY` (`lib/businessModel/entities.ts`) names eleven real types, each with its own Zod schema. Verified against every real write site in the codebase, not assumed from the type list alone — `contact` in particular turned out to be a real hybrid, corrected below:
+**What entities J4 can currently understand.** `ENTITY_REGISTRY` (`lib/businessModel/entities.ts`) names **thirteen** real types as of 2026-08-18 (`design` and `socialAccount` joined after this section was written), each with its own Zod schema. Verified against every real write site in the codebase, not assumed from the type list alone — `contact` in particular turned out to be a real hybrid, corrected below:
 
 - `item`, `transaction` — **always derived, never canonical.** Computed live from this store's own `Product`/`Order` rows on every read (`lib/businessModel/internalMapper.ts`), never persisted as their own `BusinessRecord`. `sourceProvider: "internal"`, no exceptions.
 - `contact` — **a real hybrid, split by row, not by type.** A customer contact is derived live from `Order.buyerEmail` (`internalMapper.ts`, `sourceProvider: "internal"`) — the exact same "computed, never persisted" status as `item`/`transaction`. A supplier/vendor contact is canonical instead: written by a real connector sync (QuickBooks) or, as of Business Assets M5, a confident upload discovery (`sourceProvider: "genesis_upload"`). Chat itself has no direct new-contact capture today — verified: `factCapture.ts`'s `BusinessFactSchema` covers goal/challenge/employee/location only, not contact.
@@ -67,6 +69,22 @@ This ask/link/create shape isn't new to Business Assets — it's the same shape 
 
 Explicitly deferred, named not forgotten (`lib/businessAssets/`'s own M1 plan): real video upload (the pipeline above is exactly what it plugs into once built); re-triggering classification from a clarifying-question reply; "legal"/"marketing" as first-class entity types (assets in these categories stay real and searchable without one — see the canonical-vs-derived framing above for why forcing a mapping that doesn't exist would be worse); tuning `CONFIDENCE_THRESHOLD` from real usage data.
 
+### 3a. The two entities added since, and the designation layer (2026-08-18)
+
+Recorded here because a foundation document that does not match the registry is worse than no document: a future session reads this to learn what exists.
+
+**`socialAccount`** — canonical, connector-synced (Facebook, Instagram, TikTok). One row per connected account, carrying follower counts, engagement rate, audience demographics, recent daily metrics, and `topContent` with per-post reach/likes/comments/shares. It also carries `unavailableMetrics`: the field names a platform genuinely does not expose for that account, set explicitly by the connector that knows why, never inferred from a null. That distinction is the difference between "TikTok does not report reach" and "reach is zero", and it is the reason J4 can be honest about the shape of its own knowledge. **No account is connected yet** — see `SOCIAL_CONNECTIONS_SETUP.md` for the credentials and app-review work that gates it.
+
+**`design`** — canonical, produced by `lib/design/createDesign.ts`. A design is `asset(s) + surface + arrangement`, and the record carries `assetIds`, the surface key, the arrangement, and the two outputs it produced (print file and mockup). `assetIds` is an array and follows the `xxxIds` convention, so `findRelated` traverses design-to-asset with no changes — a product made in Studio can answer where its artwork came from by walking real records rather than by convention.
+
+**Roles and supersession, on `asset`.** An asset now carries `role` (what it is FOR, as against `category`, what it IS), `origin` (`uploaded` / `generated` / `backfilled`), two-way supersession, and generation provenance. This is what makes assets referenceable rather than merely stored:
+
+- **Roles are open strings**, same discipline as every other categorical field here. `brand.logo`, `product.photo`, `storefront.hero`, `surface.garment.tshirt` are conventions, not an enum, and a new role is a new string at a call site.
+- **Supersession links both ways.** A new logo takes the role; the previous holder points forward. So "the current logo" is a real query — holds the role, not superseded — rather than "whatever is newest", and "what did it look like before" still has an answer.
+- **The distinction that matters to the storefront**: something a customer can buy is a `Product`; something that makes the store look better is an asset with a `storefront.*` role. Different objects, different approval paths, and J4 has to know which it just made.
+
+**What this does NOT add.** No new Prisma model — `BusinessRecord` was already generic, so both entities and the whole designation layer are Zod plus one module, exactly as §2 promised. Every consumer of `getBusinessProfile()` / `getBusinessUnderstanding()` sees all of it automatically.
+
 ## 4. How new information updates that understanding over time
 
 - Every real thing that happens — a sync, an order, a chat-captured fact, a decision — lands on the `BusinessEvent` log. Consumers each track their own independent read position (`BusinessEventCursor`), so adding a new consumer of this history never requires replaying or coordinating with existing ones.
@@ -92,7 +110,7 @@ It doesn't need to plug in — it already is the platform's reasoning layer, and
 
 **Gap C — CLOSED, 2026-08-05, `lib/businessModel/understanding.ts`.** The store's own relationship with the platform — Growth Points balance, current `Plan`, subscription status, Business Partner trial state — is real (the Growth Points economy's pricing froze 2026-08-05, a day after v1 of this document) and is now part of `BusinessUnderstanding`: a new `platformRelationship` field (`planId`/`planName`/`growthPointBalance`/`subscriptionStatus`/`businessPartnerTrialEndsAt`), assembled in the same `Promise.all` as the other four categories, zero new schema (every field already existed on `Store`). `cognitiveLayer.ts`'s and `ai-actions.ts`'s own ad hoc `store.growthPointBalance` fetches are both replaced with this field — the duplication is gone, closed the same way Gap A closed it for facts/beliefs. Verified live against a real store: a temporarily-patched plan/balance/subscription/trial state (reverted after) round-tripped through `getBusinessUnderstanding()` exactly.
 
-**Gap D — OPEN, found 2026-08-05, corrects an overstated claim.** `J4_IDENTITY.md`'s "relationship continuity" principle uses the example *"we ruled this out six months ago because…"* and states this is *"a real, existing fact this system can already answer, not a new capability to build."* That overstates it. `getRecentDecisionOutcomes` — the function that would answer this — defaults to a **14-day window** (§1 above). `getEntityHistory` can pull a specific record's full unbounded timeline, but only if the caller already knows which record; recalling a past *decision by topic*, months back, isn't something `BusinessUnderstanding` supports today. Long-term *pattern* memory (`Belief`) is real and genuinely unbounded — a belief that solidified from evidence six months ago stays real today. Long-term *specific decision* recall is not. `J4_IDENTITY.md` has been corrected to reflect this distinction.
+**Gap D — STILL OPEN, re-verified 2026-08-18** (`getRecentDecisionOutcomes` still defaults to `days = 14`, confirmed in `lib/businessModel/reasoning.ts`). Found 2026-08-05, corrects an overstated claim. `J4_IDENTITY.md`'s "relationship continuity" principle uses the example *"we ruled this out six months ago because…"* and states this is *"a real, existing fact this system can already answer, not a new capability to build."* That overstates it. `getRecentDecisionOutcomes` — the function that would answer this — defaults to a **14-day window** (§1 above). `getEntityHistory` can pull a specific record's full unbounded timeline, but only if the caller already knows which record; recalling a past *decision by topic*, months back, isn't something `BusinessUnderstanding` supports today. Long-term *pattern* memory (`Belief`) is real and genuinely unbounded — a belief that solidified from evidence six months ago stays real today. Long-term *specific decision* recall is not. `J4_IDENTITY.md` has been corrected to reflect this distinction.
 
 ## Coverage gaps — real, named, deliberately not architectural
 
@@ -116,6 +134,18 @@ Explicitly *not* in scope: Tier 4 of the Business Intelligence Engine roadmap (S
 **Business Assets (§3) is real, shipped, and verified live** (M1-M5, `9ee8e9e` and earlier) — not a gap closure, a genuine expansion of how Business Understanding grows. It doesn't introduce a fifth gap: every consumer of `getBusinessProfile()`/`getBusinessUnderstanding()` sees uploaded knowledge automatically, by construction, not by a new integration each of them separately needed.
 
 **A first-person self-review (2026-08-06) confirmed the foundation is architecturally solid** — nothing surfaced a flaw in how understanding is assembled, represented, or reaches its consumers. What it surfaced is real coverage, not architecture — see the four items above, carried forward as named future roadmap work, not blockers.
+
+## Re-verification, 2026-08-18
+
+Checked against the code rather than trusted, because this document was written on 2026-08-06 and the milestone that reopened it is "establish what J4 fundamentally understands".
+
+**Still true.** Gap A closed: `getBusinessUnderstanding` is real and assembles facts, beliefs, recent decisions, active thoughts, platform relationship and current assets. Gap B closed: both conversational paths route through it (`app/dashboard/ai-actions.ts:2525`, `app/api/chat/route.ts:513`), so a chat answer and a recommendation still draw on identical understanding. Gap C closed: `platformRelationship` is present.
+
+**Was out of date, now corrected above.** The registry had grown from eleven types to thirteen, and the entire asset designation layer — roles, supersession, `currentAssets` — existed in code and appeared nowhere in this document. For a document whose job is to state what J4 knows, that was the real defect found by this pass, not a missing capability.
+
+**Still open, and still Sean's call.** Gap D. The window is verifiably 14 days. The question this document asked in August is unchanged and unanswered: how far back should specific-decision memory reach, and should it be a wider fixed window or a topic-searchable lookup rather than a window at all? Recorded as pending a decision rather than resolved by an implementation default, which is the discipline every other real number in this project has followed.
+
+**Coverage gaps 2, 3 and 4 are unchanged** — profitability blocked on a real accounting connection, inventory on a product decision, and unstructured facts inside asset summaries still not promoted to structured memory. None is an architecture flaw.
 
 ## What this document deliberately does not do
 

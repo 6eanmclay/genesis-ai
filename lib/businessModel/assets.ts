@@ -115,6 +115,15 @@ export async function currentAssetsByRole(storeId: string): Promise<Record<strin
     if (!parsed.success) continue;
     const { role, supersededByAssetId } = parsed.data;
     if (!role || supersededByAssetId) continue;
+    // SCAFFOLDING IS NOT BUSINESS KNOWLEDGE (2026-08-18, found auditing the
+    // J4 Foundation). `surface.*` roles are the blank product bases the
+    // compositor generates and caches — a plain grey hoodie, an empty mug.
+    // They were appearing in currentAssets beside the real brand logo, which
+    // meant J4's own account of what it can point at listed six blank garments
+    // as assets of the business. The composition layer needs them; the
+    // understanding layer does not, and evaluateStorefront and
+    // resolveCompositionAssets already exclude them for the same reason.
+    if (role.startsWith("surface.")) continue;
     if (current[role]) continue; // newest wins; rows are already desc
     const asset = toDesignatedAsset(row);
     if (asset) current[role] = asset;
