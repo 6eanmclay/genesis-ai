@@ -8,7 +8,21 @@ import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials } from "./credentials";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+// Phase 1 — lazy, not module-scope.
+//
+// This used to be constructed at import time, so merely importing the connector
+// registry threw without STRIPE_SECRET_KEY — which made the framework's own
+// test suite need a placeholder key to load a module it never calls. A getter
+// costs nothing and keeps importing the registry free of side effects.
+let stripeClient: Stripe | null = null;
+function platformStripe(): Stripe {
+  if (!stripeClient) {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) throw new Error("STRIPE_SECRET_KEY is not configured");
+    stripeClient = new Stripe(key);
+  }
+  return stripeClient;
+}
 
 export type StripeCredentials = {
   schemaVersion: 1;
@@ -24,13 +38,37 @@ export const stripeConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.PAYMENTS_MANAGE,
   capabilities: {
     authKind: "oauth",
-    // Stripe's own coarse Connect scope. read_write grants charge, refund and
-    // payout ability on the connected account, which is broader than anything
-    // Genesis does — Phase 1 narrows this and documents what is truly needed.
+    // PHASE 1 CORRECTION. Phase 0 recorded read_write as broader than Genesis
+    // needs and said Phase 1 would narrow it. That was wrong, and tracing the
+    // code is what showed it: app/store/[slug]/actions.ts builds the storefront
+    // checkout by calling checkout.sessions.create with the MERCHANT'S OWN
+    // access token, on their account. That is a genuine write, it is how every
+    // real sale happens, and read_only would break checkout outright.
+    //
+    // So the scope stays, and what it is for is stated instead of implied.
     scopes: ["read_write"],
     reads: [],
-    writes: ["read_write grants charge/refund/payout on the connected account (Phase 1 narrows this)"],
+    writes: [
+      "creates Checkout Sessions on the connected account — this is how a customer pays the merchant",
+    ],
   },
+
+  // PHASE 1 DECISION, RECORDED: NO SYNC REQUIRED.
+  //
+  // Deliberately absent, not forgotten. Stripe payment data already enters
+  // Genesis through the canonical path: a completed checkout writes a real
+  // Order (app/api/webhooks/stripe), and internalMapper maps every Order into a
+  // canonical `transaction` on read. A Stripe sync() mapping charges to
+  // `transaction` would therefore produce a SECOND record of the same money,
+  // under a different externalId, and M5/M7 profitability reads exactly those
+  // records — inflating revenue in the intelligence layer we just shipped.
+  //
+  // What Genesis genuinely lacks from Stripe is payout and dispute state, and
+  // neither has a canonical entity today. That is a real future capability with
+  // a real design question attached, not something to smuggle in as a sync.
+  //
+  // The absence of `sync` here is the answer, and syncExecutable already
+  // reports "Stripe has nothing to sync" rather than failing.
 
   async connect(storeId, userId, params) {
     const clientId = process.env.STRIPE_CONNECT_CLIENT_ID;
@@ -43,7 +81,7 @@ export const stripeConnector: IntegrationConnector = {
     // Second call of the round-trip: the callback route hands us the OAuth
     // code it received from Stripe.
     if (params?.code) {
-      const token = await stripe.oauth.token({
+      const token = await platformStripe().oauth.token({
         grant_type: "authorization_code",
         code: params.code,
       });
@@ -89,7 +127,7 @@ export const stripeConnector: IntegrationConnector = {
 
     // First call: send the merchant to Stripe's own hosted OAuth flow.
     const baseUrl = await getBaseUrl();
-    const url = stripe.oauth.authorizeUrl({
+    const url = platformStripe().oauth.authorizeUrl({
       client_id: clientId,
       response_type: "code",
       scope: "read_write",
@@ -109,14 +147,34 @@ export const stripeConnector: IntegrationConnector = {
     }
 
     try {
-      const account = await stripe.accounts.retrieve(integration.externalAccountId);
+      const account = await platformStripe().accounts.retrieve(integration.externalAccountId);
       const ok = account.charges_enabled === true;
+
+      // Phase 1 — "connected" is not the same as "the money reaches you".
+      //
+      // charges_enabled answers "can a customer pay?". payouts_enabled answers
+      // "does that money ever land in the owner's bank?". An account can have
+      // the first without the second — Stripe holds the funds pending
+      // verification — and an owner selling happily into a blocked payout is
+      // exactly the sort of thing a business partner should say out loud.
+      //
+      // Deliberately does NOT flip ok to false: they genuinely can sell, and
+      // reporting a working checkout as broken would be its own lie. It is
+      // recorded as the integration's current issue instead.
+      const payoutsBlocked = ok && account.payouts_enabled !== true;
+      const payoutNote =
+        "Stripe can accept payments, but payouts to your bank are not enabled yet — money will sit in Stripe until its requirements are met.";
+
       await prisma.storeIntegration.update({
         where: { id: integration.id, storeId },
         data: {
           status: ok ? "CONNECTED" : "NEEDS_ATTENTION",
           lastVerifiedAt: new Date(),
-          lastError: ok ? null : "Charges are not yet enabled on this Stripe account",
+          lastError: !ok
+            ? "Charges are not yet enabled on this Stripe account"
+            : payoutsBlocked
+              ? payoutNote
+              : null,
         },
       });
       return ok ? { ok: true } : { ok: false, error: "Charges are not yet enabled on this Stripe account" };
@@ -139,7 +197,7 @@ export const stripeConnector: IntegrationConnector = {
     const clientId = process.env.STRIPE_CONNECT_CLIENT_ID;
     if (clientId && integration.externalAccountId) {
       try {
-        await stripe.oauth.deauthorize({
+        await platformStripe().oauth.deauthorize({
           client_id: clientId,
           stripe_user_id: integration.externalAccountId,
         });

@@ -8,11 +8,10 @@ import {
 import { toStatusView } from "@/lib/integrations/types";
 import type { IntegrationProvider } from "@prisma/client";
 
-// lib/integrations/stripe.ts constructs its Stripe client at MODULE SCOPE, so
-// merely importing the registry demands a key. Noted rather than worked around
-// silently — it is a Phase 1 item, and a placeholder here keeps this suite
-// self-contained without pretending the smell isn't there.
-process.env.STRIPE_SECRET_KEY ||= "sk_test_placeholder_for_framework_tests";
+// PHASE 1 removed the placeholder that used to be needed here: stripe.ts built
+// its client at module scope, so importing the registry threw without a key.
+// It is lazy now, and this suite importing the registry with NO Stripe key set
+// is the proof — if that regresses, this file stops running.
 
 // Phase 0 — the integration framework's security and contract tests.
 // No database, no environment, no network:
@@ -188,7 +187,8 @@ console.log("\n6. status() never carries credentials");
 // ---------------------------------------------------------------------------
 console.log("\n7. Every connector declares what it can do");
 async function connectorSections() {
-  // Dynamic so the placeholder key above is in place before stripe.ts runs.
+  // Dynamic import kept for section ordering, not for env setup — see the note
+  // at the top of this file about stripe.ts no longer needing a key to load.
   const { getConnector } = await import("@/lib/integrations/registry");
 
   const providers: IntegrationProvider[] = [
