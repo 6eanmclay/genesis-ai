@@ -27,6 +27,91 @@ export type ConnectResult =
   // an OAuth exchange once the provider's callback has round-tripped).
   | { kind: "connected" };
 
+// Phase 0 — what a connection is allowed to do, declared rather than implied.
+//
+// Sean's requirement: "explicit scopes/permissions and a clear definition of
+// exactly what Genesis can read/write." Before this, the only way to answer
+// that was to read each connector's authorize URL. Now every connector states
+// it, so the answer is data — quotable to the owner on a consent screen, and
+// checkable in a test.
+export interface IntegrationCapabilities {
+  /**
+   * OAuth wherever the provider offers it. "api_key" is a real, allowed
+   * exception — EasyPost genuinely issues keys and has no OAuth — but it must
+   * be justified rather than chosen for convenience.
+   */
+  authKind: "oauth" | "api_key";
+  /** Required when authKind is "api_key": why OAuth is not an option here. */
+  apiKeyExceptionReason?: string;
+  /** The exact scopes requested at the provider. Empty for api_key connectors. */
+  scopes: string[];
+  /** Canonical entity types this connector's sync() produces. */
+  reads: EntityType[];
+  /**
+   * What Genesis can CHANGE at the provider, in plain words. Empty means
+   * read-only, which is the default posture and true of most connectors.
+   */
+  writes: string[];
+}
+
+// Phase 0 — status() never returns credentials.
+//
+// The old signature returned the raw StoreIntegration row, encrypted
+// credentials blob included. It had no callers, so nothing leaked; this makes
+// that safety structural rather than lucky.
+export interface IntegrationStatusView {
+  provider: IntegrationProvider;
+  status: StoreIntegration["status"];
+  externalAccountId: string | null;
+  connectedAt: Date | null;
+  lastVerifiedAt: Date | null;
+  lastSyncedAt: Date | null;
+  lastError: string | null;
+  syncFailureCount: number;
+}
+
+/** Strips a StoreIntegration row down to what is safe to hand out. */
+export function toStatusView(row: StoreIntegration | null): IntegrationStatusView | null {
+  if (!row) return null;
+  return {
+    provider: row.provider,
+    status: row.status,
+    externalAccountId: row.externalAccountId,
+    connectedAt: row.connectedAt,
+    lastVerifiedAt: row.lastVerifiedAt,
+    lastSyncedAt: row.lastSyncedAt,
+    lastError: row.lastError,
+    syncFailureCount: row.syncFailureCount,
+  };
+}
+
+// Phase 0 — the webhook contract.
+//
+// Signature verification existed for Stripe, hand-built in its own route,
+// outside this interface entirely. A connector that supports webhooks now
+// declares how to verify one, so the generic route can refuse an unsigned or
+// forged delivery before any handler sees it.
+//
+// IDEMPOTENCY IS BY CONSTRUCTION, not by a dedupe table: handlers write through
+// persistSyncedRecords, whose @@unique([storeId, entityType, sourceProvider,
+// externalId]) makes a replayed delivery an update in place rather than a
+// duplicate.
+export interface WebhookVerification {
+  ok: boolean;
+  /** The provider's own event id, for logging and replay reasoning. */
+  eventId?: string;
+  /** Provider account id, used to resolve which store this delivery belongs to. */
+  externalAccountId?: string;
+  error?: string;
+}
+
+export interface IntegrationWebhooks {
+  /** Verifies signature and shape. Must not throw on a hostile payload. */
+  verify(rawBody: string, headers: Headers): Promise<WebhookVerification> | WebhookVerification;
+  /** Applies a verified delivery. Only ever called after verify() returns ok. */
+  handle(storeId: string, rawBody: string): Promise<void>;
+}
+
 // Every integration (Stripe today; PayPal, Google, Slack, USPS later)
 // implements this same contract — see lib/integrations/stripe.ts for the
 // reference implementation and lib/integrations/registry.ts for lookup.
@@ -34,6 +119,8 @@ export interface IntegrationConnector {
   provider: IntegrationProvider;
   displayName: string;
   requiredPermission: Permission;
+  /** Declared, not implied — see IntegrationCapabilities. */
+  capabilities: IntegrationCapabilities;
 
   // Called once with no params to kick off a connection; called again with
   // whatever params that step produced (an OAuth `code`, a submitted API
@@ -51,7 +138,24 @@ export interface IntegrationConnector {
 
   disconnect(storeId: string): Promise<void>;
 
-  status(storeId: string): Promise<StoreIntegration | null>;
+  status(storeId: string): Promise<IntegrationStatusView | null>;
+
+  // Phase 0 — the refresh contract.
+  //
+  // QuickBooks, Google Calendar and Printful each hand-rolled token refresh and
+  // Meta does its own long-lived exchange, with nothing on this interface
+  // saying so. A connector whose tokens expire implements this; the sync
+  // adapter calls it before reading, so an expired token is renewed rather than
+  // surfacing as a mysterious sync failure.
+  //
+  // Optional because it is genuinely not universal: a Stripe Connect access
+  // token does not expire, and an API-key connector has nothing to refresh.
+  // Saying "not applicable" by omission is honest; a no-op implementation
+  // everywhere would hide which connectors really need it.
+  refresh?(storeId: string): Promise<void>;
+
+  /** Present only for providers that actually deliver webhooks. */
+  webhooks?: IntegrationWebhooks;
 
   // Optional — not every connector produces business data (a future
   // notification-only integration might not). When present, fetches this

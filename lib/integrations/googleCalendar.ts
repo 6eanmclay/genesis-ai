@@ -1,7 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import { beginOAuthHandoff } from "./oauthState";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
+import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import type { Appointment } from "@/lib/businessModel/entities";
@@ -59,6 +61,12 @@ export const googleCalendarConnector: IntegrationConnector = {
   provider: "GOOGLE_CALENDAR",
   displayName: "Google Calendar",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  capabilities: {
+    authKind: "oauth",
+    scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
+    reads: ["appointment"],
+    writes: [],
+  },
 
   async connect(storeId, userId, params) {
     const clientId = process.env.GOOGLE_CALENDAR_CLIENT_ID;
@@ -133,7 +141,7 @@ export const googleCalendarConnector: IntegrationConnector = {
     url.searchParams.set("scope", SCOPE);
     url.searchParams.set("access_type", "offline");
     url.searchParams.set("prompt", "consent");
-    url.searchParams.set("state", storeId);
+    url.searchParams.set("state", await beginOAuthHandoff({ storeId, userId, provider: "GOOGLE_CALENDAR", executionId: params?.executionId }));
 
     return { kind: "redirect", url: url.toString() } satisfies ConnectResult;
   },
@@ -188,9 +196,12 @@ export const googleCalendarConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "GOOGLE_CALENDAR" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "GOOGLE_CALENDAR" } },
+      })
+    );
   },
 
   // The Foundation's mapping contract, made real for the first time. Maps

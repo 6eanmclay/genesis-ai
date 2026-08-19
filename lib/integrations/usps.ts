@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector } from "./types";
+import { toStatusView } from "./types";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 
 // Priority 2 (shipping, 2026-08-09) — "USPS/shipping integration so a paid
@@ -41,6 +42,17 @@ export const uspsConnector: IntegrationConnector = {
   provider: "USPS",
   displayName: "USPS Shipping",
   requiredPermission: PERMISSIONS.ORDERS_MANAGE,
+  capabilities: {
+    // A LEGITIMATE EXCEPTION, per Sean's rule. The real provider is EasyPost,
+    // which issues API keys and offers no OAuth flow for this use. Forcing an
+    // OAuth shape here would be inventing one the provider does not have.
+    authKind: "api_key",
+    apiKeyExceptionReason:
+      "EasyPost (the actual provider behind this connector) authenticates with an account API key and offers no OAuth authorization flow.",
+    scopes: [],
+    reads: [],
+    writes: ["purchases shipping labels, which spends the merchant's real money"],
+  },
 
   async connect(storeId, userId, params) {
     if (params?.apiKey) {
@@ -126,8 +138,11 @@ export const uspsConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "USPS" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "USPS" } },
+      })
+    );
   },
 };

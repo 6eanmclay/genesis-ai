@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector } from "./types";
+import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 
@@ -144,6 +145,12 @@ export const printfulConnector: IntegrationConnector = {
   provider: "PRINTFUL",
   displayName: "Printful",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  capabilities: {
+    authKind: "oauth",
+    scopes: [],
+    reads: [],
+    writes: ["submits fulfillment orders on the merchant's behalf"],
+  },
 
   async connect(storeId, userId, params) {
     if (params?.code) {
@@ -228,9 +235,12 @@ export const printfulConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "PRINTFUL" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "PRINTFUL" } },
+      })
+    );
   },
 
   // Deliberately no sync() — Printful isn't a source of the store's own

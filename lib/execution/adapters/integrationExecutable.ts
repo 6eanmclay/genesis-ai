@@ -56,7 +56,15 @@ export function connectExecutable(
           `integration.${connector.provider.toLowerCase()}.connect`),
     requiredPermission: connector.requiredPermission,
     async run(input, ctx) {
-      const result = await connector.connect(ctx.storeId, ctx.userId!, input.params);
+      // Phase 0 — the connector needs to sign this attempt's own id into the
+      // OAuth `state`, so the callback can close exactly this ExecutionLog row
+      // instead of guessing at the most recent PENDING one. Passed through
+      // params rather than by widening connect()'s signature across ten
+      // connectors that mostly don't care.
+      const result = await connector.connect(ctx.storeId, ctx.userId!, {
+        ...input.params,
+        ...(ctx.executionId ? { executionId: ctx.executionId } : {}),
+      });
       if (result.kind === "redirect") {
         return { message: `Redirecting to ${connector.displayName}`, redirectUrl: result.url };
       }
@@ -123,6 +131,15 @@ export function syncExecutable(
       `integration.${connector.provider.toLowerCase()}.sync`,
     requiredPermission: connector.requiredPermission,
     async run(_input, ctx) {
+      // Phase 0 — renew before reading. QuickBooks, Google Calendar and
+      // Printful all expire tokens and each hand-rolled its own refresh with
+      // nothing on the interface saying so; a connector that forgot simply
+      // failed at sync time looking like a provider outage. Failures here are
+      // deliberately not swallowed: a token that cannot be renewed IS the sync
+      // failure, and reporting it honestly beats an empty successful sync.
+      if (connector.refresh) {
+        await connector.refresh(ctx.storeId);
+      }
       if (!connector.sync) {
         return {
           message: `${connector.displayName} has nothing to sync`,

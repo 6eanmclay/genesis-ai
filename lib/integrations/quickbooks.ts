@@ -1,7 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import { beginOAuthHandoff } from "./oauthState";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
+import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import type { Document, Transaction } from "@/lib/businessModel/entities";
@@ -68,6 +70,12 @@ export const quickbooksConnector: IntegrationConnector = {
   provider: "QUICKBOOKS",
   displayName: "QuickBooks Online",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  capabilities: {
+    authKind: "oauth",
+    scopes: ["com.intuit.quickbooks.accounting"],
+    reads: ["transaction", "document"],
+    writes: [],
+  },
 
   async connect(storeId, userId, params) {
     const clientId = process.env.QUICKBOOKS_CLIENT_ID;
@@ -151,7 +159,7 @@ export const quickbooksConnector: IntegrationConnector = {
     url.searchParams.set("redirect_uri", integrationCallbackUrl(baseUrl, "QUICKBOOKS"));
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", SCOPE);
-    url.searchParams.set("state", storeId);
+    url.searchParams.set("state", await beginOAuthHandoff({ storeId, userId, provider: "QUICKBOOKS", executionId: params?.executionId }));
 
     return { kind: "redirect", url: url.toString() } satisfies ConnectResult;
   },
@@ -203,9 +211,12 @@ export const quickbooksConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "QUICKBOOKS" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "QUICKBOOKS" } },
+      })
+    );
   },
 
   // Maps recent Invoices -> Document and Payments -> Transaction, proving

@@ -1,7 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import { beginOAuthHandoff } from "./oauthState";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
+import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import {
@@ -42,6 +44,12 @@ export const facebookConnector: IntegrationConnector = {
   provider: "FACEBOOK",
   displayName: "Facebook Page",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  capabilities: {
+    authKind: "oauth",
+    scopes: ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_manage_insights"],
+    reads: ["socialAccount"],
+    writes: [],
+  },
 
   async connect(storeId, userId, params) {
     const { clientId, clientSecret } = metaClientCredentials();
@@ -110,7 +118,7 @@ export const facebookConnector: IntegrationConnector = {
     url.searchParams.set("redirect_uri", integrationCallbackUrl(baseUrl, "FACEBOOK"));
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", META_SCOPES);
-    url.searchParams.set("state", storeId);
+    url.searchParams.set("state", await beginOAuthHandoff({ storeId, userId, provider: "FACEBOOK", executionId: params?.executionId }));
 
     return { kind: "redirect", url: url.toString() } satisfies ConnectResult;
   },
@@ -155,9 +163,12 @@ export const facebookConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "FACEBOOK" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "FACEBOOK" } },
+      })
+    );
   },
 
   // Real Page-level metrics only — "store that metric as unavailable

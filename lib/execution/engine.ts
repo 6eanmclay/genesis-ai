@@ -122,9 +122,9 @@ export async function execute<TInput, TMetadata>(
           "Delegated authority is missing, revoked, or does not match this action"
         );
       }
-      ctx = { storeId: grant.storeId, userId: null, actorType };
+      ctx = { storeId: grant.storeId, userId: null, actorType, executionId };
     } else if (opts.systemStoreId) {
-      ctx = { storeId: opts.systemStoreId, userId: null, actorType: "SYSTEM" };
+      ctx = { storeId: opts.systemStoreId, userId: null, actorType: "SYSTEM", executionId };
     } else if (opts.authorityExemptAction) {
       const def = GENESIS_ACTIONS[opts.authorityExemptAction.actionType];
       if (!def || def.executable !== executable || !def.authorityExempt) {
@@ -132,18 +132,18 @@ export async function execute<TInput, TMetadata>(
           `"${opts.authorityExemptAction.actionType}" is not registered as authority-exempt`
         );
       }
-      ctx = { storeId: opts.authorityExemptAction.storeId, userId: null, actorType: "GENESIS" };
+      ctx = { storeId: opts.authorityExemptAction.storeId, userId: null, actorType: "GENESIS", executionId };
     } else if (executable.requiredPermission) {
       const { userId, storeId } = await requireStorePermission(
         executable.requiredPermission,
         opts.storeId
       );
-      ctx = { storeId, userId, actorType };
+      ctx = { storeId, userId, actorType, executionId };
     } else {
       if (!opts.storeId) {
         throw new Error("storeId is required when requiredPermission is null");
       }
-      ctx = { storeId: opts.storeId, userId: null, actorType: "SYSTEM" };
+      ctx = { storeId: opts.storeId, userId: null, actorType: "SYSTEM", executionId };
     }
   } catch (error) {
     // requireStorePermission's own redirect("/login") throws a special

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
+import { toStatusView } from "./types";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import type { Campaign } from "@/lib/businessModel/entities";
 
@@ -47,6 +48,17 @@ export const mailchimpConnector: IntegrationConnector = {
   provider: "MAILCHIMP",
   displayName: "Mailchimp",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  capabilities: {
+    // FLAGGED BY PHASE 0: Mailchimp does support OAuth2, so this API-key form
+    // is an exception that has not earned itself. Recorded here honestly
+    // rather than silently blessed — a candidate to convert.
+    authKind: "api_key",
+    apiKeyExceptionReason:
+      "Currently collects an API key, though Mailchimp supports OAuth2 — flagged for conversion rather than justified.",
+    scopes: [],
+    reads: ["campaign"],
+    writes: [],
+  },
 
   async connect(storeId, userId, params) {
     // Second call: the merchant submitted their API key.
@@ -134,9 +146,12 @@ export const mailchimpConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "MAILCHIMP" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "MAILCHIMP" } },
+      })
+    );
   },
 
   // Maps recent campaigns -> Campaign. Metrics (opens/clicks) need a

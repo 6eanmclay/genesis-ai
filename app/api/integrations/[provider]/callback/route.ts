@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { unstable_rethrow } from "next/navigation";
 import { auth } from "@/auth";
+import { completeOAuthHandoff, oauthStateFailureMessage } from "@/lib/integrations/oauthState";
 import { getConnectorByName } from "@/lib/integrations/registry";
 import { prisma } from "@/lib/prisma";
 import { execute } from "@/lib/execution/engine";
@@ -25,7 +26,7 @@ export async function GET(
 ) {
   const { provider } = await params;
   const searchParams = request.nextUrl.searchParams;
-  const storeId = searchParams.get("state");
+  const state = searchParams.get("state");
   const code = searchParams.get("code");
   const oauthError = searchParams.get("error");
   // QuickBooks' own callback includes realmId (its company id) alongside
@@ -45,6 +46,27 @@ export async function GET(
     request.url
   );
 
+  // Phase 0 — `state` is now a signed, single-use, session-bound, expiring
+  // token rather than the storeId in plain sight. The storeId comes OUT of it
+  // only after the signature, nonce cookie, provider, expiry and session user
+  // all check out, so a crafted callback cannot bind a provider account to a
+  // store this server never started a flow for.
+  const session = await auth();
+  const verified = await completeOAuthHandoff({
+    state,
+    provider,
+    sessionUserId: session?.user?.id,
+  });
+  const storeId = verified.ok ? verified.payload.storeId : null;
+  const handoffExecutionId = verified.ok && verified.payload.executionId ? verified.payload.executionId : null;
+
+  if (!verified.ok && state) {
+    // A rejected state is worth its own console signal — it is either a real
+    // expiry (common, harmless) or someone probing the callback (rare, worth
+    // knowing). No store is named, because we do not trust the one supplied.
+    console.warn(`[integrations/${provider}/callback] rejected state: ${verified.reason}`);
+  }
+
   if (oauthError || !storeId || !code) {
     // Without this, a cancelled or expired OAuth handoff leaves the PENDING
     // ExecutionLog row `connectStripe()` wrote before redirecting here
@@ -57,10 +79,12 @@ export async function GET(
       try {
         const connector = getConnectorByName(provider);
         const action = connectExecutable(connector).action;
-        const pending = await prisma.executionLog.findFirst({
-          where: { storeId, action, status: "PENDING" },
-          orderBy: { createdAt: "desc" },
-        });
+        const pending = handoffExecutionId
+          ? { executionId: handoffExecutionId }
+          : await prisma.executionLog.findFirst({
+              where: { storeId, action, status: "PENDING" },
+              orderBy: { createdAt: "desc" },
+            });
         await recordExecution({
           executionId: pending?.executionId ?? randomUUID(),
           action,
@@ -69,7 +93,9 @@ export async function GET(
           message: oauthError
             ? (OAUTH_ERROR_MESSAGES[oauthError] ??
                 `${connector.displayName} couldn't complete the connection (${oauthError}).`)
-            : "The connection link was invalid or had expired. Please try again.",
+            : !verified.ok
+              ? oauthStateFailureMessage(verified.reason)
+              : "The connection link was invalid or had expired. Please try again.",
           retryable: true,
           actorType: "USER",
           actorId: null,
@@ -88,7 +114,6 @@ export async function GET(
     return NextResponse.redirect(redirectUrl);
   }
 
-  const session = await auth();
   if (!session?.user) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
@@ -97,16 +122,20 @@ export async function GET(
     const connector = getConnectorByName(provider);
     const executable = connectExecutable(connector);
 
-    // Best-effort linkage: reuse the executionId of the PENDING row this
-    // OAuth handoff started from (written when the "Connect" button first
-    // redirected here), so both rows describe one logical request. Not done
-    // by encoding executionId into Stripe's own `state` param — that would
-    // mean touching PH-02's already-verified, real-money-tested authorize
-    // URL logic, more risk than this grouping convenience is worth.
-    const pending = await prisma.executionLog.findFirst({
-      where: { storeId, action: executable.action, status: "PENDING" },
-      orderBy: { createdAt: "desc" },
-    });
+    // Phase 0 — EXACT linkage, not a guess.
+    //
+    // This used to take "the most recent PENDING row for this action", which is
+    // wrong the moment a merchant retries: each callback closed the newest row
+    // and orphaned the rest. One real store had accumulated 18 of them. The
+    // executionId now travels inside the signed state, so this closes the
+    // attempt it actually belongs to. The fallback keeps older in-flight
+    // handoffs (minted before this deploy) working rather than stranding them.
+    const pending = handoffExecutionId
+      ? { executionId: handoffExecutionId }
+      : await prisma.executionLog.findFirst({
+          where: { storeId, action: executable.action, status: "PENDING" },
+          orderBy: { createdAt: "desc" },
+        });
 
     // Permission is re-verified here (inside execute(), via
     // requireStorePermission), not just at the button that started the

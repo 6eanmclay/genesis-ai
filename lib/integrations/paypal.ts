@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector } from "./types";
+import { toStatusView } from "./types";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 
 export type PaypalEnvironment = "sandbox" | "live";
@@ -61,6 +62,17 @@ export const paypalConnector: IntegrationConnector = {
   provider: "PAYPAL",
   displayName: "PayPal",
   requiredPermission: PERMISSIONS.PAYMENTS_MANAGE,
+  capabilities: {
+    // Merchant-supplied client id/secret exchanged for a client_credentials
+    // token. Not an OAuth handoff, and documented as such rather than dressed
+    // up as one.
+    authKind: "api_key",
+    apiKeyExceptionReason:
+      "PayPal REST is used with the merchant's own app credentials (client_credentials); no per-merchant OAuth handoff is implemented.",
+    scopes: [],
+    reads: [],
+    writes: ["captures checkout payments"],
+  },
 
   async connect(storeId, userId, params) {
     // Second call: the merchant submitted their credentials.
@@ -164,8 +176,11 @@ export const paypalConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "PAYPAL" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "PAYPAL" } },
+      })
+    );
   },
 };

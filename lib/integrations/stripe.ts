@@ -1,8 +1,10 @@
 import Stripe from "stripe";
+import { beginOAuthHandoff } from "./oauthState";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector } from "./types";
+import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials } from "./credentials";
 
@@ -20,6 +22,15 @@ export const stripeConnector: IntegrationConnector = {
   provider: "STRIPE",
   displayName: "Stripe",
   requiredPermission: PERMISSIONS.PAYMENTS_MANAGE,
+  capabilities: {
+    authKind: "oauth",
+    // Stripe's own coarse Connect scope. read_write grants charge, refund and
+    // payout ability on the connected account, which is broader than anything
+    // Genesis does — Phase 1 narrows this and documents what is truly needed.
+    scopes: ["read_write"],
+    reads: [],
+    writes: ["read_write grants charge/refund/payout on the connected account (Phase 1 narrows this)"],
+  },
 
   async connect(storeId, userId, params) {
     const clientId = process.env.STRIPE_CONNECT_CLIENT_ID;
@@ -83,7 +94,7 @@ export const stripeConnector: IntegrationConnector = {
       response_type: "code",
       scope: "read_write",
       redirect_uri: integrationCallbackUrl(baseUrl, "STRIPE"),
-      state: storeId,
+      state: await beginOAuthHandoff({ storeId, userId, provider: "STRIPE", executionId: params?.executionId }),
     });
 
     return { kind: "redirect", url } satisfies ConnectResult;
@@ -148,8 +159,11 @@ export const stripeConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "STRIPE" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "STRIPE" } },
+      })
+    );
   },
 };

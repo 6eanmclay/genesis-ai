@@ -5,6 +5,17 @@ export interface ExecutionContext {
   storeId: string;
   userId: string | null;
   actorType: ActorType;
+  // Phase 0 (integrations) — the id of the ExecutionLog row this run writes.
+  // An OAuth connector signs it into the `state` it hands the provider, so the
+  // callback closes ITS OWN attempt instead of guessing at "the most recent
+  // PENDING row for this action" — the guess that left 18 orphaned rows on one
+  // real store. Additive and read-only; nothing existing consults it.
+  //
+  // Optional deliberately: execute() always sets it, but several existing
+  // verification scripts construct a context by hand and have no execution to
+  // name. Requiring it would have forced edits across five unrelated files to
+  // satisfy the compiler rather than to fix anything.
+  executionId?: string;
 }
 
 // The thing an individual action implements — analogous to

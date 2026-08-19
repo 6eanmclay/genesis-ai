@@ -1,7 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import { beginOAuthHandoff } from "./oauthState";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
+import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import type { SocialAccount } from "@/lib/businessModel/entities";
@@ -86,6 +88,12 @@ export const tiktokConnector: IntegrationConnector = {
   provider: "TIKTOK",
   displayName: "TikTok",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  capabilities: {
+    authKind: "oauth",
+    scopes: ["user.info.basic", "user.info.stats", "video.list"],
+    reads: ["socialAccount"],
+    writes: [],
+  },
 
   async connect(storeId, userId, params) {
     const { clientKey, clientSecret } = tiktokClientCredentials();
@@ -154,7 +162,7 @@ export const tiktokConnector: IntegrationConnector = {
     url.searchParams.set("redirect_uri", integrationCallbackUrl(baseUrl, "TIKTOK"));
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", TIKTOK_SCOPES);
-    url.searchParams.set("state", storeId);
+    url.searchParams.set("state", await beginOAuthHandoff({ storeId, userId, provider: "TIKTOK", executionId: params?.executionId }));
 
     return { kind: "redirect", url: url.toString() } satisfies ConnectResult;
   },
@@ -197,9 +205,12 @@ export const tiktokConnector: IntegrationConnector = {
   },
 
   async status(storeId) {
-    return prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "TIKTOK" } },
-    });
+    // Phase 0 — never returns the credentials blob.
+    return toStatusView(
+      await prisma.storeIntegration.findUnique({
+        where: { storeId_provider: { storeId, provider: "TIKTOK" } },
+      })
+    );
   },
 
   async sync(storeId) {
