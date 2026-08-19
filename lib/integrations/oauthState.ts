@@ -27,8 +27,22 @@ import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 // achieved by clearing the cookie, and a cookie is already per-browser, which
 // is exactly the binding this needs.
 
-/** How long a connection handoff may stay open. */
-export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+/**
+ * How long a connection handoff may stay open.
+ *
+ * SIXTY MINUTES, RAISED FROM TEN (2026-08-19) after a real failure in
+ * production. The ten-minute window assumed a merchant walks straight through a
+ * consent screen. They don't: Stripe puts account onboarding and verification
+ * requirements INSIDE that same handoff, and a merchant filling in business
+ * details, bank details and identity documents is legitimately gone far longer
+ * than ten minutes. The callback then came back to a state that had already
+ * expired, and Genesis rejected its own valid connection.
+ *
+ * Only the window changes. The state is still signed, still single-use, still
+ * session-bound, still expiring — an hour is short enough that a leaked link is
+ * useless well before anyone could find it, and long enough for real onboarding.
+ */
+export const OAUTH_STATE_TTL_MS = 60 * 60 * 1000;
 
 /** The httpOnly cookie holding this flow's nonce. */
 export const OAUTH_STATE_COOKIE = "genesis_oauth_state";

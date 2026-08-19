@@ -32,6 +32,61 @@ export type StripeCredentials = {
   livemode: boolean;
 };
 
+
+/**
+ * What actually went wrong, instead of "retried 2 times".
+ *
+ * stripe-node's StripeConnectionError says "An error occurred with our
+ * connection to Stripe. Request was retried 2 times." and nothing else — no
+ * status, because the request never got a response. The real cause is one level
+ * down in `cause` (ECONNRESET, ETIMEDOUT, ENOTFOUND...), and it was being
+ * discarded before it could reach the ExecutionLog. That left a production
+ * failure diagnosable only by guessing from the outside.
+ *
+ * Everything here is drawn from the error object itself. Nothing is invented,
+ * and when there is genuinely no more detail the original message is returned
+ * unchanged rather than padded out.
+ */
+function describeStripeError(error: unknown, stage: string): Error {
+  if (!(error instanceof Error)) {
+    return new Error(`Stripe ${stage} failed: ${String(error)}`);
+  }
+
+  const e = error as Error & {
+    type?: string;
+    code?: string;
+    statusCode?: number;
+    requestId?: string;
+    cause?: unknown;
+  };
+
+  const parts: string[] = [];
+  if (e.type) parts.push(e.type);
+  if (typeof e.statusCode === "number") parts.push(`HTTP ${e.statusCode}`);
+  if (e.code) parts.push(`code=${e.code}`);
+
+  // The Node-level reason a connection error actually happened.
+  const cause = e.cause as { code?: string; message?: string; errno?: number } | undefined;
+  if (cause?.code) parts.push(`cause=${cause.code}`);
+  else if (cause?.message) parts.push(`cause=${cause.message.slice(0, 80)}`);
+  if (e.requestId) parts.push(`request=${e.requestId}`);
+
+  const detail = parts.length > 0 ? ` [${parts.join(" ")}]` : "";
+  const described = new Error(`Stripe ${stage} failed: ${e.message}${detail}`);
+
+  // Also to the platform log, where the full object survives truncation.
+  console.error(`[integrations/stripe] ${stage} failed`, {
+    type: e.type,
+    code: e.code,
+    statusCode: e.statusCode,
+    requestId: e.requestId,
+    causeCode: cause?.code,
+    message: e.message,
+  });
+
+  return described;
+}
+
 export const stripeConnector: IntegrationConnector = {
   provider: "STRIPE",
   displayName: "Stripe",
@@ -81,10 +136,17 @@ export const stripeConnector: IntegrationConnector = {
     // Second call of the round-trip: the callback route hands us the OAuth
     // code it received from Stripe.
     if (params?.code) {
-      const token = await platformStripe().oauth.token({
-        grant_type: "authorization_code",
-        code: params.code,
-      });
+      let token;
+      try {
+        token = await platformStripe().oauth.token({
+          grant_type: "authorization_code",
+          code: params.code,
+        });
+      } catch (error) {
+        // The exact failure, not "retried 2 times" — this is the step that has
+        // been failing in production since 2026-08-12.
+        throw describeStripeError(error, "OAuth token exchange");
+      }
 
       if (!token.stripe_user_id || !token.access_token) {
         throw new Error("Stripe didn't return a connected account");
@@ -147,7 +209,12 @@ export const stripeConnector: IntegrationConnector = {
     }
 
     try {
-      const account = await platformStripe().accounts.retrieve(integration.externalAccountId);
+      let account;
+      try {
+        account = await platformStripe().accounts.retrieve(integration.externalAccountId);
+      } catch (error) {
+        throw describeStripeError(error, "account retrieval");
+      }
       const ok = account.charges_enabled === true;
 
       // Phase 1 — "connected" is not the same as "the money reaches you".
