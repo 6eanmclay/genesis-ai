@@ -1,6 +1,7 @@
 "use server";
 
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { deriveTopicKey } from "@/lib/intelligence/topicKeys";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { redirect, unstable_rethrow } from "next/navigation";
@@ -58,6 +59,7 @@ import { RecoverableError, toActionState, type ActionState } from "@/lib/actionS
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
+import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
 import { ASSET_ROLES, recordGeneratedAsset } from "@/lib/businessModel/assets";
@@ -2527,10 +2529,14 @@ async function applyGenesisMessageToStore(
     // it, because "a chat answer and a recommendation draw on identical
     // understanding" is the rule Gap B established and one path having deeper
     // recall than the other would quietly break it again.
-    const [dataContext, understanding, pastDecisions] = await Promise.all([
+    const [dataContext, understanding, pastDecisions, pastStatements] = await Promise.all([
       buildChatDataContext(store.id),
       getBusinessUnderstanding(store.id),
       findRelevantDecisions(store.id, userMessage),
+      // M9 — same recall on this path too, for the same reason the line above
+      // exists: one path having deeper memory than the other would break Gap
+      // B's rule that chat and recommendations draw on identical understanding.
+      findRelevantMessages(store.id, userMessage),
     ]);
     stageDurationsMs.dataContextFetch = Date.now() - dataContextStartedAt;
     const answerOutcome = await callGenesisModel({
@@ -2548,6 +2554,7 @@ async function applyGenesisMessageToStore(
               beliefs: understanding.beliefs,
               recentDecisions: understanding.recentDecisions,
               pastDecisionsRelevantToThisQuestion: pastDecisions,
+              pastStatementsByTheOwnerRelevantToThisQuestion: pastStatements,
               activeThoughts: understanding.activeThoughts,
               // Growth Points Economy — same real signal, same "context
               // only, never a gate" semantics as cognitiveLayer.ts's own
@@ -2895,6 +2902,10 @@ async function applyGenesisMessageToStore(
             storeId: store.id,
             recommendationId: null,
             actionType: "update_product_image",
+            // M2 — the same canonical derivation the backfill uses, so a decision made in
+            // conversation enters the belief system identically to one made last January.
+            // Null where no honest name exists.
+            topicKey: deriveTopicKey("update_product_image", null),
             input: {
               productId: product.id,
               imageUrl: candidate,
@@ -3037,6 +3048,10 @@ async function applyGenesisMessageToStore(
           storeId: store.id,
           recommendationId: null,
           actionType: "delete_product",
+          // M2 — the same canonical derivation the backfill uses, so a decision made in
+          // conversation enters the belief system identically to one made last January.
+          // Null where no honest name exists.
+          topicKey: deriveTopicKey("delete_product", null),
           input: { productId: product.id, name: product.name },
           previousValues: { productId: product.id, name: product.name },
           summary: `Remove "${product.name}" — this permanently deletes it`,
@@ -3173,6 +3188,10 @@ async function applyGenesisMessageToStore(
           storeId: store.id,
           recommendationId: null,
           actionType: "update_product",
+          // M2 — the same canonical derivation the backfill uses, so a decision made in
+          // conversation enters the belief system identically to one made last January.
+          // Null where no honest name exists.
+          topicKey: deriveTopicKey("update_product", { productId: product.id, ...changedFields }),
           input: { productId: product.id, ...changedFields },
           previousValues,
           summary: suggestion?.reasoning ? `${product.name}: ${suggestion.reasoning}` : `Update "${product.name}"`,
@@ -3722,17 +3741,18 @@ async function applyGenesisMessageToStore(
           // per-field precision this function's current structure doesn't
           // cheaply support.
           aiUsageEventId: primaryAiUsageEventId,
-          // Phase 5 — deliberately left null, not fabricated. topicKey means
-          // the stable identity of a real underlying business issue/
-          // opportunity — chat proposals are owner-directed instructions
-          // ("make my hero mention free shipping," "make my website blue"),
-          // not Genesis-identified findings, and today's chat flow has no
-          // reliable way to tell "this request carries a real business-issue
-          // identity" apart from "this is just a direct instruction" without
-          // either a second Claude call or heuristic classification. An
-          // honest null here is correct; see the Phase 5 plan for the full
-          // reasoning (memory: project_architecture_pivot_audit.md).
-          topicKey: null,
+          // Phase 5 left this deliberately null, because telling "a real business
+          // issue" apart from "a direct instruction" needed either a second Claude
+          // call or heuristic classification, and an honest null beat a guess.
+          //
+          // M2 (2026-08-18) SUPERSEDES THAT, and on the same terms it set. This is
+          // neither a model call nor a heuristic: deriveTopicKey reads only
+          // actionType and the already-validated input, and returns null wherever no
+          // honest name exists. What changed is not the standard — it is that the
+          // key no longer has to carry "is this a real finding?". Learning is gated
+          // separately now (proposalOrigin.ts): a chat proposal can be recalled and
+          // grouped, but only a proposal J4 volunteered can teach J4 a preference.
+          topicKey: deriveTopicKey(actionType, parsedInput.data),
         },
       });
 
@@ -4095,6 +4115,10 @@ async function uploadBusinessAssetFromChatTurn(formData: FormData) {
         storeId: store.id,
         recommendationId: null,
         actionType: "create_product",
+        // M2 — the same canonical derivation the backfill uses, so a decision made in
+        // conversation enters the belief system identically to one made last January.
+        // Null where no honest name exists.
+        topicKey: deriveTopicKey("create_product", null),
         input: { name: proposal.name, description: proposal.description, priceInCents: proposal.priceInCents },
         previousValues: { name: "", description: null, priceInCents: 0 },
         summary: `Add product "${proposal.name}" (discovered from an uploaded ${label})`,

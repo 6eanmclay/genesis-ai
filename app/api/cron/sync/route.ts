@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runDueSyncs } from "@/lib/intelligence/scheduler";
+import { runDueIntelligenceCycles } from "@/lib/intelligence/cycle";
 import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
 
 // Phase 3 Milestone 3 — the actual trigger. Secured via Vercel's own
@@ -24,6 +25,24 @@ export async function GET(request: NextRequest) {
   // second cron route.
   const growthPointRefreshes = await runDueGrowthPointRefreshes(50);
 
+  // Business Intelligence Engine M1 — the first-party path. Until now the
+  // engine only ever ran for a store that had just completed a connector sync,
+  // which meant a store built entirely on Genesis's own commerce never ran it
+  // at all (BI_ENGINE.md, Defect 1). A store is due here because real activity
+  // happened in it, which needs no integration.
+  //
+  // Stores whose cycle already ran above are skipped rather than run twice in
+  // one invocation. A store with nothing new is never selected at all.
+  //
+  // Only SUCCESSFUL syncs are skipped, deliberately. runDueSyncs adds a store to
+  // its cycle loop only when its sync succeeded, so a store whose connector
+  // failed never ran the engine — skipping it here too would let one broken
+  // connector silently suppress the store's own first-party intelligence until
+  // the connector was fixed.
+  const intelligenceCycles = await runDueIntelligenceCycles(50, {
+    skipStoreIds: summaries.filter((s) => s.ok).map((s) => s.storeId),
+  });
+
   return NextResponse.json({
     synced,
     failed,
@@ -38,5 +57,12 @@ export async function GET(request: NextRequest) {
       errors: s.errors,
     })),
     growthPointRefreshes: growthPointRefreshes.length,
+    // Per-store detail for the same reason the sync results carry it: a bare
+    // count can't say which store actually ran, the first thing worth knowing.
+    intelligenceCycles: intelligenceCycles.map((c) => ({
+      storeId: c.storeId,
+      ok: c.ok,
+      insights: c.insights,
+    })),
   });
 }

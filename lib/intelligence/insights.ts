@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { queryRecords, getRevenue, getAverageOpenRate } from "@/lib/businessModel/reasoning";
 import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { getNewEventsForConsumer, advanceConsumerCursor } from "./businessEvents";
+import { detectStorefrontReadiness } from "./storefrontReadiness";
 
 // Phase 3 Milestone 3 (Business Intelligence Engine) — Part 3, the Insight
 // Engine. Deliberately 100% deterministic — no AI call anywhere in this
@@ -151,7 +152,7 @@ async function detectCancellationTrend(storeId: string): Promise<Insight | null>
 // BusinessEventCursor, and the parallel-run comparison below. See
 // PHASE1_DESIGN.md section 7 item 2: proving the cursor mechanism against
 // real production data before it's trusted to replace processedAt.
-const INSIGHT_ENGINE_CONSUMER = "insight-engine";
+export const INSIGHT_ENGINE_CONSUMER = "insight-engine";
 
 // Purely observational — never feeds computeInsights' real logic. Reads the
 // same "new since last pass" event set two ways (the existing processedAt
@@ -192,12 +193,18 @@ export async function computeInsights(storeId: string): Promise<Insight[]> {
     select: { id: true },
   });
 
-  const [revenue, engagement, overdue, lowStock, cancellations] = await Promise.all([
+  const [revenue, engagement, overdue, lowStock, cancellations, storefront] = await Promise.all([
     detectRevenueTrend(storeId),
     detectEngagementTrend(storeId),
     detectOverdueInvoiceCluster(storeId),
     detectLowStockCluster(storeId),
     detectCancellationTrend(storeId),
+    // M4 (2026-08-18) — the first detector that reads only first-party data.
+    // The four above it need a connector and the fifth needs two weeks of
+    // sales, which meant a pre-revenue store ran a working engine and heard
+    // nothing. This adds no new capability: evaluateStorefront already existed
+    // and is unmodified, it simply had one caller (the owner asking in chat).
+    detectStorefrontReadiness(storeId),
   ]);
 
   await prisma.businessEvent.updateMany({
@@ -205,7 +212,7 @@ export async function computeInsights(storeId: string): Promise<Insight[]> {
     data: { processedAt: new Date() },
   });
 
-  const computed = [revenue, engagement, overdue, lowStock, cancellations].filter(
+  const computed = [revenue, engagement, overdue, lowStock, cancellations, storefront].filter(
     (insight): insight is Insight => insight !== null
   );
 

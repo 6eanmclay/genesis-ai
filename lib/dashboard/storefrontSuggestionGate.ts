@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { GenesisActionType } from "@/lib/execution/genesisActions";
+import { volunteeredByJ4 } from "@/lib/intelligence/proposalOrigin";
 
 // Progressive storefront improvement, passes 2 and 3 (2026-08-12) — the
 // frequency governor and the suggestion memory.
@@ -95,11 +96,24 @@ export async function canSuggestStorefrontImprovement({
   //    stable identity ApprovalRequest and CognitiveOutput already use — the
   //    underlying pattern, independent of exact wording — so a re-worded
   //    version of a rejected idea is still recognised as the same idea.
-  const rejected = await prisma.approvalRequest.findFirst({
+  //
+  // M2 (2026-08-18) — ONLY PROPOSALS J4 VOLUNTEERED SUPPRESS J4.
+  //
+  // This file's own principle, stated at the top: "being asked is not the same
+  // as volunteering." That held for free until M2, because conversational
+  // proposals carried no topicKey and so could never match here. Once the
+  // backfill gives them canonical keys, an owner who asks for a hero change in
+  // chat and then declines the result would permanently silence J4's own hero
+  // suggestions — a regression created entirely by giving those rows a name.
+  //
+  // volunteeredByJ4 is the same shared rule learn.ts uses, so "who counts"
+  // cannot mean two different things in two files.
+  const rejections = await prisma.approvalRequest.findMany({
     where: { storeId, topicKey, status: "REJECTED" },
     orderBy: { decidedAt: "desc" },
-    select: { decidedAt: true },
+    select: { decidedAt: true, cognitiveOutputId: true },
   });
+  const rejected = volunteeredByJ4(rejections)[0];
   if (rejected) {
     return {
       allowed: false,

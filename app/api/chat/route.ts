@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { deriveTopicKey } from "@/lib/intelligence/topicKeys";
 import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import type { Theme } from "@/lib/theme";
 import type { RefineStorefrontInput } from "@/lib/execution/executables/refineStorefront";
@@ -13,6 +14,7 @@ import { GENESIS_ACTIONS } from "@/lib/execution/genesisActions";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
@@ -520,10 +522,14 @@ export async function POST(request: Request) {
           // real answer — nothing on record matches — and is better than
           // handing the model the newest decision and letting it improvise a
           // connection.
-          const [dataContext, understanding, pastDecisions] = await Promise.all([
+          const [dataContext, understanding, pastDecisions, pastStatements] = await Promise.all([
             buildChatDataContext(store.id),
             getBusinessUnderstanding(store.id),
             findRelevantDecisions(store.id, userMessage),
+            // M9 — the owner's own past words, any age. Gap D's twin: the same
+            // relevance-over-recency rule, applied to the conversation those
+            // decisions came out of.
+            findRelevantMessages(store.id, userMessage),
           ]);
           diagLog(requestId, turnStartedAt, "data_context_fetched");
           // Real bug found live (2026-08-07) — this call previously used
@@ -561,6 +567,7 @@ export async function POST(request: Request) {
                       // that out about seven months ago" rather than reciting a
                       // date the owner has to do arithmetic on.
                       pastDecisionsRelevantToThisQuestion: pastDecisions,
+                      pastStatementsByTheOwnerRelevantToThisQuestion: pastStatements,
                       activeThoughts: understanding.activeThoughts,
                       growthPointBalance: understanding.platformRelationship.growthPointBalance,
                       growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),
@@ -779,6 +786,10 @@ export async function POST(request: Request) {
                   storeId: store.id,
                   recommendationId: null,
                   actionType: "update_product_image",
+                  // M2 — the same canonical derivation the backfill uses, so a decision made in
+                  // conversation enters the belief system identically to one made last January.
+                  // Null where no honest name exists.
+                  topicKey: deriveTopicKey("update_product_image", null),
                   input: {
                     productId: product.id,
                     imageUrl: candidate,
@@ -882,6 +893,10 @@ export async function POST(request: Request) {
                 storeId: store.id,
                 recommendationId: null,
                 actionType: "delete_product",
+                // M2 — the same canonical derivation the backfill uses, so a decision made in
+                // conversation enters the belief system identically to one made last January.
+                // Null where no honest name exists.
+                topicKey: deriveTopicKey("delete_product", null),
                 input: { productId: product.id, name: product.name },
                 previousValues: { productId: product.id, name: product.name },
                 summary: `Remove "${product.name}" — this permanently deletes it`,
@@ -1703,6 +1718,10 @@ export async function POST(request: Request) {
                 storeId: store.id,
                 recommendationId: null,
                 actionType: "update_product",
+                // M2 — the same canonical derivation the backfill uses, so a decision made in
+                // conversation enters the belief system identically to one made last January.
+                // Null where no honest name exists.
+                topicKey: deriveTopicKey("update_product", { productId: product.id, ...changedFields }),
                 input: { productId: product.id, ...changedFields },
                 previousValues,
                 summary: suggestion?.reasoning ? `${product.name}: ${suggestion.reasoning}` : `Update "${product.name}"`,

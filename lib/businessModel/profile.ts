@@ -1,4 +1,7 @@
 import { prisma } from "@/lib/prisma";
+import { getProfitability, type Profitability } from "./profitability";
+import { getObligations, type Obligations } from "./obligations";
+import { getAudience, type Audience } from "./audience";
 import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
 import { businessCategoryLabel, revenueStreamLabel } from "@/lib/businessTaxonomy";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
@@ -114,6 +117,37 @@ export interface BusinessProfile {
   // own read site in lib/dashboard/storeChatUnified.ts for how J4 is
   // instructed to interpret, not just relay, this data).
   socialAccounts: CanonicalRecord<"socialAccount">[];
+  // M5 (2026-08-18) — what the owner actually KEEPS, not just what came in.
+  // Product.costInCents and getProfitSummary were both already real; they had
+  // one caller (the Analytics page), so J4 could not answer "I sold $400, what
+  // did I keep?" while the number sat computed one page away.
+  //
+  // Carries its own coverage, deliberately: profitInCents is null when no
+  // order has a known cost, and a product with no recorded cost has a null
+  // margin rather than an assumed one. Nothing here may be read as zero cost.
+  // Same revenue tier as revenue30d/revenueAllTime above — a dollar figure,
+  // gated by whoever gates those, not newly exposed by this field.
+  profitability: Profitability;
+  // M6 (2026-08-18) — what the owner OWES, not just what came in. Order has
+  // carried fulfillmentStatus/trackingNumber/createdAt for a while and
+  // getFulfillmentBreakdown already counted them, for the Analytics page
+  // alone; J4 could see that money arrived and never whether anything shipped.
+  //
+  // Four distinct facts, kept distinct: paid-and-unfulfilled is owed, refunded
+  // is not, fulfillmentStatus is the owner's own acknowledgment rather than
+  // proof of shipment, and a tracking number means a label exists rather than
+  // a parcel delivered. No shipping address is carried here at all.
+  obligations: Obligations;
+  // M8 (2026-08-19) — interest, not just purchases. NewsletterSignup is written
+  // by the live storefront and was read by one dashboard page; contacts are
+  // derived from ORDERS ONLY, so someone who gave their email but hasn't bought
+  // did not exist in J4's understanding at all.
+  //
+  // Counts and timestamps only — no email addresses are read from the database.
+  // Kept strictly separate from contacts/segments: a subscriber is evidence of
+  // interest, never a customer, and nothing here touches the canonical contact
+  // model.
+  audience: Audience;
   asOf: string;
 }
 
@@ -169,6 +203,9 @@ export async function getBusinessProfile(
     itemPerformance30d,
     itemTrends,
     segmentTrends,
+    profitability,
+    obligations,
+    audience,
   ] = await Promise.all([
     prisma.store.findUniqueOrThrow({
       where: { id: storeId },
@@ -194,6 +231,9 @@ export async function getBusinessProfile(
     getItemPerformance(storeId, { since: thirtyDaysAgo }),
     getItemPerformanceTrend(storeId),
     getCustomerSegmentTrend(storeId),
+    getProfitability(storeId),
+    getObligations(storeId),
+    getAudience(storeId),
   ]);
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
@@ -263,6 +303,9 @@ export async function getBusinessProfile(
     locations,
     assets,
     socialAccounts,
+    profitability,
+    obligations,
+    audience,
     asOf: new Date().toISOString(),
   };
 }

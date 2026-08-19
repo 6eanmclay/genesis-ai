@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { AttentionItem } from "./types";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -28,10 +29,52 @@ export async function getRecentNegativeOutcomes(storeId: string): Promise<Attent
 // PENDING row that was already resolved to SUCCESS/FAILED under the same
 // executionId (append-only design — resolution is a new row, never an
 // update to this one).
+//
+// PRODUCTION DEFECT FIXED HERE (2026-08-19). Found by reading real data: Cubit
+// & Coil had 52 ACTIVE observations, 49 of them urgent, and 47 came from this
+// function — up to 23 days old, quoting J4's own chat replies back at the owner
+// as though they were failures. The one thing genuinely needing attention (a
+// customer waiting 31 days for a package) had no signal at all.
+//
+// TWO MEANINGS OF "PENDING" HAD COLLIDED:
+//   1. waiting on a human decision — normal, healthy, unbounded in time
+//   2. started and never finished  — a real failure worth surfacing
+// Only (2) belongs here. The three corrections below separate them without
+// touching a single writer, so nothing about how executions are recorded
+// changes.
+const AWAITING_A_HUMAN: ReadonlySet<string> = new Set<string>([
+  // A chat turn that created a proposal records PENDING meaning "the owner has
+  // something to review". They may take days, and that is the flow working.
+  EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+  // The opportunistic review's own concurrency CLAIM row. recordGenesisExecution
+  // mints a fresh executionId per call (lib/execution/genesis.ts), so this row
+  // can never be paired with the completion that follows it — every successful
+  // review left one behind, and each became an urgent badge. It is an internal
+  // claim, never an owner-facing failure.
+  EXECUTION_ACTIONS.GENESIS_RECOMMENDATIONS_GENERATE,
+]);
+
+/**
+ * Whether a still-PENDING execution means "a human hasn't acted yet" rather
+ * than "this broke". Exported so the distinction is directly testable.
+ */
+export function isAwaitingHumanDecision(action: string): boolean {
+  return AWAITING_A_HUMAN.has(action);
+}
 export async function getStaleExecutions(storeId: string): Promise<AttentionItem[]> {
   const cutoff = new Date(Date.now() - ONE_HOUR_MS);
+  // Bounded at seven days, matching getRecentNegativeOutcomes' own stated
+  // reasoning directly above — "so a long-since-resolved issue naturally ages
+  // out even without full lifecycle-resolution tracking". This reader had no
+  // upper bound at all, so a 23-day-old row was still shouting today.
+  const ageLimit = new Date(Date.now() - SEVEN_DAYS_MS);
   const pendingRows = await prisma.executionLog.findMany({
-    where: { storeId, status: "PENDING", createdAt: { lt: cutoff } },
+    where: {
+      storeId,
+      status: "PENDING",
+      createdAt: { lt: cutoff, gte: ageLimit },
+      action: { notIn: [...AWAITING_A_HUMAN] },
+    },
     orderBy: { createdAt: "desc" },
   });
   if (pendingRows.length === 0) return [];

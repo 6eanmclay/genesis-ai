@@ -25,6 +25,12 @@ const NOTIFY_WORTHY: Partial<Record<string, (insight: Insight) => boolean>> = {
   "invoices.overdue": () => true, // the Insight Engine's own bar (3+) already is the notify bar
   "inventory.depleted": () => true, // even one depleted item is always notify-worthy
   "appointments.cancellations_up": () => true, // "doubled" is already a high bar
+  // M4 — already governed twice before it reaches here: evaluateStorefront
+  // only reports a finding when one is really true, and the storefront
+  // suggestion gate decides whether J4 may raise it at all (cooldown,
+  // previously-rejected, learned preference). A third threshold on top would
+  // be a second governor disagreeing with the first, not more restraint.
+  "storefront.readiness": () => true,
   // engagement.improved / revenue.increased below 25% / anything else not
   // listed here: real, but stays in the Recommendation Engine's context
   // only — never an ambient badge.

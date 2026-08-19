@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { volunteeredByJ4 } from "./proposalOrigin";
 
 // J4 Foundation Phase 2 — the Learn cognitive subsystem. Continuously
 // distills accumulated experience (Understand's facts as they change,
@@ -188,6 +189,70 @@ function measurementDirection(m: {
 //    PostExecutionMeasurement.summary already enforces verbatim carried
 //    into the claim text — Learn is not allowed to launder a correlation
 //    into a causal claim just by aggregating it.
+export interface RejectionBeliefPlan {
+  topicKey: string;
+  claim: string;
+  supportingCount: number;
+  contradictingCount: number;
+  firstObservedAt: Date;
+  lastConfirmedAt: Date;
+  lastContradictedAt: Date | null;
+  evidenceRefs: string[];
+  data: { rejectionCount: number; laterExecutionCount: number };
+}
+
+// The rejection-pattern decision, separated from its database plumbing for the
+// same reason nextBestAction.ts separates pickNextBestAction: the semantics
+// ("whose decisions count", "how many is a pattern", "what contradicts it")
+// should be provable against engineered inputs, not only observable through
+// whatever a live store happens to contain.
+//
+// Behaviour is unchanged from before M2 except for the origin filter on the
+// first line, which is the whole point of the change.
+export function planRejectionBeliefs(
+  rejected: {
+    id: string;
+    topicKey: string | null;
+    decidedAt: Date | null;
+    cognitiveOutputId: string | null;
+  }[],
+  measured: { id: string; topicKey: string | null; measuredAt: Date }[]
+): RejectionBeliefPlan[] {
+  const learnable = volunteeredByJ4(rejected)
+    .filter((r) => r.topicKey !== null && r.decidedAt !== null)
+    .sort((a, b) => a.decidedAt!.getTime() - b.decidedAt!.getTime());
+
+  const plans: RejectionBeliefPlan[] = [];
+  for (const [topicKey, group] of groupBy(learnable, (r) => r.topicKey as string)) {
+    if (group.length < REJECTION_PATTERN_THRESHOLD) continue;
+
+    const firstRejectedAt = group[0].decidedAt!;
+    const lastRejectedAt = group[group.length - 1].decidedAt!;
+    // A later execution of the same topicKey is real contradicting evidence
+    // — the pattern of declining this didn't hold every time.
+    const laterExecutions = measured.filter(
+      (m) => m.topicKey === topicKey && m.measuredAt.getTime() > firstRejectedAt.getTime()
+    );
+
+    plans.push({
+      topicKey,
+      claim:
+        laterExecutions.length > 0
+          ? `The owner has declined proposals about "${topicKey}" ${group.length} time(s), but later approved one — the pattern isn't consistent, worth a different approach rather than assuming a firm no.`
+          : `The owner has declined proposals about "${topicKey}" ${group.length} time(s); consider a different approach before proposing this again.`,
+      supportingCount: group.length,
+      contradictingCount: laterExecutions.length,
+      firstObservedAt: firstRejectedAt,
+      lastConfirmedAt: lastRejectedAt,
+      lastContradictedAt:
+        laterExecutions.length > 0 ? laterExecutions[laterExecutions.length - 1].measuredAt : null,
+      evidenceRefs: [...group.map((r) => r.id), ...laterExecutions.map((m) => m.id)],
+      data: { rejectionCount: group.length, laterExecutionCount: laterExecutions.length },
+    });
+  }
+  return plans;
+}
+
 export async function detectDecisionOutcomePattern(storeId: string): Promise<void> {
   const [measured, rejected] = await Promise.all([
     prisma.postExecutionMeasurement.findMany({
@@ -201,35 +266,25 @@ export async function detectDecisionOutcomePattern(storeId: string): Promise<voi
   ]);
 
   // --- Rejection patterns ---
-  const rejectedByTopic = groupBy(rejected, (r) => r.topicKey as string);
-  for (const [topicKey, group] of rejectedByTopic) {
-    if (group.length < REJECTION_PATTERN_THRESHOLD) continue;
-
-    const firstRejectedAt = group[0].decidedAt!;
-    const lastRejectedAt = group[group.length - 1].decidedAt!;
-    // A later execution of the same topicKey is real contradicting evidence
-    // — the pattern of declining this didn't hold every time.
-    const laterExecutions = measured.filter(
-      (m) => m.topicKey === topicKey && m.measuredAt.getTime() > firstRejectedAt.getTime()
-    );
-
+  //
+  // M2 (2026-08-18): only proposals J4 actually VOLUNTEERED are counted. Until
+  // the backfill, this filter was implicit — conversational proposals carried
+  // no topicKey, so they could never group. Now that every derivable decision
+  // has a canonical key, the rule has to be stated or it inverts: J4 would
+  // start learning the owner's "preferences" from proposals the owner asked
+  // for. Being asked about something must never create a belief.
+  for (const plan of planRejectionBeliefs(rejected, measured)) {
     await upsertBelief(storeId, {
-      topicKey: `rejection_pattern:${topicKey}`,
-      claim:
-        laterExecutions.length > 0
-          ? `The owner has declined proposals about "${topicKey}" ${group.length} time(s), but later approved one — the pattern isn't consistent, worth a different approach rather than assuming a firm no.`
-          : `The owner has declined proposals about "${topicKey}" ${group.length} time(s); consider a different approach before proposing this again.`,
+      topicKey: `rejection_pattern:${plan.topicKey}`,
+      claim: plan.claim,
       category: "owner_preference",
-      supportingCount: group.length,
-      contradictingCount: laterExecutions.length,
-      firstObservedAt: firstRejectedAt,
-      lastConfirmedAt: lastRejectedAt,
-      lastContradictedAt:
-        laterExecutions.length > 0
-          ? laterExecutions[laterExecutions.length - 1].measuredAt
-          : null,
-      evidenceRefs: [...group.map((r) => r.id), ...laterExecutions.map((m) => m.id)],
-      data: { rejectionCount: group.length, laterExecutionCount: laterExecutions.length },
+      supportingCount: plan.supportingCount,
+      contradictingCount: plan.contradictingCount,
+      firstObservedAt: plan.firstObservedAt,
+      lastConfirmedAt: plan.lastConfirmedAt,
+      lastContradictedAt: plan.lastContradictedAt,
+      evidenceRefs: plan.evidenceRefs,
+      data: plan.data,
     });
   }
 

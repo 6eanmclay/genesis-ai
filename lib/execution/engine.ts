@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { unstable_rethrow } from "next/navigation";
 import { requireStorePermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { recordExecutionEvent } from "@/lib/intelligence/executionEvents";
 import type { Executable, ExecutionContext } from "./executable";
 import { ACTION_SECTIONS, GENESIS_ACTIONS, type GenesisActionType } from "./genesisActions";
 import { CURRENT_EXECUTION_SCHEMA_VERSION, type ActorType, type ExecutionResult, type ExecutionStatus } from "./types";
@@ -250,6 +251,30 @@ export async function execute<TInput, TMetadata>(
         executionLogId: logRow.id,
       });
     }
+
+    // Business Intelligence Engine M3 (2026-08-18) — the first-party change
+    // signal. Until now nothing but a completed checkout wrote a BusinessEvent,
+    // so a store with no sales produced no events, was never selected, and M1's
+    // intelligence cycle never ran for it.
+    //
+    // Deliberately HERE, after the outcome is real and recorded: only a genuine
+    // SUCCESS earns an event (recordExecutionEvent decides that itself), and a
+    // failed or thrown execution never reaches this line — the catch block
+    // below returns without touching it.
+    //
+    // Cannot affect this execution. recordExecutionEvent never throws and never
+    // returns anything the result depends on; an event describes something that
+    // already happened, and failing the action because the description could not
+    // be written would be exactly backwards. Awaited rather than fired-and-
+    // forgotten so serverless doesn't kill the write mid-flight.
+    await recordExecutionEvent({
+      storeId: ctx.storeId,
+      executionId,
+      actionType: opts.actionType,
+      input,
+      status,
+    });
+
     return result;
   } catch (error) {
     unstable_rethrow(error);
