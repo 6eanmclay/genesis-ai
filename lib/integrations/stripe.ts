@@ -57,6 +57,12 @@ function describeStripeError(error: unknown, stage: string): Error {
     code?: string;
     statusCode?: number;
     requestId?: string;
+    // stripe-node attaches the ORIGINAL error here, not to `cause`. See
+    // RequestSender.js: `new StripeConnectionError({ message, detail: error })`.
+    // Reading `cause` — the standard Error property — is why the first version
+    // of this function logged `causeCode: undefined` on a real production
+    // failure and told us nothing.
+    detail?: unknown;
     cause?: unknown;
   };
 
@@ -65,10 +71,17 @@ function describeStripeError(error: unknown, stage: string): Error {
   if (typeof e.statusCode === "number") parts.push(`HTTP ${e.statusCode}`);
   if (e.code) parts.push(`code=${e.code}`);
 
-  // The Node-level reason a connection error actually happened.
-  const cause = e.cause as { code?: string; message?: string; errno?: number } | undefined;
-  if (cause?.code) parts.push(`cause=${cause.code}`);
-  else if (cause?.message) parts.push(`cause=${cause.message.slice(0, 80)}`);
+  // The Node-level reason a connection error actually happened: ECONNRESET,
+  // ENOTFOUND, ETIMEDOUT, a TLS/certificate failure, and so on. `detail` first
+  // because that is where stripe-node puts it; `cause` kept as the fallback for
+  // errors that follow the standard convention.
+  const underlying = (e.detail ?? e.cause) as
+    | { code?: string; errno?: number; syscall?: string; hostname?: string; name?: string; message?: string }
+    | undefined;
+  if (underlying?.code) parts.push(`cause=${underlying.code}`);
+  if (underlying?.syscall) parts.push(`syscall=${underlying.syscall}`);
+  if (underlying?.hostname) parts.push(`host=${underlying.hostname}`);
+  if (!underlying?.code && underlying?.message) parts.push(`cause=${underlying.message.slice(0, 80)}`);
   if (e.requestId) parts.push(`request=${e.requestId}`);
 
   const detail = parts.length > 0 ? ` [${parts.join(" ")}]` : "";
@@ -80,7 +93,12 @@ function describeStripeError(error: unknown, stage: string): Error {
     code: e.code,
     statusCode: e.statusCode,
     requestId: e.requestId,
-    causeCode: cause?.code,
+    underlyingName: underlying?.name,
+    underlyingCode: underlying?.code,
+    underlyingErrno: underlying?.errno,
+    underlyingSyscall: underlying?.syscall,
+    underlyingHostname: underlying?.hostname,
+    underlyingMessage: underlying?.message,
     message: e.message,
   });
 
