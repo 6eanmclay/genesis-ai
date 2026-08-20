@@ -265,6 +265,58 @@ console.log("\n7. A store Genesis knows nothing about gets no suggestions");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n7a. Matching a category is not understanding a business");
+{
+  // THE DEFECT (2026-08-20). Category used to be a fourth relevance signal, so a
+  // foam roller described as a "tool for training at home" matched the word
+  // *home* against a candle business filed under Home — and was recommended to
+  // it. Found by a test written for two businesses on one account, which is
+  // where a shallow match stops being invisible.
+  const candles: SourcingContext = {
+    ownWords: "Small-batch soy candles poured by hand in Vermont.",
+    classifications: ["Home & Garden"],
+    brandPositioning: "luxury",
+    sells: [],
+    proven: [],
+  };
+  const roller = candidate({
+    name: "High-density foam roller",
+    description: "Recovery and mobility tool for training at home",
+    customizable: false,
+  });
+  const judged = scoreCandidate(roller, candles);
+  check("a category word alone does not make it relevant", isWorthSuggesting(judged), false);
+  check("it is ruled out", judged.verdict, "does_not_fit");
+  assert("and no category signal is claimed as grounds",
+    !judged.basedOn.includes("classification"), judged.basedOn.join(", "));
+
+  // The same category still sharpens a judgment that stands on its own.
+  const wick = candidate({
+    name: "Cotton wick spool",
+    description: "Wick for hand-poured soy candles, for the home",
+    customizable: false,
+  });
+  const good = scoreCandidate(wick, candles);
+  check("something genuinely on-brand is suggested", isWorthSuggesting(good), true);
+  assert("with the category confirming rather than carrying it",
+    good.basedOn.indexOf("own_words") < good.basedOn.indexOf("classification") ||
+      !good.basedOn.includes("classification"),
+    good.basedOn.join(", "));
+
+  // A business that has only picked a category cannot be judged at all — saying
+  // "this doesn't fit your business" on the strength of a slug is a judgment
+  // nobody gave Genesis the standing to make.
+  const categoryOnly: SourcingContext = {
+    ownWords: "",
+    classifications: ["Home & Garden"],
+    brandPositioning: "other",
+    sells: [],
+    proven: [],
+  };
+  check("a category alone is not understanding", scoreCandidate(roller, categoryOnly).verdict, "unknown");
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n7b. A bad fit is said out loud, and not knowing is said differently");
 {
   // The sentence Sean called extremely important: "I wouldn't recommend this

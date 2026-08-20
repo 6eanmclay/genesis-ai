@@ -730,6 +730,123 @@ async function main() {
     }
 
     // -----------------------------------------------------------------------
+    console.log("\n16. Two businesses on ONE account stay completely separate");
+    {
+      await reset();
+      // The shape the product is being designed around: one Genesis account,
+      // more than one business, each with its own identity, vision, catalogue,
+      // sourcing relationships and understanding. Every other tenant case in
+      // this file uses two accounts, which is the easy version — a shared owner
+      // is where a store-scoped model actually gets tested.
+      const owner = await prisma.user.create({ data: { email: "one-owner@example.test" } });
+
+      const fitness = await prisma.store.create({
+        data: {
+          userId: owner.id,
+          name: "Baseline Recovery",
+          slug: "baseline-recovery",
+          tagline: "Premium home fitness and recovery",
+          description: "Recovery and mobility tools for people who train at home.",
+          brandPositioning: "minimalist",
+          businessCategories: ["fitness"],
+        },
+      });
+      const candles = await prisma.store.create({
+        data: {
+          userId: owner.id,
+          name: "Ember & Ash",
+          slug: "ember-and-ash",
+          tagline: "Hand-poured soy candles",
+          description: "Small-batch soy candles poured by hand in Vermont.",
+          brandPositioning: "luxury",
+          businessCategories: ["home"],
+        },
+      });
+
+      const { buildSourcingContext } = await import("@/lib/sourcing/context");
+      const fitnessContext = await buildSourcingContext(fitness.id);
+      const candleContext = await buildSourcingContext(candles.id);
+
+      // Each business is understood as itself. Nothing bleeds across the
+      // account, and the positioning that drives customisation scoring differs.
+      assert("each business is described in its own words",
+        fitnessContext.ownWords.includes("recovery") && !fitnessContext.ownWords.includes("candle"),
+        fitnessContext.ownWords);
+      assert("and the other in its own",
+        candleContext.ownWords.includes("candle") && !candleContext.ownWords.includes("recovery"),
+        candleContext.ownWords);
+      check("with their own positioning", fitnessContext.brandPositioning, "minimalist");
+      check("kept apart", candleContext.brandPositioning, "luxury");
+
+      // The same supplier listing, offered to both. A foam roller belongs in one
+      // of these businesses and not the other, and that judgment is the product.
+      const roller = wholesale({
+        externalProductId: "roller",
+        name: "High-density foam roller",
+        description: "Recovery and mobility tool for training at home",
+      });
+      const fitnessRun = await discoverProducts({
+        storeId: fitness.id,
+        context: fitnessContext,
+        sources: [wholesaleSource([roller])],
+      });
+      const candleRun = await discoverProducts({
+        storeId: candles.id,
+        context: candleContext,
+        sources: [wholesaleSource([roller])],
+      });
+
+      check("it fits the fitness business", fitnessRun.suggested.length, 1);
+      check("and is ruled out of the candle one", candleRun.ruledOut.map((r) => r.name),
+        ["High-density foam roller"]);
+      check("with nothing suggested there", candleRun.suggested.length, 0);
+
+      // Separate rows, separate reasoning, even for the same external listing.
+      check("one row per business", (await rowsFor(fitness.id)).length, 1);
+      check("and none written for the other", (await rowsFor(candles.id)).length, 0);
+
+      // Sourcing relationships are per business too. Connecting a supplier to
+      // one must not connect it to the other.
+      await prisma.storeIntegration.create({
+        data: { storeId: fitness.id, provider: "PRINTFUL", status: "CONNECTED" },
+      });
+      const fitnessConnections = await prisma.storeIntegration.count({ where: { storeId: fitness.id } });
+      const candleConnections = await prisma.storeIntegration.count({ where: { storeId: candles.id } });
+      check("the connection belongs to one business", fitnessConnections, 1);
+      check("and not to the account", candleConnections, 0);
+
+      // Adoption puts the product in the right catalogue, and only that one.
+      const adopted = await adoptSourcedProduct({
+        storeId: fitness.id,
+        sourcedProductId: fitnessRun.suggested[0].id,
+        priceInCents: 3400,
+      });
+      assert("adopted into the fitness business", adopted.ok, JSON.stringify(adopted));
+      check("its catalogue has it", await prisma.product.count({ where: { storeId: fitness.id } }), 1);
+      check("the other catalogue is untouched", await prisma.product.count({ where: { storeId: candles.id } }), 0);
+
+      // And the owner holding their OWN other business's id still cannot cross
+      // the line. Same person, same account, still two businesses.
+      await discoverProducts({
+        storeId: candles.id,
+        context: candleContext,
+        sources: [wholesaleSource([wholesale({ externalProductId: "wick", name: "Cotton wick spool", description: "Wick for hand-poured candles" })])],
+      });
+      const candleRows = await rowsFor(candles.id);
+      assert("the candle business found its own", candleRows.length === 1, JSON.stringify(candleRows.map((r) => r.name)));
+      const crossed = await adoptSourcedProduct({
+        storeId: fitness.id,
+        sourcedProductId: candleRows[0].id,
+        priceInCents: 900,
+      });
+      check("one business cannot adopt the other's suggestion", crossed.ok, false);
+      assert("even owned by the same person",
+        !crossed.ok && crossed.reason === "not_found", JSON.stringify(crossed));
+      check("still one product in the fitness catalogue",
+        await prisma.product.count({ where: { storeId: fitness.id } }), 1);
+    }
+
+    // -----------------------------------------------------------------------
     console.log("\n13. Products that predate any of this are unchanged");
     {
       await reset();

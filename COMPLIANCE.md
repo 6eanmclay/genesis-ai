@@ -31,6 +31,16 @@ Vercel, not assumed:
 | `SQUARE_CLIENT_ID` / `_SECRET` | the Square connector cannot be built | register a Square application |
 | `ALIEXPRESS_APP_KEY` / `_SECRET` | AliExpress cannot be searched for products; the source is registered and refuses rather than showing invented ones (§45) | register an AliExpress Open Platform app |
 
+**A second decision: how does an account hold more than one business?** The
+domain is already store-scoped throughout — identity, catalogue, connections,
+points, plan and J4's understanding all key on the business, not the account
+(§48). What does not exist is any notion of *which business am I in*:
+`resolveUserStore` picks the most recently updated one and 28 of 29 protected
+call sites rely on it, so a second business would silently become "the" business
+the moment anything touched it. Latent today — all 16 production accounts hold
+exactly one. Proposed rather than built, because it touches routing, sessions,
+navigation and onboarding at once.
+
 **A decision, not a credential: should the migration gate come back?**
 `20260820060000_product_sourcing` is **already applied to production** — not by
 a deliberate step, but by the Vercel build, because `package.json`'s build script
@@ -1854,6 +1864,118 @@ which is why it was the one that showed.
 
 ---
 
+## 48. One account, more than one business
+
+*Audited against the requirement that a Genesis account holds several businesses,
+each with its own identity, vision, catalogue, sourcing relationships and J4
+understanding. The data model already allows it. The application does not, and
+the gap is one function.*
+
+### What is genuinely independent already
+
+Every one of these is keyed by `storeId`, verified by reading the schema rather
+than trusting the comments on it:
+
+| | |
+|---|---|
+| Identity, brand positioning, blueprint, creative direction | `Store` |
+| Sourcing relationships | `StoreIntegration.storeId` |
+| Catalogue, orders, discovery | `Product`, `Order`, `SourcedProduct` |
+| Growth Points balance | `GrowthPointTransaction.storeId` |
+| Plan | `Store.planId` |
+| J4's understanding | `getBusinessUnderstanding(storeId)` |
+
+Nothing about the domain assumes one business per account. That is the good news
+and it is most of the work.
+
+### What does not work
+
+**`resolveUserStore` picks the most recently updated store**, and **28 of the 29
+protected call sites in the app use it implicitly** — `requireStorePermission()`
+with no `storeId`. There is no route segment carrying a business, no session
+field holding one, and no switcher anywhere in the interface.
+
+So today a second business is not a business you can be *in*. It is a row that
+becomes "the" business the moment anything touches it. Editing a product in
+business B silently moves every unrelated screen — orders, connections, billing,
+J4's understanding — to business B. That is not a switcher; it is a side effect
+that happens to look like one.
+
+The function says so itself: *"mirrors the app's existing one-store-per-user
+assumption"*. The assumption was accurate when it was written.
+
+**`StoreDraft.userId` is `@unique`**, so an account can have only one business
+being created at a time. A second business cannot be started while a first is
+still in the onboarding flow.
+
+### Latent, not live
+
+Read from production directly: **16 accounts, every one with exactly one
+business**, and zero `StoreMember` rows. Nobody is affected today. The first
+account to hold two is the one that finds out.
+
+### A recommender defect this found
+
+Writing the two-businesses-on-one-account test surfaced a real false positive.
+A foam roller described as a *"tool for training at home"* was **recommended to a
+hand-poured candle business**, because that business is filed under *Home* and
+the word matched.
+
+Category was a fourth relevance signal, alongside the owner's own words, what
+already earns, and the rest of the catalogue. It should never have been:
+matching a category is not understanding a business — which is the distinction
+the whole recommender exists to hold. It is now a **modifier**, able to sharpen a
+judgment that already stands on its own and never to create one.
+
+The same change fixed a second, quieter problem. `knowsTheBusiness` counted a
+category slug as understanding, so a business that had picked *Home* and said
+nothing else would have been told a product "doesn't fit the brand you've
+described" — about a brand nobody had described. A category alone now yields
+`unknown`, which is the honest answer.
+
+Two accounts made this invisible: different owners, different everything, and a
+weak match still looks like a match. One owner with two businesses is where a
+shallow signal stops hiding.
+
+### Proven
+
+`scripts/verify-sourcing-live.ts` §16 — one account, two businesses, real
+Postgres:
+
+| | |
+|---|---|
+| Each business is understood in its own words, with its own positioning | PASS |
+| The same supplier listing fits one and is **ruled out** of the other | PASS (was: recommended to both) |
+| Separate rows and separate reasoning for the same external listing | PASS |
+| Connecting a supplier to one business does not connect it to the other | PASS |
+| Adoption reaches one catalogue and not the other | PASS |
+| One business cannot adopt the other's suggestion — same owner, same account | PASS |
+
+And in `verify-product-sourcing.ts` §7a: a category word alone never makes
+something relevant; a category still confirms a judgment that stands on its own;
+a business that has only picked a category is `unknown`, not judged.
+
+### Fixed here
+
+`rewardReferralIfEligible` took `stores[0]` from an unordered `take: 1` — whichever
+row Postgres returned first. Points are per business, so on an account with two
+it credited an arbitrary one. Ordered to match `resolveUserStore`, which is a
+defensible answer rather than a correct one, and the reason the real answer has
+to stop being a convention repeated at each call site.
+
+### NOT MODELLED — and this is the part that needs a decision
+
+**Which business am I in?** There is no answer today, and inventing one touches
+routing, sessions, navigation, onboarding and J4's own sense of who it is talking
+about. It is an architecture decision, not a defect to quietly fix, and it is
+proposed rather than built — see the discovery proposal's own section on it.
+
+Nothing in this audit changed how the store is resolved. Twenty-eight call sites
+depend on that behaviour and changing it silently is how an owner ends up editing
+the wrong business's products.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -1931,6 +2053,7 @@ the defect reproduced against the pre-fix behaviour first:
 | The label purchase, and which rate it buys | §44 — the real executable, real database |
 | Product sourcing and discovery | §45 — the real pipeline, real database |
 | The sourcing migration, as it landed in production | §46 — read from the production database |
+| Two businesses on one account, kept separate | §48 — the real pipeline, real database |
 | Tenant isolation | §26 — the guard through the real client |
 | Authentication, sessions, brute force, roles | §14–16, §24 |
 | Growth Points ledger | §23 — real transactions |

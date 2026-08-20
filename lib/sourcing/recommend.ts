@@ -158,11 +158,14 @@ export function scoreCandidate(candidate: SourcedCandidate, context: SourcingCon
   const basedOn: string[] = [];
   let score = 0;
 
-  // Does Genesis know enough about this business to have an opinion at all?
-  // Read before scoring, so "I don't know you yet" and "this doesn't fit you"
-  // never get returned as the same answer.
-  const knowsTheBusiness =
-    context.ownWords.trim().length > 0 || context.sells.length > 0 || context.classifications.length > 0;
+  // Does Genesis know enough about this business to have an OPINION on fit?
+  //
+  // Deliberately not "is there any data at all". A business that has only picked
+  // a category has told Genesis what shelf it stands on, not what it is — and
+  // saying "this doesn't fit your business" on the strength of a category slug
+  // is a judgment nobody gave Genesis the standing to make. Real words, or a
+  // real catalogue, or neither.
+  const knowsTheBusiness = context.ownWords.trim().length > 0 || context.sells.length > 0;
 
   // 1. The business's own description of itself.
   const ownMatches = overlap(candidateWords, meaningfulWords(context.ownWords));
@@ -190,14 +193,15 @@ export function scoreCandidate(candidate: SourcedCandidate, context: SourcingCon
     basedOn.push("catalogue_fit");
   }
 
-  // 4. How the business classified itself.
-  const classificationMatches = overlap(candidateWords, meaningfulWords(context.classifications.join(" ")));
-  if (classificationMatches.length > 0) {
-    score += classificationMatches.length * 2;
-    basedOn.push("classification");
-  }
-
   // Nothing connects this to this business.
+  //
+  // NOTE WHAT IS NOT ABOVE: the business's own CATEGORY. It used to sit here as
+  // a fourth relevance signal, and a foam roller described as a "tool for
+  // training at home" scored on the word *home* against a candle business
+  // filed under Home — and was recommended. That is precisely the failure this
+  // recommender exists to avoid: matching a category is not understanding a
+  // business. Category is a modifier now, below, where it can sharpen a
+  // judgment but never make one.
   if (score <= 0) {
     return knowsTheBusiness
       ? {
@@ -223,6 +227,13 @@ export function scoreCandidate(candidate: SourcedCandidate, context: SourcingCon
   }
 
   // --- Modifiers. Only reached once relevance is real. --------------------
+
+  // 4. How the business classified itself. Confirmation, never grounds.
+  const classificationMatches = overlap(candidateWords, meaningfulWords(context.classifications.join(" ")));
+  if (classificationMatches.length > 0) {
+    score += classificationMatches.length * 2;
+    basedOn.push("classification");
+  }
 
   // 5. Customisation, only where it is actually an advantage.
   if (candidate.customizable && CUSTOMIZATION_HELPS.has(context.brandPositioning)) {

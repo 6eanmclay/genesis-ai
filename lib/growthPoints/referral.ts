@@ -65,12 +65,32 @@ export async function recordReferralSignup(code: string, referredUserId: string)
 export async function rewardReferralIfEligible(referredUserId: string): Promise<void> {
   const referral = await prisma.referral.findFirst({
     where: { referredUserId, status: "PENDING" },
-    include: { referrer: { include: { stores: { select: { id: true, planId: true }, take: 1 } } } },
+    // ORDERED, and both sides (2026-08-20). `take: 1` with no orderBy returns
+    // whichever row Postgres hands back first, which is only ever the right one
+    // while an account has exactly one business — an assumption the schema has
+    // never enforced and that the product is deliberately moving away from.
+    // Points are per-business (GrowthPointTransaction.storeId), so picking the
+    // wrong one credits the wrong business's balance.
+    //
+    // Most-recently-updated matches resolveUserStore, so a reward lands on the
+    // business the owner is actually working in rather than an arbitrary one.
+    // It is a defensible answer, not a correct one — see COMPLIANCE.md §48 for
+    // why "which business is this for" needs a real answer rather than a
+    // convention repeated in each call site.
+    include: {
+      referrer: {
+        include: { stores: { select: { id: true, planId: true }, orderBy: { updatedAt: "desc" }, take: 1 } },
+      },
+    },
   });
   if (!referral) return;
 
   const referrerStore = referral.referrer.stores[0];
-  const referredStore = await prisma.store.findFirst({ where: { userId: referredUserId }, select: { id: true, planId: true } });
+  const referredStore = await prisma.store.findFirst({
+    where: { userId: referredUserId },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, planId: true },
+  });
   if (!referrerStore || !referredStore) return;
 
   const referrerPlan = referrerStore.planId

@@ -234,6 +234,31 @@ number for the same reasons. It stays a suggestion — the owner's figure wins.
 
 ---
 
+## Several businesses on one account
+
+The model is store-scoped throughout, which is what makes this work: identity,
+catalogue, sourcing relationships, discovery rows, recommendation reasoning and
+adoption all key on the business, never the account. One owner with two
+businesses gets two independent understandings, and the same supplier listing can
+fit one and be ruled out of the other — proven against real Postgres, including
+that the owner cannot adopt one business's suggestion into the other.
+
+That test is also what found the recommender's worst false positive: a foam
+roller described as a *"tool for training at home"* was recommended to a
+hand-poured candle business, because that business is filed under *Home*.
+**Matching a category is not understanding a business.** Category is a modifier
+now — it can sharpen a judgment that stands on its own, never create one — and a
+business that has only picked a category is `unknown` rather than judged.
+
+Two accounts hide this: different owners, different everything, and a weak match
+still looks like a match. One owner with two businesses is where a shallow signal
+stops hiding.
+
+What does **not** exist yet is any notion of *which business am I in*. See
+`COMPLIANCE.md` §48; it is an architecture decision, not a gap in this model.
+
+---
+
 ## Status
 
 ### VERIFIED — behavioural proof exists
