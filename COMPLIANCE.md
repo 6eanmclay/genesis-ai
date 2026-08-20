@@ -107,6 +107,8 @@ customers place real orders".
 | 29 | Refunds & connected-account forgery | **Compliant** | handler-level, real database — see §29 |
 | 30 | Operator visibility on failure | **Compliant** | `reportIssue`; 22 assertions — see §30 |
 | 31 | Misconfiguration ≠ attack | **Compliant** | 500 not 400 on unset secret — see §32 |
+| 32 | Order creation survives a bad event | **Compliant** | permanent vs transient split — see §33 |
+| 33 | Order creation in a real request | **NOT VERIFIED** | harness built, cannot run here — see §33 |
 
 ---
 
@@ -876,6 +878,58 @@ once configured a real event credits normally.
 
 Checked per request rather than at module load — a config check that runs once on
 cold start cannot report anything useful, and the value changes between deploys.
+
+---
+
+## 33. The order-creation branch
+
+`after()` was checked against Next's own documentation first: it is valid in
+Route Handlers, runs after the response, and shares the route's max duration. The
+usage here is correct — Stripe gets a fast ack and the observation sweeps run
+afterwards, wrapped in `.catch()` so they cannot affect the response.
+
+**The defect, found by reading and then reproduced.** A platform-key event takes
+`storeId` straight from metadata, *unvalidated*. If the store was deleted between
+checkout and delivery, `order.create` violates the foreign key and that threw
+straight out of `POST`. Next answers 500, Stripe retries for days against
+something that can never succeed, then gives up: a real payment, no order, no
+record anywhere.
+
+The fix is a **split, not a catch-all**, because the two directions are expensive
+in opposite ways:
+
+| | Meaning | Answer | Why |
+|---|---|---|---|
+| **Permanent** (`P2003`, `P2025`) | the store or product is gone | acknowledge, report | retrying is a slower way to lose the same sale |
+| **Transient** (everything else) | a blip | rethrow → 500 | a retry is exactly what recovers it |
+
+`isPermanentOrderFailure` is pure and both directions are asserted — including
+the default, since anything unrecognised is treated as **transient**. That
+direction is deliberate: retrying a permanent failure wastes a few days of
+Stripe's patience, while not retrying a transient one loses a real sale.
+
+### What is NOT verified, and why
+
+The branch that actually writes the `Order` ends in `after()`, which throws
+outside a request scope, so it can only be exercised through a real server.
+`scripts/lib/testServer.ts` does exactly that and its **safety check works** — it
+seeds a canary row and refuses to post anything at a server that cannot see it,
+because `next dev` loads `.env` files and would otherwise write orders into a
+live merchant's database.
+
+**The full path has not run on this machine.** Two environment constraints:
+
+1. **PGlite cannot serve a real Next server.** Its wire server drops the
+   connection the moment a client opens a second one, and a server is concurrent
+   by nature. Confirmed in isolation.
+2. `scripts/lib/realPostgres.ts` exists for that reason and starts a genuine
+   Postgres — but **PostgreSQL refuses to run under an administrator account on
+   Windows**, and this shell is elevated.
+
+Neither is worth capping the production connection pool or stubbing `after()` to
+dodge. Run from a **non-elevated shell or CI** and this works. Until someone has,
+the order-creation branch is verified at the handler and constraint level only,
+and this document says so rather than implying more.
 
 ---
 
