@@ -106,6 +106,7 @@ customers place real orders".
 | 28 | Webhook handlers attacked | **Compliant** | signed payloads, 40 assertions — see §28, §29 |
 | 29 | Refunds & connected-account forgery | **Compliant** | handler-level, real database — see §29 |
 | 30 | Operator visibility on failure | **Compliant** | `reportIssue`; 22 assertions — see §30 |
+| 31 | Misconfiguration ≠ attack | **Compliant** | 500 not 400 on unset secret — see §32 |
 
 ---
 
@@ -848,6 +849,33 @@ This is a harness limitation, **not a defect**: real Postgres handles concurrent
 queries, which is the entire point of a pool. Capping the pool at one connection
 would fix the harness by changing how production talks to Neon — the wrong trade.
 So those three stay uncovered here, and are named rather than hidden.
+
+---
+
+## 32. A missing secret told Stripe to give up on real payments
+
+Both webhook routes read their secret with a non-null assertion and handed it to
+`constructEvent`. With the variable **unset**, that throws a `TypeError` — which,
+at that catch, is indistinguishable from a forged signature. So the route
+answered **400**.
+
+400 is how you tell Stripe a request is permanently bad. **Stripe stops
+retrying.** A missing environment variable therefore converted every real payment
+during that window into an order that never existed, with no retry and nothing in
+the logs but "Invalid signature" — which reads as an attack rather than a
+deployment mistake, so nobody would go looking for the cause.
+
+A misconfiguration answers **500** now: Stripe keeps retrying, and the moment the
+secret is set the backlog delivers. It also reports to the operator, which is
+exactly the class of failure §30 existed to surface.
+
+The test proves the fix does not merely move the problem: a blank secret is
+treated the same as an unset one, a genuinely forged signature is **still 400**
+(answering 500 to everything would have Stripe retrying forgeries forever), and
+once configured a real event credits normally.
+
+Checked per request rather than at module load — a config check that runs once on
+cold start cannot report anything useful, and the value changes between deploys.
 
 ---
 
