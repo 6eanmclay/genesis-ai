@@ -67,8 +67,11 @@ export const paypalConnector: IntegrationConnector = {
     // token. Not an OAuth handoff, and documented as such rather than dressed
     // up as one.
     authKind: "api_key",
+    // The stored credential is the merchant's own client id/secret, which does
+    // not expire. The short-lived bearer token is fetched per call, never kept.
+    tokenLifetime: "permanent",
     apiKeyExceptionReason:
-      "PayPal REST is used with the merchant's own app credentials (client_credentials); no per-merchant OAuth handoff is implemented.",
+      "PayPal's delegated (multiparty) flow is not self-serve — a platform must apply and be approved by PayPal before it can act on a seller's behalf in live mode. Until that approval exists, the merchant's own app credentials are the only honest option, not a shortcut.",
     scopes: [],
     reads: [],
     writes: ["captures checkout payments"],

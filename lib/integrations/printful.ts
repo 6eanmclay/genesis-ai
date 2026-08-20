@@ -150,6 +150,9 @@ export const printfulConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
   capabilities: {
     authKind: "oauth",
+    // Printful returns a refresh_token on every renewal, so it is treated as
+    // rotating and the new value is always persisted.
+    tokenLifetime: "rotating",
     scopes: [],
     noScopesReason:
       "Printful's OAuth flow takes no scope parameter — a private token carries whatever scopes the merchant granted it in their own developer portal, and the app cannot narrow them from here.",
@@ -211,6 +214,16 @@ export const printfulConnector: IntegrationConnector = {
     try {
       const credentials = decryptCredentials<PrintfulCredentials>(integration.credentials);
       const refreshed = await refreshPrintfulToken(credentials);
+      // Persist it. refreshPrintfulToken RETURNS new credentials rather than
+      // storing them, and lib/fulfillment/printful.ts saves what it gets back —
+      // but this path did not, so a Recheck that happened to trigger a refresh
+      // threw away the rotated refresh token and left the stored one retired.
+      if (refreshed.accessToken !== credentials.accessToken) {
+        await prisma.storeIntegration.update({
+          where: { id: integration.id, storeId },
+          data: { credentials: encryptCredentials(refreshed) },
+        });
+      }
       // Printful documents 120 calls/minute but does not document the status
       // code it returns when you exceed it. 429 is handled defensively rather
       // than claiming to know — if they use something else, this simply never

@@ -141,6 +141,8 @@ export const easypostConnector: IntegrationConnector = {
     // which issues API keys and offers no OAuth flow for this use. Forcing an
     // OAuth shape here would be inventing one the provider does not have.
     authKind: "api_key",
+    // An EasyPost API key is valid until the merchant rotates it themselves.
+    tokenLifetime: "permanent",
     apiKeyExceptionReason:
       "EasyPost (the actual provider behind this connector) authenticates with an account API key and offers no OAuth authorization flow.",
     scopes: [],

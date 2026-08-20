@@ -120,6 +120,10 @@ export const quickbooksConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
   capabilities: {
     authKind: "oauth",
+    // ROTATING, and the reason this field exists. Intuit issues a new refresh
+    // token roughly every 24h and retires the previous one; discarding it killed
+    // this connection for eighteen days.
+    tokenLifetime: "rotating",
     scopes: ["com.intuit.quickbooks.accounting"],
     reads: ["transaction", "document"],
     writes: [],

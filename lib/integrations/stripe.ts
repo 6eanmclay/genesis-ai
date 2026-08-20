@@ -111,6 +111,8 @@ export const stripeConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.PAYMENTS_MANAGE,
   capabilities: {
     authKind: "oauth",
+    // A Stripe Connect access token does not expire. Nothing to renew.
+    tokenLifetime: "permanent",
     // PHASE 1 CORRECTION. Phase 0 recorded read_write as broader than Genesis
     // needs and said Phase 1 would narrow it. That was wrong, and tracing the
     // code is what showed it: app/store/[slug]/actions.ts builds the storefront

@@ -10,6 +10,50 @@ NEEDS VERIFICATION, and a gap is recorded as a gap.**
 
 ---
 
+## Action required from Sean
+
+Everything on this list is blocked on an external credential, account, or
+approval — not on engineering. Nothing else waits on any of it; the code is
+written and tested, and each item simply switches something from "built" to
+"usable". **None of it blocks Intuit, and Intuit does not block any of it.**
+
+**Provider credentials that do not exist in production yet.** Checked against
+Vercel, not assumed:
+
+| Missing | Consequence today | To fix |
+|---|---|---|
+| `MAILCHIMP_CLIENT_ID` / `_SECRET` | nobody can connect Mailchimp (existing key-based connections are unaffected) | register an app in Mailchimp's developer console |
+| `FACEBOOK_CLIENT_ID` / `_SECRET` | Facebook **and** Instagram cannot connect at all | one Meta app covers both |
+| `TIKTOK_CLIENT_KEY` / `_SECRET` | TikTok cannot connect | register a TikTok developer app |
+| `SQUARE_CLIENT_ID` / `_SECRET` | the Square connector cannot be built | register a Square application |
+
+**Reconnections you have to do yourself**, because only the account holder can
+re-authorize:
+
+- **QuickBooks** — dead since 2026-08-01. The rotation bug that killed it is
+  fixed, but a retired refresh token can only be replaced by fresh consent.
+- **Google Calendar** — publish the OAuth app first. While the consent screen is
+  in *Testing*, Google expires every refresh token after seven days, so
+  reconnecting before publishing buys one week and then breaks again.
+
+**Waiting on someone else:**
+
+- **EasyPost** — account verification. You have a support ticket open; the
+  per-store architecture is finished and tested behind it.
+- **Intuit** — what they expect for a "hosting IP address" from a serverless
+  platform. See §13; there is no honest single answer to give them.
+- **PayPal** — their delegated (multiparty) onboarding needs PayPal's approval
+  before live use. Worth applying for only if you want sellers to connect PayPal
+  without pasting their own app credentials. Not required for the current flow.
+
+**Your decision, not a blocker:**
+
+- **The live end-to-end payment test.** You explicitly chose not to run real
+  money through checkout yet. Everything up to that point is verified; that one
+  proof is not, and it is recorded as unverified rather than assumed.
+
+---
+
 ## Status summary
 
 | # | Requirement | Status | Evidence |
@@ -19,7 +63,7 @@ NEEDS VERIFICATION, and a gap is recorded as a gap.**
 | 3 | Credentials encrypted at rest | **Compliant** | `credentials.ts`, AES-GCM via `INTEGRATION_ENCRYPTION_KEY` |
 | 4 | Credentials never reach the browser | **Compliant** | `toStatusView()`; asserted with a planted ciphertext |
 | 5 | Credentials never written to logs or records | **Compliant** | `providerError.ts`; 21 assertions — see §5 |
-| 6 | Refresh-token rotation handled | **Compliant** | `tokenRefresh.ts`; 15 assertions |
+| 6 | Token expiry & rotation handled | **Compliant** | `tokenRefresh.ts`; 21 assertions — see §6 |
 | 7 | Expired / invalid grant handled honestly | **Compliant** | 400 → "please reconnect", surfaced in the UI |
 | 8 | Revocation at the provider on disconnect | **Compliant** | every provider that offers it — see §8 |
 | 9 | Tenant data isolation | **Compliant** | `tenantIsolation.ts` refuses unscoped access |
@@ -41,6 +85,13 @@ form the owner cannot see, narrow, or withdraw from Genesis's side. It uses
 OAuth now. The three remaining API-key connectors are genuine: PayPal (the
 merchant's own app credentials), EasyPost and its per-store key — no OAuth
 exists at either. Each states its reason in `apiKeyExceptionReason`, asserted.
+
+PayPal's reason was rewritten during this audit. It used to say "no per-merchant
+OAuth handoff is implemented", which reads as an admission of laziness; the fact
+is that PayPal's delegated (multiparty) flow **is not self-serve** — a platform
+must apply and be approved by PayPal before acting on a seller's behalf in live
+mode. Until that approval exists the merchant's own app credentials are the only
+honest option. Applying is on the Action Required list.
 
 Mailchimp's OAuth takes no scope parameter, and neither does Printful's. An
 empty `scopes` array must mean "none exist", never "nobody filled this in", so
@@ -128,13 +179,37 @@ A 400 now says **"please reconnect"** rather than a bare status code, because a
 retired refresh token is only repairable by fresh authorization, and the owner is
 the only one who can do it.
 
-**One honest wrinkle.** Phase 0 added an optional framework-level `refresh()` to
-the connector contract, and no connector implements it — the framework suite
-prints `connectors implementing refresh(): (none yet)` on every run. That is not
-a gap in behaviour: each connector refreshes inline, immediately before any API
-call that needs a live token, which is where a refresh actually belongs. The
-unused contract method is the thing that should go, and it is recorded here so
-the printed "(none yet)" is not mistaken for missing refresh.
+**The same bug was still in two other connectors, and declaring the problem is
+what found them.** Phase 0 had added an optional framework-level `refresh()` that
+no connector ever implemented — the suite printed "(none yet)" every run, which
+read as a gap and was not one. The method was simply the wrong shape: renewal
+belongs immediately before the call that needs a live token, which is where each
+connector already does it. What was actually wanted was *visibility*, and that is
+data, not a method. So it became `capabilities.tokenLifetime`:
+
+| permanent | expires | rotating |
+|---|---|---|
+| Stripe, PayPal, EasyPost, Mailchimp | Google, Facebook, Instagram | **QuickBooks, Printful, TikTok** |
+
+Writing those three columns down immediately surfaced two live defects:
+
+- **TikTok had the QuickBooks bug verbatim.** It read only `access_token`,
+  discarded the rotated `refresh_token`, and persisted nothing at all — so every
+  call re-refreshed and the second one would have presented a retired token.
+  TikTok's own documentation is explicit: *"You must use the newly-returned token
+  if the value is different than the previous one."* Unfired only because nobody
+  has connected TikTok in production yet.
+- **Printful's `verify()` dropped the refreshed credentials.** The fulfillment
+  path saves what `refreshPrintfulToken` returns; the connector's own verify did
+  not, so a Recheck that happened to trigger a renewal retired the stored token.
+
+Both now persist through the same tested merge as QuickBooks and Google.
+
+Facebook and Instagram are declared `expires` for a subtler reason worth naming:
+the Page token used for every API call is effectively non-expiring, but the user
+token kept beside it *for revocation* lasts about 60 days. The connection keeps
+working; `disconnect()` quietly loses the ability to revoke at Meta. That is
+logged rather than silent, and reconnecting restores it.
 
 ## 8. Revocation on disconnect
 

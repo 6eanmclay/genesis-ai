@@ -61,6 +61,9 @@ export const instagramConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
   capabilities: {
     authKind: "oauth",
+    // Same as Facebook: the Page token is effectively permanent, the user token
+    // kept for revocation is not (~60 days).
+    tokenLifetime: "expires",
     scopes: ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_manage_insights"],
     reads: ["socialAccount"],
     writes: [],

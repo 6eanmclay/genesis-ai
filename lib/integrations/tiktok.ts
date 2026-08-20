@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { describeProviderError } from "./providerError";
 import { beginOAuthHandoff } from "./oauthState";
 import { integrationFetch } from "./rateLimit";
+import { mergeRefreshedTokens } from "./tokenRefresh";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
@@ -56,7 +57,19 @@ function tiktokClientCredentials(): { clientKey: string; clientSecret: string } 
   return { clientKey, clientSecret };
 }
 
-async function refreshAccessToken(credentials: TikTokCredentials): Promise<string> {
+// TikTok ROTATES, and its own documentation is explicit about it: "The returned
+// refresh_token may be different than the one passed in the payload. You must
+// use the newly-returned token if the value is different than the previous one."
+//
+// This function used to read only `access_token`, discard the rotated
+// refresh_token, and persist nothing at all — the exact bug that took QuickBooks
+// down for eighteen days, sitting here unfired only because nobody has connected
+// TikTok in production yet. It also meant every single call re-refreshed, since
+// the stored expiry never moved.
+//
+// Found 2026-08-20 while declaring capabilities.tokenLifetime, which is the
+// point of declaring it.
+async function refreshAccessToken(storeId: string, credentials: TikTokCredentials): Promise<string> {
   if (credentials.expiresAt > Date.now() + 60_000) {
     return credentials.accessToken;
   }
@@ -72,10 +85,26 @@ async function refreshAccessToken(credentials: TikTokCredentials): Promise<strin
     }),
   });
   if (!res.ok) {
-    throw new Error(`TikTok token refresh failed (${res.status})`);
+    // A 400 here means the stored refresh token is no longer accepted, which
+    // only fresh authorization can fix.
+    throw new Error(
+      res.status === 400
+        ? "TikTok connection expired — please reconnect."
+        : `TikTok token refresh failed (${res.status})`
+    );
   }
-  const data = (await res.json()) as { access_token: string };
-  return data.access_token;
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+  };
+
+  const updated = mergeRefreshedTokens(credentials, data);
+  await prisma.storeIntegration.update({
+    where: { storeId_provider: { storeId, provider: "TIKTOK" } },
+    data: { credentials: encryptCredentials(updated) },
+  });
+  return updated.accessToken;
 }
 
 async function tiktokApiGet<T>(path: string, accessToken: string, searchParams: Record<string, string> = {}): Promise<T> {
@@ -101,6 +130,10 @@ export const tiktokConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
   capabilities: {
     authKind: "oauth",
+    // ROTATING, in TikTok's own words: "The returned refresh_token may be
+    // different than the one passed in the payload. You must use the
+    // newly-returned token if the value is different than the previous one."
+    tokenLifetime: "rotating",
     scopes: ["user.info.basic", "user.info.stats", "video.list"],
     reads: ["socialAccount"],
     writes: [],
@@ -189,7 +222,7 @@ export const tiktokConnector: IntegrationConnector = {
     }
     try {
       const credentials = decryptCredentials<TikTokCredentials>(integration.credentials);
-      const accessToken = await refreshAccessToken(credentials);
+      const accessToken = await refreshAccessToken(storeId, credentials);
       await tiktokApiGet(`/user/info/`, accessToken, { fields: "open_id" });
       await prisma.storeIntegration.update({
         where: { id: integration.id, storeId },
@@ -256,7 +289,7 @@ export const tiktokConnector: IntegrationConnector = {
     });
     if (!integration?.credentials) return [];
     const credentials = decryptCredentials<TikTokCredentials>(integration.credentials);
-    const accessToken = await refreshAccessToken(credentials);
+    const accessToken = await refreshAccessToken(storeId, credentials);
 
     const userInfo = await tiktokApiGet<{
       data?: {

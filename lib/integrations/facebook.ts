@@ -53,6 +53,12 @@ export const facebookConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
   capabilities: {
     authKind: "oauth",
+    // The Page token used for every API call is effectively non-expiring, but
+    // the long-lived USER token kept alongside it for revocation lasts ~60 days.
+    // So the connection keeps working past 60 days while disconnect() quietly
+    // loses the ability to revoke at Meta — declared "expires" for that reason,
+    // and the failure is logged rather than silent.
+    tokenLifetime: "expires",
     scopes: ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_manage_insights"],
     reads: ["socialAccount"],
     writes: [],

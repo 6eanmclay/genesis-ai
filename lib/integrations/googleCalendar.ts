@@ -97,6 +97,11 @@ export const googleCalendarConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
   capabilities: {
     authKind: "oauth",
+    // The access token expires hourly; the refresh token does NOT rotate, so a
+    // renewal that only updates the access token is correct here. (An unpublished
+    // app is the separate trap: Google expires refresh tokens after 7 days while
+    // the consent screen is in Testing.)
+    tokenLifetime: "expires",
     scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
     reads: ["appointment"],
     writes: [],

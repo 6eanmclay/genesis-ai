@@ -142,15 +142,12 @@ export function syncExecutable(
       `integration.${connector.provider.toLowerCase()}.sync`,
     requiredPermission: connector.requiredPermission,
     async run(_input, ctx) {
-      // Phase 0 — renew before reading. QuickBooks, Google Calendar and
-      // Printful all expire tokens and each hand-rolled its own refresh with
-      // nothing on the interface saying so; a connector that forgot simply
-      // failed at sync time looking like a provider outage. Failures here are
-      // deliberately not swallowed: a token that cannot be renewed IS the sync
-      // failure, and reporting it honestly beats an empty successful sync.
-      if (connector.refresh) {
-        await connector.refresh(ctx.storeId);
-      }
+      // No pre-sync refresh hook. Every connector whose tokens expire renews
+      // them immediately before the call that needs a live one, which is where
+      // that belongs — a hook here would refresh on a schedule unrelated to
+      // actual use. Which connectors have an expiry problem at all is declared
+      // in capabilities.tokenLifetime instead of implied by a method nobody
+      // implemented. See the note in lib/integrations/types.ts.
       if (!connector.sync) {
         return {
           message: `${connector.displayName} has nothing to sync`,

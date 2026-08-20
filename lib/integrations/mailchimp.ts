@@ -112,6 +112,10 @@ export const mailchimpConnector: IntegrationConnector = {
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
   capabilities: {
     authKind: "oauth",
+    // Mailchimp documents that its Marketing access tokens do not expire and
+    // that there is no refresh_token to use. Legacy API keys do not expire
+    // either, so both stored shapes are permanent.
+    tokenLifetime: "permanent",
     scopes: [],
     noScopesReason:
       "Mailchimp's OAuth2 flow takes no scope parameter — consent grants access to the account, and there is nothing narrower to ask for. Genesis only reads campaigns.",

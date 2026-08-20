@@ -60,6 +60,17 @@ export interface IntegrationCapabilities {
    */
   writes: string[];
   /**
+   * Do this provider's credentials expire, and if so is renewal automatic?
+   *
+   * Declared because the answer drives real failure modes and was previously
+   * invisible from outside each connector. "rotating" is the dangerous one: the
+   * provider issues a NEW refresh token on every renewal and retires the old,
+   * so a connector that discards it dies silently about a day later. That is
+   * not hypothetical — it is what took QuickBooks down for eighteen days.
+   */
+  tokenLifetime: "permanent" | "expires" | "rotating";
+
+  /**
    * Does disconnect() end the grant AT THE PROVIDER, not just locally?
    *
    * Declared rather than assumed, because the honest answer was no for six
@@ -161,19 +172,17 @@ export interface IntegrationConnector {
 
   status(storeId: string): Promise<IntegrationStatusView | null>;
 
-  // Phase 0 — the refresh contract.
+  // Phase 0 added an optional refresh(storeId) here, and no connector ever
+  // implemented it — the framework suite printed "connectors implementing
+  // refresh(): (none yet)" on every run, which read as a gap and was not one.
   //
-  // QuickBooks, Google Calendar and Printful each hand-rolled token refresh and
-  // Meta does its own long-lived exchange, with nothing on this interface
-  // saying so. A connector whose tokens expire implements this; the sync
-  // adapter calls it before reading, so an expired token is renewed rather than
-  // surfacing as a mysterious sync failure.
-  //
-  // Optional because it is genuinely not universal: a Stripe Connect access
-  // token does not expire, and an API-key connector has nothing to refresh.
-  // Saying "not applicable" by omission is honest; a no-op implementation
-  // everywhere would hide which connectors really need it.
-  refresh?(storeId: string): Promise<void>;
+  // It was the wrong shape. Refreshing belongs immediately before the call that
+  // needs a live token, which is exactly where each connector already does it;
+  // a separate pre-sync hook would refresh on a schedule that has nothing to do
+  // with when the token is actually used. What Phase 0 genuinely wanted was
+  // VISIBILITY — some way to see from the outside which connectors have an
+  // expiry problem at all. That is data, not a method: capabilities.tokenLifetime.
+  // Removed 2026-08-20.
 
   /** Present only for providers that actually deliver webhooks. */
   webhooks?: IntegrationWebhooks;

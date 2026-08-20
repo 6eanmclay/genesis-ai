@@ -219,16 +219,38 @@ async function connectorSections() {
   }
 
   // -------------------------------------------------------------------------
-  console.log("\n8. Contract surface exists where it should");
-  const withRefresh = (["QUICKBOOKS", "GOOGLE_CALENDAR", "PRINTFUL"] as IntegrationProvider[])
-    .filter((p) => typeof getConnector(p).refresh === "function");
-  console.log(`      connectors implementing refresh(): ${withRefresh.join(", ") || "(none yet)"}`);
-  // Stripe Connect tokens do not expire and an API key has nothing to renew —
-  // absence here is a real answer, not an oversight.
-  check("Stripe correctly declares no refresh", typeof getConnector("STRIPE").refresh, "undefined");
-  check("EasyPost correctly declares no refresh", typeof getConnector("EASYPOST").refresh, "undefined");
+  console.log("\n8. Every connector says whether its credentials expire");
+  //
+  // This replaced an optional refresh() method that no connector ever
+  // implemented. The method was the wrong shape — renewal belongs immediately
+  // before the call that needs a live token, which is where each connector
+  // already does it. What was actually wanted was visibility, and that is data.
+  //
+  // Declaring it is not bookkeeping: writing these down is what surfaced that
+  // TikTok discarded its rotated refresh token exactly as QuickBooks used to,
+  // and that Printful's verify() dropped the refreshed credentials on the floor.
+  for (const p of providers) {
+    const lifetime = getConnector(p).capabilities.tokenLifetime;
+    assert(`${p} declares its token lifetime`, ["permanent", "expires", "rotating"].includes(lifetime), lifetime);
+  }
 
-  // -------------------------------------------------------------------------
+  // ROTATING is the dangerous one: the provider retires the old refresh token
+  // the moment it issues a new one, so a connector that fails to persist the
+  // new value dies silently about a day later.
+  check(
+    "the rotating providers are named",
+    providers.filter((p) => getConnector(p).capabilities.tokenLifetime === "rotating").sort(),
+    ["PRINTFUL", "QUICKBOOKS", "TIKTOK"]
+  );
+  // An API key has nothing to renew. If one ever claims otherwise, something
+  // has been copied without being read.
+  for (const p of providers) {
+    const caps = getConnector(p).capabilities;
+    if (caps.authKind === "api_key") {
+      check(`${p} (api key) has nothing to expire`, caps.tokenLifetime, "permanent");
+    }
+  }
+
   console.log("\n9. Disconnect ends the grant at the provider, where it can");
   //
   // Deleting a stored token is not revoking it. A provider that still holds a
