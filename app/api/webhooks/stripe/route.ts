@@ -1,3 +1,4 @@
+import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import Stripe from "stripe";
 import { after } from "next/server";
@@ -122,7 +123,12 @@ export async function POST(request: Request) {
             metadata: { sessionId: session.id, amountTotal: session.amount_total ?? null },
           });
         } catch (error) {
-          console.error("[stripe webhook] could not record unmatched payment:", error);
+          reportIssue("could not record an unmatched payment", error, {
+            subsystem: "payments",
+            stage: "stripe.unrecorded.persist",
+            storeId,
+            extra: { sessionId: session.id },
+          });
         }
       }
     }

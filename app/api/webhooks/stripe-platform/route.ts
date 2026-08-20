@@ -1,3 +1,4 @@
+import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
@@ -49,7 +50,12 @@ async function recordUnappliedPayment(
       metadata: { sessionId },
     });
   } catch (error) {
-    console.error("[stripe-platform webhook] could not record unapplied payment:", error);
+    reportIssue("could not record an unapplied payment", error, {
+      subsystem: "billing",
+      stage: "stripe.unapplied.persist",
+      storeId,
+      extra: { sessionId },
+    });
   }
 }
 
@@ -101,7 +107,12 @@ export async function POST(request: Request) {
             description: `Purchased ${pointAmount} Growth Point${pointAmount === 1 ? "" : "s"}`,
           });
         } catch (error) {
-          console.error(`[stripe-platform webhook] could not credit ${session.id}:`, error);
+          reportIssue(`could not credit Growth Points for ${session.id}`, error, {
+            subsystem: "billing",
+            stage: "stripe.points.credit",
+            storeId,
+            extra: { sessionId: session.id, pointAmount },
+          });
           await recordUnappliedPayment(storeId, session.id, "the Growth Point purchase could not be credited");
         }
       }
@@ -150,7 +161,12 @@ export async function POST(request: Request) {
             },
           });
         } catch (error) {
-          console.error(`[stripe-platform webhook] could not apply subscription ${session.id}:`, error);
+          reportIssue(`could not apply subscription for ${session.id}`, error, {
+            subsystem: "billing",
+            stage: "stripe.subscription.apply",
+            storeId,
+            extra: { sessionId: session.id, planId },
+          });
           await recordUnappliedPayment(storeId, session.id, "the plan subscription could not be applied");
         }
       }

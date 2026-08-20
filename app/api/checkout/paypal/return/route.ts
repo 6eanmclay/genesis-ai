@@ -1,3 +1,4 @@
+import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -36,7 +37,12 @@ async function recordCaptureProblem(storeId: string, token: string, reason: stri
   } catch (error) {
     // The redirect matters more than the record; never turn a logging failure
     // into a crash screen for someone who has just paid.
-    console.error(`[paypal/return] could not record capture problem for ${token}:`, error);
+    reportIssue(`could not record a PayPal capture problem for ${token}`, error, {
+      subsystem: "payments",
+      stage: "paypal.capture.persist",
+      storeId,
+      extra: { token, reason },
+    });
   }
 }
 

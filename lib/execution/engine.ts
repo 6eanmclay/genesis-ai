@@ -1,3 +1,4 @@
+import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import { unstable_rethrow } from "next/navigation";
 import { requireStorePermission } from "@/lib/permissions";
@@ -262,11 +263,12 @@ export async function execute<TInput, TMetadata>(
           executionLogId: logRow.id,
         });
       } catch (error) {
-        console.error(
-          `[execute] growth points not deducted for ${executable.action} on store ${ctx.storeId} ` +
-            `(execution ${executionId}, cost ${growthPointCost}):`,
-          error
-        );
+        reportIssue(`growth points not deducted for ${executable.action}`, error, {
+          subsystem: "execution",
+          stage: "growthPoints.deduct",
+          storeId: ctx.storeId,
+          extra: { executionId, cost: growthPointCost },
+        });
       }
     }
 

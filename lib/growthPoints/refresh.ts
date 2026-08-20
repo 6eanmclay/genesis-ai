@@ -1,3 +1,4 @@
+import { reportIssue } from "@/lib/observability/reportIssue";
 import { prisma, prismaSystem } from "@/lib/prisma";
 
 // Growth Points Economy (Chapter 2) — the monthly refresh sweep. Same
@@ -104,7 +105,11 @@ export async function runDueGrowthPointRefreshes(limit = 50): Promise<GrowthPoin
 
       summaries.push({ storeId: store.id, planId: store.planId, granted: allowance });
     } catch (error) {
-      console.error(`[growthPoints] refresh failed for store ${store.id}:`, error);
+      reportIssue("monthly Growth Point refresh failed", error, {
+        subsystem: "billing",
+        stage: "growthPoints.refresh",
+        storeId: store.id,
+      });
     }
   }
 

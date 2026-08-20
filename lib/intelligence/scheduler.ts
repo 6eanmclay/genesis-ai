@@ -1,3 +1,4 @@
+import { reportIssue } from "@/lib/observability/reportIssue";
 import { prisma, prismaSystem } from "@/lib/prisma";
 import { getConnector } from "@/lib/integrations/registry";
 import { execute } from "@/lib/execution/engine";
@@ -169,10 +170,12 @@ export async function runDueSyncs(limit = 50): Promise<SyncRunSummary[]> {
               metadata.changes
             );
           } catch (error) {
-            console.error(
-              `[scheduler] change detection failed for ${integration.provider} on store ${integration.storeId}:`,
-              error
-            );
+            reportIssue(`change detection failed for ${integration.provider}`, error, {
+              subsystem: "scheduler",
+              stage: "changeDetection",
+              storeId: integration.storeId,
+              extra: { provider: integration.provider },
+            });
           }
         }
         touchedStoreIds.add(integration.storeId);
@@ -208,10 +211,12 @@ export async function runDueSyncs(limit = 50): Promise<SyncRunSummary[]> {
         });
       }
     } catch (error) {
-      console.error(
-        `[scheduler] ${integration.provider} sync for store ${integration.storeId} threw:`,
-        error
-      );
+      reportIssue(`${integration.provider} sync threw`, error, {
+        subsystem: "scheduler",
+        stage: "sync",
+        storeId: integration.storeId,
+        extra: { provider: integration.provider },
+      });
       summaries.push({
         storeId: integration.storeId,
         provider: integration.provider,
