@@ -5306,6 +5306,21 @@ export async function approveGenesisActionGroup(groupId: string) {
 // shape so both callers (app/api/chat/route.ts, applyGenesisMessageToStore)
 // report through the one shared describeApprovalExecutionForChat.
 export async function performApprovePendingChanges(storeId: string): Promise<GroupApprovalResult> {
+  // The caller-supplied storeId is CONFIRMED against the session before it is
+  // used (2026-08-20). Both real callers already pass the signed-in owner's own
+  // store, so this costs them nothing.
+  //
+  // It could not be used to approve anything cross-store — every path below
+  // delegates to performApproveGenesisAction/Group, which re-derive the storeId
+  // from the session and scope their queries to it. But it DID perform an
+  // unscoped read of another store's pending approvals before those guards
+  // caught it, and "the next function down happens to be safe" is not a reason
+  // to read another tenant's rows at all.
+  const { storeId: callerStoreId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+  if (callerStoreId !== storeId) {
+    return { totalMembers: 0, succeeded: [], failed: [] };
+  }
+
   const batch = await resolveMostRecentPendingApprovalBatch(storeId);
   if (!batch) {
     return { totalMembers: 0, succeeded: [], failed: [] };

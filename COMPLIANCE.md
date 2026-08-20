@@ -431,6 +431,9 @@ The rest held up, and that is worth recording so it is not re-checked from scrat
 - The product-image executables scope every query by `ctx.storeId`.
 - The chat uploads guard inside their turn functions, not at the exported wrapper.
 - `lib/dashboard/pendingApprovals.ts` takes a raw `storeId` and looked alarming until checked: it is not a server-action module at all.
+- The approval actions (`performApproveGenesisAction`, `…Group`, and the J4 conversation and onboarding-meeting wrappers that reuse them) all scope by the session's storeId, so a cross-store approval id resolves to `not_found`.
+
+**One more tightened (2026-08-20).** `performApprovePendingChanges(storeId)` took a caller-supplied store id. It could not approve anything cross-store — every path below it re-derives the storeId from the session — but it *did* perform an unscoped read of another store's pending approvals before those guards caught it. The id is confirmed against the session now, because "the next function down happens to be safe" is not a reason to read another tenant's rows at all.
 
 ## 17. False success states
 
