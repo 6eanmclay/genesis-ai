@@ -203,6 +203,56 @@ async function main() {
       check("and the second cannot sell the first's",
         errorOf(await checkout(second.store.slug, first.product.id)), "Product not found");
     }
+    // -----------------------------------------------------------------------
+    console.log("\n6. Live shipping is only offered where it can actually complete");
+    {
+      await reset();
+      const { productSupportsLiveShipping } = await import("@/lib/shipping/checkoutShipping");
+
+      // THE DEAD END. checkoutWithShipping calls createStripeCheckoutSession
+      // directly — a chosen service has to become a Stripe shipping_options
+      // line — so a store with EasyPost but no Stripe used to pass this check,
+      // show the customer the whole flow, take a full delivery address, quote
+      // real carrier rates, and then fail the buy with a generic error.
+      const paypalOnly = await makeStore("paypal-only", { connected: false });
+      await prisma.storeIntegration.create({
+        data: { storeId: paypalOnly.store.id, provider: "PAYPAL", status: "CONNECTED" },
+      });
+      await prisma.storeIntegration.create({
+        data: { storeId: paypalOnly.store.id, provider: "EASYPOST", status: "CONNECTED" },
+      });
+      await prisma.product.update({ where: { id: paypalOnly.product.id }, data: { weightOz: 8 } });
+
+      check("a PayPal-only store is not offered live shipping",
+        await productSupportsLiveShipping(paypalOnly.store.id, paypalOnly.product.id), false);
+
+      // With Stripe connected, the same store and product genuinely can
+      // complete — so the feature must still be offered, or the fix has just
+       // turned a broken path into a missing one.
+      await prisma.storeIntegration.create({
+        data: { storeId: paypalOnly.store.id, provider: "STRIPE", status: "CONNECTED", externalAccountId: "acct_ok" },
+      });
+      check("adding Stripe turns it back on",
+        await productSupportsLiveShipping(paypalOnly.store.id, paypalOnly.product.id), true);
+
+      // And a Stripe connection that is not usable must not count either.
+      await prisma.storeIntegration.updateMany({
+        where: { storeId: paypalOnly.store.id, provider: "STRIPE" },
+        data: { status: "FAILED" },
+      });
+      check("a FAILED Stripe connection does not re-enable it",
+        await productSupportsLiveShipping(paypalOnly.store.id, paypalOnly.product.id), false);
+
+      // The other preconditions still hold on their own.
+      await prisma.storeIntegration.updateMany({
+        where: { storeId: paypalOnly.store.id, provider: "STRIPE" },
+        data: { status: "CONNECTED" },
+      });
+      await prisma.product.update({ where: { id: paypalOnly.product.id }, data: { weightOz: null } });
+      check("a product with no weight cannot be rated",
+        await productSupportsLiveShipping(paypalOnly.store.id, paypalOnly.product.id), false);
+    }
+
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

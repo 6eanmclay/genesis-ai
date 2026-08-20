@@ -30,9 +30,26 @@ export interface SelectedShipping {
  * old checkout path, which is a working checkout — not a degraded one.
  */
 export async function productSupportsLiveShipping(storeId: string, productId: string): Promise<boolean> {
-  const [integration, product] = await Promise.all([
+  const [easypost, stripe, product] = await Promise.all([
     prisma.storeIntegration.findUnique({
       where: { storeId_provider: { storeId, provider: "EASYPOST" } },
+      select: { status: true },
+    }),
+    // STRIPE IS REQUIRED TOO, and leaving it out was a real customer-facing
+    // dead end (found 2026-08-20 by tracing the PayPal checkout path).
+    //
+    // checkoutWithShipping calls createStripeCheckoutSession DIRECTLY — it does
+    // not go through selectProvider — because a chosen shipping service has to
+    // become a Stripe shipping_options line. So a store with EasyPost connected
+    // and PayPal but no Stripe passed this check, showed the customer the whole
+    // live-shipping flow, took a full delivery address, quoted real carrier
+    // rates, and then failed on the buy with "Something went wrong on our end".
+    //
+    // The customer did the most work available and got the least useful error,
+    // and the owner had no way to know it was happening. Gating here means the
+    // storefront simply offers the ordinary checkout instead, which works.
+    prisma.storeIntegration.findUnique({
+      where: { storeId_provider: { storeId, provider: "STRIPE" } },
       select: { status: true },
     }),
     prisma.product.findFirst({
@@ -41,7 +58,8 @@ export async function productSupportsLiveShipping(storeId: string, productId: st
     }),
   ]);
 
-  if (integration?.status !== "CONNECTED") return false;
+  if (easypost?.status !== "CONNECTED") return false;
+  if (stripe?.status !== "CONNECTED") return false;
   return typeof product?.weightOz === "number" && product.weightOz > 0;
 }
 
