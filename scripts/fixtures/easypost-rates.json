@@ -1,0 +1,45 @@
+{
+  "_comment": "Shape taken from a real EasyPost Shipment.rates response. Prices and ids are illustrative; the field names, string-decimal rates and optional delivery_days are exactly what EasyPost returns.",
+  "rates": [
+    {
+      "id": "rate_priority",
+      "object": "Rate",
+      "carrier": "USPS",
+      "service": "PriorityMail",
+      "rate": "8.92",
+      "currency": "USD",
+      "delivery_days": 2,
+      "est_delivery_days": 2
+    },
+    {
+      "id": "rate_ground_advantage",
+      "object": "Rate",
+      "carrier": "USPS",
+      "service": "GroundAdvantage",
+      "rate": "7.45",
+      "currency": "USD",
+      "delivery_days": 4,
+      "est_delivery_days": 4
+    },
+    {
+      "id": "rate_express",
+      "object": "Rate",
+      "carrier": "USPS",
+      "service": "PriorityMailExpress",
+      "rate": "12.35",
+      "currency": "USD",
+      "delivery_days": 1,
+      "est_delivery_days": 1
+    },
+    {
+      "id": "rate_ups_next_day",
+      "object": "Rate",
+      "carrier": "UPS",
+      "service": "NextDayAir",
+      "rate": "28.40",
+      "currency": "USD",
+      "delivery_days": null,
+      "est_delivery_days": null
+    }
+  ]
+}

@@ -504,6 +504,14 @@ model Product {
   // Product — externalVariantId records the one representative catalog
   // variant Genesis selected, not a full variant system.
   costInCents         Int?
+  // Parcel dimensions for live shipping rates (EasyPost, 2026-08-20). Nullable
+  // because most products predate this and because a digital or
+  // owner-fulfilled item genuinely has none — a null here means "cannot rate
+  // this", never "weighs nothing".
+  weightOz            Float?
+  lengthIn            Float?
+  widthIn             Float?
+  heightIn            Float?
   fulfillmentProvider IntegrationProvider?
   externalProductId   String?
   externalVariantId   String?
@@ -602,7 +610,16 @@ model Order {
   trackingNumber       String?
   trackingUrl          String?
   labelUrl             String?
+  // What the LABEL cost the owner. Written only when a label is purchased.
+  // Read by M7 profitability — do not conflate with what the customer paid.
   shippingCostInCents  Int?
+  // What the CUSTOMER chose and was charged at checkout (2026-08-20). The gap
+  // between this and shippingCostInCents is the store's shipping margin.
+  shippingChargedInCents  Int?
+  selectedShippingCarrier String?
+  selectedShippingService String?
+  selectedShippingRateId  String?
+  selectedShippingEstDays Int?
   createdAt         DateTime            @default(now())
 
   store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
