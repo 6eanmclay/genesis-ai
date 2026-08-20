@@ -10,7 +10,9 @@ interface OrderMetadata {
 
 interface ToggleFulfilledInput {
   orderId: string;
-  currentlyFulfilled: boolean;
+  // `currentlyFulfilled` used to live here, supplied by the caller. Removed
+  // 2026-08-20 — the executable reads the real state itself now, and a field
+  // nobody reads is a trap for whoever next assumes it is authoritative.
 }
 
 // Owner-experience milestone — manual-only fulfillment tracking (Sean's
@@ -21,17 +23,56 @@ export const toggleOrderFulfilledExecutable: Executable<ToggleFulfilledInput, Or
   action: EXECUTION_ACTIONS.ORDER_TOGGLE_FULFILLED,
   requiredPermission: PERMISSIONS.ORDERS_MANAGE,
   async run(input, ctx) {
-    const nowFulfilled = !input.currentlyFulfilled;
-    const order = await prisma.order.update({
+    // The CURRENT state is read here, scoped to this store, rather than taken
+    // from the caller (2026-08-20).
+    //
+    // It used to arrive as `currentlyFulfilled`, computed by the action from a
+    // read it had done earlier — a check-then-act with a page render in the
+    // middle. Two tabs, or a stale page, and the toggle flips against a state
+    // that has since changed.
+    const order = await prisma.order.findFirst({
       where: { id: input.orderId, storeId: ctx.storeId },
+      select: { id: true, fulfillmentStatus: true, trackingNumber: true, carrier: true },
+    });
+    if (!order) throw new Error("Order not found");
+
+    const currentlyFulfilled = order.fulfillmentStatus === "fulfilled";
+    const nowFulfilled = !currentlyFulfilled;
+
+    // A PARCEL IN THE POST CANNOT BECOME UNFULFILLED.
+    //
+    // Buying a label marks the order fulfilled, records tracking, and emails
+    // the customer that it shipped. Un-marking it afterwards left the order
+    // showing as still needing fulfilment while the parcel was already gone and
+    // the buyer had tracking for it — an invitation to ship the same order
+    // twice. The label is the authoritative signal, so it wins.
+    if (!nowFulfilled && order.trackingNumber) {
+      throw new Error(
+        `This order already shipped — ${order.carrier ?? "the carrier"} has tracking ${order.trackingNumber}. ` +
+          `It can't be marked unfulfilled.`
+      );
+    }
+
+    // Conditional on the state just read, so a concurrent toggle is detected
+    // rather than silently overwritten by whichever request lands last.
+    const updated = await prisma.order.updateMany({
+      where: {
+        id: input.orderId,
+        storeId: ctx.storeId,
+        fulfillmentStatus: currentlyFulfilled ? "fulfilled" : "unfulfilled",
+      },
       data: {
         fulfillmentStatus: nowFulfilled ? "fulfilled" : "unfulfilled",
         fulfilledAt: nowFulfilled ? new Date() : null,
       },
     });
+    if (updated.count === 0) {
+      throw new Error("This order's status changed while you were looking at it — reload and try again.");
+    }
+
     return {
       message: nowFulfilled ? `Order marked as fulfilled` : `Order marked as unfulfilled`,
-      metadata: { orderId: order.id, fulfillmentStatus: order.fulfillmentStatus },
+      metadata: { orderId: order.id, fulfillmentStatus: nowFulfilled ? "fulfilled" : "unfulfilled" },
     };
   },
 };

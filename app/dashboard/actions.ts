@@ -302,16 +302,20 @@ export async function deleteProduct(productId: string) {
 }
 
 export async function toggleOrderFulfilled(orderId: string) {
-  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  // The lookup is only here to learn WHICH store this order belongs to, so that
+  // execute() can re-verify the caller's permission against that store — the
+  // confirmed-safe fetch-then-authorize pattern (see ARCHITECTURE.md). It no
+  // longer reads the fulfilment state: the executable reads that itself, so a
+  // stale page cannot toggle against a status that has since changed.
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { storeId: true },
+  });
   if (!order) {
     throw new Error("Order not found");
   }
 
-  await execute(
-    toggleOrderFulfilledExecutable,
-    { orderId, currentlyFulfilled: order.fulfillmentStatus === "fulfilled" },
-    { storeId: order.storeId }
-  );
+  await execute(toggleOrderFulfilledExecutable, { orderId }, { storeId: order.storeId });
 
   redirect("/dashboard/orders");
 }

@@ -67,6 +67,7 @@ function needsDatabase(file: string): boolean {
   // Same: brings its own real Postgres and must run unelevated.
   if (file === "verify-confirmation-live.ts") return false;
   if (file === "verify-checkout-live.ts") return false;
+  if (file === "verify-orders-live.ts") return false;
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
 

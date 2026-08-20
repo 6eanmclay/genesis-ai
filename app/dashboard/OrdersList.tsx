@@ -183,7 +183,11 @@ function OrderRowCard({
           {canManage && canBuyLabel && order.shippingAddress && !order.trackingNumber && (
             <BuyLabelForm orderId={order.id} />
           )}
-          {canManage && (
+          {/* No "mark as unfulfilled" once a label exists — the parcel is in the
+              post and the buyer has tracking, so the server refuses it. Offering
+              a button that throws is worse than not offering it. Marking as
+              fulfilled is still available for orders shipped by hand. */}
+          {canManage && !(isFulfilled && order.trackingNumber) && (
             <button
               disabled={isPending}
               onClick={() => startTransition(() => toggleOrderFulfilled(order.id))}
