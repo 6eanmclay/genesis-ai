@@ -101,6 +101,9 @@ customers place real orders".
 | 23 | Growth Points cannot leak | **Compliant** | `planDeduction`; 21 assertions — see §23 |
 | 24 | Role matrix pinned | **Compliant** | owner-only permissions asserted by name — see §24 |
 | 25 | Webhook forgery & replay | **Compliant** | `resolveWebhookStore`; 14 assertions — see §25 |
+| 26 | Database-backed testing | **Compliant** | in-process Postgres, real migrations — see §26 |
+| 27 | Tests cannot touch real data | **Compliant** | env + marker table; both required — see §27 |
+| 28 | Webhook handlers attacked | **Compliant** | signed payloads, 30 assertions — see §28 |
 
 ---
 
@@ -721,8 +724,69 @@ why is the useful part:
 | `stripe-webhook-e2e` | POSTs to the webhook route over HTTP — wants `next dev`, not a database |
 | `brand-logo-flow`, `social-connections-pipeline`, `product-image-gallery-e2e` | PGlite closes the connection on any Postgres-level error, and these exercise error paths, so each fails on its *next* query rather than on what it was asserting |
 
-**Still inspection-only:** the webhook handlers themselves, which need HTTP
-request plumbing rather than just a database.
+**No longer inspection-only.** The handlers are called directly with real
+Stripe-signed payloads — see §28. One path remains server-dependent and is named
+there: the merchant webhook's order-creation branch, which ends in Next's
+`after()`.
+
+---
+
+## 27. No test can touch real merchant data
+
+Eleven suites were written to run against production and several of them
+**mutate what they find** — `verify-product-content-change` renames the first
+product it sees. The only thing between a real catalogue and a test run was
+whoever typed the command remembering which `DATABASE_URL` was in their shell.
+
+Two conditions guard that now, and **both** are required:
+
+1. `GENESIS_TEST_DATABASE=1`, which the harness sets — catches the ordinary
+   mistake of running a suite directly with production credentials loaded.
+2. A **marker table** only the harness creates. This is the one that matters:
+   exporting a variable by hand cannot make production look like a test
+   database, because production has no marker table and these suites never
+   create one.
+
+A guard satisfiable from a shell profile would be theatre, so
+`verify-test-isolation.ts` asserts each condition fails *on its own*. Verified
+against the real production database too — with the flag deliberately set and
+production credentials loaded, it refuses and names the missing marker (a
+read-only `information_schema` lookup; nothing was written).
+
+The fifth assertion is the one with a future: the realistic regression is not
+someone deleting a guard but someone adding a **thirteenth suite** without
+knowing this exists, so the suite scans `scripts/` and fails if any file touching
+Prisma lacks the call.
+
+## 28. The webhook handlers, attacked
+
+§25 asserted the store-resolution *decision*. This calls the actual `POST`
+handlers with real Stripe-signed payloads and asserts what lands in the database.
+
+**It found a real defect immediately.** A Growth Point purchase naming a store
+that no longer resolves — deleted between checkout and delivery, or stale
+metadata — threw `P2025` straight out of the handler. That is a 500, so **Stripe
+retried it for days against something that could never succeed**, and the payment
+left no trace anyone would find. Both money branches are guarded now and record
+the loss instead; the subscription branch had the same shape and the same fix.
+
+Signature verification is the security boundary, so it is asserted three ways —
+no signature, wrong secret, payload edited after signing — and each case then
+checks that **no point was credited and no ledger row written**, because
+"returns 400" is only half the property. The two endpoints hold independent
+secrets precisely so a leak of one does not authorise the other, so that is
+asserted too: the platform secret does not work on the merchant endpoint.
+
+Replay is covered end to end rather than at the constraint level: three
+deliveries of one event credit once and write one row, and a genuinely different
+session still credits — idempotency keyed on the wrong thing would silently lose
+the second sale.
+
+**Scope, stated as a limit rather than omitted:** the merchant webhook's
+order-creation branch ends with Next's `after()`, which throws outside a request
+scope, so that one path still needs a running server (`verify-stripe-webhook-e2e`).
+Everything returning before it is covered here, and the platform billing webhook
+is covered end to end because it never calls `after()` at all.
 
 ---
 
@@ -752,7 +816,9 @@ scripts/verify-webhook-store.ts           forged Stripe events at the money boun
 scripts/verify-credential-encryption.ts   tampering, re-keying, and legacy rows
 scripts/verify-db-integrity.ts            the guard, the constraints, the migrations (real Postgres)
 scripts/verify-ledger-live.ts             the ledger's real transactions (real Postgres)
-scripts/run-db-suites.ts                  runs the 12 suites that need a database
+scripts/run-db-suites.ts                  runs the suites that need a database
+scripts/verify-test-isolation.ts          no suite can point at production
+scripts/verify-webhook-handlers.ts        signed payloads against the real handlers
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
