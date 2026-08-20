@@ -108,7 +108,7 @@ customers place real orders".
 | 30 | Operator visibility on failure | **Compliant** | `reportIssue`; 22 assertions — see §30 |
 | 31 | Misconfiguration ≠ attack | **Compliant** | 500 not 400 on unset secret — see §32 |
 | 32 | Order creation survives a bad event | **Compliant** | permanent vs transient split — see §33 |
-| 33 | Order creation in a real request | **NOT VERIFIED** | harness built, cannot run here — see §33 |
+| 33 | Order creation in a real request | **Compliant** | real server + real Postgres; 32 assertions — see §34 |
 
 ---
 
@@ -908,28 +908,66 @@ the default, since anything unrecognised is treated as **transient**. That
 direction is deliberate: retrying a permanent failure wastes a few days of
 Stripe's patience, while not retrying a transient one loses a real sale.
 
-### What is NOT verified, and why
+This is now verified end to end through a real server — see §34.
 
-The branch that actually writes the `Order` ends in `after()`, which throws
-outside a request scope, so it can only be exercised through a real server.
-`scripts/lib/testServer.ts` does exactly that and its **safety check works** — it
-seeds a canary row and refuses to post anything at a server that cannot see it,
-because `next dev` loads `.env` files and would otherwise write orders into a
-live merchant's database.
+---
 
-**The full path has not run on this machine.** Two environment constraints:
+## 34. The order-creation branch, for real
 
-1. **PGlite cannot serve a real Next server.** Its wire server drops the
-   connection the moment a client opens a second one, and a server is concurrent
-   by nature. Confirmed in isolation.
-2. `scripts/lib/realPostgres.ts` exists for that reason and starts a genuine
-   Postgres — but **PostgreSQL refuses to run under an administrator account on
-   Windows**, and this shell is elevated.
+The environment was the blocker, so the environment was fixed rather than the
+application. PostgreSQL refuses to start under an administrator account on
+Windows — correctly; it is protecting itself — and this shell is elevated.
+`scripts/run-unelevated.ps1` drops privileges via `runas /trustlevel:0x20000`
+(same user, administrators group disabled) and captures the output and exit code
+that `runas` otherwise detaches. Verified before being relied on: the wrapped
+command reports `Elevated=False` where the caller reports `True`.
 
-Neither is worth capping the production connection pool or stubbing `after()` to
-dodge. Run from a **non-elevated shell or CI** and this works. Until someone has,
-the order-creation branch is verified at the handler and constraint level only,
-and this document says so rather than implying more.
+**Nothing about the application was bent to make this run.** The connection pool
+is untouched, `after()` is not stubbed, the handler is not bypassed, the database
+is not mocked, and the production guard is intact — the server is *proven* to be
+on the test database before a single webhook is sent, via a canary row read back
+through `/api/cron/status`. `next dev` loads `.env` files, so without that check
+this suite could have written orders into a live merchant's database.
+
+### The defect it found
+
+**A payment naming a product that no longer exists created no order at all.**
+
+The code's own comment promised otherwise — *"the order is still created when the
+product is missing — the money is real whatever the catalogue says"* — but it
+wrote `productId` unconditionally, and `Order.productId` is a **foreign key**. A
+deleted product violated it and the entire order was lost. Money taken, nothing
+recorded.
+
+The column is nullable and the relation is `onDelete: SetNull`, so an order
+without a product was always the intended shape; the write simply never honoured
+it. It now links only when the product genuinely exists in that store.
+
+### What is proven
+
+Thirty-two assertions about **database state**, not status codes — a 200 that
+wrote nothing is the exact failure this audit has been chasing:
+
+- One `Order` for the right store *and* product, the product's real name, the
+  amount, the buyer's email, the charge id refunds match on, all five shipping
+  fields recovered from metadata, and the address the customer typed.
+- The `BusinessEvent` that commits **in the same transaction** — one without the
+  other means the intelligence engine's view silently diverges from the money.
+- Three replays of one event leave exactly one `Order` and one `BusinessEvent`,
+  while a genuinely different session still creates a second.
+- Unsigned, wrong-secret and tampered-after-signing payloads all 400 and create
+  nothing. 400 is correct: a forgery is permanently bad and Stripe should not
+  retry it.
+- A deleted store is acknowledged (200) rather than retried to death.
+- A cross-store claim lands in the attacker's own store, with no product borrowed
+  from the victim and no dangling link.
+- And a legitimate payment still succeeds after all of it.
+
+**Harness note:** `reset()` retries on deadlock, because `after()` work is still
+running when the next section truncates — `TRUNCATE` wants an
+`AccessExclusiveLock` while the post-response sweep holds an `AccessShareLock`.
+That is not flake-tolerance; it is the test racing work it deliberately
+triggered, and it is incidental proof that `after()` genuinely executes.
 
 ---
 
@@ -963,6 +1001,7 @@ scripts/run-db-suites.ts                  runs the suites that need a database
 scripts/verify-test-isolation.ts          no suite can point at production
 scripts/verify-webhook-handlers.ts        signed payloads against the real handlers
 scripts/verify-report-issue.ts            never throws, never leaks a token
+scripts/verify-order-webhook-live.ts      the order-creation branch (real server + real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
