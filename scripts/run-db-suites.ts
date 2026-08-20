@@ -69,6 +69,7 @@ function needsDatabase(file: string): boolean {
   if (file === "verify-checkout-live.ts") return false;
   if (file === "verify-orders-live.ts") return false;
   if (file === "verify-paypal-live.ts") return false;
+  if (file === "verify-paypal-refund.ts") return false;
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
 

@@ -23,6 +23,12 @@ export const EXECUTION_ACTIONS = {
   INTEGRATION_PAYPAL_CONNECT: "integration.paypal.connect",
   INTEGRATION_PAYPAL_VERIFY: "integration.paypal.verify",
   CHECKOUT_PAYPAL_CAPTURE: "checkout.paypal.capture",
+  // A VERIFIED PayPal refund that could not be applied to any order
+  // (2026-08-20). Same reasoning as CHECKOUT_STRIPE_UNRECORDED below: money has
+  // genuinely moved and Genesis has nothing to show for it, so it must be
+  // visible to the owner rather than existing only as a console line — see
+  // app/api/webhooks/paypal/[storeId]/route.ts.
+  CHECKOUT_PAYPAL_REFUND_UNAPPLIED: "checkout.paypal.refund_unapplied",
   // A completed Stripe checkout that could NOT be turned into an Order.
   // Recorded so real money arriving with nothing to show for it is visible to
   // the owner rather than existing only as a console line — see

@@ -1330,6 +1330,105 @@ every existing real-Postgres suite was re-run on it: all still pass.
 
 ---
 
+## 42. A PayPal refund now reaches Genesis
+
+*The last piece of P0.3 — "refunds/status changes are handled". §41 recorded the
+capture id, which gave a refund somewhere to land. This is the thing that lands.*
+
+Before this, a PayPal refund changed nothing. Every consumer of that decision
+reads `Order.status`, and nothing on this rail ever set it, so a refunded PayPal
+sale kept counting as revenue **and the owner could still be told to post the
+goods** — the guard that stops that (§36) reads the same field.
+
+### Where the trust comes from
+
+The store id is in the URL path, so **anyone can post to any store's endpoint**.
+That is fine, and it is the design: the path is a *claim*, and the signature is
+the *proof*. Each delivery is verified against the webhook id stored in **that
+store's own credentials**, so a forged delivery naming any store fails, and a
+genuine event for store A posted at store B's endpoint fails too — B's webhook id
+is not the one it was signed for. The same shape as the Stripe rail, where
+`event.account` is the claim and the signature is the proof.
+
+The signature is checked against the **raw bytes**. The verification request is
+assembled as text with the body spliced in rather than re-serialised from a
+parsed object: PayPal signs what it sent, and `JSON.stringify` reproducing those
+bytes is a convention, not a rule.
+
+### Nobody has to paste a webhook id
+
+PayPal webhooks are per-app, and each merchant here supplies their own app — so
+the subscription is created **with the merchant's own credentials at connect
+time**, and deleted at disconnect. A reconnect finds the existing subscription
+(`WEBHOOK_URL_ALREADY_EXISTS`) and reuses it rather than failing.
+
+When PayPal will not take the URL at all — a development host, an app that
+refuses it — the connection still succeeds and the integration says so on itself:
+*"Connected, but refunds will not reach Genesis… A refunded order will keep
+counting as revenue until this is fixed."* Failing the whole connection over it
+would trade a reporting gap for no payment rail at all. The connector's declared
+capabilities were updated too: creating a webhook in the merchant's app is a real
+write, and a capability list that omitted it would understate what connecting
+does.
+
+### Three answers, and why they are different
+
+A webhook endpoint's status code is an instruction, and §32 is the record of what
+happens when the wrong one is sent:
+
+- **400 — forged.** The only branch that says it. Retrying an unverifiable
+  delivery cannot make it verifiable.
+- **404 — no webhook configured for this store.** *Not* 400. A store that
+  connected before refund webhooks existed has done nothing wrong; PayPal keeps
+  retrying, so reconnecting collects the backlog. Proven: the same delivery that
+  got 404 lands as soon as the store reconnects.
+- **503 — the order is not in the database yet.** The capture route writes the
+  order *after* PayPal takes the money, so a refund issued moments later can
+  genuinely arrive first. Inside a ten-minute window a retry is the fix. Outside
+  it nothing is coming, so the answer becomes 200 plus a durable, owner-visible
+  record naming the capture — retrying for three days would only delay somebody
+  looking at money that has left the merchant's account.
+
+### Partial refunds, on this rail too
+
+Only a genuinely full refund flips the status, identical to the Stripe rail. What
+is new is that the **cumulative** total is what decides: PayPal's
+`total_refunded_amount` is used in preference to this refund's own `amount`, so
+two halves add up instead of each looking partial forever. A refund that is still
+genuinely partial leaves the status alone — the same named, deliberate gap
+recorded in this document's close-out.
+
+### Proven
+
+`scripts/verify-paypal-refund.ts` — the real route, a real Postgres. Only PayPal's
+`verify-webhook-signature` is supplied, and it answers SUCCESS **only** for the
+webhook id an event was signed for, which is what gives the refusals below any
+meaning.
+
+| | |
+|---|---|
+| A verified full refund marks the order refunded | PASS |
+| …and the owner can no longer post the goods at their own expense | PASS |
+| A forged refund is refused, and changes nothing | PASS |
+| A delivery with no signature headers never reaches PayPal | PASS |
+| **The same event, properly signed, is accepted** (the positive control) | PASS |
+| Store A's genuine refund is refused at store B's endpoint | PASS |
+| A verified event naming another store's capture applies to nothing, and is recorded | PASS |
+| No webhook configured answers 404, and the retry lands after reconnecting | PASS |
+| A partial refund does not relabel the order | PASS |
+| Two partials that complete the total do | PASS |
+| Three concurrent redeliveries write once | PASS |
+| A refund that beats its order asks PayPal to retry | PASS |
+| An old one is recorded for reconciliation instead | PASS |
+| A reversal is treated as a refund; other events are acknowledged, not acted on | PASS |
+
+The positive control is the line worth keeping. Without it a suite can assert
+`400` forever while the route refuses every delivery for some entirely unrelated
+reason, and read as proof the whole time.
+
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -1366,6 +1465,7 @@ scripts/verify-confirmation-live.ts       claim, release, retry, tenant separati
 scripts/verify-checkout-live.ts           checkout guards against the real action (real Postgres)
 scripts/verify-orders-live.ts             fulfilment lifecycle and tenant scoping (real Postgres)
 scripts/verify-paypal-live.ts             the PayPal rail, end to end (real Postgres)
+scripts/verify-paypal-refund.ts           forged, cross-tenant and replayed refunds (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
@@ -1397,6 +1497,7 @@ the defect reproduced against the pre-fix behaviour first:
 | Fulfilment lifecycle and the label state machine | §36, §39 |
 | Refunds and money out | §40 |
 | The PayPal rail, end to end | §41 — the real route, real database |
+| PayPal refunds, forged and cross-tenant | §42 — the real route, real database |
 | Tenant isolation | §26 — the guard through the real client |
 | Authentication, sessions, brute force, roles | §14–16, §24 |
 | Growth Points ledger | §23 — real transactions |
@@ -1433,7 +1534,7 @@ key.
 
 ### NOT MODELLED — a product decision, not a defect
 
-**Partial refunds** (§40). Genesis has no field for one, so a partially refunded
+**Partial refunds** (§40, §42 — both rails). Genesis has no field for one, so a partially refunded
 order reads as fully paid and its full amount counts as revenue. **Deliberately
 not implemented, and awaiting Sean's approval** — it needs a schema change *and*
 a decision about how a partial refund should affect revenue reporting: whether it
@@ -1441,10 +1542,8 @@ reduces recognised revenue, appears as a separate adjustment, or shows only in
 the order view. Guessing at that inside an audit would put a number on a
 merchant's dashboard that nobody chose.
 
-### Known engineering gap, already queued
+### Closed since this section was written
 
-**PayPal refunds are not handled** (§41). Not blocked on anything external, and
-not a product question either — the capture id is now recorded, so the hook
-exists; the handler does not. It is the next piece of the Connections roadmap's
-own P0.3, and until it lands, a refunded PayPal sale still reads as revenue and
-its goods can still be posted at the owner's expense.
+**PayPal refunds are now handled** (§42) — recorded here because this close-out
+named the gap and it would be worse to leave it reading as open. Both rails now
+learn about a refund, and both stop at the same place: a genuinely partial one.
