@@ -544,6 +544,57 @@ async function main() {
       assert("not silently to the surviving one", orphaned.slug !== "copper-and-coil");
     }
 
+    // -----------------------------------------------------------------------
+    console.log("\n13. A migrated call site cannot fall back to another business");
+    {
+      await reset();
+      // requireBusinessOrActive is the migration primitive: a slug means the
+      // caller named its business, no slug means the legacy route. The property
+      // that matters is that the FIRST case never degrades into the second.
+      //
+      // requireBusiness itself needs a session, so what is exercised here is the
+      // resolution it delegates to, with the same inputs.
+      const owner = await makeUser("migrated@example.test");
+      const gym = await makeBusiness(owner.id, "gym");
+      const coil = await makeBusiness(owner.id, "coil");
+      await setActiveBusiness(owner.id, gym.id);
+
+      // A page under /b/coil binds "coil" into its actions. The account is
+      // ACTIVE in the gym. The action must write to the coil business.
+      const named = await resolveBusiness(owner.id, coil.id);
+      check("the named business wins over the active one",
+        named.kind === "resolved" ? named.store.slug : null, "coil");
+      check("and the active business is unchanged by reading", await activeOf(owner.id), gym.id);
+
+      // The legacy route, same account, same moment: it gets the active one.
+      const legacy = await resolveBusiness(owner.id);
+      check("the legacy path still resolves the active business",
+        legacy.kind === "resolved" ? legacy.store.slug : null, "gym");
+
+      // Both at once, which is the two-tabs case for a migrated screen beside an
+      // unmigrated one.
+      const [fromBusinessRoute, fromLegacyRoute] = await Promise.all([
+        resolveBusiness(owner.id, coil.id),
+        resolveBusiness(owner.id),
+      ]);
+      check("a migrated screen and a legacy screen disagree correctly",
+        [
+          fromBusinessRoute.kind === "resolved" ? fromBusinessRoute.store.slug : null,
+          fromLegacyRoute.kind === "resolved" ? fromLegacyRoute.store.slug : null,
+        ],
+        ["coil", "gym"]);
+
+      // A slug belonging to somebody else is refused rather than falling back to
+      // the business this account CAN reach. That fallback is the whole failure
+      // mode: an action bound to one business quietly running against another.
+      const stranger = await makeUser("stranger2@example.test");
+      const theirs = await makeBusiness(stranger.id, "not-mine");
+      const refused = await resolveBusiness(owner.id, theirs.id);
+      check("another account's business is refused", refused.kind, "none");
+      assert("and not swapped for the active one", refused.kind !== "resolved");
+      check("the active business is still untouched", await activeOf(owner.id), gym.id);
+    }
+
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

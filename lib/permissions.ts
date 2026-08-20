@@ -219,7 +219,7 @@ export async function requireBusiness(
 export async function requireBusinessPage(
   permission: Permission | null,
   slug: string
-): Promise<{ userId: string; store: Store; role: StoreRole }> {
+): Promise<{ userId: string; userName: string | null; store: Store; role: StoreRole }> {
   const session = await auth();
   if (!session?.user) {
     redirect("/login");
@@ -239,7 +239,31 @@ export async function requireBusinessPage(
     redirect(`/b/${slug}`);
   }
 
-  return { userId, store: access.store, role: access.role };
+  return { userId, userName: session.user.name ?? null, store: access.store, role: access.role };
+}
+
+/**
+ * The migration primitive (2026-08-20, BUSINESS_CONTEXT.md Phase C).
+ *
+ * A slug means the caller named its business — a page under /b/[slug] binding it
+ * into an action — and that is authoritative. No slug means the legacy route,
+ * which resolves the account's active business.
+ *
+ * Exists so each of the 28 implicit call sites migrates by adding one optional
+ * parameter rather than being rewritten, and so the two routes can share one
+ * action while it happens. Every site that has migrated is explicit; every site
+ * that has not is exactly as safe as it was.
+ *
+ * THIS IS SCAFFOLDING. When the last screen has moved, the optional parameter
+ * becomes required and this function disappears — an action that can still fall
+ * back to the active business is an action that can be called from a page which
+ * named a different one.
+ */
+export async function requireBusinessOrActive(
+  permission: Permission,
+  slug?: string
+): Promise<{ userId: string; storeId: string; store: Store; role: StoreRole }> {
+  return slug ? requireBusiness(permission, slug) : requireStorePermission(permission);
 }
 
 export async function requireStorePageAccess(

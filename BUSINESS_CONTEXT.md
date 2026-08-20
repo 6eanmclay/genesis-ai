@@ -94,10 +94,27 @@ in a later phase is required for an earlier one to be correct.
   (`/b/x/b/x/orders` is the bug that would otherwise appear) and that the legacy
   base is byte-for-byte unchanged, which is what keeps unmigrated screens working.
 
-**Still to do:** the `/b/[slug]` layout itself. The dashboard layout currently
-does two jobs — resolve the business, and render the shell — and only the first
-six lines are the first job. Splitting them is what lets both routes exist
-without a second copy of a 400-line layout.
+- **The layout split** (2026-08-20). `app/dashboard/layout.tsx` did two jobs:
+  work out which business this is, and render the shell around it. Only the
+  first six lines were the first job, and it was the job that had to change.
+  `BusinessWorkspace` is the render half, extracted rather than duplicated — a
+  second copy of four hundred lines is a second copy that drifts, and the half
+  that drifts is whichever one is opened less often. The legacy layout went from
+  401 lines to 119, all of them resolution.
+- **`app/b/[slug]/layout.tsx`** — resolves the slug, refuses a business the
+  account cannot reach with `notFound()` rather than a redirect somewhere that
+  works, and renders the same workspace with `basePath = /b/<slug>`.
+- **`basePath` threaded into the shell.** Its two "am I on home" checks were the
+  literal `/dashboard`; inside a business that would have meant home never
+  highlighted and the home layout never applied.
+
+**Still to do in Phase A:** `app/b/[slug]/page.tsx`. The business root has no
+page yet, so `/b/<slug>` itself 404s while `/b/<slug>/orders` works. The home
+page is 864 lines and branches on *no business at all* (onboarding) before
+anything else — under `/b/[slug]` that branch is unreachable by construction, so
+the split is real work rather than a move. Deliberately not faked: a business
+root that renders an invented landing screen would be worse than one that is
+honestly missing. No navigation links to it, so nothing is broken today.
 
 ### Phase B — an account can own several businesses ~~(lift the draft constraint)~~
 
@@ -137,6 +154,34 @@ Still required from this phase:
 8. Route handlers (`/api/chat`, `/api/j4/speak`, both upload routes,
    `/api/chat/recent-messages`) take the business explicitly from the request
    rather than resolving it.
+
+**The primitive** (2026-08-20): `requireBusinessOrActive(permission, slug?)`. A
+slug means the caller named its business and that is authoritative; no slug means
+the legacy route. Each site migrates by adding one optional parameter rather
+than being rewritten, and both routes share one action while it happens.
+
+**This is scaffolding, and it has an end.** When the last screen has moved the
+parameter becomes required and the function disappears — an action that can still
+fall back to the active business is an action that can be called from a page
+which named a different one.
+
+**Migrated so far: 1 of 15 screens, 2 of 28 call sites.**
+
+| | |
+|---|---|
+| Orders page | `OrdersWorkspace` extracted; both routes render it |
+| `disconnectUsps` | slug-bound, and its redirect follows the business |
+| `saveReturnAddress` | slug-bound |
+
+The redirect detail is not incidental. A slug-bound action that sent the owner
+back to `/dashboard/orders` would have disconnected the right business and then
+shown them a different one.
+
+**Remaining: 14 screens, 26 call sites.** Two of the four Orders actions are
+among them — `submitUspsCredentials` and `recheckUsps` go through `execute()`,
+which resolves the business internally (`lib/execution/engine.ts`, the one
+implicit site outside the app directory). That is a deeper change than binding a
+slug and is its own step.
 
 **Verified by:** the adversarial suite in Phase E, run after each section.
 

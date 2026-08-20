@@ -4,7 +4,8 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessOrActive, requireStorePermission } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE, businessBasePath } from "@/lib/dashboard/navConfig";
 import { getConnector } from "@/lib/integrations/registry";
 import { execute } from "@/lib/execution/engine";
 import type { ExecutionResult } from "@/lib/execution/types";
@@ -422,12 +423,19 @@ export async function submitUspsCredentials(formData: FormData) {
   );
 }
 
-export async function disconnectUsps() {
-  const { storeId } = await requireStorePermission(PERMISSIONS.ORDERS_MANAGE);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). `slug` is bound by the page under /b/[slug]; the legacy /dashboard page
+// passes nothing and resolves the account's active business exactly as before.
+//
+// The redirect follows the business too. A slug-bound action that sent the owner
+// back to /dashboard/orders would have disconnected the right business and then
+// shown them a different one.
+export async function disconnectUsps(slug?: string) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.ORDERS_MANAGE, slug);
 
   await getConnector("EASYPOST").disconnect(storeId);
 
-  redirect("/dashboard/orders");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/orders`);
 }
 
 export async function recheckUsps() {
@@ -466,8 +474,12 @@ export async function purchaseShippingLabel(formData: FormData) {
 // own honest-error check). A plain field update, not a real Executable —
 // no external system call, no verification step, matching how Store.theme
 // and other plain-JSON settings fields are already saved elsewhere.
-export async function saveReturnAddress(formData: FormData) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.ORDERS_MANAGE);
+// MIGRATED — see disconnectUsps above. Bound as
+// saveReturnAddress.bind(null, slug) by the business-scoped page, so the address
+// is written to the business whose page the form was rendered on rather than to
+// whichever one the account was last active in.
+export async function saveReturnAddress(slug: string | undefined, formData: FormData) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.ORDERS_MANAGE, slug);
 
   const name = (formData.get("name") as string)?.trim();
   const phone = (formData.get("phone") as string)?.trim();

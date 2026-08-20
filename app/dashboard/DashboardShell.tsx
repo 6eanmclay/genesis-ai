@@ -108,6 +108,7 @@ interface LiveObservation {
 export function DashboardShell({
   sections,
   roomSections,
+  basePath,
   storeId,
   storeName,
   storefrontUrl,
@@ -136,6 +137,16 @@ export function DashboardShell({
   sections: NavSection[];
   /** One list per room that has sections; the shell picks by current route. */
   roomSections: NavSection[][];
+  /**
+   * Where this workspace lives — "/dashboard" on the legacy route, "/b/<slug>"
+   * inside a business (BUSINESS_CONTEXT.md Phase A).
+   *
+   * The section hrefs arrive already rebased, so this is only needed for the
+   * shell's own two checks about where it is. Both used to be the literal
+   * "/dashboard", which inside a business would have meant home never
+   * highlighted and the home layout never applied.
+   */
+  basePath: string;
   storeId: string;
   storeName: string;
   storefrontUrl: string | null;
@@ -266,7 +277,10 @@ export function DashboardShell({
   });
 
   const isActive = (href: string) =>
-    href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
+    // Home is an exact match; everything else is a prefix, so /b/x/products/123
+    // still lights up Products. Compared against this workspace's own base
+    // rather than a literal, or nothing would highlight inside a business.
+    href === basePath ? pathname === basePath : pathname.startsWith(href);
 
   // Product Vision navigation correction — primary nav is exactly this
   // small at every breakpoint, not just on narrow screens. There is
@@ -321,7 +335,7 @@ export function DashboardShell({
   // Business home exactly — not the whole Your Business group. This is the
   // one route where J4 is the hero rather than an ambient bar, so it's also
   // the one route whose fixed-chrome offsets differ.
-  const isHome = pathname === "/dashboard";
+  const isHome = pathname === basePath;
 
   // J4 is a layer over this workspace, never a page the owner is sent to.
   // Holding the state here rather than in the URL is the whole correction:
