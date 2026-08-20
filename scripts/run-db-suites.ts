@@ -53,8 +53,17 @@ const SCRIPTS_DIR = join(process.cwd(), "scripts");
 function needsDatabase(file: string): boolean {
   const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
   if (file === "run-db-suites.ts") return false;
-  // The two suites that bring their own database must not be run twice.
+  // Suites that bring their own database must not be run twice here.
   if (file === "verify-db-integrity.ts" || file === "verify-ledger-live.ts") return false;
+  // verify-order-webhook-live.ts brings a real Postgres AND a real Next server,
+  // and PostgreSQL refuses to start under an administrator account. It has its
+  // own entry point for that reason:
+  //
+  //   powershell -File scripts/run-unelevated.ps1   //     -Command "npx tsx scripts/verify-order-webhook-live.ts" -OutFile out.txt
+  //
+  // Running it from here would fail for a reason that has nothing to do with
+  // the code under test.
+  if (file === "verify-order-webhook-live.ts") return false;
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
 
