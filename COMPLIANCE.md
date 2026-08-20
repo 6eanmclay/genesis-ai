@@ -36,6 +36,21 @@ re-authorize:
   in *Testing*, Google expires every refresh token after seven days, so
   reconnecting before publishing buys one week and then breaks again.
 
+**Email does not work at all, and that reaches customers.** There is no
+`RESEND_API_KEY` in production, so `isEmailConfigured()` is false on every store.
+Three things silently do not happen:
+
+- a customer is never told their order shipped, even after a label is bought
+- password reset cannot send
+- the Marketing Engine's send milestone stays paused, as it has been
+
+Nothing pretends otherwise — `sendEmail` throws rather than faking success, and
+as of 2026-08-20 buying a label tells the owner in plain words that the customer
+was not emailed and that they need to send the tracking number themselves. But
+that is damage control, not a working store. **A Resend account and a verified
+sending domain is the single highest-value item on this page** for "real
+customers place real orders".
+
 **Waiting on someone else:**
 
 - **EasyPost** — account verification. You have a support ticket open; the
