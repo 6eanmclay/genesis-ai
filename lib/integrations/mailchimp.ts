@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import { beginOAuthHandoff } from "./oauthState";
+import { integrationFetch } from "./rateLimit";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
 import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
@@ -98,7 +99,7 @@ export function authFor(credentials: MailchimpCredentials): { base: string; head
 /** Validation by use — a failed ping throws, which the engine records as FAILED. */
 async function pingMailchimp(credentials: MailchimpCredentials): Promise<void> {
   const { base, headers } = authFor(credentials);
-  const res = await fetch(`${base}/`, { headers });
+  const res = await integrationFetch(`${base}/`, { headers }, { label: "Mailchimp" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `Mailchimp connection check failed (${res.status})`);
@@ -265,9 +266,10 @@ export const mailchimpConnector: IntegrationConnector = {
     const credentials = decryptCredentials<MailchimpCredentials>(integration.credentials);
     const { base, headers: authHeader } = authFor(credentials);
 
-    const res = await fetch(
+    const res = await integrationFetch(
       `${base}/campaigns?count=10&sort_field=send_time&sort_dir=DESC`,
-      { headers: authHeader }
+      { headers: authHeader },
+      { label: "Mailchimp" }
     );
     if (!res.ok) {
       throw new Error(`Mailchimp campaigns fetch failed (${res.status})`);
@@ -287,7 +289,14 @@ export const mailchimpConnector: IntegrationConnector = {
       campaigns.map(async (campaign): Promise<SyncedRecord> => {
         let metrics: Record<string, number> | null = null;
         try {
-          const reportRes = await fetch(`${base}/reports/${campaign.id}`, { headers: authHeader });
+          // The genuine exposure here: Mailchimp's documented limit is 10
+          // SIMULTANEOUS connections, and this fans out one request per
+          // campaign at once. Ten campaigns sits exactly on the line.
+          const reportRes = await integrationFetch(
+            `${base}/reports/${campaign.id}`,
+            { headers: authHeader },
+            { label: "Mailchimp" }
+          );
           if (reportRes.ok) {
             const report = (await reportRes.json()) as {
               opens?: { opens_total?: number };

@@ -1,6 +1,7 @@
 import type { IntegrationProvider } from "@prisma/client";
 import type { IntegrationConnector } from "@/lib/integrations/types";
 import { persistSyncedRecords, type PersistSyncResult } from "@/lib/businessModel/sync";
+import { RateLimitedError } from "@/lib/integrations/rateLimit";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
 
@@ -114,6 +115,16 @@ export interface SyncMetadata {
   // small (the same assumption reasoning.ts's findRelated already makes),
   // so this isn't the storage risk it would be at a different scale.
   changes: PersistSyncResult["changes"];
+  /**
+   * Set only when the provider rate-limited us and told us how long to wait.
+   *
+   * A rate limit is a DEFERRAL, not a failure. Letting it fall through to the
+   * generic failure path would increment syncFailureCount and push a perfectly
+   * healthy connection toward the 24h backoff cap for the crime of being
+   * popular — so it is reported separately and the scheduler waits exactly as
+   * long as the provider asked.
+   */
+  retryAfterMs?: number | null;
 }
 
 // Phase 3 Milestone 2 — the third adapter, same shape as
@@ -146,7 +157,25 @@ export function syncExecutable(
           metadata: { written: 0, errors: 0, changes: [] },
         };
       }
-      const records = await connector.sync(ctx.storeId);
+      let records;
+      try {
+        records = await connector.sync(ctx.storeId);
+      } catch (error) {
+        if (error instanceof RateLimitedError) {
+          // PARTIAL, not FAILED: nothing is broken, we were simply asked to
+          // come back later. The wait travels in metadata because a thrown
+          // error reaches the scheduler as a bare FAILED with no metadata at
+          // all, which is exactly how the provider's own timing used to get
+          // thrown away.
+          return {
+            message: error.message,
+            metadata: { written: 0, errors: 0, changes: [], retryAfterMs: error.retryAfterMs },
+            partial: true,
+            retryable: true,
+          };
+        }
+        throw error;
+      }
       const result = await persistSyncedRecords(
         ctx.storeId,
         connector.provider.toLowerCase(),

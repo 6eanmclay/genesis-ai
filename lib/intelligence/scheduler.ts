@@ -26,6 +26,44 @@ const DEFAULT_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h — the seam for
 // yet for every connector to sync on a different schedule.
 const MAX_BACKOFF_MS = 24 * 60 * 60 * 1000; // 24h cap on retry backoff
 
+/**
+ * When to try this connector again, and what its failure count becomes — pure.
+ *
+ * Extracted (2026-08-20) because a rate limit and a broken connection deserve
+ * opposite treatment and the difference was invisible inside the update call.
+ * A throttled connector is HEALTHY: it answered, it just asked us to come back
+ * later. Counting that as a failure walks a popular connection up the
+ * exponential curve toward the 24h cap for no reason, and the owner sees a
+ * connection that "stopped syncing" when nothing is wrong with it.
+ */
+export function nextSyncAttempt(params: {
+  outcome: "success" | "rate_limited" | "failure";
+  retryAfterMs?: number | null;
+  failureCount: number;
+  now: number;
+}): { nextSyncDueAt: Date; syncFailureCount: number } {
+  const { outcome, retryAfterMs, failureCount, now } = params;
+
+  if (outcome === "success") {
+    return { nextSyncDueAt: new Date(now + DEFAULT_SYNC_INTERVAL_MS), syncFailureCount: 0 };
+  }
+
+  if (outcome === "rate_limited") {
+    // The provider's own instruction, when it gave one. When it did not, wait
+    // a short fixed spell rather than the full 6h interval — the limit is
+    // usually per-minute, so a healthy connector should not lose a whole cycle.
+    const wait = retryAfterMs && retryAfterMs > 0 ? retryAfterMs : 5 * 60 * 1000;
+    // The failure count is deliberately UNCHANGED, not reset: a rate limit
+    // neither proves the connection works nor that it is broken, so it should
+    // not clear a real failure streak either.
+    return { nextSyncDueAt: new Date(now + Math.min(wait, MAX_BACKOFF_MS)), syncFailureCount: failureCount };
+  }
+
+  const nextFailureCount = failureCount + 1;
+  const backoffMs = Math.min(DEFAULT_SYNC_INTERVAL_MS * 2 ** nextFailureCount, MAX_BACKOFF_MS);
+  return { nextSyncDueAt: new Date(now + backoffMs), syncFailureCount: nextFailureCount };
+}
+
 // Deliberately cross-tenant — due connectors across the whole platform,
 // not one store's. Only ever reached via runDueSyncs() below, itself only
 // called from the CRON_SECRET-gated /api/cron/sync route — see
@@ -70,13 +108,43 @@ export async function runDueSyncs(limit = 50): Promise<SyncRunSummary[]> {
       systemStoreId: integration.storeId,
     });
 
+    // A rate limit arrives as PARTIAL carrying the provider's own timing —
+    // see SyncMetadata.retryAfterMs. It is neither a success nor a failure.
+    const rateLimit =
+      result.status === "PARTIAL" ? (result.metadata as SyncMetadata)?.retryAfterMs : undefined;
+    if (rateLimit !== undefined) {
+      const next = nextSyncAttempt({
+        outcome: "rate_limited",
+        retryAfterMs: rateLimit,
+        failureCount: integration.syncFailureCount,
+        now: Date.now(),
+      });
+      await prisma.storeIntegration.update({
+        where: { id: integration.id, storeId: integration.storeId },
+        data: { nextSyncDueAt: next.nextSyncDueAt, syncFailureCount: next.syncFailureCount },
+      });
+      summaries.push({
+        storeId: integration.storeId,
+        provider: integration.provider,
+        ok: false,
+        written: 0,
+        errors: 0,
+      });
+      continue;
+    }
+
     if (result.status === "SUCCESS") {
+      const next = nextSyncAttempt({
+        outcome: "success",
+        failureCount: integration.syncFailureCount,
+        now: Date.now(),
+      });
       await prisma.storeIntegration.update({
         where: { id: integration.id, storeId: integration.storeId },
         data: {
           lastSyncedAt: new Date(),
-          nextSyncDueAt: new Date(Date.now() + DEFAULT_SYNC_INTERVAL_MS),
-          syncFailureCount: 0,
+          nextSyncDueAt: next.nextSyncDueAt,
+          syncFailureCount: next.syncFailureCount,
         },
       });
 
@@ -100,16 +168,16 @@ export async function runDueSyncs(limit = 50): Promise<SyncRunSummary[]> {
       // Real retry/backoff, per Sean's explicit requirement — exponential
       // off syncFailureCount, capped, so a persistently-broken connection
       // doesn't get hammered every cycle forever.
-      const nextFailureCount = integration.syncFailureCount + 1;
-      const backoffMs = Math.min(
-        DEFAULT_SYNC_INTERVAL_MS * 2 ** nextFailureCount,
-        MAX_BACKOFF_MS
-      );
+      const next = nextSyncAttempt({
+        outcome: "failure",
+        failureCount: integration.syncFailureCount,
+        now: Date.now(),
+      });
       await prisma.storeIntegration.update({
         where: { id: integration.id, storeId: integration.storeId },
         data: {
-          syncFailureCount: nextFailureCount,
-          nextSyncDueAt: new Date(Date.now() + backoffMs),
+          syncFailureCount: next.syncFailureCount,
+          nextSyncDueAt: next.nextSyncDueAt,
         },
       });
       summaries.push({

@@ -7,6 +7,7 @@ import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import { mergeRefreshedTokens } from "./tokenRefresh";
+import { integrationFetch, isGoogleRateLimit } from "./rateLimit";
 import type { Appointment } from "@/lib/businessModel/entities";
 import { internalContactId } from "@/lib/businessModel/internalMapper";
 
@@ -191,9 +192,12 @@ export const googleCalendarConnector: IntegrationConnector = {
     try {
       const credentials = decryptCredentials<GoogleCalendarCredentials>(integration.credentials);
       const accessToken = await refreshAccessToken(storeId, credentials);
-      const res = await fetch(
+      const res = await integrationFetch(
         "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1",
-        { headers: { Authorization: `Bearer ${accessToken}` } }
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        // Google signals a rate limit with 403 OR 429, and a 403 is also how it
+        // reports a genuinely missing permission — which must NOT be retried.
+        { label: "Google Calendar", isRateLimited: isGoogleRateLimit }
       );
       const ok = res.ok;
       await prisma.storeIntegration.update({
@@ -291,7 +295,11 @@ export const googleCalendarConnector: IntegrationConnector = {
     url.searchParams.set("singleEvents", "true");
     url.searchParams.set("orderBy", "startTime");
 
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const res = await integrationFetch(
+      url.toString(),
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { label: "Google Calendar", isRateLimited: isGoogleRateLimit }
+    );
     if (!res.ok) {
       throw new Error(`Google Calendar events fetch failed (${res.status})`);
     }

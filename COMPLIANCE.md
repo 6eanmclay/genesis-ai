@@ -24,7 +24,7 @@ NEEDS VERIFICATION, and a gap is recorded as a gap.**
 | 8 | Revocation at the provider on disconnect | **Compliant** | every provider that offers it — see §8 |
 | 9 | Tenant data isolation | **Compliant** | `tenantIsolation.ts` refuses unscoped access |
 | 10 | Transport security | **Compliant** | HTTPS-only hosting; no plaintext endpoints |
-| 11 | API error handling & backoff | **Partial** | sync backoff real; per-call 429 handling — see §11 |
+| 11 | API error handling, rate limits & backoff | **Compliant** | shared `rateLimit.ts`; 36 + 22 assertions — see §11 |
 | 12 | Owner-visible recovery path | **Compliant** | Recheck / Sync now / Disconnect + reconnect form |
 | 13 | Static egress IP | **Needs Intuit clarification** | see §13 |
 
@@ -173,18 +173,52 @@ platform-wide key and `resolveStoreEasyPostClient` takes a storeId with no
 environment-variable variant, so Genesis cannot fund a merchant's postage from a
 shared account.
 
-## 11. API error handling — PARTIAL
+## 11. API error handling, rate limits and backoff
 
-**Real:** connector sync failures record `syncFailureCount` and back off
-exponentially (capped at 24h) in `lib/intelligence/scheduler.ts`, so a broken
-connection is not hammered. Stripe's SDK retries transport failures internally. A single unreadable
-EasyPost tracker does not fail an entire sync.
+Sync failures record `syncFailureCount` and back off exponentially, capped at
+24h, so a broken connection is not hammered. A single unreadable EasyPost tracker
+does not fail an entire sync.
 
-**Gap:** there is no explicit per-call handling of HTTP **429** or `Retry-After`
-in the hand-written `fetch` connectors (QuickBooks, Google, Meta, TikTok). A rate
-limit currently surfaces as a generic failure and is retried on the next
-scheduled pass rather than when the provider says to. Not urgent at current
-volume; recorded honestly rather than claimed.
+**Rate limiting is handled once, at the connector layer** —
+`lib/integrations/rateLimit.ts`, not sprinkled per provider. The question asked
+first was whether each provider even needs it, and the answer is no, so three
+connectors deliberately got nothing:
+
+| Provider | What it actually does | Wrapped? |
+|---|---|---|
+| Mailchimp | 429, limit of 10 *simultaneous* connections | yes |
+| TikTok | 429 + `rate_limit_exceeded`, 600/min | yes |
+| Google | **403 *or* 429**, and asks for backoff **with jitter** by name | yes |
+| QuickBooks | 429 when throttled | yes |
+| Printful | 120/min; status code **undocumented** — 429 handled defensively | yes |
+| Stripe | stripe-node retries 429s itself; `maxNetworkRetries` defaults to 2 | no — nothing to do |
+| EasyPost | official SDK, same reasoning | no — nothing to do |
+| **Meta** | **does not return 429 at all** | no — **would be wrong** |
+
+Meta is the one worth stating plainly. The Graph API signals throttling with an
+error *code in the body* (4 app-level, 17 user-level, 32/80001 page-level) and
+puts the wait in `X-Business-Use-Case-Usage`'s `estimated_time_to_regain_access`,
+in minutes. A 429 handler there would never fire once, and would read as
+protection that is not there. Adding it would be worse than the gap.
+
+Two details are the provider's, not ours. `Retry-After` is legally either
+delta-seconds or an HTTP-date and both forms appear in the wild, so both parse —
+and a header we cannot parse is `null`, never a guess. Jitter is real because
+Google documents *why*: without it, every client throttled together retries
+together and is throttled again.
+
+**A rate limit is a deferral, not a failure**, and that distinction is the most
+valuable part. It reaches the scheduler as PARTIAL carrying the provider's own
+timing, so a throttled connector waits exactly as long as it was asked to and its
+`syncFailureCount` is left alone. Previously it would have counted as a failure
+and walked a healthy, popular connection up the exponential curve toward the 24h
+cap — the owner seeing a connection that "stopped syncing" when nothing was wrong
+with it. `nextSyncAttempt()` is pure and asserts all three outcomes.
+
+**Still open:** the token-exchange and revocation endpoints are not wrapped. They
+run once per connection rather than on every sync, so the volume that provokes a
+rate limit is not there. Recorded rather than done.
+
 
 ## 12. Owner-visible recovery
 
@@ -230,6 +264,8 @@ scripts/verify-token-refresh.ts           rotation, chaining, expiry
 scripts/verify-stale-executions.ts        pending-vs-failed execution semantics
 scripts/verify-payment-badge.ts           what a payments badge may claim
 scripts/verify-mailchimp-auth.ts          OAuth conversion without breaking existing connections
+scripts/verify-rate-limit.ts              Retry-After, jitter, what is and is not retried
+scripts/verify-sync-backoff.ts            deferral vs failure, and the caps on both
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

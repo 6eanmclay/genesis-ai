@@ -5,6 +5,7 @@ import type { ConnectResult, IntegrationConnector } from "./types";
 import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
+import { integrationFetch } from "./rateLimit";
 
 // Onboarding v2 — the OAuth auth backbone for Printful, the first
 // fulfillment-strategy connector (see lib/fulfillment/printful.ts for what
@@ -208,9 +209,15 @@ export const printfulConnector: IntegrationConnector = {
     try {
       const credentials = decryptCredentials<PrintfulCredentials>(integration.credentials);
       const refreshed = await refreshPrintfulToken(credentials);
-      const res = await fetch(`${PRINTFUL_API_BASE}/stores`, {
-        headers: { Authorization: `Bearer ${refreshed.accessToken}` },
-      });
+      // Printful documents 120 calls/minute but does not document the status
+      // code it returns when you exceed it. 429 is handled defensively rather
+      // than claiming to know — if they use something else, this simply never
+      // fires, which is the honest failure mode for an undocumented detail.
+      const res = await integrationFetch(
+        `${PRINTFUL_API_BASE}/stores`,
+        { headers: { Authorization: `Bearer ${refreshed.accessToken}` } },
+        { label: "Printful" }
+      );
       const ok = res.ok;
       await prisma.storeIntegration.update({
         where: { id: integration.id, storeId },

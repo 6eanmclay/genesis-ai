@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { beginOAuthHandoff } from "./oauthState";
+import { integrationFetch } from "./rateLimit";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
@@ -79,7 +80,12 @@ async function refreshAccessToken(credentials: TikTokCredentials): Promise<strin
 async function tiktokApiGet<T>(path: string, accessToken: string, searchParams: Record<string, string> = {}): Promise<T> {
   const url = new URL(`${TIKTOK_API_BASE}${path}`);
   for (const [key, value] of Object.entries(searchParams)) url.searchParams.set(key, value);
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  // TikTok documents 429 + `rate_limit_exceeded` at 600 requests/minute.
+  const res = await integrationFetch(
+    url.toString(),
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { label: "TikTok" }
+  );
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`TikTok API request to ${path} failed (${res.status}): ${body}`);

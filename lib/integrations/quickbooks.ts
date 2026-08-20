@@ -7,6 +7,7 @@ import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import { mergeRefreshedTokens } from "./tokenRefresh";
+import { integrationFetch } from "./rateLimit";
 import type { Document, Transaction } from "@/lib/businessModel/entities";
 
 // Phase 3 Milestone 2 — proof integration #2: a genuinely different OAuth
@@ -223,9 +224,10 @@ export const quickbooksConnector: IntegrationConnector = {
     try {
       const credentials = decryptCredentials<QuickBooksCredentials>(integration.credentials);
       const accessToken = await refreshAccessToken(storeId, credentials);
-      const res = await fetch(
+      const res = await integrationFetch(
         `${apiBase(credentials.environment)}/v3/company/${credentials.realmId}/companyinfo/${credentials.realmId}`,
-        { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } }
+        { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
+        { label: "QuickBooks" }
       );
       const ok = res.ok;
       await prisma.storeIntegration.update({
@@ -325,7 +327,7 @@ export const quickbooksConnector: IntegrationConnector = {
 
     async function query(sql: string): Promise<{ QueryResponse?: Record<string, unknown[]> }> {
       const url = `${base}/v3/company/${credentials.realmId}/query?query=${encodeURIComponent(sql)}`;
-      const res = await fetch(url, { headers });
+      const res = await integrationFetch(url, { headers }, { label: "QuickBooks" });
       if (!res.ok) throw new Error(`QuickBooks query failed (${res.status})`);
       return res.json();
     }
