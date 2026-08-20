@@ -84,7 +84,6 @@ export interface BlueprintContextSubset {
     heroSubheadline?: string;
     // Priority 4 (asset-to-storefront, 2026-08-09) — see updateHero.ts's
     // own UpdateHeroInput comment for the full architectural reasoning.
-    heroImageUrl?: string | null;
     primaryCallToAction?: string;
     secondaryCallToAction?: string | null;
     aboutUs?: string;
@@ -348,12 +347,10 @@ export const GENESIS_ACTIONS: Record<
     inputSchema: z.object({
       heroHeadline: z.string(),
       heroSubheadline: z.string(),
-      heroImageUrl: z.string().nullable().optional(),
     }),
     getCurrentValues: ({ blueprint }) => ({
       heroHeadline: blueprint?.homepageContent?.heroHeadline ?? "",
       heroSubheadline: blueprint?.homepageContent?.heroSubheadline ?? "",
-      heroImageUrl: blueprint?.homepageContent?.heroImageUrl ?? null,
     }),
     category: "content",
     authorizationTier: "always_ask",

@@ -13,7 +13,6 @@ export const FIELD_LABELS: Record<string, string> = {
   seoMetaDescription: "Meta Description",
   heroHeadline: "Hero Headline",
   heroSubheadline: "Hero Subheadline",
-  heroImageUrl: "Homepage Hero Image",
   imageUrl: "Product Image",
   brandStory: "Brand Story",
   missionStatement: "Mission Statement",

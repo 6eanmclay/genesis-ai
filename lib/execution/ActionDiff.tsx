@@ -63,13 +63,7 @@ export function ActionDiffRows({
         const previous = previousValues[key];
         const proposed = input[key];
 
-        // Generic, name-pattern-based rule (matching formatDiffValue's own
-        // *InCents convention above) — any field ending in ImageUrl gets
-        // the same side-by-side lightbox preview imageUrl already had,
-        // rather than special-casing every new image field one at a time
-        // (heroImageUrl is the first; a future sectionImageUrl etc. needs
-        // no changes here).
-        if (key === "imageUrl" || key.endsWith("ImageUrl")) {
+        if (key === "imageUrl") {
           const lightboxImages = [
             ...(typeof previous === "string" ? [{ id: "current", url: previous }] : []),
             ...(typeof proposed === "string" ? [{ id: "proposed", url: proposed }] : []),
@@ -87,7 +81,7 @@ export function ActionDiffRows({
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={previous}
-                      alt="Current"
+                      alt="Current product"
                       onClick={() => setOpenImageIndex(0)}
                       className="aspect-square w-full rounded-md object-cover"
                     />
@@ -103,7 +97,7 @@ export function ActionDiffRows({
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={proposed}
-                      alt="Proposed"
+                      alt="Proposed product"
                       onClick={() => setOpenImageIndex(proposedLightboxIndex)}
                       className="aspect-square w-full rounded-md object-cover"
                     />
