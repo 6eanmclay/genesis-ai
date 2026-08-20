@@ -1482,6 +1482,97 @@ verified for the store it belongs to.
 
 ---
 
+## 44. The customer paid for overnight and got five-day ground
+
+*P0.4 — "Paid order → shipping address → label workflow → USPS → tracking number
+→ shipped order". Audited as far as the EasyPost blocker permits, which turned
+out to be far enough to find the worst defect on the path.*
+
+### The defect
+
+Checkout let the customer choose a shipping service and charged them for it. The
+webhook faithfully recorded which one: `selectedShippingCarrier`,
+`selectedShippingService`, `shippingChargedInCents`, `selectedShippingRateId`.
+
+**Nothing ever read them.** The label purchase filtered the carrier's rates to
+USPS and bought the cheapest, full stop. So a customer who chose Priority Mail
+Express and paid $31.40 for it got Ground Advantage at $5.50 — the delivery
+promise made to them quietly broken, and $25.90 landing in the store's margin
+without anybody deciding that it should.
+
+The same line held a second defect: `carrier === "USPS"`. A customer who chose
+and paid for UPS Ground could never receive it. The purchase would buy a USPS
+service instead, or — with no USPS rates on the table — fail claiming USPS
+returned no rates for a shipment nobody asked USPS about.
+
+Both are reproduced against the pre-fix implementation in
+`verify-regressions.ts` §10.
+
+### The fix, and the half that is easy to get wrong
+
+`chooseRate()` buys the service the order says was paid for. Where the carrier is
+no longer offering it, it **refuses** — it does not fall back to the cheapest.
+Falling back is the original defect wearing a hat: it is exactly the behaviour
+that broke the delivery promise, just reached by a more sympathetic route. The
+refusal names what the customer paid for, what the carrier is actually offering,
+and says plainly that nothing was bought, because the owner is the only person
+who can resolve it.
+
+An order that chose nothing — an ordinary checkout with no live shipping — still
+buys the cheapest USPS rate, unchanged. There is no promise to keep, and no
+consent to a different carrier.
+
+Service names are compared through `humanService()`, the same normalisation
+checkout showed the customer: `GroundAdvantage` at the carrier is
+`Ground Advantage` on the order. Matching raw against stored would never hit,
+which would have turned every live-shipping order into a refusal — a fix that
+fails closed on all of them is not better than the bug.
+
+### A seam, and what it is for
+
+The carrier round trip moved into `lib/shipping/labelPurchase.ts` behind an
+injectable `LabelBuyer`, the same shape and for the same reason as the order
+confirmation's injectable sender (§35): the EasyPost HTTP call is the one part
+of this path that genuinely needs a credential this environment does not have,
+and keeping it inline meant **none** of the surrounding decisions could be
+proven. The default buyer is the production path. The rate chooser inside it,
+`selectRateForLabel`, is the real function and runs in the suite too — so what
+gets bought, and when the purchase refuses, are proven rather than described.
+
+### Proven
+
+`scripts/verify-label-purchase-live.ts` — real Postgres, the real executable, the
+real rate chooser.
+
+| | |
+|---|---|
+| The service the customer paid for is what gets bought | PASS (was: the cheapest) |
+| A non-USPS carrier is honoured | PASS (was: unbuyable) |
+| An order with no selection still buys the cheapest USPS rate | PASS |
+| A cheaper non-USPS rate is not substituted in where nothing was chosen | PASS |
+| A service the carrier will not sell is refused, naming what is available | PASS |
+| …and the claim is released, so the retry buys the right service | PASS |
+| No rates at all is a different failure, and says so | PASS |
+| A refunded order is refused before the carrier is asked anything | PASS |
+| No weight, no address, no ship-from address: all refused before any spend | PASS |
+| Three concurrent submits buy one label | PASS |
+| One store cannot buy postage against another's order | PASS |
+
+### EXTERNALLY BLOCKED
+
+The EasyPost HTTP call itself, and therefore whether a real carrier returns the
+rates this suite's table describes. Needs EasyPost account verification. Nothing
+else on P0.4 waits on it.
+
+### Also true, and not a defect
+
+The owner still types the parcel's weight at label time rather than it coming
+from `Product.weightOz` — deliberate, since the person holding the box knows
+what it weighs and the quote's weight was an estimate. Worth knowing that the
+label can therefore be for a different parcel than the one quoted.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -1520,6 +1611,7 @@ scripts/verify-orders-live.ts             fulfilment lifecycle and tenant scopin
 scripts/verify-paypal-live.ts             the PayPal rail, end to end (real Postgres)
 scripts/verify-paypal-refund.ts           forged, cross-tenant and replayed refunds (real Postgres)
 scripts/verify-paypal-webhook-lifecycle.ts  the refund subscription, connect to disconnect (real Postgres)
+scripts/verify-label-purchase-live.ts     which rate is bought, and when it refuses (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
@@ -1553,6 +1645,7 @@ the defect reproduced against the pre-fix behaviour first:
 | The PayPal rail, end to end | §41 — the real route, real database |
 | PayPal refunds, forged and cross-tenant | §42 — the real route, real database |
 | The refund subscription's lifecycle | §43 — the real connector, real database |
+| The label purchase, and which rate it buys | §44 — the real executable, real database |
 | Tenant isolation | §26 — the guard through the real client |
 | Authentication, sessions, brute force, roles | §14–16, §24 |
 | Growth Points ledger | §23 — real transactions |

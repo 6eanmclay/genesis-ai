@@ -7,6 +7,7 @@ import { nextSyncAttempt } from "@/lib/intelligence/scheduler";
 import { isTokenIssuedBeforePasswordChange } from "@/lib/auth/passwordReset";
 import { checkPassword } from "@/lib/auth/passwordPolicy";
 import { redactSecrets } from "@/lib/integrations/providerError";
+import { chooseRate } from "@/lib/shipping/rates";
 
 // Adversarial regression suite. No database, no network:
 //
@@ -333,6 +334,59 @@ function oldErrorMessage(status: number, body: string): string {
   // And the redaction must not eat the message it was protecting.
   const prose = "The refresh token is invalid or expired. Please reconnect.";
   assert("ordinary prose survives redaction", redactSecrets(prose) === prose);
+}
+
+
+// ===========================================================================
+console.log("\n10. Shipping — a customer paid for overnight and got five-day ground");
+
+// THE OLD IMPLEMENTATION, copied from lib/execution/executables/shipping.ts
+// before 2026-08-20: filter to USPS, take the cheapest, and never look at what
+// the customer chose. Order.selectedShippingService was written by the webhook
+// and read by nobody.
+interface RateLike { id: string; carrier: string; service: string; rate: string }
+function oldChooseRate(rates: RateLike[]): RateLike | null {
+  const usps = rates.filter((r) => r.carrier === "USPS");
+  if (usps.length === 0) return null;
+  return usps.reduce((lowest, r) => (parseFloat(r.rate) < parseFloat(lowest.rate) ? r : lowest));
+}
+
+{
+  const RATES: RateLike[] = [
+    { id: "rate_ga", carrier: "USPS", service: "GroundAdvantage", rate: "5.50" },
+    { id: "rate_express", carrier: "USPS", service: "PriorityMailExpress", rate: "31.40" },
+    { id: "rate_ups", carrier: "UPS", service: "Ground", rate: "8.75" },
+  ];
+
+  // The customer chose overnight at checkout and was charged $31.40 for it.
+  const paidFor = { carrier: "USPS", service: "Priority Mail Express" };
+  const old = oldChooseRate(RATES);
+  const now = chooseRate(RATES, paidFor);
+
+  regression("the paid-for service being silently downgraded", {
+    attackWorkedBefore: old?.service === "GroundAdvantage",
+    attackFailsNow: now.ok && now.rate.service === "PriorityMailExpress",
+  });
+
+  // The second half of the same defect: a carrier that is not USPS could never
+  // be bought at all, so a customer who paid for UPS Ground got a USPS label —
+  // or, with no USPS rates on the table, nothing.
+  const nowUps = chooseRate(RATES, { carrier: "UPS", service: "Ground" });
+  regression("a non-USPS service being unbuyable", {
+    attackWorkedBefore: oldChooseRate(RATES)?.carrier === "USPS",
+    attackFailsNow: nowUps.ok && nowUps.rate.carrier === "UPS",
+  });
+
+  // The fix must REFUSE rather than substitute when the service is gone —
+  // falling back to the cheapest would be the original defect wearing a hat.
+  const gone = chooseRate(RATES.filter((r) => r.service !== "PriorityMailExpress"), paidFor);
+  assert("a service the carrier no longer sells is refused, not substituted",
+    !gone.ok && gone.reason === "selection_unavailable");
+
+  // And an order that chose nothing still gets exactly what it always got.
+  const unchosen = chooseRate(RATES, { carrier: null, service: null });
+  assert("an order with no selection still buys the cheapest USPS rate",
+    unchosen.ok && unchosen.rate.id === "rate_ga");
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

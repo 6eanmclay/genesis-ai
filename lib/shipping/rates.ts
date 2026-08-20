@@ -90,7 +90,7 @@ export function parcelForProduct(product: {
   };
 }
 
-interface EasyPostRateLike {
+export interface EasyPostRateLike {
   id?: string | null;
   carrier?: string | null;
   service?: string | null;
@@ -100,7 +100,7 @@ interface EasyPostRateLike {
 }
 
 /** Turn a service code into something a shopper recognises. */
-function humanService(service: string): string {
+export function humanService(service: string): string {
   return service
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/_/g, " ")
@@ -275,4 +275,72 @@ export async function quoteShippingForProduct(params: {
       detail: error instanceof Error ? error.message.slice(0, 200) : "Rating failed",
     };
   }
+}
+
+// --- Buying the rate the customer actually paid for -------------------------
+
+export interface SelectedService {
+  carrier: string | null;
+  service: string | null;
+}
+
+export type RateChoice<T extends EasyPostRateLike = EasyPostRateLike> =
+  | { ok: true; rate: T; matchedSelection: boolean }
+  | { ok: false; reason: "no_rates" }
+  | { ok: false; reason: "selection_unavailable"; wanted: string; offered: string[] };
+
+/**
+ * Which rate should this label be bought at? — pure.
+ *
+ * THE DEFECT THIS EXISTS TO FIX (2026-08-20). The label purchase filtered to
+ * USPS and bought the cheapest, ignoring `Order.selectedShippingService`
+ * entirely — the service the customer chose at checkout and was charged for. A
+ * customer who paid for Priority Mail Express got Ground Advantage, the delivery
+ * promise made to them was quietly broken, and the difference landed in the
+ * store's margin without anybody deciding that.
+ *
+ * When the order carries a selection, that selection is what gets bought. When
+ * the carrier is not offering it any more, this REFUSES rather than substituting
+ * — silently downgrading a paid-for service is the defect, not the fallback.
+ *
+ * When there is no selection at all (an ordinary checkout, no live shipping)
+ * the old behaviour stands: the cheapest USPS rate, which is what the owner has
+ * always been buying.
+ */
+export function chooseRate<T extends EasyPostRateLike>(rates: T[], selected: SelectedService): RateChoice<T> {
+  const usable = rates.filter(
+    (r) => r?.id && r.carrier && r.service && Number.isFinite(Number.parseFloat(r.rate ?? ""))
+  );
+  if (usable.length === 0) return { ok: false, reason: "no_rates" };
+
+  const wantCarrier = selected.carrier?.trim();
+  const wantService = selected.service?.trim();
+
+  if (wantCarrier && wantService) {
+    // Compared through humanService because that is the form the customer was
+    // shown and the form stored on the order — "GroundAdvantage" at the carrier,
+    // "Ground Advantage" on the order. Matching raw against stored would never
+    // hit, which would turn every live-shipping order into a refusal.
+    const match = usable.find(
+      (r) =>
+        r.carrier!.toLowerCase() === wantCarrier.toLowerCase() &&
+        humanService(r.service!).toLowerCase() === humanService(wantService).toLowerCase()
+    );
+    if (match) return { ok: true, rate: match, matchedSelection: true };
+    return {
+      ok: false,
+      reason: "selection_unavailable",
+      wanted: `${wantCarrier} ${humanService(wantService)}`,
+      offered: usable.map((r) => `${r.carrier} ${humanService(r.service!)}`),
+    };
+  }
+
+  // No selection: the pre-existing behaviour, unchanged.
+  const usps = usable.filter((r) => r.carrier === "USPS");
+  const pool: T[] = usps.length > 0 ? usps : [];
+  if (pool.length === 0) return { ok: false, reason: "no_rates" };
+  const cheapest = pool.reduce((lowest, r) =>
+    Number.parseFloat(r.rate ?? "") < Number.parseFloat(lowest.rate ?? "") ? r : lowest
+  );
+  return { ok: true, rate: cheapest, matchedSelection: false };
 }
