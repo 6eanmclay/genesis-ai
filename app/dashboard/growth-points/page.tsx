@@ -5,6 +5,7 @@ import { getOrCreateReferralCode } from "@/lib/growthPoints/referral";
 import { growthPointPackages } from "@/lib/growthPoints/purchaseCatalog";
 import { purchaseGrowthPoints, addGrowthPointsForTesting } from "./actions";
 import { SubmitButton } from "../SubmitButton";
+import { isPlatformAdmin } from "@/lib/platformAdmin";
 
 // Growth Points Economy (Chapter 2) — the owner's own real economy view:
 // current balance, real point history, real usage by action, their own
@@ -47,6 +48,7 @@ function NotAvailable({ reason }: { reason: string }) {
 
 export default async function GrowthPointsPage() {
   const { userId, store, role } = await requireStorePageAccess(PERMISSIONS.ANALYTICS_VIEW);
+  const isOperator = await isPlatformAdmin();
 
   const [history, usage, referrals, referralCode] = await Promise.all([
     getGrowthPointHistory(store.id, 20),
@@ -88,12 +90,16 @@ export default async function GrowthPointsPage() {
           "Buy more Growth Points" below — this is a development/testing
           convenience, never disguised as a purchase or an earned reward.
           Every adjustment is fully visible in Point history below, labeled
-          honestly. Real, known limitation worth revisiting before real
-          paying merchants are onboarded broadly: as built, any OWNER can
-          self-serve points repeatedly (capped per submission, not
-          lifetime) — fine for a single pre-launch store, a real product
-          decision to gate/remove before that stops being true. */}
-      {role === "OWNER" && (
+          honestly.
+
+          GATED 2026-08-20 — this is the "real product decision to gate/remove"
+          the previous note here anticipated. It was rendered for any OWNER and
+          the action was gated on BILLING_MANAGE, which every owner has on their
+          own store, so a real customer could mint themselves 500 points per
+          submit, unlimited times, on a product sold for money. Platform
+          operators only now, on both sides: the server action refuses, and this
+          does not render, so nobody is shown a button that throws. */}
+      {isOperator && (
         <div className="mt-6 rounded-xl border border-dashed border-amber-400/40 bg-amber-50/50 p-5 dark:border-amber-400/25 dark:bg-amber-950/10">
           <p className="text-sm font-medium text-black dark:text-zinc-50">Add Growth Points — development/testing</p>
           <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">

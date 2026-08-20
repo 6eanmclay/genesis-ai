@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
 import { createGrowthPointCheckoutSession } from "@/lib/billing/checkout";
 import { adjustGrowthPointBalance } from "@/lib/growthPoints/ledger";
+import { isPlatformAdmin } from "@/lib/platformAdmin";
 import { prisma } from "@/lib/prisma";
 
 export async function purchaseGrowthPoints(packageKey: string) {
@@ -24,6 +25,16 @@ const MAX_ADJUSTMENT_PER_SUBMIT = 500;
 
 export async function addGrowthPointsForTesting(formData: FormData) {
   const { storeId, userId } = await requireStorePermission(PERMISSIONS.BILLING_MANAGE);
+
+  // PLATFORM ADMIN ONLY (2026-08-20). This was gated on BILLING_MANAGE, which
+  // every store OWNER has on their own store — so any real customer could mint
+  // themselves 500 Growth Points per submit, unlimited times, on a product that
+  // is sold for money. It was added deliberately as a development unblock and
+  // is correct as one; it simply must not be reachable by the people buying
+  // points. The env-var allowlist keeps it working for Sean and nobody else.
+  if (!(await isPlatformAdmin())) {
+    throw new Error("Manual balance adjustment is a platform-operator tool.");
+  }
   const raw = Number(formData.get("amount"));
   const amount = Math.floor(raw);
   if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_ADJUSTMENT_PER_SUBMIT) {

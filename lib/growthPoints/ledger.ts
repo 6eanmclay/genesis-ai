@@ -118,6 +118,53 @@ export async function checkGrowthPointBalanceForActions(
 // action has genuinely succeeded (never on a FAILED execution). Mirrors
 // ExecutionLog's own append-only convention: this only ever creates a row,
 // never updates one.
+/**
+ * What a deduction should actually do — pure, and the reason this is separate.
+ *
+ * Two defects found auditing the ledger on 2026-08-20, both of which the credit
+ * side had already guarded against and the debit side had not:
+ *
+ * 1. NO IDEMPOTENCY. creditGrowthPointsFromPurchase checks a unique externalRef
+ *    inside its transaction so a redelivered Stripe event cannot double-credit.
+ *    Deduction checked nothing, so the same execution charged twice would take
+ *    the points twice.
+ *
+ * 2. CHECK-THEN-ACT ACROSS A TRANSACTION BOUNDARY. checkGrowthPointBalance runs
+ *    in execute() before the work; the decrement runs in a different transaction
+ *    afterwards. Two concurrent actions on one store could both pass the check
+ *    and both decrement, spending points the store did not have and leaving the
+ *    balance negative.
+ */
+export type DeductionPlan =
+  /** Already charged for this execution. Do nothing at all. */
+  | { kind: "already_charged" }
+  /** Covered by a plan or trial: record it at zero, do not move the balance. */
+  | { kind: "covered"; source: "plan" | "trial" }
+  /** Charge it. */
+  | { kind: "charge"; cost: number }
+  /**
+   * The work is done and the balance will not cover it — a race lost to a
+   * concurrent spend. Recorded at zero rather than driven negative or charged
+   * twice, with the shortfall named.
+   */
+  | { kind: "uncharged_shortfall"; cost: number; balance: number };
+
+export function planDeduction(params: {
+  alreadyCharged: boolean;
+  unlimitedSource: "plan" | "trial" | null;
+  balance: number;
+  cost: number;
+}): DeductionPlan {
+  // Idempotency first: an execution already charged must never be charged
+  // again, whatever the balance or plan says now.
+  if (params.alreadyCharged) return { kind: "already_charged" };
+  if (params.unlimitedSource) return { kind: "covered", source: params.unlimitedSource };
+  if (params.balance < params.cost) {
+    return { kind: "uncharged_shortfall", cost: params.cost, balance: params.balance };
+  }
+  return { kind: "charge", cost: params.cost };
+}
+
 export async function deductGrowthPoints(params: {
   storeId: string;
   actionType: GenesisActionType;
@@ -145,6 +192,42 @@ export async function deductGrowthPoints(params: {
         ? "trial"
         : null;
 
+    // Idempotency, checked INSIDE the transaction — the same discipline
+    // creditGrowthPointsFromPurchase already used and this side lacked.
+    const alreadyCharged = params.executionLogId
+      ? (await tx.growthPointTransaction.findFirst({
+          where: { executionLogId: params.executionLogId, type: "DEDUCTION" },
+          select: { id: true },
+        })) !== null
+      : false;
+
+    const plan = planDeduction({
+      alreadyCharged,
+      unlimitedSource,
+      balance: current?.growthPointBalance ?? 0,
+      cost: params.cost,
+    });
+
+    if (plan.kind === "already_charged") return;
+
+    if (plan.kind === "uncharged_shortfall") {
+      // The work is already done by the time this runs, so refusing achieves
+      // nothing except a false failure. Recorded honestly at zero instead of
+      // driving the balance negative.
+      await tx.growthPointTransaction.create({
+        data: {
+          storeId: params.storeId,
+          type: "DEDUCTION",
+          amount: 0,
+          balanceAfter: plan.balance,
+          actionType: params.actionType,
+          executionLogId: params.executionLogId,
+          description: `Not charged for "${params.actionType}" — balance was ${plan.balance}, cost was ${plan.cost}`,
+        },
+      });
+      return;
+    }
+
     if (unlimitedSource) {
       await tx.growthPointTransaction.create({
         data: {
@@ -161,9 +244,33 @@ export async function deductGrowthPoints(params: {
       return;
     }
 
-    const store = await tx.store.update({
-      where: { id: params.storeId },
+    // Conditional: the balance must STILL cover the cost at write time. A
+    // concurrent spend that landed between the read above and this write loses
+    // the race here rather than pushing the balance below zero.
+    const applied = await tx.store.updateMany({
+      where: { id: params.storeId, growthPointBalance: { gte: params.cost } },
       data: { growthPointBalance: { decrement: params.cost } },
+    });
+    if (applied.count === 0) {
+      const after = await tx.store.findUnique({
+        where: { id: params.storeId },
+        select: { growthPointBalance: true },
+      });
+      await tx.growthPointTransaction.create({
+        data: {
+          storeId: params.storeId,
+          type: "DEDUCTION",
+          amount: 0,
+          balanceAfter: after?.growthPointBalance ?? 0,
+          actionType: params.actionType,
+          executionLogId: params.executionLogId,
+          description: `Not charged for "${params.actionType}" — another action spent the balance first`,
+        },
+      });
+      return;
+    }
+    const store = await tx.store.findUniqueOrThrow({
+      where: { id: params.storeId },
       select: { growthPointBalance: true },
     });
     await tx.growthPointTransaction.create({
