@@ -1,5 +1,9 @@
+import { randomUUID } from "crypto";
 import Stripe from "stripe";
 import { after } from "next/server";
+import { recordExecution } from "@/lib/execution/log";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
+import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { prisma } from "@/lib/prisma";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
@@ -83,11 +87,51 @@ export async function POST(request: Request) {
         metadataStoreId: session.metadata?.storeId ?? null,
         productId: productId ?? null,
       });
+
+      // Real money has arrived and no Order can be written for it. Until
+      // 2026-08-20 the console line above was the ONLY trace: the customer got
+      // their receipt from Stripe, the owner saw nothing at all, and Stripe got
+      // a 200 so it never retried.
+      //
+      // When the store resolved, the owner gets a durable, visible record. When
+      // it did not, there is genuinely no store to attach one to — a session
+      // from an account we cannot match to any connection — and the console
+      // line is the honest limit of what can be recorded. Stated rather than
+      // quietly accepted.
+      if (storeId) {
+        try {
+          await recordExecution({
+            executionId: randomUUID(),
+            action: EXECUTION_ACTIONS.CHECKOUT_STRIPE_UNRECORDED,
+            status: "FAILED",
+            verified: false,
+            message:
+              `A payment completed in Stripe (session ${session.id}) but no order could be created — ` +
+              `the checkout did not carry a product. Reconcile this in Stripe before assuming it is not a real sale.`,
+            retryable: false,
+            actorType: "USER",
+            actorId: null,
+            storeId,
+            storeDraftId: null,
+            schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
+            timestamp: new Date(),
+            metadata: { sessionId: session.id, amountTotal: session.amount_total ?? null },
+          });
+        } catch (error) {
+          console.error("[stripe webhook] could not record unmatched payment:", error);
+        }
+      }
     }
 
     if (storeId && productId) {
-      const product = await prisma.product.findUnique({
-        where: { id: productId },
+      // Scoped to the store this event was resolved to (2026-08-20). The
+      // lookup used to be by bare id, so a session carrying another store's
+      // productId would have put THAT store's product name on this order. The
+      // order is still created when the product is missing — the money is real
+      // whatever the catalogue says — it just records an honest "Unknown
+      // product" rather than a name borrowed from somewhere else.
+      const product = await prisma.product.findFirst({
+        where: { id: productId, storeId },
       });
 
       // Idempotent: Stripe can redeliver the same event more than once. An

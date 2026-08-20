@@ -23,6 +23,11 @@ export const EXECUTION_ACTIONS = {
   INTEGRATION_PAYPAL_CONNECT: "integration.paypal.connect",
   INTEGRATION_PAYPAL_VERIFY: "integration.paypal.verify",
   CHECKOUT_PAYPAL_CAPTURE: "checkout.paypal.capture",
+  // A completed Stripe checkout that could NOT be turned into an Order.
+  // Recorded so real money arriving with nothing to show for it is visible to
+  // the owner rather than existing only as a console line — see
+  // app/api/webhooks/stripe/route.ts.
+  CHECKOUT_STRIPE_UNRECORDED: "checkout.stripe.unrecorded",
   // Phase 3 Milestone 2 — the 3 proof integrations (Connector Framework).
   INTEGRATION_GOOGLE_CALENDAR_CONNECT: "integration.google_calendar.connect",
   INTEGRATION_GOOGLE_CALENDAR_VERIFY: "integration.google_calendar.verify",
