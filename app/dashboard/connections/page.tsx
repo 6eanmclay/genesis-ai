@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import {
   CONNECTOR_CATALOG,
   CONNECTION_CATEGORY_ORDER,
@@ -130,14 +131,25 @@ async function resolveEntry(storeId: string, entry: CatalogEntry): Promise<Resol
   };
 }
 
-export default async function ConnectionsPage({
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged; what changed is where it gets its business.
+//
+// A `slug` means it was reached at /b/[slug] and that business is
+// authoritative. No slug means the legacy /dashboard route. `basePath` is what
+// every link inside uses, so a page rendered for one business never links into
+// another.
+export async function ConnectionsScreen({
+  slug,
+  basePath: _basePath,
   searchParams,
 }: {
+  slug?: string;
+  basePath: string;
   searchParams: Promise<{ integration_error?: string; integration_connected?: string }>;
 }) {
   const { integration_error: integrationError, integration_connected: integrationConnected } =
     await searchParams;
-  const { store } = await requireStorePageAccess(PERMISSIONS.CONNECTIONS_MANAGE);
+  const { store } = await requireBusinessPageOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   const [resolved, gaps] = await Promise.all([
@@ -196,6 +208,7 @@ export default async function ConnectionsPage({
               const r = resolvedById.get(entry.id)!;
               return (
                 <ConnectorCard
+                  slug={slug}
                   key={entry.id}
                   entry={r.entry}
                   storeId={store.id}
@@ -244,4 +257,15 @@ export default async function ConnectionsPage({
       })}
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen. Preserved rather than redirected; existing links point here.
+export default async function ConnectionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ integration_error?: string; integration_connected?: string }>;
+}) {
+  return ConnectionsScreen({ basePath: LEGACY_BUSINESS_BASE, searchParams });
 }

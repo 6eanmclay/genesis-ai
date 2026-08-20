@@ -11,7 +11,7 @@ import {
   verifyExecutable,
   syncExecutable,
 } from "@/lib/execution/adapters/integrationExecutable";
-import { requireStorePermission, PERMISSIONS } from "@/lib/permissions";
+import { requireBusinessOrActive, requireStorePermission, PERMISSIONS } from "@/lib/permissions";
 import { logProductEvent } from "@/lib/telemetry/events";
 
 // Phase 3 Milestone 2 — the framework's own Server Action layer: 5 generic,
@@ -61,8 +61,10 @@ export async function verifyIntegration(provider: IntegrationProvider) {
   redirect("/dashboard/connections");
 }
 
-export async function disconnectIntegration(provider: IntegrationProvider) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.CONNECTIONS_MANAGE);
+// MIGRATED — see BUSINESS_CONTEXT.md Phase C. Disconnecting a supplier from the
+// wrong business is not recoverable by the owner: the credentials are gone.
+export async function disconnectIntegration(slug: string | undefined, provider: IntegrationProvider) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
   await getConnector(provider).disconnect(storeId);
   redirect("/dashboard/connections");
 }

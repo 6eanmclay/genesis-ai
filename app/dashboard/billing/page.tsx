@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { manageBilling, subscribeToPlan } from "./actions";
 import { SubmitButton } from "../SubmitButton";
 
@@ -25,8 +26,24 @@ function formatDate(date: Date): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-export default async function BillingPage() {
-  const { store } = await requireStorePageAccess(PERMISSIONS.BILLING_MANAGE);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged; what changed is where it gets its business.
+//
+// A `slug` means it was reached at /b/[slug] and that business is
+// authoritative. No slug means the legacy /dashboard route. `basePath` is what
+// every link inside uses, so a page rendered for one business never links into
+// another.
+//
+// Billing is one of the four screens where operating on the wrong business costs
+// real money — a subscription is charged against the business it is started from.
+export async function BillingScreen({
+  slug,
+  basePath: _basePath,
+}: {
+  slug?: string;
+  basePath: string;
+}) {
+  const { store } = await requireBusinessPageOrActive(PERMISSIONS.BILLING_MANAGE, slug);
 
   const [currentPlan, availablePlans] = await Promise.all([
     store.planId ? prisma.plan.findUnique({ where: { id: store.planId } }) : Promise.resolve(null),
@@ -84,7 +101,7 @@ export default async function BillingPage() {
             ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {availablePlans.map((plan) => (
-                  <form key={plan.id} action={subscribeToPlan.bind(null, plan.id)}>
+                  <form key={plan.id} action={subscribeToPlan.bind(null, slug, plan.id)}>
                     <div className="flex flex-col justify-between rounded-xl border border-black/[.08] bg-white p-5 dark:border-white/[.1] dark:bg-zinc-950">
                       <div>
                         <p className="text-sm font-medium text-black dark:text-zinc-50">{plan.name}</p>
@@ -114,7 +131,7 @@ export default async function BillingPage() {
       </h2>
       <div className="mt-3">
         {store.stripeCustomerId ? (
-          <form action={manageBilling}>
+          <form action={manageBilling.bind(null, slug)}>
             <SubmitButton
               pendingText="Opening..."
               className="rounded-full border border-black/[.08] px-4 py-2 text-sm text-black transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-50 dark:hover:bg-white/[.05]"
@@ -128,4 +145,10 @@ export default async function BillingPage() {
       </div>
     </div>
   );
+}
+
+
+// The legacy route — same screen, business resolved from the account.
+export default async function BillingPage() {
+  return BillingScreen({ basePath: LEGACY_BUSINESS_BASE });
 }

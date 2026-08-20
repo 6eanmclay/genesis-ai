@@ -266,6 +266,24 @@ export async function requireBusinessOrActive(
   return slug ? requireBusiness(permission, slug) : requireStorePermission(permission);
 }
 
+/**
+ * The page counterpart of requireBusinessOrActive.
+ *
+ * A slug means the page was reached at /b/[slug] and that business is
+ * authoritative; no slug means the legacy route. Lets a section migrate by
+ * taking one optional prop rather than having its body extracted — the screen is
+ * the same screen, and only where it gets its business changes.
+ *
+ * Scaffolding, with the same end: when every section takes a slug, the optional
+ * parameter becomes required and this goes away.
+ */
+export async function requireBusinessPageOrActive(
+  permission: Permission | null,
+  slug?: string
+): Promise<{ userId: string; store: Store; role: StoreRole }> {
+  return slug ? requireBusinessPage(permission, slug) : requireStorePageAccess(permission);
+}
+
 export async function requireStorePageAccess(
   permission: Permission | null
 ): Promise<{ userId: string; store: Store; role: StoreRole }> {

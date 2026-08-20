@@ -108,13 +108,12 @@ in a later phase is required for an earlier one to be correct.
   literal `/dashboard`; inside a business that would have meant home never
   highlighted and the home layout never applied.
 
-**Still to do in Phase A:** `app/b/[slug]/page.tsx`. The business root has no
-page yet, so `/b/<slug>` itself 404s while `/b/<slug>/orders` works. The home
-page is 864 lines and branches on *no business at all* (onboarding) before
-anything else — under `/b/[slug]` that branch is unreachable by construction, so
-the split is real work rather than a move. Deliberately not faked: a business
-root that renders an invented landing screen would be worse than one that is
-honestly missing. No navigation links to it, so nothing is broken today.
+- **`app/b/[slug]/page.tsx`** (2026-08-20). The home page was 864 lines opening
+  with *does this account have a business at all* — onboarding. That branch
+  stayed on the legacy route, where it belongs: an account with no business has
+  no slug to be at. `HomeWorkspace` is the rest, and both routes render it.
+
+**Phase A is complete.**
 
 ### Phase B — an account can own several businesses ~~(lift the draft constraint)~~
 
@@ -165,19 +164,33 @@ parameter becomes required and the function disappears — an action that can st
 fall back to the active business is an action that can be called from a page
 which named a different one.
 
-**Migrated so far: 1 of 15 screens, 2 of 28 call sites.**
+**Migrated so far: 5 of 15 screens, 9 call sites.**
 
-| | |
+| Screen | How |
 |---|---|
-| Orders page | `OrdersWorkspace` extracted; both routes render it |
-| `disconnectUsps` | slug-bound, and its redirect follows the business |
-| `saveReturnAddress` | slug-bound |
+| **Home** (`/b/[slug]`) | `HomeWorkspace` extracted. The onboarding branch stayed behind: under `/b/[slug]` "does this account have a business" is already answered, so it is unreachable there by construction rather than by a check |
+| **Products** | takes `slug`/`basePath`; links rebased |
+| **Connections** | takes `slug`; `ConnectorCard` binds it into disconnect |
+| **Billing** | takes `slug`; both forms bound |
+| **Growth Points** | takes `slug`; purchase bound, link to Billing rebased |
+| Orders | `OrdersWorkspace` extracted; both routes render it |
+
+Actions bound to the named business: `disconnectUsps`, `saveReturnAddress`,
+`manageBilling`, `subscribeToPlan`, `purchaseGrowthPoints`,
+`addGrowthPointsForTesting`, `disconnectIntegration`.
+
+Two screens were extracted (Home, Orders) and three were migrated in place
+(Products, Connections, Billing, Growth Points). In place is the better move
+where it works: moving several hundred lines of JSX to change one line of
+resolution is a bigger diff with more room to be wrong. Home and Orders needed
+extraction because their pages genuinely branch before resolving.
 
 The redirect detail is not incidental. A slug-bound action that sent the owner
 back to `/dashboard/orders` would have disconnected the right business and then
 shown them a different one.
 
-**Remaining: 14 screens, 26 call sites.** Two of the four Orders actions are
+**Remaining: 10 screens; 21 `requireStorePermission()`, 11
+`requireStorePageAccess()` and 19 `resolveUserStore()` sites.** Two of the four Orders actions are
 among them — `submitUspsCredentials` and `recheckUsps` go through `execute()`,
 which resolves the business internally (`lib/execution/engine.ts`, the one
 implicit site outside the app directory). That is a deeper change than binding a
@@ -205,6 +218,21 @@ The two-tab test is the one that decides whether this worked. It is expressed as
 two concurrent resolutions naming different slugs, asserting neither sees the
 other's business — which fails against any implementation that reads ambient
 state, and passes only when the context is genuinely carried per request.
+
+---
+
+## Known, and not yet migrated
+
+- **Stored `actionHref` values are legacy-based.** Recommendation rows carry
+  `"/dashboard/products"` as data, written when they were created. The Products
+  screen queries on that string, so rebasing the filter would stop it matching
+  any existing row. Their own migration, and a data one rather than a code one.
+- **`lib/execution/engine.ts`** resolves the business internally, so every action
+  routed through `execute()` — including two of the four Orders actions — is
+  still implicit. The one such site outside `app/`.
+- **No screen has been exercised through a real browser session.** The suites
+  prove resolution and authorization against real Postgres; they do not prove a
+  rendered page.
 
 ---
 

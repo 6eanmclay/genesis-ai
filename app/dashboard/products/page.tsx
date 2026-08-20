@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { toggleProductActive, deleteProduct } from "../actions";
 import {
@@ -22,12 +23,23 @@ import { CreateProductForm } from "./CreateProductForm";
 import { EditProductForm } from "./EditProductForm";
 import { ProductImageGallery } from "./ProductImageGallery";
 
-export default async function ProductsPage({
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged; what changed is where it gets its business.
+//
+// A `slug` means it was reached at /b/[slug] and that business is
+// authoritative. No slug means the legacy /dashboard route, which resolves the
+// account's active business exactly as before. `basePath` is what every link
+// inside uses, so a page rendered for one business never links into another.
+export async function ProductsScreen({
+  slug,
+  basePath,
   searchParams,
 }: {
+  slug?: string;
+  basePath: string;
   searchParams: Promise<{ focus?: string }>;
 }) {
-  const { store, role } = await requireStorePageAccess(PERMISSIONS.PRODUCTS_MANAGE);
+  const { store, role } = await requireBusinessPageOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   // Reliability/polish pass (v22) — this page's own root never applied the
   // store's theme, so --brand-accent (used by ACCENT_BUTTON and several
   // shared components below) was never actually in scope, silently
@@ -55,6 +67,11 @@ export default async function ProductsPage({
     // directly at this page — the same real data Live Intelligence/the nav
     // badges already use, just filtered to this one destination.
     prisma.genesisObservation.findMany({
+      // NOT rebased, deliberately. This is a query against rows already in the
+      // database, whose actionHref was written as "/dashboard/products" when
+      // they were created. Rebasing the filter would stop it matching any of
+      // them. Stored action hrefs are legacy-based and are their own migration
+      // — see BUSINESS_CONTEXT.md's remaining-risk list.
       where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/products" },
       select: { dedupeKey: true, genesisState: true, summary: true },
     }),
@@ -104,7 +121,7 @@ export default async function ProductsPage({
               highlightId={focus}
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
-              currentPath="/dashboard/products"
+              currentPath={`${basePath}/products`}
             />
           </div>
         </>
@@ -178,4 +195,16 @@ export default async function ProductsPage({
       <CreateProductForm />
     </div>
   );
+}
+
+
+// The legacy route. Resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/products renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function ProductsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ focus?: string }>;
+}) {
+  return ProductsScreen({ basePath: LEGACY_BUSINESS_BASE, searchParams });
 }

@@ -26,6 +26,7 @@ interface ExecutionLogDisplay {
 // added later needs zero new JSX, only a new lib/integrations/*.ts module
 // and a CONNECTOR_CATALOG entry.
 export function ConnectorCard({
+  slug,
   entry,
   storeId,
   integrationStatus,
@@ -36,6 +37,14 @@ export function ConnectorCard({
   connectedAt,
   recommendationReason,
 }: {
+  /**
+   * The business this card belongs to, when it was rendered inside one.
+   *
+   * Bound into disconnect so the supplier is cut from THIS business.
+   * Disconnecting the wrong one is not recoverable by the owner — the
+   * credentials are gone.
+   */
+  slug?: string;
   entry: CatalogEntry;
   storeId: string;
   integrationStatus: string | null; // StoreIntegration.status, or null if never connected
@@ -91,7 +100,7 @@ export function ConnectorCard({
                   Sync now
                 </SubmitButton>
               </form>
-              <form action={disconnectIntegration.bind(null, provider)}>
+              <form action={disconnectIntegration.bind(null, slug, provider)}>
                 <SubmitButton
                   pendingText="Disconnecting..."
                   className="rounded-full border border-black/[.08] px-4 py-1.5 text-xs text-red-600 disabled:opacity-50 dark:border-white/[.145] dark:text-red-400"

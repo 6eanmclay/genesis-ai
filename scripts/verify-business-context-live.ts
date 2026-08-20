@@ -595,6 +595,130 @@ async function main() {
       check("the active business is still untouched", await activeOf(owner.id), gym.id);
     }
 
+    // -----------------------------------------------------------------------
+    console.log("\n14. The money screens, bound to the business they were rendered for");
+    {
+      await reset();
+      // Billing, Growth Points, Connections and Products are migrated first
+      // because they are where operating on the wrong business costs something
+      // that cannot be undone by the owner: a subscription charged, points
+      // credited, a supplier's credentials deleted.
+      const owner = await makeUser("money@example.test");
+      const gym = await makeBusiness(owner.id, "iron-gym-money");
+      const coil = await makeBusiness(owner.id, "coil-money");
+      // The account is ACTIVE in the gym. Every assertion below is about a page
+      // rendered for the OTHER business.
+      await setActiveBusiness(owner.id, gym.id);
+
+      await prisma.storeIntegration.create({
+        data: { storeId: gym.id, provider: "PRINTFUL", status: "CONNECTED" },
+      });
+      await prisma.storeIntegration.create({
+        data: { storeId: coil.id, provider: "PRINTFUL", status: "CONNECTED" },
+      });
+      await prisma.growthPointTransaction.create({
+        data: { storeId: gym.id, type: "GRANT", amount: 100, balanceAfter: 100, description: "gym" },
+      });
+      await prisma.growthPointTransaction.create({
+        data: { storeId: coil.id, type: "GRANT", amount: 700, balanceAfter: 700, description: "coil" },
+      });
+
+      // What a slug-bound action resolves. requireBusinessOrActive needs a
+      // session, so this exercises the resolution it delegates to — the branch
+      // that decides which business the write lands on.
+      const bound = await resolveBusiness(owner.id, coil.id);
+      check("a page rendered for the coil business resolves to it",
+        bound.kind === "resolved" ? bound.store.slug : null, "coil-money");
+
+      // GROWTH POINTS. Points are per business; crediting the wrong balance is
+      // real money in the wrong place.
+      const coilBalance = await prisma.growthPointTransaction.findFirst({
+        where: { storeId: bound.kind === "resolved" ? bound.storeId : "" },
+        orderBy: { createdAt: "desc" },
+      });
+      check("its points balance is its own, not the active business's",
+        coilBalance?.balanceAfter, 700);
+
+      // CONNECTIONS. A disconnect bound to one business must not touch the
+      // other's credentials.
+      await prisma.storeIntegration.updateMany({
+        where: { storeId: bound.kind === "resolved" ? bound.storeId : "", provider: "PRINTFUL" },
+        data: { status: "DISCONNECTED" },
+      });
+      const gymConnection = await prisma.storeIntegration.findFirst({
+        where: { storeId: gym.id, provider: "PRINTFUL" },
+      });
+      const coilConnection = await prisma.storeIntegration.findFirst({
+        where: { storeId: coil.id, provider: "PRINTFUL" },
+      });
+      check("the named business is disconnected", coilConnection?.status, "DISCONNECTED");
+      check("the active business is untouched", gymConnection?.status, "CONNECTED");
+
+      // And the account is still active in the gym — acting on a business does
+      // not move the account into it, which is the recency behaviour Phase 0
+      // removed and this migration must not reintroduce.
+      check("acting on a business does not make it active", await activeOf(owner.id), gym.id);
+
+      // CROSS-BUSINESS DENIAL. A slug belonging to another account is refused
+      // rather than falling back to one this account can reach — the fallback is
+      // what would charge the wrong business.
+      const stranger = await makeUser("stranger-money@example.test");
+      const theirs = await makeBusiness(stranger.id, "not-mine-money");
+      const refused = await resolveBusiness(owner.id, theirs.id);
+      check("another account's business is refused", refused.kind, "none");
+      assert("and not swapped for one this account owns", refused.kind !== "resolved");
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n15. Two businesses, two screens, at the same time");
+    {
+      await reset();
+      const owner = await makeUser("concurrent-screens@example.test");
+      const a = await makeBusiness(owner.id, "screen-a");
+      const b = await makeBusiness(owner.id, "screen-b");
+      await setActiveBusiness(owner.id, a.id);
+
+      await prisma.product.create({
+        data: { storeId: a.id, name: "A product", description: "d", priceInCents: 100 },
+      });
+      await prisma.product.create({
+        data: { storeId: b.id, name: "B product", description: "d", priceInCents: 200 },
+      });
+
+      /** One migrated screen: named business in, that business's data out. */
+      const screen = async (storeId: string) => {
+        const context = await resolveBusiness(owner.id, storeId);
+        if (context.kind !== "resolved") return null;
+        const product = await prisma.product.findFirst({ where: { storeId: context.storeId } });
+        return { slug: context.store.slug, product: product?.name ?? null };
+      };
+      /** One unmigrated screen: no slug, so the active business. */
+      const legacyScreen = async () => {
+        const context = await resolveBusiness(owner.id);
+        if (context.kind !== "resolved") return null;
+        const product = await prisma.product.findFirst({ where: { storeId: context.storeId } });
+        return { slug: context.store.slug, product: product?.name ?? null };
+      };
+
+      // A migrated screen for B, a migrated screen for A, and an unmigrated
+      // screen — all in flight together. This is the real state of the app
+      // during the migration, and it has to be correct in that state, not only
+      // at the end of it.
+      for (let round = 0; round < 3; round++) {
+        const [screenB, screenA, legacy] = await Promise.all([screen(b.id), screen(a.id), legacyScreen()]);
+        check(`round ${round + 1}: the screen for B shows B`, screenB, { slug: "screen-b", product: "B product" });
+        check(`round ${round + 1}: the screen for A shows A`, screenA, { slug: "screen-a", product: "A product" });
+        check(`round ${round + 1}: the unmigrated screen shows the active business`, legacy,
+          { slug: "screen-a", product: "A product" });
+      }
+
+      // Switching mid-flight moves the unmigrated screen and nothing else.
+      await setActiveBusiness(owner.id, b.id);
+      const [afterSwitchNamed, afterSwitchLegacy] = await Promise.all([screen(a.id), legacyScreen()]);
+      check("a named screen is unaffected by a switch", afterSwitchNamed?.slug, "screen-a");
+      check("an unmigrated screen follows it", afterSwitchLegacy?.slug, "screen-b");
+    }
+
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getGrowthPointHistory, getGrowthPointUsageByAction, getReferralsSent } from "@/lib/growthPoints/ownerQueries";
 import { getOrCreateReferralCode } from "@/lib/growthPoints/referral";
 import { growthPointPackages } from "@/lib/growthPoints/purchaseCatalog";
@@ -46,8 +47,24 @@ function NotAvailable({ reason }: { reason: string }) {
   );
 }
 
-export default async function GrowthPointsPage() {
-  const { userId, store, role } = await requireStorePageAccess(PERMISSIONS.ANALYTICS_VIEW);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged; what changed is where it gets its business.
+//
+// A `slug` means it was reached at /b/[slug] and that business is
+// authoritative. No slug means the legacy /dashboard route. `basePath` is what
+// every link inside uses, so a page rendered for one business never links into
+// another.
+//
+// Growth Points are per business, and buying them is real money. Crediting the
+// wrong balance is the failure this migration exists to make impossible.
+export async function GrowthPointsScreen({
+  slug,
+  basePath,
+}: {
+  slug?: string;
+  basePath: string;
+}) {
+  const { userId, store, role } = await requireBusinessPageOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
   const isOperator = await isPlatformAdmin();
 
   const [history, usage, referrals, referralCode] = await Promise.all([
@@ -106,7 +123,7 @@ export default async function GrowthPointsPage() {
             A real, transparent balance adjustment (never a purchase or an earned reward) so testing J4 never
             gets blocked while you&rsquo;re still building. Shows up honestly in Point history below.
           </p>
-          <form action={addGrowthPointsForTesting} className="mt-3 flex flex-wrap items-end gap-2">
+          <form action={addGrowthPointsForTesting.bind(null, slug)} className="mt-3 flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-1">
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Amount (max 500)</span>
               <input
@@ -227,7 +244,7 @@ export default async function GrowthPointsPage() {
             {packages.map(([key, pkg]) => (
               <form
                 key={key}
-                action={purchaseGrowthPoints.bind(null, key)}
+                action={purchaseGrowthPoints.bind(null, slug, key)}
                 className="flex flex-col justify-between rounded-xl border border-black/[.08] bg-white p-5 dark:border-white/[.1] dark:bg-zinc-950"
               >
                 <div>
@@ -250,7 +267,7 @@ export default async function GrowthPointsPage() {
         {role === "OWNER" && (
           <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
             Subscribing to a plan, and managing your payment method, live in{" "}
-            <Link href="/dashboard/billing" className="underline decoration-current/30 hover:decoration-current">
+            <Link href={`${basePath}/billing`} className="underline decoration-current/30 hover:decoration-current">
               Billing
             </Link>
             .
@@ -259,4 +276,10 @@ export default async function GrowthPointsPage() {
       </div>
     </div>
   );
+}
+
+
+// The legacy route — same screen, business resolved from the account.
+export default async function GrowthPointsPage() {
+  return GrowthPointsScreen({ basePath: LEGACY_BUSINESS_BASE });
 }

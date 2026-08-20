@@ -2,14 +2,21 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessOrActive } from "@/lib/permissions";
 import { createGrowthPointCheckoutSession } from "@/lib/billing/checkout";
 import { adjustGrowthPointBalance } from "@/lib/growthPoints/ledger";
 import { isPlatformAdmin } from "@/lib/platformAdmin";
 import { prisma } from "@/lib/prisma";
 
-export async function purchaseGrowthPoints(packageKey: string) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.BILLING_MANAGE);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). `slug` is bound by the page under /b/[slug]; the legacy page passes
+// nothing and resolves the account's active business exactly as before.
+//
+// These are the actions where operating on the wrong business costs real money:
+// a subscription is charged against the business it is started from, and Growth
+// Points are credited to that business's balance.
+export async function purchaseGrowthPoints(slug: string | undefined, packageKey: string) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.BILLING_MANAGE, slug);
   const url = await createGrowthPointCheckoutSession(storeId, packageKey);
   redirect(url);
 }
@@ -23,8 +30,8 @@ export async function purchaseGrowthPoints(packageKey: string) {
 // ledger/history the rest of this page already renders.
 const MAX_ADJUSTMENT_PER_SUBMIT = 500;
 
-export async function addGrowthPointsForTesting(formData: FormData) {
-  const { storeId, userId } = await requireStorePermission(PERMISSIONS.BILLING_MANAGE);
+export async function addGrowthPointsForTesting(slug: string | undefined, formData: FormData) {
+  const { storeId, userId } = await requireBusinessOrActive(PERMISSIONS.BILLING_MANAGE, slug);
 
   // PLATFORM ADMIN ONLY (2026-08-20). This was gated on BILLING_MANAGE, which
   // every store OWNER has on their own store — so any real customer could mint
