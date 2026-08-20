@@ -4703,6 +4703,24 @@ export async function confirmStoreDraftCore(
   userId: string,
   opts: { logoUrl?: string | null; sessionInstanceId?: string } = {}
 ): Promise<{ store: Awaited<ReturnType<typeof prisma.store.create>> }> {
+  // This file is "use server", so every exported async function in it is a
+  // callable endpoint — including this one, which was written as an internal
+  // helper and takes the user it acts on AS A PARAMETER. Nothing verified that
+  // the caller was that user, so the shape of it was: name any account, and
+  // their draft becomes a real published Store and the draft is deleted.
+  //
+  // Every one of the four call sites already passes the signed-in user's own
+  // id (requireUserId / requireUser / session.user.id), so this check costs
+  // them nothing. Found 2026-08-20 by auditing every id-taking export in every
+  // "use server" module; it was the only one that trusted its caller.
+  const session = await auth();
+  if (!session?.user?.id) {
+    redirect("/login");
+  }
+  if (session.user.id !== userId) {
+    throw new Error("You can only confirm your own store draft.");
+  }
+
   const draft = await prisma.storeDraft.findUnique({
     where: { userId },
   });
