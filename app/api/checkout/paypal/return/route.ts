@@ -1,3 +1,4 @@
+import { sendOrderConfirmation } from "@/lib/orders/orderConfirmation";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -256,6 +257,13 @@ export async function GET(request: NextRequest) {
 
       return created;
     });
+
+    // After the transaction has committed, so a rolled-back order is never
+    // confirmed. Awaited rather than fired-and-forgotten: this route has no
+    // after() equivalent, and serverless would kill an unawaited send mid-flight.
+    // Its own idempotency claim means a double-hit on this route (back button,
+    // reload) does not email the buyer twice.
+    await sendOrderConfirmation({ orderId: order.id, storeId: store.id });
 
     return NextResponse.redirect(new URL(`/store/${slug}/success?order_id=${order.id}`, request.url));
   } catch (error) {

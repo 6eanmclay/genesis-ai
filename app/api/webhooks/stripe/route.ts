@@ -1,3 +1,4 @@
+import { sendOrderConfirmation } from "@/lib/orders/orderConfirmation";
 import { isPermanentOrderFailure } from "@/lib/orders/orderFailure";
 import { checkWebhookSecret } from "@/lib/observability/webhookConfig";
 import { reportIssue } from "@/lib/observability/reportIssue";
@@ -287,12 +288,31 @@ export async function POST(request: Request) {
       // Scheduled via after() so Stripe still gets its expected fast ack.
       // Phase 5's measurement sweep rides the same trigger — deterministic,
       // zero AI cost, a no-op unless a past approval's window has elapsed.
-      after(() =>
-        Promise.all([
+      after(async () => {
+        // The customer confirmation runs HERE, and the placement is the point.
+        //
+        // after() fires once the response is sent, which is strictly after the
+        // transaction above has committed — so a rolled-back order can never be
+        // confirmed. Putting the send inside the transaction would risk the
+        // opposite: an email about an order that then failed to commit.
+        //
+        // Its own idempotency claim means a redelivered event does not email the
+        // customer twice, even though after() runs on every delivery.
+        //
+        // Awaited before the sweeps rather than raced with them, so a slow
+        // intelligence pass cannot delay the one thing the customer is waiting
+        // for. It never throws — see sendOrderConfirmation.
+        const created = await prisma.order.findUnique({
+          where: { paymentProvider_externalOrderId: { paymentProvider: "STRIPE", externalOrderId: session.id } },
+          select: { id: true },
+        });
+        if (created) await sendOrderConfirmation({ orderId: created.id, storeId });
+
+        await Promise.all([
           runDeterministicObservationSweep(storeId),
           measureDueMeasurements(storeId),
-        ]).catch(() => {})
-      );
+        ]).catch(() => {});
+      });
     }
   }
 

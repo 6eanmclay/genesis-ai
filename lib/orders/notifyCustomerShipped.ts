@@ -17,7 +17,9 @@ import { sendEmail, isEmailConfigured } from "@/lib/email/sendEmail";
 export type ShippedNotification =
   | { notified: true }
   | { notified: false; reason: "email_not_configured" }
-  | { notified: false; reason: "send_failed"; detail: string };
+  | { notified: false; reason: "send_failed"; detail: string }
+  /** A previous label purchase already told them. Not a failure. */
+  | { notified: false; reason: "already_notified" };
 
 export async function notifyCustomerShipped(params: {
   to: string;
@@ -71,6 +73,11 @@ export function labelPurchaseMessage(params: {
 
   if (params.notification.notified) {
     return `${bought} The customer has been emailed the tracking number.`;
+  }
+  if (params.notification.reason === "already_notified") {
+    // Not a warning: they were told the first time, and telling them twice
+    // about one shipment would be worse than not repeating it.
+    return `${bought} The customer had already been notified about this shipment.`;
   }
   if (params.notification.reason === "email_not_configured") {
     return `${bought} The customer was NOT emailed — Genesis can't send email yet, so you'll need to send them the tracking number yourself.`;

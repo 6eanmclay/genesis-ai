@@ -6,7 +6,11 @@ import { EXECUTION_ACTIONS } from "../actions";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import type { EasyPostCredentials } from "@/lib/integrations/easypost";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
-import { notifyCustomerShipped, labelPurchaseMessage } from "@/lib/orders/notifyCustomerShipped";
+import {
+  notifyCustomerShipped,
+  labelPurchaseMessage,
+  type ShippedNotification,
+} from "@/lib/orders/notifyCustomerShipped";
 
 interface StoreReturnAddress {
   name: string;
@@ -151,13 +155,33 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
     // actually told now reaches the owner's own result message, because on a
     // store with no email configured — every store today — the buyer heard
     // nothing and only the owner can put that right.
-    const notification = await notifyCustomerShipped({
-      to: order.buyerEmail,
-      productName: order.productName,
-      carrier: updated.carrier ?? "USPS",
-      trackingNumber: updated.trackingNumber!,
-      trackingUrl: updated.trackingUrl,
+    // Claimed before sending, released if the send fails — the same shape as
+    // the order confirmation, and for the same reason. The label-purchase guard
+    // above (`if (order.trackingNumber) throw`) is a check-then-act, so two
+    // concurrent submits could both reach here; without this the buyer would
+    // get two "your order shipped" emails for one shipment.
+    const claimed = await prisma.order.updateMany({
+      where: { id: order.id, storeId: ctx.storeId, shipmentNotifiedAt: null },
+      data: { shipmentNotifiedAt: new Date() },
     });
+
+    const notification: ShippedNotification =
+      claimed.count === 0
+        ? { notified: false, reason: "already_notified" }
+        : await notifyCustomerShipped({
+            to: order.buyerEmail,
+            productName: order.productName,
+            carrier: updated.carrier ?? "USPS",
+            trackingNumber: updated.trackingNumber!,
+            trackingUrl: updated.trackingUrl,
+          });
+
+    if (claimed.count > 0 && !notification.notified) {
+      // Release, so buying a label again (or a later retry) can still tell them.
+      await prisma.order
+        .update({ where: { id: order.id, storeId: ctx.storeId }, data: { shipmentNotifiedAt: null } })
+        .catch(() => {});
+    }
 
     return {
       message: labelPurchaseMessage({

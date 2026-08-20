@@ -120,15 +120,23 @@ export async function startRealPostgres(): Promise<RealPostgres> {
       }
     },
     async close() {
-      await prisma.$disconnect();
-      await pg.stop();
-      // The data directory is a throwaway; leaving it behind would accumulate a
-      // full Postgres cluster per test run.
+      // EVERY step is guarded, and that matters more than it looks.
+      //
+      // close() is called from a `finally`, so anything it throws REPLACES the
+      // error the suite was actually reporting — and then a real assertion
+      // failure surfaces as "EBUSY: resource busy" with no trace of the thing
+      // that went wrong. That cost a debugging round: `persistent: false` makes
+      // embedded-postgres delete the data directory itself during stop(), which
+      // races Windows still holding a handle on it.
+      //
+      // Cleaning up a temp directory is never worth losing a test failure over.
+      await prisma.$disconnect().catch(() => {});
+      await pg.stop().catch(() => {});
       try {
         rmSync(dataDir, { recursive: true, force: true });
       } catch {
-        // Windows sometimes holds a handle briefly after stop(). Not worth
-        // failing a test run over a temp directory.
+        // Windows holds handles briefly after shutdown. The directory is under
+        // the OS temp root and will be swept up there.
       }
     },
   };
