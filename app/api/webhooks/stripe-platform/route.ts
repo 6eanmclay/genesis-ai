@@ -86,12 +86,24 @@ export async function POST(request: Request) {
         // the console line was the only trace of that.
         await recordUnappliedPayment(storeId, session.id, "a Growth Point purchase could not be applied");
       } else {
-        await creditGrowthPointsFromPurchase({
-          storeId,
-          amount: pointAmount,
-          externalRef: session.id,
-          description: `Purchased ${pointAmount} Growth Point${pointAmount === 1 ? "" : "s"}`,
-        });
+        // A storeId that no longer resolves — the store was deleted between
+        // checkout and delivery, or the metadata is stale — used to throw
+        // P2025 straight out of this handler. That returned a 500, so Stripe
+        // retried for days against something that could never succeed, and the
+        // payment left no trace anyone would find.
+        //
+        // Found by verify-webhook-handlers.ts, which sends exactly that event.
+        try {
+          await creditGrowthPointsFromPurchase({
+            storeId,
+            amount: pointAmount,
+            externalRef: session.id,
+            description: `Purchased ${pointAmount} Growth Point${pointAmount === 1 ? "" : "s"}`,
+          });
+        } catch (error) {
+          console.error(`[stripe-platform webhook] could not credit ${session.id}:`, error);
+          await recordUnappliedPayment(storeId, session.id, "the Growth Point purchase could not be credited");
+        }
       }
     }
 
@@ -116,10 +128,13 @@ export async function POST(request: Request) {
         // on a separate customer.subscription.created event's delivery
         // order, so this is correct even if that event arrives later (or
         // is lost).
-        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-        await prisma.store.update({
-          where: { id: storeId },
-          data: {
+        // Same shape as the purchase branch above: a store that no longer
+        // exists must not turn into an unbounded Stripe retry loop.
+        try {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          await prisma.store.update({
+            where: { id: storeId },
+            data: {
             planId,
             ...(customerId ? { stripeCustomerId: customerId } : {}),
             stripeSubscriptionId: subscription.id,
@@ -132,8 +147,12 @@ export async function POST(request: Request) {
             // its own very next run and grants the real first-month
             // allowance itself. This is the whole proof that Chapter 5
             // integrates into Chapter 2 rather than reimplementing it.
-          },
-        });
+            },
+          });
+        } catch (error) {
+          console.error(`[stripe-platform webhook] could not apply subscription ${session.id}:`, error);
+          await recordUnappliedPayment(storeId, session.id, "the plan subscription could not be applied");
+        }
       }
     }
   }

@@ -41,13 +41,19 @@ export class NotATestDatabaseError extends Error {
   }
 }
 
-/** Create the marker. Called by the harness, and by nothing else. */
-export async function markAsTestDatabase(prisma: PrismaClient): Promise<void> {
-  await prisma.$executeRawUnsafe(
-    `CREATE TABLE IF NOT EXISTS "${TEST_DATABASE_MARKER}" (created_at timestamptz NOT NULL DEFAULT now())`
-  );
-  await prisma.$executeRawUnsafe(`INSERT INTO "${TEST_DATABASE_MARKER}" DEFAULT VALUES`);
-}
+/**
+ * The SQL that stamps a database as a throwaway. Run by the harness against its
+ * own PGlite instance directly, NOT through Prisma.
+ *
+ * Prisma's $executeRawUnsafe over PGlite's wire protocol fails on DDL and
+ * leaves the connection closed — which cost an afternoon, because the symptom
+ * is every later query in the process failing with "Server has closed the
+ * connection" rather than anything pointing at the CREATE TABLE.
+ */
+export const MARK_TEST_DATABASE_SQL = [
+  `CREATE TABLE IF NOT EXISTS "${TEST_DATABASE_MARKER}" (created_at timestamptz NOT NULL DEFAULT now())`,
+  `INSERT INTO "${TEST_DATABASE_MARKER}" (created_at) VALUES (now())`,
+].join("; ");
 
 /**
  * Refuse to continue unless this is genuinely a throwaway database.

@@ -4,7 +4,7 @@ import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { execFile } from "child_process";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { markAsTestDatabase, TEST_DATABASE_MARKER } from "./requireTestDatabase";
+import { MARK_TEST_DATABASE_SQL, TEST_DATABASE_MARKER } from "./requireTestDatabase";
 
 // A real Postgres, in this process, for tests that need one (2026-08-20).
 //
@@ -113,11 +113,21 @@ ${stderr}`));
     );
   });
 
-  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+  // Stamp it as a throwaway, so requireTestDatabase can tell this apart from
+  // production by something stronger than an environment variable anyone could
+  // export.
+  //
+  // AFTER the migrations, not before: `migrate deploy` refuses with P3005 on a
+  // database whose schema is not empty, and a single marker table is enough to
+  // trip that.
+  //
+  // And through PGlite directly rather than Prisma: $executeRawUnsafe over the
+  // wire protocol fails on DDL and leaves the connection closed, which surfaces
+  // as every later query in the process failing with "Server has closed the
+  // connection" — nothing pointing at the CREATE TABLE that caused it.
+  await db.exec(MARK_TEST_DATABASE_SQL);
 
-  // Stamp it, so requireTestDatabase can tell this apart from production by
-  // something stronger than an environment variable anyone could export.
-  await markAsTestDatabase(prisma);
+  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
 
   return {
     prisma,
@@ -157,7 +167,7 @@ ${stderr}`));
         SELECT tablename FROM pg_tables
         WHERE schemaname = 'public'
           AND tablename <> '_prisma_migrations'
-          AND tablename <> '${TEST_DATABASE_MARKER}'`;
+          AND tablename <> ${TEST_DATABASE_MARKER}`;
       if (tables.length === 0) return;
       const list = tables.map((t) => `"${t.tablename}"`).join(", ");
       await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
