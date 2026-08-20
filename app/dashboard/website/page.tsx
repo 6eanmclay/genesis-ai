@@ -386,7 +386,7 @@ export async function WebsiteScreen({
 
       {/* Publish/Unpublish — secondary to actually seeing the site above,
           so just the action, not a repeated status readout. */}
-      <form action={toggleStorePublished} className="mt-3">
+      <form action={toggleStorePublished.bind(null, slug)} className="mt-3">
         <SubmitButton
           pendingText="Updating..."
           className={

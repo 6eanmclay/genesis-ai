@@ -31,8 +31,18 @@ async function uploadOneToBlob(file: File): Promise<string> {
   return uploaded.url;
 }
 
-export function CreateProductForm() {
-  const { state, formAction, resetKey } = useActionFormState(createProduct);
+export function CreateProductForm({
+  slug,
+}: {
+  /**
+   * The business this form belongs to, when it was rendered inside one.
+   *
+   * Bound into the action, so a form on one business's page writes to THAT
+   * business rather than to whichever one the account was last active in.
+   */
+  slug?: string;
+}) {
+  const { state, formAction, resetKey } = useActionFormState(createProduct.bind(null, slug));
   // Real mobile bug fix (2026-08-08) — a real phone photo routinely clears
   // Vercel's own hard, non-configurable 4.5MB Function request-body ceiling
   // (confirmed against Vercel's current docs; next.config.ts's own

@@ -148,7 +148,7 @@ export async function OrdersWorkspace({
           )}
 
           {!uspsConnected ? (
-            <form action={submitUspsCredentials} className="mt-3 flex flex-col gap-2">
+            <form action={submitUspsCredentials.bind(null, slug)} className="mt-3 flex flex-col gap-2">
               <p className="text-xs text-zinc-500">
                 Create a free account at easypost.com — it&apos;s the real service behind USPS label purchases
                 here — then paste your API key below.
@@ -166,7 +166,7 @@ export async function OrdersWorkspace({
             </form>
           ) : (
             <div className="mt-3 flex gap-2">
-              <form action={recheckUsps}>
+              <form action={recheckUsps.bind(null, slug)}>
                 <SubmitButton
                   pendingText="Checking..."
                   className="rounded-full border border-black/[.08] px-4 py-1.5 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"

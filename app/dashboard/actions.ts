@@ -64,10 +64,20 @@ export async function signOutOfGenesis() {
   await signOut({ redirectTo: "/" });
 }
 
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). These called execute() without a storeId, so execute() resolved the
+// account's ACTIVE business itself — the last implicit resolution on the write
+// path. An action invoked from one business's page would have run its executable
+// against another business entirely.
+//
+// execute() has always accepted an explicit storeId. What was missing was
+// callers supplying one.
 export async function createProduct(
+  slug: string | undefined,
   prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   try {
     const name = (formData.get("name") as string)?.trim();
     const description = (formData.get("description") as string)?.trim();
@@ -112,7 +122,7 @@ export async function createProduct(
       description: description || null,
       priceInCents,
       uploadedImageUrls,
-    });
+    }, { storeId: businessId });
     // Real bug fix (2026-08-08) — execute() never throws for a business-
     // logic failure inside run(); it catches everything internally and
     // returns a FAILED ExecutionResult instead (see engine.ts's own doc
@@ -129,7 +139,7 @@ export async function createProduct(
     return toActionState(error, formData);
   }
 
-  redirect("/dashboard/products");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/products`);
 }
 
 // Product media gallery (2026-08-08) — plain callable Server Actions
@@ -208,9 +218,11 @@ export async function replaceProductImage(slug: string | undefined, imageId: str
 }
 
 export async function editStore(
+  slug: string | undefined,
   prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.STORE_MANAGE, slug);
   try {
     const name = (formData.get("name") as string)?.trim();
     const tagline = (formData.get("tagline") as string)?.trim();
@@ -220,7 +232,7 @@ export async function editStore(
       throw new RecoverableError("Store name is required");
     }
 
-    await execute(editStoreExecutable, { name, tagline: tagline || null, description: description || null });
+    await execute(editStoreExecutable, { name, tagline: tagline || null, description: description || null }, { storeId: businessId });
   } catch (error) {
     unstable_rethrow(error);
     return toActionState(error, formData);
@@ -232,13 +244,14 @@ export async function editStore(
   // was consolidated onto the Brand page (see brand/page.tsx's own
   // comment). A first-time owner saving their business name got silently
   // navigated away from the page they were just looking at.
-  redirect("/dashboard/brand");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/brand`);
 }
 
-export async function toggleStorePublished() {
-  const result = await execute(publishStoreExecutable, undefined);
+export async function toggleStorePublished(slug?: string) {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.STORE_MANAGE, slug);
+  const result = await execute(publishStoreExecutable, undefined, { storeId: businessId });
 
-  redirect(result.status === "FAILED" ? "/dashboard/website?publish_error=1" : "/dashboard/website");
+  redirect(result.status === "FAILED" ? `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/website?publish_error=1` : `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/website`);
 }
 
 export async function editProduct(
@@ -326,7 +339,8 @@ export async function toggleOrderFulfilled(orderId: string) {
   redirect("/dashboard/orders");
 }
 
-export async function connectStripe() {
+export async function connectStripe(slug?: string) {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
   const result = await execute(connectExecutable(getConnector("STRIPE")), {});
   await logConnectAttempt("stripe", "integration.connect_attempt", result);
   if (result.redirectUrl) {
@@ -338,7 +352,7 @@ export async function connectStripe() {
   // callback route's own failure-surfacing never gets a chance to run.
   // Without this flash param, a merchant could click "Connect Stripe" and
   // silently land right back where they started with no explanation.
-  redirect(result.status === "FAILED" ? "/dashboard/payments?integration_error=stripe" : "/dashboard/payments");
+  redirect(result.status === "FAILED" ? `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments?integration_error=stripe` : `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments`);
 }
 
 export async function disconnectStripe(slug?: string) {
@@ -349,27 +363,31 @@ export async function disconnectStripe(slug?: string) {
   redirect("/dashboard/payments");
 }
 
-export async function recheckStripe() {
+export async function recheckStripe(slug?: string) {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
   const result = await execute(verifyExecutable(getConnector("STRIPE")), undefined);
   await logConnectAttempt("stripe", "integration.recheck_attempt", result);
 
-  redirect("/dashboard/payments");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments`);
 }
 
-export async function connectPaypal() {
+export async function connectPaypal(slug?: string) {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
   const result = await execute(connectExecutable(getConnector("PAYPAL")), {});
   await logConnectAttempt("paypal", "integration.connect_attempt", result);
   if (result.redirectUrl) {
     redirect(result.redirectUrl); // never true for PayPal today — kept for structural symmetry with connectStripe
   }
 
-  redirect("/dashboard/payments");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments`);
 }
 
 // The second `connect()` call a form-based connector needs — Stripe's OAuth
 // flow never had an equivalent, since the callback route plays this role
 // for redirect-based connectors instead.
-export async function submitPaypalCredentials(formData: FormData) {
+export async function submitPaypalCredentials(
+  slug: string | undefined,formData: FormData) {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
   const clientId = (formData.get("clientId") as string)?.trim();
   const clientSecret = (formData.get("clientSecret") as string)?.trim();
   const environment = (formData.get("environment") as string)?.trim();
@@ -390,8 +408,8 @@ export async function submitPaypalCredentials(formData: FormData) {
   // shown below when no integration exists yet.
   redirect(
     result.status === "FAILED"
-      ? "/dashboard/payments?integration_error=paypal"
-      : "/dashboard/payments?integration_connected=paypal"
+      ? `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments?integration_error=paypal`
+      : `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments?integration_connected=paypal`
   );
 }
 
@@ -403,16 +421,19 @@ export async function disconnectPaypal(slug?: string) {
   redirect("/dashboard/payments");
 }
 
-export async function recheckPaypal() {
+export async function recheckPaypal(slug?: string) {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
   const result = await execute(verifyExecutable(getConnector("PAYPAL")), undefined);
   await logConnectAttempt("paypal", "integration.recheck_attempt", result);
 
-  redirect("/dashboard/payments");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments`);
 }
 
 // Priority 2 (shipping, 2026-08-09) — same form-based connect pattern as
 // PayPal (an EasyPost account has no OAuth flow either, just an API key).
-export async function submitUspsCredentials(formData: FormData) {
+export async function submitUspsCredentials(
+  slug: string | undefined,formData: FormData) {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.ORDERS_MANAGE, slug);
   const apiKey = (formData.get("apiKey") as string)?.trim();
   if (!apiKey) {
     throw new Error("EasyPost API Key is required");
@@ -424,7 +445,7 @@ export async function submitUspsCredentials(formData: FormData) {
   await logConnectAttempt("usps", "integration.connect_attempt", result);
 
   redirect(
-    result.status === "FAILED" ? "/dashboard/orders?integration_error=usps" : "/dashboard/orders?integration_connected=usps"
+    result.status === "FAILED" ? `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/orders?integration_error=usps` : `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/orders?integration_connected=usps`
   );
 }
 
@@ -443,11 +464,12 @@ export async function disconnectUsps(slug?: string) {
   redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/orders`);
 }
 
-export async function recheckUsps() {
+export async function recheckUsps(slug?: string) {
+  const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.ORDERS_MANAGE, slug);
   const result = await execute(verifyExecutable(getConnector("EASYPOST")), undefined);
   await logConnectAttempt("usps", "integration.recheck_attempt", result);
 
-  redirect("/dashboard/orders");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/orders`);
 }
 
 // Priority 2 (shipping, 2026-08-09) — buys one real USPS label for one

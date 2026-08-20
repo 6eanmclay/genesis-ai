@@ -277,7 +277,7 @@ export async function PaymentsScreen({
           </div>
 
           {!stripeConnected ? (
-            <form action={connectStripe} className="mt-1">
+            <form action={connectStripe.bind(null, slug)} className="mt-1">
               <SubmitButton
                 pendingText="Redirecting..."
                 className={`px-5 py-2 text-sm ${ACCENT_BUTTON}`}
@@ -288,7 +288,7 @@ export async function PaymentsScreen({
             </form>
           ) : (
             <div className="mt-1 flex flex-wrap justify-center gap-2">
-              <form action={recheckStripe}>
+              <form action={recheckStripe.bind(null, slug)}>
                 <SubmitButton
                   pendingText="Checking..."
                   className={GHOST_BUTTON}
@@ -298,7 +298,7 @@ export async function PaymentsScreen({
                 </SubmitButton>
               </form>
               {stripeIntegration?.status !== "CONNECTED" && (
-                <form action={connectStripe}>
+                <form action={connectStripe.bind(null, slug)}>
                   <SubmitButton
                     pendingText="Redirecting..."
                     className={`px-4 py-1.5 text-xs ${ACCENT_BUTTON}`}
@@ -358,7 +358,7 @@ export async function PaymentsScreen({
 
           {!paypalConnected ? (
             paypalFormFields ? (
-              <form action={submitPaypalCredentials} className="mt-1 flex w-full flex-col gap-2.5 text-left">
+              <form action={submitPaypalCredentials.bind(null, slug)} className="mt-1 flex w-full flex-col gap-2.5 text-left">
                 <p className="text-xs text-zinc-500">
                   Create a PayPal Developer app at developer.paypal.com and enter its credentials below.
                 </p>
@@ -383,7 +383,7 @@ export async function PaymentsScreen({
               </form>
             ) : (
               <>
-                <form action={connectPaypal} className="mt-1">
+                <form action={connectPaypal.bind(null, slug)} className="mt-1">
                   <SubmitButton
                     pendingText="Starting..."
                     className={`px-5 py-2 text-sm ${ACCENT_BUTTON}`}
@@ -400,7 +400,7 @@ export async function PaymentsScreen({
           ) : (
             <>
               <div className="mt-1 flex flex-wrap justify-center gap-2">
-                <form action={recheckPaypal}>
+                <form action={recheckPaypal.bind(null, slug)}>
                   <SubmitButton
                     pendingText="Checking..."
                     className={GHOST_BUTTON}

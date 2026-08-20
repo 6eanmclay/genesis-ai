@@ -12,11 +12,19 @@ const ACCENT_BUTTON =
 // which pull in prisma, which can't be part of a client bundle (the exact
 // bug pattern already caught once this session with navConfig.ts).
 export function EditStoreForm({
+  slug,
   store,
 }: {
+  /**
+   * The business this form belongs to, when it was rendered inside one.
+   *
+   * Bound into the action, so a form on one business's page writes to THAT
+   * business rather than to whichever one the account was last active in.
+   */
+  slug?: string;
   store: { name: string; tagline: string | null; description: string | null };
 }) {
-  const { state, formAction, resetKey } = useActionFormState(editStore);
+  const { state, formAction, resetKey } = useActionFormState(editStore.bind(null, slug));
 
   return (
     <form key={resetKey} action={formAction} className="mt-4 flex max-w-md flex-col gap-4">

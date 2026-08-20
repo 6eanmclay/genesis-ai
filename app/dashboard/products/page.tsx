@@ -193,7 +193,7 @@ export async function ProductsScreen({
       <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
         Add a product
       </h2>
-      <CreateProductForm />
+      <CreateProductForm slug={slug} />
     </div>
   );
 }
