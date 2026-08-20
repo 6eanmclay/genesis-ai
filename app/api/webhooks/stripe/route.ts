@@ -11,6 +11,7 @@ import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
 import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessModel/internalMapper";
 import { fromStripeShippingDetails } from "@/lib/orders/shippingAddress";
 import { parseCheckoutShipping } from "@/lib/shipping/checkoutShipping";
+import { resolveWebhookStore } from "@/lib/orders/webhookStore";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -57,34 +58,37 @@ export async function POST(request: Request) {
     // trust boundary intact (a forged metadata.storeId still can't claim
     // an event for an account it isn't genuinely connected to) while fixing
     // the ambiguity for stores that legitimately share one Stripe account.
-    let storeId: string | undefined;
-    if (event.account) {
-      const metadataStoreId = session.metadata?.storeId;
-      if (metadataStoreId) {
-        const claimed = await prisma.storeIntegration.findUnique({
-          where: { storeId_provider: { storeId: metadataStoreId, provider: "STRIPE" } },
-          select: { storeId: true, externalAccountId: true },
-        });
-        if (claimed?.externalAccountId === event.account) {
-          storeId = claimed.storeId;
-        }
-      }
-      if (!storeId) {
-        const integration = await prisma.storeIntegration.findFirst({
+    // The decision itself lives in lib/orders/webhookStore.ts so it can be
+    // attacked directly with forged events — see verify-webhook-store.ts. The
+    // rules are unchanged; only the lookups happen here.
+    const metadataStoreId = session.metadata?.storeId;
+    const claimed =
+      event.account && metadataStoreId
+        ? await prisma.storeIntegration.findUnique({
+            where: { storeId_provider: { storeId: metadataStoreId, provider: "STRIPE" } },
+            select: { storeId: true, externalAccountId: true },
+          })
+        : null;
+    const byAccount = event.account
+      ? await prisma.storeIntegration.findFirst({
           where: { provider: "STRIPE", externalAccountId: event.account },
           select: { storeId: true },
-        });
-        storeId = integration?.storeId;
-      }
-    } else {
-      storeId = session.metadata?.storeId;
-    }
+        })
+      : null;
+
+    const storeId =
+      resolveWebhookStore({
+        eventAccount: event.account,
+        metadataStoreId,
+        claimed,
+        byAccount,
+      }).storeId ?? undefined;
 
     if (!storeId || !productId) {
       console.error("[stripe webhook] could not resolve order target", {
         sessionId: session.id,
         account: event.account ?? null,
-        metadataStoreId: session.metadata?.storeId ?? null,
+        metadataStoreId: metadataStoreId ?? null,
         productId: productId ?? null,
       });
 
