@@ -29,6 +29,16 @@ Vercel, not assumed:
 | `FACEBOOK_CLIENT_ID` / `_SECRET` | Facebook **and** Instagram cannot connect at all | one Meta app covers both |
 | `TIKTOK_CLIENT_KEY` / `_SECRET` | TikTok cannot connect | register a TikTok developer app |
 | `SQUARE_CLIENT_ID` / `_SECRET` | the Square connector cannot be built | register a Square application |
+| `ALIEXPRESS_APP_KEY` / `_SECRET` | AliExpress cannot be searched for products; the source is registered and refuses rather than showing invented ones (§45) | register an AliExpress Open Platform app |
+
+**A migration waiting to be applied to production**, and the only item on this
+list that is not about a credential. `prisma/migrations/20260820060000_product_sourcing`
+adds `ProductSourceKind`, two columns on `Product` and the `SourcedProduct`
+table (§45). It applies cleanly against real Postgres — every suite in this
+document runs through it — but production migrations are a deliberate separate
+step (`DEPLOYMENT.md`), so nothing has touched the production database. Until it
+is applied, the sourcing code is deployed and inert. Applying it is additive:
+no existing row changes meaning, and there is no backfill.
 
 **Reconnections you have to do yourself**, because only the account holder can
 re-authorize:
@@ -1573,6 +1583,121 @@ label can therefore be for a different parcel than the one quoted.
 
 ---
 
+## 45. The catalog, as the base of something
+
+*P0.5 — the real product catalog, and Sean's own framing for it: the foundation
+of Genesis's future product-discovery system, not a static list. Multiple
+sources, print-on-demand held apart from wholesale, and room for J4 to recommend
+from what it understands about the business. Designed and evidenced in
+`PRODUCT_SOURCING.md`; this section is the audit record.*
+
+Three things were missing before recommendation could sit on anything.
+
+**Nothing recorded where a product came from.** `Product.fulfillmentProvider`
+answers a narrower question — which connector it arrived through — and is null
+for everything Cubit & Coil sells, because Sean makes the rings himself. So an
+owner-made product and a dropshipped one were indistinguishable, and they differ
+in ways the code already acts on: who buys the shipping label, whether there is
+stock, whether "customise this" means anything.
+
+**The supplier abstraction only fitted one shape.** `FulfillmentConnector` is
+built around applying artwork to something that does not exist yet. Wholesale is
+the structural opposite. Forcing it through would have meant lying about the
+image or making every field optional on a contract that is currently honest.
+
+**Discovery did not survive the request**, so a suggestion the owner had already
+turned down was indistinguishable from one Genesis had never raised.
+
+### Two defects found in this work itself
+
+Both by its own suite, before anything shipped, and both recorded because the
+alternative reading is that the design was right first time.
+
+**An unrelated product could be recommended on a fact about the supplier.**
+Customisation fit was a scoring term like any other, so a phone case with no
+connection to a copper-ring business scored positive on it alone and would have
+been raised with *"your own artwork can go on it"* as its entire justification —
+a sentence about Printful wearing the costume of a recommendation. Relevance is
+now a **gate**: signals that connect the candidate to the business are summed
+first, and if that total is zero, nothing is said. Modifiers can never be the
+reason something is suggested.
+
+**An exact duplicate of the store's best seller scored positive.** The
+already-selling penalty was −20 against a relevance total that reached +24.
+Recommending something the owner already sells is the clearest possible signal
+that nothing was understood, and it cannot be outweighed by how relevant the
+thing is — being relevant is precisely why it is already in the catalogue. Now
+disqualifying rather than penalised.
+
+A third was caught during the build: adoption derived the fulfilment provider as
+`createsListings ? "PRINTFUL" : null`, correct exactly until a second print
+partner exists, at which point every product from it would have been labelled
+Printful and handed to Printful's order routing. Each source now declares its own,
+and it is recorded on the candidate so adoption never re-resolves it.
+
+### A modelling decision worth recording
+
+`SourcedProduct.externalVariantId` is **NOT NULL with `""` meaning "this source
+has no variants"**. Nullable was the natural modelling and wrong twice: Postgres
+treats NULLs in a unique index as distinct, so every re-run of discovery would
+have inserted another copy of every variant-less candidate — which is every
+wholesale listing — and Prisma cannot target a compound unique containing a
+null, so the upsert that makes discovery idempotent could not have been written.
+The sentinel converts back at exactly one place.
+
+### Proven
+
+`scripts/verify-sourcing-live.ts` (real Postgres, the real pipeline) and
+`scripts/verify-product-sourcing.ts` (pure).
+
+| | |
+|---|---|
+| Discovery holds print-on-demand and wholesale at once, kept apart | PASS |
+| Every suggestion carries reasoning in the business's own words | PASS |
+| Three runs produce two rows; a changed price corrects in place | PASS |
+| A dismissal is respected next run, and blocks adoption | PASS |
+| Adoption carries sourceKind, sourceKey and the supplier's ids onto the Product | PASS |
+| …and claims no fulfilment partner where there is none | PASS |
+| Two clicks, and three concurrent adoptions, produce one product | PASS |
+| One store cannot adopt or dismiss another's suggestion | PASS |
+| A blocked source is named and contributes nothing | PASS |
+| A failing source is a provider error, not a configuration one | PASS |
+| A candidate claiming another source's key is dropped | PASS |
+| Deleting an adopted product does not erase the record of finding it | PASS |
+| Nothing worth saying is nothing written down | PASS |
+| Products that predate all of this are OWNER_MADE with no source | PASS |
+| A source declares its capabilities; none is inferred from its name | PASS |
+| A blocked source refuses rather than returning an invented catalogue | PASS |
+| An unknown cost is never reasoned about as a zero | PASS |
+| A store Genesis knows nothing about gets no suggestions at all | PASS |
+
+### UNVERIFIED
+
+- **Printful's real catalogue through the new adapter.** The connector beneath it
+  was validated live against Printful's API when written; the adapter has not
+  been run against a connected store.
+- **`buildSourcingContext` against a real store's understanding.** The scorer is
+  proven against contexts; the projection that builds them is not.
+
+### EXTERNALLY BLOCKED
+
+- **AliExpress** — `ALIEXPRESS_APP_KEY` / `ALIEXPRESS_APP_SECRET`. Registered,
+  and refuses rather than inventing a catalogue.
+- **Printful** — a store with Printful connected, to search anything at all.
+- **The migration is not applied to production.** It applies cleanly against real
+  Postgres (every suite in this document runs through it), but production
+  migrations are a deliberate separate step. See **Action required from Sean**.
+
+### NOT MODELLED — deliberately, and named
+
+Variants beyond one representative per candidate; inventory, including for
+`WHOLESALE_STOCKED`, which is an honest shape with no quantity behind it;
+automatic order routing to a supplier, which stays the explicit non-goal it has
+been since `ONBOARDING_V2_DESIGN.md`; and any owner-facing surface — there is no
+discovery screen, because interface work needs a confirmed design first.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -1612,6 +1737,8 @@ scripts/verify-paypal-live.ts             the PayPal rail, end to end (real Post
 scripts/verify-paypal-refund.ts           forged, cross-tenant and replayed refunds (real Postgres)
 scripts/verify-paypal-webhook-lifecycle.ts  the refund subscription, connect to disconnect (real Postgres)
 scripts/verify-label-purchase-live.ts     which rate is bought, and when it refuses (real Postgres)
+scripts/verify-product-sourcing.ts        source capabilities and recommendation honesty
+scripts/verify-sourcing-live.ts           discovery, dismissal and adoption (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
@@ -1646,6 +1773,7 @@ the defect reproduced against the pre-fix behaviour first:
 | PayPal refunds, forged and cross-tenant | §42 — the real route, real database |
 | The refund subscription's lifecycle | §43 — the real connector, real database |
 | The label purchase, and which rate it buys | §44 — the real executable, real database |
+| Product sourcing and discovery | §45 — the real pipeline, real database |
 | Tenant isolation | §26 — the guard through the real client |
 | Authentication, sessions, brute force, roles | §14–16, §24 |
 | Growth Points ledger | §23 — real transactions |

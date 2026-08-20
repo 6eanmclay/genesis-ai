@@ -10,12 +10,12 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  password      String?
-  emailVerified DateTime?
-  image         String?
+  id                String    @id @default(cuid())
+  email             String    @unique
+  name              String?
+  password          String?
+  emailVerified     DateTime?
+  image             String?
   // Growth Points Economy (Chapter 2) — the user's own durable, shareable
   // referral code. Generated lazily on first access (most users never share
   // one), not at signup — see lib/growthPoints/referral.ts. Deliberately a
@@ -23,7 +23,7 @@ model User {
   // that can be shared before any referral exists; Referral.code is a
   // per-relationship snapshot of which code was used for one specific
   // referred signup, written once redeemed.
-  referralCode  String?   @unique
+  referralCode      String?   @unique
   // Sessions are JWTs, so there is no server-side session row to delete when
   // someone resets their password — a token already in an attacker's hands
   // stays valid until it expires on its own. That makes "someone got into my
@@ -32,22 +32,22 @@ model User {
   // issued before this timestamp is refused. Null for accounts that have never
   // reset, which is the same as "no reason to refuse anything".
   passwordChangedAt DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  accounts              Account[]
-  sessions              Session[]
-  stores                Store[]
-  draft                 StoreDraft?
-  storeMemberships      StoreMember[]
-  connectedIntegrations StoreIntegration[]
-  executionLogs         ExecutionLog[]
-  productEvents         ProductEvent[]
-  aiUsageEvents         AiUsageEvent[]
-  referralsSent         Referral[] @relation("ReferralsSent")
-  referralsReceived     Referral[] @relation("ReferralsReceived")
+  accounts                   Account[]
+  sessions                   Session[]
+  stores                     Store[]
+  draft                      StoreDraft?
+  storeMemberships           StoreMember[]
+  connectedIntegrations      StoreIntegration[]
+  executionLogs              ExecutionLog[]
+  productEvents              ProductEvent[]
+  aiUsageEvents              AiUsageEvent[]
+  referralsSent              Referral[]                  @relation("ReferralsSent")
+  referralsReceived          Referral[]                  @relation("ReferralsReceived")
   businessPartnerTrialGrants BusinessPartnerTrialGrant[]
-  passwordResetTokens   PasswordResetToken[]
+  passwordResetTokens        PasswordResetToken[]
 }
 
 model Account {
@@ -131,18 +131,18 @@ model PasswordResetToken {
 }
 
 model Store {
-  id                 String   @id @default(cuid())
-  userId             String
-  name               String
-  slug               String   @unique
-  description        String?
-  tagline            String?
-  logoUrl            String?
-  theme              Json?
-  blueprint          Json?
-  pendingChange      Json?
-  published          Boolean  @default(false)
-  version            Int      @default(1)
+  id                           String    @id @default(cuid())
+  userId                       String
+  name                         String
+  slug                         String    @unique
+  description                  String?
+  tagline                      String?
+  logoUrl                      String?
+  theme                        Json?
+  blueprint                    Json?
+  pendingChange                Json?
+  published                    Boolean   @default(false)
+  version                      Int       @default(1)
   // Phase 3 Milestone 2 — code-level taxonomy slugs (lib/businessTaxonomy.ts),
   // never a Prisma enum: a String[] so a new category/subcategory is a
   // purely additive code change, matching ApprovalRequest.status's own
@@ -150,12 +150,12 @@ model Store {
   // Connections. Classified once at generation time (see ai-actions.ts's
   // CoreFieldsSchema); a real backfill for pre-existing stores is a later,
   // smaller addition.
-  businessCategories String[] @default([])
+  businessCategories           String[]  @default([])
   // Phase 3 Milestone 5 — same shape/reasoning as businessCategories above,
   // a second, independent classification axis: *how* the business makes
   // money (product_sales/service_fees/subscriptions/...), not *what
   // industry* it's in. See lib/businessTaxonomy.ts's REVENUE_STREAM_TYPES.
-  revenueStreams     String[] @default([])
+  revenueStreams               String[]  @default([])
   // Onboarding v2 — the owner's stated brand positioning (luxury/
   // streetwear/minimalist/budget/family/professional/other — see
   // lib/businessTaxonomy.ts's BRAND_POSITIONING_TYPES), a third,
@@ -165,7 +165,7 @@ model Store {
   // selectFulfillmentStrategy() and lib/onboarding/pricing.ts's
   // recommendPrice() — a real branching input, not narrative flavor text
   // like blueprint.brandIdentity.brandPersonality.
-  brandPositioning   String?
+  brandPositioning             String?
   // Onboarding v2, Creative Direction — the durable creative identity the
   // owner chose from Genesis's three generated directions: {name,
   // description, brandVoice, photographyStyle, colors, typography,
@@ -175,14 +175,14 @@ model Store {
   // future creative work (marketing, social, packaging, future logos).
   // Null for the reselling/curating path and every store created before
   // this field existed.
-  creativeDirection  Json?
+  creativeDirection            Json?
   // Meeting with J4 M3 — set once, the moment the first real conversation
   // with J4 (after the Partnership launch ceremony, before the owner ever
   // sees the regular dashboard) completes. Checked once on load to decide
   // whether to show the meeting or redirect straight to /dashboard — never
   // re-triggered. Deliberately distinct from createdAt/updatedAt (neither
   // means "has this store ever met J4").
-  firstMeetingCompletedAt DateTime?
+  firstMeetingCompletedAt      DateTime?
   // Business Partner Preview — the real 7-day trial of Business Partner's
   // unlimited-1-point-action tier, granted once at firstMeetingCompletedAt
   // (see lib/growthPoints/trial.ts). Null = never granted; a future
@@ -190,7 +190,7 @@ model Store {
   // Plan.unlimitedActionCostCeiling); a past timestamp = expired. The
   // durable, deletion-proof record of the grant itself lives in
   // BusinessPartnerTrialGrant below — this field is only the live check.
-  businessPartnerTrialEndsAt DateTime?
+  businessPartnerTrialEndsAt   DateTime?
   // Progressive storefront improvement — the frequency governor (2026-08-12).
   // Stamped every time J4 raises an UNPROMPTED storefront-improvement
   // proposal, and read before he is allowed to raise another. This is what
@@ -201,7 +201,7 @@ model Store {
   // Deliberately governs only J4's own initiative — a storefront change the
   // OWNER asks for in chat is never gated by this, because being asked is
   // not the same as volunteering. See lib/dashboard/storefrontSuggestionGate.ts.
-  lastStorefrontSuggestionAt DateTime?
+  lastStorefrontSuggestionAt   DateTime?
   // Storefront Canvas, step 1 of 6 (2026-08-12) — which audience this
   // business actually serves, asked once during creation and changeable by
   // asking J4 later. "mobile" | "desktop" | "balanced"; null is treated as
@@ -215,39 +215,39 @@ model Store {
   // the whole reason one composition was chosen over separate desktop and
   // mobile compositions — the owner should never have to manage two
   // websites. Inert until step 4 reads it.
-  priorityAudience String?
+  priorityAudience             String?
   // Growth Points Economy (Chapter 2) — the store's real, spendable balance.
   // Debited by execute() when an approved GENESIS_ACTIONS action has a real
   // catalog cost (lib/growthPoints/catalog.ts), credited by the monthly
   // refresh sweep and referral rewards. Every change also writes one
   // GrowthPointTransaction row — this column is the current total, that
   // model is the append-only ledger explaining how it got there.
-  growthPointBalance Int @default(0)
+  growthPointBalance           Int       @default(0)
   // Nullable — no owner is assigned a real Plan yet (the catalog and every
   // Plan's allowance are still deliberately unpopulated, Sean's own
   // decision to make in a dedicated design session). A null planId means
   // "not on a plan," not "on a free plan with zero points" — the monthly
   // refresh sweep skips these stores entirely rather than pretending a
   // zero-value plan exists.
-  planId             String?
+  planId                       String?
   // Set alongside planId once real plans exist; advanced by exactly one
   // calendar month each time the refresh sweep grants that plan's
   // allowance. Same "due timestamp stamped on the row" idiom as
   // StoreIntegration.nextSyncDueAt, not a new cadence mechanism.
-  growthPointNextRefreshAt DateTime?
+  growthPointNextRefreshAt     DateTime?
   // Chapter 5 (Payments) — the platform's own Stripe Customer for this
   // store (Genesis billing the owner directly), entirely distinct from
   // StoreIntegration's STRIPE/PAYPAL rows (the merchant's own Connect
   // account for accepting THEIR customers' payments). Null until the
   // owner's first real billing interaction (a Growth Point purchase or a
   // plan subscription) — created lazily, not at store creation.
-  stripeCustomerId     String? @unique
+  stripeCustomerId             String?   @unique
   // Null until a real Stripe Subscription exists. Mirrors Stripe's own
   // status vocabulary verbatim (active/past_due/canceled/incomplete/
   // trialing/unpaid) as a plain String, not a Prisma enum — same
   // "avoid enum-migration friction" convention as ExecutionLog.status.
-  stripeSubscriptionId String? @unique
-  subscriptionStatus   String?
+  stripeSubscriptionId         String?   @unique
+  subscriptionStatus           String?
   // Kept in sync from Stripe's own customer.subscription.updated events —
   // never computed locally.
   subscriptionCurrentPeriodEnd DateTime?
@@ -259,9 +259,9 @@ model Store {
   // address requires but a customer's doesn't always have on file. Null
   // until the owner fills it in on Settings — label purchase is blocked
   // with an honest message until it's set, never a fabricated default.
-  returnAddress      Json?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  returnAddress                Json?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
 
   user                      User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   plan                      Plan?                      @relation(fields: [planId], references: [id], onDelete: SetNull)
@@ -288,6 +288,7 @@ model Store {
   aiUsageEvents             AiUsageEvent[]
   growthPointTransactions   GrowthPointTransaction[]
   tasks                     Task[]
+  sourcedProducts           SourcedProduct[]
 
   @@index([planId])
 }
@@ -396,7 +397,7 @@ model StoreIntegration {
 }
 
 model StoreDraft {
-  id                 String   @id @default(cuid())
+  id                    String   @id @default(cuid())
   // Experience-First Onboarding — nullable now. A draft is owned by EITHER
   // a real userId (the activation flow, today's exact existing behavior)
   // OR an anonymousSessionToken below, never neither, briefly both during
@@ -404,37 +405,37 @@ model StoreDraft {
   // userId and clears anonymousSessionToken as one atomic update — the row
   // itself is never recreated). Postgres treats multiple NULLs as distinct
   // under a unique constraint, so many anonymous drafts can coexist.
-  userId             String?  @unique
+  userId                String?  @unique
   // Experience-First Onboarding — the signed, anonymous-session identity
   // (lib/onboarding/anonymousSession.ts) that owns this draft before a
   // real account exists. Null once claimed. Never set alongside a real
   // userId for longer than the single claim update.
-  anonymousSessionToken String? @unique
-  inputStoreName     String?
-  inputProductType   String?
-  inputVision        String?
-  name               String
-  description        String?
-  tagline            String?
-  theme              Json?
-  productsDraft      Json?
-  blueprint          Json?
-  pendingChange      Json?
-  status             String   @default("draft")
-  version            Int      @default(1)
+  anonymousSessionToken String?  @unique
+  inputStoreName        String?
+  inputProductType      String?
+  inputVision           String?
+  name                  String
+  description           String?
+  tagline               String?
+  theme                 Json?
+  productsDraft         Json?
+  blueprint             Json?
+  pendingChange         Json?
+  status                String   @default("draft")
+  version               Int      @default(1)
   // Phase 3 Milestone 2 — see Store.businessCategories's own comment; this
   // is the draft-stage copy, carried over to Store at confirmStoreDraft.
-  businessCategories String[] @default([])
+  businessCategories    String[] @default([])
   // Phase 3 Milestone 5 — see Store.revenueStreams's own comment; same
   // draft-stage-copy pattern as businessCategories above.
-  revenueStreams     String[] @default([])
+  revenueStreams        String[] @default([])
   // Onboarding v2 — see Store.brandPositioning's own comment; same
   // draft-stage-copy pattern as businessCategories/revenueStreams above.
-  brandPositioning   String?
+  brandPositioning      String?
   // Onboarding v2, Creative Direction — see Store.creativeDirection's own
   // comment; same draft-stage-copy pattern, carried over verbatim at
   // confirmStoreDraftCore.
-  creativeDirection  Json?
+  creativeDirection     Json?
   // Onboarding v2 — the guided discovery flow's own state machine progress
   // (current step, classifications made so far, the chosen fulfillment
   // candidate/variant) and, while no real Store/StoreIntegration exists yet
@@ -445,7 +446,7 @@ model StoreDraft {
   // separate from pendingChange — that's one AI-authored diff awaiting
   // confirm; this is "where the guided conversation currently is," a
   // different kind of state that persists across many turns.
-  onboardingState    Json?
+  onboardingState       Json?
   // Experience-First Onboarding — the anonymous experience flow's own state
   // (transcript so far, and the generated concept once confident), entirely
   // separate from onboardingState above: that field belongs to the
@@ -454,9 +455,9 @@ model StoreDraft {
   // shape. Cleared conceptually once claimed, though the field itself is
   // simply never read again after that point (see the claim step in
   // app/onboarding/actions.ts).
-  experienceState    Json?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  experienceState       Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   user          User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
   generations   StoreGeneration[]
@@ -493,7 +494,7 @@ model StoreMessage {
   taskId String?
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  task  Task?  @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  task  Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@index([taskId])
 }
@@ -544,12 +545,141 @@ model Product {
   fulfillmentProvider IntegrationProvider?
   externalProductId   String?
   externalVariantId   String?
+  // WHERE THIS PRODUCT COMES FROM (2026-08-20, P0.5).
+  //
+  // fulfillmentProvider above records *which connector* a product came
+  // through, which is a different and narrower question: it is null for
+  // everything Cubit & Coil actually sells, because Sean makes tensor rings
+  // himself. That leaves the platform unable to tell an owner-made product
+  // from a dropshipped one — and they behave differently in ways the code
+  // already cares about. Who buys the shipping label. Whether there is stock to
+  // run out of. Whether "customize this" means anything. What the cost basis is.
+  //
+  // Defaulted to OWNER_MADE because that is the truth about every product that
+  // exists today: each one was entered by hand by the person who makes or holds
+  // it. Nothing is backfilled or inferred.
+  sourceKind          ProductSourceKind    @default(OWNER_MADE)
+  // Which registered source this came from (lib/sourcing/registry.ts), e.g.
+  // "printful". A plain string, not an enum, for the same reason the business
+  // taxonomy is not one: adding a supplier should be a registry entry, not a
+  // migration. Null for anything the owner brought themselves.
+  sourceKey           String?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
-  store  Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  orders Order[]
-  images ProductImage[]
+  store       Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  orders      Order[]
+  images      ProductImage[]
+  sourcedFrom SourcedProduct[]
+}
+
+// How a product comes into existence and reaches the customer.
+//
+// Not a taxonomy of suppliers — a taxonomy of BEHAVIOUR, which is why it is an
+// enum rather than a string: every value here changes what other code must do,
+// and a value nobody handles should fail to compile rather than fall through.
+enum ProductSourceKind {
+  // The owner makes or holds it, and ships it. Cubit & Coil's tensor rings.
+  OWNER_MADE
+  // Printed or customised per order by a partner, who ships it. Printful.
+  // The only kind for which "customise this" is a real capability.
+  PRINT_ON_DEMAND
+  // Bought from a wholesaler who ships direct to the customer. AliExpress.
+  // The owner never touches it and never buys a label for it.
+  WHOLESALE_DROPSHIP
+  // Bought wholesale, held by the owner, shipped by the owner. Has stock.
+  WHOLESALE_STOCKED
+  // Nothing ships. No parcel, no label, no address.
+  DIGITAL
+}
+
+// A product Genesis has FOUND, from any source — not one the store sells.
+//
+// The distinction is the whole point of this table. A catalog is a list of what
+// a store sells; discovery is a standing conversation about what it could sell,
+// and that conversation has to survive the page it happened on. Before this,
+// browsing a supplier's catalog produced candidates that existed only inside one
+// request: J4 could not come back to them, could not explain why it had raised
+// one, and could not tell a suggestion the owner had already rejected from one
+// it had never seen.
+//
+// Deliberately store-scoped rather than global. The same Printful blank is a
+// different proposition for a streetwear brand than for a wellness one, and the
+// reasoning attached to it is about THIS business.
+model SourcedProduct {
+  id                String @id @default(cuid())
+  storeId           String
+  // Which registered source, and that source's own ids. Together with storeId
+  // these make re-running discovery an update in place rather than a pile of
+  // duplicates — the same idempotency-by-construction the sync layer uses.
+  sourceKey         String
+  externalProductId String
+  // Part of the key, so two variants of one product are two candidates.
+  //
+  // NON-NULL, with "" meaning "this source has no variants at all" — which a
+  // wholesale listing frequently does not, where a print-on-demand blank always
+  // does. Nullable would have been the natural modelling and is wrong here for
+  // two compounding reasons: Postgres treats NULLs in a unique index as
+  // distinct, so every re-run of discovery would have inserted another copy of
+  // every variant-less candidate; and Prisma cannot target a compound unique
+  // containing a null, so the upsert that makes discovery idempotent could not
+  // be written at all. The sentinel is converted back to null at the one place
+  // it reaches a Product (lib/sourcing/adopt.ts).
+  externalVariantId String @default("")
+
+  kind                   ProductSourceKind
+  name                   String
+  description            String?
+  imageUrl               String?
+  // What the supplier charges. Null when the source will not quote without a
+  // credential — an unknown cost is recorded as unknown, never as zero.
+  unitCostInCents        Int?
+  // Suggested, never imposed. The owner prices their own store.
+  suggestedRetailInCents Int?
+  currency               String               @default("USD")
+  // True only where the source can genuinely put the owner's artwork on it.
+  // A wholesale listing is not customisable and must never be offered as if it
+  // were — this is the field that keeps those two shapes apart downstream.
+  customizable           Boolean              @default(false)
+  // Which integration will actually fulfil an order for this, if any. Recorded
+  // at discovery so adoption never has to re-resolve a source — which would be
+  // both wrong (there is more than one possible print partner) and fragile (a
+  // de-registered source would strand a suggestion the owner is looking at).
+  fulfillmentProvider    IntegrationProvider?
+
+  // WHY J4 RAISED THIS. Written by the recommender, read by the owner-facing
+  // surface, and kept as Json for the same reason Store.blueprint is: the shape
+  // of an explanation will change as J4's understanding deepens, and that should
+  // not be a migration each time. Null for a candidate nobody has reasoned about
+  // yet — which is honest, and distinguishable from a score of zero.
+  recommendation Json?
+  // Ordering for the owner-facing list. Denormalised out of `recommendation` so
+  // the database can sort without parsing Json. Null = not yet scored.
+  score          Int?
+
+  // SUGGESTED until the owner does something. DISMISSED is remembered so the
+  // same candidate is never raised twice, which is the difference between a
+  // partner and a nag. ADOPTED points at the Product it became.
+  status           SourcedProductStatus @default(SUGGESTED)
+  adoptedProductId String?
+
+  discoveredAt DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  dismissedAt  DateTime?
+
+  store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  // SetNull, not Cascade: deleting a product the owner adopted must not erase
+  // the record that Genesis found it, or discovery would offer it straight back.
+  adopted Product? @relation(fields: [adoptedProductId], references: [id], onDelete: SetNull)
+
+  @@unique([storeId, sourceKey, externalProductId, externalVariantId])
+  @@index([storeId, status, score])
+}
+
+enum SourcedProductStatus {
+  SUGGESTED
+  DISMISSED
+  ADOPTED
 }
 
 // Product media gallery (2026-08-08) — up to 10 images per product,
@@ -594,15 +724,15 @@ model NewsletterSignup {
 // one. Composite-unique rather than a bare unique on externalOrderId, so
 // two providers' ids can never collide.
 model Order {
-  id                String              @id @default(cuid())
-  storeId           String
-  productId         String?
-  productName       String
-  amountInCents     Int
-  buyerEmail        String
-  status            String              @default("paid")
-  paymentProvider   IntegrationProvider
-  externalOrderId   String
+  id                      String              @id @default(cuid())
+  storeId                 String
+  productId               String?
+  productName             String
+  amountInCents           Int
+  buyerEmail              String
+  status                  String              @default("paid")
+  paymentProvider         IntegrationProvider
+  externalOrderId         String
   // Real gap closed (2026-08-09) — refunds had nowhere to attach: Order was
   // only ever keyed by the CHECKOUT-level id (externalOrderId, a Stripe
   // Checkout Session id), but a refund webhook (charge.refunded) arrives
@@ -610,7 +740,7 @@ model Order {
   // provider, or an order created before this field existed, may not have
   // one) and unique-when-set so a refund event can look its Order up
   // directly rather than re-deriving it from metadata a second time.
-  externalPaymentId String?
+  externalPaymentId       String?
   // Implementation roadmap Milestone 1 — a real, fulfillable business needs
   // a real shipping address; neither checkout path collected or stored one
   // before this. Normalized to one common shape regardless of provider
@@ -618,7 +748,7 @@ model Order {
   // (Milestone 4) never has to branch on paymentProvider to read it.
   // Nullable: a digital-goods order (no such path exists yet, but the
   // field shouldn't assume every future Order is physical) has none.
-  shippingAddress   Json?
+  shippingAddress         Json?
   // Owner-experience milestone — the owner's own manual acknowledgment that
   // an order has been fulfilled (shipped through Printful's own dashboard,
   // self-fulfilled, or otherwise). Deliberately separate from `status`
@@ -626,8 +756,8 @@ model Order {
   // V1 is manual-only by Sean's explicit choice: no automatic real-money
   // order placement with a fulfillment connector yet — that's an explicit,
   // later Phase 2 capability, not an oversight.
-  fulfillmentStatus String              @default("unfulfilled")
-  fulfilledAt       DateTime?
+  fulfillmentStatus       String              @default("unfulfilled")
+  fulfilledAt             DateTime?
   // WAS THE CUSTOMER ACTUALLY TOLD? (2026-08-20)
   //
   // A fourth axis, and deliberately not folded into any of the three above.
@@ -641,8 +771,8 @@ model Order {
   // Both are the CLAIM in a claim-then-send: set before the attempt so a
   // concurrent delivery cannot also send, and cleared again if the send fails
   // so a later retry can. See lib/orders/orderConfirmation.ts.
-  confirmationSentAt DateTime?
-  shipmentNotifiedAt DateTime?
+  confirmationSentAt      DateTime?
+  shipmentNotifiedAt      DateTime?
   // The claim that stops one shipment being paid for twice (2026-08-20).
   //
   // purchaseShippingLabelExecutable guarded on `trackingNumber` — but that is
@@ -651,7 +781,7 @@ model Order {
   // both reached EasyPost, so the merchant paid real postage twice for one
   // parcel. Set before any EasyPost call and cleared if the purchase fails, so
   // a genuine retry is still possible.
-  labelClaimedAt     DateTime?
+  labelClaimedAt          DateTime?
   // Priority 2 (shipping, 2026-08-09) — set together, only by a real,
   // owner-triggered EasyPost label purchase (lib/execution/executables/
   // shipping.ts). Nullable: unset for every order until the owner
@@ -659,13 +789,13 @@ model Order {
   // payment, matching fulfillmentStatus's own "manual, owner-triggered"
   // precedent above (now extended to a step that spends real money on
   // postage, so it must stay an explicit action more than ever).
-  carrier              String?
-  trackingNumber       String?
-  trackingUrl          String?
-  labelUrl             String?
+  carrier                 String?
+  trackingNumber          String?
+  trackingUrl             String?
+  labelUrl                String?
   // What the LABEL cost the owner. Written only when a label is purchased.
   // Read by M7 profitability — do not conflate with what the customer paid.
-  shippingCostInCents  Int?
+  shippingCostInCents     Int?
   // What the CUSTOMER chose and was charged at checkout (2026-08-20). The gap
   // between this and shippingCostInCents is the store's shipping margin.
   shippingChargedInCents  Int?
@@ -673,7 +803,7 @@ model Order {
   selectedShippingService String?
   selectedShippingRateId  String?
   selectedShippingEstDays Int?
-  createdAt         DateTime            @default(now())
+  createdAt               DateTime            @default(now())
 
   store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -708,9 +838,9 @@ model ExecutionLog {
   metadata      Json?
   createdAt     DateTime @default(now())
 
-  store      Store?      @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  storeDraft StoreDraft? @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
-  actor      User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  store                   Store?                   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeDraft              StoreDraft?              @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
+  actor                   User?                    @relation(fields: [actorId], references: [id], onDelete: SetNull)
   growthPointTransactions GrowthPointTransaction[]
 
   @@index([storeId, createdAt])
@@ -1083,10 +1213,10 @@ model GenesisObservation {
 // modeling needed, one generic mechanism works uniformly across all five
 // kinds because they already share one canonical id scheme.
 model DismissedAttentionCard {
-  id          String   @id @default(cuid())
-  storeId     String
-  cardId      String
-  dismissedAt DateTime @default(now())
+  id                String   @id @default(cuid())
+  storeId           String
+  cardId            String
+  dismissedAt       DateTime @default(now())
   dismissedByUserId String?
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -1132,7 +1262,7 @@ model Task {
   // commit decision), not yet populated by anything in M3 itself. Added now
   // so the field exists ahead of the dedicated implementation pass that
   // actually builds the drafting loop, rather than another migration later.
-  draftState Json?
+  draftState    Json?
 
   priority String // "FAILED" | "WARNING" | "opportunity" — reuses AttentionItem's existing severity vocabulary
   status   String @default("OPEN") // OPEN | IN_PROGRESS | AWAITING_INPUT | COMPLETED | DISMISSED
@@ -1367,40 +1497,40 @@ model Belief {
 // keeps working exactly as before. See lib/aiFeatures.ts/lib/aiPricing.ts
 // for what populates feature/provider/model/costUsd going forward.
 model AiUsageEvent {
-  id           String   @id @default(cuid())
-  storeId      String?
-  userId       String?
+  id                    String   @id @default(cuid())
+  storeId               String?
+  userId                String?
   // Experience-First Onboarding — the anonymous-scope counterpart to
   // storeId/userId above. No relation (an anonymous session is never a real
   // row anywhere), same "exactly one of these three is ever set" convention
   // — see GenesisModelScope in lib/genesisModel.ts.
   anonymousSessionToken String?
-  inputTokens  Int
-  outputTokens Int
+  inputTokens           Int
+  outputTokens          Int
   // What triggered this call — one of lib/aiFeatures.ts's AiFeature
   // catalog. Nullable only because it predates this column; every new
   // write from Milestone 2 onward sets it (a required param at the
   // call-site level, not just a schema nicety).
-  feature      String?
+  feature               String?
   // "anthropic" | "openai" today; the provider that actually served the
   // request, not which SDK/helper was used internally.
-  provider     String?
+  provider              String?
   // The literal model string sent to the provider (e.g.
   // "claude-opus-4-8", "gpt-image-1") — not a version-agnostic label, so a
   // future model swap is visible in the data, not silently blended in.
-  model        String?
+  model                 String?
   // Locked in at record-time from lib/aiPricing.ts's rate table in effect
   // when this call happened — never recomputed later, so editing pricing
   // going forward can't silently rewrite historical cost data. Decimal,
   // not Float, for the same reason Product.priceInCents avoids float
   // rounding — though this is a real dollar amount, not integer cents,
   // since per-call costs are routinely sub-cent.
-  costUsd      Decimal? @db.Decimal(10, 6)
+  costUsd               Decimal? @db.Decimal(10, 6)
   // Real image count for a provider that has no token concept (OpenAI
   // image generation) — 0, not null, once a row is written for one, so
   // "0 images" and "not an image call" stay distinguishable from "unknown."
-  imageCount   Int?
-  durationMs   Int?
+  imageCount            Int?
+  durationMs            Int?
   // "accepted" | "rejected" | null. Deliberately reserved for the
   // genuinely one-to-one case — claimExperienceDraft in
   // app/onboarding/actions.ts, the only real "was this call's real-world
@@ -1416,7 +1546,7 @@ model AiUsageEvent {
   // Null means "no decision point exists for this call yet," not
   // "ignored" — there is no eager "ignored" write; see this model's
   // design note in the AI Cost & Usage Infrastructure plan for why.
-  outcome      String?
+  outcome               String?
   // The business-intent category this action serves — see
   // lib/businessIntent.ts's fixed 9-category list (Build Business, Create
   // Product, Improve Store, Create Marketing, Analyze Business, Research,
@@ -1427,7 +1557,7 @@ model AiUsageEvent {
   // rewrite what a historical event is understood to have been. This is
   // what makes the ledger answer "how do businesses grow inside Genesis,"
   // not just "what did this cost."
-  businessIntent String?
+  businessIntent        String?
   // Deliberately NOT derived from costUsd, and deliberately NOT named
   // "cost" — Sean's explicit product principle (2026-08-04): operational
   // cost (what a call actually costs a provider) and business value (how
@@ -1440,13 +1570,13 @@ model AiUsageEvent {
   // Credits aren't live) and locked in at record-time for the same
   // "never silently rewrite history" reason as businessIntent above.
   // Inert today — every row is null until the catalog has real entries.
-  growthCreditValue Int?
+  growthCreditValue     Int?
   // Populated only where a real session identity already exists today —
   // concretely, anonymousSessionToken copied in directly by the
   // onboarding flow. Left null everywhere else rather than inventing a
   // conversation/thread id that doesn't exist anywhere in this schema yet.
-  sessionId    String?
-  occurredAt   DateTime @default(now())
+  sessionId             String?
+  occurredAt            DateTime @default(now())
 
   store Store? @relation(fields: [storeId], references: [id], onDelete: Cascade)
   user  User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1465,8 +1595,8 @@ model AiUsageEvent {
 // implementation (same discipline as lib/growthCreditCatalog.ts). Global,
 // not tenant-scoped — a Plan is platform config, not a store's own data.
 model Plan {
-  id                        String   @id @default(cuid())
-  name                      String   @unique
+  id                          String   @id @default(cuid())
+  name                        String   @unique
   // Null until a real plan design exists — the monthly refresh sweep
   // (lib/growthPoints/refresh.ts) honestly no-ops for a store on a plan
   // whose allowance isn't set yet, rather than crediting zero and calling
@@ -1474,18 +1604,18 @@ model Plan {
   monthlyGrowthPointAllowance Int?
   // Null until Sean sets it — see Referral below for the same "wired but
   // inert" reasoning as growthCreditCatalog.ts.
-  referralRewardPoints      Int?
+  referralRewardPoints        Int?
   // Chapter 5 (Payments) — the real Stripe recurring Price this plan
   // subscribes an owner to. Null until Sean creates a real Plan row with a
   // real price — same "ships empty, populated later, never guessed"
   // discipline as the two fields above.
-  stripePriceId             String?  @unique
+  stripePriceId               String?  @unique
   // Growth Points Economy — real initial pricing, frozen 2026-08-05.
   // Display only: the real charge always comes from Stripe's own Price
   // object (stripePriceId) at checkout time, this is a cached snapshot so
   // the billing/growth-points pages can show a real "$X/month" without an
   // extra Stripe API round-trip on every page load.
-  priceInCents              Int?
+  priceInCents                Int?
   // Null means no plan-level free tier (Builder, Growth). A real number
   // means any GENESIS_ACTIONS entry whose lib/growthPoints/catalog.ts cost
   // is at or below this ceiling never touches the store's own balance —
@@ -1493,16 +1623,16 @@ model Plan {
   // lib/growthPoints/ledger.ts's checkGrowthPointBalance/
   // deductGrowthPoints). Deliberately a ceiling, not a boolean or a fixed
   // "1" — generalizes to a future plan wanting its own real threshold.
-  unlimitedActionCostCeiling Int?
+  unlimitedActionCostCeiling  Int?
   // The one-time bonus granted on a store's real first-ever subscription
   // to this plan (lib/growthPoints/ledger.ts's creditOnboardingAllocation,
   // triggered from the platform billing webhook). Null until Sean sets a
   // real number — same "wired but inert" discipline as every other
   // deferred value in this economy; the mechanism is real, this amount
   // just isn't decided yet.
-  onboardingAllocation      Int?
-  createdAt                 DateTime @default(now())
-  updatedAt                 DateTime @updatedAt
+  onboardingAllocation        Int?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 
   stores Store[]
 }
@@ -1518,33 +1648,33 @@ model Plan {
 // on DEDUCTION rows, for traceability back to the real execution that
 // spent the points.
 model GrowthPointTransaction {
-  id            String   @id @default(cuid())
-  storeId       String
+  id             String   @id @default(cuid())
+  storeId        String
   // DEDUCTION | REFRESH | REFERRAL_REWARD | PURCHASE | ADJUSTMENT — a plain
   // String, not a Prisma enum, matching ExecutionLog.status/actorType's own
   // "avoid enum-migration friction" convention in this schema.
-  type          String
+  type           String
   // Signed — negative for DEDUCTION, positive for every credit type.
-  amount        Int
+  amount         Int
   // The real balance immediately after this transaction, so history can be
   // read back without replaying every prior row.
-  balanceAfter  Int
+  balanceAfter   Int
   // Set only on DEDUCTION rows — the GENESIS_ACTIONS actionType this
   // transaction paid for (lib/execution/genesisActions.ts's keys, the same
   // vocabulary lib/growthPoints/catalog.ts is keyed by).
-  actionType    String?
+  actionType     String?
   executionLogId String?
-  description   String
+  description    String
   // Chapter 5 (Payments) — the idempotency key for a real PURCHASE row: the
   // originating Stripe object id (a Checkout Session id today). Guards
   // against double-crediting on a redelivered webhook event, mirroring
   // Order's own @@unique([paymentProvider, externalOrderId]) pattern —
   // there's no Order row to piggyback that guard on here, so this is its
   // own unique constraint instead. Null for every non-PURCHASE type.
-  externalRef   String?  @unique
-  createdAt     DateTime @default(now())
+  externalRef    String?  @unique
+  createdAt      DateTime @default(now())
 
-  store       Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
   executionLog ExecutionLog? @relation(fields: [executionLogId], references: [id], onDelete: SetNull)
 
   @@index([storeId, createdAt])
@@ -1558,16 +1688,16 @@ model GrowthPointTransaction {
 // amount comes from Plan.referralRewardPoints, which is null (honest
 // no-op) until Sean sets it.
 model Referral {
-  id              String    @id @default(cuid())
-  referrerUserId  String
-  referredUserId  String    @unique
-  code            String    @unique
+  id             String    @id @default(cuid())
+  referrerUserId String
+  referredUserId String    @unique
+  code           String    @unique
   // PENDING | REWARDED — flips once, never reverts; the reward grant is
   // guarded to be idempotent against this status, not against re-running
   // the sweep that checks it.
-  status          String    @default("PENDING")
-  rewardedAt      DateTime?
-  createdAt       DateTime  @default(now())
+  status         String    @default("PENDING")
+  rewardedAt     DateTime?
+  createdAt      DateTime  @default(now())
 
   referrer User @relation("ReferralsSent", fields: [referrerUserId], references: [id], onDelete: Cascade)
   referred User @relation("ReferralsReceived", fields: [referredUserId], references: [id], onDelete: Cascade)
