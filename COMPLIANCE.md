@@ -2135,6 +2135,87 @@ switcher is worth building.
 
 ---
 
+## 50. J4 was talking about the wrong business
+
+*Found by the real browser session, and by nothing else. Every suite in this
+document asserts on resolution and authorization; this took a rendered page.*
+
+### What was wrong
+
+`J4Surface` is rendered by the workspace shell, so it appears on **every** screen
+— including every screen under `/b/[slug]`. It resolved the account's **active**
+business rather than the one being viewed.
+
+So an owner opening Copper & Coil saw J4's tasks, ideas, decisions and
+information **for Iron Gym**. The observation that gave it away, rendered on
+`/b/copper-and-coil/website`:
+
+> *"Your store is live, but the only product is a placeholder (named
+> ZZTOPBARBELL, description just "d", no photo)…"*
+
+ZZTOPBARBELL is the other business's product.
+
+**Nothing in the database was wrong, and no authorization was bypassed.** Every
+row was correctly scoped to the business it belonged to. This read the wrong
+business — the same class of defect as a leak, and just as visible to an owner.
+
+### Why nothing else caught it
+
+Every other suite asks *which business does this resolve to* and *may this
+account reach it*. Both answers were correct here. The defect was in what a
+**rendered page** showed, and only a browser can see that.
+
+The browser session was the argument for the browser session.
+
+### How it was found, and the two wrong turns on the way
+
+Worth recording, because both were mine and both would have hidden it.
+
+**The first assertion was on `body.innerText`.** Every positive check failed and
+every "the other business is not here" check passed — both for the same reason.
+J4's surface is a fixed layer over the workspace, so the section beneath it
+renders but is not *visible* text, and `innerText` returned neither business's
+products. **A negative assertion that passes because nothing rendered is worth
+nothing.** Switched to the page's own markup, which is the right thing to read
+when the question is *which business's data reached this page*.
+
+**Then five sections failed and two isolated probes could not reproduce it.** The
+temptation at that point is to call it flaky and move on. The reproduction needed
+the full sequence, because J4's content is generated live — this server has a
+real `ANTHROPIC_API_KEY` — and only exists once enough pages have been visited.
+The match context, captured rather than guessed at, named the surface directly.
+
+### The fix
+
+`J4Surface` takes the business it was rendered inside. The workspace passes it,
+and the `/b/[slug]` layout supplies it. The legacy route passes nothing and
+resolves the active business, which is correct there — it has no slug to be told
+about.
+
+### Proven
+
+`scripts/verify-business-browser.ts` — a real Next server, a real Postgres, a
+real browser, a real sign-in through the login form:
+
+| | |
+|---|---|
+| Signing in through the real form | PASS |
+| A URL naming a business shows that business, beating the active one | PASS |
+| Another account's business is a 404, not a substitution | PASS |
+| An invented slug is the same answer | PASS |
+| **Two tabs, one account, a different business in each, three rounds** | PASS |
+| All 15 sections render inside a business | PASS |
+| No section shows the other business's data | PASS (was: 5 did) |
+| The legacy route still works and shows the active business | PASS |
+
+### What this suite deliberately does not assert
+
+Anything about J4's generated text itself. It is model output, different on every
+run, and an assertion over it would mean something different each time. What is
+asserted is the deterministic half: which business's data reached the page.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2177,6 +2258,8 @@ scripts/verify-label-purchase-live.ts     which rate is bought, and when it refu
 scripts/verify-product-sourcing.ts        source capabilities and recommendation honesty
 scripts/verify-sourcing-live.ts           discovery, dismissal and adoption (real Postgres)
 scripts/verify-business-context-live.ts   which business is active, and how it is chosen (real Postgres)
+scripts/verify-business-browser.ts        the whole thing through a real browser (real server + Postgres)
+scripts/verify-business-paths.ts          business-scoped navigation paths
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
@@ -2215,6 +2298,7 @@ the defect reproduced against the pre-fix behaviour first:
 | The sourcing migration, as it landed in production | §46 — read from the production database |
 | Two businesses on one account, kept separate | §48 — the real pipeline, real database |
 | Active-business resolution and its migration | §49 — the real resolver, real database |
+| The migrated screens, through a real browser | §50 — real server, real browser, real sign-in |
 | Tenant isolation | §26 — the guard through the real client |
 | Authentication, sessions, brute force, roles | §14–16, §24 |
 | Growth Points ledger | §23 — real transactions |

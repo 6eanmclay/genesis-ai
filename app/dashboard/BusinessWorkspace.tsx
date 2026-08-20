@@ -35,6 +35,14 @@ export interface BusinessWorkspaceProps {
   userName: string | null;
   /** "/dashboard" for the legacy route, "/b/<slug>" inside a business. */
   basePath: string;
+  /**
+   * The business this workspace is rendering, when it was named in the URL.
+   *
+   * Passed down to J4's surface so it talks about THIS business. Without it that
+   * surface resolved the account's active business and rendered one business's
+   * tasks and ideas on another's pages.
+   */
+  slug?: string;
   children: ReactNode;
 }
 
@@ -43,6 +51,7 @@ export async function BusinessWorkspace({
   role,
   userName,
   basePath,
+  slug,
   children,
 }: BusinessWorkspaceProps) {
   // Filtering by real hasPermission belongs here, not in navConfig.ts —
@@ -314,7 +323,7 @@ export async function BusinessWorkspace({
       // content. The shell shows and hides it; nothing navigates. The layer
       // surface is the conversation only — Tasks, Ideas, Decisions and
       // Information are what the /j4 room is for.
-      j4={<J4Surface surface="layer" />}
+      j4={<J4Surface surface="layer" slug={slug} />}
       uploadVoiceMemo={uploadVoiceMemo}
       sections={sections}
       roomSections={roomSections}

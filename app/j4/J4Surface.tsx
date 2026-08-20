@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
+import { accessTo } from "@/lib/businessContext";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
@@ -192,7 +193,22 @@ function toUnderstandingGroups(u: BusinessUnderstanding): UnderstandingGroup[] {
   ];
 }
 
-export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
+// A REAL CROSS-BUSINESS LEAK, found by the browser session (2026-08-20).
+//
+// This surface is rendered by the workspace shell, so it appears on every screen
+// — including every screen under /b/[slug]. It resolved the account's ACTIVE
+// business rather than the one being viewed, so J4's tasks, ideas, decisions and
+// information for one business were rendered on another business's pages.
+//
+// Nothing in the database was wrong and no authorization was bypassed; the rows
+// were correctly scoped to the business they belonged to. This read the wrong
+// business, which is the same class of defect and just as visible to an owner:
+// they open Copper & Coil and J4 talks to them about Iron Gym.
+//
+// Not caught by any suite, because every suite asserts on resolution and
+// authorization. It took a real browser rendering a real page to see it — which
+// is the argument for the browser session, made by the browser session.
+export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slug?: string }) {
   // `isRoom` used to live here and gated the Tasks read. Both surfaces now
   // fetch the same material, because both surfaces show it — see the Promise
   // .all below. Deleted rather than left unused: a ready-made "the layer is
@@ -203,7 +219,13 @@ export async function J4Surface({ surface }: { surface: J4SurfaceKind }) {
     redirect("/login");
   }
 
-  const resolved = await resolveUserStore(session.user.id);
+  // The business this surface was rendered inside, when there is one. Falls back
+  // to the account's active business only on the legacy route, which has no slug
+  // to be told about.
+  const resolved = slug
+    ? await accessTo(session.user.id, (await prisma.store.findUnique({ where: { slug }, select: { id: true } }))?.id ?? "")
+        .then((a) => (a ? { store: a.store, role: a.role } : null))
+    : await resolveUserStore(session.user.id);
   if (!resolved) {
     // No real store yet — J4 has nothing to work on. Back to onboarding.
     redirect("/onboarding");

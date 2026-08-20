@@ -189,8 +189,10 @@ The redirect detail is not incidental. A slug-bound action that sent the owner
 back to `/dashboard/orders` would have disconnected the right business and then
 shown them a different one.
 
-**Remaining: 10 screens; 21 `requireStorePermission()`, 11
-`requireStorePageAccess()` and 19 `resolveUserStore()` sites.** Two of the four Orders actions are
+**All 15 screens migrated.** Zero screens and zero writes in `actions.ts`
+resolve implicitly. Remaining: 10 sites in `ai-actions.ts`, 3 in
+`j4/proposal-actions.ts`, 5 API routes, and `/j4/room`. Onboarding and the legacy
+dashboard stay implicit deliberately. Two of the four Orders actions are
 among them — `submitUspsCredentials` and `recheckUsps` go through `execute()`,
 which resolves the business internally (`lib/execution/engine.ts`, the one
 implicit site outside the app directory). That is a deeper change than binding a
@@ -230,9 +232,11 @@ state, and passes only when the context is genuinely carried per request.
 - **`lib/execution/engine.ts`** resolves the business internally, so every action
   routed through `execute()` — including two of the four Orders actions — is
   still implicit. The one such site outside `app/`.
-- **No screen has been exercised through a real browser session.** The suites
-  prove resolution and authorization against real Postgres; they do not prove a
-  rendered page.
+- ~~No screen has been exercised through a real browser session.~~ **Done**
+  (§50). A real server, a real Postgres, a real browser, a real sign-in through
+  the login form. It found a defect nothing else could: `J4Surface` resolved the
+  account's *active* business rather than the one being viewed, so J4 talked
+  about Iron Gym on Copper & Coil's pages. Fixed.
 
 ---
 

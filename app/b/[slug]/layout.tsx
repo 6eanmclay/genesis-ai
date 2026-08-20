@@ -49,6 +49,7 @@ export default async function BusinessLayout({
       role={role}
       userName={userName}
       basePath={businessBasePath(slug)}
+      slug={slug}
     >
       {children}
     </BusinessWorkspace>

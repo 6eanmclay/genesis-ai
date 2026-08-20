@@ -74,6 +74,7 @@ function needsDatabase(file: string): boolean {
   if (file === "verify-label-purchase-live.ts") return false;
   if (file === "verify-sourcing-live.ts") return false;
   if (file === "verify-business-context-live.ts") return false;
+  if (file === "verify-business-browser.ts") return false;
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
 
