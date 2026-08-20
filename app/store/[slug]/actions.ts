@@ -3,6 +3,8 @@
 import { redirect, unstable_rethrow } from "next/navigation";
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
+import { quoteShippingForProduct, type DestinationAddress, type ShippingOption } from "@/lib/shipping/rates";
+import { confirmSelectedRate, toCheckoutMetadata, type SelectedShipping } from "@/lib/shipping/checkoutShipping";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
 import { decryptCredentials } from "@/lib/integrations/credentials";
@@ -37,7 +39,10 @@ async function createStripeCheckoutSession(
   store: Store,
   product: Product,
   slug: string,
-  baseUrl: string
+  baseUrl: string,
+  // Present only when the customer chose a shipping service on the storefront.
+  // Absent for every other checkout, which behaves exactly as it always has.
+  shipping?: { destination: DestinationAddress; selected: SelectedShipping }
 ): Promise<string> {
   const storeStripe = await getStripeClientForStore(store.id);
 
@@ -60,13 +65,43 @@ async function createStripeCheckoutSession(
     // allowed_countries scoped to where the built fulfillment path
     // (Printful) actually ships today — a real, easy-to-widen decision,
     // not an architectural limit.
-    shipping_address_collection: { allowed_countries: ["US"] },
+    // When the customer already gave us their address to get real rates,
+    // Stripe must not ask for it a second time — and the chosen service is
+    // added as a fixed shipping line so the total they approve is the total
+    // they were quoted. Without live shipping this is unchanged.
+    ...(shipping
+      ? {
+          shipping_options: [
+            {
+              shipping_rate_data: {
+                type: "fixed_amount" as const,
+                fixed_amount: { amount: shipping.selected.amountInCents, currency: "usd" },
+                display_name: `${shipping.selected.carrier} ${shipping.selected.service}`,
+                ...(shipping.selected.estimatedDays !== null
+                  ? {
+                      delivery_estimate: {
+                        maximum: { unit: "business_day" as const, value: shipping.selected.estimatedDays },
+                      },
+                    }
+                  : {}),
+              },
+            },
+          ],
+        }
+      : { shipping_address_collection: { allowed_countries: ["US" as const] } }),
     success_url: `${baseUrl}/store/${slug}/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/store/${slug}`,
-    metadata: {
-      storeId: store.id,
-      productId: product.id,
-    },
+    metadata: shipping
+      ? toCheckoutMetadata({
+          storeId: store.id,
+          productId: product.id,
+          destination: shipping.destination,
+          selected: shipping.selected,
+        })
+      : {
+          storeId: store.id,
+          productId: product.id,
+        },
   });
 
   if (!session.url) {
@@ -222,4 +257,109 @@ export async function subscribeToNewsletter(slug: string, formData: FormData) {
   });
 
   redirect(`/store/${slug}?subscribed=1`);
+}
+
+// ---------------------------------------------------------------------------
+// Live shipping selection (2026-08-20).
+//
+// Only reachable for a store that connected its own EasyPost account and a
+// product with a real weight. Everything else still uses createCheckoutSession
+// above, unchanged.
+
+export interface ShippingQuoteState {
+  status: "idle" | "quoted" | "error";
+  options?: ShippingOption[];
+  message?: string;
+  address?: DestinationAddress;
+}
+
+function readAddress(formData: FormData): DestinationAddress | null {
+  const line1 = String(formData.get("line1") ?? "").trim();
+  const city = String(formData.get("city") ?? "").trim();
+  const postalCode = String(formData.get("postalCode") ?? "").trim();
+  if (!line1 || !city || !postalCode) return null;
+  return {
+    name: String(formData.get("name") ?? "").trim() || null,
+    line1,
+    line2: String(formData.get("line2") ?? "").trim() || null,
+    city,
+    state: String(formData.get("state") ?? "").trim() || null,
+    postalCode,
+    country: String(formData.get("country") ?? "US").trim() || "US",
+  };
+}
+
+/** Ask the carrier what it would charge to send this product to this address. */
+export async function quoteShippingOptions(
+  slug: string,
+  productId: string,
+  _prevState: ShippingQuoteState,
+  formData: FormData
+): Promise<ShippingQuoteState> {
+  const address = readAddress(formData);
+  if (!address) {
+    return { status: "error", message: "Please fill in the street address, city and ZIP code." };
+  }
+
+  const store = await prisma.store.findUnique({ where: { slug }, select: { id: true } });
+  if (!store) return { status: "error", message: "Store not found" };
+
+  const quote = await quoteShippingForProduct({ storeId: store.id, productId, destination: address });
+  if (!quote.ok) {
+    // Each failure names itself rather than collapsing into "no options",
+    // which a shopper cannot tell apart from a broken store.
+    const message =
+      quote.reason === "carrier_returned_none"
+        ? "No carrier could quote a delivery to that address. Please check it and try again."
+        : "Shipping options aren't available for this item right now.";
+    return { status: "error", message, address };
+  }
+
+  return { status: "quoted", options: quote.options, address };
+}
+
+/**
+ * Take the chosen service to Stripe.
+ *
+ * The rate is re-quoted and matched by id server-side — the browser never gets
+ * to name a shipping price.
+ */
+export async function checkoutWithShipping(
+  slug: string,
+  productId: string,
+  _prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  let redirectUrl: string;
+  try {
+    const address = readAddress(formData);
+    const rateId = String(formData.get("rateId") ?? "").trim();
+    if (!address || !rateId) throw new RecoverableError("Please choose a shipping option.");
+
+    const store = await prisma.store.findUnique({ where: { slug } });
+    if (!store) throw new RecoverableError("Store not found");
+
+    const product = await prisma.product.findFirst({ where: { id: productId, storeId: store.id, active: true } });
+    if (!product) throw new RecoverableError("Product not found");
+    if (!(await canStoreAcceptPayments(store.id))) throw new RecoverableError(CHECKOUT_UNAVAILABLE_MESSAGE);
+
+    const confirmed = await confirmSelectedRate({ storeId: store.id, productId, destination: address, rateId });
+    if (!confirmed.ok) {
+      throw new RecoverableError(
+        confirmed.reason === "rate_expired"
+          ? "Those shipping prices expired while you were choosing. Please pick again."
+          : "Shipping options aren't available for this item right now."
+      );
+    }
+
+    const baseUrl = await getBaseUrl();
+    redirectUrl = await createStripeCheckoutSession(store, product, slug, baseUrl, {
+      destination: address,
+      selected: confirmed.selected,
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionState(error);
+  }
+  redirect(redirectUrl);
 }

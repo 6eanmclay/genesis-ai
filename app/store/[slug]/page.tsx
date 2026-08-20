@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { productSupportsLiveShipping } from "@/lib/shipping/checkoutShipping";
 import { auth } from "@/auth";
 import { getStoreRole } from "@/lib/permissions";
 import { createCheckoutSession, subscribeToNewsletter } from "./actions";
@@ -70,13 +71,15 @@ export async function generateMetadata({
   };
 }
 
-function BuyButton({
+async function BuyButton({
   slug,
+  storeId,
   product,
   className,
   canAcceptPayments,
 }: {
   slug: string;
+  storeId: string;
   product: StoreProduct;
   className: string;
   canAcceptPayments: boolean;
@@ -87,6 +90,18 @@ function BuyButton({
   // a mocked-up control.
   if (!canAcceptPayments) {
     return <p className="text-sm text-[var(--brand-text-secondary)]">{CHECKOUT_UNAVAILABLE_MESSAGE}</p>;
+  }
+
+  // Live shipping (2026-08-20). When this store has connected its own EasyPost
+  // account AND this product has a real weight, the customer picks a shipping
+  // service first. Every other store and product keeps the original one-click
+  // path exactly as it was — this cannot degrade a storefront that sells today.
+  if (await productSupportsLiveShipping(storeId, product.id)) {
+    return (
+      <Link href={`/store/${slug}/ship/${product.id}`} className={className}>
+        Buy Now
+      </Link>
+    );
   }
 
   return (
@@ -398,6 +413,7 @@ export default async function StorefrontPage({
                     </div>
                     <ProductActions
                       slug={slug}
+                      storeId={product.storeId}
                       product={product}
                       buyButtonClass={buyButtonClass}
                       detailsLinkClass={detailsLinkClass}
@@ -432,6 +448,7 @@ export default async function StorefrontPage({
                     </p>
                     <ProductActions
                       slug={slug}
+                      storeId={products[0].storeId}
                       product={products[0]}
                       buyButtonClass={buyButtonClass}
                       detailsLinkClass={detailsLinkClass}
@@ -447,6 +464,7 @@ export default async function StorefrontPage({
                       <ProductCard
                         key={product.id}
                         slug={slug}
+                        storeId={product.storeId}
                         product={product}
                         buyButtonClass={buyButtonClass}
                         detailsLinkClass={detailsLinkClass}
@@ -463,6 +481,7 @@ export default async function StorefrontPage({
                   <ProductCard
                     key={product.id}
                     slug={slug}
+                    storeId={product.storeId}
                     product={product}
                     buyButtonClass={buyButtonClass}
                     detailsLinkClass={detailsLinkClass}
@@ -761,6 +780,7 @@ export default async function StorefrontPage({
 
 function ProductActions({
   slug,
+  storeId,
   product,
   buyButtonClass,
   detailsLinkClass,
@@ -768,6 +788,7 @@ function ProductActions({
   canAcceptPayments,
 }: {
   slug: string;
+  storeId: string;
   product: StoreProduct;
   buyButtonClass: string;
   detailsLinkClass: string;
@@ -778,6 +799,7 @@ function ProductActions({
     <div className={`flex gap-2 ${className ?? ""}`}>
       <BuyButton
         slug={slug}
+        storeId={storeId}
         product={product}
         className={buyButtonClass}
         canAcceptPayments={canAcceptPayments}
@@ -791,6 +813,7 @@ function ProductActions({
 
 function ProductCard({
   slug,
+  storeId,
   product,
   buyButtonClass,
   detailsLinkClass,
@@ -798,6 +821,7 @@ function ProductCard({
   canAcceptPayments,
 }: {
   slug: string;
+  storeId: string;
   product: StoreProduct;
   buyButtonClass: string;
   detailsLinkClass: string;
@@ -826,6 +850,7 @@ function ProductCard({
         </p>
         <ProductActions
           slug={slug}
+          storeId={storeId}
           product={product}
           buyButtonClass={buyButtonClass}
           detailsLinkClass={detailsLinkClass}

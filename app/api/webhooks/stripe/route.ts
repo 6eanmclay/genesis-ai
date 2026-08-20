@@ -6,6 +6,7 @@ import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement
 import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
 import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessModel/internalMapper";
 import { fromStripeShippingDetails } from "@/lib/orders/shippingAddress";
+import { parseCheckoutShipping } from "@/lib/shipping/checkoutShipping";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -101,6 +102,11 @@ export async function POST(request: Request) {
         });
         if (existing) return;
 
+        // Null for every checkout that did not go through the shipping step,
+        // which is most of them — the parser returns honest nulls rather than
+        // defaults, so nothing below changes for those.
+        const chosenShipping = parseCheckoutShipping(session.metadata);
+
         const order = await tx.order.create({
           data: {
             storeId,
@@ -123,7 +129,23 @@ export async function POST(request: Request) {
             // collected_information, not directly on the session (an
             // older-version shape this codebase's training data would
             // have assumed instead — see AGENTS.md's warning about that).
-            shippingAddress: fromStripeShippingDetails(session.collected_information?.shipping_details) ?? undefined,
+            // Live shipping (2026-08-20). When the customer chose a shipping
+            // service on the storefront, they typed their address there and
+            // Stripe was never asked to collect it again — so it arrives in
+            // metadata instead. Stripe's own collected_information remains the
+            // source for every other checkout, unchanged.
+            shippingAddress:
+              (chosenShipping.address as object | null) ??
+              fromStripeShippingDetails(session.collected_information?.shipping_details) ??
+              undefined,
+            // What the CUSTOMER paid to ship. Distinct from shippingCostInCents
+            // (what the label later costs the owner) on purpose — see the
+            // schema comment; the gap between them is the store's margin.
+            shippingChargedInCents: chosenShipping.amountInCents ?? undefined,
+            selectedShippingCarrier: chosenShipping.carrier ?? undefined,
+            selectedShippingService: chosenShipping.service ?? undefined,
+            selectedShippingRateId: chosenShipping.rateId ?? undefined,
+            selectedShippingEstDays: chosenShipping.estimatedDays ?? undefined,
           },
         });
 
