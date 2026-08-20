@@ -95,6 +95,8 @@ customers place real orders".
 | 17 | No false success states | **Compliant** | 4 fixed, 5 verified honest — see §17 |
 | 18 | Scheduled work fails in isolation | **Compliant** | 3 loops + 3 stages isolated — see §18 |
 | 19 | Spot-checked and correct | **Verified** | routes, uploads, checkout routing — see §19 |
+| 20 | OAuth CSRF on every callback | **Compliant** | signed state on all 3 routes; 8 assertions — see §20 |
+| 21 | Money always leaves a trace | **Partial** | 3 paths fixed; DB-bound, untested — see §21 |
 
 ---
 
@@ -487,6 +489,74 @@ the next audit does not re-derive them:
   logged, never surfaced raw to a customer.
 - **Payment badges, `canStoreAcceptPayments` and `selectProvider`** all agree on
   one definition of connected: `status === "CONNECTED"`. Three places, one rule.
+
+---
+
+## 20. The OAuth CSRF Phase 0 missed
+
+Phase 0 replaced `state = storeId` with a signed, single-use, session-bound,
+expiring handoff across every OAuth callback — and left one route untouched.
+
+The onboarding fulfillment callback still used `state = "${draftId}:PRINTFUL"`
+and split it on a colon. It was **not** an open takeover, because the route
+checks that the draft belongs to the signed-in user. But a crafted callback
+clicked by a signed-in owner would still have stored **the attacker's Printful
+credentials on the victim's draft** — and every fulfillment order that store
+later placed would have gone to the attacker's account, with real product and
+real money.
+
+The route parses nothing now. Onboarding needed one extension to Phase 0's
+payload, which assumed a Store exists: an optional `storeDraftId`, set *instead
+of* `storeId`. That has a useful side effect worth keeping — a state minted for
+the dashboard's own Printful connect carries a `storeId` and no draft, so it
+cannot be replayed against the onboarding callback even though the provider
+matches. Asserted both ways.
+
+Only three API routes read query parameters at all. The other two are the shared
+integrations callback (signed state since Phase 0) and the PayPal buyer return,
+which cannot be forged for a different store: capture runs against that store's
+own credentials and the `custom_id` is checked against the store it claims.
+
+## 21. Money that arrives and produces nothing
+
+Three paths where a real payment completed and the only trace was a console line
+the owner never sees. Stripe had been told OK, so it never retried.
+
+- **A storefront checkout that could not be resolved to a store and product.**
+  The customer got their Stripe receipt; the owner saw nothing.
+- **A Growth Point purchase or plan subscription that could not be applied.**
+  Someone paid Genesis and received nothing.
+- **A PayPal capture that succeeded with a mismatched `custom_id`.** Fixed
+  earlier in this audit; the same shape.
+
+Each now writes a durable FAILED `ExecutionLog` naming the session and amount,
+telling the owner to reconcile it before assuming it was not a real sale. Where
+the store genuinely cannot be resolved — a session from an account matching no
+connection — there is nothing to attach a record to, and the code says so rather
+than quietly accepting it.
+
+**A related inversion, on the same money path.** `execute()` deducts Growth
+Points *after* the work is done and the success is already recorded. That
+deduction was awaited bare, so a ledger write that threw fell into the catch
+block, overwrote the record with FAILED, and returned FAILED — telling the owner
+their action failed when it had succeeded, which invites them to do it again.
+Under-charging on a database hiccup is the right way to be wrong: a missed
+deduction is a few points, a false failure is duplicated work.
+
+Verified rather than assumed while there: `recordExecutionEvent` really does
+catch everything, and `creditGrowthPointsFromPurchase` really is idempotent —
+it checks a unique `externalRef` inside the same transaction, so a redelivered
+Stripe event cannot double-credit real money.
+
+**Left alone deliberately:** partial refunds still do not flip `Order.status`.
+The existing comment already names that as a real gap rather than an oversight,
+and relabelling a substantially-paid order "refunded" would mislead the owner
+about what they still have to ship.
+
+**Not covered by a test, and recorded as such:** the `execute()` and webhook
+fixes above are in database-bound code with no injection seam, so they are
+verified by inspection and typecheck only. A database-backed test is the honest
+next step for them, and this document does not claim more than that.
 
 ---
 
