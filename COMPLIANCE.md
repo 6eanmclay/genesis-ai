@@ -114,6 +114,7 @@ customers place real orders".
 | 36 | One parcel cannot be paid for twice | **Compliant** | claim before spending — see §36 |
 | 37 | Checkout metadata is authoritative | **Compliant** | real action, real Postgres; 30 assertions — see §37 |
 | 38 | Shipping checkout can actually complete | **Compliant** | gated on Stripe; 4 assertions — see §38 |
+| 39 | Order fulfilment lifecycle | **Compliant** | real Postgres; 27 assertions — see §39 |
 
 ---
 
@@ -1139,6 +1140,49 @@ but it would have been the first thing to break when that clears.
 
 ---
 
+## 39. An order already in the post could be marked unfulfilled again
+
+Buying a label marks the order fulfilled, records tracking, and emails the buyer
+that it shipped. The Orders list then offered **"Mark as unfulfilled"** on that
+same order, unconditionally — and it worked. The result: an order showing as
+still needing fulfilment while the parcel was gone and the customer had tracking
+for it. An invitation to ship the same order twice.
+
+The label is the authoritative signal, so it wins. The refusal names the carrier
+and tracking number, because an owner who clicked that button deserves to know
+why. The button is gone from the UI for shipped orders too — offering an action
+that throws is worse than not offering it — while marking fulfilled by hand
+still works for orders shipped without a label, and *that* reversal still works,
+since nothing has left the building.
+
+**The toggle also trusted the caller.** `currentlyFulfilled` arrived from the
+action, computed from a read taken before the page rendered, so a stale tab could
+toggle against a status that had since changed. The executable reads the real
+state itself now, and the field is **deleted rather than ignored** — a field
+nobody reads is a trap for whoever next assumes it is authoritative. The write is
+conditional on the state that was read.
+
+### Proven, not reasoned about
+
+- **Cross-tenant:** an authorised owner of store A naming store B's order id gets
+  `Order not found` — both directions, on fulfilled and unfulfilled orders —
+  while their own orders still work.
+- **The Orders list** is session-scoped with **no filter, search or pagination
+  parameter to manipulate**: its only `searchParams` are flash flags. Revenue is
+  excluded from the query for roles without `REVENUE_VIEW` rather than hidden in
+  the markup. The tenant guard refuses an unscoped list outright.
+- **Missing orders:** invented id, empty id and deleted order all refuse.
+
+### A correction worth recording
+
+My first version of the concurrency section asserted that only one of two
+toggles should take effect. **That is wrong** — two sequential toggles returning
+to the start *is* a toggle, and the test was asserting a bug. It now asserts the
+property that matters: the executable follows the database rather than any
+caller's idea of it.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -1173,6 +1217,7 @@ scripts/verify-order-webhook-live.ts      the order-creation branch (real server
 scripts/verify-order-confirmation.ts      what the confirmation says, and to whom
 scripts/verify-confirmation-live.ts       claim, release, retry, tenant separation (real Postgres)
 scripts/verify-checkout-live.ts           checkout guards against the real action (real Postgres)
+scripts/verify-orders-live.ts             fulfilment lifecycle and tenant scoping (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
