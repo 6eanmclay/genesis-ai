@@ -93,6 +93,8 @@ customers place real orders".
 | 15 | Brute-force limits & cron gate | **Compliant** | `attemptThrottle.ts`, `cronAuth.ts`; 27 assertions — see §15 |
 | 16 | Authorization on every server action | **Compliant** | every `"use server"` export audited — see §16 |
 | 17 | No false success states | **Compliant** | 4 fixed, 5 verified honest — see §17 |
+| 18 | Scheduled work fails in isolation | **Compliant** | 3 loops + 3 stages isolated — see §18 |
+| 19 | Spot-checked and correct | **Verified** | routes, uploads, checkout routing — see §19 |
 
 ---
 
@@ -433,6 +435,58 @@ The standing rule: Genesis never tells anyone something happened unless it did.
 **Four PayPal exits dropped the buyer on the shop's front page with no message.** Missing credentials, a failed capture, a failed re-fetch of an already-captured order, and a custom_id mismatch. Two of those happen *after* PayPal has taken the money — and silence is the worst false state, because the comfortable assumption is "it failed, I'll try again", and they would pay twice. There are exactly two honest things to say and now exactly two notices, with the money-moved one asserted hard: retrying is not safe, and the words say so rather than relying on a missing button. Both money-moved paths also write a FAILED `ExecutionLog` so the owner sees a real captured payment that produced no order.
 
 **Checked and found honest** (recorded so they are not re-audited): the newsletter signup says "you're on the list", which is exactly what happened and claims nothing about sending; `?payment_pending=1` renders a real banner with a reference; the forgot-password success copy is only reachable when email is actually configured, and a send failure becomes an error rather than a success; "Order marked as fulfilled" claims only the state change; Stripe's webhook is idempotent inside a transaction and both webhook routes verify signatures.
+
+---
+
+## 18. Scheduled work, and failing in isolation
+
+The daily cron does three independent things: connector syncs, growth-point
+refreshes, and first-party intelligence cycles. A store needs no connected
+integration to be due points, and none to have intelligence to run.
+
+**They were awaited bare, and both cross-tenant loops were unguarded.** Three
+silent failure modes, all found by reading the loops rather than by anything
+breaking:
+
+- One store's failure inside the sync loop — a Prisma write that throws, a
+  connector failing in a way `execute()` does not catch — **abandoned every
+  store after it in the same run**, until the next invocation.
+- The growth-point loop had the same shape, so one failed transaction silently
+  denied every later store a month's points.
+- A throw in any stage 500'd the whole route and skipped the two after it, with
+  nothing recording that they had been *skipped* rather than *found empty*.
+
+All three loops are isolated per store now, and each stage reports its own
+outcome. The response carries `stageErrors`, because a stage that failed and a
+stage that found nothing to do produce identical counts, and telling them apart
+is the entire reason that field exists.
+
+Change detection is isolated separately and deliberately: it is interpretation
+layered on a sync that has already succeeded and already been recorded, so it
+must never be able to undo the run it is commenting on.
+
+`runDueIntelligenceCycles` already had per-store isolation and was left alone.
+
+## 19. Verified honest, no change needed
+
+Checked against implementation during this pass and found correct. Recorded so
+the next audit does not re-derive them:
+
+- **Every API route** is authenticated, cron-gated, or intentionally public. The
+  only three without a session check are the NextAuth handler, the PayPal buyer
+  return (buyers are not signed in), and registration.
+- **Blob uploads** run the session and permission check inside
+  `onBeforeGenerateToken`, before any token — and therefore any byte — is
+  issued, with content types and a size ceiling enforced. Paths are
+  `products/{uuid}`, so one tenant cannot guess or overwrite another's.
+- **Checkout** re-checks `canStoreAcceptPayments` on the server even though the
+  button hides itself, because the action is a public POST target regardless of
+  what rendered. `selectProvider` only ever returns a provider whose status is
+  actually CONNECTED, so it cannot route a customer to a broken one.
+- **Unknown errors** in storefront actions map to a generic message and are
+  logged, never surfaced raw to a customer.
+- **Payment badges, `canStoreAcceptPayments` and `selectProvider`** all agree on
+  one definition of connected: `status === "CONNECTED"`. Three places, one rule.
 
 ---
 

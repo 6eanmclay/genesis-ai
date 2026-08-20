@@ -67,38 +67,45 @@ export async function runDueGrowthPointRefreshes(limit = 50): Promise<GrowthPoin
   const summaries: GrowthPointRefreshSummary[] = [];
 
   for (const store of due) {
-    const nextRefreshAt = addOneCalendarMonth(store.growthPointNextRefreshAt ?? new Date());
-    const allowance = store.plan?.monthlyGrowthPointAllowance;
+    // Per-store isolation (2026-08-20), same reasoning as the sync scheduler:
+    // this loop is cross-tenant, so one store's failed transaction used to
+    // abandon every store after it and silently deny them a month's points.
+    try {
+      const nextRefreshAt = addOneCalendarMonth(store.growthPointNextRefreshAt ?? new Date());
+      const allowance = store.plan?.monthlyGrowthPointAllowance;
 
-    if (allowance === null || allowance === undefined || !store.planId) {
-      await prisma.store.update({
-        where: { id: store.id },
-        data: { growthPointNextRefreshAt: nextRefreshAt },
+      if (allowance === null || allowance === undefined || !store.planId) {
+        await prisma.store.update({
+          where: { id: store.id },
+          data: { growthPointNextRefreshAt: nextRefreshAt },
+        });
+        continue;
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.store.update({
+          where: { id: store.id },
+          data: {
+            growthPointBalance: { increment: allowance },
+            growthPointNextRefreshAt: nextRefreshAt,
+          },
+          select: { growthPointBalance: true },
+        });
+        await tx.growthPointTransaction.create({
+          data: {
+            storeId: store.id,
+            type: "REFRESH",
+            amount: allowance,
+            balanceAfter: updated.growthPointBalance,
+            description: `Monthly refresh (${store.plan!.name})`,
+          },
+        });
       });
-      continue;
+
+      summaries.push({ storeId: store.id, planId: store.planId, granted: allowance });
+    } catch (error) {
+      console.error(`[growthPoints] refresh failed for store ${store.id}:`, error);
     }
-
-    await prisma.$transaction(async (tx) => {
-      const updated = await tx.store.update({
-        where: { id: store.id },
-        data: {
-          growthPointBalance: { increment: allowance },
-          growthPointNextRefreshAt: nextRefreshAt,
-        },
-        select: { growthPointBalance: true },
-      });
-      await tx.growthPointTransaction.create({
-        data: {
-          storeId: store.id,
-          type: "REFRESH",
-          amount: allowance,
-          balanceAfter: updated.growthPointBalance,
-          description: `Monthly refresh (${store.plan!.name})`,
-        },
-      });
-    });
-
-    summaries.push({ storeId: store.id, planId: store.planId, granted: allowance });
   }
 
   return summaries;

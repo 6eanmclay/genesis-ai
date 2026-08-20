@@ -99,87 +99,119 @@ export async function runDueSyncs(limit = 50): Promise<SyncRunSummary[]> {
   const touchedStoreIds = new Set<string>();
 
   for (const integration of due) {
-    const connector = getConnector(integration.provider);
-    // The unattended-execution seam (lib/execution/engine.ts) — no human
-    // session exists here, this is the scheduler's own storeId, verified
-    // by nothing but the fact that this code path is only ever reached
-    // from the CRON_SECRET-gated cron route.
-    const result = await execute(syncExecutable(connector), undefined, {
-      systemStoreId: integration.storeId,
-    });
-
-    // A rate limit arrives as PARTIAL carrying the provider's own timing —
-    // see SyncMetadata.retryAfterMs. It is neither a success nor a failure.
-    const rateLimit =
-      result.status === "PARTIAL" ? (result.metadata as SyncMetadata)?.retryAfterMs : undefined;
-    if (rateLimit !== undefined) {
-      const next = nextSyncAttempt({
-        outcome: "rate_limited",
-        retryAfterMs: rateLimit,
-        failureCount: integration.syncFailureCount,
-        now: Date.now(),
-      });
-      await prisma.storeIntegration.update({
-        where: { id: integration.id, storeId: integration.storeId },
-        data: { nextSyncDueAt: next.nextSyncDueAt, syncFailureCount: next.syncFailureCount },
-      });
-      summaries.push({
-        storeId: integration.storeId,
-        provider: integration.provider,
-        ok: false,
-        written: 0,
-        errors: 0,
-      });
-      continue;
-    }
-
-    if (result.status === "SUCCESS") {
-      const next = nextSyncAttempt({
-        outcome: "success",
-        failureCount: integration.syncFailureCount,
-        now: Date.now(),
-      });
-      await prisma.storeIntegration.update({
-        where: { id: integration.id, storeId: integration.storeId },
-        data: {
-          lastSyncedAt: new Date(),
-          nextSyncDueAt: next.nextSyncDueAt,
-          syncFailureCount: next.syncFailureCount,
-        },
+    // Per-store isolation (2026-08-20). This loop is cross-tenant: without
+    // it, one store's failure — a Prisma write that throws, a connector that
+    // breaks in a way execute() does not catch — abandoned every store after
+    // it in the same run, silently, until the next cron invocation. The whole
+    // point of a bounded scheduler is that it works through a backlog; one bad
+    // row must not be able to hold the queue.
+    try {
+      const connector = getConnector(integration.provider);
+      // The unattended-execution seam (lib/execution/engine.ts) — no human
+      // session exists here, this is the scheduler's own storeId, verified
+      // by nothing but the fact that this code path is only ever reached
+      // from the CRON_SECRET-gated cron route.
+      const result = await execute(syncExecutable(connector), undefined, {
+        systemStoreId: integration.storeId,
       });
 
-      const metadata = result.metadata as SyncMetadata;
-      if (metadata.changes.length > 0) {
-        await runChangeDetection(
-          integration.storeId,
-          integration.provider.toLowerCase(),
-          metadata.changes
-        );
+      // A rate limit arrives as PARTIAL carrying the provider's own timing —
+      // see SyncMetadata.retryAfterMs. It is neither a success nor a failure.
+      const rateLimit =
+        result.status === "PARTIAL" ? (result.metadata as SyncMetadata)?.retryAfterMs : undefined;
+      if (rateLimit !== undefined) {
+        const next = nextSyncAttempt({
+          outcome: "rate_limited",
+          retryAfterMs: rateLimit,
+          failureCount: integration.syncFailureCount,
+          now: Date.now(),
+        });
+        await prisma.storeIntegration.update({
+          where: { id: integration.id, storeId: integration.storeId },
+          data: { nextSyncDueAt: next.nextSyncDueAt, syncFailureCount: next.syncFailureCount },
+        });
+        summaries.push({
+          storeId: integration.storeId,
+          provider: integration.provider,
+          ok: false,
+          written: 0,
+          errors: 0,
+        });
+        continue;
       }
-      touchedStoreIds.add(integration.storeId);
-      summaries.push({
-        storeId: integration.storeId,
-        provider: integration.provider,
-        ok: true,
-        written: metadata.written,
-        errors: metadata.errors,
-      });
-    } else {
-      // Real retry/backoff, per Sean's explicit requirement — exponential
-      // off syncFailureCount, capped, so a persistently-broken connection
-      // doesn't get hammered every cycle forever.
-      const next = nextSyncAttempt({
-        outcome: "failure",
-        failureCount: integration.syncFailureCount,
-        now: Date.now(),
-      });
-      await prisma.storeIntegration.update({
-        where: { id: integration.id, storeId: integration.storeId },
-        data: {
-          syncFailureCount: next.syncFailureCount,
-          nextSyncDueAt: next.nextSyncDueAt,
-        },
-      });
+
+      if (result.status === "SUCCESS") {
+        const next = nextSyncAttempt({
+          outcome: "success",
+          failureCount: integration.syncFailureCount,
+          now: Date.now(),
+        });
+        await prisma.storeIntegration.update({
+          where: { id: integration.id, storeId: integration.storeId },
+          data: {
+            lastSyncedAt: new Date(),
+            nextSyncDueAt: next.nextSyncDueAt,
+            syncFailureCount: next.syncFailureCount,
+          },
+        });
+
+        const metadata = result.metadata as SyncMetadata;
+        if (metadata.changes.length > 0) {
+          // Isolated (2026-08-20). Change detection is interpretation layered on
+          // top of a sync that has ALREADY SUCCEEDED and already been recorded —
+          // letting it throw here used to abandon the whole cross-tenant loop, so
+          // one store's odd data silently stopped every store after it from
+          // syncing at all until the next cron run.
+          try {
+            await runChangeDetection(
+              integration.storeId,
+              integration.provider.toLowerCase(),
+              metadata.changes
+            );
+          } catch (error) {
+            console.error(
+              `[scheduler] change detection failed for ${integration.provider} on store ${integration.storeId}:`,
+              error
+            );
+          }
+        }
+        touchedStoreIds.add(integration.storeId);
+        summaries.push({
+          storeId: integration.storeId,
+          provider: integration.provider,
+          ok: true,
+          written: metadata.written,
+          errors: metadata.errors,
+        });
+      } else {
+        // Real retry/backoff, per Sean's explicit requirement — exponential
+        // off syncFailureCount, capped, so a persistently-broken connection
+        // doesn't get hammered every cycle forever.
+        const next = nextSyncAttempt({
+          outcome: "failure",
+          failureCount: integration.syncFailureCount,
+          now: Date.now(),
+        });
+        await prisma.storeIntegration.update({
+          where: { id: integration.id, storeId: integration.storeId },
+          data: {
+            syncFailureCount: next.syncFailureCount,
+            nextSyncDueAt: next.nextSyncDueAt,
+          },
+        });
+        summaries.push({
+          storeId: integration.storeId,
+          provider: integration.provider,
+          ok: false,
+          written: 0,
+          errors: 0,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `[scheduler] ${integration.provider} sync for store ${integration.storeId} threw:`,
+        error
+      );
       summaries.push({
         storeId: integration.storeId,
         provider: integration.provider,

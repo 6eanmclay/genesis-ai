@@ -26,7 +26,23 @@ export async function GET(request: NextRequest) {
     console.error("[cron/sync] pruning auth attempts failed:", error);
   });
 
-  const summaries = await runDueSyncs(50);
+  // Stage isolation (2026-08-20). These three stages are independent — a
+  // store needs no connected integration to be due growth points, and none to
+  // have first-party intelligence to run. Awaited bare, one throwing 500'd the
+  // whole route and silently skipped the two after it, with nothing recording
+  // that they had been skipped rather than found empty.
+  //
+  // Each stage now reports its own outcome, and a stage that failed says so in
+  // the response instead of being indistinguishable from one that had no work.
+  const stageErrors: string[] = [];
+
+  let summaries: Awaited<ReturnType<typeof runDueSyncs>> = [];
+  try {
+    summaries = await runDueSyncs(50);
+  } catch (error) {
+    console.error("[cron/sync] connector syncs failed:", error);
+    stageErrors.push("syncs");
+  }
   const synced = summaries.filter((s) => s.ok).length;
   const failed = summaries.length - synced;
 
@@ -34,7 +50,13 @@ export async function GET(request: NextRequest) {
   // integration syncs (a store needs no connected integration at all to be
   // due a monthly refresh), sharing the same daily trigger rather than a
   // second cron route.
-  const growthPointRefreshes = await runDueGrowthPointRefreshes(50);
+  let growthPointRefreshes: Awaited<ReturnType<typeof runDueGrowthPointRefreshes>> = [];
+  try {
+    growthPointRefreshes = await runDueGrowthPointRefreshes(50);
+  } catch (error) {
+    console.error("[cron/sync] growth point refreshes failed:", error);
+    stageErrors.push("growthPoints");
+  }
 
   // Business Intelligence Engine M1 — the first-party path. Until now the
   // engine only ever ran for a store that had just completed a connector sync,
@@ -50,11 +72,21 @@ export async function GET(request: NextRequest) {
   // failed never ran the engine — skipping it here too would let one broken
   // connector silently suppress the store's own first-party intelligence until
   // the connector was fixed.
-  const intelligenceCycles = await runDueIntelligenceCycles(50, {
-    skipStoreIds: summaries.filter((s) => s.ok).map((s) => s.storeId),
-  });
+  let intelligenceCycles: Awaited<ReturnType<typeof runDueIntelligenceCycles>> = [];
+  try {
+    intelligenceCycles = await runDueIntelligenceCycles(50, {
+      skipStoreIds: summaries.filter((s) => s.ok).map((s) => s.storeId),
+    });
+  } catch (error) {
+    console.error("[cron/sync] intelligence cycles failed:", error);
+    stageErrors.push("intelligence");
+  }
 
   return NextResponse.json({
+    // A stage that FAILED is reported as failed, not as a stage that found
+    // nothing to do. Those look identical in the counts below, and telling
+    // them apart is the whole reason this field exists.
+    stageErrors,
     synced,
     failed,
     total: summaries.length,
