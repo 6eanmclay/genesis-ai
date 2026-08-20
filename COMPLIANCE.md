@@ -111,6 +111,7 @@ customers place real orders".
 | 33 | Order creation in a real request | **Compliant** | real server + real Postgres; 32 assertions — see §34 |
 | 34 | Customer confirmation exists at all | **Compliant** | `orderConfirmation.ts`; 63 assertions — see §35 |
 | 35 | Confirmation actually delivered | **EXTERNALLY BLOCKED** | needs a Resend credential — see §35 |
+| 36 | One parcel cannot be paid for twice | **Compliant** | claim before spending — see §36 |
 
 ---
 
@@ -1036,6 +1037,29 @@ real Postgres: the decision to send, the recipient, the exact subject and body,
 the claim, the release, the retry, the four-way state separation, and that one
 tenant's customer never hears about another's order. What remains unproven is
 strictly *"Resend accepted it and a human received it"*.
+
+---
+
+## 36. One parcel could be paid for twice
+
+`purchaseShippingLabelExecutable` guarded on `order.trackingNumber` — but that is
+written **after** the label is bought, and everything between the check and
+`Shipment.buy` is awaited: a shipment creation, a rate fetch, a comparison. Two
+concurrent submits both passed the check and both reached EasyPost. Real postage,
+charged twice, for one parcel.
+
+Fixed with the same claim pattern as the order confirmation — by this point a
+proven shape in this codebase rather than a new idea. Released on failure so an
+order cannot get stuck permanently unshippable, but **only while
+`trackingNumber` is still null**: if the purchase succeeded and only the write
+failed, the original guard refuses to buy again, and the two conditions together
+are what make a retry safe rather than expensive.
+
+**Worth naming as a pattern.** This is the third place in two days where a
+check-then-act sat in front of something irreversible — the Growth Point
+deduction (§23), the customer notification (§35), and now money at a carrier. All
+three read as correct and all three had a window. It is worth recognising on
+sight in review.
 
 ---
 
