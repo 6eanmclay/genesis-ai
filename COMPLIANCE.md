@@ -1,12 +1,15 @@
-# Integration security & compliance
+# Production-readiness audit
 
-*Started 2026-08-20, prompted by Intuit's production-key questionnaire. The
-questionnaire is a benchmark, not the goal: every item below is a real property
-Genesis should have whether or not Intuit ever asks.*
+*Started 2026-08-20, prompted by Intuit's production-key questionnaire and then
+continued well past it. The questionnaire was a benchmark, not the goal — and
+once the integrations were done the same standard was applied to authentication,
+authorization, the checkout and fulfilment paths, and every place Genesis tells
+somebody that something happened.*
 
 **The rule for this document: nothing is marked compliant unless there is
 evidence — a file, a test, or a measurement. "Probably fine" is recorded as
-NEEDS VERIFICATION, and a gap is recorded as a gap.**
+NEEDS VERIFICATION, and a gap is recorded as a gap. Code that looks like it
+supports something is not evidence that it does.**
 
 ---
 
@@ -86,6 +89,10 @@ customers place real orders".
 | 11 | API error handling, rate limits & backoff | **Compliant** | shared `rateLimit.ts`; 36 + 22 assertions — see §11 |
 | 12 | Owner-visible recovery path | **Compliant** | Recheck / Sync now / Disconnect + reconnect form |
 | 13 | Static egress IP | **Needs Intuit clarification** | see §13 |
+| 14 | Password policy & session eviction | **Compliant** | `passwordPolicy.ts`; 30 assertions — see §14 |
+| 15 | Brute-force limits & cron gate | **Compliant** | `attemptThrottle.ts`, `cronAuth.ts`; 27 assertions — see §15 |
+| 16 | Authorization on every server action | **Compliant** | every `"use server"` export audited — see §16 |
+| 17 | No false success states | **Compliant** | 4 fixed, 5 verified honest — see §17 |
 
 ---
 
@@ -359,6 +366,55 @@ IP if they require one.
 
 ---
 
+## 14. Authentication
+
+Three defects, all found by auditing the auth surface rather than the connectors.
+
+**There was no password requirement at all.** Signup checked `if (!email || !password)`; the reset flow checked nothing. `"a"` was a valid password on a platform holding merchants' connected Stripe accounts. One shared policy now guards both — a reset path with weaker rules than signup is a way around the rules.
+
+The rules follow NIST SP 800-63B, so the notable part is what is *absent*: no composition requirements. Demanding an uppercase and a symbol pushes people to `Password1!` and away from passphrases. `correct horse battery staple` passes, and there are assertions saying so, so nobody "improves" that later. bcrypt's 72-byte truncation is enforced rather than ignored — past it, two different passwords become the same stored password.
+
+**Resetting a password did not evict whoever prompted the reset.** Sessions are JWTs, so there is no session row to delete, and a token already in an attacker's hands stayed valid until it expired on its own. `passwordChangedAt` is stamped on reset and any JWT issued before it is refused.
+
+That was verified against `@auth/core` twice rather than assumed: returning `null` from the jwt callback really does push `sessionStore.clean()` and drop the cookie, and the `iat` comparison still works despite Auth.js re-issuing the token on every session read, because the callback runs *before* that re-encode. The units are the trap — `iat` is seconds, `Date` is milliseconds, and comparing them directly signs out every user on the platform. That is why it is a named function with its own assertion.
+
+**A reset burned only the link that was used.** An attacker's outstanding link survived, so securing the account left the back door open for the rest of the hour. All of an account's unused links are now burned together.
+
+## 15. Brute force, and the cron gate
+
+**No auth endpoint had any rate limiting.** Login, signup and password-reset requests could be hammered at whatever rate a script managed.
+
+Two limits, because they stop different attacks: per-identifier is tight and catches a password list against one address; per-source is looser (offices share an IP) and catches one common password sprayed across many addresses, which never trips a per-identifier limit at all. Either alone leaves the other untouched.
+
+Both refusals return the *same* response as an ordinary failure — a distinct "too many attempts" would confirm the address exists. The reset endpoint counts attempts whether or not the email matches a real account, because counting only real ones makes the limit itself an oracle.
+
+A database table, not an in-memory counter: this is serverless, so a Map resets on every cold start and is not shared between instances — it would look like protection and provide none. What is stored is a **hash**; a table full of plaintext emails typed by attackers, belonging to real people who never signed up here, would be a liability created in the name of security.
+
+**The cron gate failed open.** It compared the header against a template string that becomes the literal `"Bearer undefined"` when `CRON_SECRET` is unset — behind which sits `runDueSyncs`, the scheduler's cross-tenant execution bypass. The secret is set in production so this was latent, but "the environment happens to be configured correctly" is not an access control.
+
+## 16. Authorization — audited, and mostly sound
+
+Every id-taking export in every `"use server"` module was checked. **One trusted its caller:** `confirmStoreDraftCore(userId)` was written as an internal helper, but every exported async function in a `"use server"` file is a callable endpoint — so it was "name any account, and their draft becomes a published Store and the draft is deleted". All four call sites already passed the signed-in user's own id.
+
+The rest held up, and that is worth recording so it is not re-checked from scratch:
+
+- `toggleProductActive` / `deleteProduct` / `toggleOrderFulfilled` look unguarded — bare resource id, unscoped lookup — but they pass the **resource's** storeId into `execute()`, which runs `requireStorePermission` against exactly that store. A caller naming another tenant's product fails on their own missing role.
+- The product-image executables scope every query by `ctx.storeId`.
+- The chat uploads guard inside their turn functions, not at the exported wrapper.
+- `lib/dashboard/pendingApprovals.ts` takes a raw `storeId` and looked alarming until checked: it is not a server-action module at all.
+
+## 17. False success states
+
+The standing rule: Genesis never tells anyone something happened unless it did.
+
+**Buying a shipping label said nothing about whether the customer was told.** "Bought a USPS label — tracking 9400…" was the whole message. On every store today the buyer had heard nothing, because email is unconfigured. The owner would read that as done; the customer would be waiting. It now says plainly that they were not emailed and that the owner needs to send the tracking number themselves.
+
+**Four PayPal exits dropped the buyer on the shop's front page with no message.** Missing credentials, a failed capture, a failed re-fetch of an already-captured order, and a custom_id mismatch. Two of those happen *after* PayPal has taken the money — and silence is the worst false state, because the comfortable assumption is "it failed, I'll try again", and they would pay twice. There are exactly two honest things to say and now exactly two notices, with the money-moved one asserted hard: retrying is not safe, and the words say so rather than relying on a missing button. Both money-moved paths also write a FAILED `ExecutionLog` so the owner sees a real captured payment that produced no order.
+
+**Checked and found honest** (recorded so they are not re-audited): the newsletter signup says "you're on the list", which is exactly what happened and claims nothing about sending; `?payment_pending=1` renders a real banner with a reference; the forgot-password success copy is only reachable when email is actually configured, and a send failure becomes an error rather than a success; "Order marked as fulfilled" claims only the state change; Stripe's webhook is idempotent inside a transaction and both webhook routes verify signatures.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -373,6 +429,14 @@ scripts/verify-mailchimp-auth.ts          OAuth conversion without breaking exis
 scripts/verify-rate-limit.ts              Retry-After, jitter, what is and is not retried
 scripts/verify-sync-backoff.ts            deferral vs failure, and the caps on both
 scripts/verify-provider-error.ts          what a failed provider call may say
+scripts/verify-password-policy.ts         password rules, and evicting a reset session
+scripts/verify-auth-throttle.ts           brute-force buckets, and the cron gate
+scripts/verify-checkout-outcome.ts        what a buyer is told when checkout breaks
+scripts/verify-shipped-notification.ts    whether the customer was actually emailed
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
+
+Both migrations added during this audit — `passwordChangedAt` and `AuthAttempt` —
+were confirmed applied in production by reading `_prisma_migrations` directly,
+not inferred from a green build.
