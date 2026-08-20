@@ -47,6 +47,10 @@ be asserted.
 | I8 | **A product may fit a business eventually without fitting it today.** The model must be able to express that, and must not hide such a product. |
 | I9 | **Every outcome carries its reasoning** — why recommended, why rejected, why deferred — in the owner's own terms. |
 | I10 | **Fit is evaluated before feasibility.** A product that does not belong is `not_a_fit` however affordable it is. Telling an owner they can afford the wrong thing is worse than saying nothing. |
+| I11 | **Unknown is never converted into zero, even when zero is the safe way to behave.** The system may *act* as though capital is zero while the owner has said nothing, but it must never *record* that as a stated zero. Three states stay distinguishable forever: unstated, explicitly zero, explicitly greater than zero. Collapsing the first two destroys the only signal that says "worth asking about". |
+| I12 | **Evidence and policy are separate.** Evidence is what happened. Policy is how Genesis reads it. A threshold change must never require touching the code that gathers evidence, and must never rewrite what was recorded. |
+| I13 | **Currency belongs to the business.** Every money value is in `Store.currency`. No progression function assumes a currency, and none compares or sums across two. One currency per business in P0.5; the assumption is named and local rather than global and buried. |
+| I14 | **Units are units, not orders.** Progression evidence counts real quantity. An order for 100 units and an order for one are not the same evidence. |
 
 ---
 
@@ -108,20 +112,48 @@ it themselves.
 ```prisma
 model Store {
   // ...
-  /// What the owner has said they can invest, in cents. NEVER inferred (I1).
+  /// The business's own currency. Every money value on this business — costs,
+  /// margins, capital, supplier minimums — is in it. One per business (I13).
+  currency               String    @default("USD")
+  /// What the owner has said they can invest, in the business's currency.
+  /// NEVER inferred (I1). NULL means UNSTATED, not zero (I11).
   investableCapitalCents Int?
-  /// When they said it. NULL here means UNSTATED, which is different from
-  /// stating zero: unstated may be asked about, zero must not be asked again.
+  /// When they said it. Together with the column above this is what keeps
+  /// three states apart — see the resolution rule below.
   capitalStatedAt        DateTime?
-  /// Capabilities the owner has confirmed. Absent = unknown = treated as false
-  /// for feasibility, and worth asking about.
+  /// Capabilities the owner has confirmed. Absent = unknown, not false.
   ownerCapabilities      String[]  @default([])
 }
 ```
 
-**Resolution rule.** `availableCapitalCents = investableCapitalCents ?? 0`. An
-owner who has said nothing gets recommendations that need nothing. This is the
-zero-capital path, and it is the default rather than a fallback.
+**Three states, and they must never collapse (I11).**
+
+| State | Columns | Genesis acts as if | Worth asking? |
+|---|---|---|---|
+| **Unstated** | both `NULL` | capital is zero | **Yes** |
+| **Explicitly zero** | `0`, with a `statedAt` | capital is zero | No — they said so |
+| **Explicitly positive** | `> 0`, with a `statedAt` | that amount | No |
+
+The first two behave identically and are **not** the same fact. Collapsing them
+destroys the only signal that says *worth asking about*, and asking someone who
+already told you nothing is how a partner starts sounding like a form.
+
+So the resolution is a discriminated value, not a number:
+
+```ts
+export type CapitalPosture =
+  | { state: "unstated"; actAsIfCents: 0 }
+  | { state: "stated"; investableCents: number; statedAt: Date };
+
+/** What feasibility may spend. Identical for the first two states, by design. */
+export function spendableCents(posture: CapitalPosture): number {
+  return posture.state === "stated" ? posture.investableCents : 0;
+}
+```
+
+Every outcome that was limited by capital records **which state it came from**,
+so J4 can say *"I'm assuming you don't want to put money in — tell me if that's
+wrong"* to one owner and not to the other.
 
 ### C. Supplier economics — database, on `SourcedProduct`
 
@@ -139,50 +171,101 @@ model SourcedProduct {
 }
 ```
 
-### D. Product readiness — derived, never stored (I4, I5)
+### D. Product evidence — derived, never stored (I4, I5, I12)
 
-Computed on demand from that business's real orders.
+**Evidence is what happened. It contains no judgement and no thresholds.**
+Renamed from "readiness" deliberately: readiness is a conclusion, and this type
+holds none.
 
 ```ts
-export interface ProductReadiness {
+export interface ProductEvidence {
   productId: string;
-  unitsSold: number;          // paid, non-refunded orders
+  currency: string;           // the business's, carried so no caller assumes
+  unitsSold: number;          // SUM of quantity over paid orders (see G)
   refundedUnits: number;
+  orderCount: number;         // distinct orders — kept, and not the same number
+  firstSoldAt: Date | null;
   windowDays: number;         // first sale to now, min 1
-  unitsPerWeek: number;       // unitsSold / (windowDays / 7)
+  unitsPerWeek: number;
   netRevenueCents: number;    // excludes refunded (matches §40)
-  netMarginCents: number;     // netRevenue - (unitCost * units) - shippingCost
-  returnRate: number;         // refundedUnits / (unitsSold + refundedUnits)
-  /** Methods this product's evidence would justify. Never a promise it is affordable. */
-  earnedRungs: number[];
+  /** NULL where product cost is unknown. Never zero (I2). */
+  netMarginCents: number | null;
+  returnRate: number;
 }
 ```
 
-**Derivation** — every input is an existing column:
+`orderCount` and `unitsSold` are both kept and are genuinely different questions:
+*how many people bought this* and *how many did they take*. A progression
+decision needs the second; a demand signal often wants the first.
 
-- `unitsSold` = `Order` rows for this `productId` with `status = "paid"`.
-  One order is one unit; there is no quantity column, and inventing one is out
-  of scope.
-- `refundedUnits` = same, `status = "refunded"`.
-- `netMarginCents` = `sum(amountInCents)` over paid orders, minus
+**Derivation** — every input is a column, and `Order.quantity` is new (see G):
+
+- `unitsSold` = `SUM(quantity)` over `Order` rows for this `productId` with
+  `status = "paid"`.
+- `orderCount` = `COUNT(*)` over the same rows.
+- `refundedUnits` = `SUM(quantity)` where `status = "refunded"`.
+- `netMarginCents` = `SUM(amountInCents)` over paid orders, minus
   `Product.costInCents * unitsSold` where cost is known, minus
-  `sum(shippingCostInCents)`. **Where `costInCents` is null, margin is `null`,
+  `SUM(shippingCostInCents)`. **Where `costInCents` is null, margin is `null`,
   not zero** (I2).
 
-**Earned-rung thresholds** — deterministic, and stated so they can be argued
-with rather than discovered:
+Every figure is in `Store.currency`, and the type carries it so no downstream
+caller has to assume (I13).
 
-| Rung | Earned when |
-|---|---|
-| 1 — stocked | `unitsSold >= 20` AND `windowDays >= 28` AND `returnRate <= 0.10` AND `netMarginCents` is known and positive |
-| 2 — private label | rung 1 AND `unitsSold >= 100` AND `windowDays >= 84` |
-| 3 — own production | rung 2 AND `unitsSold >= 500` AND `windowDays >= 168` |
+### E. Progression policy — versioned, separate from evidence (I12)
+
+**Evidence is what happened. Policy is how Genesis reads it.** They are separate
+because they change for entirely different reasons: evidence changes when a
+customer buys something, policy changes when we learn our thresholds were wrong.
+
+Policy lives in `lib/sourcing/progressionPolicy.ts` as a versioned constant.
+Not a database table — it is platform judgement, identical for every business,
+and a per-business row would be a per-business fork nobody asked for.
+
+```ts
+export interface RungPolicy {
+  rung: 1 | 2 | 3;
+  minUnitsSold: number;
+  minWindowDays: number;
+  maxReturnRate: number;
+  /** Margin must be KNOWN and above this. Never satisfied by an unknown (I2). */
+  minNetMarginCents: number;
+}
+
+export interface ProgressionPolicy {
+  /** Bumped whenever any threshold changes. Recorded on every decision. */
+  version: string;             // e.g. "2026-08-20.1"
+  rungs: RungPolicy[];
+}
+```
+
+The initial policy — **approved as the starting point, not as domain truth**:
+
+| Rung | minUnits | minDays | maxReturnRate | minMargin |
+|---|---|---|---|---|
+| 1 — stocked | 20 | 28 | 0.10 | > 0 |
+| 2 — private label | 100 | 84 | 0.10 | > 0 |
+| 3 — own production | 500 | 168 | 0.10 | > 0 |
 
 Time floors matter as much as volume: 20 units in three days is a spike, not a
 pattern, and buying a case on it is exactly the mistake this system exists to
 prevent.
 
-### E. Business stage — derived, never stored (I5)
+**The rules that make this a real separation, not a naming convention:**
+
+1. `productEvidence()` **never imports the policy.** It cannot; nothing in it
+   takes a threshold.
+2. Applying policy is its own pure function:
+   ```ts
+   earnedRungs(evidence: ProductEvidence, policy: ProgressionPolicy): number[]
+   ```
+3. **Every stored decision records `policyVersion`.** A threshold change does not
+   rewrite history — it means later decisions were made under a different policy,
+   and the record says which.
+4. Changing a threshold is a one-line edit to the constant plus a version bump.
+   Nothing that gathers evidence is touched, and no stored row changes.
+
+### F. Business stage — derived, never stored (I5)
 
 ```ts
 export type BusinessStage = "exploring" | "selling" | "proven" | "committing";
@@ -191,14 +274,15 @@ export type BusinessStage = "exploring" | "selling" | "proven" | "committing";
 | Stage | Derived when |
 |---|---|
 | `exploring` | no paid orders in this business |
-| `selling` | at least one paid order, no product has earned rung 1 |
+| `selling` | at least one paid order, no product has earned rung 1 under current policy |
 | `proven` | at least one product has earned rung 1 |
 | `committing` | at least one product is *sourced at* rung ≥ 1 |
 
 Stage describes what is on the table. It never gates a specific product on its
-own — that is readiness (I4).
+own — that is evidence (I4). Stage is a *reading of evidence under policy*, so it
+moves when either changes, which is correct and is why it is never stored.
 
-### F. `ProgressionDecision` — database, new
+### G. `ProgressionDecision` — database, new
 
 A graduation is derived, but the owner's answer to one must persist, or it is
 offered again next week.
@@ -211,9 +295,13 @@ model ProgressionDecision {
   /// The rung that was offered.
   toKind     ProductSourceKind
   decision   ProgressionDecisionKind  // ACCEPTED | DECLINED
-  /// The evidence as it stood, so "has it materially changed" is answerable
-  /// without re-deriving history. Json for the same reason recommendation is.
-  evidence   Json
+  /// Which policy version produced the offer (I12). A later threshold change
+  /// does not rewrite this; it means the next offer was judged differently.
+  policyVersion String
+  /// The CONDITIONS as they stood — not just the evidence. This is what
+  /// "has anything material changed" is answered against. Json for the same
+  /// reason recommendation is: the set of conditions will grow.
+  conditions Json                     // ProgressionConditions
   decidedAt  DateTime @default(now())
 
   store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -225,11 +313,66 @@ model ProgressionDecision {
 enum ProgressionDecisionKind { ACCEPTED  DECLINED }
 ```
 
-**Re-offer rule.** A `DECLINED` graduation is not offered again until
-`unitsSold` has grown by **at least 50%** over the units recorded in `evidence`.
-Anything less is the same suggestion in a new hat.
+### H. Reconsideration — material change, never a percentage
 
----
+**A declined product becomes eligible again when a material condition changes,
+not when an arbitrary counter is crossed.** An owner who said no to a £1,400
+commitment has not changed their mind because units went from 40 to 60. They may
+well have changed it because the supplier dropped the minimum to 50.
+
+The snapshot is therefore of *conditions*, and each has a rule for what counts as
+material:
+
+```ts
+export interface ProgressionConditions {
+  capitalState: "unstated" | "stated";
+  spendableCents: number;
+  ownerCapabilities: OwnerCapability[];
+  minimumOrderUnits: number | null;
+  bulkUnitCostInCents: number | null;
+  unitsSold: number;
+  unitsPerWeek: number;
+  netMarginCents: number | null;
+  sourceAvailable: boolean;      // the supplier is still connectable
+  currency: string;
+}
+
+export type ReconsiderationReason =
+  | "capital_increased"
+  | "capital_first_stated"
+  | "capability_gained"
+  | "minimum_order_lowered"
+  | "supplier_price_dropped"
+  | "margin_improved"
+  | "demand_grew"
+  | "source_became_available"
+  | "policy_changed";
+```
+
+| Condition | Material when |
+|---|---|
+| `spendableCents` | rises **at or above** the upfront cost that blocked it — the change that turns *no* into *yes*, not any increase |
+| `capitalState` | moves `unstated` → `stated`, in either direction of amount. The owner has now told us something |
+| `ownerCapabilities` | a capability the offer required is gained |
+| `minimumOrderUnits` | falls, or becomes known having been unknown |
+| `bulkUnitCostInCents` | falls, or becomes known having been unknown |
+| `netMarginCents` | becomes known having been unknown, or rises enough to change payback by a week or more |
+| `unitsPerWeek` | rises enough to change payback by a week or more |
+| `sourceAvailable` | `false` → `true` |
+| `policyVersion` | differs from the current policy (I12) |
+
+**Demand is deliberately expressed as payback, not as units.** "You've sold 50%
+more" is a fact about a number; "this now pays for itself in four weeks instead
+of nine" is a fact about the decision the owner declined. Only the second is a
+reason to ask again.
+
+**The reason is recorded and shown** (I9). J4 does not re-raise a product; it
+says *why* it is raising it again:
+
+> *"You said no to the case of foam rollers in June. The supplier has dropped
+> its minimum from 200 to 50, so it's £340 now rather than £1,400."*
+
+An offer with no material change is **not** re-raised, however much time passes.
 
 ## Decision boundaries
 
@@ -240,13 +383,19 @@ architecture; collapsing any two of them is how this becomes a catalog again.
 // pure — the economics of a method
 methodProfile(kind: ProductSourceKind): SourcingMethodProfile
 
-// database read — what the owner has stated. Never inferred (I1).
+// pure — platform judgement, versioned (I12)
+currentPolicy(): ProgressionPolicy
+
+// database read — three states, never collapsed (I1, I11)
 capitalPosture(storeId: string): Promise<CapitalPosture>
 
-// derived from real orders (I6)
-productReadiness(storeId: string, productId: string): Promise<ProductReadiness>
+// derived from real orders. Contains NO thresholds (I6, I12, I14)
+productEvidence(storeId: string, productId: string): Promise<ProductEvidence>
 
-// derived from readiness + orders (I5)
+// pure — policy applied to evidence, and the only place thresholds appear
+earnedRungs(evidence: ProductEvidence, policy: ProgressionPolicy): number[]
+
+// derived from evidence + policy + what is already sourced (I5)
 businessStage(storeId: string): Promise<BusinessStage>
 
 // pure — CAN this business do this, today?
@@ -254,7 +403,8 @@ assessFeasibility(input: {
   profile: SourcingMethodProfile;
   posture: CapitalPosture;
   supplier: { minimumOrderUnits: number | null; bulkUnitCostInCents: number | null };
-  readiness: ProductReadiness | null;   // null for a candidate never sold
+  evidence: ProductEvidence | null;   // null for a candidate never sold
+  currency: string;
 }): Feasibility
 
 // pure — DOES this belong here? Already built, unchanged.
@@ -272,25 +422,36 @@ export type Feasibility =
   | { kind: "cannot_assess"; missing: ("minimum_order" | "bulk_price" | "product_cost")[] }
   | {
       kind: "not_yet";
+      currency: string;
       upfrontCents: number;
-      shortfallCents: number;          // upfront - availableCapital
+      shortfallCents: number;
+      /** WHICH capital state produced the shortfall (I11). Decides whether J4
+       *  should ask, and it must never be lost between here and the owner. */
+      capitalBasis: "stated" | "assumed_because_unstated";
       missingCapabilities: OwnerCapability[];
-      /** Only when readiness exists and margin is known. */
+      /** Null whenever any input is unknown (I2). Never an estimate. */
       paybackWeeks: number | null;
       unitsToGo: number | null;
     };
 ```
 
-`paybackWeeks` = `upfrontCents / (marginPerUnitAtBulk * unitsPerWeek)`, and is
+`paybackWeeks` = `upfrontCents / (marginPerUnitAtBulk × unitsPerWeek)`, and is
 `null` whenever any input is unknown (I2). **A payback figure is never an
 estimate**: it is the number an owner would spend money on.
+
+`capitalBasis` is the difference between two sentences J4 must not confuse:
+
+- `stated` → *"That's £1,400 and you told me you have £300 to put in."*
+- `assumed_because_unstated` → *"That's £1,400. I'm working on the assumption you
+  don't want to put money in — tell me if that's wrong."*
 
 ### `Outcome`
 
 ```ts
 export type Outcome =
   | { kind: "recommended_now"; reasons: string[] }
-  | { kind: "not_yet"; reasons: string[]; blockers: string[]; plan: string }
+  | { kind: "not_yet"; reasons: string[]; blockers: string[]; plan: string;
+      capitalBasis: "stated" | "assumed_because_unstated" }
   | { kind: "not_a_fit"; concerns: string[] }
   | { kind: "cannot_assess"; missing: string[] };
 ```
@@ -304,10 +465,8 @@ export type Outcome =
 4. feasibility `not_yet` → `not_yet`, carrying the fit reasons **and** the plan.
 5. otherwise → `recommended_now`.
 
-Step 4 is the invariant I8 made concrete: a product that fits and is not
-affordable is **shown**, with what would change it, not hidden.
-
----
+Step 4 is invariant I8 made concrete: a product that fits and is not affordable is
+**shown**, with what would change it, not hidden.
 
 ## Graduations
 
@@ -317,11 +476,13 @@ findGraduationOpportunities(storeId: string): Promise<GraduationOpportunity[]>
 
 For every product the business sells:
 
-1. Compute `productReadiness`.
-2. For each rung above the product's current `sourceKind`, in order, take the
-   highest rung it has earned.
-3. Skip if a `ProgressionDecision` declined it and the re-offer rule is not met.
-4. Assess feasibility for that rung.
+1. Compute `productEvidence` — facts only, no thresholds.
+2. Apply `earnedRungs(evidence, currentPolicy())` and take the highest rung above
+   the product's current `sourceKind`.
+3. If a `ProgressionDecision` declined it, compare today's conditions against the
+   recorded snapshot. **Skip unless a material condition has changed**; where one
+   has, carry its `ReconsiderationReason` through to the outcome (I9).
+4. Assess feasibility for that rung, in the business's currency.
 5. Emit the outcome. A graduation that is `not_yet` is **still emitted** — it is
    the most motivating thing in the system, and hiding it would be the mistake.
 
@@ -333,18 +494,41 @@ learn two vocabularies for "here is something worth doing".
 
 ## Schema changes
 
-Additive only. No existing row changes meaning; no backfill.
+Additive only. No existing row changes meaning; no backfill that alters a fact.
 
 1. `ProductSourceKind` gains `PRIVATE_LABEL` (rung 2) and `CONTRACT_MANUFACTURED`
    (rung 3). Postgres enums only append, so this is safe.
-2. `Store` gains `investableCapitalCents`, `capitalStatedAt`, `ownerCapabilities`.
+2. `Store` gains `currency` (default `"USD"`), `investableCapitalCents`,
+   `capitalStatedAt`, `ownerCapabilities`.
 3. `SourcedProduct` gains `minimumOrderUnits`, `bulkUnitCostInCents`,
    `leadTimeDays`.
-4. New `ProgressionDecision` + `ProgressionDecisionKind`.
+4. `Order` gains **`quantity Int @default(1)`** — see below.
+5. New `ProgressionDecision` + `ProgressionDecisionKind`.
 
-**No column stores business stage or product readiness** (I5).
+**No column stores business stage, product evidence, or earned rungs** (I5, I12).
 
----
+### Order quantity — the minimum that keeps evidence truthful (I14)
+
+`unitsSold` must not permanently mean *number of orders*. A single order for 100
+units is not the same evidence as 100 orders for one, and a progression decision
+built on the wrong one would tell an owner to buy a case on the strength of one
+bulk sale.
+
+**What is added:** one column, `Order.quantity Int @default(1)`.
+
+- **The default is truthful for every existing row.** Every order Genesis has
+  ever written came from a checkout that sells one product with no quantity
+  control, so each is genuinely one unit. This is a backfill that records what
+  was already true, not one that invents a value (I2).
+- `amountInCents` remains the **order total**. Per-unit revenue is
+  `amountInCents / quantity`, computed where needed and never stored twice.
+- The Stripe and PayPal capture paths write `quantity` from the line item where
+  the provider states one, and `1` where it does not — which is the current
+  behaviour of both, made explicit.
+
+**What is deliberately NOT added:** a line-item model, cart support, inventory
+counts, or per-unit price history. One order still concerns one product. This is
+the smallest change that stops the evidence lying, and nothing more.
 
 ## Architecture vs interface
 
@@ -356,48 +540,70 @@ still have to be true?*
 | Method profiles, capital posture, readiness, stage | How groups are labelled and ordered |
 | Feasibility and the four outcomes | Which reasons are shown, and how many |
 | Graduation evidence and thresholds | Whether a graduation is a card, a message, or a moment |
-| The re-offer rule | Whether declined items are collapsed or hidden |
+| Material-change reconsideration, and its reasons | Whether declined items are collapsed or hidden |
 
 ---
 
 ## Minimum P0.5 implementation boundary
 
-**In:**
+Eight units of work, each independently verifiable. Nothing here renders a screen.
 
-1. `methodProfile()` with the fixed table above, and the two new enum values.
-2. Capital posture columns + `capitalPosture()`, defaulting to zero.
-3. Supplier economics columns on `SourcedProduct`, populated where a source
-   states them and left null where it does not.
-4. `productReadiness()` and `businessStage()`, derived from real orders.
-5. `assessFeasibility()` and `decide()` — the four outcomes.
-6. `findGraduationOpportunities()` + `ProgressionDecision` and the re-offer rule.
-7. Verification: pure suites for every derivation and threshold; a real-Postgres
-   suite for readiness, stage, graduations and per-business isolation, including
-   **two businesses on one account at different stages**.
+| # | What | Verified by |
+|---|---|---|
+| 1 | `methodProfile()` + the two new enum values (`PRIVATE_LABEL`, `CONTRACT_MANUFACTURED`) | pure: every kind has a profile; rung ordering; `carriesOwnBranding` true only for kinds that genuinely customise |
+| 2 | `Store.currency`; every money type carries it | pure + real Postgres: no function assumes a currency; two businesses on one account may differ |
+| 3 | Capital posture columns + `capitalPosture()` returning the **three-state** value | pure: unstated and explicit-zero behave identically and remain distinguishable (I11); real Postgres for the round trip |
+| 4 | `Order.quantity` + backfill to 1; capture paths write real quantity | real Postgres: one order of 100 units is not 100 orders of one (I14); existing rows unchanged in meaning |
+| 5 | `productEvidence()` — no thresholds anywhere in it | real Postgres: units, refunds, window, margin; **margin `null` where cost is unknown**, never zero |
+| 6 | `progressionPolicy` constant + `earnedRungs()` + `businessStage()` | pure: thresholds are read from policy only; changing the constant changes outcomes and touches nothing else (I12) |
+| 7 | `assessFeasibility()` + `decide()` — the four outcomes, in the normative order | pure: fit-before-feasibility (I10); `not_yet` carries a real plan; `capitalBasis` survives to the outcome |
+| 8 | `findGraduationOpportunities()`, `ProgressionDecision`, and reconsideration by **material change** | real Postgres: a decline is remembered; an unchanged condition never re-raises; each material change re-raises **with its reason** (I9) |
+
+Plus one adversarial suite over the whole thing: **two businesses on one account
+at different stages**, proving evidence, policy application, stage, capital
+posture, decisions and graduations are all per-business (I7).
 
 **Out, deliberately:**
 
 - **Any private-label or manufacturing connector.** The rung exists in the model
-  before a supplier for it does — the reverse is how a supplier's shape dictates
-  the architecture.
+  before a supplier for it does — the reverse is how a supplier's shape ends up
+  dictating the architecture.
 - **Inventory tracking and reordering.** A stocked product's remaining units are
-  not modelled. `WHOLESALE_STOCKED` is honest about the shape without pretending
-  to track quantity, exactly as it does today.
-- **Order quantity.** One order is one unit. Real quantity is its own change and
-  affects far more than this.
+  not modelled. `WHOLESALE_STOCKED` stays honest about the shape without
+  pretending to count.
+- **Line items and carts.** `Order.quantity` is the smallest change that stops
+  the evidence lying. One order still concerns one product.
+- **Multi-currency within one business.** `Store.currency` makes the assumption
+  explicit and local, so lifting it later is a contained change rather than an
+  excavation.
 - **The customer-facing catalog screen.** Waiting on approval of the discovery
   UX proposal.
 - **Asking the owner for capital.** The columns exist and are read; the
-  conversation that fills them is interface work.
+  conversation that fills them is interface work — though the three-state posture
+  is precisely what makes that conversation possible to write later.
 
 ---
 
-## Open questions for Sean
+## Decisions taken, and what is still open
 
-1. **Thresholds.** 20 units / 28 days for rung 1 is a judgement, not a
-   derivation. It is deliberately conservative — the cost of being early is an
-   owner spending money they should not have.
-2. **The 50% re-offer rule** is the same kind of judgement.
-3. **Currency.** Every figure is in one currency per business today. Multi-
-   currency sourcing is not modelled and would touch margin arithmetic
-   everywhere.
+**Decided 2026-08-20, and folded in above:**
+
+| | |
+|---|---|
+| Thresholds | Kept as the **initial policy**, versioned and configurable, never hardcoded as domain truth. Evidence and policy are now separate types with separate functions (I12) |
+| Re-offering | The fixed 50% rule is **gone**. Reconsideration is triggered by a **material change** in a named condition, and the reason is recorded so J4 can explain it (I9) |
+| Currency | Modelled on the business. One per business in P0.5, named and local rather than global and assumed (I13) |
+| Order quantity | `Order.quantity` added. Evidence counts units, not orders (I14). No line items, no carts, no inventory |
+| Unknown vs zero | New invariant I11. The system may *act* as though capital is zero; it must never *record* an unstated posture as a stated one |
+
+**Still open, and genuinely judgement rather than derivation:**
+
+1. **The initial threshold values.** 20/28 for rung 1 is deliberately
+   conservative — the cost of being early is an owner spending money they should
+   not have. Now cheap to change: one constant, one version bump.
+2. **What counts as "enough to change payback by a week"** in the material-change
+   table. A week is a guess at the granularity an owner would notice.
+3. **Where `Order.quantity` comes from for PayPal.** Stripe line items state a
+   quantity; PayPal's capture response is per purchase unit and this codebase
+   creates one order per product. Writing `1` is correct for what the checkout
+   actually sells today, and the moment a cart exists this needs revisiting.
