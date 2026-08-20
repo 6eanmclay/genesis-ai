@@ -31,15 +31,13 @@ Vercel, not assumed:
 | `SQUARE_CLIENT_ID` / `_SECRET` | the Square connector cannot be built | register a Square application |
 | `ALIEXPRESS_APP_KEY` / `_SECRET` | AliExpress cannot be searched for products; the source is registered and refuses rather than showing invented ones (§45) | register an AliExpress Open Platform app |
 
-**A second decision: how does an account hold more than one business?** The
-domain is already store-scoped throughout — identity, catalogue, connections,
-points, plan and J4's understanding all key on the business, not the account
-(§48). What does not exist is any notion of *which business am I in*:
-`resolveUserStore` picks the most recently updated one and 28 of 29 protected
-call sites rely on it, so a second business would silently become "the" business
-the moment anything touched it. Latent today — all 16 production accounts hold
-exactly one. Proposed rather than built, because it touches routing, sessions,
-navigation and onboarding at once.
+**Multi-business context — resolved, with one step left.** *Which business am I
+in* is now an explicit, stored fact rather than a recency guess (§49), and the
+domain was already store-scoped throughout (§48). What remains is putting the
+business in the URL so a link can address one and two tabs can hold two: a route
+migration across 28 screens, plus lifting `StoreDraft.userId`'s unique constraint
+so an account can create a second business while a first is still in onboarding.
+Not blocking correctness today; blocking the switcher.
 
 **A decision, not a credential: should the migration gate come back?**
 `20260820060000_product_sourcing` is **already applied to production** — not by
@@ -1976,6 +1974,149 @@ the wrong business's products.
 
 ---
 
+## 49. Which business am I in
+
+*Business context made a first-class concept. Not a patch to the old resolver —
+the old resolver was a heuristic doing an architecture's job, and the fix is the
+architecture.*
+
+### The audit
+
+Forty-seven call sites resolved "the" business implicitly: 28 server actions and
+route handlers through `requireStorePermission()` with no id, and 19 more calling
+`resolveUserStore` directly. Every one of them got **whichever store had been
+updated most recently.**
+
+So a second business never had to be chosen to become the active one. It only had
+to be *touched*. Sorted by what it would have cost:
+
+| Surface | What attaches to the wrong business |
+|---|---|
+| **Billing** | `subscribeToPlan` — a real subscription, charged against whichever business was written to last |
+| **Growth Points** | `purchaseGrowthPoints` — real money, credited to the wrong balance. Points are per business |
+| **Connections** | `disconnectIntegration` — a supplier disconnected from a business nobody chose |
+| **Products / Orders** | writes land in the wrong catalogue and the wrong order list |
+| **J4 understanding** | the chat, the voice route and the recent-messages route all resolve this way — J4 would be reasoning about a business the person is not looking at |
+| **Uploads** | product images and business assets attach to the wrong business |
+| **Analytics / recommendations** | read the wrong business's numbers and advise on them |
+
+Latent, not live: read from production, **all 16 accounts hold exactly one
+business.** Nobody has been affected. The first account to hold two is the one
+that would find out, and it would find out by being charged.
+
+### The rule
+
+> **Authorization context must be explicit. A navigation default may be
+> remembered. Recency is never either.**
+
+Those are different things, and collapsing them is what caused this. *Where
+should I send someone who just opened the app* is allowed to be a remembered
+preference. *Which business does this write belong to* is not allowed to be a
+preference at all — it is stated, or unambiguous, or the question gets asked.
+
+`lib/businessContext.ts` has three outcomes and no fourth:
+
+- **resolved** — stated explicitly, or the account has exactly one, or the person
+  deliberately switched to it
+- **ambiguous** — more than one and nothing says which. **Not a guess.** Callers
+  ask
+- **none** — no business yet, an ordinary state for a new account
+
+`Store.updatedAt` appears nowhere in the file. That is the point.
+
+### Authorization boundaries
+
+One definition of reach, and everything derives from it: **owner or member.**
+`accessibleBusinesses` and `accessTo` are the only places that decide, so
+ownership and membership can never drift apart in one call site and not another.
+
+Two properties that are easy to get wrong and are asserted:
+
+- **A named business the account cannot reach is refused, never substituted.**
+  Succeeding with a different business than the one asked for by id is worse than
+  failing, because it succeeds.
+- **An owner who is also a member of their own business is still an owner.**
+  Taking the lower role would quietly demote them.
+
+### Migration strategy
+
+`20260820070000_active_business` is additive plus one deterministic backfill.
+
+Every account owning **exactly one** business gets it as its active one — not a
+guess, the only answer, and the same answer the old lookup was already giving.
+Employees belonging to exactly one, likewise. An account with **more than one is
+left NULL on purpose**: there is no correct answer, and inventing one in a
+migration would be the exact recency guess this change exists to remove.
+
+Both statements only touch `NULL`s, so re-running never overwrites a real choice.
+
+The backfill was not reasoned about — it was **run against real rows** covering
+all four account shapes (one business, two businesses, employee-only, empty) and
+asserted, including that a re-run is a no-op.
+
+### Keeping the ambiguous branch unreachable
+
+Handling ambiguity is not the same as avoiding it. Business creation now calls
+`adoptNewBusiness`, so an account making its second business is *working in it*
+rather than landing in a state where nothing can proceed. Ambiguity is reachable
+only if a business is created outside that path — and then it fails closed.
+
+`resolveUserStore` survives as a thin adapter for its 19 callers and returns
+`null` on ambiguity. **Failing closed, not picking**, is the property that
+matters for the sites not yet migrated.
+
+### A guard that was right, and a map that was incomplete
+
+`accessibleBusinesses` needs `StoreMember.findMany({ where: { userId } })`, and
+the tenant-isolation guard refused it — correctly, on its own terms: an unscoped
+`findMany` on `StoreMember` does leak other tenants' rows.
+
+What was wrong was the map, not the rule. `userId` is a required column, so
+filtering by it bounds the read to one person's own membership rows and leaks
+nothing — the same dual-key shape `productEvent` and `aiUsageEvent` already carry,
+and for the same reason. Added, with a test asserting that **widening the map did
+not widen the rule**: every bypass closed for `storeId` (negation, `notIn`, bare
+presence, an OR with one unscoped branch) is still closed for `userId`.
+
+Working around the guard with the unguarded client would have been faster and
+would have removed a real protection to avoid a five-line change.
+
+### Proven
+
+`scripts/verify-business-context-live.ts` — real Postgres, ten sections:
+
+| | |
+|---|---|
+| A business never becomes active by being touched — edited, published, product added | PASS (was: silently switched) |
+| More than one with nothing chosen is a question, not a pick | PASS (was: picked) |
+| Switching is explicit, durable, and symmetrical | PASS |
+| Creating a business makes it the active one | PASS |
+| A named business wins; one you cannot reach is refused, not substituted | PASS |
+| Employees reach only what they belong to; an owner-member is still an owner | PASS |
+| A deleted business clears the pointer; a revoked membership does not dangle | PASS |
+| Products, orders, connections and Growth Points all follow the active business | PASS |
+| The permission layer refuses rather than picking | PASS |
+| The migration's backfill, run against all four account shapes | PASS |
+
+And `verify-regressions.ts` §11 reproduces it against the pre-fix implementation:
+the old resolver returns the touched business, the new one does not.
+
+### Remaining architectural risk
+
+**The 47 call sites still resolve implicitly.** They are now *safe* — explicit
+where a pointer exists, unambiguous where there is one business, refusing
+otherwise — but "which business" is still an ambient fact rather than something
+each call site names. The URL carries no business, so two tabs on two businesses
+are impossible and a link cannot address one.
+
+That is the next step, and it is deliberately not taken here: a route migration
+across 28 screens plus a real onboarding change (`StoreDraft.userId` is unique,
+so an account can only have one business *being created* at a time). None of it
+is required for correctness today; all of it is required before a business
+switcher is worth building.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2017,6 +2158,7 @@ scripts/verify-paypal-webhook-lifecycle.ts  the refund subscription, connect to 
 scripts/verify-label-purchase-live.ts     which rate is bought, and when it refuses (real Postgres)
 scripts/verify-product-sourcing.ts        source capabilities and recommendation honesty
 scripts/verify-sourcing-live.ts           discovery, dismissal and adoption (real Postgres)
+scripts/verify-business-context-live.ts   which business is active, and how it is chosen (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
@@ -2054,6 +2196,7 @@ the defect reproduced against the pre-fix behaviour first:
 | Product sourcing and discovery | §45 — the real pipeline, real database |
 | The sourcing migration, as it landed in production | §46 — read from the production database |
 | Two businesses on one account, kept separate | §48 — the real pipeline, real database |
+| Active-business resolution and its migration | §49 — the real resolver, real database |
 | Tenant isolation | §26 — the guard through the real client |
 | Authentication, sessions, brute force, roles | §14–16, §24 |
 | Growth Points ledger | §23 — real transactions |

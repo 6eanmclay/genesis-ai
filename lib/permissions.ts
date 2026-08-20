@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { resolveBusiness } from "@/lib/businessContext";
 import type { Store, StoreRole } from "@prisma/client";
 
 // Canonical permission names — call sites always use PERMISSIONS.X, never a
@@ -82,38 +83,27 @@ export async function getStoreRole(
   return membership?.role ?? null;
 }
 
-// Finds "the" store for a user (owner-first, then employee membership) —
-// mirrors the app's existing one-store-per-user assumption, just now also
-// recognizing employees who don't own a store themselves. Never throws;
-// returns null when the user has no store yet, which is a normal state
-// (a brand new signup), not an error — callers that need to require access
-// should use requireStorePermission instead.
+// Finds the business a user is working in, delegating to lib/businessContext.ts.
 //
-// 2026-08-08 — real header-identity staleness investigation: Store.userId
-// carries no unique constraint, and confirmStoreDraftCore (onboarding's
-// real store-creation path, reachable from three separate flows) never
-// checks for an existing store before creating one — so the "one store
-// per user" comment above is this app's real intent, not a DB-enforced
-// guarantee. The unordered findFirst this replaced picked whichever row
-// Postgres happened to return first, which is only ever safe if that
-// intent perfectly held. orderBy makes this deterministic regardless —
-// the most recently updated store is "the" one every caller (both the J4
-// Portal header and the main dashboard's own DashboardShell, which share
-// this exact function) resolves and displays, rather than an arbitrary,
-// possibly stale row. A no-op when the invariant does hold.
+// 2026-08-20 — REWRITTEN, not patched. This used to answer by picking the most
+// recently UPDATED store, which meant a second business became the active one by
+// being touched rather than by being chosen. See lib/businessContext.ts for the
+// rule that replaced it: authorization context must be explicit, a navigation
+// default may be remembered, and recency is never either.
+//
+// Kept as a function because 19 call sites use it directly, but it is now a thin
+// adapter over the real resolution. It returns null in BOTH the "no business"
+// and the "more than one and nothing says which" cases — callers that can do
+// something better than null with the second one should call resolveBusiness()
+// and handle `ambiguous` themselves. Returning null there is the conservative
+// answer: it fails closed rather than picking, which is exactly what the old
+// implementation would not do.
 export async function resolveUserStore(
   userId: string
 ): Promise<{ store: Store; role: StoreRole } | null> {
-  const owned = await prisma.store.findFirst({ where: { userId }, orderBy: { updatedAt: "desc" } });
-  if (owned) return { store: owned, role: "OWNER" };
-
-  const membership = await prisma.storeMember.findFirst({
-    where: { userId },
-    include: { store: true },
-  });
-  if (membership) return { store: membership.store, role: membership.role };
-
-  return null;
+  const resolution = await resolveBusiness(userId);
+  if (resolution.kind !== "resolved") return null;
+  return { store: resolution.store, role: resolution.role };
 }
 
 // The single chokepoint every protected route, server action, and (per the
@@ -135,14 +125,22 @@ export async function requireStorePermission(
   let store: Store | null;
   let role: StoreRole | null;
 
-  if (storeId) {
-    store = await prisma.store.findUnique({ where: { id: storeId } });
-    role = store ? await getStoreRole(userId, storeId) : null;
-  } else {
-    const resolved = await resolveUserStore(userId);
-    store = resolved?.store ?? null;
-    role = resolved?.role ?? null;
+  const resolution = await resolveBusiness(userId, storeId);
+
+  // AMBIGUOUS IS NOT AN ERROR AND NOT A GUESS (2026-08-20). An account with more
+  // than one business and nothing saying which is a question, not a failure. It
+  // is surfaced as its own message rather than "Store not found", because the
+  // two need completely different responses: one is "choose a business", the
+  // other is "this business does not exist".
+  if (resolution.kind === "ambiguous") {
+    throw new Error("Choose which business this is for before continuing.");
   }
+  if (resolution.kind === "none") {
+    throw new Error("Store not found");
+  }
+
+  store = resolution.store;
+  role = resolution.role;
 
   if (!store || !role) {
     throw new Error("Store not found");

@@ -389,5 +389,60 @@ function oldChooseRate(rates: RateLike[]): RateLike | null {
     unchosen.ok && unchosen.rate.id === "rate_ga");
 }
 
+// ===========================================================================
+console.log("\n11. Business context — a second business became active by being touched");
+
+// THE OLD IMPLEMENTATION, copied from lib/permissions.ts before 2026-08-20:
+// "the" business for an account was whichever store had been UPDATED most
+// recently. 47 call sites relied on it. So a second business did not have to be
+// chosen to become the active one; it only had to be written to.
+interface StoreLike { id: string; updatedAt: number }
+function oldResolveUserStore(stores: StoreLike[]): StoreLike | null {
+  const sorted = [...stores].sort((a, b) => b.updatedAt - a.updatedAt);
+  return sorted[0] ?? null;
+}
+
+// The current rule, as a pure function of the same inputs: an explicit pointer
+// decides, a single business needs no pointer, and more than one with no pointer
+// is a question rather than an answer. Mirrors lib/businessContext.ts, which is
+// proven against a real database in verify-business-context-live.ts.
+function newResolve(stores: StoreLike[], activeStoreId: string | null): StoreLike | "ambiguous" | null {
+  if (activeStoreId) {
+    const active = stores.find((s) => s.id === activeStoreId);
+    if (active) return active;
+  }
+  if (stores.length === 0) return null;
+  if (stores.length === 1) return stores[0];
+  return "ambiguous";
+}
+
+{
+  const first: StoreLike = { id: "first", updatedAt: 100 };
+  // The owner is working in `first`. They edit a product in `second`, which
+  // touches it.
+  const second: StoreLike = { id: "second", updatedAt: 200 };
+  const stores = [first, second];
+
+  regression("a business becoming active by being touched", {
+    attackWorkedBefore: oldResolveUserStore(stores)?.id === "second",
+    attackFailsNow: (newResolve(stores, "first") as StoreLike | null)?.id === "first",
+  });
+
+  // And with nothing chosen, the old code still picked. The new one asks.
+  regression("silently picking when nothing says which", {
+    attackWorkedBefore: oldResolveUserStore(stores)?.id === "second",
+    attackFailsNow: newResolve(stores, null) === "ambiguous",
+  });
+
+  // The unambiguous cases must not have regressed into questions.
+  assert("one business still resolves without a pointer",
+    (newResolve([first], null) as StoreLike)?.id === "first");
+  assert("no business is still an ordinary null", newResolve([], null) === null);
+  // A pointer at a business that no longer exists falls through rather than
+  // dangling \u2014 the deleted-business case.
+  assert("a stale pointer falls through to the only remaining business",
+    (newResolve([first], "deleted") as StoreLike)?.id === "first");
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

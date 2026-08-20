@@ -24,6 +24,25 @@ model User {
   // per-relationship snapshot of which code was used for one specific
   // referred signup, written once redeemed.
   referralCode      String?   @unique
+  // WHICH BUSINESS IS THIS PERSON WORKING IN (2026-08-20).
+  //
+  // A Genesis account holds several businesses, each with its own identity,
+  // catalogue, connections, points, plan and J4 understanding. Before this
+  // column there was no answer to "which one" — resolveUserStore picked the most
+  // recently UPDATED store, and 47 call sites relied on it. A second business
+  // would have become the active one the moment anything touched it: edit a
+  // product in it and orders, connections and billing follow.
+  //
+  // Set only by a deliberate act — creating a business, or switching to one (see
+  // lib/businessContext.ts's setActiveBusiness, the single writer). Never as a
+  // side effect of updating a store, which is the whole difference between an
+  // explicit context and a recency heuristic wearing one's clothes.
+  //
+  // Nullable: a brand-new account has no business yet. SetNull rather than
+  // Cascade, because deleting a business must leave the account working rather
+  // than orphaning the person who owned it.
+  activeStoreId     String?
+  activeStore       Store?    @relation("ActiveBusiness", fields: [activeStoreId], references: [id], onDelete: SetNull)
   // Sessions are JWTs, so there is no server-side session row to delete when
   // someone resets their password — a token already in an attacker's hands
   // stays valid until it expires on its own. That makes "someone got into my
@@ -264,6 +283,9 @@ model Store {
   updatedAt                    DateTime  @updatedAt
 
   user                      User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Accounts currently working in this business — practically 0 or 1: its owner,
+  // plus any employee who last switched here.
+  activeForUsers            User[]                     @relation("ActiveBusiness")
   plan                      Plan?                      @relation(fields: [planId], references: [id], onDelete: SetNull)
   products                  Product[]
   visions                   StoreGeneration[]

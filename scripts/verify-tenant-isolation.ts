@@ -119,5 +119,32 @@ console.log("\n6. The models under guard");
     models.every((m) => (TENANT_SCOPED_MODEL_KEYS as Record<string, readonly string[]>)[m].length > 0));
 }
 
+// ---------------------------------------------------------------------------
+console.log("\nStoreMember is scoped by the person as well as the business");
+{
+  // Added 2026-08-20 for business context. "Which businesses can this account
+  // reach" is inherently a cross-store question, and StoreMember is where it is
+  // answered — so `userId` is a real scope key there, the same dual-key shape
+  // productEvent and aiUsageEvent already had.
+  const MEMBER = TENANT_SCOPED_MODEL_KEYS.storeMember;
+  assert("userId is a recognised scope", MEMBER.includes("userId"), MEMBER.join(", "));
+  assert("and so is storeId", MEMBER.includes("storeId"), MEMBER.join(", "));
+
+  assert("one person's own memberships are scoped", hasValidScope({ userId: "user_1" }, MEMBER));
+  assert("as is one business's members", hasValidScope({ storeId: "store_1" }, MEMBER));
+
+  // THE PART THAT MATTERS. Widening the map must not widen the rule: every
+  // bypass closed for storeId has to still be closed for userId, or this became
+  // a hole rather than a completion.
+  assert("everybody except me is NOT scoping", !hasValidScope({ userId: { not: "user_1" } }, MEMBER));
+  assert("nor notIn", !hasValidScope({ userId: { notIn: ["user_1"] } }, MEMBER));
+  assert("nor a bare presence", !hasValidScope({ userId: {} }, MEMBER));
+  assert("nor a role filter alone", !hasValidScope({ role: "OWNER" }, MEMBER));
+  assert("nor nothing at all", !hasValidScope({}, MEMBER));
+  // An OR with one unscoped branch still selects other people's rows.
+  assert("an OR needs every branch scoped",
+    !hasValidScope({ OR: [{ userId: "user_1" }, { role: "OWNER" }] }, MEMBER));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

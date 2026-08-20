@@ -17,6 +17,7 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
+import { adoptNewBusiness } from "@/lib/businessContext";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { J4Surface } from "@/app/j4/J4Workspace";
@@ -5054,6 +5055,19 @@ export async function confirmStoreDraftCore(
     outcome: "success",
     metadata: { versionsBeforeConfirm: draft.version },
   });
+
+  // THE NEW BUSINESS IS THE ONE THEY ARE NOW IN (2026-08-20).
+  //
+  // Creating a business is a deliberate act, which makes it one of the two
+  // places allowed to set the active one (lib/businessContext.ts). Without this,
+  // an account making its SECOND business would land in the ambiguous state —
+  // more than one business and nothing saying which — and the resolver refuses
+  // to guess there. Setting it here is what keeps that state unreachable through
+  // any normal path, rather than merely handled when it happens.
+  //
+  // Deliberately after the store is fully written and its event logged: an
+  // account should never be pointed at a business whose creation did not finish.
+  await adoptNewBusiness(userId, store.id);
 
   return { store };
 }

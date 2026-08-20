@@ -44,7 +44,22 @@ const GUARDED_READ_OPERATIONS = new Set(["findMany", "count", "aggregate"]);
 // every model, since it's a real, legitimate pattern regardless of which
 // flat keys a given model has.
 const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
-  storeMember: ["storeId"],
+  // Dual-key (store vs. the person), added 2026-08-20 for business context.
+  //
+  // "Which businesses can this account reach" is inherently a cross-store
+  // question, and StoreMember is where it is answered. `userId` is a required
+  // column, so filtering by it bounds the read to exactly one person's own
+  // membership rows — it leaks nothing, which is the actual test this guard
+  // applies. Same dual-key shape as productEvent and aiUsageEvent below, and
+  // added for the same reason they were: a real call site that is genuinely
+  // scoped by a key this map had not been told about.
+  //
+  // Deliberately NOT a bypass, and it is worth being precise about why. The
+  // rejection this replaces was correct on its own terms — an unscoped
+  // findMany on StoreMember does leak other tenants' rows. What was wrong was
+  // the map, not the rule: `where: { userId }` is a real scope, and the
+  // negation and relation-filter bypasses closed below still apply to it.
+  storeMember: ["storeId", "userId"],
   storeIntegration: ["storeId"],
   storeMessage: ["storeId"],
   product: ["storeId"],
