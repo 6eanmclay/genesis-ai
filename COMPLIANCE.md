@@ -109,6 +109,8 @@ customers place real orders".
 | 31 | Misconfiguration ≠ attack | **Compliant** | 500 not 400 on unset secret — see §32 |
 | 32 | Order creation survives a bad event | **Compliant** | permanent vs transient split — see §33 |
 | 33 | Order creation in a real request | **Compliant** | real server + real Postgres; 32 assertions — see §34 |
+| 34 | Customer confirmation exists at all | **Compliant** | `orderConfirmation.ts`; 63 assertions — see §35 |
+| 35 | Confirmation actually delivered | **EXTERNALLY BLOCKED** | needs a Resend credential — see §35 |
 
 ---
 
@@ -971,6 +973,72 @@ triggered, and it is incidental proof that `after()` genuinely executes.
 
 ---
 
+## 35. The customer who paid was never told anything
+
+Tracing every caller: the Stripe webhook committed the `Order` and scheduled
+observation sweeps, the PayPal return committed and redirected, and **the only
+customer email anywhere in the codebase was `notifyCustomerShipped`** — called
+once, from the shipping-label purchase, which happens days later if it happens at
+all. A customer paid, saw a success page, and then heard nothing.
+
+`notifyCustomerShipped` is **not** misnamed and is **not** doubling as a
+confirmation mechanism. That was worth checking and came back clean: one caller,
+name matches. The problem was absence, not misuse.
+
+### A fourth state
+
+| field | axis |
+|---|---|
+| `status` | the money — paid / refunded |
+| `fulfillmentStatus` | the owner's acknowledgment |
+| `trackingNumber` | a label exists |
+| **`confirmationSentAt` / `shipmentNotifiedAt`** | **the customer was told** |
+
+The fourth had no representation at all. They are not interchangeable: an order
+can be paid and unconfirmed, fulfilled without the buyer ever being emailed, or
+confirmed and never shipped.
+
+### Idempotency is a claim, not a check
+
+`after()` runs on **every** webhook delivery, so a check-then-send would email
+the customer again on each redelivery. The claim is a conditional update matching
+only while the column is null — proven with three concurrent calls, exactly one
+of which sends. A **failed send releases the claim**, so the next delivery
+retries rather than the order being permanently marked as told when it never was.
+
+Placement is load-bearing: the confirmation runs inside `after()`, which fires
+after the response and therefore strictly after the transaction commits, so a
+rolled-back order can never be confirmed. Inside the transaction it would risk
+the opposite — an email about an order that then failed to commit.
+
+The shipped notification got the same treatment; it had none, and the
+label-purchase guard is a check-then-act, so two concurrent submits could send
+two "your order shipped" emails for one shipment.
+
+### Two defects found in this work itself
+
+- **The tenant-isolation guard rejected the first version** — the claim was an
+  `Order.updateMany` with no store scoping, and it was right to. The function
+  takes the order/store pair now, so scoping is structural.
+- A deleted order reported **`already_sent`**, which is a false statement, and
+  precisely what an operator would read while working out why a customer never
+  heard anything. It reports `not_found` now, which also covers a mismatched
+  order/store pair.
+
+### EXTERNALLY BLOCKED: delivery
+
+**No email has been sent and nothing here claims one was.** There is no Resend
+credential. The sender is injected — not to fake delivery, but because delivery
+is the one part that genuinely requires it.
+
+Everything up to handing a provider the payload is real and asserted against a
+real Postgres: the decision to send, the recipient, the exact subject and body,
+the claim, the release, the retry, the four-way state separation, and that one
+tenant's customer never hears about another's order. What remains unproven is
+strictly *"Resend accepted it and a human received it"*.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -1002,6 +1070,8 @@ scripts/verify-test-isolation.ts          no suite can point at production
 scripts/verify-webhook-handlers.ts        signed payloads against the real handlers
 scripts/verify-report-issue.ts            never throws, never leaks a token
 scripts/verify-order-webhook-live.ts      the order-creation branch (real server + real Postgres)
+scripts/verify-order-confirmation.ts      what the confirmation says, and to whom
+scripts/verify-confirmation-live.ts       claim, release, retry, tenant separation (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
