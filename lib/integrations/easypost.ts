@@ -29,10 +29,15 @@ import { encryptCredentials, decryptCredentials } from "./credentials";
 // Asking someone for a credential that does not exist is a good way to make
 // them think the product is broken.
 //
-// THE ENUM VALUE STAYS "USPS". Renaming an IntegrationProvider enum member is a
-// production database migration for a label, and there are live rows using it.
-// Everything a person actually sees now says EasyPost; the stored value is an
-// internal identifier and is documented as such rather than churned.
+// THE ENUM VALUE IS NOW EASYPOST TOO (2026-08-20). It was left as USPS at first
+// on the assumption that live rows depended on it — checking production showed
+// zero StoreIntegration rows, zero execution logs and zero tracked orders using
+// it, so the objection did not hold. Renamed with ALTER TYPE ... RENAME VALUE,
+// which relabels in place and rewrites no data.
+//
+// USPS still appears in this codebase as a CARRIER name (shipping.ts filters
+// rates by carrier === "USPS"), which is correct and untouched — EasyPost is who
+// Genesis talks to, USPS is who carries the parcel.
 //
 // THE API KEY IS A SANCTIONED EXCEPTION, not laziness: EasyPost offers no OAuth
 // authorization flow for this use, so there is no delegated handoff to prefer.
@@ -128,7 +133,7 @@ export function mapTrackerToShipment(tracker: TrackerLike, orderId: string | nul
 }
 
 export const easypostConnector: IntegrationConnector = {
-  provider: "USPS",
+  provider: "EASYPOST",
   displayName: "EasyPost (shipping labels & tracking)",
   requiredPermission: PERMISSIONS.ORDERS_MANAGE,
   capabilities: {
@@ -152,10 +157,10 @@ export const easypostConnector: IntegrationConnector = {
       const encryptedCredentials = encryptCredentials(credentials);
 
       await prisma.storeIntegration.upsert({
-        where: { storeId_provider: { storeId, provider: "USPS" } },
+        where: { storeId_provider: { storeId, provider: "EASYPOST" } },
         create: {
           storeId,
-          provider: "USPS",
+          provider: "EASYPOST",
           status: "CONNECTED",
           externalAccountId: "easypost",
           credentials: encryptedCredentials,
@@ -184,7 +189,7 @@ export const easypostConnector: IntegrationConnector = {
 
   async verify(storeId) {
     const integration = await prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "USPS" } },
+      where: { storeId_provider: { storeId, provider: "EASYPOST" } },
     });
     if (!integration?.credentials) {
       return { ok: false, error: "Not connected" };
@@ -230,7 +235,7 @@ export const easypostConnector: IntegrationConnector = {
    */
   async sync(storeId): Promise<SyncedRecord[]> {
     const integration = await prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "USPS" } },
+      where: { storeId_provider: { storeId, provider: "EASYPOST" } },
     });
     if (integration?.status !== "CONNECTED" || !integration.credentials) return [];
 
@@ -274,7 +279,7 @@ export const easypostConnector: IntegrationConnector = {
 
   async disconnect(storeId) {
     const integration = await prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId, provider: "USPS" } },
+      where: { storeId_provider: { storeId, provider: "EASYPOST" } },
     });
     if (!integration) return;
 
@@ -291,7 +296,7 @@ export const easypostConnector: IntegrationConnector = {
     // Phase 0 — never returns the credentials blob.
     return toStatusView(
       await prisma.storeIntegration.findUnique({
-        where: { storeId_provider: { storeId, provider: "USPS" } },
+        where: { storeId_provider: { storeId, provider: "EASYPOST" } },
       })
     );
   },

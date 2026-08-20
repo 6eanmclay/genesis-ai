@@ -301,7 +301,9 @@ enum IntegrationProvider {
   PAYPAL
   GOOGLE
   SLACK
-  USPS
+  // The provider is EasyPost; USPS is the carrier whose postage it buys. Renamed
+  // from USPS on 2026-08-20 (ALTER TYPE ... RENAME VALUE, non-destructive).
+  EASYPOST
   GOOGLE_CALENDAR
   QUICKBOOKS
   MAILCHIMP

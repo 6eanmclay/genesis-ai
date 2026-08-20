@@ -193,7 +193,7 @@ async function connectorSections() {
 
   const providers: IntegrationProvider[] = [
     "STRIPE", "PAYPAL", "GOOGLE_CALENDAR", "QUICKBOOKS", "MAILCHIMP",
-    "PRINTFUL", "FACEBOOK", "INSTAGRAM", "TIKTOK", "USPS",
+    "PRINTFUL", "FACEBOOK", "INSTAGRAM", "TIKTOK", "EASYPOST",
   ];
   for (const p of providers) {
     const c = getConnector(p);
@@ -218,7 +218,7 @@ async function connectorSections() {
   // Stripe Connect tokens do not expire and an API key has nothing to renew —
   // absence here is a real answer, not an oversight.
   check("Stripe correctly declares no refresh", typeof getConnector("STRIPE").refresh, "undefined");
-  check("USPS/EasyPost correctly declares no refresh", typeof getConnector("USPS").refresh, "undefined");
+  check("EasyPost correctly declares no refresh", typeof getConnector("EASYPOST").refresh, "undefined");
 
   // Webhook support is declared, not assumed. None today: Stripe's own routes
   // are deliberately left in place until Phase 1 migrates them.

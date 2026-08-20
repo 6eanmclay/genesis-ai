@@ -79,7 +79,7 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
     }
 
     const integration = await prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId: ctx.storeId, provider: "USPS" } },
+      where: { storeId_provider: { storeId: ctx.storeId, provider: "EASYPOST" } },
     });
     const credentials = integration?.credentials
       ? decryptCredentials<EasyPostCredentials>(integration.credentials)

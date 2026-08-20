@@ -1,0 +1,15 @@
+-- Rename the IntegrationProvider enum member USPS -> EASYPOST.
+--
+-- The connector's provider is EasyPost; USPS is the CARRIER whose postage
+-- EasyPost buys. The enum value was the last place the two were conflated.
+--
+-- NON-DESTRUCTIVE BY CONSTRUCTION. ALTER TYPE ... RENAME VALUE renames the
+-- label in place: every existing row keeps pointing at the same enum member,
+-- no data is rewritten, no column is dropped or recreated. This is deliberately
+-- NOT the drop-and-recreate Prisma would generate on its own, which would
+-- destroy rows.
+--
+-- Verified before writing: production held 0 StoreIntegration rows with this
+-- provider, 0 execution log rows naming it, and 0 orders with tracking numbers.
+-- The rename is safe regardless, but nothing was riding on it either.
+ALTER TYPE "IntegrationProvider" RENAME VALUE 'USPS' TO 'EASYPOST';

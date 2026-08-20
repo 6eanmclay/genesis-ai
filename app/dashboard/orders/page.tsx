@@ -70,7 +70,7 @@ export default async function OrdersPage({
       },
     }),
     canManage
-      ? prisma.storeIntegration.findUnique({ where: { storeId_provider: { storeId: store.id, provider: "USPS" } } })
+      ? prisma.storeIntegration.findUnique({ where: { storeId_provider: { storeId: store.id, provider: "EASYPOST" } } })
       : Promise.resolve(null),
   ]);
   const orders: OrderRow[] = rawOrders.map((order) => ({

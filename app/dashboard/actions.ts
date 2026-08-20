@@ -408,7 +408,7 @@ export async function submitUspsCredentials(formData: FormData) {
     throw new Error("EasyPost API Key is required");
   }
 
-  const result = await execute(connectExecutable(getConnector("USPS")), {
+  const result = await execute(connectExecutable(getConnector("EASYPOST")), {
     params: { apiKey },
   });
   await logConnectAttempt("usps", "integration.connect_attempt", result);
@@ -421,13 +421,13 @@ export async function submitUspsCredentials(formData: FormData) {
 export async function disconnectUsps() {
   const { storeId } = await requireStorePermission(PERMISSIONS.ORDERS_MANAGE);
 
-  await getConnector("USPS").disconnect(storeId);
+  await getConnector("EASYPOST").disconnect(storeId);
 
   redirect("/dashboard/orders");
 }
 
 export async function recheckUsps() {
-  const result = await execute(verifyExecutable(getConnector("USPS")), undefined);
+  const result = await execute(verifyExecutable(getConnector("EASYPOST")), undefined);
   await logConnectAttempt("usps", "integration.recheck_attempt", result);
 
   redirect("/dashboard/orders");
