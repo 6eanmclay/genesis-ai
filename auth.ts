@@ -5,6 +5,7 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { isTokenIssuedBeforePasswordChange } from "@/lib/auth/passwordReset";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -66,7 +67,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     signIn: "/login",
   },
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
         // Minted only on a real sign-in (this branch), never on token
@@ -74,6 +75,43 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // (ProductEvent.sessionInstanceId). Persists for the JWT's lifetime,
         // not per browser tab; see the v20 plan for that known tradeoff.
         token.sessionInstanceId = randomUUID();
+        return token;
+      }
+
+      // A password reset must actually evict whoever prompted it (2026-08-20).
+      //
+      // Sessions are JWTs, so there is no session row to delete — a token
+      // already in an attacker's hands stayed valid until it expired on its
+      // own, which made "someone got into my account, I'll change my password"
+      // fail at the one thing it exists to do.
+      //
+      // Only on token REFRESH, never on the sign-in branch above: at sign-in
+      // the password was just verified, and comparing timestamps that were
+      // written moments apart would sign people out of the session they are
+      // in the middle of creating.
+      //
+      // Why an `iat` check works even though Auth.js re-issues the token on
+      // every session read (jwt.js calls .setIssuedAt() with no argument, so
+      // `iat` moves forward each time): the callback runs BEFORE that
+      // re-encode, on the payload decoded from the cookie. So the `iat` seen
+      // here is always from the holder's PREVIOUS request, and any request
+      // after a password change necessarily carries one from before it. The
+      // first request an evicted session makes is refused. Verified against
+      // @auth/core's own lib/actions/session.js, where a null return pushes
+      // sessionStore.clean() and drops the cookie — this is real eviction, not
+      // a flag nothing reads.
+      if (token.id && typeof token.iat === "number") {
+        const owner = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { passwordChangedAt: true },
+        });
+        // The units are a trap: `iat` is seconds, Date is milliseconds.
+        // isTokenIssuedBeforePasswordChange owns that comparison and is
+        // asserted in scripts/verify-password-policy.ts, because getting it
+        // backwards would sign out every user on the platform at once.
+        if (isTokenIssuedBeforePasswordChange(token.iat, owner?.passwordChangedAt)) {
+          return null;
+        }
       }
       return token;
     },

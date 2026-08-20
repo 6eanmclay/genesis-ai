@@ -1,0 +1,16 @@
+-- Evicting live sessions when a password is reset.
+--
+-- Sessions are JWTs (auth.ts: session.strategy = "jwt"), so there is no
+-- server-side session row to delete. A token already in someone else's hands
+-- stayed valid after a password reset, until it expired on its own — which
+-- means "someone got into my account, I'll change my password" did not
+-- actually get them out, the one thing that flow exists to do.
+--
+-- Every JWT carries an `iat`. Any token minted before this timestamp is now
+-- refused in the jwt callback.
+--
+-- Additive and nullable: NULL means "has never reset", which is correctly the
+-- same as "no reason to refuse any token". No existing row changes meaning and
+-- nothing is backfilled — backfilling a timestamp here would sign every
+-- existing user out for no reason.
+ALTER TABLE "User" ADD COLUMN "passwordChangedAt" TIMESTAMP(3);

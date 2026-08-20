@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { recordReferralSignup } from "@/lib/growthPoints/referral";
+import { checkPassword } from "@/lib/auth/passwordPolicy";
 
 export async function POST(request: Request) {
   try {
@@ -12,6 +13,15 @@ export async function POST(request: Request) {
         { error: "Email and password are required" },
         { status: 400 }
       );
+    }
+
+    // There was no requirement here at all until 2026-08-20 — "a" was a valid
+    // password on a platform that holds connected Stripe accounts. Checked
+    // before the existing-user lookup so the rules are enforced identically
+    // whether or not the email is already taken.
+    const passwordCheck = checkPassword(password);
+    if (!passwordCheck.ok) {
+      return NextResponse.json({ error: passwordCheck.message }, { status: 400 });
     }
 
     const existingUser = await prisma.user.findUnique({

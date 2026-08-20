@@ -3,8 +3,13 @@
 import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { verifyPasswordResetToken, consumePasswordResetToken } from "@/lib/auth/passwordReset";
+import {
+  verifyPasswordResetToken,
+  consumePasswordResetToken,
+  invalidateOtherResetTokens,
+} from "@/lib/auth/passwordReset";
 import { RecoverableError } from "@/lib/actionState";
+import { checkPassword } from "@/lib/auth/passwordPolicy";
 
 export type ResetPasswordState =
   | { status: "idle" }
@@ -33,6 +38,12 @@ export async function resetPassword(
     if (password !== confirmPassword) {
       throw new RecoverableError("Those passwords don't match.");
     }
+    // The same policy as signup, from the same function. A reset path with
+    // weaker rules than signup is a way around the rules.
+    const passwordCheck = checkPassword(password);
+    if (!passwordCheck.ok) {
+      throw new RecoverableError(passwordCheck.message);
+    }
 
     const userId = await verifyPasswordResetToken(token);
     if (!userId) {
@@ -48,9 +59,19 @@ export async function resetPassword(
     const hashedPassword = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
     await prisma.user.update({
       where: { id: userId },
-      data: { password: hashedPassword },
+      data: {
+        password: hashedPassword,
+        // Stamped so auth.ts can refuse every JWT minted before now. Without
+        // this, an attacker already signed in stays signed in — see the note
+        // in auth.ts's jwt callback.
+        passwordChangedAt: new Date(),
+      },
     });
     await consumePasswordResetToken(token);
+    // Burn every OTHER outstanding reset link for this account, not just the
+    // one used. If an attacker requested a reset and the real owner then reset
+    // their password, the attacker's link would otherwise still work.
+    await invalidateOtherResetTokens(userId);
   } catch (error) {
     if (error instanceof RecoverableError) {
       return { status: "error", message: error.message };

@@ -43,3 +43,37 @@ export async function consumePasswordResetToken(rawToken: string): Promise<void>
     data: { usedAt: new Date() },
   });
 }
+
+/**
+ * Burn every outstanding reset link for this account except ones already used.
+ *
+ * Added 2026-08-20. Without it, a reset link an attacker requested stayed live
+ * after the real owner reset their password — so the very act of securing the
+ * account left a working back door open for the rest of the hour.
+ */
+export async function invalidateOtherResetTokens(userId: string): Promise<void> {
+  await prisma.passwordResetToken.updateMany({
+    where: { userId, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+}
+
+/**
+ * Is a JWT older than the account's last password change? — pure.
+ *
+ * Extracted because the units are a trap worth proving rather than trusting.
+ * A JWT's `iat` is in SECONDS; a Date is in MILLISECONDS. Comparing them
+ * directly puts 1.7e9 against 1.7e12, which is always "older", which would
+ * sign out every user on the platform on their next request.
+ */
+export function isTokenIssuedBeforePasswordChange(
+  iatSeconds: number | undefined,
+  passwordChangedAt: Date | null | undefined
+): boolean {
+  // No stamp means the account has never reset, so there is nothing to refuse.
+  if (!passwordChangedAt) return false;
+  // A token with no issued-at cannot be placed in time. Refusing it would log
+  // out anyone whose token predates this field existing.
+  if (typeof iatSeconds !== "number") return false;
+  return iatSeconds * 1000 < passwordChangedAt.getTime();
+}

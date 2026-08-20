@@ -24,6 +24,14 @@ model User {
   // per-relationship snapshot of which code was used for one specific
   // referred signup, written once redeemed.
   referralCode  String?   @unique
+  // Sessions are JWTs, so there is no server-side session row to delete when
+  // someone resets their password — a token already in an attacker's hands
+  // stays valid until it expires on its own. That makes "someone got into my
+  // account, I'll change my password" not actually evict them, which is the
+  // single thing that flow exists to do. Every JWT carries an `iat`; any token
+  // issued before this timestamp is refused. Null for accounts that have never
+  // reset, which is the same as "no reason to refuse anything".
+  passwordChangedAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
