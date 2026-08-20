@@ -6,6 +6,7 @@ import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types"
 import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
+import { mergeRefreshedTokens } from "./tokenRefresh";
 import type { Appointment } from "@/lib/businessModel/entities";
 import { internalContactId } from "@/lib/businessModel/internalMapper";
 
@@ -28,7 +29,10 @@ const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 
-async function refreshAccessToken(credentials: GoogleCalendarCredentials): Promise<string> {
+async function refreshAccessToken(
+  storeId: string,
+  credentials: GoogleCalendarCredentials
+): Promise<string> {
   if (credentials.expiresAt > Date.now() + 60_000) {
     return credentials.accessToken;
   }
@@ -51,10 +55,36 @@ async function refreshAccessToken(credentials: GoogleCalendarCredentials): Promi
     }),
   });
   if (!res.ok) {
-    throw new Error(`Google token refresh failed (${res.status})`);
+    // Google does not rotate refresh tokens, so a 400 here is not the rotation
+    // bug QuickBooks had — it means the token was revoked or expired. The most
+    // common cause by far is an OAuth consent screen still in "Testing"
+    // publishing status, where Google expires every refresh token after seven
+    // days. That is a Google Cloud Console setting, not something code can fix.
+    const detail =
+      res.status === 400
+        ? "Google no longer accepts this connection's saved credentials — please reconnect Google Calendar."
+        : `Google token refresh failed (${res.status})`;
+    throw new Error(detail);
   }
-  const data = (await res.json()) as { access_token: string; expires_in: number };
-  return data.access_token;
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+  };
+
+  // Persist the refreshed token (2026-08-20). Google does not rotate, so this
+  // was not fatal the way QuickBooks' identical omission was — but without it
+  // every single call re-refreshed, burning a network round trip and a quota
+  // hit to re-derive a token we already had.
+  // Shared, tested merge — see lib/integrations/tokenRefresh.ts for why a
+  // rotated refresh token must never be discarded.
+  const updated: GoogleCalendarCredentials = mergeRefreshedTokens(credentials, data);
+  await prisma.storeIntegration.updateMany({
+    where: { storeId, provider: "GOOGLE_CALENDAR" },
+    data: { credentials: encryptCredentials(updated) },
+  });
+
+  return updated.accessToken;
 }
 
 export const googleCalendarConnector: IntegrationConnector = {
@@ -156,7 +186,7 @@ export const googleCalendarConnector: IntegrationConnector = {
 
     try {
       const credentials = decryptCredentials<GoogleCalendarCredentials>(integration.credentials);
-      const accessToken = await refreshAccessToken(credentials);
+      const accessToken = await refreshAccessToken(storeId, credentials);
       const res = await fetch(
         "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1",
         { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -216,7 +246,7 @@ export const googleCalendarConnector: IntegrationConnector = {
     if (!integration?.credentials) return [];
 
     const credentials = decryptCredentials<GoogleCalendarCredentials>(integration.credentials);
-    const accessToken = await refreshAccessToken(credentials);
+    const accessToken = await refreshAccessToken(storeId, credentials);
 
     const url = new URL(
       "https://www.googleapis.com/calendar/v3/calendars/primary/events"

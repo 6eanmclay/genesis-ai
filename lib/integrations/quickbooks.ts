@@ -6,6 +6,7 @@ import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types"
 import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
+import { mergeRefreshedTokens } from "./tokenRefresh";
 import type { Document, Transaction } from "@/lib/businessModel/entities";
 
 // Phase 3 Milestone 2 — proof integration #2: a genuinely different OAuth
@@ -39,7 +40,28 @@ function apiBase(environment: QuickBooksEnvironment): string {
     : "https://sandbox-quickbooks.api.intuit.com";
 }
 
-async function refreshAccessToken(credentials: QuickBooksCredentials): Promise<string> {
+// PRODUCTION BUG FIXED HERE (2026-08-20).
+//
+// Intuit ROTATES the refresh token: every refresh response carries a new one,
+// roughly every 24 hours, and the previous one stops working. This function
+// read `access_token` and `expires_in`, threw the new `refresh_token` away, and
+// never wrote anything back — so the first refresh succeeded, Intuit rotated,
+// and every refresh after that presented a dead token.
+//
+// The evidence matched exactly: connected 2026-07-31, last successful sync
+// 2026-08-01, then eleven consecutive "token refresh failed (400)". About
+// twenty-four hours, which is Intuit's rotation interval.
+//
+// The refreshed access token was not persisted either, so even a working
+// connection re-refreshed on every single call.
+//
+// Now the whole credential set is written back under the store it belongs to.
+// storeId is required — this is a tenant-owned row, and lib/tenantIsolation.ts
+// refuses an unscoped write regardless.
+async function refreshAccessToken(
+  storeId: string,
+  credentials: QuickBooksCredentials
+): Promise<string> {
   if (credentials.expiresAt > Date.now() + 60_000) {
     return credentials.accessToken;
   }
@@ -60,10 +82,31 @@ async function refreshAccessToken(credentials: QuickBooksCredentials): Promise<s
     }),
   });
   if (!res.ok) {
-    throw new Error(`QuickBooks token refresh failed (${res.status})`);
+    // A 400 here means the stored refresh token is no longer accepted, which
+    // only a fresh authorization can repair. Said plainly so the owner is told
+    // to reconnect rather than left reading a status code.
+    const detail =
+      res.status === 400
+        ? "QuickBooks no longer accepts this connection's saved credentials — please reconnect QuickBooks."
+        : `QuickBooks token refresh failed (${res.status})`;
+    throw new Error(detail);
   }
-  const data = (await res.json()) as { access_token: string; expires_in: number };
-  return data.access_token;
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+  };
+
+  // Shared, tested merge — see lib/integrations/tokenRefresh.ts for why a
+  // rotated refresh token must never be discarded.
+  const updated: QuickBooksCredentials = mergeRefreshedTokens(credentials, data);
+
+  await prisma.storeIntegration.updateMany({
+    where: { storeId, provider: "QUICKBOOKS" },
+    data: { credentials: encryptCredentials(updated) },
+  });
+
+  return updated.accessToken;
 }
 
 export const quickbooksConnector: IntegrationConnector = {
@@ -174,7 +217,7 @@ export const quickbooksConnector: IntegrationConnector = {
 
     try {
       const credentials = decryptCredentials<QuickBooksCredentials>(integration.credentials);
-      const accessToken = await refreshAccessToken(credentials);
+      const accessToken = await refreshAccessToken(storeId, credentials);
       const res = await fetch(
         `${apiBase(credentials.environment)}/v3/company/${credentials.realmId}/companyinfo/${credentials.realmId}`,
         { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } }
@@ -231,7 +274,7 @@ export const quickbooksConnector: IntegrationConnector = {
     if (!integration?.credentials) return [];
 
     const credentials = decryptCredentials<QuickBooksCredentials>(integration.credentials);
-    const accessToken = await refreshAccessToken(credentials);
+    const accessToken = await refreshAccessToken(storeId, credentials);
     const base = apiBase(credentials.environment);
     const headers = { Authorization: `Bearer ${accessToken}`, Accept: "application/json" };
 
