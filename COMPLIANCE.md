@@ -113,6 +113,7 @@ customers place real orders".
 | 35 | Confirmation actually delivered | **EXTERNALLY BLOCKED** | needs a Resend credential — see §35 |
 | 36 | One parcel cannot be paid for twice | **Compliant** | claim before spending — see §36 |
 | 37 | Checkout metadata is authoritative | **Compliant** | real action, real Postgres; 30 assertions — see §37 |
+| 38 | Shipping checkout can actually complete | **Compliant** | gated on Stripe; 4 assertions — see §38 |
 
 ---
 
@@ -1105,6 +1106,36 @@ of both is proven against a real Postgres.
 which *includes* the shipping charged — and profitability computes
 `amountInCents − productCost − postageCost`, so the shipping margin is counted
 correctly rather than double-counted. That looked like a defect until traced.
+
+---
+
+## 38. A PayPal-only store sent shipping customers into a dead end
+
+Found by auditing PayPal's checkout creation after Stripe's. **PayPal's own path
+is sound** — `custom_id` and the amount are both server-derived from the store
+and product, and it refuses unless the connection is CONNECTED. The defect was
+next door.
+
+`productSupportsLiveShipping` required EasyPost and a product weight. It did
+**not** require Stripe — but `checkoutWithShipping` calls
+`createStripeCheckoutSession` *directly* rather than going through
+`selectProvider`, because a chosen service has to become a Stripe
+`shipping_options` line.
+
+So a store with EasyPost and PayPal but no Stripe passed the check. The
+storefront showed the customer the entire live-shipping flow — type a full
+delivery address, wait for real carrier rates, choose a service — and then the
+buy failed with *"Something went wrong on our end."* **The customer did the most
+work available and got the least useful error**, and the owner had no way to know
+it was happening.
+
+Gated on Stripe now, so those storefronts offer the ordinary checkout, which
+works. The test proves the fix did not merely turn a broken path into a missing
+one: adding Stripe turns live shipping back on, a FAILED Stripe connection does
+not, and the weight precondition still stands alone.
+
+**Not live today** — it needs EasyPost, still blocked on account verification —
+but it would have been the first thing to break when that clears.
 
 ---
 
