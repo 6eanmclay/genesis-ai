@@ -97,6 +97,10 @@ customers place real orders".
 | 19 | Spot-checked and correct | **Verified** | routes, uploads, checkout routing — see §19 |
 | 20 | OAuth CSRF on every callback | **Compliant** | signed state on all 3 routes; 8 assertions — see §20 |
 | 21 | Money always leaves a trace | **Partial** | 3 paths fixed; DB-bound, untested — see §21 |
+| 22 | Each fix proven against the old code | **Compliant** | 9 defects reproduced then blocked — see §22 |
+| 23 | Growth Points cannot leak | **Compliant** | `planDeduction`; 21 assertions — see §23 |
+| 24 | Role matrix pinned | **Compliant** | owner-only permissions asserted by name — see §24 |
+| 25 | Webhook forgery & replay | **Compliant** | `resolveWebhookStore`; 14 assertions — see §25 |
 
 ---
 
@@ -560,6 +564,102 @@ next step for them, and this document does not claim more than that.
 
 ---
 
+## 22. Proof that each defect was real
+
+A test asserting the current code is correct is not evidence on its own — it
+might have passed before the fix too.
+
+`scripts/verify-regressions.ts` carries the **actual pre-fix implementations**,
+copied from the commits that replaced them, and asserts two things per defect:
+the attack succeeds against the old code, and fails against the current one.
+Nine of them: both tenant-isolation bypasses, the forged onboarding OAuth state,
+payment badges claiming a dead Stripe account can take money, the discarded
+rotated refresh token, `"Bearer undefined"`, a rate limit counted as a failure, a
+stolen session surviving a password reset, `"a"` as a password, and an access
+token written into `ExecutionLog`.
+
+Both halves have to keep telling the truth: revert a fix and the second assertion
+breaks; "simplify" an old-code reproduction until it stops being vulnerable and
+the first breaks. Each section also asserts the *legitimate* case still works,
+because half these fixes could be made to pass by breaking the feature.
+
+## 23. Growth Points — three ways money leaked
+
+Points are sold for real money. The credit side had guarded itself all along;
+the debit side had not.
+
+**Deducted twice.** `creditGrowthPointsFromPurchase` checks a unique
+`externalRef` inside its own transaction, so a redelivered Stripe event cannot
+double-credit. `deductGrowthPoints` took an `executionLogId` and never looked at
+it. Idempotency is now decided *first* — before plan coverage or balance — so a
+second attempt does nothing even if the store has since moved to an unlimited
+plan or the balance changed.
+
+**Spent below zero.** `checkGrowthPointBalance` runs in `execute()` before the
+work; the decrement ran in a different transaction afterwards. Two concurrent
+actions could both pass the check and both decrement. The decrement is
+conditional now — the balance must still cover the cost at write time — and a
+race lost to a concurrent spend writes an honest zero-amount row naming the
+shortfall rather than going negative or pretending the action was free.
+
+**Minted for free.** `addGrowthPointsForTesting` was gated on `BILLING_MANAGE`,
+which every store OWNER has on their own store — so any real customer could give
+themselves 500 points per submit, unlimited times. The code's own comment called
+this "a real product decision to gate/remove before that stops being true". It is
+platform-operator only now on both sides: the action refuses, and the form does
+not render, so nobody is shown a button that throws.
+
+`planDeduction` is pure, so the boundaries are asserted where money quietly
+leaks: a balance exactly equal to the cost still charges, one point short does
+not, a zero-cost action is a charge of zero rather than a shortfall, and coverage
+is checked before affordability so an unlimited plan works at a zero balance.
+
+## 24. Roles — audited, and pinned before it matters
+
+No privilege escalation, for a structural reason: **OWNER is derived from
+`Store.userId`, never from a `StoreMember` row**, so it cannot be granted by
+writing to a membership table. EMPLOYEE comes from `StoreMember` — and **no code
+path anywhere creates one**. `EMPLOYEES_MANAGE` is defined and never referenced;
+there is no invite flow. Today every user is either OWNER of their own store or
+has no role at all.
+
+That is a reason to pin the matrix *now*. The realistic way this breaks is not an
+attacker but someone adding a line to the EMPLOYEE array while wiring up a
+feature, months from now, once an invite flow exists. So the owner-only
+permissions are asserted **by name**, each paired with an assertion that the
+owner genuinely holds it.
+
+## 25. Forging webhook events at the money boundary
+
+The trust boundary for money arriving was only reachable through a database, so
+it had never been attacked directly. The rules are unchanged — lifted verbatim
+out of the webhook — but `resolveWebhookStore` is pure now and gets forged
+events thrown at it.
+
+The attack: a connected merchant holds an API-key-equivalent access token for
+their own Stripe account, so they can create a Checkout Session directly with any
+metadata they like — including someone else's `storeId`. `event.account` is
+stamped by Stripe and cannot be forged, so metadata may only *disambiguate*
+between stores that genuinely hold that account.
+
+Six forgeries, all landing nowhere useful — including the subtle one: a **null**
+stored `externalAccountId` must not match a null account, or any connected event
+could be claimed for a store whose account id had been cleared. An account
+matching nothing resolves to null rather than guessing, which is what makes that
+money visible as unrecorded rather than quietly filed under a wrong store.
+
+The legitimate case is asserted too, because it is why this is not simply "use
+`event.account`": `externalAccountId` has no unique constraint, so one owner
+running two stores can connect the same Stripe account to both.
+
+Replay and reordering get their own section: resolution is a pure function of the
+event, so a redelivered event always lands in the same store. That matters
+because the order-level idempotency guard keys on session id *within* one store —
+if resolution drifted between attempts, the guard would be looking in the wrong
+place.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -579,6 +679,10 @@ scripts/verify-auth-throttle.ts           brute-force buckets, and the cron gate
 scripts/verify-checkout-outcome.ts        what a buyer is told when checkout breaks
 scripts/verify-shipped-notification.ts    whether the customer was actually emailed
 scripts/verify-tenant-isolation.ts        what counts as a store-scoping filter
+scripts/verify-regressions.ts             each defect reproduced against the pre-fix code
+scripts/verify-growth-point-ledger.ts     points never lost, duplicated, or double-charged
+scripts/verify-permissions.ts             the role matrix, asserted by name
+scripts/verify-webhook-store.ts           forged Stripe events at the money boundary
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
