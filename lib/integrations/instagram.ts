@@ -13,7 +13,9 @@ import {
   exchangeCodeForUserToken,
   exchangeForLongLivedUserToken,
   fetchManagedPages,
+  fetchMetaUserId,
   metaGraphGet,
+  revokeMetaGrant,
 } from "./metaShared";
 import type { SocialAccount } from "@/lib/businessModel/entities";
 import { generateSocialInsight } from "@/lib/execution/socialInsight";
@@ -47,6 +49,10 @@ type InstagramCredentials = {
   schemaVersion: 1;
   igUserId: string;
   pageAccessToken: string;
+  // Kept solely so disconnect() can revoke at Meta (2026-08-20). Optional
+  // because connections made before that change genuinely do not have them.
+  metaUserId?: string;
+  userAccessToken?: string;
 };
 
 export const instagramConnector: IntegrationConnector = {
@@ -58,8 +64,7 @@ export const instagramConnector: IntegrationConnector = {
     scopes: ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_manage_insights"],
     reads: ["socialAccount"],
     writes: [],
-    // GAP: Meta supports DELETE /{user-id}/permissions and this does not use it
-    revokesOnDisconnect: false,
+    revokesOnDisconnect: true,
   },
 
   async connect(storeId, userId, params) {
@@ -94,6 +99,8 @@ export const instagramConnector: IntegrationConnector = {
         schemaVersion: 1,
         igUserId,
         pageAccessToken: pageWithInstagram.access_token,
+        metaUserId: await fetchMetaUserId(longLived.accessToken),
+        userAccessToken: longLived.accessToken,
       };
 
       await prisma.storeIntegration.upsert({
@@ -164,6 +171,18 @@ export const instagramConnector: IntegrationConnector = {
       where: { storeId_provider: { storeId, provider: "INSTAGRAM" } },
     });
     if (!integration) return;
+    // Revoke at Meta before clearing locally — best-effort, so a Meta outage
+    // cannot trap the owner in a connection they asked to end.
+    if (integration.credentials) {
+      const credentials = decryptCredentials<InstagramCredentials>(integration.credentials);
+      const result = await revokeMetaGrant({
+        metaUserId: credentials.metaUserId,
+        userAccessToken: credentials.userAccessToken,
+      });
+      if (!result.revoked) {
+        console.error(`[instagram/disconnect] grant not revoked at Meta for store ${storeId}: ${result.reason}`);
+      }
+    }
     await prisma.storeIntegration.update({
       where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },

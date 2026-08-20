@@ -28,6 +28,9 @@ import { generateSocialInsight } from "@/lib/execution/socialInsight";
 
 const TIKTOK_AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/";
 const TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/";
+// Confirmed against TikTok's own "User Access Token Management" doc: POST,
+// form-encoded, client_key + client_secret + token. A success is an empty body.
+const TIKTOK_REVOKE_URL = "https://open.tiktokapis.com/v2/oauth/revoke/";
 const TIKTOK_API_BASE = "https://open.tiktokapis.com/v2";
 // user.info.profile intentionally omitted — bio/verification aren't
 // used by this integration's own sync() today; requesting only the
@@ -93,8 +96,7 @@ export const tiktokConnector: IntegrationConnector = {
     scopes: ["user.info.basic", "user.info.stats", "video.list"],
     reads: ["socialAccount"],
     writes: [],
-    // GAP: TikTok supports /oauth/revoke/ and this does not use it
-    revokesOnDisconnect: false,
+    revokesOnDisconnect: true,
   },
 
   async connect(storeId, userId, params) {
@@ -200,6 +202,30 @@ export const tiktokConnector: IntegrationConnector = {
       where: { storeId_provider: { storeId, provider: "TIKTOK" } },
     });
     if (!integration) return;
+    // Revoke at TikTok before clearing locally — deleting our copy of a token
+    // leaves the grant live, and the owner has just been told it ended.
+    // Best-effort by design: the local disconnect proceeds regardless.
+    if (integration.credentials) {
+      try {
+        const credentials = decryptCredentials<TikTokCredentials>(integration.credentials);
+        const { clientKey, clientSecret } = tiktokClientCredentials();
+        const res = await fetch(TIKTOK_REVOKE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_key: clientKey,
+            client_secret: clientSecret,
+            token: credentials.accessToken,
+          }),
+        });
+        if (!res.ok) {
+          console.error(`[tiktok/disconnect] revoke failed for store ${storeId}: ${res.status}`);
+        }
+      } catch (error) {
+        // Never the token itself — only what went wrong.
+        console.error(`[tiktok/disconnect] revoke errored for store ${storeId}:`, error instanceof Error ? error.message : error);
+      }
+    }
     await prisma.storeIntegration.update({
       where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },

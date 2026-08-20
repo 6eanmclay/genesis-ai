@@ -13,7 +13,9 @@ import {
   exchangeCodeForUserToken,
   exchangeForLongLivedUserToken,
   fetchManagedPages,
+  fetchMetaUserId,
   metaGraphGet,
+  revokeMetaGrant,
 } from "./metaShared";
 import type { SocialAccount } from "@/lib/businessModel/entities";
 import { generateSocialInsight } from "@/lib/execution/socialInsight";
@@ -38,6 +40,11 @@ type FacebookCredentials = {
   schemaVersion: 1;
   pageId: string;
   pageAccessToken: string;
+  // Kept solely so disconnect() can revoke at Meta (2026-08-20). Optional
+  // because connections made before that change genuinely do not have them,
+  // and inventing a value would be worse than admitting the limit.
+  metaUserId?: string;
+  userAccessToken?: string;
 };
 
 export const facebookConnector: IntegrationConnector = {
@@ -49,8 +56,7 @@ export const facebookConnector: IntegrationConnector = {
     scopes: ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_manage_insights"],
     reads: ["socialAccount"],
     writes: [],
-    // GAP: Meta supports DELETE /{user-id}/permissions and this does not use it
-    revokesOnDisconnect: false,
+    revokesOnDisconnect: true,
   },
 
   async connect(storeId, userId, params) {
@@ -85,6 +91,8 @@ export const facebookConnector: IntegrationConnector = {
         schemaVersion: 1,
         pageId: page.id,
         pageAccessToken: page.access_token,
+        metaUserId: await fetchMetaUserId(longLived.accessToken),
+        userAccessToken: longLived.accessToken,
       };
 
       await prisma.storeIntegration.upsert({
@@ -156,8 +164,19 @@ export const facebookConnector: IntegrationConnector = {
       where: { storeId_provider: { storeId, provider: "FACEBOOK" } },
     });
     if (!integration) return;
-    // No revoke call — the merchant can also remove Genesis's access
-    // directly from their own Facebook Business Integrations settings.
+    // Revoke at Meta before clearing locally, so "Disconnect" is true at the
+    // provider and not just in our own row. Best-effort: a Meta outage must not
+    // trap the owner in a connection they asked to end.
+    if (integration.credentials) {
+      const credentials = decryptCredentials<FacebookCredentials>(integration.credentials);
+      const result = await revokeMetaGrant({
+        metaUserId: credentials.metaUserId,
+        userAccessToken: credentials.userAccessToken,
+      });
+      if (!result.revoked) {
+        console.error(`[facebook/disconnect] grant not revoked at Meta for store ${storeId}: ${result.reason}`);
+      }
+    }
     await prisma.storeIntegration.update({
       where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },

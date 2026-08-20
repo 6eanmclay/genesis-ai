@@ -21,7 +21,7 @@ NEEDS VERIFICATION, and a gap is recorded as a gap.**
 | 5 | Credentials never written to logs | **Compliant** | audited — see §5 |
 | 6 | Refresh-token rotation handled | **Compliant** | `tokenRefresh.ts`; 15 assertions |
 | 7 | Expired / invalid grant handled honestly | **Compliant** | 400 → "please reconnect", surfaced in the UI |
-| 8 | Revocation at the provider on disconnect | **Partial** | 3 of 7 OAuth connectors — see §8 |
+| 8 | Revocation at the provider on disconnect | **Compliant** | every provider that offers it — see §8 |
 | 9 | Tenant data isolation | **Compliant** | `tenantIsolation.ts` refuses unscoped access |
 | 10 | Transport security | **Compliant** | HTTPS-only hosting; no plaintext endpoints |
 | 11 | API error handling & backoff | **Partial** | sync backoff real; per-call 429 handling — see §11 |
@@ -101,32 +101,46 @@ call that needs a live token, which is where a refresh actually belongs. The
 unused contract method is the thing that should go, and it is recorded here so
 the printed "(none yet)" is not mistaken for missing refresh.
 
-## 8. Revocation on disconnect — PARTIAL, with named gaps
+## 8. Revocation on disconnect
 
-**The gap:** deleting a stored token is not revoking it. The token stayed valid
-at the provider while the owner had just been told access ended. That gap between
-what the button says and what is true is the real problem; Intuit requiring
-revocation is only how it was found.
+**The defect:** deleting a stored token is not revoking it. Outside Stripe,
+disconnect cleared our copy and left the grant live at the provider — while the
+owner had just been told access ended. That gap between what the button says and
+what is true is the real problem; Intuit asking about it is only how it surfaced.
 
-Fixed for the three where it matters most and the endpoint is documented:
+Every provider that offers revocation now gets it:
 
 | Connector | Revokes | How |
 |---|---|---|
 | Stripe | ✅ | `oauth.deauthorize` (already did) |
 | QuickBooks | ✅ | Intuit `/v2/oauth2/tokens/revoke` |
 | Google Calendar | ✅ | `oauth2.googleapis.com/revoke` |
-| Printful | ❌ **gap** | provider supports revocation; not implemented |
-| Facebook / Instagram | ❌ **gap** | Meta `DELETE /{user-id}/permissions`; not implemented |
-| TikTok | ❌ **gap** | TikTok `/oauth/revoke/`; not implemented |
-| PayPal / Mailchimp / EasyPost | n/a | API-key or client-credentials — the merchant rotates the key |
+| Facebook / Instagram | ✅ | Meta `DELETE /{user-id}/permissions` |
+| TikTok | ✅ | `open.tiktokapis.com/v2/oauth/revoke/` |
+| Printful | — | **Printful documents no revocation endpoint** |
+| PayPal / Mailchimp / EasyPost | — | API key — the merchant rotates it at the provider |
+
+**Printful was recorded as a gap and was not one.** The first version of this
+document asserted "Printful supports revocation and this does not use it". Their
+OAuth documentation covers authorize, token, refresh and scopes and nothing else;
+a token "remains valid until it expires or is manually deleted" in their portal.
+Reading the docs is what corrected it. The suite now asserts Printful is the only
+non-revoking OAuth connector, so if they ever ship an endpoint the test fails and
+says so.
+
+**Meta needed a real change, not a call.** `DELETE /{user-id}/permissions` needs
+the Meta user id and a user token, and connect() discarded both the moment it had
+a Page token. Both are captured now. A connection made *before* this change
+cannot be revoked — `GET /me` with a Page token returns the Page, not the person,
+so the user id is not recoverable after the fact. Those log the reason and
+disconnect locally rather than pretending. Reconnecting fixes it permanently.
 
 Revocation is **best-effort by design**: if the provider is unreachable the local
 disconnect still proceeds, because refusing would trap an owner in a connection
-they asked to end. The failure is logged rather than swallowed.
+they asked to end. Failures are logged — reason only, never the token.
 
 This is declared in data, not prose: `capabilities.revokesOnDisconnect` on every
-connector, asserted by the framework suite, which also prints the remaining gaps
-on every run so they cannot quietly become permanent.
+connector, asserted by name in the framework suite.
 
 ## 9. Tenant isolation
 

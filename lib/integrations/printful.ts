@@ -150,7 +150,12 @@ export const printfulConnector: IntegrationConnector = {
     scopes: [],
     reads: [],
     writes: ["submits fulfillment orders on the merchant's behalf"],
-    // GAP: Printful supports token revocation and this does not use it
+    // Not a gap, and the earlier note here claiming otherwise was wrong.
+    // Printful documents no revocation endpoint at all — its OAuth docs cover
+    // authorize, token, refresh and scopes, and nothing else; a private token
+    // "remains valid until it expires or is manually deleted" in their own
+    // developer portal. There is no honest call to make, so disconnect clears
+    // our copy and the merchant removes the app on Printful's side.
     revokesOnDisconnect: false,
   },
 

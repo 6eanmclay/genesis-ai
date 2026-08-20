@@ -132,3 +132,46 @@ export function metaClientCredentials(): { clientId: string; clientSecret: strin
   }
   return { clientId, clientSecret };
 }
+
+// Revocation (2026-08-20) — Meta's `DELETE /{user-id}/permissions` genuinely
+// ends the grant: "any user access token for the person will be invalidated".
+// It needs the Meta USER id and a user (or app) token, and until now connect()
+// threw both away the moment it had a Page token. Both are captured now, so
+// disconnect can mean what it says.
+//
+// Deliberately not derivable after the fact: `GET /me` with a Page token
+// returns the Page, not the person, so there is no way to recover the user id
+// for a connection made before this change. Those degrade honestly rather than
+// pretending — see the callers.
+
+/** The Meta user id behind a long-lived user token. Captured at connect. */
+export async function fetchMetaUserId(userAccessToken: string): Promise<string> {
+  const data = await metaGraphGet<{ id: string }>("/me", userAccessToken, { fields: "id" });
+  return data.id;
+}
+
+/**
+ * End the app's grant for this person at Meta.
+ *
+ * Returns why it could not run rather than throwing, because a disconnect must
+ * complete locally either way — refusing would trap an owner in a connection
+ * they asked to end.
+ */
+export async function revokeMetaGrant(params: {
+  metaUserId?: string;
+  userAccessToken?: string;
+}): Promise<{ revoked: boolean; reason?: string }> {
+  if (!params.metaUserId || !params.userAccessToken) {
+    return {
+      revoked: false,
+      reason: "connected before the user token was stored — Meta cannot be told from here",
+    };
+  }
+  const url = new URL(`${META_GRAPH_BASE}/${params.metaUserId}/permissions`);
+  url.searchParams.set("access_token", params.userAccessToken);
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    return { revoked: false, reason: `Meta returned ${res.status}` };
+  }
+  return { revoked: true };
+}

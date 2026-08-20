@@ -232,7 +232,7 @@ async function connectorSections() {
   check(
     "the connectors that revoke at the provider",
     revoking.sort(),
-    ["GOOGLE_CALENDAR", "QUICKBOOKS", "STRIPE"]
+    ["FACEBOOK", "GOOGLE_CALENDAR", "INSTAGRAM", "QUICKBOOKS", "STRIPE", "TIKTOK"]
   );
   for (const p of providers) {
     const caps = getConnector(p).capabilities;
@@ -242,10 +242,16 @@ async function connectorSections() {
       check(`${p} (api key) correctly declares no revocation`, caps.revokesOnDisconnect, false);
     }
   }
+  // Printful is the one OAuth connector that does not revoke, and that is a
+  // fact about Printful rather than a shortcut here: their OAuth docs cover
+  // authorize/token/refresh/scopes and document no revocation endpoint. An
+  // earlier version of this suite called it a gap; checking the docs is what
+  // corrected it. Asserted so that if Printful ever ships one, this fails and
+  // says so.
   const oauthWithoutRevoke = providers.filter(
     (p) => getConnector(p).capabilities.authKind === "oauth" && !getConnector(p).capabilities.revokesOnDisconnect
   );
-  console.log(`      OAuth connectors still to implement revocation: ${oauthWithoutRevoke.join(", ") || "(none)"}`);
+  check("only Printful lacks revocation, because Printful offers none", oauthWithoutRevoke, ["PRINTFUL"]);
 
   // Webhook support is declared, not assumed. None today: Stripe's own routes
   // are deliberately left in place until Phase 1 migrates them.
