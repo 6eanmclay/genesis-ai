@@ -148,6 +148,8 @@ export const printfulConnector: IntegrationConnector = {
   capabilities: {
     authKind: "oauth",
     scopes: [],
+    noScopesReason:
+      "Printful's OAuth flow takes no scope parameter — a private token carries whatever scopes the merchant granted it in their own developer portal, and the app cannot narrow them from here.",
     reads: [],
     writes: ["submits fulfillment orders on the merchant's behalf"],
     // Not a gap, and the earlier note here claiming otherwise was wrong.

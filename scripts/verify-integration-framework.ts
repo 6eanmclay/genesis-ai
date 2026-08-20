@@ -204,9 +204,17 @@ async function connectorSections() {
     if (caps?.authKind === "api_key") {
       assert(`${p} justifies its API-key exception`, !!caps.apiKeyExceptionReason, caps.apiKeyExceptionReason?.slice(0, 60));
     }
-    // An OAuth connector must name the scopes it asks for.
-    if (caps?.authKind === "oauth" && p !== "PRINTFUL") {
-      assert(`${p} names its scopes`, caps.scopes.length > 0, caps.scopes.join(" "));
+    // An OAuth connector must name the scopes it asks for — or say why there
+    // are none. Two providers genuinely take no scope parameter, and an empty
+    // array must mean "none exist", never "nobody filled this in". This used
+    // to exempt Printful by name, which would have silently swallowed the next
+    // connector that shipped with scopes: [] by accident.
+    if (caps?.authKind === "oauth") {
+      if (caps.scopes.length > 0) {
+        assert(`${p} names its scopes`, true, caps.scopes.join(" "));
+      } else {
+        assert(`${p} explains why it has no scopes`, !!caps.noScopesReason, caps.noScopesReason?.slice(0, 60));
+      }
     }
   }
 
@@ -242,16 +250,20 @@ async function connectorSections() {
       check(`${p} (api key) correctly declares no revocation`, caps.revokesOnDisconnect, false);
     }
   }
-  // Printful is the one OAuth connector that does not revoke, and that is a
-  // fact about Printful rather than a shortcut here: their OAuth docs cover
-  // authorize/token/refresh/scopes and document no revocation endpoint. An
-  // earlier version of this suite called it a gap; checking the docs is what
-  // corrected it. Asserted so that if Printful ever ships one, this fails and
-  // says so.
+  // Two OAuth connectors do not revoke, and in both cases that is a fact about
+  // the provider rather than a shortcut here: neither Printful nor Mailchimp
+  // documents a revocation endpoint (Mailchimp's own words: a token "will
+  // remain valid unless the user revokes your application's permission" — from
+  // their account settings, not from an API). An earlier version of this suite
+  // called Printful a gap; reading the docs is what corrected it. Asserted so
+  // that if either ever ships one, this fails and says so.
   const oauthWithoutRevoke = providers.filter(
     (p) => getConnector(p).capabilities.authKind === "oauth" && !getConnector(p).capabilities.revokesOnDisconnect
   );
-  check("only Printful lacks revocation, because Printful offers none", oauthWithoutRevoke, ["PRINTFUL"]);
+  check("the only two lacking revocation are the two that offer none", oauthWithoutRevoke.sort(), [
+    "MAILCHIMP",
+    "PRINTFUL",
+  ]);
 
   // Webhook support is declared, not assumed. None today: Stripe's own routes
   // are deliberately left in place until Phase 1 migrates them.

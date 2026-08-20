@@ -1,23 +1,68 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
+import { beginOAuthHandoff } from "./oauthState";
 import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types";
 import { toStatusView } from "./types";
+import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import type { Campaign } from "@/lib/businessModel/entities";
 
-// Phase 3 Milestone 2 — proof integration #3: API-key auth, no OAuth at
-// all — the third distinct auth pattern (alongside Stripe's OAuth-redirect
-// and PayPal's multi-field form/API-key). Mailchimp API keys embed their
-// own datacenter suffix (e.g. "...-us6"), so the base URL is derived from
-// the key itself rather than being fixed — a genuinely different detail
-// than PayPal's fixed sandbox/live base URLs, still fitting the exact same
-// {kind:"form"} ConnectResult shape with just one field instead of three.
+// Originally built (Phase 3 M2) as the proof that the framework handled plain
+// API-key auth. Phase 0 then flagged it as an exception that had not earned
+// itself: Mailchimp does support OAuth2, and Sean's standing rule is not to ask
+// a business owner to paste an API key when the provider offers a delegated
+// flow. Pasting a Mailchimp key hands over the whole account permanently, in a
+// form the owner cannot see, narrow, or withdraw from Genesis's side.
+//
+// So this is OAuth now, against Mailchimp's documented endpoints. Two details
+// are genuinely Mailchimp-specific rather than assumed:
+//
+//   - Access tokens DO NOT EXPIRE and there is no refresh token. That is
+//     Mailchimp's own documented behaviour, which is why there is no refresh()
+//     here — absence is an answer, not an oversight.
+//   - The API base is per-account. The token alone does not tell you which
+//     datacenter to call, so the metadata endpoint is asked once at connect and
+//     the answer stored.
+//
+// Connections made before this change still work. Their credentials are an API
+// key, they keep being used as one, and nothing forces an owner to reconnect
+// mid-campaign — see authFor() below.
 
-type MailchimpCredentials = {
+const AUTHORIZE_URL = "https://login.mailchimp.com/oauth2/authorize";
+const TOKEN_URL = "https://login.mailchimp.com/oauth2/token";
+const METADATA_URL = "https://login.mailchimp.com/oauth2/metadata";
+
+/** Issued by OAuth. The current shape. */
+type MailchimpOAuthCredentials = {
+  schemaVersion: 2;
+  accessToken: string;
+  /** Server prefix, e.g. "us6" — from the metadata endpoint, not guessed. */
+  dc: string;
+};
+
+/** Pasted by the owner, before the OAuth conversion. Still honoured. */
+type MailchimpApiKeyCredentials = {
   schemaVersion: 1;
   apiKey: string;
 };
+
+type MailchimpCredentials = MailchimpOAuthCredentials | MailchimpApiKeyCredentials;
+
+function isApiKey(credentials: MailchimpCredentials): credentials is MailchimpApiKeyCredentials {
+  return (credentials as MailchimpApiKeyCredentials).apiKey !== undefined;
+}
+
+function mailchimpClientCredentials(): { clientId: string; clientSecret: string } {
+  const clientId = process.env.MAILCHIMP_CLIENT_ID;
+  const clientSecret = process.env.MAILCHIMP_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "Mailchimp isn't configured yet — MAILCHIMP_CLIENT_ID/MAILCHIMP_CLIENT_SECRET are missing. Register the app at Mailchimp's own developer console first."
+    );
+  }
+  return { clientId, clientSecret };
+}
 
 function datacenterOf(apiKey: string): string {
   const parts = apiKey.split("-");
@@ -28,19 +73,35 @@ function datacenterOf(apiKey: string): string {
   return dc;
 }
 
-function apiBase(apiKey: string): string {
-  return `https://${datacenterOf(apiKey)}.api.mailchimp.com/3.0`;
+/**
+ * How to call Mailchimp for THIS connection — pure, and the one place the two
+ * credential shapes are told apart. An API-key connection made before the OAuth
+ * conversion keeps working exactly as it did.
+ */
+export function authFor(credentials: MailchimpCredentials): { base: string; headers: Record<string, string> } {
+  if (isApiKey(credentials)) {
+    return {
+      base: `https://${datacenterOf(credentials.apiKey)}.api.mailchimp.com/3.0`,
+      headers: {
+        Authorization: `Basic ${Buffer.from(`anystring:${credentials.apiKey}`).toString("base64")}`,
+      },
+    };
+  }
+  // Mailchimp's own documented header for an OAuth token — "OAuth", not
+  // "Bearer".
+  return {
+    base: `https://${credentials.dc}.api.mailchimp.com/3.0`,
+    headers: { Authorization: `OAuth ${credentials.accessToken}` },
+  };
 }
 
-async function pingMailchimp(apiKey: string): Promise<void> {
-  const res = await fetch(`${apiBase(apiKey)}/`, {
-    headers: {
-      Authorization: `Basic ${Buffer.from(`anystring:${apiKey}`).toString("base64")}`,
-    },
-  });
+/** Validation by use — a failed ping throws, which the engine records as FAILED. */
+async function pingMailchimp(credentials: MailchimpCredentials): Promise<void> {
+  const { base, headers } = authFor(credentials);
+  const res = await fetch(`${base}/`, { headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail ?? `Mailchimp key check failed (${res.status})`);
+    throw new Error(body.detail ?? `Mailchimp connection check failed (${res.status})`);
   }
 }
 
@@ -49,30 +110,61 @@ export const mailchimpConnector: IntegrationConnector = {
   displayName: "Mailchimp",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
   capabilities: {
-    // FLAGGED BY PHASE 0: Mailchimp does support OAuth2, so this API-key form
-    // is an exception that has not earned itself. Recorded here honestly
-    // rather than silently blessed — a candidate to convert.
-    authKind: "api_key",
-    apiKeyExceptionReason:
-      "Currently collects an API key, though Mailchimp supports OAuth2 — flagged for conversion rather than justified.",
+    authKind: "oauth",
     scopes: [],
+    noScopesReason:
+      "Mailchimp's OAuth2 flow takes no scope parameter — consent grants access to the account, and there is nothing narrower to ask for. Genesis only reads campaigns.",
     reads: ["campaign"],
     writes: [],
-    // API key — the merchant revokes it in Mailchimp
+    // Mailchimp documents no revocation endpoint: a token "will remain valid
+    // unless the user revokes your application's permission" — from their
+    // account's Connected Sites/integrations settings, not from an API. There
+    // is no honest call to make here, so disconnect clears our copy and says so.
     revokesOnDisconnect: false,
   },
 
   async connect(storeId, userId, params) {
-    // Second call: the merchant submitted their API key.
-    if (params?.apiKey) {
-      const apiKey = params.apiKey.trim();
+    const { clientId, clientSecret } = mailchimpClientCredentials();
+    const baseUrl = await getBaseUrl();
+    const redirectUri = integrationCallbackUrl(baseUrl, "MAILCHIMP");
 
-      // Validates the key by using it — a failed ping throws, which the
-      // engine turns into a FAILED result, same convention as PayPal's
-      // getPaypalAccessToken() validation-by-use.
-      await pingMailchimp(apiKey);
+    // Second call: Mailchimp's callback round-tripped with a code.
+    if (params?.code) {
+      const tokenRes = await fetch(TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          code: params.code,
+        }),
+      });
+      if (!tokenRes.ok) {
+        // The body can echo the code back; only the status is logged/raised.
+        throw new Error(`Mailchimp token exchange failed (${tokenRes.status})`);
+      }
+      const token = (await tokenRes.json()) as { access_token: string };
 
-      const credentials: MailchimpCredentials = { schemaVersion: 1, apiKey };
+      // Which datacenter this account lives in. The token does not say, and
+      // guessing a prefix would produce 404s that look like a broken account.
+      const metaRes = await fetch(METADATA_URL, {
+        headers: { Authorization: `OAuth ${token.access_token}` },
+      });
+      if (!metaRes.ok) {
+        throw new Error(`Mailchimp metadata lookup failed (${metaRes.status})`);
+      }
+      const metadata = (await metaRes.json()) as { dc?: string; login?: { login_email?: string } };
+      if (!metadata.dc) {
+        throw new Error("Mailchimp did not return a server prefix for this account.");
+      }
+
+      const credentials: MailchimpOAuthCredentials = {
+        schemaVersion: 2,
+        accessToken: token.access_token,
+        dc: metadata.dc,
+      };
 
       await prisma.storeIntegration.upsert({
         where: { storeId_provider: { storeId, provider: "MAILCHIMP" } },
@@ -80,7 +172,7 @@ export const mailchimpConnector: IntegrationConnector = {
           storeId,
           provider: "MAILCHIMP",
           status: "CONNECTED",
-          externalAccountId: datacenterOf(apiKey),
+          externalAccountId: metadata.dc,
           credentials: encryptCredentials(credentials),
           connectedByUserId: userId,
           connectedAt: new Date(),
@@ -88,7 +180,7 @@ export const mailchimpConnector: IntegrationConnector = {
         },
         update: {
           status: "CONNECTED",
-          externalAccountId: datacenterOf(apiKey),
+          externalAccountId: metadata.dc,
           credentials: encryptCredentials(credentials),
           connectedByUserId: userId,
           connectedAt: new Date(),
@@ -100,11 +192,15 @@ export const mailchimpConnector: IntegrationConnector = {
       return { kind: "connected" };
     }
 
-    // First call: no OAuth app — collect the merchant's own API key.
-    return {
-      kind: "form",
-      fields: [{ name: "apiKey", label: "API Key", type: "password" }],
-    } satisfies ConnectResult;
+    // First call: Mailchimp's own hosted consent screen. No key ever reaches
+    // Genesis, and the owner can withdraw the grant from their own account.
+    const url = new URL(AUTHORIZE_URL);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("state", await beginOAuthHandoff({ storeId, userId, provider: "MAILCHIMP", executionId: params?.executionId }));
+
+    return { kind: "redirect", url: url.toString() } satisfies ConnectResult;
   },
 
   async verify(storeId) {
@@ -117,7 +213,7 @@ export const mailchimpConnector: IntegrationConnector = {
     const credentials = decryptCredentials<MailchimpCredentials>(integration.credentials);
 
     try {
-      await pingMailchimp(credentials.apiKey);
+      await pingMailchimp(credentials);
       await prisma.storeIntegration.update({
         where: { id: integration.id, storeId },
         data: { status: "CONNECTED", lastVerifiedAt: new Date(), lastError: null },
@@ -138,9 +234,9 @@ export const mailchimpConnector: IntegrationConnector = {
       where: { storeId_provider: { storeId, provider: "MAILCHIMP" } },
     });
     if (!integration) return;
-    // No revoke call for a plain API key — regenerating it in the
-    // Mailchimp dashboard is how a merchant would fully cut access, same
-    // limitation PayPal's own disconnect() already documents.
+    // Mailchimp documents no revocation endpoint — a token stays valid until
+    // the user withdraws the app's permission from their own Mailchimp account
+    // settings. Nothing to call, so nothing is pretended.
     await prisma.storeIntegration.update({
       where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },
@@ -167,10 +263,7 @@ export const mailchimpConnector: IntegrationConnector = {
     if (!integration?.credentials) return [];
 
     const credentials = decryptCredentials<MailchimpCredentials>(integration.credentials);
-    const base = apiBase(credentials.apiKey);
-    const authHeader = {
-      Authorization: `Basic ${Buffer.from(`anystring:${credentials.apiKey}`).toString("base64")}`,
-    };
+    const { base, headers: authHeader } = authFor(credentials);
 
     const res = await fetch(
       `${base}/campaigns?count=10&sort_field=send_time&sort_dir=DESC`,

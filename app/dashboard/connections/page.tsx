@@ -99,7 +99,14 @@ async function resolveEntry(storeId: string, entry: CatalogEntry): Promise<Resol
   // connect() result is only owed once the most recent action is a connect
   // attempt that got that far (no metadata.fields means either nothing
   // happened yet, or it fully completed).
+  //
+  // Capabilities beat a stale log row (2026-08-20). Mailchimp used to collect
+  // an API key and now uses OAuth, so a store whose most recent attempt
+  // predates the conversion still had a "paste your API Key" box on file — a
+  // box that would take a live secret and discard it. A connector that
+  // declares OAuth never asks for typed credentials, whatever an old log says.
   const formFields =
+    entry.connector.capabilities.authKind !== "oauth" &&
     latestLog?.action === connectExecutable(entry.connector).action
       ? ((latestLog.metadata as { fields?: { name: string; label: string; type: string }[] } | null)
           ?.fields ?? null)

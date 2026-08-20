@@ -45,6 +45,13 @@ export interface IntegrationCapabilities {
   apiKeyExceptionReason?: string;
   /** The exact scopes requested at the provider. Empty for api_key connectors. */
   scopes: string[];
+  /**
+   * Required when authKind is "oauth" and `scopes` is empty: why there are none
+   * to name. Some providers genuinely take no scope parameter and grant whole-
+   * account access on consent, which the owner deserves to be told plainly —
+   * an empty array must mean "none exist", never "nobody filled this in".
+   */
+  noScopesReason?: string;
   /** Canonical entity types this connector's sync() produces. */
   reads: EntityType[];
   /**

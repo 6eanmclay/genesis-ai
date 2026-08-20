@@ -14,7 +14,7 @@ NEEDS VERIFICATION, and a gap is recorded as a gap.**
 
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
-| 1 | OAuth 2.0 authorization code flow | **Compliant** | every OAuth connector; no implicit flow anywhere |
+| 1 | OAuth 2.0 where the provider offers it | **Compliant** | 7 connectors; no implicit flow anywhere — see §1 |
 | 2 | CSRF protection on the OAuth callback | **Compliant** | `oauthState.ts`; 13 assertions incl. the original attack |
 | 3 | Credentials encrypted at rest | **Compliant** | `credentials.ts`, AES-GCM via `INTEGRATION_ENCRYPTION_KEY` |
 | 4 | Credentials never reach the browser | **Compliant** | `toStatusView()`; asserted with a planted ciphertext |
@@ -33,6 +33,25 @@ NEEDS VERIFICATION, and a gap is recorded as a gap.**
 ## 1–2. OAuth and CSRF
 
 Authorization code flow throughout; no implicit flow exists in the codebase.
+
+**No owner is asked to paste a key a provider would have delegated.** Mailchimp
+was the last exception that had not earned itself — it collected an API key
+while supporting OAuth2, which hands over the whole account permanently in a
+form the owner cannot see, narrow, or withdraw from Genesis's side. It uses
+OAuth now. The three remaining API-key connectors are genuine: PayPal (the
+merchant's own app credentials), EasyPost and its per-store key — no OAuth
+exists at either. Each states its reason in `apiKeyExceptionReason`, asserted.
+
+Mailchimp's OAuth takes no scope parameter, and neither does Printful's. An
+empty `scopes` array must mean "none exist", never "nobody filled this in", so
+those two carry a `noScopesReason` and the suite requires one. It used to exempt
+Printful by name, which would have silently swallowed the next connector that
+shipped with `scopes: []` by accident.
+
+Stores connected the old way keep working — their credentials are still an API
+key and are still used as one, so nobody is forced to reconnect mid-campaign.
+`scripts/verify-mailchimp-auth.ts` asserts both shapes and that they are never
+confused for one another.
 
 The `state` parameter was the most serious finding of the integration audit. It
 carried the storeId in plain sight, which meant nothing was doing the job
@@ -118,7 +137,8 @@ Every provider that offers revocation now gets it:
 | Facebook / Instagram | ✅ | Meta `DELETE /{user-id}/permissions` |
 | TikTok | ✅ | `open.tiktokapis.com/v2/oauth/revoke/` |
 | Printful | — | **Printful documents no revocation endpoint** |
-| PayPal / Mailchimp / EasyPost | — | API key — the merchant rotates it at the provider |
+| Mailchimp | — | **Mailchimp documents none either** — the user withdraws it in their account |
+| PayPal / EasyPost | — | API key — the merchant rotates it at the provider |
 
 **Printful was recorded as a gap and was not one.** The first version of this
 document asserted "Printful supports revocation and this does not use it". Their
@@ -209,6 +229,7 @@ scripts/verify-integration-framework.ts   OAuth state, credentials, capabilities
 scripts/verify-token-refresh.ts           rotation, chaining, expiry
 scripts/verify-stale-executions.ts        pending-vs-failed execution semantics
 scripts/verify-payment-badge.ts           what a payments badge may claim
+scripts/verify-mailchimp-auth.ts          OAuth conversion without breaking existing connections
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
