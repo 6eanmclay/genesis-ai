@@ -112,6 +112,7 @@ customers place real orders".
 | 34 | Customer confirmation exists at all | **Compliant** | `orderConfirmation.ts`; 63 assertions — see §35 |
 | 35 | Confirmation actually delivered | **EXTERNALLY BLOCKED** | needs a Resend credential — see §35 |
 | 36 | One parcel cannot be paid for twice | **Compliant** | claim before spending — see §36 |
+| 37 | Checkout metadata is authoritative | **Compliant** | real action, real Postgres; 30 assertions — see §37 |
 
 ---
 
@@ -1063,6 +1064,50 @@ sight in review.
 
 ---
 
+## 37. Checkout-session creation — audited adversarially, and it held
+
+The half of the money route everything downstream trusts. `createCheckoutSession`
+decides which store the money belongs to, which product, and what the customer is
+charged; if a client can substitute any of it, the webhook faithfully records a
+corrupted sale.
+
+**No defect found.** Worth recording *why* rather than only that, because the
+reasons are structural and easy to break later:
+
+- **Cross-store products are impossible.** The lookup is
+  `findFirst({ id, storeId, active })`, so a `productId` from another store
+  resolves to nothing rather than to that store's product. Proven both
+  directions — including the legitimate case of one owner running two stores on
+  **one Stripe account**, where the `storeId` in metadata is the only thing
+  keeping their sales apart.
+- **The price is never client-supplied.** No code path reads an amount from the
+  form; `unit_amount` comes from `product.priceInCents`, read server-side.
+  Asserted by passing `priceInCents` and `amount` in the form and showing they
+  change nothing.
+- **Shipping cannot be priced by the browser.** `confirmSelectedRate` re-quotes
+  EasyPost server-side and matches the chosen `rateId` against that *fresh*
+  quote, taking the amount from the carrier's answer.
+- **CONNECTED is the only status that can take money.** FAILED, NEEDS_ATTENTION
+  and DISCONNECTED are each refused, with a message a shopper can act on.
+
+**The join in the chain is now asserted**, which nothing covered before.
+`createCheckoutSession` writes metadata the webhook reads hours later in a
+different process, joined by nothing but string keys — a rename on either side
+would fail no typecheck and silently produce orders with no shipping. Tested as a
+**round trip** rather than a key comparison, because a key list can match while
+the values are mangled.
+
+**Externally blocked, not skipped:** the Stripe API call needs a Stripe test key,
+and `confirmSelectedRate`'s re-quote needs an EasyPost key. Every guard in front
+of both is proven against a real Postgres.
+
+**Checked and found correct:** `amountInCents` stores `session.amount_total`,
+which *includes* the shipping charged — and profitability computes
+`amountInCents − productCost − postageCost`, so the shipping margin is counted
+correctly rather than double-counted. That looked like a defect until traced.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -1096,6 +1141,7 @@ scripts/verify-report-issue.ts            never throws, never leaks a token
 scripts/verify-order-webhook-live.ts      the order-creation branch (real server + real Postgres)
 scripts/verify-order-confirmation.ts      what the confirmation says, and to whom
 scripts/verify-confirmation-live.ts       claim, release, retry, tenant separation (real Postgres)
+scripts/verify-checkout-live.ts           checkout guards against the real action (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
