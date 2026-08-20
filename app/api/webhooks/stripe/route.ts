@@ -1,3 +1,4 @@
+import { isPermanentOrderFailure } from "@/lib/orders/orderFailure";
 import { checkWebhookSecret } from "@/lib/observability/webhookConfig";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
@@ -166,6 +167,19 @@ export async function POST(request: Request) {
       // the Order and its BusinessEvent commit together or not at all — see
       // PHASE1_DESIGN.md section 4. A retry that finds an existing Order is
       // a genuine no-op, exactly like the upsert this replaced.
+      // Wrapped 2026-08-20, after reproducing the failure it existed to allow.
+      //
+      // A PLATFORM-key event takes storeId straight from metadata, unvalidated.
+      // If the store was deleted between checkout and delivery, order.create
+      // violates the foreign key and that threw straight out of POST — Next
+      // answers 500, Stripe retries for days against something that can never
+      // succeed, then gives up. A real payment, no order, and no record.
+      //
+      // The split below is the whole point. A PERMANENT failure must be
+      // acknowledged, because retrying it is only a slower way to lose the same
+      // sale. A TRANSIENT one must NOT be, because a retry is exactly what
+      // recovers it.
+      try {
       await prisma.$transaction(async (tx) => {
         const existing = await tx.order.findUnique({
           where: { paymentProvider_externalOrderId: { paymentProvider: "STRIPE", externalOrderId: session.id } },
@@ -230,6 +244,30 @@ export async function POST(request: Request) {
           },
         ]);
       });
+      } catch (error) {
+        // See lib/orders/orderFailure.ts for why the two are told apart.
+        const permanent = isPermanentOrderFailure(error);
+
+        reportIssue(
+          permanent
+            ? `a payment could not become an order and never will (${String((error as { code?: unknown }).code)})`
+            : "a payment could not become an order",
+          error,
+          {
+            subsystem: "payments",
+            stage: permanent ? "stripe.order.permanent" : "stripe.order.transient",
+            storeId,
+            extra: { sessionId: session.id, amountTotal: session.amount_total ?? null },
+          }
+        );
+
+        if (!permanent) {
+          // Rethrow so Next answers 500 and Stripe retries — which is the
+          // behaviour that actually recovers a transient database failure.
+          throw error;
+        }
+        return new Response("OK", { status: 200 });
+      }
 
       // Phase 4 — a completed order is exactly a "business state may have
       // just changed" moment (e.g. inventory heading toward a stockout).

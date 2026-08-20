@@ -384,6 +384,48 @@ async function main() {
     check("crediting normally once configured", await balanceOf(store.id), 500);
   }
 
+
+  // -------------------------------------------------------------------------
+  console.log("\n11. A payment for a store that no longer exists");
+  {
+    await reset();
+    const store = await makeStore("gone");
+    const product = await prisma.product.create({
+      data: { storeId: store.id, name: "Candle", description: "d", priceInCents: 2500, active: true },
+    });
+    const deletedStoreId = store.id;
+    const deletedProductId = product.id;
+    // The store is deleted between checkout and webhook delivery. Its products
+    // go with it (onDelete: Cascade).
+    await prisma.store.delete({ where: { id: store.id } });
+    await heal();
+
+    // A PLATFORM-key event (no event.account) takes storeId straight from
+    // metadata, unvalidated. order.create then violates the foreign key.
+    const stale = {
+      id: "evt_stale_store",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_stale_store",
+          metadata: { storeId: deletedStoreId, productId: deletedProductId },
+          amount_total: 2500,
+          customer_details: { email: "buyer@example.test" },
+        },
+      },
+    };
+
+    const response = await merchantPost(signedRequest(stale, MERCHANT_SECRET));
+    await heal();
+
+    // BEFORE THE FIX this threw the FK violation out of POST. Next answers 500,
+    // Stripe retries for days against something that can never succeed, and
+    // then gives up — a real payment, no order, and no record anywhere.
+    check("a payment for a deleted store is acknowledged, not retried forever", response.status, 200);
+    assert("and specifically not a 500", response.status !== 500, String(response.status));
+    check("no order exists", await prisma.order.count(), 0);
+  }
+
   await prisma.$disconnect();
   await db.close();
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

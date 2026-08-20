@@ -1,4 +1,5 @@
 import { resolveWebhookStore } from "@/lib/orders/webhookStore";
+import { isPermanentOrderFailure } from "@/lib/orders/orderFailure";
 
 // Forging Stripe webhook events at the trust boundary for money.
 // No database, no network:
@@ -156,6 +157,35 @@ console.log("\n6. Replays and duplicates resolve identically");
   const other = resolveWebhookStore({ ...event, metadataStoreId: "store_first", claimed: { storeId: "store_first", externalAccountId: "acct_shared" } });
   check("an interleaved different event does not disturb it", resolveWebhookStore(event), first);
   assert("and resolves on its own terms", other.storeId === "store_first");
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n7. Which failures Stripe should be asked to retry");
+{
+  // A webhook status code is an instruction to Stripe, not a description of
+  // our mood. Getting it backwards is expensive in opposite directions: a
+  // permanent failure answered 500 is retried for days and then silently given
+  // up on; a transient one answered 200 throws away the mechanism that would
+  // have recovered it.
+  const prismaError = (code: string) => Object.assign(new Error("prisma"), { code });
+
+  // The store or product is gone. Nothing brings it back.
+  assert("a foreign key violation is permanent", isPermanentOrderFailure(prismaError("P2003")));
+  assert("a missing record is permanent", isPermanentOrderFailure(prismaError("P2025")));
+
+  // Everything else must be retried, because a retry is what recovers it.
+  assert("a closed connection is transient", !isPermanentOrderFailure(prismaError("P1017")));
+  assert("a timeout is transient", !isPermanentOrderFailure(prismaError("P2024")));
+  assert("a unique-constraint clash is transient", !isPermanentOrderFailure(prismaError("P2002")));
+
+  // The default direction is deliberate. Retrying a permanent failure wastes a
+  // few days of Stripe's patience; NOT retrying a transient one loses a real
+  // sale. Anything unrecognised must fall on the retry side.
+  assert("an unknown Prisma code is transient", !isPermanentOrderFailure(prismaError("P9999")));
+  assert("a plain Error is transient", !isPermanentOrderFailure(new Error("boom")));
+  assert("a thrown string is transient", !isPermanentOrderFailure("something"));
+  assert("null is transient", !isPermanentOrderFailure(null));
+  assert("undefined is transient", !isPermanentOrderFailure(undefined));
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
