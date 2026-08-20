@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector } from "./types";
 import { toStatusView } from "./types";
 import { encryptCredentials, decryptCredentials } from "./credentials";
-import { getBaseUrl } from "./util";
+import { canonicalBaseUrl } from "./util";
 
 export type PaypalEnvironment = "sandbox" | "live";
 
@@ -106,7 +106,7 @@ export const paypalConnector: IntegrationConnector = {
       // the URL, still gets a working payment rail — they just get told, on the
       // integration itself, that refunds will not reach Genesis. Failing the
       // whole connection over it would trade a reporting gap for no rail at all.
-      const baseUrl = await getBaseUrl();
+      const baseUrl = await canonicalBaseUrl();
       const webhook = await ensurePaypalWebhook(
         accessToken,
         environment,
@@ -180,10 +180,31 @@ export const paypalConnector: IntegrationConnector = {
     }
 
     try {
-      await getPaypalAccessToken(credentials.clientId, credentials.clientSecret, credentials.environment);
+      const accessToken = await getPaypalAccessToken(
+        credentials.clientId,
+        credentials.clientSecret,
+        credentials.environment
+      );
+
+      // VERIFY MEANS VERIFY (2026-08-20). A working token says money can be
+      // taken; it says nothing about whether a refund would ever reach Genesis.
+      //
+      // This is also the repair path. Every store connected before refund
+      // webhooks existed has no subscription, and nothing else would ever give
+      // it one — its refunds would 404 forever while the integration showed a
+      // contented green Connected. So verify re-checks the subscription, creates
+      // one if it is missing or has been deleted at PayPal, and persists it.
+      const webhook = await ensurePaypalWebhookForVerify(accessToken, credentials, storeId);
+      if (webhook.credentials) {
+        await prisma.storeIntegration.update({
+          where: { id: integration!.id, storeId },
+          data: { credentials: encryptCredentials(webhook.credentials) },
+        });
+      }
+
       await prisma.storeIntegration.update({
         where: { id: integration!.id, storeId },
-        data: { status: "CONNECTED", lastVerifiedAt: new Date(), lastError: null },
+        data: { status: "CONNECTED", lastVerifiedAt: new Date(), lastError: webhook.note },
       });
       return { ok: true };
     } catch (error) {
@@ -375,4 +396,52 @@ export async function verifyPaypalWebhook(input: {
   if (!res.ok) return false;
   const result = await res.json().catch(() => ({}));
   return result?.verification_status === "SUCCESS";
+}
+
+/**
+ * Make sure this store still has a refund subscription — used by verify().
+ *
+ * Split out rather than inlined because it has three genuinely different
+ * outcomes and each one has to be honest: the subscription is there, it was
+ * missing and has been created, or PayPal will not give us one and the owner
+ * needs to be told what that costs them.
+ */
+async function ensurePaypalWebhookForVerify(
+  accessToken: string,
+  credentials: PaypalCredentials,
+  storeId: string
+): Promise<{ credentials: PaypalCredentials | null; note: string | null }> {
+  const base = paypalApiBase(credentials.environment);
+
+  if (credentials.webhookId) {
+    // Still there? A merchant can delete it in their PayPal dashboard, and a
+    // stored id that no longer resolves is worse than none — it makes every
+    // delivery unverifiable while the integration insists it is configured.
+    const existing = await fetch(`${base}/v1/notifications/webhooks/${credentials.webhookId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).catch(() => null);
+    if (existing?.ok) return { credentials: null, note: null };
+    if (existing && existing.status !== 404) {
+      // Could not tell. Do not throw away a subscription that may be fine.
+      return { credentials: null, note: null };
+    }
+  }
+
+  const baseUrl = await canonicalBaseUrl();
+  const created = await ensurePaypalWebhook(
+    accessToken,
+    credentials.environment,
+    paypalWebhookUrl(baseUrl, storeId)
+  ).catch((error: unknown) => ({
+    webhookId: null,
+    error: error instanceof Error ? error.message : "Could not reach PayPal to set up refund notifications",
+  }));
+
+  if (!created.webhookId) {
+    return {
+      credentials: null,
+      note: `Payments work, but refunds will not reach Genesis: ${created.error ?? "no refund webhook could be created"}. A refunded order will keep counting as revenue until this is fixed.`,
+    };
+  }
+  return { credentials: { ...credentials, webhookId: created.webhookId }, note: null };
 }

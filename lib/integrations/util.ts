@@ -18,3 +18,25 @@ export async function getBaseUrl(): Promise<string> {
 export function integrationCallbackUrl(baseUrl: string, provider: IntegrationProvider): string {
   return `${baseUrl}/api/integrations/${provider.toLowerCase()}/callback`;
 }
+
+/**
+ * The URL a provider should call back to for the lifetime of a subscription —
+ * not "whatever host this request came in on".
+ *
+ * getBaseUrl() derives the host from the request, which is right for an OAuth
+ * redirect (the browser has to come back to where it started) and wrong for
+ * anything durable. A merchant who connects PayPal from a preview deployment
+ * would otherwise have a refund webhook registered against that preview's
+ * hostname — it works until the deployment is rotated, and then their refunds
+ * silently stop arriving with nothing anywhere saying why.
+ *
+ * VERCEL_PROJECT_PRODUCTION_URL is the project's own production domain and is
+ * present automatically on every Vercel deployment, so this needs no new
+ * configuration. Falls back to the request host locally, where there is no
+ * canonical domain to prefer.
+ */
+export async function canonicalBaseUrl(): Promise<string> {
+  const domain = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (domain) return domain.startsWith("http") ? domain : `https://${domain}`;
+  return getBaseUrl();
+}

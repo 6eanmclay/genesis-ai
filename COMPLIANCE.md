@@ -1429,6 +1429,59 @@ reason, and read as proof the whole time.
 
 ---
 
+## 43. The subscription's own lifecycle
+
+*§42 proves what happens when a refund arrives. This is the other half: whether a
+store is in a state where one **can** arrive. Different question, and the one
+every store connected before §42 gets wrong.*
+
+### Two defects in the work from §42 itself
+
+**Every already-connected store would have gone on losing refunds.** The
+subscription is created at connect time, and nothing else would ever create one
+— so a store connected last week keeps 404ing every refund while showing a
+contented green *Connected*. Nothing in the system would have said so.
+
+`verify()` is now the repair path, and it re-checks rather than assumes: if the
+stored id no longer resolves at PayPal, or was never there, it creates one and
+persists it. A **500** is explicitly not a **404** — "PayPal is having a bad
+minute" must not be read as "this subscription is gone", or every wobble churns
+a new subscription and leaves dead ones in the merchant's account.
+
+**The subscription was being registered against the request's own host.**
+`getBaseUrl()` derives the host from the request, which is right for an OAuth
+redirect and wrong for anything durable: a merchant connecting from a preview
+deployment would get a refund webhook pointing at that preview's hostname. It
+works until the deployment rotates, and then their refunds stop arriving with
+nothing anywhere saying why. Now resolved through `canonicalBaseUrl()`, which
+prefers `VERCEL_PROJECT_PRODUCTION_URL` — present automatically on every Vercel
+deployment, so it needs no new configuration.
+
+### Proven
+
+`scripts/verify-paypal-webhook-lifecycle.ts` — the real connector, a real
+Postgres, PayPal's own subscription API supplied as a small stateful world so
+"nothing was created" is as provable as "something was".
+
+| | |
+|---|---|
+| Connecting registers a subscription for this store, on the canonical domain | PASS |
+| Reconnecting reuses it rather than failing on `WEBHOOK_URL_ALREADY_EXISTS` | PASS |
+| A refused subscription still leaves a working payment rail, and says what it costs | PASS |
+| Verify repairs a store that connected before any of this existed | PASS |
+| Verify replaces a subscription deleted at PayPal | PASS |
+| An inconclusive lookup does not throw away a good one | PASS |
+| Verify still fails when the credentials are the problem | PASS |
+| Disconnecting deletes it at PayPal too | PASS |
+| A subscription that will not delete never blocks disconnecting | PASS |
+| One owner's two stores never share a subscription | PASS |
+
+The last one is the tenant case in ordinary clothes: one PayPal app, two stores,
+two subscriptions, each carrying its own store id — so a refund can only ever be
+verified for the store it belongs to.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -1466,6 +1519,7 @@ scripts/verify-checkout-live.ts           checkout guards against the real actio
 scripts/verify-orders-live.ts             fulfilment lifecycle and tenant scoping (real Postgres)
 scripts/verify-paypal-live.ts             the PayPal rail, end to end (real Postgres)
 scripts/verify-paypal-refund.ts           forged, cross-tenant and replayed refunds (real Postgres)
+scripts/verify-paypal-webhook-lifecycle.ts  the refund subscription, connect to disconnect (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
@@ -1498,6 +1552,7 @@ the defect reproduced against the pre-fix behaviour first:
 | Refunds and money out | §40 |
 | The PayPal rail, end to end | §41 — the real route, real database |
 | PayPal refunds, forged and cross-tenant | §42 — the real route, real database |
+| The refund subscription's lifecycle | §43 — the real connector, real database |
 | Tenant isolation | §26 — the guard through the real client |
 | Authentication, sessions, brute force, roles | §14–16, §24 |
 | Growth Points ledger | §23 — real transactions |
