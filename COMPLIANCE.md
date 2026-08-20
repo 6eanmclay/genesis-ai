@@ -103,7 +103,9 @@ customers place real orders".
 | 25 | Webhook forgery & replay | **Compliant** | `resolveWebhookStore`; 14 assertions — see §25 |
 | 26 | Database-backed testing | **Compliant** | in-process Postgres, real migrations — see §26 |
 | 27 | Tests cannot touch real data | **Compliant** | env + marker table; both required — see §27 |
-| 28 | Webhook handlers attacked | **Compliant** | signed payloads, 30 assertions — see §28 |
+| 28 | Webhook handlers attacked | **Compliant** | signed payloads, 40 assertions — see §28, §29 |
+| 29 | Refunds & connected-account forgery | **Compliant** | handler-level, real database — see §29 |
+| 30 | Operator visibility on failure | **Compliant** | `reportIssue`; 22 assertions — see §30 |
 
 ---
 
@@ -790,6 +792,65 @@ is covered end to end because it never calls `after()` at all.
 
 ---
 
+## 29. Refunds, and a merchant claiming someone else's sale
+
+Two more handler paths, both money-state transitions never previously exercised.
+
+**Refunds move exactly one order, and only on a full refund.** A partial refund
+deliberately leaves it `paid` — the owner still has to ship it, and relabelling a
+substantially-paid order would mislead them about that. Replays are no-ops, an
+unmatched refund is acknowledged rather than crashing the endpoint into a Stripe
+retry loop, and the store's *other* orders are asserted untouched, because a
+refund sweeping siblings along with it is the failure hardest to notice.
+
+**The connected-account forgery is now proven at the handler level**, not just
+against the resolution function: a merchant creating a session on their own
+Stripe account with the victim's `storeId` in metadata gets the event filed
+against their own store. Nothing recorded against the victim, no order anywhere.
+
+## 30. The operator could not see any of it
+
+Sentry is wired and its DSN is set in production. But **nineteen error paths**
+across the webhooks, the checkout return, the scheduler and the execution engine
+were `console.error` and nothing else. Not one reached Sentry.
+
+Those are precisely the paths this audit added or hardened because they matter: a
+completed payment that produced no order, points that could not be credited, a
+PayPal capture that took money and could not be recorded, one store's failure
+inside a cross-tenant cron, a deduction that silently did not happen.
+
+On Vercel a console line goes to runtime logs — retained briefly, and found only
+by someone who already suspects a problem. *"Money arrived and produced nothing"*
+cannot depend on somebody thinking to look. The owner-facing half already existed
+(these paths write a durable `ExecutionLog`); this is the **operator** half.
+
+Tagged by subsystem, stage and storeId rather than buried in a message, so "which
+store is this?" is a filter and not a full-text search at 3am.
+
+Two properties are proven rather than assumed. It **never throws** — every call
+site is already inside a catch handling something that has gone wrong, so a
+Sentry outage there must not become the thing that breaks a payment. And it
+**redacts**: provider errors carry response bodies, and the same token this audit
+kept out of the database must not go to a third party instead. Both directions
+asserted, including that the redaction does not eat the reason it was protecting.
+
+## 31. The harness limit, diagnosed properly
+
+The three suites still failing under the harness were assumed to be hitting
+PGlite's connection-close-on-error. **That was wrong.** Confirmed in isolation:
+**concurrent queries** close the connection. Prisma's pg adapter uses a pool, so
+a `Promise.all` of three counts opens more than one connection to PGlite's wire
+server and it drops them. All three run code that legitimately parallelises reads
+(`reasoning.ts`, `understanding.ts`, the image executables' `Promise.all` of
+updates).
+
+This is a harness limitation, **not a defect**: real Postgres handles concurrent
+queries, which is the entire point of a pool. Capping the pool at one connection
+would fix the harness by changing how production talks to Neon — the wrong trade.
+So those three stay uncovered here, and are named rather than hidden.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -819,6 +880,7 @@ scripts/verify-ledger-live.ts             the ledger's real transactions (real P
 scripts/run-db-suites.ts                  runs the suites that need a database
 scripts/verify-test-isolation.ts          no suite can point at production
 scripts/verify-webhook-handlers.ts        signed payloads against the real handlers
+scripts/verify-report-issue.ts            never throws, never leaks a token
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
