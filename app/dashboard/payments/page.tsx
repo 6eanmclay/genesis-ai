@@ -247,11 +247,22 @@ export default async function PaymentsPage({
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-black/[.08] p-6 text-center dark:border-white/[.145]">
           <StripeWordmark />
           <div className="flex flex-wrap items-center justify-center gap-1.5">
-            {stripeConnected ? <ConnectedBadge /> : <NotConnectedBadge />}
-            {stripeConnected && stripeIntegration?.status === "NEEDS_ATTENTION" && (
-              <AttentionBadge label="Needs attention" />
+            {/* HONEST BADGE (2026-08-20). This read `stripeConnected`, which is
+                only "not DISCONNECTED" — so a connection that had FAILED
+                verification still displayed "Connected". Six real stores were
+                being told they could take payments through test-mode or
+                revoked accounts that could not take a cent. Only a connection
+                that actually verifies says Connected now. */}
+            {stripeIntegration?.status === "CONNECTED" ? (
+              <ConnectedBadge />
+            ) : stripeConnected ? (
+              <AttentionBadge
+                label={stripeIntegration?.status === "NEEDS_ATTENTION" ? "Needs attention" : "Not working"}
+              />
+            ) : (
+              <NotConnectedBadge />
             )}
-            {stripeConnected && <StripeModeBadge livemode={stripeLivemode} />}
+            {stripeIntegration?.status === "CONNECTED" && <StripeModeBadge livemode={stripeLivemode} />}
           </div>
 
           {!stripeConnected ? (
@@ -299,6 +310,11 @@ export default async function PaymentsPage({
 
           {latestStripeLog?.status === "FAILED" && !stripeConnected && (
             <p className="text-xs text-red-600 dark:text-red-400">Last attempt failed: {latestStripeLog.message}</p>
+          )}
+          {stripeConnected && stripeIntegration && stripeIntegration.status !== "CONNECTED" && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              This store can&apos;t take payments through Stripe right now. Reconnect to fix it.
+            </p>
           )}
           {stripeStatusDisplay && stripeConnected && (
             <p className="text-xs text-zinc-500">
