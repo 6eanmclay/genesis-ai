@@ -6,7 +6,7 @@ import { EXECUTION_ACTIONS } from "../actions";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import type { EasyPostCredentials } from "@/lib/integrations/easypost";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
-import { notifyCustomerShipped } from "@/lib/orders/notifyCustomerShipped";
+import { notifyCustomerShipped, labelPurchaseMessage } from "@/lib/orders/notifyCustomerShipped";
 
 interface StoreReturnAddress {
   name: string;
@@ -145,23 +145,26 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
     // order... customer notification"). Never blocks or fails this
     // executable — the label is already bought with real money by this
     // point, so an email hiccup must never look like the label purchase
-    // itself failed. sendEmail's own EmailNotConfiguredError (no real
-    // Resend account yet, same named gap as password reset) is swallowed
-    // the same honest way, not silently pretended to have sent.
-    try {
-      await notifyCustomerShipped({
-        to: order.buyerEmail,
-        productName: order.productName,
-        carrier: updated.carrier ?? "USPS",
-        trackingNumber: updated.trackingNumber!,
-        trackingUrl: updated.trackingUrl,
-      });
-    } catch {
-      // Logged by notifyCustomerShipped itself; the label purchase still succeeded.
-    }
+    // itself failed.
+    //
+    // But it is no longer SILENT either (2026-08-20). Whether the customer was
+    // actually told now reaches the owner's own result message, because on a
+    // store with no email configured — every store today — the buyer heard
+    // nothing and only the owner can put that right.
+    const notification = await notifyCustomerShipped({
+      to: order.buyerEmail,
+      productName: order.productName,
+      carrier: updated.carrier ?? "USPS",
+      trackingNumber: updated.trackingNumber!,
+      trackingUrl: updated.trackingUrl,
+    });
 
     return {
-      message: `Bought a ${updated.carrier} label — tracking ${updated.trackingNumber}`,
+      message: labelPurchaseMessage({
+        carrier: updated.carrier ?? "USPS",
+        trackingNumber: updated.trackingNumber!,
+        notification,
+      }),
       metadata: {
         orderId: order.id,
         carrier: updated.carrier ?? "USPS",
