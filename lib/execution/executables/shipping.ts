@@ -4,7 +4,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
 import { decryptCredentials } from "@/lib/integrations/credentials";
-import type { UspsCredentials } from "@/lib/integrations/usps";
+import type { EasyPostCredentials } from "@/lib/integrations/easypost";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
 import { notifyCustomerShipped } from "@/lib/orders/notifyCustomerShipped";
 
@@ -82,7 +82,7 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
       where: { storeId_provider: { storeId: ctx.storeId, provider: "USPS" } },
     });
     const credentials = integration?.credentials
-      ? decryptCredentials<UspsCredentials>(integration.credentials)
+      ? decryptCredentials<EasyPostCredentials>(integration.credentials)
       : null;
     if (!credentials?.apiKey) {
       throw new Error("Connect USPS Shipping (via EasyPost) in Payments/Connections before buying a label");

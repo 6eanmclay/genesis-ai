@@ -9,7 +9,7 @@ import { printfulConnector } from "./printful";
 import { facebookConnector } from "./facebook";
 import { instagramConnector } from "./instagram";
 import { tiktokConnector } from "./tiktok";
-import { uspsConnector } from "./usps";
+import { easypostConnector } from "./easypost";
 
 // Adding a new integration means writing a connector module and adding one
 // line here — nothing else in the framework needs to know it exists. The 3
@@ -32,7 +32,9 @@ const CONNECTORS: Partial<Record<IntegrationProvider, IntegrationConnector>> = {
   // Priority 2 (shipping, 2026-08-09) — real USPS rates/labels/tracking
   // via EasyPost. See lib/integrations/usps.ts's own comment for why the
   // provider is named USPS even though EasyPost is the real mechanism.
-  USPS: uspsConnector,
+  // The provider enum still reads USPS; the connector is EasyPost. See
+  // lib/integrations/easypost.ts for why the enum value was not churned.
+  USPS: easypostConnector,
 };
 
 export function getConnector(provider: IntegrationProvider): IntegrationConnector {

@@ -367,6 +367,46 @@ export const SocialAccountSchema = z.object({
 });
 export type SocialAccount = z.infer<typeof SocialAccountSchema>;
 
+
+// Phase 2 (EasyPost) — a parcel on its way to a customer.
+//
+// DELIBERATELY PROVIDER-INDEPENDENT, like every other entity here. The status
+// vocabulary is EasyPost's, but EasyPost's is the industry's — a future Shippo
+// or UPS connector maps onto these same words without translation, which is the
+// whole reason the canonical layer exists.
+//
+// WHY THIS IS NOT A FIELD ON Order. Genesis already stores a tracking NUMBER on
+// the order, which is the promise that something shipped. What it never had is
+// what happened next: in transit, delivered, or stuck. That is a stream of
+// events about a parcel, not a property of the sale, and it comes from a
+// provider that may not be connected at all. Keeping it as its own record means
+// an order with no shipment is simply an order with no shipment, and no
+// migration was needed to say so.
+export const ShipmentSchema = z.object({
+  trackingCode: z.string(),
+  carrier: z.string().nullable(),
+  // pre_transit | in_transit | out_for_delivery | delivered |
+  // available_for_pickup | return_to_sender | failure | cancelled | error |
+  // unknown. A free string rather than an enum, matching every other
+  // categorical field in this file: a carrier inventing a new state must not
+  // break the sync.
+  status: z.string(),
+  statusDetail: z.string().nullable(),
+  estimatedDeliveryAt: z.string().nullable(),
+  deliveredAt: z.string().nullable(),
+  lastScanAt: z.string().nullable(),
+  lastScanDescription: z.string().nullable(),
+  lastScanLocation: z.string().nullable(),
+  // The Genesis Order this parcel belongs to, using the same xxxId convention
+  // findRelated already walks.
+  orderId: z.string().nullable(),
+  // Derived from status, stored so a reader never has to know the vocabulary.
+  // Honest booleans: "not delivered" is not the same as "went wrong".
+  isDelivered: z.boolean(),
+  isException: z.boolean(),
+});
+export type Shipment = z.infer<typeof ShipmentSchema>;
+
 export const ENTITY_REGISTRY = {
   contact: { schema: ContactSchema, label: "Contact" },
   transaction: { schema: TransactionSchema, label: "Transaction" },
@@ -381,6 +421,7 @@ export const ENTITY_REGISTRY = {
   asset: { schema: AssetSchema, label: "Asset" },
   design: { schema: DesignSchema, label: "Design" },
   socialAccount: { schema: SocialAccountSchema, label: "Social Account" },
+  shipment: { schema: ShipmentSchema, label: "Shipment" },
 } as const;
 
 export type EntityType = keyof typeof ENTITY_REGISTRY;
