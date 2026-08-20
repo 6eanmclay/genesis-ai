@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { describeProviderError } from "./providerError";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
 import type { ConnectResult, IntegrationConnector } from "./types";
@@ -81,8 +82,9 @@ export async function exchangePrintfulCode(code: string, redirectUrl: string): P
     }),
   });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Printful token exchange failed (${res.status}): ${body}`);
+    throw new Error(
+      describeProviderError({ provider: "Printful", status: res.status, bodyText: await res.text(), stage: "token exchange" })
+    );
   }
   const token = (await res.json()) as PrintfulTokenResponse;
 

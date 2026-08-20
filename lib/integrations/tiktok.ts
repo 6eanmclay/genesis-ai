@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { describeProviderError } from "./providerError";
 import { beginOAuthHandoff } from "./oauthState";
 import { integrationFetch } from "./rateLimit";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -87,8 +88,9 @@ async function tiktokApiGet<T>(path: string, accessToken: string, searchParams: 
     { label: "TikTok" }
   );
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`TikTok API request to ${path} failed (${res.status}): ${body}`);
+    throw new Error(
+      describeProviderError({ provider: "TikTok", status: res.status, bodyText: await res.text(), stage: `request to ${path}` })
+    );
   }
   return res.json() as Promise<T>;
 }
@@ -122,8 +124,9 @@ export const tiktokConnector: IntegrationConnector = {
         }),
       });
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`TikTok token exchange failed (${res.status}): ${body}`);
+        throw new Error(
+          describeProviderError({ provider: "TikTok", status: res.status, bodyText: await res.text(), stage: "token exchange" })
+        );
       }
       const token = (await res.json()) as {
         access_token: string;

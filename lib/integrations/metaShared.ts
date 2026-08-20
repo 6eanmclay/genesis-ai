@@ -14,6 +14,9 @@
 // "metric not supported" or deprecated-version error, re-verify against
 // https://developers.facebook.com/docs/graph-api/changelog before assuming
 // the integration itself is broken.
+
+import { describeProviderError } from "./providerError";
+
 export const META_GRAPH_API_VERSION = "v21.0";
 export const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
 export const META_OAUTH_DIALOG_URL = "https://www.facebook.com/v21.0/dialog/oauth";
@@ -54,8 +57,9 @@ export async function exchangeCodeForUserToken(params: {
   url.searchParams.set("code", params.code);
   const res = await fetch(url);
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Meta token exchange failed (${res.status}): ${body}`);
+    throw new Error(
+      describeProviderError({ provider: "Meta", status: res.status, bodyText: await res.text(), stage: "token exchange" })
+    );
   }
   const data = (await res.json()) as { access_token: string; expires_in?: number };
   return { accessToken: data.access_token, expiresIn: data.expires_in ?? 3600 };
@@ -78,8 +82,9 @@ export async function exchangeForLongLivedUserToken(params: {
   url.searchParams.set("fb_exchange_token", params.shortLivedToken);
   const res = await fetch(url);
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Meta long-lived token exchange failed (${res.status}): ${body}`);
+    throw new Error(
+      describeProviderError({ provider: "Meta", status: res.status, bodyText: await res.text(), stage: "long-lived token exchange" })
+    );
   }
   const data = (await res.json()) as { access_token: string; expires_in?: number };
   return { accessToken: data.access_token, expiresIn: data.expires_in ?? 60 * 24 * 60 * 60 };
@@ -103,8 +108,9 @@ export async function fetchManagedPages(userAccessToken: string): Promise<MetaPa
   url.searchParams.set("access_token", userAccessToken);
   const res = await fetch(url);
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Fetching Facebook Pages failed (${res.status}): ${body}`);
+    throw new Error(
+      describeProviderError({ provider: "Facebook", status: res.status, bodyText: await res.text(), stage: "Page lookup" })
+    );
   }
   const data = (await res.json()) as { data?: MetaPage[] };
   return data.data ?? [];
@@ -116,8 +122,9 @@ export async function metaGraphGet<T>(path: string, accessToken: string, params:
   url.searchParams.set("access_token", accessToken);
   const res = await fetch(url);
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Meta Graph API request to ${path} failed (${res.status}): ${body}`);
+    throw new Error(
+      describeProviderError({ provider: "Meta", status: res.status, bodyText: await res.text(), stage: `request to ${path}` })
+    );
   }
   return res.json() as Promise<T>;
 }

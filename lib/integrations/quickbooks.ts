@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { describeProviderError } from "./providerError";
 import { beginOAuthHandoff } from "./oauthState";
 import { PERMISSIONS } from "@/lib/permissions";
 import { Prisma } from "@prisma/client";
@@ -154,8 +155,9 @@ export const quickbooksConnector: IntegrationConnector = {
         }),
       });
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`QuickBooks token exchange failed (${res.status}): ${body}`);
+        throw new Error(
+          describeProviderError({ provider: "QuickBooks", status: res.status, bodyText: await res.text(), stage: "token exchange" })
+        );
       }
       const token = (await res.json()) as {
         access_token: string;

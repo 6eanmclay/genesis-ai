@@ -18,7 +18,7 @@ NEEDS VERIFICATION, and a gap is recorded as a gap.**
 | 2 | CSRF protection on the OAuth callback | **Compliant** | `oauthState.ts`; 13 assertions incl. the original attack |
 | 3 | Credentials encrypted at rest | **Compliant** | `credentials.ts`, AES-GCM via `INTEGRATION_ENCRYPTION_KEY` |
 | 4 | Credentials never reach the browser | **Compliant** | `toStatusView()`; asserted with a planted ciphertext |
-| 5 | Credentials never written to logs | **Compliant** | audited — see §5 |
+| 5 | Credentials never written to logs or records | **Compliant** | `providerError.ts`; 21 assertions — see §5 |
 | 6 | Refresh-token rotation handled | **Compliant** | `tokenRefresh.ts`; 15 assertions |
 | 7 | Expired / invalid grant handled honestly | **Compliant** | 400 → "please reconnect", surfaced in the UI |
 | 8 | Revocation at the provider on disconnect | **Compliant** | every provider that offers it — see §8 |
@@ -91,6 +91,22 @@ hit, and it logs *the absence* of credentials, not a value:
 Error logging deliberately records error **type, HTTP status, provider request
 id and the OS-level cause** — never request bodies or headers, which is where
 tokens live.
+
+**The audit of that claim found it half true, and the code was changed to make
+it fully true.** It held for requests and not for responses: eleven call sites
+did ``throw new Error(`... failed (${res.status}): ${body}`)`` with the raw
+response body. That message is not ephemeral — the execution engine catches it,
+writes it to `ExecutionLog.message` in the database, and renders it on the
+owner's Connections card. Three problems, worst last: a business owner is shown
+raw JSON from an API they have never heard of; token endpoints are exactly where
+credentials live, and a failure body echoing submitted parameters back is a real
+provider behaviour rather than a hypothetical; and unlike a log line that scrolls
+away, a secret in `ExecutionLog` persists until someone deletes the row.
+
+`describeProviderError()` now takes the status and the provider's own error name
+and description, redacts anything token-shaped, caps the length, and quotes
+nothing at all from a body it cannot parse. Prose is left intact — a redaction
+that eats the message it was protecting is no use. Both properties are asserted.
 
 ## 6–7. Token lifecycle
 
@@ -266,6 +282,7 @@ scripts/verify-payment-badge.ts           what a payments badge may claim
 scripts/verify-mailchimp-auth.ts          OAuth conversion without breaking existing connections
 scripts/verify-rate-limit.ts              Retry-After, jitter, what is and is not retried
 scripts/verify-sync-backoff.ts            deferral vs failure, and the caps on both
+scripts/verify-provider-error.ts          what a failed provider call may say
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

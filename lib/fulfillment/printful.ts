@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { encryptCredentials, decryptCredentials } from "@/lib/integrations/credentials";
 import { PRINTFUL_API_BASE, refreshPrintfulToken, type PrintfulCredentials } from "@/lib/integrations/printful";
+import { describeProviderError } from "@/lib/integrations/providerError";
 import type {
   FulfillmentCandidate,
   FulfillmentConnector,
@@ -243,8 +244,9 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
       }),
     });
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Printful product creation failed (${res.status}): ${body}`);
+      throw new Error(
+        describeProviderError({ provider: "Printful", status: res.status, bodyText: await res.text(), stage: "product creation" })
+      );
     }
     const body = (await res.json()) as { result: { id: number } };
     return { externalProductId: String(body.result.id) };
@@ -274,8 +276,9 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
       }),
     });
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Printful draft order creation failed (${res.status}): ${body}`);
+      throw new Error(
+        describeProviderError({ provider: "Printful", status: res.status, bodyText: await res.text(), stage: "draft order creation" })
+      );
     }
     const body = (await res.json()) as {
       result: {
