@@ -150,6 +150,8 @@ export const printfulConnector: IntegrationConnector = {
     scopes: [],
     reads: [],
     writes: ["submits fulfillment orders on the merchant's behalf"],
+    // GAP: Printful supports token revocation and this does not use it
+    revokesOnDisconnect: false,
   },
 
   async connect(storeId, userId, params) {

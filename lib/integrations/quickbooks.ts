@@ -31,6 +31,9 @@ type QuickBooksCredentials = {
 };
 
 const AUTH_URL = "https://appcenter.intuit.com/connect/oauth2";
+// Intuit's documented revocation endpoint. Accepts either token; the refresh
+// token is sent because revoking it invalidates the whole grant.
+const REVOKE_URL = "https://developer.api.intuit.com/v2/oauth2/tokens/revoke";
 const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 const SCOPE = "com.intuit.quickbooks.accounting";
 
@@ -118,6 +121,8 @@ export const quickbooksConnector: IntegrationConnector = {
     scopes: ["com.intuit.quickbooks.accounting"],
     reads: ["transaction", "document"],
     writes: [],
+    // calls Intuit's revoke endpoint
+    revokesOnDisconnect: true,
   },
 
   async connect(storeId, userId, params) {
@@ -247,6 +252,46 @@ export const quickbooksConnector: IntegrationConnector = {
       where: { storeId_provider: { storeId, provider: "QUICKBOOKS" } },
     });
     if (!integration) return;
+
+    // REVOKE AT INTUIT, not just locally (2026-08-20).
+    //
+    // Disconnect used to delete the stored credentials and stop there. The
+    // token stayed alive at Intuit until it expired on its own, while the owner
+    // had just been told Genesis no longer had access. That gap between what
+    // the button says and what is true is the actual problem; Intuit requiring
+    // revocation for production apps is only how we found it.
+    //
+    // Best effort, deliberately. If Intuit is unreachable the local disconnect
+    // still proceeds — the owner asked to disconnect, and refusing because a
+    // third party is down would leave them connected against their wishes. The
+    // failure is logged so a token we failed to revoke is not silently
+    // forgotten.
+    const clientId = process.env.QUICKBOOKS_CLIENT_ID;
+    const clientSecret = process.env.QUICKBOOKS_CLIENT_SECRET;
+    if (integration.credentials && clientId && clientSecret) {
+      try {
+        const credentials = decryptCredentials<QuickBooksCredentials>(integration.credentials);
+        if (credentials?.refreshToken) {
+          const res = await fetch(REVOKE_URL, {
+            method: "POST",
+            headers: {
+              Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ token: credentials.refreshToken }),
+          });
+          if (!res.ok) {
+            console.error(`[integrations/quickbooks] revoke returned ${res.status} for store ${storeId}`);
+          }
+        }
+      } catch (error) {
+        console.error(
+          `[integrations/quickbooks] revoke failed for store ${storeId}`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
     await prisma.storeIntegration.update({
       where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },

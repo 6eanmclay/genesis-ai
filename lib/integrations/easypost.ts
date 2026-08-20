@@ -146,6 +146,8 @@ export const easypostConnector: IntegrationConnector = {
     scopes: [],
     reads: ["shipment"],
     writes: ["purchases shipping labels, which spends the merchant's real money"],
+    // API key — the merchant rotates it in EasyPost
+    revokesOnDisconnect: false,
   },
 
   async connect(storeId, userId, params) {

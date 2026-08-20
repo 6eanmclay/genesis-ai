@@ -28,6 +28,8 @@ type GoogleCalendarCredentials = {
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+// Google's documented revocation endpoint.
+const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 
 async function refreshAccessToken(
   storeId: string,
@@ -96,6 +98,8 @@ export const googleCalendarConnector: IntegrationConnector = {
     scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
     reads: ["appointment"],
     writes: [],
+    // calls Google's revoke endpoint
+    revokesOnDisconnect: true,
   },
 
   async connect(storeId, userId, params) {
@@ -216,9 +220,40 @@ export const googleCalendarConnector: IntegrationConnector = {
       where: { storeId_provider: { storeId, provider: "GOOGLE_CALENDAR" } },
     });
     if (!integration) return;
-    // No revoke call — Google's token.revoke endpoint could be added here
-    // later; the merchant can also revoke access directly from their
-    // Google Account's own connected-apps settings.
+
+    // REVOKE AT GOOGLE (2026-08-20). This used to say the revoke endpoint
+    // "could be added here later" and pointed the merchant at their own Google
+    // account settings. That put the work on the person who had just clicked
+    // Disconnect and been told it was done. Forgetting a token is not ending
+    // access, and this scope reads real personal calendar data.
+    //
+    // Best effort: an unreachable Google must not trap an owner in a connection
+    // they asked to end, so the local disconnect proceeds either way and the
+    // failure is logged rather than swallowed.
+    if (integration.credentials) {
+      try {
+        const credentials = decryptCredentials<GoogleCalendarCredentials>(integration.credentials);
+        // Revoking the refresh token ends the whole grant; the access token is
+        // the fallback for a connection that never received one.
+        const token = credentials?.refreshToken ?? credentials?.accessToken;
+        if (token) {
+          const res = await fetch(REVOKE_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ token }),
+          });
+          if (!res.ok) {
+            console.error(`[integrations/google_calendar] revoke returned ${res.status} for store ${storeId}`);
+          }
+        }
+      } catch (error) {
+        console.error(
+          `[integrations/google_calendar] revoke failed for store ${storeId}`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
     await prisma.storeIntegration.update({
       where: { id: integration.id, storeId },
       data: { status: "DISCONNECTED", credentials: Prisma.DbNull },

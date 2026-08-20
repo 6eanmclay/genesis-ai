@@ -52,6 +52,20 @@ export interface IntegrationCapabilities {
    * read-only, which is the default posture and true of most connectors.
    */
   writes: string[];
+  /**
+   * Does disconnect() end the grant AT THE PROVIDER, not just locally?
+   *
+   * Declared rather than assumed, because the honest answer was no for six
+   * connectors and nobody could tell from the outside. Deleting a stored token
+   * is not revoking it: the token stays valid at the provider while the owner
+   * has just been told access ended. Intuit and Google both require real
+   * revocation; every provider that offers an endpoint should use it.
+   *
+   * False is an allowed, honest answer — some providers (a bare API key) have
+   * nothing to revoke. It must never be true unless disconnect really calls the
+   * provider.
+   */
+  revokesOnDisconnect: boolean;
 }
 
 // Phase 0 — status() never returns credentials.

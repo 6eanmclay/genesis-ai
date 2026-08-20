@@ -72,6 +72,8 @@ export const paypalConnector: IntegrationConnector = {
     scopes: [],
     reads: [],
     writes: ["captures checkout payments"],
+    // client-credentials token, nothing to revoke per-merchant
+    revokesOnDisconnect: false,
   },
 
   async connect(storeId, userId, params) {

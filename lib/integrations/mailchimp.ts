@@ -58,6 +58,8 @@ export const mailchimpConnector: IntegrationConnector = {
     scopes: [],
     reads: ["campaign"],
     writes: [],
+    // API key — the merchant revokes it in Mailchimp
+    revokesOnDisconnect: false,
   },
 
   async connect(storeId, userId, params) {

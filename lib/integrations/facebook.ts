@@ -49,6 +49,8 @@ export const facebookConnector: IntegrationConnector = {
     scopes: ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_manage_insights"],
     reads: ["socialAccount"],
     writes: [],
+    // GAP: Meta supports DELETE /{user-id}/permissions and this does not use it
+    revokesOnDisconnect: false,
   },
 
   async connect(storeId, userId, params) {

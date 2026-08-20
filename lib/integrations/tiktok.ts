@@ -93,6 +93,8 @@ export const tiktokConnector: IntegrationConnector = {
     scopes: ["user.info.basic", "user.info.stats", "video.list"],
     reads: ["socialAccount"],
     writes: [],
+    // GAP: TikTok supports /oauth/revoke/ and this does not use it
+    revokesOnDisconnect: false,
   },
 
   async connect(storeId, userId, params) {

@@ -124,6 +124,8 @@ export const stripeConnector: IntegrationConnector = {
     writes: [
       "creates Checkout Sessions on the connected account — this is how a customer pays the merchant",
     ],
+    // calls stripe.oauth.deauthorize
+    revokesOnDisconnect: true,
   },
 
   // PHASE 1 DECISION, RECORDED: NO SYNC REQUIRED.

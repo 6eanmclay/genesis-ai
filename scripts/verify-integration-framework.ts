@@ -220,6 +220,33 @@ async function connectorSections() {
   check("Stripe correctly declares no refresh", typeof getConnector("STRIPE").refresh, "undefined");
   check("EasyPost correctly declares no refresh", typeof getConnector("EASYPOST").refresh, "undefined");
 
+  // -------------------------------------------------------------------------
+  console.log("\n9. Disconnect ends the grant at the provider, where it can");
+  //
+  // Deleting a stored token is not revoking it. A provider that still holds a
+  // live grant is still connected, whatever Genesis's own row says — and the
+  // owner has just been told access ended. Intuit and Google both require real
+  // revocation; this asserts the three connectors that now do it, and keeps the
+  // honest "not yet" of the others visible instead of buried.
+  const revoking = providers.filter((p) => getConnector(p).capabilities.revokesOnDisconnect);
+  check(
+    "the connectors that revoke at the provider",
+    revoking.sort(),
+    ["GOOGLE_CALENDAR", "QUICKBOOKS", "STRIPE"]
+  );
+  for (const p of providers) {
+    const caps = getConnector(p).capabilities;
+    // An API-key connector has no grant to revoke — the merchant rotates the
+    // key at the provider. Declaring false there is correct, not a gap.
+    if (caps.authKind === "api_key") {
+      check(`${p} (api key) correctly declares no revocation`, caps.revokesOnDisconnect, false);
+    }
+  }
+  const oauthWithoutRevoke = providers.filter(
+    (p) => getConnector(p).capabilities.authKind === "oauth" && !getConnector(p).capabilities.revokesOnDisconnect
+  );
+  console.log(`      OAuth connectors still to implement revocation: ${oauthWithoutRevoke.join(", ") || "(none)"}`);
+
   // Webhook support is declared, not assumed. None today: Stripe's own routes
   // are deliberately left in place until Phase 1 migrates them.
   const withWebhooks = providers.filter((p) => getConnector(p).webhooks !== undefined);
