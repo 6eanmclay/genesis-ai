@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
     purchase_units?: {
       custom_id?: string;
       amount?: { value?: string };
-      payments?: { captures?: { custom_id?: string; amount?: { value?: string } }[] };
+      payments?: { captures?: { id?: string; custom_id?: string; amount?: { value?: string } }[] };
       shipping?: {
         name?: { full_name?: string | null } | null;
         address?: {
@@ -191,6 +191,18 @@ export async function GET(request: NextRequest) {
     purchaseUnit?.payments?.captures?.[0]?.amount?.value ?? purchaseUnit?.amount?.value ?? "0";
   const amountInCents = Math.round(parseFloat(amountValue) * 100);
   const buyerEmail = orderData.payer?.email_address ?? "unknown";
+  // THE ID A REFUND ARRIVES ON (2026-08-20).
+  //
+  // Order.externalPaymentId exists for exactly this — externalOrderId is the
+  // CHECKOUT-level id, and a refund is keyed one level down (the payment intent
+  // on Stripe, the capture on PayPal). The Stripe rail has written it since the
+  // field was added; this rail never did, so a PayPal refund had nothing to
+  // attach to and the schema's own guarantee was quietly true for one rail only.
+  //
+  // Nullable rather than required: an order captured before this existed has
+  // none, and refusing to record a real sale over a missing id would trade a
+  // reporting gap for a lost payment.
+  const captureId = purchaseUnit?.payments?.captures?.[0]?.id ?? null;
 
   // Real money has now moved (capture succeeded, custom_id matched this
   // store). Everything from here on (product lookup, Order.upsert) is a
@@ -218,7 +230,13 @@ export async function GET(request: NextRequest) {
   });
 
   try {
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    // Scoped to THIS store (2026-08-20), matching the Stripe rail. The lookup
+    // was by bare id, so a custom_id carrying another store's productId put that
+    // store's product name on this order and linked the row to it — a tenant
+    // leak in both directions, through a field nobody scoped because it is
+    // built server-side. Defence in depth: the order is still created, it just
+    // records an honest "Unknown product" instead of a borrowed one.
+    const product = await prisma.product.findFirst({ where: { id: productId, storeId: store.id } });
 
     // Same existence-check-inside-a-transaction pattern as the Stripe
     // webhook handler — see PHASE1_DESIGN.md section 4-5. A double-hit on
@@ -233,8 +251,18 @@ export async function GET(request: NextRequest) {
       const created = await tx.order.create({
         data: {
           storeId: store.id,
-          productId,
+          // Only linked when the product genuinely exists in THIS store.
+          //
+          // This said `productId` unconditionally, and Order.productId is a
+          // foreign key — so an owner tidying the catalogue while a buyer was
+          // approving on PayPal's site made the write violate it, and the whole
+          // order was lost. Money captured, nothing recorded, and no webhook
+          // behind this route to ever put it right. The same defect the Stripe
+          // rail carried until its first real end-to-end run found it
+          // (COMPLIANCE.md §34); found here the same way.
+          productId: product?.id ?? null,
           productName: product?.name ?? "Unknown product",
+          externalPaymentId: captureId,
           amountInCents,
           buyerEmail,
           status: "paid",

@@ -53,6 +53,15 @@ export async function startRealPostgres(): Promise<RealPostgres> {
     password: "postgres",
     port,
     persistent: false,
+    // PRODUCTION IS UTF8; THIS MUST BE TOO (2026-08-20).
+    //
+    // initdb takes its encoding from the host locale, which on this Windows
+    // machine is WIN1252. Everything passed until a route wrote a real Prisma
+    // error message into ExecutionLog: the arrow in it has no WIN1252
+    // equivalent, Postgres raised 22P05, and the suite died inside the very
+    // failure path it was there to prove. Neon is UTF8, so a harness that is
+    // not can pass tests production would fail — and, worse, fail differently.
+    initdbFlags: ["--encoding=UTF8", "--no-locale"],
   });
 
   await pg.initialise();

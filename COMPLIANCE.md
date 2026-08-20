@@ -1222,9 +1222,111 @@ plainly rather than leaving implied: a partially refunded order still reads as
 fully paid, and **its full amount still counts as revenue and profit**. Genesis
 has no field for a partial refund, so there is nothing to correct against.
 
-Fixing it means a schema change and a decision about how partial refunds should
-affect revenue reporting — that is Sean's call, not one to make inside an audit.
-Recorded here as a known divergence between money state and order state.
+**Deliberately not implemented, and awaiting Sean's approval.** Fixing it means a
+schema change *and* a decision about how partial refunds should affect revenue
+reporting — that is a product call, not one to make inside an audit. Recorded
+here as a known divergence between money state and order state.
+
+---
+
+## 41. The other payment rail had never been run
+
+*Connections roadmap, P0.3 — "PayPal as the second payment rail, via the existing
+integration architecture, **same lifecycle guarantees as Stripe**" (VISION.md).
+The Stripe rail was audited to that standard in §34, §37 and §40. The rail beside
+it never had been, and the first end-to-end run of it found three defects.*
+
+PayPal matters more than Stripe here, not less. Stripe has a webhook behind it:
+when order creation fails, Stripe retries, and §34's permanent/transient split
+decides whether that retry can help. **PayPal has nothing behind it.** Capture
+happens synchronously in `app/api/checkout/paypal/return/route.ts` when the buyer
+returns from PayPal's site, and if anything after the capture fails, no second
+delivery is ever coming. Whatever that route drops is dropped for good.
+
+`scripts/verify-paypal-live.ts` runs the real route handler against a real
+Postgres. Only PayPal's own HTTP responses are supplied — that is the externally
+blocked boundary, and it is the only thing substituted. The store and product
+resolution, the transaction, the order, the business event and the confirmation
+claim are all production code.
+
+### A product deleted mid-checkout destroyed a real payment
+
+`Order.productId` is a foreign key. The route wrote the `productId` out of
+`custom_id` unconditionally, so if the owner tidied the catalogue while a buyer
+was on PayPal's site approving, the write violated the constraint, the whole
+transaction rolled back, and the buyer was redirected to `?payment_pending=1`.
+
+Money captured. No order. No webhook to retry it. Nothing.
+
+This is the same defect §34 found on the Stripe rail, and it was still live here
+— which is the argument for running each rail rather than reasoning that the fix
+must have generalised. Reproduced first (`0 orders`), then fixed the same way:
+`productId: product?.id ?? null`, so the sale is recorded even when the catalogue
+has moved on.
+
+### Another store's product could be attached to a sale
+
+The product lookup was `findUnique({ where: { id: productId } })` — no store
+scope. The suite fed a `custom_id` pairing store A with store B's product, and
+the order came back linked to the foreign product with **its name on it**:
+`productName: "victim candle"`.
+
+`custom_id` is built server-side, so no live path reaches this today. It is
+recorded as a real defect anyway, because the only thing standing between an
+unscoped lookup and a tenant leak was a value nobody had to keep trustworthy.
+Now scoped to `store.id`, exactly as the Stripe rail is.
+
+### A PayPal refund had nothing to attach to
+
+`Order.externalPaymentId` exists precisely so a refund can find its order:
+`externalOrderId` is the checkout-level id, and a refund arrives one level down —
+the payment intent on Stripe, the **capture** on PayPal. The Stripe rail has
+written it since the field was added. This rail never did.
+
+So the schema's own guarantee was quietly true for one rail only, and a PayPal
+refund could not have been reconciled even by hand. Now recorded from
+`purchase_units[0].payments.captures[0].id`.
+
+### What still is not there: PayPal refunds
+
+Recording the capture id **unblocks** refund handling; it does not implement it.
+`charge.refunded` has no PayPal counterpart in this codebase, so today:
+
+- a PayPal refund never flips `Order.status`, so refunded money still counts as
+  revenue and profit (§40's accounting fix is Stripe-only in practice)
+- `purchaseShippingLabelExecutable`'s refund guard — the one that stops the owner
+  posting goods to somebody who already has their money back — never fires for a
+  PayPal order
+
+This is **an engineering gap, not an external blocker**, and it is the next piece
+of P0.3. It needs a design decision that touches Sean's own PayPal account, so it
+is written up separately rather than built inside this section.
+
+### The harness was not the database production runs on
+
+Found while reproducing the first defect: the route tried to record the failure,
+and the write itself failed with `22P05` — an arrow in the Prisma error message
+had no WIN1252 equivalent. `initdb` had been taking its encoding from the Windows
+host locale for every real-Postgres suite written so far.
+
+Neon is UTF8. A harness that is not can pass what production would fail, and fail
+what production would pass. Fixed at the source — `initdbFlags:
+["--encoding=UTF8", "--no-locale"]` — rather than by avoiding the character, and
+every existing real-Postgres suite was re-run on it: all still pass.
+
+### Proven
+
+| | |
+|---|---|
+| A real capture becomes a paid order, with the product, buyer and address | PASS |
+| A deleted product no longer costs the owner the sale | PASS (was: 0 orders) |
+| A foreign product is neither linked nor named | PASS (was: linked, named) |
+| The capture id is recorded, so a refund can land | PASS (was: null) |
+| A reload after paying creates one order, one event, one email | PASS |
+| A capture belonging to another store is refused, and recorded | PASS |
+| A declined capture never becomes a paid order | PASS |
+| An unconnected store never reaches PayPal at all | PASS |
+
 
 ---
 
@@ -1263,6 +1365,7 @@ scripts/verify-order-confirmation.ts      what the confirmation says, and to who
 scripts/verify-confirmation-live.ts       claim, release, retry, tenant separation (real Postgres)
 scripts/verify-checkout-live.ts           checkout guards against the real action (real Postgres)
 scripts/verify-orders-live.ts             fulfilment lifecycle and tenant scoping (real Postgres)
+scripts/verify-paypal-live.ts             the PayPal rail, end to end (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
@@ -1270,3 +1373,78 @@ No item here is marked compliant on the strength of reading the code alone.
 Both migrations added during this audit — `passwordChangedAt` and `AuthAttempt` —
 were confirmed applied in production by reading `_prisma_migrations` directly,
 not inferred from a green build.
+
+---
+
+## Close-out — what each of these words means
+
+*The money-surface audit is complete. **The system is not verified as a whole**,
+and this section exists so that cannot be misread. Four categories, and they are
+not interchangeable.*
+
+### VERIFIED — behavioural proof exists
+
+Each of these was exercised against a real Postgres, or a real Next server, with
+the defect reproduced against the pre-fix behaviour first:
+
+| Surface | Where |
+|---|---|
+| Checkout-session creation | §37 — real server action, real database |
+| Webhook signature and store resolution | §25, §28 — real signed payloads |
+| Order creation, shipping metadata, BusinessEvent | §34 — real server, real request scope |
+| Replay and idempotency (orders, points, confirmations) | §23, §26, §34, §35 |
+| The confirmation's decision, payload and claim | §35 |
+| Fulfilment lifecycle and the label state machine | §36, §39 |
+| Refunds and money out | §40 |
+| The PayPal rail, end to end | §41 — the real route, real database |
+| Tenant isolation | §26 — the guard through the real client |
+| Authentication, sessions, brute force, roles | §14–16, §24 |
+| Growth Points ledger | §23 — real transactions |
+
+Every defect found is reproduced against its old behaviour in
+`verify-regressions.ts` or in the suite that found it.
+
+### UNVERIFIED — real, and not proven
+
+Not failures. Things this environment cannot demonstrate, named so nobody
+assumes otherwise:
+
+- **The Stripe API call itself.** Every guard in front of it is proven; the call
+  needs a Stripe test key.
+- **`confirmSelectedRate`'s live re-quote.** The logic is proven; the round trip
+  needs an EasyPost key.
+- **Cross-tenant paths composed under one live HTTP session.** Server actions and
+  the permission matrix are each proven; the two together are not, because a
+  server action needs an action ID from a rendered page.
+- **Three suites** (`brand-logo-flow`, `social-connections-pipeline`,
+  `product-image-gallery-e2e`) that parallelise reads and cannot run on PGlite.
+  They would likely pass on the real-Postgres harness; nobody has moved them.
+- **Email delivery.** Everything up to the provider handoff is proven; the
+  handoff is externally blocked.
+
+### EXTERNALLY BLOCKED — waiting on a credential, account or approval
+
+Engineering is complete on every one; none is an engineering gap. The full list
+with instructions is under **Action required from Sean** at the top of this
+document. In short: Resend (every customer email), QuickBooks reconnect, Google
+OAuth publish, Mailchimp / Facebook / TikTok / Square client credentials,
+EasyPost account verification, the Intuit hosting-IP question, and a Stripe test
+key.
+
+### NOT MODELLED — a product decision, not a defect
+
+**Partial refunds** (§40). Genesis has no field for one, so a partially refunded
+order reads as fully paid and its full amount counts as revenue. **Deliberately
+not implemented, and awaiting Sean's approval** — it needs a schema change *and*
+a decision about how a partial refund should affect revenue reporting: whether it
+reduces recognised revenue, appears as a separate adjustment, or shows only in
+the order view. Guessing at that inside an audit would put a number on a
+merchant's dashboard that nobody chose.
+
+### Known engineering gap, already queued
+
+**PayPal refunds are not handled** (§41). Not blocked on anything external, and
+not a product question either — the capture id is now recorded, so the hook
+exists; the handler does not. It is the next piece of the Connections roadmap's
+own P0.3, and until it lands, a refunded PayPal sale still reads as revenue and
+its goods can still be posted at the owner's expense.
