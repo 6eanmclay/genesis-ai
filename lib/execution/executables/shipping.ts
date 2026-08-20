@@ -96,6 +96,28 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
       throw new Error("Enter a real package weight (in ounces) to get a rate");
     }
 
+    // CLAIM BEFORE SPENDING (2026-08-20).
+    //
+    // The `order.trackingNumber` guard above is only as good as the instant it
+    // ran: trackingNumber is written AFTER the label is bought, and everything
+    // between here and Shipment.buy is awaited. Two concurrent submits both
+    // passed that check and both reached EasyPost — real postage, paid twice,
+    // for one parcel.
+    //
+    // The conditional update matches only while no purchase is in flight, so
+    // exactly one caller proceeds. Released on any failure below, because an
+    // order stuck permanently claimed could never be shipped at all.
+    const labelClaim = await prisma.order.updateMany({
+      where: { id: order.id, storeId: ctx.storeId, labelClaimedAt: null, trackingNumber: null },
+      data: { labelClaimedAt: new Date() },
+    });
+    if (labelClaim.count === 0) {
+      throw new Error("A shipping label for this order is already being bought");
+    }
+
+    let updated: Awaited<ReturnType<typeof prisma.order.update>>;
+    let shippingCostInCents: number;
+    try {
     const client = new EasyPost(credentials.apiKey);
 
     const shipment = await client.Shipment.create({
@@ -130,9 +152,9 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
 
     const bought = await client.Shipment.buy(shipment.id, lowestUspsRate);
 
-    const shippingCostInCents = Math.round(parseFloat(lowestUspsRate.rate) * 100);
+    shippingCostInCents = Math.round(parseFloat(lowestUspsRate.rate) * 100);
 
-    const updated = await prisma.order.update({
+    updated = await prisma.order.update({
       where: { id: order.id, storeId: ctx.storeId },
       data: {
         carrier: bought.selected_rate?.carrier ?? "USPS",
@@ -144,6 +166,20 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
         fulfilledAt: new Date(),
       },
     });
+    } catch (error) {
+      // Released only while no label actually landed. If the purchase succeeded
+      // and the write failed, trackingNumber is still null here and the claim
+      // lifts — but the guard above will not re-run a purchase for an order
+      // that already has one, so the two conditions together are what keep a
+      // retry safe rather than expensive.
+      await prisma.order
+        .updateMany({
+          where: { id: order.id, storeId: ctx.storeId, trackingNumber: null },
+          data: { labelClaimedAt: null },
+        })
+        .catch(() => {});
+      throw error;
+    }
 
     // Real customer notification (Sean: "...tracking number → shipped
     // order... customer notification"). Never blocks or fails this

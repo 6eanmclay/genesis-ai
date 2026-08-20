@@ -1,0 +1,13 @@
+-- Stopping one shipment being paid for twice.
+--
+-- purchaseShippingLabelExecutable guarded on `trackingNumber`, which is only
+-- written AFTER the label is bought — and several awaits separate that check
+-- from the EasyPost purchase. Two concurrent submits both passed the check and
+-- both bought a label, so the merchant paid real postage twice for one parcel.
+--
+-- This column is the claim: set before any EasyPost call, cleared if the
+-- purchase fails so a genuine retry is still possible.
+--
+-- Additive and nullable. NULL means "no purchase in flight", correctly true of
+-- every existing order.
+ALTER TABLE "Order" ADD COLUMN "labelClaimedAt" TIMESTAMP(3);
