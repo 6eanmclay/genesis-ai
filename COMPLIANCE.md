@@ -700,8 +700,29 @@ deliberate constraint violation kills the client — healed in the harness, but
 only for errors that actually reached Postgres, since disconnecting after a
 guard-level error breaks the *next* query instead.
 
-**Still inspection-only:** the webhook handlers, which need HTTP request plumbing
-rather than just a database.
+**And it revived twelve dormant suites.** `scripts/run-db-suites.ts` runs the
+suites that import `lib/prisma` against the harness. They had never run: they
+died instantly with "Can't reach database server", so they contained coverage
+nobody could execute — worse than no coverage, because it looks like coverage in
+a file listing. **8 of 12 pass now**, up from 1.
+
+The finding there mattered more than the count. **Eleven of the twelve were
+written to run against production**, reaching for "a real store", "a real
+product", "a real user" via a bare `findFirst`. Some of them *mutate* what they
+find — `verify-product-content-change` renames the first product it sees, which
+against the production database renames a live merchant's item. They need no
+particular data, only *some*, so the runner seeds it.
+
+The four that still fail are reported rather than hidden, because which ones and
+why is the useful part:
+
+| Suite | Why |
+|---|---|
+| `stripe-webhook-e2e` | POSTs to the webhook route over HTTP — wants `next dev`, not a database |
+| `brand-logo-flow`, `social-connections-pipeline`, `product-image-gallery-e2e` | PGlite closes the connection on any Postgres-level error, and these exercise error paths, so each fails on its *next* query rather than on what it was asserting |
+
+**Still inspection-only:** the webhook handlers themselves, which need HTTP
+request plumbing rather than just a database.
 
 ---
 
@@ -731,6 +752,7 @@ scripts/verify-webhook-store.ts           forged Stripe events at the money boun
 scripts/verify-credential-encryption.ts   tampering, re-keying, and legacy rows
 scripts/verify-db-integrity.ts            the guard, the constraints, the migrations (real Postgres)
 scripts/verify-ledger-live.ts             the ledger's real transactions (real Postgres)
+scripts/run-db-suites.ts                  runs the 12 suites that need a database
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
