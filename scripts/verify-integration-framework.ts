@@ -153,6 +153,77 @@ console.log("\n5. Expiring, and provider-bound");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n5b. The draft-phase handoff, for onboarding");
+{
+  // The onboarding fulfillment callback used `state = "${draftId}:PRINTFUL"` —
+  // unsigned, not single-use, not session-bound. Phase 0 removed exactly that
+  // defect from every other callback and left this one. It checked that the
+  // draft belonged to the signed-in user, so it was not an open takeover, but a
+  // crafted callback clicked by a signed-in owner would still have stored the
+  // ATTACKER'S Printful credentials on the victim's draft — and every
+  // fulfillment order that store later placed would have gone to their account.
+  const draftNonce = newNonce();
+  const draftState = signOAuthState(
+    {
+      storeId: "",
+      storeDraftId: "draft_victim",
+      provider: "PRINTFUL",
+      userId: "user_owner",
+      executionId: "",
+      nonce: draftNonce,
+      expiresAt: NOW.getTime() + OAUTH_STATE_TTL_MS,
+    },
+    SECRET
+  );
+  const verifyDraft = (over: Record<string, unknown> = {}) =>
+    verifyOAuthState(draftState, {
+      secret: SECRET,
+      provider: "PRINTFUL",
+      cookieNonce: draftNonce,
+      sessionUserId: "user_owner",
+      now: NOW,
+      ...over,
+    });
+
+  const good = verifyDraft();
+  assert("a real draft handoff verifies", good.ok);
+  if (good.ok) check("and names the draft it was minted for", good.payload.storeDraftId, "draft_victim");
+
+  // The bare pre-Phase-0 form.
+  check("the old unsigned state is rejected", verifyOAuthState("draft_victim:PRINTFUL", {
+    secret: SECRET, provider: "PRINTFUL", cookieNonce: draftNonce, sessionUserId: "user_owner", now: NOW,
+  }), { ok: false, reason: "malformed" });
+
+  // Every property the store-phase handoff has, this one has too.
+  check("a different signed-in user cannot finish it", verifyDraft({ sessionUserId: "user_attacker" }).ok, false);
+  check("replaying it has no cookie to match", verifyDraft({ cookieNonce: null }).ok, false);
+  check("and it expires", verifyDraft({ now: new Date(NOW.getTime() + OAUTH_STATE_TTL_MS + 1000) }).ok, false);
+
+  // A state minted for the DASHBOARD Printful connect carries a storeId and no
+  // storeDraftId, so the onboarding callback cannot be driven with one even
+  // though the provider matches.
+  const dashboardState = signOAuthState(
+    {
+      storeId: "store_1",
+      provider: "PRINTFUL",
+      userId: "user_owner",
+      executionId: "",
+      nonce: draftNonce,
+      expiresAt: NOW.getTime() + OAUTH_STATE_TTL_MS,
+    },
+    SECRET
+  );
+  const crossed = verifyOAuthState(dashboardState, {
+    secret: SECRET, provider: "PRINTFUL", cookieNonce: draftNonce, sessionUserId: "user_owner", now: NOW,
+  });
+  assert("a dashboard state still verifies on its own terms", crossed.ok);
+  assert(
+    "but carries no draft, so the onboarding callback refuses it",
+    crossed.ok && crossed.payload.storeDraftId === undefined
+  );
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n6. status() never carries credentials");
 {
   const row = {

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { completeOAuthHandoff } from "@/lib/integrations/oauthState";
 import { prisma } from "@/lib/prisma";
 import { exchangePrintfulCode } from "@/lib/integrations/printful";
 import { encryptCredentials } from "@/lib/integrations/credentials";
@@ -35,9 +36,29 @@ export async function GET(request: NextRequest) {
   // resumes exactly where they left off (see app/onboarding/business/).
   const redirectUrl = new URL("/onboarding/business", request.url);
 
-  const [storeDraftId, provider] = state?.split(":") ?? [];
+  // Verified, not parsed (2026-08-20). This route used to split the state on a
+  // colon and trust both halves, which is precisely the defect Phase 0 removed
+  // from every other OAuth callback. The draft-ownership check below meant it
+  // was not an open takeover — but a crafted callback clicked by a signed-in
+  // owner would still have stored the ATTACKER'S Printful credentials on the
+  // victim's draft, and every fulfillment order that store later placed would
+  // have gone to the attacker's account.
+  const session = await auth();
+  const verified = await completeOAuthHandoff({
+    state,
+    provider: "PRINTFUL",
+    sessionUserId: session?.user?.id,
+  });
+  // A state minted for the dashboard's own Printful connect carries a storeId
+  // and no storeDraftId, so it cannot be replayed here even though the provider
+  // matches.
+  const storeDraftId = verified.ok ? (verified.payload.storeDraftId ?? null) : null;
 
-  if (oauthError || !storeDraftId || !code || provider !== "PRINTFUL") {
+  if (!verified.ok && state) {
+    console.warn(`[onboarding/fulfillment/callback] rejected state: ${verified.reason}`);
+  }
+
+  if (oauthError || !storeDraftId || !code) {
     if (storeDraftId) {
       await recordExecution({
         executionId: randomUUID(),
@@ -61,7 +82,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  const session = await auth();
   if (!session?.user) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
@@ -107,7 +127,7 @@ export async function GET(request: NextRequest) {
       storeDraftId,
       schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
       timestamp: new Date(),
-      metadata: { provider },
+      metadata: { provider: "PRINTFUL" },
     });
 
     redirectUrl.searchParams.set("onboarding_fulfillment_connected", "1");

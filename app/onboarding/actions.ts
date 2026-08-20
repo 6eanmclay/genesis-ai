@@ -13,6 +13,7 @@ import { selectFulfillmentStrategy } from "@/lib/fulfillment/strategy";
 import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
 import { buildPrintfulAuthorizeUrl } from "@/lib/integrations/printful";
 import { getBaseUrl } from "@/lib/integrations/util";
+import { beginOAuthHandoff } from "@/lib/integrations/oauthState";
 import { recommendPrice, applyOwnerPrice } from "@/lib/onboarding/pricing";
 import { GeneratedImageProvider } from "@/lib/imageProviders/generatedImageProvider";
 import { uploadProductImageFile } from "@/lib/imageProviders/uploadProvider";
@@ -703,7 +704,15 @@ export async function startFulfillmentConnect(): Promise<{ authorizeUrl: string;
   }
   const baseUrl = await getBaseUrl();
   const redirectUrl = `${baseUrl}/api/onboarding/fulfillment/callback`;
-  const authorizeUrl = buildPrintfulAuthorizeUrl(redirectUrl, `${draft.id}:PRINTFUL`);
+  // Signed, single-use, session-bound, expiring — the same handoff every other
+  // connector uses. This used to be the literal string `${draft.id}:PRINTFUL`,
+  // which is the exact defect Phase 0 removed everywhere else and left here.
+  const oauthState = await beginOAuthHandoff({
+    storeDraftId: draft.id,
+    userId,
+    provider: "PRINTFUL",
+  });
+  const authorizeUrl = buildPrintfulAuthorizeUrl(redirectUrl, oauthState);
   return { authorizeUrl, rationale };
 }
 

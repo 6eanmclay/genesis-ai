@@ -48,7 +48,22 @@ export const OAUTH_STATE_TTL_MS = 60 * 60 * 1000;
 export const OAUTH_STATE_COOKIE = "genesis_oauth_state";
 
 export interface OAuthStatePayload {
+  /** The store this handoff belongs to. Empty for a draft-phase flow. */
   storeId: string;
+  /**
+   * Set INSTEAD of storeId when the flow starts during onboarding, before any
+   * Store exists (2026-08-20).
+   *
+   * The onboarding fulfillment callback used `state = "${draftId}:PRINTFUL"` —
+   * unsigned, not single-use, not session-bound — which is precisely the defect
+   * described at the top of this file, still open on that one route after Phase
+   * 0 fixed every other. It checked that the draft belonged to the signed-in
+   * user, so it was not an open takeover, but a crafted callback clicked by a
+   * signed-in owner would still have stored the ATTACKER'S Printful credentials
+   * on the victim's draft — and every fulfillment order that store later placed
+   * would have gone to the attacker's account.
+   */
+  storeDraftId?: string;
   /** Uppercase IntegrationProvider name — a state minted for one provider must not work for another. */
   provider: string;
   /** Who started the flow. Re-checked against the live session at the callback. */
@@ -210,7 +225,9 @@ function secret(): string {
  * Called by every OAuth connector in place of `state: storeId`.
  */
 export async function beginOAuthHandoff(params: {
-  storeId: string;
+  /** One of these. `storeDraftId` is for onboarding, before a Store exists. */
+  storeId?: string;
+  storeDraftId?: string;
   userId: string;
   provider: string;
   executionId?: string;
@@ -218,7 +235,8 @@ export async function beginOAuthHandoff(params: {
   const nonce = newNonce();
   const state = signOAuthState(
     {
-      storeId: params.storeId,
+      storeId: params.storeId ?? "",
+      ...(params.storeDraftId ? { storeDraftId: params.storeDraftId } : {}),
       provider: params.provider.toUpperCase(),
       userId: params.userId,
       executionId: params.executionId ?? "",
