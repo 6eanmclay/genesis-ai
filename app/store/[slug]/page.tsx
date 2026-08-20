@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { productSupportsLiveShipping } from "@/lib/shipping/checkoutShipping";
+import { parseCheckoutProblem, checkoutProblemNotice } from "@/lib/orders/checkoutOutcome";
 import { auth } from "@/auth";
 import { getStoreRole } from "@/lib/permissions";
 import { createCheckoutSession, subscribeToNewsletter } from "./actions";
@@ -128,6 +129,7 @@ export default async function StorefrontPage({
     previewProposal?: string;
     previewDirection?: string;
     payment_pending?: string;
+    checkout_problem?: string;
     ref?: string;
   }>;
 }) {
@@ -138,8 +140,15 @@ export default async function StorefrontPage({
     previewProposal,
     previewDirection,
     payment_pending: paymentPending,
+    checkout_problem: checkoutProblemParam,
     ref: paymentRef,
   } = await searchParams;
+
+  // A checkout that did not finish cleanly. Before this, every one of these
+  // cases dropped the buyer here with no message at all — including the ones
+  // where PayPal had already taken their money.
+  const checkoutProblem = parseCheckoutProblem(checkoutProblemParam);
+  const problemNotice = checkoutProblem ? checkoutProblemNotice(checkoutProblem) : null;
 
   const store = await prisma.store.findUnique({
     where: { slug },
@@ -720,6 +729,26 @@ export default async function StorefrontPage({
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
       {!store.published && viewerRole && <PreviewModeBanner />}
+      {problemNotice && (
+        <div
+          className={`border-b px-8 py-4 text-center text-sm ${
+            problemNotice.safeToRetry
+              ? "border-[var(--brand-text)]/[.08] bg-[var(--brand-accent)]/5"
+              : "border-amber-500/30 bg-amber-500/10"
+          }`}
+        >
+          <p className="font-medium">{problemNotice.headline}</p>
+          <p className="mt-1 text-[var(--brand-text-secondary)]">
+            {problemNotice.detail}
+            {paymentRef && (
+              <>
+                {" "}
+                Reference <span className="font-medium">{paymentRef}</span>.
+              </>
+            )}
+          </p>
+        </div>
+      )}
       {paymentPending === "1" && (
         <div className="border-b border-[var(--brand-text)]/[.08] bg-[var(--brand-accent)]/5 px-8 py-4 text-center text-sm">
           Your payment was received. We&apos;re finishing your order — if you

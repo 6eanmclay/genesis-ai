@@ -9,12 +9,54 @@ import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
 import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessModel/internalMapper";
 import { fromPaypalShipping } from "@/lib/orders/shippingAddress";
+import type { CheckoutProblem } from "@/lib/orders/checkoutOutcome";
+
+/**
+ * A durable, owner-visible record that money moved and Genesis could not finish
+ * the order. Every caller is a path where PayPal has taken (or may have taken)
+ * a real payment — without this the only trace was a console line nobody reads.
+ */
+async function recordCaptureProblem(storeId: string, token: string, reason: string): Promise<void> {
+  try {
+    await recordExecution({
+      executionId: randomUUID(),
+      action: EXECUTION_ACTIONS.CHECKOUT_PAYPAL_CAPTURE,
+      status: "FAILED",
+      verified: false,
+      message: `PayPal order ${token}: ${reason}. Reconcile this in PayPal before assuming it is not a real sale.`,
+      retryable: true,
+      actorType: "USER",
+      actorId: null,
+      storeId,
+      storeDraftId: null,
+      schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
+      timestamp: new Date(),
+      metadata: { token, reason },
+    });
+  } catch (error) {
+    // The redirect matters more than the record; never turn a logging failure
+    // into a crash screen for someone who has just paid.
+    console.error(`[paypal/return] could not record capture problem for ${token}:`, error);
+  }
+}
 
 // The buyer lands here after approving on PayPal's site. No webhook for
 // PH-06's MVP (see ARCHITECTURE.md) — capture happens synchronously right
 // here, which is actually the authoritative payment-completion signal for
 // this flow, not a workaround.
 export async function GET(request: NextRequest) {
+  // Every unhappy exit below used to be a bare redirect to the shop's front
+  // page — no message, no reference, nothing. A person who had just approved a
+  // payment on PayPal's site was left to guess whether they had been charged.
+  // Now each one says which of the two situations they are actually in, and
+  // carries the PayPal order id so a human can reconcile it. See
+  // lib/orders/checkoutOutcome.ts.
+  const problemUrl = (slug: string, problem: CheckoutProblem, reference: string | null) => {
+    const url = new URL(`/store/${slug}`, request.url);
+    url.searchParams.set("checkout_problem", problem);
+    if (reference) url.searchParams.set("ref", reference);
+    return url;
+  };
   const searchParams = request.nextUrl.searchParams;
   const token = searchParams.get("token"); // PayPal order id
   const slug = searchParams.get("slug");
@@ -27,7 +69,6 @@ export async function GET(request: NextRequest) {
   if (!store) {
     return NextResponse.redirect(new URL("/", request.url));
   }
-  const storeUrl = new URL(`/store/${slug}`, request.url);
 
   const integration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId: store.id, provider: "PAYPAL" } },
@@ -37,20 +78,38 @@ export async function GET(request: NextRequest) {
     : null;
   if (!credentials) {
     console.error(`[paypal/return] no credentials for store ${store.id}`);
-    return NextResponse.redirect(storeUrl);
+    // Nothing was captured — the approval expires at PayPal on its own.
+    return NextResponse.redirect(problemUrl(slug, "payment_not_completed", token));
   }
 
-  const accessToken = await getPaypalAccessToken(
-    credentials.clientId,
-    credentials.clientSecret,
-    credentials.environment
-  );
+  // Unguarded before this: a PayPal auth failure threw out of the route and a
+  // buyer mid-checkout got a crash screen.
+  let accessToken: string;
+  try {
+    accessToken = await getPaypalAccessToken(
+      credentials.clientId,
+      credentials.clientSecret,
+      credentials.environment
+    );
+  } catch (error) {
+    console.error(`[paypal/return] could not authenticate with PayPal for store ${store.id}:`, error);
+    return NextResponse.redirect(problemUrl(slug, "payment_not_completed", token));
+  }
   const base = paypalApiBase(credentials.environment);
 
-  const captureRes = await fetch(`${base}/v2/checkout/orders/${token}/capture`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-  });
+  let captureRes: Response;
+  try {
+    captureRes = await fetch(`${base}/v2/checkout/orders/${token}/capture`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    // The request never completed, so whether PayPal captured is genuinely
+    // unknown. "Don't pay again" is the only safe thing to say.
+    console.error(`[paypal/return] capture request failed to complete for order ${token}:`, error);
+    await recordCaptureProblem(store.id, token, "capture request did not complete — capture state unknown");
+    return NextResponse.redirect(problemUrl(slug, "payment_taken_unconfirmed", token));
+  }
 
   let orderData: {
     purchase_units?: {
@@ -85,15 +144,20 @@ export async function GET(request: NextRequest) {
       (d) => d.issue === "ORDER_ALREADY_CAPTURED"
     );
     if (!alreadyCaptured) {
-      console.error(`[paypal/return] capture failed for order ${token}:`, JSON.stringify(errorBody));
-      return NextResponse.redirect(storeUrl);
+      // Deliberately not logging errorBody wholesale — see
+      // lib/integrations/providerError.ts for why provider bodies do not get
+      // pasted into durable records.
+      console.error(`[paypal/return] capture failed for order ${token} (${captureRes.status})`);
+      return NextResponse.redirect(problemUrl(slug, "payment_not_completed", token));
     }
     const orderRes = await fetch(`${base}/v2/checkout/orders/${token}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!orderRes.ok) {
       console.error(`[paypal/return] re-fetch of already-captured order ${token} failed: ${orderRes.status}`);
-      return NextResponse.redirect(storeUrl);
+      // The money HAS moved — ORDER_ALREADY_CAPTURED is how we got here.
+      await recordCaptureProblem(store.id, token, `captured, but re-fetch failed (${orderRes.status})`);
+      return NextResponse.redirect(problemUrl(slug, "payment_taken_unconfirmed", token));
     }
     orderData = await orderRes.json();
   }
@@ -109,7 +173,11 @@ export async function GET(request: NextRequest) {
     console.error(
       `[paypal/return] custom_id mismatch for order ${token}: got "${customId}", expected store ${store.id}`
     );
-    return NextResponse.redirect(storeUrl);
+    // Capture already succeeded by this point, so real money moved and no
+    // Order can be written for it. This left no trace anywhere before — not
+    // for the buyer, and not for the owner either.
+    await recordCaptureProblem(store.id, token, `captured, but custom_id did not match this store`);
+    return NextResponse.redirect(problemUrl(slug, "payment_taken_unconfirmed", token));
   }
 
   const amountValue =
