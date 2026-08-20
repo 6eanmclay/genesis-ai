@@ -259,6 +259,25 @@ What does **not** exist yet is any notion of *which business am I in*. See
 
 ---
 
+## Where this goes next
+
+`PRODUCT_PROGRESSION.md` is the P0.5 architecture built on top of this one: the
+same source contract and fit reasoning, plus the part that makes it a
+business-building system rather than a discovery one — whether the business can
+*do* a thing today, and what would change that.
+
+The join is one function. This document's `scoreCandidate` answers *does this
+belong here*; the progression spec's `assessFeasibility` answers *can this
+business do it*, and `decide()` combines them in that order. Fit is evaluated
+first, deliberately: telling an owner they can afford the wrong product is worse
+than saying nothing.
+
+Nothing in this document changes. The fit verdict, the relevance gate, the source
+contract and the per-business isolation are all load-bearing for the progression
+model and all already verified.
+
+---
+
 ## Status
 
 ### VERIFIED — behavioural proof exists
