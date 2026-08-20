@@ -20,23 +20,31 @@ export async function getOrderSummary(
   // object (and separately, a present-but-undefined `_sum` key throws
   // "needs at least one truthy value," unlike an omitted key).
   if (opts.includeRevenue) {
-    const [windowed, allTime] = await Promise.all([
+    // REFUNDED MONEY IS NOT REVENUE (2026-08-20).
+    //
+    // This summed amountInCents across every order regardless of status, so a
+    // refund left the dashboard still reporting the money as earned. The owner
+    // was being shown income they had given back.
+    //
+    // The COUNT deliberately still includes refunded orders: one genuinely
+    // happened, and hiding it would make a busy refund-heavy month look quiet.
+    // Only the money is corrected — which is why these are separate queries
+    // rather than one filtered aggregate.
+    const earned = { status: { not: "refunded" } };
+    const [windowed, windowedRevenue, allTime, allTimeRevenue] = await Promise.all([
+      prisma.order.aggregate({ where: { storeId, createdAt: { gte: since } }, _count: true }),
       prisma.order.aggregate({
-        where: { storeId, createdAt: { gte: since } },
-        _count: true,
+        where: { storeId, createdAt: { gte: since }, ...earned },
         _sum: { amountInCents: true },
       }),
-      prisma.order.aggregate({
-        where: { storeId },
-        _count: true,
-        _sum: { amountInCents: true },
-      }),
+      prisma.order.aggregate({ where: { storeId }, _count: true }),
+      prisma.order.aggregate({ where: { storeId, ...earned }, _sum: { amountInCents: true } }),
     ]);
     return {
       orderCount: windowed._count,
-      revenueInCents: windowed._sum.amountInCents ?? 0,
+      revenueInCents: windowedRevenue._sum.amountInCents ?? 0,
       allTimeOrderCount: allTime._count,
-      allTimeRevenueInCents: allTime._sum.amountInCents ?? 0,
+      allTimeRevenueInCents: allTimeRevenue._sum.amountInCents ?? 0,
       windowLabel: "Last 30 days",
     };
   }

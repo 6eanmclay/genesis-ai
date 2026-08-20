@@ -69,6 +69,22 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
     if (!order) throw new Error("Order not found");
     if (order.trackingNumber) throw new Error("This order already has a shipping label");
 
+    // A REFUNDED ORDER MUST NOT COST THE OWNER POSTAGE (2026-08-20).
+    //
+    // Nothing checked payment status here, so a fully refunded order could
+    // still have a real label bought for it: the customer has their money back
+    // AND the goods are posted to them at the owner's expense. Straight out the
+    // door with nothing coming back.
+    //
+    // Deliberately blocking only a FULL refund (status === "refunded"), which is
+    // the only refund this codebase currently models — see the charge.refunded
+    // handler's own note on partial refunds.
+    if (order.status === "refunded") {
+      throw new Error(
+        "This order was refunded — buying a label would post the goods at your expense after the customer got their money back."
+      );
+    }
+
     const toAddress = order.shippingAddress as unknown as OrderShippingAddress | null;
     if (!toAddress) {
       throw new Error("This order has no shipping address on file — a label can't be bought without one");

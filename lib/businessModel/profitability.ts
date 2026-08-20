@@ -330,6 +330,9 @@ export async function getProfitability(storeId: string): Promise<Profitability> 
       select: {
         productId: true,
         amountInCents: true,
+        // Read so a refunded order contributes ZERO revenue while KEEPING its
+        // costs — see the mapping below.
+        status: true,
         shippingCostInCents: true,
         product: { select: { costInCents: true } },
       },
@@ -341,7 +344,14 @@ export async function getProfitability(storeId: string): Promise<Profitability> 
     products,
     orders: orders.map((o) => ({
       productId: o.productId,
-      amountInCents: o.amountInCents,
+      // A REFUNDED ORDER EARNED NOTHING, BUT STILL COST SOMETHING (2026-08-20).
+      //
+      // This used to pass the full amount regardless of status, so a refund
+      // showed up as profit. Excluding the order entirely would be the opposite
+      // error: the product cost and the postage were still spent, and a
+      // shipped-then-refunded order is a real loss the owner should see rather
+      // than a zero. So the revenue goes to nothing and the costs stay.
+      amountInCents: o.status === "refunded" ? 0 : o.amountInCents,
       productCostInCents: o.product?.costInCents ?? null,
       shippingCostInCents: o.shippingCostInCents,
     })),

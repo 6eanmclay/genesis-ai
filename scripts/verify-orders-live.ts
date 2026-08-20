@@ -275,6 +275,93 @@ async function main() {
         () => guarded.order.findMany({ where: { status: "paid" } }),
         "Tenant isolation");
     }
+    // -----------------------------------------------------------------------
+    console.log("\n7. A refunded order cannot cost the owner anything more");
+    {
+      await reset();
+      const { store, order } = await makeOrder("refunded", { status: "refunded" });
+
+      // MONEY BACK, THEN GOODS OUT. Nothing checked payment status before
+      // buying postage, so a refunded order could still have a real label
+      // bought: the customer keeps their money AND receives the item, at the
+      // owner's expense.
+      const { purchaseShippingLabelExecutable } = await import("@/lib/execution/executables/shipping");
+      await refuses(
+        "no postage may be bought for a refunded order",
+        () => purchaseShippingLabelExecutable.run(
+          { orderId: order.id, weightOz: 8 },
+          { storeId: store.id, userId: "u", actorType: "USER", executionId: "e" }
+        ),
+        "was refunded"
+      );
+
+      // And committing to send the goods is refused too.
+      await refuses("nor may it be marked fulfilled", () => runAs(store.id, order.id), "was refunded");
+      check("it stays unfulfilled", (await stateOf(order.id)).fulfillmentStatus, "unfulfilled");
+
+      // The refusal happens BEFORE the claim, so a refused attempt does not
+      // leave the order locked out of shipping if it is later un-refunded.
+      const claimState = await prisma.order.findUniqueOrThrow({
+        where: { id: order.id }, select: { labelClaimedAt: true },
+      });
+      check("and is not left claimed", claimState.labelClaimedAt, null);
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n8. Shipped, then refunded — both facts survive");
+    {
+      await reset();
+      // The real sequence: goods shipped, money returned afterwards. Both
+      // things genuinely happened, so both stay recorded.
+      const { store, order } = await makeOrder("shipped-then-refunded", {
+        status: "refunded",
+        fulfillmentStatus: "fulfilled",
+        fulfilledAt: new Date(),
+        carrier: "USPS",
+        trackingNumber: "9400111899223197428491",
+      });
+
+      // Un-marking is still allowed here — it shipped before the refund, and an
+      // owner may legitimately want to correct the flag. But the LABEL guard
+      // outranks it, because the parcel is still gone.
+      await refuses("a shipped-then-refunded order still cannot be un-shipped",
+        () => runAs(store.id, order.id), "already shipped");
+
+      const after = await stateOf(order.id);
+      check("it keeps its tracking", after.trackingNumber, "9400111899223197428491");
+      check("and stays fulfilled", after.fulfillmentStatus, "fulfilled");
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n9. Refunded money is not revenue");
+    {
+      await reset();
+      const { store } = await makeOrder("revenue-kept");
+      await prisma.order.create({
+        data: {
+          storeId: store.id, productName: "Refunded item", amountInCents: 5000,
+          buyerEmail: "b@example.test", status: "refunded",
+          paymentProvider: "STRIPE", externalOrderId: "cs_refunded_rev",
+        },
+      });
+
+      const { getOrderSummary } = await import("@/lib/dashboard/whatHappened");
+      const summary = await getOrderSummary(store.id, { includeRevenue: true });
+
+      // The refunded 5000 must not appear as income. Only the kept 2500 does.
+      check("revenue counts only money actually kept", summary.revenueInCents, 2500);
+      check("all-time revenue likewise", summary.allTimeRevenueInCents, 2500);
+      // But the order still happened — hiding it would make a refund-heavy
+      // month look quiet rather than troubled.
+      check("the order count still includes it", summary.orderCount, 2);
+      check("and all-time too", summary.allTimeOrderCount, 2);
+
+      // Without REVENUE_VIEW the figure never reaches the caller at all.
+      const noRevenue = await getOrderSummary(store.id, { includeRevenue: false });
+      check("an employee sees no revenue figure", noRevenue.revenueInCents, null);
+      check("but still sees the orders", noRevenue.orderCount, 2);
+    }
+
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

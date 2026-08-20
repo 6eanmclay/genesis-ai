@@ -32,12 +32,22 @@ export const toggleOrderFulfilledExecutable: Executable<ToggleFulfilledInput, Or
     // that has since changed.
     const order = await prisma.order.findFirst({
       where: { id: input.orderId, storeId: ctx.storeId },
-      select: { id: true, fulfillmentStatus: true, trackingNumber: true, carrier: true },
+      select: { id: true, fulfillmentStatus: true, trackingNumber: true, carrier: true, status: true },
     });
     if (!order) throw new Error("Order not found");
 
     const currentlyFulfilled = order.fulfillmentStatus === "fulfilled";
     const nowFulfilled = !currentlyFulfilled;
+
+    // A REFUNDED ORDER MUST NOT BE MARKED FULFILLED.
+    //
+    // The money went back; committing to send the goods anyway is a decision
+    // nobody made on purpose. Un-marking one that shipped BEFORE the refund is
+    // still allowed below — that is a real sequence (goods sent, money later
+    // returned) and the owner may legitimately want to correct the flag.
+    if (nowFulfilled && order.status === "refunded") {
+      throw new Error("This order was refunded — it can't be marked as fulfilled.");
+    }
 
     // A PARCEL IN THE POST CANNOT BECOME UNFULFILLED.
     //
