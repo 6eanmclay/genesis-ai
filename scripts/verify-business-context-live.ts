@@ -396,6 +396,154 @@ async function main() {
       check("re-running never overwrites a real choice", await activeOf(doubled.id), chosen);
     }
 
+    // -----------------------------------------------------------------------
+    console.log("\n11. An account can own a second business today");
+    {
+      await reset();
+      // The question Phase B was written to answer, asked of the real schema
+      // rather than reasoned about. StoreDraft.userId is UNIQUE, so an account
+      // can only have one business BEING CREATED at a time. The plan assumed
+      // that blocked owning several. It does not, and the difference matters.
+      const user = await makeUser("second-business@example.test");
+
+      const firstDraft = await prisma.storeDraft.create({
+        data: { userId: user.id, name: "First", tagline: "t", description: "d" },
+      });
+      const first = await makeBusiness(user.id, "first-business");
+      await adoptNewBusiness(user.id, first.id);
+      // Confirming a draft deletes it, which is what frees the constraint.
+      await prisma.storeDraft.delete({ where: { id: firstDraft.id } });
+
+      // Now the same account starts another.
+      const secondDraft = await prisma.storeDraft.create({
+        data: { userId: user.id, name: "Second", tagline: "t", description: "d" },
+      });
+      assert("a second draft is allowed once the first is confirmed", secondDraft.id !== firstDraft.id);
+      const second = await makeBusiness(user.id, "second-business");
+      await adoptNewBusiness(user.id, second.id);
+      await prisma.storeDraft.delete({ where: { id: secondDraft.id } });
+
+      check("the account owns two businesses", await prisma.store.count({ where: { userId: user.id } }), 2);
+      const both = await accessibleBusinesses(user.id);
+      check("and reaches both", both.map((b) => b.store.slug).sort(), ["first-business", "second-business"]);
+      const resolved = await resolveBusiness(user.id);
+      check("working in the newest", resolved.kind === "resolved" ? resolved.storeId : null, second.id);
+
+      // WHAT THE CONSTRAINT ACTUALLY BLOCKS, stated as a test so the limitation
+      // is a recorded fact rather than a guess: two drafts at the same time.
+      await prisma.storeDraft.create({
+        data: { userId: user.id, name: "Third", tagline: "t", description: "d" },
+      });
+      const twoAtOnce = await prisma.storeDraft
+        .create({ data: { userId: user.id, name: "Fourth", tagline: "t", description: "d" } })
+        .then(() => null)
+        .catch((e: unknown) => (e instanceof Error ? e.constructor.name : String(e)));
+      assert("but two businesses cannot be created at the SAME time", twoAtOnce !== null, String(twoAtOnce));
+      check("which leaves the account with its two real businesses",
+        await prisma.store.count({ where: { userId: user.id } }), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n12. Two tabs, two businesses, one account");
+    {
+      await reset();
+      // THE TEST THAT DECIDES WHETHER ANY OF THIS WORKED. Two requests in flight
+      // at once, each naming a different business, from the same account. It
+      // fails against any implementation that reads ambient state and passes
+      // only when the business is genuinely carried per request.
+      const owner = await makeUser("two-tabs@example.test");
+      const gym = await makeBusiness(owner.id, "iron-gym");
+      const coil = await makeBusiness(owner.id, "copper-and-coil");
+      await setActiveBusiness(owner.id, gym.id);
+
+      // Each business gets one of everything Sean named, so "did the wrong
+      // business answer" is visible in the data rather than only in an id.
+      for (const [store, tag] of [[gym, "gym"], [coil, "coil"]] as const) {
+        await prisma.product.create({
+          data: { storeId: store.id, name: `${tag} product`, description: "d", priceInCents: 1000 },
+        });
+        await prisma.order.create({
+          data: {
+            storeId: store.id, productName: `${tag} order`, amountInCents: 1000,
+            buyerEmail: `${tag}@example.test`, status: "paid",
+            paymentProvider: "STRIPE", externalOrderId: `cs_tab_${tag}`,
+          },
+        });
+        await prisma.storeIntegration.create({
+          data: { storeId: store.id, provider: tag === "gym" ? "PRINTFUL" : "EASYPOST", status: "CONNECTED" },
+        });
+        await prisma.growthPointTransaction.create({
+          data: {
+            storeId: store.id, type: "GRANT",
+            amount: tag === "gym" ? 500 : 900,
+            balanceAfter: tag === "gym" ? 500 : 900,
+            description: "tab test",
+          },
+        });
+      }
+
+      /** What one request sees, given the business it named. */
+      const asTab = async (storeId: string) => {
+        const context = await resolveBusiness(owner.id, storeId);
+        if (context.kind !== "resolved") return { slug: null };
+        const id = context.storeId;
+        const [product, order, connection, points] = await Promise.all([
+          prisma.product.findFirst({ where: { storeId: id } }),
+          prisma.order.findFirst({ where: { storeId: id } }),
+          prisma.storeIntegration.findFirst({ where: { storeId: id } }),
+          prisma.growthPointTransaction.findFirst({ where: { storeId: id }, orderBy: { createdAt: "desc" } }),
+        ]);
+        return {
+          slug: context.store.slug,
+          product: product?.name ?? null,
+          order: order?.productName ?? null,
+          connection: connection?.provider ?? null,
+          points: points?.balanceAfter ?? null,
+        };
+      };
+
+      // Interleaved deliberately, and repeatedly — a context leak that depends
+      // on ordering would pass a single sequential run.
+      for (let round = 0; round < 5; round++) {
+        const [tabA, tabB] = await Promise.all([asTab(gym.id), asTab(coil.id)]);
+        check(`round ${round + 1}: tab A is the gym`, tabA, {
+          slug: "iron-gym", product: "gym product", order: "gym order",
+          connection: "PRINTFUL", points: 500,
+        });
+        check(`round ${round + 1}: tab B is the coil business`, tabB, {
+          slug: "copper-and-coil", product: "coil product", order: "coil order",
+          connection: "EASYPOST", points: 900,
+        });
+      }
+
+      // Six at once, alternating, is the version a sequential implementation
+      // survives and a shared-state one does not.
+      const mixed = await Promise.all([
+        asTab(gym.id), asTab(coil.id), asTab(gym.id),
+        asTab(coil.id), asTab(gym.id), asTab(coil.id),
+      ]);
+      check("six concurrent requests each answer for the business they named",
+        mixed.map((m) => m.slug),
+        ["iron-gym", "copper-and-coil", "iron-gym", "copper-and-coil", "iron-gym", "copper-and-coil"]);
+
+      // AND SWITCHING IN ONE TAB MUST NOT MOVE THE OTHER. The active business is
+      // a landing preference; a request that named its business is unaffected.
+      const [switched, stillCoil] = await Promise.all([
+        setActiveBusiness(owner.id, coil.id),
+        asTab(gym.id),
+      ]);
+      check("the switch takes", switched.ok, true);
+      check("but a request that named the gym still got the gym", stillCoil.slug, "iron-gym");
+      check("and the landing preference did move", await activeOf(owner.id), coil.id);
+
+      // A tab holding a business the account loses access to gets nothing — not
+      // the other business.
+      await prisma.store.delete({ where: { id: gym.id } });
+      const orphaned = await asTab(gym.id);
+      check("a deleted business resolves to nothing", orphaned.slug, null);
+      assert("not silently to the surviving one", orphaned.slug !== "copper-and-coil");
+    }
+
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

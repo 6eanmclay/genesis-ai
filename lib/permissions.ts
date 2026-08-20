@@ -1,7 +1,7 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { resolveBusiness } from "@/lib/businessContext";
+import { accessTo, resolveBusiness } from "@/lib/businessContext";
 import type { Store, StoreRole } from "@prisma/client";
 
 // Canonical permission names — call sites always use PERMISSIONS.X, never a
@@ -160,6 +160,88 @@ export async function requireStorePermission(
 // back to /dashboard (the onboarding/Home entry point) rather than shown an
 // error boundary, since "you can't be here" is a routing fact for a page
 // view, not an exceptional failure the way a rejected action is.
+//
+// PHASE A (2026-08-20) — the explicit counterparts. See BUSINESS_CONTEXT.md.
+//
+// `requireStorePermission` and `requireStorePageAccess` below resolve the
+// business from the account, which is safe (§49) but ambient: the caller does
+// not name the business it is acting on, so two browser tabs cannot hold two
+// businesses and a link cannot address one. These two take the business by SLUG,
+// which is what the /b/[slug] route segment provides.
+//
+// Deliberately additive rather than a rewrite of the existing pair. 28 call
+// sites use those, and migrating them section by section against a working
+// explicit API is the difference between a migration and a rewrite.
+
+/**
+ * The business named in the URL, for a server action — throws, like its
+ * ambient counterpart.
+ *
+ * A slug the account cannot reach is refused rather than falling back to the
+ * business they can reach. Substituting is worse than failing, because it
+ * succeeds: an action bound to one business would quietly run against another.
+ */
+export async function requireBusiness(
+  permission: Permission,
+  slug: string
+): Promise<{ userId: string; storeId: string; store: Store; role: StoreRole }> {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+  const userId = session.user.id;
+
+  const store = await prisma.store.findUnique({ where: { slug } });
+  if (!store) {
+    throw new Error("Store not found");
+  }
+
+  const access = await accessTo(userId, store.id);
+  // Deliberately the same message as a missing business. Telling somebody a
+  // business exists but is not theirs is an answer they did not have before.
+  if (!access) {
+    throw new Error("Store not found");
+  }
+  if (!hasPermission(access.role, permission)) {
+    throw new Error("You don't have permission to do this.");
+  }
+
+  return { userId, storeId: store.id, store: access.store, role: access.role };
+}
+
+/**
+ * The business named in the URL, for a page — redirects, like its ambient
+ * counterpart, because "you cannot be here" is a routing fact for a page view.
+ *
+ * notFound() rather than a redirect for an unreachable business: a redirect to
+ * somewhere that works would tell the visitor the business exists.
+ */
+export async function requireBusinessPage(
+  permission: Permission | null,
+  slug: string
+): Promise<{ userId: string; store: Store; role: StoreRole }> {
+  const session = await auth();
+  if (!session?.user) {
+    redirect("/login");
+  }
+  const userId = session.user.id;
+
+  const store = await prisma.store.findUnique({ where: { slug } });
+  if (!store) notFound();
+
+  const access = await accessTo(userId, store.id);
+  if (!access) notFound();
+
+  if (permission && !hasPermission(access.role, permission)) {
+    // Reachable, but not for this section. Send them somewhere in THIS business
+    // rather than out of it — bouncing an employee to another business because
+    // they lack one permission would be its own context bug.
+    redirect(`/b/${slug}`);
+  }
+
+  return { userId, store: access.store, role: access.role };
+}
+
 export async function requireStorePageAccess(
   permission: Permission | null
 ): Promise<{ userId: string; store: Store; role: StoreRole }> {

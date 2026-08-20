@@ -217,3 +217,45 @@ export const ORDERS_SECTIONS: NavSection[] = [
 // Products is a catalogue and Studio is a workbench, and neither is improved
 // by a row containing its own name.
 export const ROOM_SECTIONS: NavSection[][] = [STOREFRONT_SECTIONS, COMMERCE_SECTIONS];
+
+// --- Business-scoped paths (Phase A, 2026-08-20) ---------------------------
+//
+// The hrefs above are absolute `/dashboard/...` because for as long as an
+// account held one business there was only one place a section could be. With
+// the business in the route (BUSINESS_CONTEXT.md) the same section lives at
+// `/b/<slug>/...`, and the shell has to render whichever one it is inside.
+//
+// Deliberately a transformation of the existing list rather than a second list.
+// Two lists of sections would drift, and the one that drifted would be the one
+// nobody was looking at.
+
+/** Where the dashboard lived before the business was in the route. */
+export const LEGACY_BUSINESS_BASE = "/dashboard";
+
+/** The root of a business's own dashboard. */
+export function businessBasePath(slug: string): string {
+  return `/b/${slug}`;
+}
+
+/**
+ * Move one href onto a given base — pure.
+ *
+ * Sentinels (`#account`) are returned untouched: they are not routes, and
+ * prefixing one would turn a button that opens a sheet into a dead link.
+ */
+export function sectionHref(href: string, basePath: string): string {
+  if (isSentinelHref(href)) return href;
+  if (basePath === LEGACY_BUSINESS_BASE) return href;
+  if (href === LEGACY_BUSINESS_BASE) return basePath;
+  if (href.startsWith(`${LEGACY_BUSINESS_BASE}/`)) {
+    return `${basePath}${href.slice(LEGACY_BUSINESS_BASE.length)}`;
+  }
+  // Anything that was never under /dashboard — the storefront, an external
+  // link — is left alone. Rebasing those would break them.
+  return href;
+}
+
+/** The same sections, addressed within one business. */
+export function sectionsFor(sections: NavSection[], basePath: string): NavSection[] {
+  return sections.map((section) => ({ ...section, href: sectionHref(section.href, basePath) }));
+}
