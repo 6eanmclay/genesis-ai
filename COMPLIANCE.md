@@ -173,10 +173,18 @@ disconnected one offers the connect form. `lastError` is surfaced on the card
 rather than kept in logs, so "QuickBooks needs reconnecting" is something the
 owner reads, not something only a developer could discover.
 
-The badge must match the truth. A Stripe row that says CONNECTED while the
-credentials are dead now renders as needing attention rather than a green tick —
-found during Phase 1, and the same dishonesty still exists on the PayPal badge,
-which is recorded as open work rather than quietly fixed.
+The badge must match the truth. Both cards used to ask "is the row not
+DISCONNECTED?" and render a green **Connected** on the strength of it — so six
+real stores were told they could take payments through Stripe accounts that had
+failed verification and could not take a cent. PayPal went further and rendered
+**Connected** and **Needs attention** side by side, two contradictory answers to
+the only question the card exists to answer.
+
+Only a connection that actually verified says Connected now, and the rule is one
+shared function rather than two cards each deciding for themselves what
+"connected" means — `lib/integrations/paymentBadge.ts`, asserted by
+`scripts/verify-payment-badge.ts`, including the case where no status has an
+answer, which is how the original dishonesty survived review.
 
 ## 13. Static egress IP — NEEDS INTUIT CLARIFICATION
 
@@ -200,6 +208,7 @@ together on every change:
 scripts/verify-integration-framework.ts   OAuth state, credentials, capabilities, revocation
 scripts/verify-token-refresh.ts           rotation, chaining, expiry
 scripts/verify-stale-executions.ts        pending-vs-failed execution semantics
+scripts/verify-payment-badge.ts           what a payments badge may claim
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

@@ -14,6 +14,7 @@ import {
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import type { StripeCredentials } from "@/lib/integrations/stripe";
+import { paymentBadgeFor } from "@/lib/integrations/paymentBadge";
 
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
@@ -205,6 +206,8 @@ export default async function PaymentsPage({
 
   const stripeConnected = stripeIntegration && stripeIntegration.status !== "DISCONNECTED";
   const paypalConnected = paypalIntegration && paypalIntegration.status !== "DISCONNECTED";
+  const stripeBadge = paymentBadgeFor(stripeIntegration?.status);
+  const paypalBadge = paymentBadgeFor(paypalIntegration?.status);
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
@@ -247,18 +250,13 @@ export default async function PaymentsPage({
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-black/[.08] p-6 text-center dark:border-white/[.145]">
           <StripeWordmark />
           <div className="flex flex-wrap items-center justify-center gap-1.5">
-            {/* HONEST BADGE (2026-08-20). This read `stripeConnected`, which is
-                only "not DISCONNECTED" — so a connection that had FAILED
-                verification still displayed "Connected". Six real stores were
-                being told they could take payments through test-mode or
-                revoked accounts that could not take a cent. Only a connection
-                that actually verifies says Connected now. */}
-            {stripeIntegration?.status === "CONNECTED" ? (
+            {/* The rule lives in lib/integrations/paymentBadge.ts and is
+                asserted by scripts/verify-payment-badge.ts, because "can this
+                store take money?" is too consequential to answer in JSX. */}
+            {stripeBadge.kind === "connected" ? (
               <ConnectedBadge />
-            ) : stripeConnected ? (
-              <AttentionBadge
-                label={stripeIntegration?.status === "NEEDS_ATTENTION" ? "Needs attention" : "Not working"}
-              />
+            ) : stripeBadge.kind === "attention" ? (
+              <AttentionBadge label={stripeBadge.label} />
             ) : (
               <NotConnectedBadge />
             )}
@@ -311,7 +309,7 @@ export default async function PaymentsPage({
           {latestStripeLog?.status === "FAILED" && !stripeConnected && (
             <p className="text-xs text-red-600 dark:text-red-400">Last attempt failed: {latestStripeLog.message}</p>
           )}
-          {stripeConnected && stripeIntegration && stripeIntegration.status !== "CONNECTED" && (
+          {stripeBadge.kind === "attention" && (
             <p className="text-xs text-red-600 dark:text-red-400">
               This store can&apos;t take payments through Stripe right now. Reconnect to fix it.
             </p>
@@ -334,9 +332,14 @@ export default async function PaymentsPage({
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-black/[.08] p-6 text-center dark:border-white/[.145]">
           <PaypalWordmark />
           <div className="flex flex-wrap items-center justify-center gap-1.5">
-            {paypalConnected ? <ConnectedBadge /> : <NotConnectedBadge />}
-            {paypalConnected && paypalIntegration?.status === "NEEDS_ATTENTION" && (
-              <AttentionBadge label="Needs attention" />
+            {/* Same rule as Stripe's above — one shared answer, not two
+                cards each deciding for themselves what "connected" means. */}
+            {paypalBadge.kind === "connected" ? (
+              <ConnectedBadge />
+            ) : paypalBadge.kind === "attention" ? (
+              <AttentionBadge label={paypalBadge.label} />
+            ) : (
+              <NotConnectedBadge />
             )}
           </div>
 
@@ -402,6 +405,11 @@ export default async function PaymentsPage({
                   </SubmitButton>
                 </form>
               </div>
+              {paypalBadge.kind === "attention" && (
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  This store can&apos;t take payments through PayPal right now. Reconnect to fix it.
+                </p>
+              )}
               {paypalStatusDisplay && (
                 <p className="text-xs text-zinc-500">
                   {paypalStatusDisplay.message}
