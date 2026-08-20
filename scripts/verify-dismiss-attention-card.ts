@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { prismaSystem } from "../lib/prisma";
 import { buildPageAttentionCards, getDismissedCardIds } from "../lib/dashboard/attentionCards";
@@ -10,6 +11,11 @@ import { buildPageAttentionCards, getDismissedCardIds } from "../lib/dashboard/a
 // findMany for the real observation still returns it — J4's own
 // awareness is unaffected. Cleans up after itself.
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const observation = await prismaSystem.genesisObservation.findFirst({ where: { status: "ACTIVE" } });
   if (!observation) throw new Error("No real ACTIVE observation found to test against");
 

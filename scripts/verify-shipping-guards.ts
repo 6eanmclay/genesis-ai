@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { prismaSystem } from "../lib/prisma";
 import { purchaseShippingLabelExecutable } from "../lib/execution/executables/shipping";
@@ -10,6 +11,11 @@ import { purchaseShippingLabelExecutable } from "../lib/execution/executables/sh
 // API call is ever attempted, using a real throwaway store/order against
 // the real database.
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const owner = await prismaSystem.user.findFirst({ select: { id: true } });
   if (!owner) throw new Error("No real user found to own the throwaway test store");
 

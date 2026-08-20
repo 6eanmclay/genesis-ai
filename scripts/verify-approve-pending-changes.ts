@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { randomUUID } from "crypto";
 import { prismaSystem } from "../lib/prisma";
@@ -22,6 +23,11 @@ import type { GroupApprovalResult } from "../lib/dashboard/pendingApprovals";
 //   3. describeApprovalExecutionForChat produces Sean's exact expected
 //      phrasing for the success, partial-failure, and full-failure cases.
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const store = await prismaSystem.store.findFirst({ select: { id: true } });
   if (!store) throw new Error("No real store found to test against");
   const products = await prismaSystem.product.findMany({ where: { storeId: store.id }, select: { id: true, name: true }, take: 2 });

@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { prismaSystem } from "../lib/prisma";
 import {
@@ -14,6 +15,11 @@ import {
 // correctly synced to the ProductImage table's own position-0 row after
 // each mutation. Cleans up after itself, restoring original state.
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const product = await prismaSystem.product.findFirst({
     where: { name: "DESKTOP Test Product" },
     include: { images: true },

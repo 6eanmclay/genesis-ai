@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { randomUUID } from "crypto";
 import { prismaSystem } from "../lib/prisma";
@@ -15,6 +16,11 @@ import { buildPageAttentionCards, groupAttentionCards } from "../lib/dashboard/a
 // through getPendingApprovals -> buildPageAttentionCards -> groupAttentionCards
 // and come out clustered exactly as the UI now expects.
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const store = await prismaSystem.store.findFirst({ select: { id: true } });
   if (!store) throw new Error("No real store found to test against");
   const product = await prismaSystem.product.findFirst({ where: { storeId: store.id }, select: { id: true } });

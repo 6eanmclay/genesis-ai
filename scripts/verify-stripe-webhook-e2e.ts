@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import Stripe from "stripe";
 import { prismaSystem } from "../lib/prisma";
@@ -32,6 +33,11 @@ async function postWebhook(payload: unknown): Promise<Response> {
 }
 
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const owner = await prismaSystem.user.findFirst({ select: { id: true } });
   if (!owner) throw new Error("No real user found to own the throwaway test store");
 

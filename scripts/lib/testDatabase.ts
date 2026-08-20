@@ -4,6 +4,7 @@ import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { execFile } from "child_process";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { markAsTestDatabase, TEST_DATABASE_MARKER } from "./requireTestDatabase";
 
 // A real Postgres, in this process, for tests that need one (2026-08-20).
 //
@@ -114,6 +115,10 @@ ${stderr}`));
 
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
 
+  // Stamp it, so requireTestDatabase can tell this apart from production by
+  // something stronger than an environment variable anyone could export.
+  await markAsTestDatabase(prisma);
+
   return {
     prisma,
     url,
@@ -150,7 +155,9 @@ ${stderr}`));
       // survive or the schema would look unmigrated.
       const tables = await prisma.$queryRaw<{ tablename: string }[]>`
         SELECT tablename FROM pg_tables
-        WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`;
+        WHERE schemaname = 'public'
+          AND tablename <> '_prisma_migrations'
+          AND tablename <> '${TEST_DATABASE_MARKER}'`;
       if (tables.length === 0) return;
       const list = tables.map((t) => `"${t.tablename}"`).join(", ");
       await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);

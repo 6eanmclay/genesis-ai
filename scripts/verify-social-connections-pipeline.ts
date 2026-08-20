@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { prismaSystem } from "../lib/prisma";
 import { persistSyncedRecords } from "../lib/businessModel/sync";
@@ -24,6 +25,11 @@ import { SocialAccountSchema } from "../lib/businessModel/entities";
 // live OAuth/API-calling code in facebook.ts/instagram.ts/tiktok.ts still
 // needs a real account once credentials exist (see SOCIAL_CONNECTIONS_SETUP.md).
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const store = await prismaSystem.store.findFirst({ select: { id: true } });
   if (!store) throw new Error("No real store found to test against");
 

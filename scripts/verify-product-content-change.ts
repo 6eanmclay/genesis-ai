@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { prismaSystem } from "../lib/prisma";
 import { editProductExecutable } from "../lib/execution/executables/products";
@@ -10,6 +11,11 @@ import { editProductExecutable } from "../lib/execution/executables/products";
 // exact class of bug that only shows up by actually running the code,
 // not by typecheck.
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const product = await prismaSystem.product.findFirst({ select: { id: true, name: true, description: true, priceInCents: true, storeId: true } });
   if (!product) throw new Error("No real product found to test against");
   console.log("Starting state:", product);

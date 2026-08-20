@@ -1,4 +1,5 @@
-import { prisma } from "@/lib/prisma";
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
+import { prisma, prismaSystem } from "@/lib/prisma";
 import {
   PROPOSAL_STATUS,
   branchProposal,
@@ -31,6 +32,11 @@ function check(name: string, ok: boolean, detail: string) {
 }
 
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const store = await prisma.store.findFirst({ select: { id: true, name: true } });
   if (!store) throw new Error("No store to test against.");
   console.log(`Testing against store: ${store.name}\n`);

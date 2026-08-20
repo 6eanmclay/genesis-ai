@@ -1,4 +1,5 @@
-import { prisma } from "@/lib/prisma";
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
+import { prisma, prismaSystem } from "@/lib/prisma";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { ASSET_ROLES, resolveCurrentAsset, listAssetsByRole } from "@/lib/businessModel/assets";
 import { buildLogoDirection } from "@/lib/brand/logoDirection";
@@ -29,6 +30,11 @@ const TEST_URL_A = "https://example.invalid/verify-logo-a.png";
 const TEST_URL_B = "https://example.invalid/verify-logo-b.png";
 
 async function main() {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   const store = await prisma.store.findFirst({ select: { id: true, name: true, logoUrl: true } });
   if (!store) throw new Error("No store to test against.");
   console.log(`Testing against store: ${store.name}\n`);

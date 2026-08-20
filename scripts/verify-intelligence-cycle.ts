@@ -1,3 +1,4 @@
+import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import { prismaSystem } from "@/lib/prisma";
 import { INSIGHT_ENGINE_CONSUMER } from "@/lib/intelligence/insights";
 import { getStoresDueForIntelligence, runIntelligenceCycle } from "@/lib/intelligence/cycle";
@@ -43,6 +44,11 @@ async function maxSequenceFor(storeId: string): Promise<bigint> {
 }
 
 async function main(): Promise<void> {
+  // Refuses to run against anything but an isolated test database. These
+  // suites create, mutate and delete rows — without this, a production
+  // DATABASE_URL in the shell was enough to rename a real merchant's product.
+  // See scripts/lib/requireTestDatabase.ts.
+  await requireTestDatabase(prismaSystem);
   // 1. What first-party activity actually exists, per store, with no
   //    integration involved in the question at all.
   const activity = await prismaSystem.businessEvent.groupBy({

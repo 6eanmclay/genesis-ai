@@ -1,4 +1,5 @@
 import { startTestDatabase } from "@/scripts/lib/testDatabase";
+import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
 import { execFile } from "child_process";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
@@ -54,7 +55,7 @@ async function runSuite(file: string, url: string): Promise<{ file: string; ok: 
     execFile(
       `npx tsx scripts/${file}`,
       {
-        env: { ...process.env, DATABASE_URL: url },
+        env: { ...process.env, DATABASE_URL: url, [TEST_DATABASE_ENV]: "1" },
         maxBuffer: 20 * 1024 * 1024,
         shell: true,
       },
