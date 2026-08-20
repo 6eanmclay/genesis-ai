@@ -160,8 +160,13 @@ async function supersedePendingImageApproval(storeId: string, productId: string)
   });
 }
 
-export async function addProductImages(productId: string, urls: string[]) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). These resolve the store implicitly and pass it as the SCOPE the executable
+// runs in — they do not derive it from the entity. So a page rendered for one
+// business calling one of these while the account was active in another would
+// have handed the executable the wrong scope entirely.
+export async function addProductImages(slug: string | undefined, productId: string, urls: string[]) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const existingCount = await prisma.productImage.count({ where: { productId } });
   const result = await execute(addProductImagesExecutable, { productId, urls }, { storeId });
   if (result.status === "FAILED") {
@@ -174,24 +179,24 @@ export async function addProductImages(productId: string, urls: string[]) {
   }
 }
 
-export async function reorderProductImages(productId: string, orderedImageIds: string[]) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+export async function reorderProductImages(slug: string | undefined, productId: string, orderedImageIds: string[]) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const result = await execute(reorderProductImagesExecutable, { productId, orderedImageIds }, { storeId });
   if (result.status === "FAILED") {
     throw new Error(result.message);
   }
 }
 
-export async function deleteProductImage(imageId: string) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+export async function deleteProductImage(slug: string | undefined, imageId: string) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const result = await execute(deleteProductImageExecutable, { imageId }, { storeId });
   if (result.status === "FAILED") {
     throw new Error(result.message);
   }
 }
 
-export async function replaceProductImage(imageId: string, url: string) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+export async function replaceProductImage(slug: string | undefined, imageId: string, url: string) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const image = await prisma.productImage.findUnique({ where: { id: imageId }, select: { productId: true, position: true } });
   const result = await execute(replaceProductImageExecutable, { imageId, url }, { storeId });
   if (result.status === "FAILED") {
@@ -336,8 +341,8 @@ export async function connectStripe() {
   redirect(result.status === "FAILED" ? "/dashboard/payments?integration_error=stripe" : "/dashboard/payments");
 }
 
-export async function disconnectStripe() {
-  const { storeId } = await requireStorePermission(PERMISSIONS.PAYMENTS_MANAGE);
+export async function disconnectStripe(slug?: string) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
 
   await getConnector("STRIPE").disconnect(storeId);
 
@@ -390,8 +395,8 @@ export async function submitPaypalCredentials(formData: FormData) {
   );
 }
 
-export async function disconnectPaypal() {
-  const { storeId } = await requireStorePermission(PERMISSIONS.PAYMENTS_MANAGE);
+export async function disconnectPaypal(slug?: string) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
 
   await getConnector("PAYPAL").disconnect(storeId);
 
@@ -510,8 +515,8 @@ export async function saveReturnAddress(slug: string | undefined, formData: Form
 // app/dashboard/marketing/page.tsx) — grantDelegatedAuthority itself throws
 // if the actionType turns out not to be delegable, so this can't silently
 // grant something it shouldn't.
-export async function grantAuthority(formData: FormData) {
-  const { storeId, userId } = await requireStorePermission(PERMISSIONS.AUTHORITY_MANAGE);
+export async function grantAuthority(slug: string | undefined, formData: FormData) {
+  const { storeId, userId } = await requireBusinessOrActive(PERMISSIONS.AUTHORITY_MANAGE, slug);
   const actionType = formData.get("actionType") as string;
 
   await grantDelegatedAuthority({ storeId, actionType, grantedByUserId: userId });
@@ -519,8 +524,8 @@ export async function grantAuthority(formData: FormData) {
   redirect("/dashboard/marketing");
 }
 
-export async function revokeAuthority(formData: FormData) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.AUTHORITY_MANAGE);
+export async function revokeAuthority(slug: string | undefined, formData: FormData) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.AUTHORITY_MANAGE, slug);
   const actionType = formData.get("actionType") as string;
 
   await revokeDelegatedAuthority(storeId, actionType);

@@ -1,4 +1,5 @@
-import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 
@@ -50,8 +51,16 @@ function ConfidencePill({ confidence }: { confidence: number }) {
 // page reads Understand only. "What's awaiting your decision" is a
 // different, real concern that already lives on Home and each owning
 // section.
-export default async function UnderstandingPage() {
-  const { store } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function UnderstandingScreen({ slug, basePath }: { slug?: string; basePath: string }) {
+  const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const understanding = await getBusinessUnderstanding(store.id);
   const { profile, beliefs, recentDecisions, activeThoughts, platformRelationship } = understanding;
@@ -81,7 +90,7 @@ export default async function UnderstandingPage() {
                 {profile.classification.revenueStreams.map((r) => r.label).join(", ")}
               </p>
             )}
-            <a href="/dashboard/brand" className="mt-3 inline-block text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">
+            <a href={`${basePath}/brand`} className="mt-3 inline-block text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">
               See full brand identity →
             </a>
           </div>
@@ -108,7 +117,7 @@ export default async function UnderstandingPage() {
             ) : (
               <p className="mt-2 text-sm text-zinc-500">No trend data yet — not enough history to compare.</p>
             )}
-            <a href="/dashboard/products" className="mt-3 inline-block text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">
+            <a href={`${basePath}/products`} className="mt-3 inline-block text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">
               See full catalog →
             </a>
           </div>
@@ -152,7 +161,7 @@ export default async function UnderstandingPage() {
                 <dd>{profile.customers.segments.newCustomers.length} {trendArrow(profile.customers.segmentTrends.newCustomers?.direction)}</dd>
               </div>
             </dl>
-            <a href="/dashboard/customers" className="mt-3 inline-block text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">
+            <a href={`${basePath}/customers`} className="mt-3 inline-block text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">
               See full customer list →
             </a>
           </div>
@@ -298,7 +307,7 @@ export default async function UnderstandingPage() {
                 ))}
               </ul>
             )}
-            <a href="/dashboard/connections" className="mt-3 inline-block text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">
+            <a href={`${basePath}/connections`} className="mt-3 inline-block text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">
               Manage connections →
             </a>
           </div>
@@ -349,7 +358,7 @@ export default async function UnderstandingPage() {
           <h2 className="text-lg font-semibold text-black dark:text-zinc-50">Still open</h2>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             What I&apos;ve already told you and haven&apos;t heard back on — the full, live version is on{" "}
-            <a href="/dashboard" className="font-medium text-[var(--brand-accent)] hover:opacity-80">Your Business</a>.
+            <a href={`${basePath}`} className="font-medium text-[var(--brand-accent)] hover:opacity-80">Your Business</a>.
           </p>
           <div className={`mt-3 ${CARD}`}>
             {activeThoughts.length === 0 ? (
@@ -382,12 +391,20 @@ export default async function UnderstandingPage() {
               </p>
             )}
             <div className="mt-3 flex gap-4">
-              <a href="/dashboard/billing" className="text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">Billing →</a>
-              <a href="/dashboard/growth-points" className="text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">Growth Points →</a>
+              <a href={`${basePath}/billing`} className="text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">Billing →</a>
+              <a href={`${basePath}/growth-points`} className="text-xs font-medium text-[var(--brand-accent)] hover:opacity-80">Growth Points →</a>
             </div>
           </div>
         </section>
       </div>
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/understanding renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function UnderstandingPage() {
+  return UnderstandingScreen({ basePath: LEGACY_BUSINESS_BASE });
 }

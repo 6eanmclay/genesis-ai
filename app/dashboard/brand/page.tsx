@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { compareObservationPriority } from "@/lib/dashboard/genesisState";
@@ -49,12 +50,24 @@ function formatIdentityValue(value: string | string[] | undefined): string {
 // Settings — see ACTION_SECTIONS in lib/execution/genesisActions.ts). Reads
 // directly from Store's existing fields and blueprint.brandIdentity —
 // no duplicated state, no new data model.
-export default async function BrandPage({
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function BrandScreen({
+  slug,
+  basePath,
   searchParams,
 }: {
+  slug?: string;
+  basePath: string;
   searchParams: Promise<{ focus?: string }>;
 }) {
-  const { store, role } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
+  const { store, role } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const canReviewApprovals = hasPermission(role, PERMISSIONS.ANALYTICS_VIEW);
   const [pendingApprovals, rawObservations, dismissedCardIds] = await Promise.all([
     canReviewApprovals ? getPendingApprovals(store.id) : Promise.resolve([]),
@@ -120,7 +133,7 @@ export default async function BrandPage({
               taskAction={startTaskConversation}
               highlightId={focus}
               dismissAction={dismissAttentionCard}
-              currentPath="/dashboard/brand"
+              currentPath={`${basePath}/brand`}
             />
           </div>
         </>
@@ -175,4 +188,16 @@ export default async function BrandPage({
       </p>
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/brand renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function BrandPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ focus?: string }>;
+}) {
+  return BrandScreen({ basePath: LEGACY_BUSINESS_BASE, searchParams });
 }

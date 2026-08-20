@@ -173,7 +173,23 @@ function SortableThumbnail({
   );
 }
 
-export function ProductImageGallery({ productId, images }: { productId: string; images: GalleryImage[] }) {
+export function ProductImageGallery({
+  slug,
+  productId,
+  images,
+}: {
+  /**
+   * The business this gallery belongs to, when it was rendered inside one.
+   *
+   * Bound into every image action. These actions pass the resolved store as the
+   * SCOPE their executable runs in rather than deriving it from the product, so
+   * without this a gallery on one business's page would have handed the
+   * executable another business's scope entirely.
+   */
+  slug?: string;
+  productId: string;
+  images: GalleryImage[];
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -247,7 +263,7 @@ export function ProductImageGallery({ productId, images }: { productId: string; 
 
       if (urls.length > 0) {
         try {
-          await addProductImages(productId, urls);
+          await addProductImages(slug, productId, urls);
           router.refresh();
         } catch (err) {
           setError(err instanceof Error ? err.message : "Something went wrong — please try again.");
@@ -267,7 +283,7 @@ export function ProductImageGallery({ productId, images }: { productId: string; 
     if (!file || !imageId) return;
     runMutation(async () => {
       const url = await uploadOneToBlob(file);
-      await replaceProductImage(imageId, url);
+      await replaceProductImage(slug, imageId, url);
     });
   }
 
@@ -278,7 +294,7 @@ export function ProductImageGallery({ productId, images }: { productId: string; 
     const reordered = [...ordered];
     [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
     setLocalOrder(reordered);
-    runMutation(() => reorderProductImages(productId, reordered.map((img) => img.id)));
+    runMutation(() => reorderProductImages(slug, productId, reordered.map((img) => img.id)));
   }
 
   function handleDragStart(event: DragStartEvent) {
@@ -294,7 +310,7 @@ export function ProductImageGallery({ productId, images }: { productId: string; 
     if (oldIndex === -1 || newIndex === -1) return;
     const reordered = arrayMove(ordered, oldIndex, newIndex);
     setLocalOrder(reordered);
-    runMutation(() => reorderProductImages(productId, reordered.map((img) => img.id)));
+    runMutation(() => reorderProductImages(slug, productId, reordered.map((img) => img.id)));
   }
 
   const draggingImage = draggingId ? ordered.find((img) => img.id === draggingId) : null;
@@ -335,7 +351,7 @@ export function ProductImageGallery({ productId, images }: { productId: string; 
                     replaceTargetId.current = image.id;
                     replaceInputRef.current?.click();
                   }}
-                  onDelete={() => runMutation(() => deleteProductImage(image.id))}
+                  onDelete={() => runMutation(() => deleteProductImage(slug, image.id))}
                 />
               ))}
             </div>

@@ -1,4 +1,5 @@
-import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { prisma } from "@/lib/prisma";
 import { currentAssetsByRole } from "@/lib/businessModel/assets";
 import { AssetSchema } from "@/lib/businessModel/entities";
@@ -35,8 +36,16 @@ import { uploadBusinessAssetFromChat } from "../ai-actions";
 // a storefront graphic appears here the day its surface is added, with no
 // change to this file.
 
-export default async function StudioPage() {
-  const { store } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function StudioScreen({ slug, basePath }: { slug?: string; basePath: string }) {
+  const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
 
   const [assetsByRole, designRows, assetRows] = await Promise.all([
     currentAssetsByRole(store.id),
@@ -220,7 +229,7 @@ export default async function StudioPage() {
           <StudioActions
             categories={categories}
             uploadAsset={uploadBusinessAssetFromChat}
-            currentPath="/dashboard/studio"
+            currentPath={`${basePath}/studio`}
           />
         </section>
 
@@ -337,4 +346,12 @@ export default async function StudioPage() {
       </div>
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/studio renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function StudioPage() {
+  return StudioScreen({ basePath: LEGACY_BUSINESS_BASE });
 }

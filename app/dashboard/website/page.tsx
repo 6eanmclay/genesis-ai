@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { getPendingApprovals, type PendingApproval } from "@/lib/dashboard/pendingApprovals";
@@ -50,12 +51,24 @@ function formatOrder(order: SectionKey[], customSectionTitle: string | null | un
 // owner/employee preview of an unpublished store — see
 // app/store/[slug]/page.tsx) — Visibility and Vision History are real,
 // preserved, and deliberately secondary rather than competing with it.
-export default async function WebsitePage({
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function WebsiteScreen({
+  slug,
+  basePath,
   searchParams,
 }: {
+  slug?: string;
+  basePath: string;
   searchParams: Promise<{ focus?: string; publish_error?: string }>;
 }) {
-  const { store } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
+  const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const { publish_error: publishError } = await searchParams;
 
   // A one-time flash from toggleStorePublished's own redirect — same
@@ -405,7 +418,7 @@ export default async function WebsitePage({
               taskAction={startTaskConversation}
               highlightId={focus}
               dismissAction={dismissAttentionCard}
-              currentPath="/dashboard/website"
+              currentPath={`${basePath}/website`}
             />
           </div>
         </>
@@ -495,4 +508,16 @@ export default async function WebsitePage({
       </details>
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/website renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function WebsitePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ focus?: string; publish_error?: string }>;
+}) {
+  return WebsiteScreen({ basePath: LEGACY_BUSINESS_BASE, searchParams });
 }

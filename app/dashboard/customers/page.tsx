@@ -1,4 +1,5 @@
-import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getCustomerSummaries, getOrdersByEmail } from "@/lib/dashboard/customers";
 import {
   getCustomerSegments,
@@ -54,8 +55,16 @@ function describeCustomerHealth(
   return `${totalCount} customer${totalCount === 1 ? "" : "s"} so far — none have ordered a second time yet.`;
 }
 
-export default async function CustomersPage() {
-  const { store, role } = await requireStorePageAccess(PERMISSIONS.ORDERS_VIEW);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function CustomersScreen({ slug, basePath }: { slug?: string; basePath: string }) {
+  const { store, role } = await requireBusinessPageOrActive(PERMISSIONS.ORDERS_VIEW, slug);
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
 
   const [customers, segments, segmentTrend, ordersByEmail] = await Promise.all([
@@ -77,4 +86,12 @@ export default async function CustomersPage() {
       </div>
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/customers renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function CustomersPage() {
+  return CustomersScreen({ basePath: LEGACY_BUSINESS_BASE });
 }

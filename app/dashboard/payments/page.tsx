@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { SubmitButton } from "../SubmitButton";
 import {
@@ -89,14 +90,26 @@ function StripeModeBadge({ livemode }: { livemode: boolean | null }) {
   );
 }
 
-export default async function PaymentsPage({
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function PaymentsScreen({
+  slug,
+  basePath,
   searchParams,
 }: {
+  slug?: string;
+  basePath: string;
   searchParams: Promise<{ integration_error?: string; integration_connected?: string }>;
 }) {
   const { integration_error: integrationError, integration_connected: integrationConnected } =
     await searchParams;
-  const { store } = await requireStorePageAccess(PERMISSIONS.PAYMENTS_MANAGE);
+  const { store } = await requireBusinessPageOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   const showContinueToLaunch =
@@ -295,7 +308,7 @@ export default async function PaymentsPage({
                   </SubmitButton>
                 </form>
               )}
-              <form action={disconnectStripe}>
+              <form action={disconnectStripe.bind(null, slug)}>
                 <SubmitButton
                   pendingText="Disconnecting..."
                   className={`${GHOST_BUTTON} text-red-600 dark:text-red-400`}
@@ -396,7 +409,7 @@ export default async function PaymentsPage({
                     Recheck
                   </SubmitButton>
                 </form>
-                <form action={disconnectPaypal}>
+                <form action={disconnectPaypal.bind(null, slug)}>
                   <SubmitButton
                     pendingText="Disconnecting..."
                     className={`${GHOST_BUTTON} text-red-600 dark:text-red-400`}
@@ -431,4 +444,16 @@ export default async function PaymentsPage({
       </div>
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/payments renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function PaymentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ integration_error?: string; integration_connected?: string }>;
+}) {
+  return PaymentsScreen({ basePath: LEGACY_BUSINESS_BASE, searchParams });
 }

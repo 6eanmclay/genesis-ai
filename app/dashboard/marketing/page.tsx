@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
@@ -26,8 +27,16 @@ import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 // plan). A manual SEO edit form, social bios brought to the same parity,
 // and "Social" folding in here once platform connections exist are the
 // next build on this route, not part of this pass.
-export default async function MarketingPage() {
-  const { store, role } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function MarketingScreen({ slug, basePath }: { slug?: string; basePath: string }) {
+  const { store, role } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const canManageAuthority = hasPermission(role, PERMISSIONS.AUTHORITY_MANAGE);
 
   const [subscribers, pendingApprovals, seoAuthorityGrant, recentSeoDecisions, dismissedCardIds] = await Promise.all([
@@ -94,7 +103,7 @@ export default async function MarketingPage() {
               taskAction={startTaskConversation}
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
-              currentPath="/dashboard/marketing"
+              currentPath={`${basePath}/marketing`}
             />
           </div>
         </>
@@ -116,7 +125,7 @@ export default async function MarketingPage() {
               taskAction={startTaskConversation}
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
-              currentPath="/dashboard/marketing"
+              currentPath={`${basePath}/marketing`}
             />
           </div>
         </>
@@ -132,7 +141,7 @@ export default async function MarketingPage() {
               ? "Genesis can publish SEO improvements automatically, without waiting for your approval."
               : "Genesis will always ask before changing your SEO title or description."}
           </p>
-          <form action={seoAuthorityGrant ? revokeAuthority : grantAuthority} className="mt-3">
+          <form action={(seoAuthorityGrant ? revokeAuthority : grantAuthority).bind(null, slug)} className="mt-3">
             <input type="hidden" name="actionType" value="update_seo" />
             <SubmitButton
               pendingText={seoAuthorityGrant ? "Revoking..." : "Granting..."}
@@ -231,4 +240,12 @@ export default async function MarketingPage() {
       )}
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/marketing renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function MarketingPage() {
+  return MarketingScreen({ basePath: LEGACY_BUSINESS_BASE });
 }

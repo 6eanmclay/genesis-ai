@@ -155,6 +155,7 @@ export async function ProductsScreen({
                     thumbnail + upload form; up to 10 ordered images,
                     reorder/replace/delete per image, multi-select add. */}
                 <ProductImageGallery
+                  slug={slug}
                   productId={product.id}
                   images={product.images.map((img) => ({ id: img.id, url: img.url, position: img.position }))}
                 />

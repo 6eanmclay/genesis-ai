@@ -1,4 +1,5 @@
-import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
@@ -27,8 +28,16 @@ import { AttentionCardList } from "../AttentionCardList";
 // approval entirely via chat's old direct-write path. Business-
 // configuration-shaped, not creative identity (Brand) or storefront-visual
 // content (Website), so they land here rather than either of those.
-export default async function SettingsPage() {
-  const { store } = await requireStorePageAccess(PERMISSIONS.STORE_MANAGE);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function SettingsScreen({ slug, basePath }: { slug?: string; basePath: string }) {
+  const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   const [pendingApprovals, dismissedCardIds] = await Promise.all([
@@ -89,7 +98,7 @@ export default async function SettingsPage() {
               taskAction={startTaskConversation}
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
-              currentPath="/dashboard/settings"
+              currentPath={`${basePath}/settings`}
             />
           </div>
         </>
@@ -133,7 +142,7 @@ export default async function SettingsPage() {
               taskAction={startTaskConversation}
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
-              currentPath="/dashboard/settings"
+              currentPath={`${basePath}/settings`}
             />
           </div>
         </>
@@ -165,4 +174,12 @@ export default async function SettingsPage() {
       )}
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/settings renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function SettingsPage() {
+  return SettingsScreen({ basePath: LEGACY_BUSINESS_BASE });
 }

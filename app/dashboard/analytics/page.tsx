@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, hasPermission, requireStorePageAccess } from "@/lib/permissions";
+import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getOrderSummary, getRecentActivity, getProfitSummary, getFulfillmentBreakdown } from "@/lib/dashboard/whatHappened";
 import { getAttentionItems } from "@/lib/dashboard/needsAttention";
 import { getRecommendations } from "@/lib/dashboard/recommendations";
@@ -29,8 +30,16 @@ function formatTimeAgo(date: Date): string {
 // The dedicated, deeper view of the same recommendation engine Home shows a
 // promoted slice of — same underlying data and producers, just the page
 // worth bookmarking for a full review rather than a dashboard glance.
-export default async function AnalyticsPage() {
-  const { store, role } = await requireStorePageAccess(PERMISSIONS.ANALYTICS_VIEW);
+// MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
+// C). The screen is unchanged. What changed is where it gets its business: a
+// `slug` means it was reached at /b/[slug] and that business is authoritative;
+// no slug means the legacy /dashboard route, which resolves the account's active
+// business exactly as before.
+//
+// `basePath` is what every link inside uses, so a page rendered for one business
+// never links into another.
+export async function AnalyticsScreen({ slug, basePath }: { slug?: string; basePath: string }) {
+  const { store, role } = await requireBusinessPageOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
 
   const [products, stripeIntegration, paypalIntegration] = await Promise.all([
@@ -164,4 +173,12 @@ export default async function AnalyticsPage() {
       </div>
     </div>
   );
+}
+
+
+// The legacy route — resolves the account's ACTIVE business and renders the same
+// screen /b/<slug>/analytics renders. Preserved rather than redirected: existing
+// links and bookmarks point here.
+export default async function AnalyticsPage() {
+  return AnalyticsScreen({ basePath: LEGACY_BUSINESS_BASE });
 }
