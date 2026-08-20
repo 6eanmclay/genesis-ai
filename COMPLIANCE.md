@@ -2101,6 +2101,24 @@ would have removed a real protection to avoid a five-line change.
 And `verify-regressions.ts` §11 reproduces it against the pre-fix implementation:
 the old resolver returns the touched business, the new one does not.
 
+### Confirmed in production
+
+Read from the production database after the deploy, not inferred from a green
+build:
+
+| | |
+|---|---|
+| `20260820070000_active_business` | applied, finished |
+| `User.activeStoreId` | text, nullable |
+| `User_activeStoreId_fkey` | on delete **SET NULL** |
+| Accounts owning exactly one business | 16 |
+| Accounts with an active business set | **16** — every one backfilled |
+| Accounts pointed at a business they cannot reach | **0** |
+
+The last row is the one worth checking rather than assuming: a backfill that set
+a pointer to a business the account has no access to would have created exactly
+the authorization gap this change exists to close.
+
 ### Remaining architectural risk
 
 **The 47 call sites still resolve implicitly.** They are now *safe* — explicit
