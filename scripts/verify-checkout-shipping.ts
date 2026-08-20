@@ -121,5 +121,49 @@ console.log("\n5. An estimate is carried only when the carrier gave one");
   check("a zero-day estimate is not a promise", parseCheckoutShipping({ shippingEstDays: "0" }).estimatedDays, null);
 }
 
+// ---------------------------------------------------------------------------
+console.log("\n6. The two halves of the chain agree on the same keys");
+{
+  // createCheckoutSession WRITES this metadata; the webhook READS it, hours
+  // later, in a different process, with nothing but string keys joining them.
+  // A rename on either side would not fail a typecheck — it would silently
+  // produce orders with no shipping, or none at all.
+  const written = toCheckoutMetadata({
+    storeId: "store_1",
+    productId: "prod_1",
+    destination: DESTINATION,
+    selected: SELECTED,
+  });
+
+  // The webhook resolves the store and product from these two by name.
+  check("storeId travels under the key the webhook reads", written.storeId, "store_1");
+  check("and productId likewise", written.productId, "prod_1");
+
+  // Everything the webhook needs for the Order comes back out of what was put
+  // in — asserted as a ROUND TRIP rather than by comparing key lists, because
+  // a key list can match while the values are mangled.
+  const read = parseCheckoutShipping(written);
+  check("carrier survives", read.carrier, SELECTED.carrier);
+  check("service survives", read.service, SELECTED.service);
+  check("rate id survives", read.rateId, SELECTED.rateId);
+  check("amount survives", read.amountInCents, SELECTED.amountInCents);
+  check("estimate survives", read.estimatedDays, SELECTED.estimatedDays);
+  check("and the address survives whole", read.address?.postalCode, DESTINATION.postalCode);
+
+  // Every key written is a string, because Stripe metadata cannot hold
+  // anything else — a number or object would arrive back as something the
+  // parser does not expect.
+  assert("every metadata value is a string",
+    Object.values(written).every((v) => typeof v === "string"),
+    JSON.stringify(Object.entries(written).map(([k, v]) => [k, typeof v])));
+
+  // The non-shipping checkout writes only these two keys. The webhook must
+  // still resolve from them, and must not require the shipping ones.
+  const plain = { storeId: "store_1", productId: "prod_1" };
+  const plainRead = parseCheckoutShipping(plain);
+  assert("a checkout without shipping still carries its store", plain.storeId === "store_1");
+  check("and parses to honest nulls rather than failing", plainRead.carrier, null);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
