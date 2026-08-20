@@ -111,7 +111,32 @@ export interface ProductSource {
   blockedOn: string[];
 
   search(intent: SourcingIntent): Promise<SourceSearchResult>;
+
+  /**
+   * What one candidate actually costs — present if and only if
+   * `capabilities.quotesCost` is true.
+   *
+   * Separate from search() because it is expensive per candidate (two HTTP
+   * round trips on Printful) and discovery surfaces eight at a time. A cost is
+   * fetched when somebody is genuinely interested, and until then the candidate
+   * records an honest null.
+   *
+   * The "if and only if" is not a comment. verify-product-sourcing.ts asserts it
+   * over the whole registry, because a source declaring a capability it does not
+   * implement is exactly the kind of thing that reads as working right up until
+   * a caller believes it.
+   */
+  quote?(params: { storeId: string; candidate: SourcedCandidate }): Promise<SourceQuoteResult>;
 }
+
+export interface SourceQuote {
+  /** What the supplier charges for one, before shipping. */
+  unitCostInCents: number;
+  /** What the supplier charges to ship one, when it will say. */
+  shippingInCents: number;
+}
+
+export type SourceQuoteResult = ({ ok: true } & SourceQuote) | ({ ok: false } & SourceUnavailable);
 
 /**
  * How "this source has no variants" is stored.

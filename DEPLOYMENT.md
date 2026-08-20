@@ -8,7 +8,9 @@ How code and schema changes actually reach production, and the one step that is 
 
 Cheap, high-blast-radius operational risks, tracked separately from feature work. Check an item off once it's been verified against the real environment, not just implemented.
 
-- [x] **Remove automatic production schema migrations** — done 2026-08-01, see below.
+- [ ] **Remove automatic production schema migrations** — done 2026-08-01
+  (`5002093`), **and reversed on 2026-08-13** (`a2a05bf`), which this document
+  did not say for a week. See *Correction* immediately below.
   - [ ] **Verify Preview deployment database branching** — open. Need to confirm in the Vercel dashboard (Project → Storage → the Neon integration → connection settings) whether Preview deployments get an isolated Neon branch or share the production database. See *Two things worth knowing but not yet resolved* below for why this couldn't be confirmed via CLI. Not blocking anything today (migrations no longer auto-run in either environment), but worth closing out and documenting the answer here.
 - [~] **Production error monitoring (Sentry)** — code-complete 2026-08-01, **not yet live**. See *Sentry — code-complete, one manual step remains* below for exactly what's left and why I couldn't finish it myself.
 - [x] **Per-store AI usage ceilings / proactive cost governance** — done 2026-08-02, **live in production**. A real circuit breaker (Sean's framing, not a billing system): daily per-store/per-user token ceiling, computed from an append-only `AiUsageEvent` log (real usage from the provider's own response, never estimated). Background/autonomous AI work (the one real call site — `cognitiveLayer.ts`'s scheduled/opportunistic business review) stops immediately with no confirmation possible; owner-initiated chat gets a real "Continue anyway" button in `GenesisAssistant.tsx` that re-issues the exact same request with the ceiling bypassed for that one turn. Every breach reports through Sentry. Verified functionally end-to-end against a real account with a real Claude call: real usage recorded correctly, a temporarily-lowered ceiling produced the real block + confirm button, and clicking it produced a real, successful, grounded Genesis response. Production migration (`20260802010559_add_ai_usage_event`) applied by Sean 2026-08-02, confirmed via real Prisma CLI output against the real Neon production host.
@@ -17,6 +19,51 @@ Cheap, high-blast-radius operational risks, tracked separately from feature work
 ## Code deploys — unchanged, still automatic
 
 Pushing to `master` triggers a normal Vercel build (`next build`) and deploy. Nothing about this changed. Most schema evolution in this codebase happens through `Json` columns (`Store.blueprint`, `Product.richContent`, etc.) rather than new tables/columns — see `ARCHITECTURE.md`'s *Database model* section — so the large majority of deploys have no pending migration at all and this section is all that applies to them.
+
+## Correction — the gate is not there (2026-08-20)
+
+**Everything in the section below describing migrations as a deliberate, manual
+step was true when written and has been wrong since 2026-08-13.**
+
+`package.json`'s build script reads:
+
+```
+"build": "node scripts/migrate-deploy.mjs && next build"
+```
+
+`a2a05bf` ("Run migrations as part of the production build") put automatic
+migration back, and `db27a05` later moved it onto the unpooled connection to fix
+a real advisory-lock problem. Both were reasonable changes. Neither updated this
+file, so for a week the only document describing how migrations reach production
+described a gate that had been removed.
+
+**What that means in practice.** Pushing to `master` applies every pending
+migration to the production database before the app builds. There is no review
+step and no human in the loop. Code and migration deploy together again, so the
+ordering advice below ("migration first, then the code that depends on it") is
+now automatic rather than something anybody chooses.
+
+**How this was found.** `20260820060000_product_sourcing` was written and
+deliberately *not* applied, and recorded in `COMPLIANCE.md` as waiting for a
+manual step. Reading the production database to apply it showed it already
+applied — by the Vercel build triggered by the push that added it. The schema
+was verified correct against production directly: both enums with the right
+labels, `Product.sourceKind` NOT NULL defaulting to `OWNER_MADE`, all 21
+`SourcedProduct` columns, both indexes, all 55 existing products reading
+`OWNER_MADE` and nothing rewritten.
+
+**The claim in the section below that an agent cannot apply a production
+migration is also no longer meaningful.** It is still true that the production
+`DATABASE_URL` is a Vercel Sensitive variable and unreadable there — verified
+again today, it reads `[SENSITIVE]` in `.env.production.local`. But nothing has
+to read it: a push applies the migration.
+
+**Whether to reinstate the gate is a decision for Sean, not a cleanup task.**
+The reasons it was introduced (no staging, no review, real customer and order
+data) have not changed; the reason it was reversed is not recorded anywhere. It
+is on `COMPLIANCE.md`'s decision list rather than being quietly changed back.
+
+---
 
 ## Schema migrations — now a deliberate, separate step
 

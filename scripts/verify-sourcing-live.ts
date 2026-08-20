@@ -328,18 +328,28 @@ async function main() {
       check("nothing is re-suggested", again.suggested.length, 0);
       check("and the row stays adopted", (await rowsFor(store.id))[0].status, "ADOPTED");
 
-      // Concurrency, which is the version of this that a status check alone
-      // would not survive.
-      await reset();
-      const racing = await makeStore("racing");
-      const raceFound = await discoverProducts({ storeId: racing.id, context: CUBIT, sources });
-      const results = await Promise.all([
-        adoptSourcedProduct({ storeId: racing.id, sourcedProductId: raceFound.suggested[0].id, priceInCents: 100 }),
-        adoptSourcedProduct({ storeId: racing.id, sourcedProductId: raceFound.suggested[0].id, priceInCents: 100 }),
-        adoptSourcedProduct({ storeId: racing.id, sourcedProductId: raceFound.suggested[0].id, priceInCents: 100 }),
-      ]);
-      check("every caller is told it worked", results.filter((r) => r.ok).length, 3);
-      check("but only one product exists", await prisma.product.count({ where: { storeId: racing.id } }), 1);
+      // Concurrency, which is the version of this that a status check alone does
+      // not survive — and which passed once before failing on a re-run, because
+      // a race that only sometimes loses is still a race. Repeated, and with
+      // more callers, so a regression here fails reliably rather than eventually.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await reset();
+        const racing = await makeStore(`racing-${attempt}`);
+        const raceFound = await discoverProducts({ storeId: racing.id, context: CUBIT, sources });
+        const results = await Promise.all(
+          Array.from({ length: 6 }, () =>
+            adoptSourcedProduct({ storeId: racing.id, sourcedProductId: raceFound.suggested[0].id, priceInCents: 100 })
+          )
+        );
+        const products = await prisma.product.count({ where: { storeId: racing.id } });
+        // The one that must never bend: six callers, one product.
+        check(`attempt ${attempt + 1}: exactly one product`, products, 1);
+        // And nobody is told it failed when it did not — they all end up
+        // pointing at the same real product.
+        const ids = new Set(results.filter((r) => r.ok).map((r) => (r as { productId: string }).productId));
+        check(`attempt ${attempt + 1}: everyone who succeeded points at it`, ids.size, 1);
+        assert(`attempt ${attempt + 1}: at least one caller succeeded`, results.some((r) => r.ok));
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -434,10 +444,45 @@ async function main() {
       });
 
       check("nothing is raised", result.suggested.length, 0);
-      // Counted rather than stored: a row for something Genesis had no reason to
-      // raise would be indistinguishable later from one it did.
-      check("but it is counted", result.consideredAndSkipped, 1);
+      // Returned rather than stored: a row for something Genesis declined would
+      // be indistinguishable later from one it raised.
+      check("but it is ruled out by name", result.ruledOut.map((r) => r.name), ["Phone Case"]);
+      // THE SENTENCE J4 HAS TO BE ABLE TO SAY. "I wouldn't recommend this for
+      // your store" is a judgment, and a recommender that can only stay silent
+      // about a bad fit cannot make it.
+      assert("with a reason an owner can read",
+        result.ruledOut[0].concerns.some((c) => c.includes("doesn't connect to anything you've told me")),
+        JSON.stringify(result.ruledOut[0]));
+      check("nothing could-not-judge about it", result.couldNotJudge, 0);
       check("and no row exists for it", (await rowsFor(store.id)).length, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n9b. Not knowing a business is not the same as ruling something out");
+    {
+      await reset();
+      const store = await makeStore("unknown-business");
+      // A brand-new store: nothing described, nothing sold, nothing classified.
+      const blank: SourcingContext = {
+        ownWords: "",
+        classifications: [],
+        brandPositioning: "other",
+        sells: [],
+        proven: [],
+      };
+      const result = await discoverProducts({
+        storeId: store.id,
+        context: blank,
+        sources: [wholesaleSource([wholesale()])],
+      });
+
+      check("nothing is suggested", result.suggested.length, 0);
+      // The distinction Sean's own framing turns on. Telling a new owner their
+      // product "doesn't fit the brand" when no brand has been described yet
+      // invents a standard they never set.
+      check("and nothing is ruled out either", result.ruledOut.length, 0);
+      check("it is simply not judgeable yet", result.couldNotJudge, 1);
+      check("no rows written", (await rowsFor(store.id)).length, 0);
     }
 
     // -----------------------------------------------------------------------
@@ -520,6 +565,168 @@ async function main() {
         priceInCents: 4200,
       });
       assert("with a price it works", priced.ok, JSON.stringify(priced));
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n14. What J4 knows becomes what the recommender may reason from");
+    {
+      await reset();
+      const { buildSourcingContext } = await import("@/lib/sourcing/context");
+      const user = await prisma.user.create({ data: { email: "cubit@example.test" } });
+      // A real store, described the way an owner describes one.
+      const store = await prisma.store.create({
+        data: {
+          userId: user.id,
+          name: "Cubit & Coil",
+          slug: "cubit-and-coil",
+          tagline: "Hand-wound copper for energy work",
+          description: "Hand-wound copper tensor rings and coils.",
+          brandPositioning: "minimalist",
+          // Brand identity lives inside the blueprint, which is where the
+          // onboarding flow puts it — read the same way here as in production.
+          blueprint: {
+            brandIdentity: {
+              brandStory: "Every ring is wound by hand from solid copper.",
+              uniqueSellingProposition: "Sacred cubit measurements, wound by hand.",
+              targetAudience: "People who practise energy work and meditation at home",
+              coreValues: ["Craftsmanship"],
+            },
+          },
+          businessCategories: ["wellness"],
+          revenueStreams: ["product_sales"],
+        },
+      });
+      const ring = await prisma.product.create({
+        data: { storeId: store.id, name: "Copper tensor ring", description: "Hand-wound", priceInCents: 8500 },
+      });
+      await prisma.product.create({
+        data: { storeId: store.id, name: "Sacred cubit coil", description: "Wound copper", priceInCents: 12000 },
+      });
+      // One of them has actually earned. The other has not, and that difference
+      // is the one the recommender weights most heavily.
+      await prisma.order.create({
+        data: {
+          storeId: store.id,
+          productId: ring.id,
+          productName: ring.name,
+          amountInCents: 8500,
+          buyerEmail: "buyer@example.test",
+          status: "paid",
+          paymentProvider: "STRIPE",
+          externalOrderId: "cs_ring_1",
+        },
+      });
+
+      const context = await buildSourcingContext(store.id);
+
+      // THE JOIN TO THE FOUNDATION. Everything here came from something the
+      // owner or their real sales said; nothing is a default persona.
+      assert("the owner's own words are carried through",
+        context.ownWords.includes("copper") && context.ownWords.includes("energy work"), context.ownWords);
+      assert("including the brand story and what makes it different",
+        context.ownWords.includes("solid copper") && context.ownWords.includes("Sacred cubit"), context.ownWords);
+      check("the brand positioning is the store's own", context.brandPositioning, "minimalist");
+      assert("what the store sells is listed",
+        context.sells.includes("Copper tensor ring") && context.sells.includes("Sacred cubit coil"),
+        context.sells.join(", "));
+      // Proven means it earned money, not that it exists.
+      check("and only what has actually earned counts as proven", context.proven, ["Copper tensor ring"]);
+      assert("classifications come through as labels, not slugs",
+        context.classifications.length > 0 && !context.classifications.includes("product_sales"),
+        context.classifications.join(", "));
+
+      // And the context genuinely drives the recommendation.
+      const result = await discoverProducts({
+        storeId: store.id,
+        context,
+        sources: [
+          wholesaleSource([
+            wholesale(),
+            wholesale({ externalProductId: "w2", name: "Phone Case", description: "A case for phones" }),
+          ]),
+        ],
+      });
+      assert("a fitting product is raised", result.suggested.some((x) => x.name.includes("Copper")),
+        JSON.stringify(result.suggested.map((x) => x.name)));
+      assert("an unfitting one is ruled out by name",
+        result.ruledOut.some((x) => x.name === "Phone Case"), JSON.stringify(result.ruledOut));
+
+      // A brand-new store, with nothing said about it yet, is a different answer
+      // rather than a worse one.
+      const blankUser = await prisma.user.create({ data: { email: "blank@example.test" } });
+      const blankStore = await prisma.store.create({
+        data: { userId: blankUser.id, name: "Untitled", slug: "untitled", tagline: "", description: "" },
+      });
+      const blankContext = await buildSourcingContext(blankStore.id);
+      check("nothing is invented for a store with nothing in it", blankContext.ownWords, "");
+      check("no products", blankContext.sells, []);
+      check("nothing proven", blankContext.proven, []);
+      // "other" is a real slug meaning the owner has not said, and the one
+      // positioning for which customisation earns nothing.
+      check("and positioning falls back honestly", blankContext.brandPositioning, "other");
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n15. Pricing a suggestion re-reasons about it");
+    {
+      await reset();
+      const { quoteSourcedProduct } = await import("@/lib/sourcing/quote");
+      const store = await makeStore("pricing");
+
+      const quoting: ProductSource = {
+        ...wholesaleSource([wholesale({ unitCostInCents: null, suggestedRetailInCents: null })]),
+        async quote() {
+          return { ok: true, unitCostInCents: 600, shippingInCents: 400 };
+        },
+      };
+      const found = await discoverProducts({ storeId: store.id, context: CUBIT, sources: [quoting] });
+      const before = (await rowsFor(store.id))[0];
+      // Discovery deliberately does not price: eight candidates is sixteen round
+      // trips to fill a list the owner may glance at once.
+      check("it starts unpriced", before.unitCostInCents, null);
+      const beforeRecommendation = before.recommendation as { basedOn: string[] };
+      assert("and nothing was said about margin", !beforeRecommendation.basedOn.includes("margin"),
+        beforeRecommendation.basedOn.join(", "));
+
+      // A real quote goes through the registry, so this source cannot be reached
+      // that way. The refusal is what matters, and it is honest.
+      const unregistered = await quoteSourcedProduct({
+        storeId: store.id,
+        sourcedProductId: found.suggested[0].id,
+        context: CUBIT,
+      });
+      check("an unregistered source cannot be priced", unregistered.ok, false);
+      assert("and says so rather than guessing",
+        !unregistered.ok && unregistered.reason === "not_quotable", JSON.stringify(unregistered));
+      check("the row keeps its honest null", (await rowsFor(store.id))[0].unitCostInCents, null);
+
+      // A blocked registered source is the same answer, with what it needs.
+      await prisma.sourcedProduct.updateMany({
+        where: { storeId: store.id },
+        data: { sourceKey: "aliexpress" },
+      });
+      const blocked = await quoteSourcedProduct({
+        storeId: store.id,
+        sourcedProductId: found.suggested[0].id,
+        context: CUBIT,
+      });
+      check("a blocked source will not price", blocked.ok, false);
+      assert("naming what it needs",
+        !blocked.ok && blocked.detail.includes("ALIEXPRESS_APP_KEY"), JSON.stringify(blocked));
+      // Never a zero. A cost of zero would make this the most profitable thing
+      // in the store.
+      check("and still no number is written", (await rowsFor(store.id))[0].unitCostInCents, null);
+
+      // Tenant scoping on the way in, because this spends a real API call
+      // against the store's own connected account.
+      const other = await makeStore("other-store");
+      const crossed = await quoteSourcedProduct({
+        storeId: other.id,
+        sourcedProductId: found.suggested[0].id,
+        context: CUBIT,
+      });
+      check("one store cannot price another's suggestion", crossed.ok, false);
+      assert("as not found", !crossed.ok && crossed.reason === "not_found", JSON.stringify(crossed));
     }
 
     // -----------------------------------------------------------------------

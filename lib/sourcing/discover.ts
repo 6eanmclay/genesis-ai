@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getProductSources, getProductSource } from "./registry";
 import { scoreCandidate, isWorthSuggesting, type SourcingContext } from "./recommend";
+import type { ProductSourceKind } from "@prisma/client";
 import { toVariantKey, type SourcedCandidate, type ProductSource, type SourceUnavailable } from "./types";
 
 // Running discovery, and remembering what it found.
@@ -15,9 +16,24 @@ import { toVariantKey, type SourcedCandidate, type ProductSource, type SourceUna
 
 export interface DiscoveryResult {
   /** Candidates now sitting as SUGGESTED for this store, best first. */
-  suggested: { id: string; name: string; score: number; reasons: string[] }[];
-  /** How many were seen but not worth raising. Counted, never padded in. */
-  consideredAndSkipped: number;
+  suggested: { id: string; name: string; kind: ProductSourceKind; score: number; reasons: string[] }[];
+  /**
+   * Candidates Genesis looked at and decided against, with the reason.
+   *
+   * Kept rather than counted, because being able to say *"I wouldn't recommend
+   * this for your store — it's technically the right category, but it doesn't
+   * fit the brand you've described"* is most of what separates a partner from a
+   * search box. Not persisted: a row for something Genesis declined would be
+   * indistinguishable later from one it raised, and the judgment is only true of
+   * the business as it was understood at the time.
+   */
+  ruledOut: { name: string; kind: ProductSourceKind; concerns: string[] }[];
+  /**
+   * How many could not be judged at all, because Genesis does not yet know the
+   * business well enough. Deliberately not folded into ruledOut — "I don't know
+   * you yet" is not "this doesn't fit you".
+   */
+  couldNotJudge: number;
   /** Sources that could not be searched, and why. Never silently omitted. */
   unavailable: { key: string; displayName: string; problem: SourceUnavailable }[];
   /** Candidates the owner has already dismissed and which were not raised again. */
@@ -113,7 +129,8 @@ export async function discoverProducts(params: {
     dismissed.map((d) => `${d.sourceKey}|${d.externalProductId}|${d.externalVariantId}`)
   );
 
-  let consideredAndSkipped = 0;
+  const ruledOut: DiscoveryResult["ruledOut"] = [];
+  let couldNotJudge = 0;
   let respectedDismissals = 0;
   const suggested: DiscoveryResult["suggested"] = [];
 
@@ -126,9 +143,13 @@ export async function discoverProducts(params: {
 
     const recommendation = scoreCandidate(candidate, context);
     if (!isWorthSuggesting(recommendation)) {
-      // Counted, not stored. A row for something Genesis had no reason to raise
-      // would be indistinguishable later from one it did.
-      consideredAndSkipped++;
+      // Returned, not stored. A row for something Genesis declined would be
+      // indistinguishable later from one it raised.
+      if (recommendation.verdict === "does_not_fit") {
+        ruledOut.push({ name: candidate.name, kind: candidate.kind, concerns: recommendation.concerns });
+      } else {
+        couldNotJudge++;
+      }
       continue;
     }
 
@@ -169,10 +190,16 @@ export async function discoverProducts(params: {
     });
 
     if (row.status === "SUGGESTED") {
-      suggested.push({ id: row.id, name: row.name, score: recommendation.score, reasons: recommendation.reasons });
+      suggested.push({
+        id: row.id,
+        name: row.name,
+        kind: row.kind,
+        score: recommendation.score,
+        reasons: recommendation.reasons,
+      });
     }
   }
 
   suggested.sort((a, b) => b.score - a.score);
-  return { suggested, consideredAndSkipped, unavailable, respectedDismissals };
+  return { suggested, ruledOut, couldNotJudge, unavailable, respectedDismissals };
 }

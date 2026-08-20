@@ -2,6 +2,9 @@ import { getProductSources, getReadySources, getProductSource, describeBlockedSo
 import { scoreCandidate, isWorthSuggesting, type SourcingContext } from "@/lib/sourcing/recommend";
 import { toVariantKey, fromVariantKey, type SourcedCandidate } from "@/lib/sourcing/types";
 import { aliexpressSource } from "@/lib/sourcing/aliexpress";
+import { framingFor, groupBySourcing } from "@/lib/sourcing/framing";
+import { recommendStartingSet } from "@/lib/sourcing/startingSet";
+import type { ProductSourceKind } from "@prisma/client";
 
 // The sourcing model's own rules. No database, no network:
 //
@@ -128,6 +131,33 @@ async function assertBlockedSourceInventsNothing() {
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n2c. A declared capability has something behind it");
+{
+  // The invariant TypeScript cannot express: `quote` is present if and only if
+  // `quotesCost` is true. A source declaring a capability it does not implement
+  // reads as working right up until a caller believes it.
+  for (const source of getProductSources()) {
+    check(`${source.key}: quotesCost matches whether it can be asked`,
+      typeof source.quote === "function", source.capabilities.quotesCost);
+    // A source that ships direct and one that does not are both legitimate, but
+    // the flag has to be a real boolean rather than accidentally undefined.
+    for (const [name, value] of Object.entries(source.capabilities)) {
+      assert(`${source.key}: ${name} is stated`, typeof value === "boolean", String(value));
+    }
+    // Only a source that creates listings can have something fulfil on our
+    // behalf. A wholesale supplier with a fulfilmentProvider would put its
+    // products in front of order-routing code with no idea what to do with them.
+    if (!source.capabilities.createsListings) {
+      check(`${source.key}: nobody fulfils on our behalf`, source.fulfillmentProvider, null);
+    }
+    // And customisation is only ever true for print-on-demand.
+    if (source.capabilities.customization) {
+      check(`${source.key}: only print-on-demand customises`, source.kind, "PRINT_ON_DEMAND");
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n3. A recommendation cannot exist without a real fact behind it");
 {
   // Nothing about this candidate connects to anything about the business.
@@ -161,7 +191,10 @@ console.log("\n4. Recommending what the owner already sells is the clearest fail
   const duplicate = scoreCandidate(candidate({ name: "Copper tensor ring", description: "A copper tensor ring" }), CUBIT);
   assert("it scores negative", duplicate.score < 0, String(duplicate.score));
   check("so it is never suggested", isWorthSuggesting(duplicate), false);
-  assert("and it says why", duplicate.reasons.some((r) => r.includes("already sell")), duplicate.reasons.join(" | "));
+  // A duplicate is a CONCERN, never a reason. Anything in `reasons` is an
+  // argument for adding it, and there is no version of this that argues for it.
+  assert("and it says why", duplicate.concerns.some((r) => r.includes("already sell")), duplicate.concerns.join(" | "));
+  check("with nothing said in its favour", duplicate.reasons, []);
 
   // Case must not be a way around it.
   const shouty = scoreCandidate(candidate({ name: "COPPER TENSOR RING" }), CUBIT);
@@ -209,7 +242,7 @@ console.log("\n6. An unknown cost is not a zero");
     candidate({ name: "Copper Coil Kit", unitCostInCents: 2500, suggestedRetailInCents: 2000 }),
     CUBIT
   );
-  assert("selling at a loss is called out", loss.reasons.some((r) => r.includes("at a loss")), loss.reasons.join(" | "));
+  assert("selling at a loss is called out", loss.concerns.some((r) => r.includes("at a loss")), loss.concerns.join(" | "));
   assert("and pushed below everything else", loss.score < unknown.score);
 }
 
@@ -232,6 +265,134 @@ console.log("\n7. A store Genesis knows nothing about gets no suggestions");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n7b. A bad fit is said out loud, and not knowing is said differently");
+{
+  // The sentence Sean called extremely important: "I wouldn't recommend this
+  // product for your store. Although it's technically a fitness product, it
+  // doesn't fit the brand you've described."
+  const wrong = scoreCandidate(candidate({ name: "Phone Case", description: "A case for phones" }), CUBIT);
+  check("it is a real judgment", wrong.verdict, "does_not_fit");
+  assert("with a reason in the owner's terms", wrong.concerns.length > 0, JSON.stringify(wrong));
+  check("and nothing positive is claimed", wrong.reasons, []);
+
+  // A duplicate is a bad fit too, and says why.
+  const duplicate = scoreCandidate(candidate({ name: "Copper tensor ring" }), CUBIT);
+  check("a duplicate does not fit", duplicate.verdict, "does_not_fit");
+  assert("saying so", duplicate.concerns.some((c) => c.includes("already sell")), JSON.stringify(duplicate));
+
+  // But a store nothing is known about gets neither answer.
+  const blank: SourcingContext = { ownWords: "", classifications: [], brandPositioning: "other", sells: [], proven: [] };
+  const cannotSay = scoreCandidate(candidate({ name: "Copper Wire Spool" }), blank);
+  check("an unknown business cannot be judged", cannotSay.verdict, "unknown");
+  // Telling a new owner their product "doesn't fit the brand" before any brand
+  // has been described invents a standard they never set.
+  check("so nothing is held against it", cannotSay.concerns, []);
+
+  // Losing money is a concern, not a selling point, however well it fits.
+  const loss = scoreCandidate(
+    candidate({ name: "Copper Coil Kit", unitCostInCents: 2500, suggestedRetailInCents: 2000 }),
+    CUBIT
+  );
+  check("a loss-maker does not fit", loss.verdict, "does_not_fit");
+  assert("and it is a concern, not a reason",
+    loss.concerns.some((c) => c.includes("at a loss")) && !loss.reasons.some((r) => r.includes("at a loss")),
+    JSON.stringify(loss));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n7c. Products are grouped by what the owner can do with them, never by supplier");
+{
+  const pod = framingFor("PRINT_ON_DEMAND");
+  const bulk = framingFor("WHOLESALE_DROPSHIP");
+
+  // The owner never chooses a supplier by name. "Printful" and "AliExpress" are
+  // answers to a question nobody building a business is asking.
+  for (const framing of [pod, bulk, framingFor("OWNER_MADE"), framingFor("WHOLESALE_STOCKED"), framingFor("DIGITAL")]) {
+    for (const text of [framing.label, framing.intent, framing.explanation, framing.bestFor]) {
+      assert(`no supplier is named in "${text.slice(0, 32)}..."`,
+        !/printful|aliexpress|easypost/i.test(text), text);
+    }
+  }
+
+  check("customisable products are for building the brand", pod.intent, "Build your brand");
+  check("and are customisable", pod.customizable, true);
+  check("with nothing to hold", pod.holdsInventory, false);
+  check("ready-to-sell products expand the line", bulk.intent, "Expand your product line");
+  // The distinction the whole model exists for.
+  check("and are not customisable", bulk.customizable, false);
+  // Stocked wholesale is the one that ties up money, and must say so.
+  assert("holding stock is called out where it applies",
+    framingFor("WHOLESALE_STOCKED").holdsInventory === true &&
+      framingFor("WHOLESALE_STOCKED").explanation.includes("tied up"),
+    framingFor("WHOLESALE_STOCKED").explanation);
+  // Dropshipping is hedged, because Genesis does not route orders to a supplier
+  // yet and "shipped for you" would be a promise it does not keep.
+  assert("dropshipping does not overpromise fulfilment",
+    bulk.explanation.includes("yourself"), bulk.explanation);
+
+  const grouped = groupBySourcing([
+    { kind: "PRINT_ON_DEMAND" as ProductSourceKind, id: "a" },
+    { kind: "WHOLESALE_DROPSHIP" as ProductSourceKind, id: "b" },
+    { kind: "PRINT_ON_DEMAND" as ProductSourceKind, id: "c" },
+  ]);
+  check("two groups", grouped.length, 2);
+  check("with the right counts", grouped.map((g) => g.items.length).sort(), [1, 2]);
+  // An empty "Customizable products" heading promises a branded route that is
+  // not there.
+  assert("and no empty group is invented", grouped.every((g) => g.items.length > 0));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n7d. A starting set is a mix, not the top of a list");
+{
+  const item = (id: string, kind: ProductSourceKind, score: number) => ({ id, name: id, kind, score });
+
+  // Six ready-to-sell products outscore both branded ones. Taking the top five
+  // would give the owner a first catalogue with nothing of theirs in it.
+  const set = recommendStartingSet([
+    item("roller", "WHOLESALE_DROPSHIP", 30),
+    item("bands", "WHOLESALE_DROPSHIP", 28),
+    item("dumbbells", "WHOLESALE_DROPSHIP", 26),
+    item("massage-gun", "WHOLESALE_DROPSHIP", 24),
+    item("mat", "WHOLESALE_DROPSHIP", 22),
+    item("straps", "WHOLESALE_DROPSHIP", 20),
+    item("tee", "PRINT_ON_DEMAND", 12),
+    item("hoodie", "PRINT_ON_DEMAND", 10),
+  ]);
+
+  check("five picks", set.picks.length, 5);
+  const branded = set.picks.filter((p) => p.kind === "PRINT_ON_DEMAND");
+  check("two of them branded", branded.length, 2);
+  // The strongest fits are still there — only the weakest ready-to-sell picks
+  // gave way.
+  assert("the best fit is kept", set.picks.some((p) => p.id === "roller"));
+  assert("and the weakest was the one dropped", !set.picks.some((p) => p.id === "mat"));
+  assert("the swap is explained rather than done quietly",
+    set.advice.some((a) => a.includes("on purpose")), set.advice.join(" | "));
+  assert("and the shape argument is made",
+    set.advice.some((a) => a.includes("associating the product")), set.advice.join(" | "));
+  assert("with the rest acknowledged",
+    set.advice.some((a) => a.includes("more that fit")), set.advice.join(" | "));
+
+  // Nothing brandable available at all: name the gap, do not advise adding
+  // something that cannot be added.
+  const noBranded = recommendStartingSet([
+    item("roller", "WHOLESALE_DROPSHIP", 30),
+    item("bands", "WHOLESALE_DROPSHIP", 28),
+  ]);
+  check("both picked", noBranded.picks.length, 2);
+  assert("the absence is named", noBranded.gaps.length > 0, JSON.stringify(noBranded.gaps));
+  assert("and no impossible advice is given",
+    !noBranded.advice.some((a) => a.includes("Worth adding one or two that do")),
+    noBranded.advice.join(" | "));
+
+  // Nothing at all is nothing said.
+  const empty = recommendStartingSet([]);
+  check("no picks", empty.picks, []);
+  check("and no advice invented", empty.advice, []);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\n8. The variant sentinel converts back to what it means");
 {
   // A wholesale listing has no variant; a print-on-demand blank always does.
@@ -250,6 +411,28 @@ process.exit(failures === 0 ? 0 : 1);
 async function main(): Promise<void> {
   console.log("\n2b. A blocked source, asked directly");
   await assertBlockedSourceInventsNothing();
+
+  console.log("\n2d. A blocked source will not price anything either");
+  const quoted = await aliexpressSource.quote!({
+    storeId: "store_1",
+    candidate: {
+      sourceKey: "aliexpress",
+      externalProductId: "x",
+      externalVariantId: null,
+      kind: "WHOLESALE_DROPSHIP",
+      name: "Anything",
+      description: null,
+      imageUrl: null,
+      unitCostInCents: null,
+      suggestedRetailInCents: null,
+      currency: "USD",
+      customizable: false,
+      fulfillmentProvider: null,
+    },
+  });
+  check("it refuses to price", quoted.ok, false);
+  // A zero would make this the most profitable thing in the store.
+  assert("and quotes no number at all", !("unitCostInCents" in quoted), JSON.stringify(quoted));
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);

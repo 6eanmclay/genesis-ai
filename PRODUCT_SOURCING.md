@@ -155,6 +155,83 @@ in is a matter of record rather than whatever the scorer could reach. Widening i
 is a deliberate edit to one function, which is the point. Recommendation quality
 improves as understanding deepens, with no change to the scorer.
 
+**A bad fit is said out loud.** `scoreCandidate` returns a `verdict` of `fits`,
+`does_not_fit` or `unknown`, with `concerns` alongside `reasons`. Sean's framing:
+*"I wouldn't recommend this product for your store. Although it's technically a
+fitness product, it doesn't fit the brand you've described."* A recommender that
+can only stay silent about a bad fit cannot say that sentence, and being able to
+say it is most of what separates a partner from a search box.
+
+`unknown` is a third answer and not a rounding of the second. *"I don't know your
+business well enough to say"* and *"this doesn't fit your business"* are
+completely different statements — telling a brand-new owner their product does
+not fit a brand they have not described yet invents a standard they never set.
+Discovery returns ruled-out candidates with their concerns, and counts the
+unjudgeable separately.
+
+---
+
+## Framing — the owner never chooses a supplier by name
+
+"Printful" and "AliExpress" are answers to a question nobody building a business
+is asking. The question is *can I put my brand on it, and do I have to hold any
+of it* — which is what a sourcing model actually decides. So `framing.ts` lives
+in the domain, not in a component: one answer to "what does print-on-demand mean
+for me" wherever that gets asked, whether a screen, a chat reply or a spoken
+summary.
+
+| Kind | Label | Intent |
+|---|---|---|
+| `PRINT_ON_DEMAND` | Customizable products | **Build your brand** |
+| `WHOLESALE_DROPSHIP` | Ready-to-sell products | **Expand your product line** |
+| `WHOLESALE_STOCKED` | Products you stock | Buy in and hold |
+| `OWNER_MADE` | What you make | Sell your own work |
+| `DIGITAL` | Digital products | Sell without shipping |
+
+Dropshipping's description is deliberately hedged — *"passing each order to the
+supplier is still something you do yourself for now"* — because Genesis does not
+route orders to a supplier yet, and "shipped for you" would be a promise the
+platform does not keep. `groupBySourcing` never emits an empty group: a
+"Customizable products" heading with nothing under it promises a branded route
+that is not there.
+
+---
+
+## The starting set
+
+`recommendStartingSet` is the step past a ranked list, and the one Sean named as
+the point: *"I'd start with these five... I'd also recommend adding one or two
+branded products so customers begin associating the product experience with your
+brand."*
+
+That is not the top five by score. It is a deliberate mix, because a first
+catalogue made entirely of resold stock has nothing of the owner in it, and one
+made entirely of branded blanks has nothing to sell but the logo. Branded items
+are pulled up to a target of two by displacing the *weakest* non-branded pick,
+never by growing the set — and the swap is stated rather than done quietly.
+
+Nothing is invented to fill a slot. Where nothing brandable was found at all, the
+gap is named instead of advising the owner to add something that does not exist.
+
+Kept separate from scoring on purpose: scoring answers *does this belong in this
+business*, this answers *what should the first shelf look like*. They change for
+different reasons and should be arguable independently.
+
+---
+
+## Pricing on demand
+
+Discovery records an honest `null` cost. Pricing eight candidates is sixteen HTTP
+round trips to fill a list the owner may glance at once, so `quoteSourcedProduct`
+asks only when somebody is interested — and **re-scores**. A cost changes the
+margin, the margin changes the score, and the score changes the order the owner
+reads; a row that took on a real price while keeping reasoning written when the
+price was unknown would be a recommendation arguing against its own numbers.
+
+The suggested retail comes from the same `recommendPrice()` the onboarding flow
+uses, so a price Genesis suggests here and one it suggests there are the same
+number for the same reasons. It stays a suggestion — the owner's figure wins.
+
 ---
 
 ## Status
@@ -182,8 +259,10 @@ improves as understanding deepens, with no change to the scorer.
 - **Printful's real catalogue through this adapter.** The underlying connector
   was validated live against Printful's API when it was written; the *adapter*
   over it has not been run against a connected store.
-- **`buildSourcingContext` against a real store's understanding.** The scorer is
-  proven against contexts; the projection that builds them is not.
+- ~~**`buildSourcingContext` against a real store's understanding.**~~ Now
+  verified against real Postgres: a store with a description, brand story, USP,
+  audience, two products and one real paid order produces a context carrying all
+  of it, with only the product that actually earned counted as proven.
 
 ### EXTERNALLY BLOCKED
 
@@ -191,9 +270,12 @@ improves as understanding deepens, with no change to the scorer.
   AliExpress Open Platform app). The source is registered and refuses; it does
   not return an invented catalogue.
 - **Printful** — needs a store with Printful connected to search anything.
-- **The migration** `20260820060000_product_sourcing` is written and applies
-  cleanly against real Postgres, but production migrations are a deliberate
-  separate step (`DEPLOYMENT.md`) and it has **not** been applied to production.
+- ~~**The migration** has not been applied to production.~~ **Wrong when
+  written.** It was applied by the Vercel build, whose script has run
+  `prisma migrate deploy` again since 2026-08-13 while `DEPLOYMENT.md` said
+  otherwise. The schema was then verified directly against the production
+  database — both enums, every column, both indexes, and all 55 existing
+  products reading `OWNER_MADE` with nothing rewritten. See `COMPLIANCE.md` §46.
 
 ### NOT MODELLED — deliberately, and named
 

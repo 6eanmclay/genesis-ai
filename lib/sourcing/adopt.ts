@@ -66,25 +66,36 @@ export async function adoptSourcedProduct(params: {
     };
   }
 
-  // CLAIM, then create. Two concurrent adoptions of one candidate would
-  // otherwise both pass the status check above and both create a product, which
-  // is the same check-then-act that put two shipping labels on one parcel.
-  const claimed = await prisma.sourcedProduct.updateMany({
-    where: { id: candidate.id, storeId, status: { not: "ADOPTED" } },
-    data: { status: "ADOPTED" },
-  });
-  if (claimed.count === 0 && candidate.status !== "ADOPTED") {
-    const winner = await prisma.sourcedProduct.findFirst({
-      where: { id: candidate.id, storeId },
-      select: { adoptedProductId: true },
+  // CLAIM AND CREATE IN ONE TRANSACTION (2026-08-20).
+  //
+  // THE DEFECT THIS REPLACES, found by this function's own suite on a re-run
+  // after passing once — it was a race, so it was flaky, which is exactly why
+  // it had to be run more than once. The claim and the create were separate
+  // statements, and the loser of the claim FELL THROUGH to create anyway
+  // whenever the winner had not yet written `adoptedProductId`. Three
+  // simultaneous adoptions produced three identical products.
+  //
+  // Together in one transaction, the winner's row lock is what serialises this:
+  // a second caller's conditional update blocks until the winner commits, then
+  // re-evaluates its predicate against the committed row and matches nothing. By
+  // the time a loser sees count 0, the product id it needs is committed too,
+  // because both writes are in the same transaction.
+  //
+  // The predicate is not simply `status != ADOPTED`: a row whose product was
+  // deleted is still ADOPTED with a null `adoptedProductId`, and that genuinely
+  // should be adoptable again.
+  const outcome = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.sourcedProduct.updateMany({
+      where: {
+        id: candidate.id,
+        storeId,
+        OR: [{ status: { not: "ADOPTED" } }, { adoptedProductId: null }],
+      },
+      data: { status: "ADOPTED" },
     });
-    if (winner?.adoptedProductId) {
-      return { ok: true, productId: winner.adoptedProductId, alreadyAdopted: true };
-    }
-  }
+    if (claimed.count === 0) return { won: false as const };
 
-  try {
-    const product = await prisma.product.create({
+    const product = await tx.product.create({
       data: {
         storeId,
         name: candidate.name,
@@ -103,15 +114,10 @@ export async function adoptSourcedProduct(params: {
         // variant", and the empty-string sentinel is a storage detail of the
         // discovery table, not a fact about the product.
         externalVariantId: fromVariantKey(candidate.externalVariantId),
-        // Read off the row, not re-derived from the registry (2026-08-20).
-        //
-        // Two things wrong with looking it up again. It said
-        // `createsListings ? "PRINTFUL" : null`, which is correct exactly until
-        // a second print-on-demand partner exists and every product from it gets
-        // labelled Printful and handed to Printful's order routing. And it made
-        // adoption fail outright for a source that had since been de-registered,
-        // stranding a suggestion the owner was looking at — when everything
-        // needed to create the product was already recorded on the row.
+        // Read off the row, not re-derived from the registry. It said
+        // `createsListings ? "PRINTFUL" : null`, which is correct exactly until a
+        // second print-on-demand partner exists and every product from it gets
+        // labelled Printful and handed to Printful's order routing.
         //
         // Null for a wholesale listing: it has an external id, but nobody is
         // fulfilling on our behalf, and claiming otherwise would put it in front
@@ -121,19 +127,32 @@ export async function adoptSourcedProduct(params: {
       select: { id: true },
     });
 
-    await prisma.sourcedProduct.updateMany({
+    await tx.sourcedProduct.updateMany({
       where: { id: candidate.id, storeId },
-      data: { status: "ADOPTED", adoptedProductId: product.id },
+      data: { adoptedProductId: product.id },
     });
 
-    return { ok: true, productId: product.id, alreadyAdopted: false };
-  } catch (error) {
-    // Release the claim, or a failed adoption locks the candidate out forever.
-    await prisma.sourcedProduct
-      .updateMany({ where: { id: candidate.id, storeId, adoptedProductId: null }, data: { status: "SUGGESTED" } })
-      .catch(() => {});
-    throw error;
+    return { won: true as const, productId: product.id };
+  });
+
+  if (outcome.won) return { ok: true, productId: outcome.productId, alreadyAdopted: false };
+
+  // Somebody else won. Their product id is committed, because their claim and
+  // their create were the same transaction.
+  const winner = await prisma.sourcedProduct.findFirst({
+    where: { id: candidate.id, storeId },
+    select: { adoptedProductId: true },
+  });
+  if (winner?.adoptedProductId) {
+    return { ok: true, productId: winner.adoptedProductId, alreadyAdopted: true };
   }
+  // No claim, and no product to point at. Refuse rather than create a second
+  // one — a duplicate in the owner's catalogue is worse than a retry.
+  return {
+    ok: false,
+    reason: "not_found",
+    detail: "This is already being added to your store.",
+  };
 }
 
 /**

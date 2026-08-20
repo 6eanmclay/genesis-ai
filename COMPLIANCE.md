@@ -31,14 +31,16 @@ Vercel, not assumed:
 | `SQUARE_CLIENT_ID` / `_SECRET` | the Square connector cannot be built | register a Square application |
 | `ALIEXPRESS_APP_KEY` / `_SECRET` | AliExpress cannot be searched for products; the source is registered and refuses rather than showing invented ones (§45) | register an AliExpress Open Platform app |
 
-**A migration waiting to be applied to production**, and the only item on this
-list that is not about a credential. `prisma/migrations/20260820060000_product_sourcing`
-adds `ProductSourceKind`, two columns on `Product` and the `SourcedProduct`
-table (§45). It applies cleanly against real Postgres — every suite in this
-document runs through it — but production migrations are a deliberate separate
-step (`DEPLOYMENT.md`), so nothing has touched the production database. Until it
-is applied, the sourcing code is deployed and inert. Applying it is additive:
-no existing row changes meaning, and there is no backfill.
+**A decision, not a credential: should the migration gate come back?**
+`20260820060000_product_sourcing` is **already applied to production** — not by
+a deliberate step, but by the Vercel build, because `package.json`'s build script
+has run `prisma migrate deploy` again since 2026-08-13 and `DEPLOYMENT.md` said
+otherwise for a week (§46). The schema was verified correct against production
+directly. Nothing is broken. But every push to `master` now migrates the
+production database with no review step, which is exactly what Track 0 removed
+on 2026-08-01, and the reason it was reversed is not recorded anywhere. Whether
+to reinstate the gate is Sean's call, and it has been left alone rather than
+quietly changed back.
 
 **Reconnections you have to do yourself**, because only the account holder can
 re-authorize:
@@ -1684,9 +1686,9 @@ The sentinel converts back at exactly one place.
 - **AliExpress** — `ALIEXPRESS_APP_KEY` / `ALIEXPRESS_APP_SECRET`. Registered,
   and refuses rather than inventing a catalogue.
 - **Printful** — a store with Printful connected, to search anything at all.
-- **The migration is not applied to production.** It applies cleanly against real
-  Postgres (every suite in this document runs through it), but production
-  migrations are a deliberate separate step. See **Action required from Sean**.
+- ~~**The migration is not applied to production.**~~ **Wrong when written** — it
+  was already applied by the Vercel build. Corrected in §46, along with the
+  reason this document believed otherwise.
 
 ### NOT MODELLED — deliberately, and named
 
@@ -1695,6 +1697,160 @@ Variants beyond one representative per candidate; inventory, including for
 automatic order routing to a supplier, which stays the explicit non-goal it has
 been since `ONBOARDING_V2_DESIGN.md`; and any owner-facing surface — there is no
 discovery screen, because interface work needs a confirmed design first.
+
+---
+
+## 46. The migration gate had been gone for a week
+
+*Found while trying to apply a migration deliberately. The instruction was to
+apply `20260820060000_product_sourcing` to production as a separate, reviewed
+step, exactly as `DEPLOYMENT.md` describes. Reading the production database to
+do it showed it **already applied** — by the Vercel build triggered by the push
+that added it.*
+
+### What is actually true
+
+`package.json`:
+
+```
+"build": "node scripts/migrate-deploy.mjs && next build"
+```
+
+`5002093` (2026-08-01, Track 0) removed automatic production migrations, for
+reasons that are still all true: no staging, no review step, no human in the
+loop, and real customer and order data on the other end. `a2a05bf` (2026-08-13)
+put them back, and `db27a05` later moved them onto the unpooled connection to
+fix a genuine advisory-lock problem. Both were reasonable changes on their own
+terms. **Neither updated `DEPLOYMENT.md`**, which went on describing the gate as
+in place for a week — including a paragraph asserting that applying a production
+migration "genuinely requires a real human with Neon console access — not
+something I (or any agent) can complete unassisted, even in principle."
+
+That paragraph's premise is still true: the production `DATABASE_URL` is a
+Vercel Sensitive variable and reads `[SENSITIVE]`, verified again today. Its
+conclusion is not. Nothing has to read the credential — a push applies the
+migration.
+
+### This document was wrong too
+
+§45 recorded, under EXTERNALLY BLOCKED: *"The migration is not applied to
+production."* It was applied before that sentence was written. The claim was
+inherited from `DEPLOYMENT.md` rather than checked against the database, which
+is precisely the failure mode this document's own opening rule exists to stop —
+*code that looks like it supports something is not evidence that it does*, and a
+document that says something is not evidence either.
+
+Corrected in place rather than quietly amended: the entry now says the migration
+is applied, and how it got there.
+
+### The migration itself, verified against production
+
+Read directly from the production database, not inferred from a green build:
+
+| | |
+|---|---|
+| `ProductSourceKind` | `OWNER_MADE, PRINT_ON_DEMAND, WHOLESALE_DROPSHIP, WHOLESALE_STOCKED, DIGITAL` |
+| `SourcedProductStatus` | `SUGGESTED, DISMISSED, ADOPTED` |
+| `Product.sourceKind` | NOT NULL, default `'OWNER_MADE'` |
+| `Product.sourceKey` | nullable text |
+| `SourcedProduct` | all 21 columns present, correct nullability |
+| Indexes | primary key, the unique discovery key, and the `(storeId, status, score)` index |
+| Existing products | 55, **all** reading `OWNER_MADE` — nothing rewritten |
+| `SourcedProduct` rows | 0 |
+
+The migration is additive and did exactly what it said. That is not the finding.
+
+### The finding
+
+**Every push to `master` migrates the production database with no review step**,
+and the only document describing how that works said the opposite.
+
+Deliberately **not** changed back. The reasons the gate was introduced have not
+changed, but the reason it was reversed is not recorded anywhere, and quietly
+re-removing a build step somebody added three weeks after removing it the first
+time is how a project ends up flip-flopping on a safety property nobody is
+actually deciding about. It is on the **Action required from Sean** list as a
+decision.
+
+Two things worth weighing if it does come back: the advisory-lock problem
+`db27a05` fixed was real and a manual path has to keep that fix; and code and
+migration deploying together is currently the *only* thing making the
+"migration first, then the code that depends on it" ordering true, so removing
+it reintroduces an ordering somebody has to get right by hand.
+
+---
+
+## 47. Six clicks, six products
+
+*A defect in §45's own adoption path, found by its own suite — on a **re-run**,
+having passed the first time. Recorded because a race that only sometimes loses
+is the kind that ships.*
+
+### What was wrong
+
+Adoption claimed the candidate and created the product in two separate
+statements:
+
+```ts
+const claimed = await prisma.sourcedProduct.updateMany({
+  where: { id, storeId, status: { not: "ADOPTED" } },
+  data: { status: "ADOPTED" },
+});
+if (claimed.count === 0 && candidate.status !== "ADOPTED") {
+  const winner = await /* read adoptedProductId */;
+  if (winner?.adoptedProductId) return { ok: true, ... };
+}
+// ...and then created the product regardless
+```
+
+The loser of the claim **fell through and created anyway** whenever the winner
+had not yet written `adoptedProductId` — a window that is open for exactly as
+long as a product insert takes. Three simultaneous adoptions produced three
+identical products in the owner's catalogue.
+
+The claim itself was correct. What was wrong was treating "somebody else won"
+as a condition to check rather than a path that ends.
+
+### The fix, and why the lock does the work
+
+Claim and create are now one transaction. A second caller's conditional update
+**blocks on the winner's row lock**, then re-evaluates its predicate against the
+committed row and matches nothing. By the time a loser sees `count === 0`, the
+product id it needs is committed too, because both writes belong to the same
+transaction. There is no window left to fall through.
+
+The predicate is deliberately not `status != ADOPTED`. A row whose product was
+later deleted is still ADOPTED with a null `adoptedProductId`, and that genuinely
+should be adoptable again — so the condition is *not adopted, **or** pointing at
+nothing*.
+
+A loser that finds no claim and no product now refuses rather than creating a
+second one. A duplicate in the owner's catalogue is worse than a retry.
+
+### Proven
+
+The test that found it now runs six concurrent adoptions, five times over, so a
+regression fails reliably rather than eventually:
+
+| | |
+|---|---|
+| Six concurrent adoptions, five rounds: exactly one product each time | PASS (was: 3 products from 3 callers) |
+| Every caller that succeeded points at the same product | PASS |
+| At least one caller succeeds — the fix does not deadlock them all | PASS |
+| Re-adopting after the product was deleted still works | PASS |
+
+The whole suite was then run three times end to end, clean each time.
+
+### Worth saying plainly
+
+Every other claim-then-act in this codebase — Growth Points, the order
+confirmation, the shipping label, the customer notification, the PayPal refund —
+puts the claim and the effect far enough apart that the same question applies to
+each. Those were reviewed when this was found. They differ in one way that
+matters: their effect is idempotent or externally keyed (an email that has
+already been sent, a label that already has a tracking number), so a fallthrough
+produces a duplicate *attempt*, not a duplicate *row*. This one created a row,
+which is why it was the one that showed.
 
 ---
 
@@ -1774,6 +1930,7 @@ the defect reproduced against the pre-fix behaviour first:
 | The refund subscription's lifecycle | §43 — the real connector, real database |
 | The label purchase, and which rate it buys | §44 — the real executable, real database |
 | Product sourcing and discovery | §45 — the real pipeline, real database |
+| The sourcing migration, as it landed in production | §46 — read from the production database |
 | Tenant isolation | §26 — the guard through the real client |
 | Authentication, sessions, brute force, roles | §14–16, §24 |
 | Growth Points ledger | §23 — real transactions |

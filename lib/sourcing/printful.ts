@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { printfulFulfillmentConnector } from "@/lib/fulfillment/printful";
-import type { ProductSource, SourceSearchResult, SourcingIntent } from "./types";
+import type { ProductSource, SourceQuoteResult, SourceSearchResult, SourcedCandidate, SourcingIntent } from "./types";
 
 // Printful, as a product SOURCE.
 //
@@ -81,6 +81,39 @@ export const printfulSource: ProductSource = {
         ok: false,
         reason: "provider_error",
         detail: error instanceof Error ? error.message.slice(0, 200) : "Printful search failed",
+      };
+    }
+  },
+
+  async quote({ storeId, candidate }: { storeId: string; candidate: SourcedCandidate }): Promise<SourceQuoteResult> {
+    if (!candidate.externalVariantId) {
+      // Printful prices a VARIANT, not a product. A candidate without one cannot
+      // be quoted, and saying so is better than quoting the wrong thing.
+      return {
+        ok: false,
+        reason: "provider_error",
+        detail: "This item has no Printful variant, so it can't be priced.",
+      };
+    }
+    try {
+      const estimate = await printfulFulfillmentConnector.getCost({
+        storeId,
+        storeDraftId: null,
+        candidate: {
+          provider: "PRINTFUL",
+          externalProductId: candidate.externalProductId,
+          name: candidate.name,
+          description: candidate.description ?? "",
+          imageUrl: candidate.imageUrl,
+          variant: { externalVariantId: candidate.externalVariantId, name: candidate.name },
+        },
+      });
+      return { ok: true, unitCostInCents: estimate.costInCents, shippingInCents: estimate.shippingInCents };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "provider_error",
+        detail: error instanceof Error ? error.message.slice(0, 200) : "Printful could not price this item",
       };
     }
   },

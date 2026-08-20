@@ -1,4 +1,4 @@
-import type { ProductSource, SourceSearchResult } from "./types";
+import type { ProductSource, SourceQuoteResult, SourceSearchResult } from "./types";
 
 // AliExpress, as a wholesale/dropship source.
 //
@@ -43,12 +43,22 @@ export const aliexpressSource: ProductSource = {
   blockedOn: ALIEXPRESS_REQUIRED_CREDENTIALS,
 
   async search(): Promise<SourceSearchResult> {
-    return {
-      ok: false,
-      reason: "not_configured",
-      detail:
-        "AliExpress sourcing needs an AliExpress Open Platform app before its catalog can be searched. Nothing is being shown from it rather than showing invented products.",
-      missing: ALIEXPRESS_REQUIRED_CREDENTIALS,
-    };
+    return NOT_CONFIGURED("its catalog can be searched");
+  },
+
+  // Present because the capability is declared. A wholesale supplier genuinely
+  // does quote a price — it just cannot be asked yet, and answering with an
+  // invented number would be worse than answering with the reason.
+  async quote(): Promise<SourceQuoteResult> {
+    return NOT_CONFIGURED("it can price anything");
   },
 };
+
+function NOT_CONFIGURED(what: string) {
+  return {
+    ok: false as const,
+    reason: "not_configured" as const,
+    detail: `AliExpress sourcing needs an AliExpress Open Platform app before ${what}. Nothing is being shown from it rather than showing invented products.`,
+    missing: ALIEXPRESS_REQUIRED_CREDENTIALS,
+  };
+}

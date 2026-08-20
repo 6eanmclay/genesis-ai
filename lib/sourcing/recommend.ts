@@ -44,10 +44,32 @@ export interface SourcingContext {
   proven: string[];
 }
 
+/**
+ * Does this belong in this business?
+ *
+ * Three answers, and the third is the one that is usually collapsed into the
+ * second by mistake. "I don't know your business well enough to say" and "this
+ * does not fit your business" are completely different statements, and an owner
+ * hearing the wrong one either loses trust in a good suggestion or takes a bad
+ * silence as approval.
+ */
+export type FitVerdict = "fits" | "does_not_fit" | "unknown";
+
 export interface Recommendation {
+  verdict: FitVerdict;
   score: number;
-  /** Sentences an owner can read. Never jargon, never a bare number. */
+  /** Why it fits. Sentences an owner can read — never jargon, never a number. */
   reasons: string[];
+  /**
+   * Why it might not, in the same voice.
+   *
+   * Sean's own framing for P0.5: *"I wouldn't recommend this product for your
+   * store. Although it's technically a fitness product, it doesn't fit the brand
+   * you've described."* A recommender that can only stay silent about a bad fit
+   * cannot say that sentence — and being able to say it is most of what
+   * separates a partner from a search box.
+   */
+  concerns: string[];
   /** Which signals contributed, for auditing a score after the fact. */
   basedOn: string[];
 }
@@ -117,8 +139,10 @@ export function scoreCandidate(candidate: SourcedCandidate, context: SourcingCon
   );
   if (alreadySelling) {
     return {
+      verdict: "does_not_fit",
       score: -1,
-      reasons: ["You already sell this, so it would be a duplicate rather than something new."],
+      reasons: [],
+      concerns: ["You already sell this, so it would be a duplicate rather than something new."],
       basedOn: ["already_selling"],
     };
   }
@@ -130,8 +154,15 @@ export function scoreCandidate(candidate: SourcedCandidate, context: SourcingCon
   // "your own artwork can go on it" as its entire justification, which is a
   // sentence about the supplier wearing the costume of a recommendation.
   const reasons: string[] = [];
+  const concerns: string[] = [];
   const basedOn: string[] = [];
   let score = 0;
+
+  // Does Genesis know enough about this business to have an opinion at all?
+  // Read before scoring, so "I don't know you yet" and "this doesn't fit you"
+  // never get returned as the same answer.
+  const knowsTheBusiness =
+    context.ownWords.trim().length > 0 || context.sells.length > 0 || context.classifications.length > 0;
 
   // 1. The business's own description of itself.
   const ownMatches = overlap(candidateWords, meaningfulWords(context.ownWords));
@@ -166,9 +197,30 @@ export function scoreCandidate(candidate: SourcedCandidate, context: SourcingCon
     basedOn.push("classification");
   }
 
-  // Nothing connects this to this business. Say nothing, rather than reaching
-  // for something true about the supplier and presenting it as a fit.
-  if (score <= 0) return { score: 0, reasons: [], basedOn: [] };
+  // Nothing connects this to this business.
+  if (score <= 0) {
+    return knowsTheBusiness
+      ? {
+          // A real judgment, and one J4 can say out loud. The candidate may be a
+          // perfectly good product; it is not one that belongs here.
+          verdict: "does_not_fit",
+          score: 0,
+          reasons: [],
+          concerns: [
+            `It doesn't connect to anything you've told me about your business — not what you sell, not who you sell to, and not how you describe the brand.`,
+          ],
+          basedOn: ["no_relevance"],
+        }
+      : {
+          // Nothing is known, so nothing can be judged. Saying "this doesn't fit"
+          // here would be inventing a standard the owner never set.
+          verdict: "unknown",
+          score: 0,
+          reasons: [],
+          concerns: [],
+          basedOn: [],
+        };
+  }
 
   // --- Modifiers. Only reached once relevance is real. --------------------
 
@@ -194,14 +246,21 @@ export function scoreCandidate(candidate: SourcedCandidate, context: SourcingCon
       }
     } else if (margin <= 0) {
       // Enough to sink anything. A product that loses money on every sale is not
-      // a weaker suggestion than a good one, it is not a suggestion.
+      // a weaker suggestion than a good one, it is not a suggestion — however
+      // well it fits the brand.
       score -= 100;
       basedOn.push("margin");
-      reasons.push(`At the suggested price this would sell at a loss.`);
+      concerns.push(`At the suggested price this would sell at a loss.`);
     }
   }
 
-  return { score, reasons, basedOn };
+  return {
+    verdict: score > 0 ? "fits" : "does_not_fit",
+    score,
+    reasons,
+    concerns,
+    basedOn,
+  };
 }
 
 /**
@@ -213,5 +272,5 @@ export function scoreCandidate(candidate: SourcedCandidate, context: SourcingCon
  * suggest anything yet" is the more useful answer, and the one that is true.
  */
 export function isWorthSuggesting(recommendation: Recommendation): boolean {
-  return recommendation.score > 0 && recommendation.reasons.length > 0;
+  return recommendation.verdict === "fits" && recommendation.score > 0 && recommendation.reasons.length > 0;
 }
