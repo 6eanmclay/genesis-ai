@@ -115,6 +115,8 @@ customers place real orders".
 | 37 | Checkout metadata is authoritative | **Compliant** | real action, real Postgres; 30 assertions — see §37 |
 | 38 | Shipping checkout can actually complete | **Compliant** | gated on Stripe; 4 assertions — see §38 |
 | 39 | Order fulfilment lifecycle | **Compliant** | real Postgres; 27 assertions — see §39 |
+| 40 | Refund path / money out | **Compliant** | real Postgres; 38 assertions — see §40 |
+| 41 | Partial refunds modelled | **NOT MODELLED** | known gap, decision needed — see §40 |
 
 ---
 
@@ -1180,6 +1182,49 @@ toggles should take effect. **That is wrong** — two sequential toggles returni
 to the start *is* a toggle, and the test was asserting a bug. It now asserts the
 property that matters: the executable follows the database rather than any
 caller's idea of it.
+
+---
+
+## 40. Refunds — three ways money left without anyone deciding
+
+Money *in* was proven end to end; money *out* had never had an adversarial pass.
+Three defects, none of which had any guard at all.
+
+**Postage.** Nothing checked payment status before buying a label, so a fully
+refunded order could still have a real one bought: **the customer keeps their
+money and receives the goods, posted at the owner's expense.** Refused now —
+and refused *before* the claim, so a refused attempt does not leave the order
+locked out of shipping if it is later un-refunded.
+
+**Fulfilment.** A refunded order could be marked fulfilled — committing to send
+goods for money that had gone back.
+
+**Revenue.** `getOrderSummary` summed `amountInCents` across every order
+regardless of status, so the dashboard kept reporting refunded money as earned.
+The **count** still includes refunded orders deliberately: one genuinely
+happened, and hiding it would make a refund-heavy month look quiet rather than
+troubled. Only the money is corrected.
+
+**Profit** had the same shape but needed the opposite care. Excluding refunded
+orders entirely would have been the mirror-image error — the product cost and the
+postage were still spent, so a shipped-then-refunded order is a **real loss the
+owner should see**, not a zero. Revenue goes to nothing; the costs stay.
+
+**Deliberately still allowed:** an order shipped *before* it was refunded keeps
+both facts. Goods went out and money came back; both happened. The label guard
+still outranks any attempt to un-ship it.
+
+### NOT MODELLED: partial refunds
+
+`charge.refunded` only flips `Order.status` on a **full** refund, which the
+handler's own comment has always named as a gap. The consequence is worth stating
+plainly rather than leaving implied: a partially refunded order still reads as
+fully paid, and **its full amount still counts as revenue and profit**. Genesis
+has no field for a partial refund, so there is nothing to correct against.
+
+Fixing it means a schema change and a decision about how partial refunds should
+affect revenue reporting — that is Sean's call, not one to make inside an audit.
+Recorded here as a known divergence between money state and order state.
 
 ---
 
