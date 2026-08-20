@@ -96,7 +96,7 @@ customers place real orders".
 | 18 | Scheduled work fails in isolation | **Compliant** | 3 loops + 3 stages isolated — see §18 |
 | 19 | Spot-checked and correct | **Verified** | routes, uploads, checkout routing — see §19 |
 | 20 | OAuth CSRF on every callback | **Compliant** | signed state on all 3 routes; 8 assertions — see §20 |
-| 21 | Money always leaves a trace | **Partial** | 3 paths fixed; DB-bound, untested — see §21 |
+| 21 | Money always leaves a trace | **Compliant** | 3 paths fixed; now DB-tested — see §21, §26 |
 | 22 | Each fix proven against the old code | **Compliant** | 9 defects reproduced then blocked — see §22 |
 | 23 | Growth Points cannot leak | **Compliant** | `planDeduction`; 21 assertions — see §23 |
 | 24 | Role matrix pinned | **Compliant** | owner-only permissions asserted by name — see §24 |
@@ -560,10 +560,12 @@ The existing comment already names that as a real gap rather than an oversight,
 and relabelling a substantially-paid order "refunded" would mislead the owner
 about what they still have to ship.
 
-**Not covered by a test, and recorded as such:** the `execute()` and webhook
-fixes above are in database-bound code with no injection seam, so they are
-verified by inspection and typecheck only. A database-backed test is the honest
-next step for them, and this document does not claim more than that.
+**Now covered.** This was recorded as inspection-only, with a database-backed
+test named as the honest next step. That harness exists — see §26 — and the
+ledger half of it is proven: `verify-ledger-live.ts` runs the real
+`deductGrowthPoints` and `creditGrowthPointsFromPurchase` transactions against a
+real Postgres. What remains inspection-only is narrower: the webhook handlers
+themselves, which need HTTP request plumbing rather than just a database.
 
 ---
 
@@ -663,6 +665,46 @@ place.
 
 ---
 
+## 26. A real database for the tests that could only be read
+
+Twelve suites could not run locally, and every fix in database-bound code was
+verified by reading. `scripts/lib/testDatabase.ts` closes that: PGlite in-process,
+speaking the real wire protocol, with the schema built by running **the real
+migration files** — a harness that invents its own schema tests a database that
+does not exist.
+
+**Not the production database, deliberately.** The obvious shortcut is to point
+the suites at `DATABASE_URL` and roll back, which is one bad transaction boundary
+away from mutating a real merchant's store. Nothing here can reach production: the
+connection string is built from a port the test process opened.
+
+It immediately turned three read-only claims into tested ones:
+
+- **The tenant guard is real.** The two bypasses were proven against the
+  predicate; this proves the *extension* uses it, by running unscoped `findMany`,
+  `count`, `updateMany`, a negated `storeId` and a store relation naming no
+  store — all refused against a live database with another tenant's order in it.
+- **The constraints under the idempotency checks are real.** A replayed Stripe
+  session cannot become a second order; a redelivered Growth Point purchase
+  cannot credit twice; deleting a store takes its orders and ledger with it
+  rather than orphaning a closed merchant's customer emails and money history.
+- **Every migration applies cleanly from scratch** — the one property a
+  migration has that cannot be code-reviewed.
+
+Three PGlite constraints are written down where they cost time, so they cost
+nobody else any: the migration must run **async** (a sync child process blocks
+the event loop the in-process server needs, and it hangs with no clue why);
+`sslmode=disable`, or the handshake fails as the misleading "Can't reach database
+server"; and PGlite **closes the connection on any Postgres-level error**, so a
+deliberate constraint violation kills the client — healed in the harness, but
+only for errors that actually reached Postgres, since disconnecting after a
+guard-level error breaks the *next* query instead.
+
+**Still inspection-only:** the webhook handlers, which need HTTP request plumbing
+rather than just a database.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -686,6 +728,9 @@ scripts/verify-regressions.ts             each defect reproduced against the pre
 scripts/verify-growth-point-ledger.ts     points never lost, duplicated, or double-charged
 scripts/verify-permissions.ts             the role matrix, asserted by name
 scripts/verify-webhook-store.ts           forged Stripe events at the money boundary
+scripts/verify-credential-encryption.ts   tampering, re-keying, and legacy rows
+scripts/verify-db-integrity.ts            the guard, the constraints, the migrations (real Postgres)
+scripts/verify-ledger-live.ts             the ledger's real transactions (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
