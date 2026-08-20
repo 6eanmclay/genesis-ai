@@ -84,7 +84,7 @@ customers place real orders".
 | 6 | Token expiry & rotation handled | **Compliant** | `tokenRefresh.ts`; 21 assertions — see §6 |
 | 7 | Expired / invalid grant handled honestly | **Compliant** | 400 → "please reconnect", surfaced in the UI |
 | 8 | Revocation at the provider on disconnect | **Compliant** | every provider that offers it — see §8 |
-| 9 | Tenant data isolation | **Compliant** | `tenantIsolation.ts` refuses unscoped access |
+| 9 | Tenant data isolation | **Compliant** | `tenantIsolation.ts`; 34 assertions — see §9 |
 | 10 | Transport security | **Compliant** | HTTPS-only hosting; no plaintext endpoints |
 | 11 | API error handling, rate limits & backoff | **Compliant** | shared `rateLimit.ts`; 36 + 22 assertions — see §11 |
 | 12 | Owner-visible recovery path | **Compliant** | Recheck / Sync now / Disconnect + reconnect form |
@@ -277,9 +277,30 @@ connector, asserted by name in the framework suite.
 
 ## 9. Tenant isolation
 
-`lib/tenantIsolation.ts` refuses any Prisma read or write on a tenant-owned table
-that lacks a store-scoping filter — enforced at the client, not by convention. A
-real bug it caught: `designateAsset` performing an unscoped update.
+`lib/tenantIsolation.ts` refuses any Prisma collection read or mutation on a
+tenant-owned table that lacks a store-scoping filter — enforced as a client
+extension at a single choke point, not by convention. A real bug it caught:
+`designateAsset` performing an unscoped update.
+
+**It had no test, and this document marked it compliant anyway** — on the
+strength of the file existing, which is exactly the standard this audit exists to
+reject. Writing the assertions found two real bypasses, both of which selected
+other tenants' rows *while passing the check*:
+
+```
+{ storeId: { not: "mine" } }      every store EXCEPT the caller's
+{ store: { published: true } }    every published store on the platform
+```
+
+The first passed because `storeId` was merely **present**; the second because
+`store` was merely a non-empty object. Presence is not scoping — a negation is
+its exact opposite, and a relation filter naming no particular store narrows
+nothing. A scope key must now carry an identifying value (a bare id, `equals`,
+or `in`), and a `store` relation filter must name an `id`, `slug`, or `userId`.
+
+The OR/AND asymmetry is asserted because it is the one that leaks: AND needs only
+one scoped branch (every branch must match anyway), but OR needs **every** branch
+scoped, since a single unscoped branch returns other stores' rows on its own.
 
 Per-store credential boundaries are structural, not conventional. EasyPost has no
 platform-wide key and `resolveStoreEasyPostClient` takes a storeId with no
@@ -433,6 +454,7 @@ scripts/verify-password-policy.ts         password rules, and evicting a reset s
 scripts/verify-auth-throttle.ts           brute-force buckets, and the cron gate
 scripts/verify-checkout-outcome.ts        what a buyer is told when checkout breaks
 scripts/verify-shipped-notification.ts    whether the customer was actually emailed
+scripts/verify-tenant-isolation.ts        what counts as a store-scoping filter
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

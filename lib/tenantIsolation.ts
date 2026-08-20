@@ -93,15 +93,56 @@ function isRealFilterObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0;
 }
 
-// True if `where` includes a real value for one of `scopeKeys`, a
-// non-empty nested `store: {...}` relation filter, or composes down to one
-// via AND (any branch scoped is enough) / OR (every branch must be scoped,
-// since an unscoped OR branch could still return unscoped rows).
-function hasValidScope(where: unknown, scopeKeys: readonly string[]): boolean {
+// Two bypasses closed 2026-08-20, found by probing this function rather than
+// reading it. Both passed the old check while selecting other tenants' rows:
+//
+//   { storeId: { not: "mine" } }        every store EXCEPT mine
+//   { store: { published: true } }      every published store on the platform
+//
+// The first was accepted because `storeId` was merely PRESENT; the second
+// because `store` was merely a non-empty object. Presence is not scoping — a
+// negation is the exact opposite of it, and a relation filter that names no
+// particular store narrows nothing.
+
+/**
+ * Does this value pin the query to specific store(s)? — pure.
+ *
+ * `in: []` is allowed even though it is empty: it matches no rows, so it
+ * cannot leak, and rejecting it would fail a legitimate query over an
+ * empty list.
+ */
+function isIdentifyingValue(value: unknown): boolean {
+  if (typeof value === "string" || typeof value === "number") return true;
+  if (!isRealFilterObject(value)) return false;
+  if ("equals" in value && (typeof value.equals === "string" || typeof value.equals === "number")) return true;
+  if ("in" in value && Array.isArray(value.in)) return true;
+  // Everything else — `not`, `notIn`, `contains`, a bare `{}` — either selects
+  // other tenants or selects everything.
+  return false;
+}
+
+// A `store: {...}` relation filter is legitimate (the storefront looks products
+// up by slug), but only when it names a particular store.
+const STORE_IDENTIFYING_KEYS = ["id", "slug", "userId"] as const;
+
+function isIdentifyingStoreFilter(value: unknown): boolean {
+  if (!isRealFilterObject(value)) return false;
+  return STORE_IDENTIFYING_KEYS.some((key) => key in value && isIdentifyingValue(value[key]));
+}
+
+/**
+ * True if `where` pins the query to specific store(s) — pure, and exported so
+ * scripts/verify-tenant-isolation.ts can assert it without a database.
+ *
+ * AND: any one scoped branch is enough, since every branch must match.
+ * OR: every branch must be scoped, since one unscoped branch returns
+ * unscoped rows on its own.
+ */
+export function hasValidScope(where: unknown, scopeKeys: readonly string[]): boolean {
   if (!isRealFilterObject(where)) return false;
 
-  if (scopeKeys.some((key) => key in where && where[key] !== undefined)) return true;
-  if (isRealFilterObject(where.store)) return true;
+  if (scopeKeys.some((key) => key in where && isIdentifyingValue(where[key]))) return true;
+  if (isIdentifyingStoreFilter(where.store)) return true;
   if (Array.isArray(where.AND) && where.AND.some((clause) => hasValidScope(clause, scopeKeys))) return true;
   if (Array.isArray(where.OR) && where.OR.length > 0 && where.OR.every((clause) => hasValidScope(clause, scopeKeys))) {
     return true;
@@ -109,6 +150,9 @@ function hasValidScope(where: unknown, scopeKeys: readonly string[]): boolean {
 
   return false;
 }
+
+/** The models this guard covers, exported for the same test. */
+export const TENANT_SCOPED_MODEL_KEYS = TENANT_SCOPED_MODELS;
 
 export function withTenantIsolation<T extends PrismaClient>(client: T) {
   return client.$extends({
