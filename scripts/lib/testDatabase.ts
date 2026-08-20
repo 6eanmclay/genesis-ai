@@ -32,6 +32,15 @@ import { PrismaPg } from "@prisma/adapter-pg";
 export interface TestDatabase {
   prisma: PrismaClient;
   /**
+   * The connection string this harness is serving.
+   *
+   * Set DATABASE_URL to this BEFORE importing anything that pulls in
+   * lib/prisma.ts — that module builds its client at import time, so a suite
+   * wanting to exercise the app's OWN functions (rather than a client it made
+   * itself) has to point the environment at the test database first.
+   */
+  url: string;
+  /**
    * Run something expected to fail, and return whether it did.
    *
    * PGlite's wire server CLOSES THE CONNECTION on any Postgres-level error —
@@ -107,6 +116,7 @@ ${stderr}`));
 
   return {
     prisma,
+    url,
     async expectRejected(fn) {
       try {
         await fn();
