@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "child_process";
-import { startTestDatabase, type TestDatabase } from "./testDatabase";
+import { startRealPostgres, type RealPostgres } from "./realPostgres";
 import { TEST_DATABASE_ENV } from "./requireTestDatabase";
 
 // A real Next server, on a real port, against the test database (2026-08-20).
@@ -28,27 +28,22 @@ import { TEST_DATABASE_ENV } from "./requireTestDatabase";
 // So the server is proven to be on the test database before a single webhook is
 // sent — see assertServerUsesTestDatabase below.
 //
-// ===================== NOT YET RUN ON THIS MACHINE ==========================
+// ========================= HOW TO RUN THIS =================================
 //
-// This harness is complete and its safety check is exercised, but the full
-// path has NOT been executed here, and nothing should claim otherwise. Two
-// environment constraints, both real and neither worth distorting production to
-// dodge:
+// PostgreSQL refuses to start under an administrator account on Windows, and
+// that refusal is correct — Postgres protecting itself from being run with
+// privileges it should never have. The fix belongs in the environment, not the
+// application, so scripts/run-unelevated.ps1 drops privileges with
+// `runas /trustlevel:0x20000` (same user, administrators group disabled) and
+// captures the output and exit code, which runas otherwise detaches:
 //
-//   1. PGlite cannot serve a real Next server. Its wire server drops the
-//      connection the moment a client opens a second one, and a server makes
-//      concurrent queries as a matter of course.
-//   2. scripts/lib/realPostgres.ts exists for exactly that reason and starts a
-//      genuine Postgres — but PostgreSQL refuses to run under an ADMINISTRATOR
-//      account on Windows, and this shell is elevated.
+//   powershell -File scripts/run-unelevated.ps1 //     -Command "npx tsx scripts/verify-order-webhook-live.ts" //     -OutFile out.txt
 //
-// Run from a non-elevated shell (or CI) and this works. Until someone has done
-// that, the merchant webhook's order-creation branch is verified at the handler
-// and constraint level only, which COMPLIANCE.md says in those words.
+// From an already-unelevated shell, just run the suite directly.
 
 export interface TestServer {
   baseUrl: string;
-  db: TestDatabase;
+  db: RealPostgres;
   close(): Promise<void>;
 }
 
@@ -87,7 +82,7 @@ const HARNESS_CRON_SECRET = "harness-cron-secret-not-a-real-one";
  * proves nothing either way. This endpoint does one query and returns JSON, so
  * seeing the canary in it is positive proof rather than absence of an error.
  */
-async function assertServerUsesTestDatabase(baseUrl: string, db: TestDatabase, slug: string): Promise<void> {
+async function assertServerUsesTestDatabase(baseUrl: string, db: RealPostgres, slug: string): Promise<void> {
   const user = await db.prisma.user.create({ data: { email: `${slug}@example.test` } });
   const store = await db.prisma.store.create({
     data: {
@@ -122,7 +117,9 @@ async function assertServerUsesTestDatabase(baseUrl: string, db: TestDatabase, s
 }
 
 export async function startTestServer(options: { timeoutMs?: number } = {}): Promise<TestServer> {
-  const db = await startTestDatabase();
+  // A REAL Postgres, not PGlite: a Next server opens a connection pool, and
+  // PGlite drops the connection the moment a second one appears.
+  const db = await startRealPostgres();
   const port = pickPort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const canarySlug = `harness-canary-${port}`;

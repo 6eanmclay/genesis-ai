@@ -92,9 +92,32 @@ export async function startRealPostgres(): Promise<RealPostgres> {
           AND tablename <> '_prisma_migrations'
           AND tablename <> '_genesis_test_database'`;
       if (tables.length === 0) return;
-      await prisma.$executeRawUnsafe(
-        `TRUNCATE TABLE ${tables.map((t) => `"${t.tablename}"`).join(", ")} RESTART IDENTITY CASCADE`
-      );
+      const sql = `TRUNCATE TABLE ${tables.map((t) => `"${t.tablename}"`).join(", ")} RESTART IDENTITY CASCADE`;
+
+      // Retried on deadlock, and that is worth explaining rather than looking
+      // like flake-tolerance.
+      //
+      // When a suite drives a real server, work scheduled by Next's `after()`
+      // is STILL RUNNING after the response came back — that is the entire
+      // point of it. So a reset between sections races the previous section's
+      // post-response sweep: TRUNCATE wants an AccessExclusiveLock while the
+      // sweep holds an AccessShareLock, and Postgres picks one to kill (40P01).
+      //
+      // Nothing about the product is wrong here; the test simply moved on
+      // faster than the work it triggered. Backing off and retrying lets the
+      // sweep finish. If it never does, the error surfaces rather than being
+      // swallowed.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await prisma.$executeRawUnsafe(sql);
+          return;
+        } catch (error) {
+          const deadlock = (error as { meta?: { code?: unknown } })?.meta?.code === "40P01"
+            || String((error as Error)?.message ?? "").includes("deadlock detected");
+          if (!deadlock || attempt >= 4) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        }
+      }
     },
     async close() {
       await prisma.$disconnect();

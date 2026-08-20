@@ -194,7 +194,20 @@ export async function POST(request: Request) {
         const order = await tx.order.create({
           data: {
             storeId,
-            productId,
+            // Only linked when the product genuinely exists in THIS store.
+            //
+            // This said `productId` unconditionally, and the comment above
+            // promised the order would still be created with "Unknown product"
+            // when the catalogue had moved on. It could not: Order.productId is
+            // a foreign key, so naming a product that had been deleted violated
+            // it and the whole order was lost — money taken, nothing recorded.
+            //
+            // Found 2026-08-20 by the first end-to-end run of this branch
+            // through a real server (scripts/verify-order-webhook-live.ts). The
+            // column is nullable and the relation is onDelete: SetNull, so an
+            // order without a product was always the intended shape; the write
+            // simply never honoured it.
+            productId: product?.id ?? null,
             productName: product?.name ?? "Unknown product",
             amountInCents: session.amount_total ?? 0,
             buyerEmail: session.customer_details?.email ?? "unknown",
