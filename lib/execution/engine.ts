@@ -243,13 +243,31 @@ export async function execute<TInput, TMetadata>(
     // Only reachable here on a real (non-FAILED) outcome — a thrown error
     // is caught below instead, so a failed attempt never costs the owner
     // real points.
+    //
+    // Isolated (2026-08-20). The work is DONE and already recorded as a success
+    // by the line above; letting a ledger write throw from here dropped into the
+    // catch block, which overwrote that record with FAILED and returned FAILED
+    // to the caller. The owner would be told their action failed when it had
+    // actually succeeded — and would reasonably do it again.
+    //
+    // Under-charging on a database hiccup is the right way to be wrong here. A
+    // missed deduction is a few points; a false failure is duplicated work on
+    // whatever the action actually did.
     if (growthPointCost !== null && opts.actionType) {
-      await deductGrowthPoints({
-        storeId: ctx.storeId,
-        actionType: opts.actionType,
-        cost: growthPointCost,
-        executionLogId: logRow.id,
-      });
+      try {
+        await deductGrowthPoints({
+          storeId: ctx.storeId,
+          actionType: opts.actionType,
+          cost: growthPointCost,
+          executionLogId: logRow.id,
+        });
+      } catch (error) {
+        console.error(
+          `[execute] growth points not deducted for ${executable.action} on store ${ctx.storeId} ` +
+            `(execution ${executionId}, cost ${growthPointCost}):`,
+          error
+        );
+      }
     }
 
     // Business Intelligence Engine M3 (2026-08-18) — the first-party change

@@ -1,5 +1,9 @@
+import { randomUUID } from "crypto";
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
+import { recordExecution } from "@/lib/execution/log";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
+import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { creditGrowthPointsFromPurchase } from "@/lib/growthPoints/ledger";
 
 // Chapter 5 (Payments) — a genuinely separate webhook endpoint from
@@ -14,6 +18,40 @@ import { creditGrowthPointsFromPurchase } from "@/lib/growthPoints/ledger";
 // normal, not a workaround.
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 const webhookSecret = process.env.STRIPE_PLATFORM_WEBHOOK_SECRET!;
+
+/**
+ * A durable, owner-visible record that a platform payment could not be applied.
+ *
+ * Only possible when the store resolved. When it did not there is genuinely no
+ * store to attach anything to, and the console line above is the honest limit —
+ * stated rather than quietly accepted, the same as the storefront webhook.
+ */
+async function recordUnappliedPayment(
+  storeId: string | undefined,
+  sessionId: string,
+  what: string
+): Promise<void> {
+  if (!storeId) return;
+  try {
+    await recordExecution({
+      executionId: randomUUID(),
+      action: EXECUTION_ACTIONS.BILLING_STRIPE_UNAPPLIED,
+      status: "FAILED",
+      verified: false,
+      message: `A payment completed in Stripe (session ${sessionId}) but ${what}. Reconcile this before assuming it was not a real payment.`,
+      retryable: false,
+      actorType: "USER",
+      actorId: null,
+      storeId,
+      storeDraftId: null,
+      schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
+      timestamp: new Date(),
+      metadata: { sessionId },
+    });
+  } catch (error) {
+    console.error("[stripe-platform webhook] could not record unapplied payment:", error);
+  }
+}
 
 export async function POST(request: Request) {
   const body = await request.text();
@@ -44,6 +82,9 @@ export async function POST(request: Request) {
           storeId: storeId ?? null,
           pointAmountRaw: pointAmountRaw ?? null,
         });
+        // Someone paid Genesis for points and received none. Until 2026-08-20
+        // the console line was the only trace of that.
+        await recordUnappliedPayment(storeId, session.id, "a Growth Point purchase could not be applied");
       } else {
         await creditGrowthPointsFromPurchase({
           storeId,
@@ -67,6 +108,8 @@ export async function POST(request: Request) {
           storeId: storeId ?? null,
           planId: planId ?? null,
         });
+        // A subscription was paid for and no store is on the plan.
+        await recordUnappliedPayment(storeId, session.id, "a plan subscription could not be applied");
       } else {
         // The Checkout Session itself doesn't carry the subscription's own
         // current status/period — retrieved directly rather than relying

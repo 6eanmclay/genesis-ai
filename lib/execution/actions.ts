@@ -28,6 +28,10 @@ export const EXECUTION_ACTIONS = {
   // the owner rather than existing only as a console line — see
   // app/api/webhooks/stripe/route.ts.
   CHECKOUT_STRIPE_UNRECORDED: "checkout.stripe.unrecorded",
+  // A completed PLATFORM payment (Growth Points or a plan subscription) that
+  // could not be applied to a store. Same reasoning as the storefront one
+  // above: the owner paid Genesis and got nothing, and that must be visible.
+  BILLING_STRIPE_UNAPPLIED: "billing.stripe.unapplied",
   // Phase 3 Milestone 2 — the 3 proof integrations (Connector Framework).
   INTEGRATION_GOOGLE_CALENDAR_CONNECT: "integration.google_calendar.connect",
   INTEGRATION_GOOGLE_CALENDAR_VERIFY: "integration.google_calendar.verify",
