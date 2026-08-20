@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAuthorizedCronRequest } from "@/lib/auth/cronAuth";
 import { prismaSystem } from "@/lib/prisma";
 
 // Read-only companion to /api/cron/sync — reports each connected
@@ -10,8 +11,10 @@ import { prismaSystem } from "@/lib/prisma";
 // filter, so this uses prismaSystem rather than the tenant-isolation-
 // guarded client — see lib/prisma.ts's own comment on that export.
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Fails CLOSED when CRON_SECRET is unset — see lib/auth/cronAuth.ts. The
+  // inline comparison this replaced compared against the literal string
+  // "Bearer undefined" in that case, which anyone could send.
+  if (!isAuthorizedCronRequest(request.headers.get("authorization"))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

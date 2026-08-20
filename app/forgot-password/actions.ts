@@ -6,6 +6,14 @@ import { createPasswordResetToken } from "@/lib/auth/passwordReset";
 import { sendPasswordResetEmail } from "@/lib/email/passwordReset";
 import { isEmailConfigured } from "@/lib/email/sendEmail";
 import { RecoverableError } from "@/lib/actionState";
+import { headers } from "next/headers";
+import {
+  attemptBucket,
+  isThrottled,
+  recordFailedAttempt,
+  PER_IDENTIFIER_LIMIT,
+  PER_SOURCE_LIMIT,
+} from "@/lib/auth/attemptThrottle";
 
 // Auth screens review (2026-08-07) — a real 3-state outcome (untouched /
 // error / success-with-a-message), which lib/actionState.ts's shared
@@ -39,6 +47,29 @@ export async function requestPasswordReset(
     if (!email) {
       throw new RecoverableError("Enter your email address.");
     }
+
+    // Rate limited (2026-08-20). Unthrottled, this endpoint sends real email to
+    // a real person on demand — so it is a way to flood someone's inbox using
+    // the store's own sending domain, which is also how that domain gets its
+    // reputation ruined.
+    //
+    // The outcome on refusal is the SAME success state as everything else here.
+    // A distinct "too many requests" would answer the question this whole
+    // action is built to avoid answering: whether the address has an account.
+    const forwarded = (await headers()).get("x-forwarded-for");
+    const ip = forwarded ? (forwarded.split(",")[0]?.trim() || null) : null;
+    const emailBucket = attemptBucket("reset:email", email);
+    const buckets = [emailBucket, ...(ip ? [attemptBucket("reset:ip", ip)] : [])];
+
+    if (await isThrottled(emailBucket, PER_IDENTIFIER_LIMIT)) {
+      return { status: "success" };
+    }
+    if (ip && (await isThrottled(attemptBucket("reset:ip", ip), PER_SOURCE_LIMIT))) {
+      return { status: "success" };
+    }
+    // Counted whether or not the address matches an account — counting only
+    // real ones would make the limit itself an oracle.
+    await recordFailedAttempt(buckets);
 
     const user = await prisma.user.findUnique({ where: { email } });
     // Never reveal whether an account exists — same outcome either way.

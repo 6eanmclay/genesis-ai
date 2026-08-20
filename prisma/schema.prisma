@@ -96,6 +96,27 @@ model VerificationToken {
 // passwords: this token is high-entropy random data, not a low-entropy
 // human-chosen secret, so it doesn't need slow, brute-force-resistant
 // hashing the way a password does.
+// Brute-force protection for the auth endpoints (2026-08-20).
+//
+// There was none: login, signup and password-reset requests could all be
+// hammered without limit. A database table rather than in-memory counters
+// because this runs on serverless — an in-process Map would reset on every cold
+// start and would not be shared between concurrent instances, which is to say
+// it would look like protection and provide none.
+//
+// `bucket` is a HASH of what is being limited, never the value itself. A table
+// full of plaintext email addresses — including ones typed by attackers, which
+// belong to real people who never signed up here — would be a liability created
+// in the name of security.
+model AuthAttempt {
+  id         String   @id @default(cuid())
+  bucket     String
+  occurredAt DateTime @default(now())
+
+  // Serves both the count-in-window query and the expiry sweep.
+  @@index([bucket, occurredAt])
+}
+
 model PasswordResetToken {
   id        String    @id @default(cuid())
   userId    String

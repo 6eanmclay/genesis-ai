@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAuthorizedCronRequest } from "@/lib/auth/cronAuth";
 import { runDueSyncs } from "@/lib/intelligence/scheduler";
 import { runDueIntelligenceCycles } from "@/lib/intelligence/cycle";
 import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
+import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
 
 // Phase 3 Milestone 3 — the actual trigger. Secured via Vercel's own
 // documented convention for cron routes: Vercel automatically sends
@@ -10,10 +12,19 @@ import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
 // before runDueSyncs — the scheduler's unattended-execution bypass in
 // execute() — ever runs. See vercel.json for the actual schedule.
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Fails CLOSED when CRON_SECRET is unset — see lib/auth/cronAuth.ts. The
+  // inline comparison this replaced compared against the literal string
+  // "Bearer undefined" in that case, which anyone could send.
+  if (!isAuthorizedCronRequest(request.headers.get("authorization"))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Auth-throttle rows outlive their usefulness after WINDOW_MS. Swept here
+  // rather than on every login, because the count query is already bounded by
+  // occurredAt — stale rows are a storage concern, not a correctness one.
+  await pruneExpiredAttempts().catch((error) => {
+    console.error("[cron/sync] pruning auth attempts failed:", error);
+  });
 
   const summaries = await runDueSyncs(50);
   const synced = summaries.filter((s) => s.ok).length;

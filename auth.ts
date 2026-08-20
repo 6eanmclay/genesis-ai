@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { isTokenIssuedBeforePasswordChange } from "@/lib/auth/passwordReset";
+import { checkSignInThrottle, recordFailedAttempt, clearAttempts } from "@/lib/auth/attemptThrottle";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -37,16 +38,36 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      authorize: async (credentials) => {
+      authorize: async (credentials, request) => {
         if (!credentials?.email || !credentials?.password) {
           return null;
         }
+        const email = credentials.email as string;
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email as string },
-        });
+        // Brute-force protection (2026-08-20). There was none at all before
+        // this: a script could work through a password list against a known
+        // address as fast as the network allowed.
+        //
+        // Vercel sets x-forwarded-for; the FIRST entry is the client, and the
+        // rest are proxies that a caller can forge by supplying their own
+        // header. Trusting a later entry would let an attacker rotate their
+        // own bucket at will.
+        const forwarded = request?.headers?.get?.("x-forwarded-for") ?? null;
+        const ip = forwarded ? (forwarded.split(",")[0]?.trim() || null) : null;
+
+        const { throttled, buckets } = await checkSignInThrottle({ email, ip });
+        if (throttled) {
+          // Deliberately the same `null` as a wrong password. A distinct
+          // "too many attempts" response would confirm the address exists and
+          // is worth attacking — and this path is reached by addresses that
+          // have no account at all.
+          return null;
+        }
+
+        const user = await prisma.user.findUnique({ where: { email } });
 
         if (!user || !user.password) {
+          await recordFailedAttempt(buckets);
           return null;
         }
 
@@ -56,9 +77,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         );
 
         if (!isValid) {
+          await recordFailedAttempt(buckets);
           return null;
         }
 
+        // Cleared on success, so someone who mistypes nine times and then gets
+        // it right is not left one slip away from a lockout for the next
+        // quarter of an hour.
+        await clearAttempts(buckets);
         return user;
       },
     }),
