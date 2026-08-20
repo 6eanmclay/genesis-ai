@@ -349,6 +349,41 @@ async function main() {
     check("and no order exists anywhere", await prisma.order.count(), 0);
   }
 
+
+  // -------------------------------------------------------------------------
+  console.log("\n10. A misconfigured endpoint is not mistaken for an attack");
+  {
+    await reset();
+    const store = await makeStore("misconfig");
+    const event = pointsEvent(store.id, "cs_misconfig");
+    const configured = process.env.STRIPE_PLATFORM_WEBHOOK_SECRET;
+
+    // The defect: with the variable unset, constructEvent throws a TypeError,
+    // which the old catch turned into 400 "Invalid signature". 400 tells Stripe
+    // the request is permanently bad, so it stops retrying — converting a
+    // missing environment variable into real payments that never became orders,
+    // logged as something that reads like an attack.
+    delete process.env.STRIPE_PLATFORM_WEBHOOK_SECRET;
+    const unset = await platformPost(signedRequest(event, PLATFORM_SECRET));
+    check("an unset secret answers 500, so Stripe keeps retrying", unset.status, 500);
+    assert("and not 400, which would make Stripe give up", unset.status !== 400);
+
+    process.env.STRIPE_PLATFORM_WEBHOOK_SECRET = "   ";
+    check("a blank secret is treated the same", (await platformPost(signedRequest(event, PLATFORM_SECRET))).status, 500);
+
+    check("and nothing was credited while misconfigured", await balanceOf(store.id), 0);
+
+    // Restored: a genuinely forged signature must STILL be 400. Answering 500
+    // to everything would just move the problem — Stripe would retry forgeries
+    // forever.
+    process.env.STRIPE_PLATFORM_WEBHOOK_SECRET = configured;
+    check("a forged signature is still 400",
+      (await platformPost(signedRequest(event, "whsec_attacker"))).status, 400);
+    check("and a real one still works",
+      (await platformPost(signedRequest(event, PLATFORM_SECRET))).status, 200);
+    check("crediting normally once configured", await balanceOf(store.id), 500);
+  }
+
   await prisma.$disconnect();
   await db.close();
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

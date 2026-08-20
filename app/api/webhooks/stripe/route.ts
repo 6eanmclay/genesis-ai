@@ -1,3 +1,4 @@
+import { checkWebhookSecret } from "@/lib/observability/webhookConfig";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import Stripe from "stripe";
@@ -15,11 +16,26 @@ import { parseCheckoutShipping } from "@/lib/shipping/checkoutShipping";
 import { resolveWebhookStore } from "@/lib/orders/webhookStore";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+
 
 export async function POST(request: Request) {
   const body = await request.text();
   const signature = request.headers.get("stripe-signature");
+
+  // Read per request, not at module load: a config check that runs once when
+  // the lambda cold-starts cannot report anything useful, and the value can
+  // change between deploys.
+  const configured = checkWebhookSecret(process.env.STRIPE_WEBHOOK_SECRET, "STRIPE_WEBHOOK_SECRET");
+  if (!configured.ok) {
+    // 500, NOT 400. 400 tells Stripe the request is permanently bad and it
+    // stops retrying, which turns a missing environment variable into real
+    // payments that never became orders. See lib/observability/webhookConfig.ts.
+    reportIssue(configured.reason, new Error("STRIPE_WEBHOOK_SECRET is not set"), {
+      subsystem: "payments",
+      stage: "stripe.webhook.config",
+    });
+    return new Response("Webhook not configured", { status: configured.status });
+  }
 
   if (!signature) {
     return new Response("Missing signature", { status: 400 });
@@ -27,7 +43,7 @@ export async function POST(request: Request) {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
+    event = stripe.webhooks.constructEvent(body, signature, configured.secret);
   } catch {
     return new Response("Invalid signature", { status: 400 });
   }
