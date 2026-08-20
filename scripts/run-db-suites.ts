@@ -23,14 +23,24 @@ import { join } from "path";
 //   stripe-webhook-e2e          needs a running dev server — it POSTs to the
 //                               webhook route over HTTP. A database is not
 //                               enough; this one wants `next dev`.
-//   brand-logo-flow             //   social-connections-pipeline  } hit a PGlite limitation, not a defect: its
-//   product-image-gallery-e2e   /  wire server CLOSES THE CONNECTION on any
-//                               Postgres-level error, and these three exercise
-//                               error paths as part of what they test. The
-//                               suite then fails on its NEXT query rather than
-//                               on the thing it was asserting. The harness heals
-//                               this for its own suites; it cannot reach inside
-//                               a child process's client to do the same.
+//   brand-logo-flow              hit a PGlite limitation, diagnosed and
+//   social-connections-pipeline  confirmed in isolation 2026-08-20:
+//   product-image-gallery-e2e    CONCURRENT QUERIES close the connection.
+//                                Prisma's pg adapter uses a pool, so a
+//                                Promise.all of three counts opens more than
+//                                one connection to PGlite's wire server and it
+//                                drops them. All three run code that
+//                                legitimately parallelises reads (reasoning.ts,
+//                                understanding.ts, the image executables'
+//                                Promise.all of updates).
+//
+//                                A harness limitation, NOT a defect: real
+//                                Postgres handles concurrent queries, which is
+//                                the entire point of a pool. Capping the pool
+//                                at one would fix the harness by changing how
+//                                production talks to Neon — the wrong trade. So
+//                                these three stay uncovered here, and are named
+//                                rather than hidden.
 //
 // The finding that mattered more than the count: these suites were written to
 // run against PRODUCTION. Eleven of twelve reach for "a real store", "a real

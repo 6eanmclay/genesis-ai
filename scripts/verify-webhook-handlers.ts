@@ -265,6 +265,90 @@ async function main() {
     assert("naming the session", recorded[0].message.includes("cs_noproduct"), recorded[0].message);
   }
 
+
+  // -------------------------------------------------------------------------
+  console.log("\n8. Refunds move exactly one order, and only on a full refund");
+  {
+    await reset();
+    const store = await makeStore("refunds");
+    const order = async (id: string, intent: string | null, amountInCents = 5000) =>
+      prisma.order.create({
+        data: {
+          storeId: store.id, productName: "Candle", amountInCents,
+          buyerEmail: "b@example.test", status: "paid",
+          paymentProvider: "STRIPE", externalOrderId: id, externalPaymentId: intent,
+        },
+      });
+
+    const refundEvent = (intent: string, refunded: number, total: number) => ({
+      id: `evt_${intent}_${refunded}`,
+      type: "charge.refunded",
+      data: { object: { payment_intent: intent, amount_refunded: refunded, amount: total } },
+    });
+    const statusOf = async (externalOrderId: string) =>
+      (await prisma.order.findFirstOrThrow({ where: { storeId: store.id, externalOrderId } })).status;
+
+    // A FULL refund is the only thing that flips the order.
+    await order("cs_full", "pi_full");
+    await merchantPost(signedRequest(refundEvent("pi_full", 5000, 5000), MERCHANT_SECRET));
+    check("a full refund marks the order refunded", await statusOf("cs_full"), "refunded");
+
+    // A PARTIAL refund deliberately does not. The owner still has to ship it,
+    // and relabelling a substantially-paid order would mislead them about that.
+    await order("cs_partial", "pi_partial");
+    await merchantPost(signedRequest(refundEvent("pi_partial", 500, 5000), MERCHANT_SECRET));
+    check("a partial refund leaves it paid", await statusOf("cs_partial"), "paid");
+
+    // Replay. Stripe redelivers refunds like anything else.
+    await merchantPost(signedRequest(refundEvent("pi_full", 5000, 5000), MERCHANT_SECRET));
+    await merchantPost(signedRequest(refundEvent("pi_full", 5000, 5000), MERCHANT_SECRET));
+    check("replaying a refund is a no-op", await statusOf("cs_full"), "refunded");
+
+    // A refund for a charge this platform has never seen must not crash the
+    // endpoint, or Stripe retries it forever.
+    const unknown = await merchantPost(signedRequest(refundEvent("pi_never_seen", 100, 100), MERCHANT_SECRET));
+    check("an unmatched refund is acknowledged", unknown.status, 200);
+
+    // ONLY the matching order moves. A refund must never sweep a store's other
+    // orders along with it.
+    check("the partial-refund order is still untouched", await statusOf("cs_partial"), "paid");
+    check("and nothing else changed status",
+      await prisma.order.count({ where: { storeId: store.id, status: "refunded" } }), 1);
+  }
+
+  // -------------------------------------------------------------------------
+  console.log("\n9. A connected merchant cannot claim another store's sale");
+  {
+    await reset();
+    const victim = await makeStore("victim-store");
+    const attacker = await makeStore("attacker-store");
+    await prisma.storeIntegration.create({
+      data: { storeId: victim.id, provider: "STRIPE", status: "CONNECTED", externalAccountId: "acct_victim" },
+    });
+    await prisma.storeIntegration.create({
+      data: { storeId: attacker.id, provider: "STRIPE", status: "CONNECTED", externalAccountId: "acct_attacker" },
+    });
+
+    // A connected merchant CAN create sessions on their own account with any
+    // metadata they like — including a storeId that is not theirs. Stripe
+    // stamps event.account with the account the session really lives on.
+    const forged = {
+      id: "evt_forged_claim",
+      type: "checkout.session.completed",
+      account: "acct_attacker",
+      data: { object: { id: "cs_forged_claim", metadata: { storeId: victim.id }, amount_total: 9900 } },
+    };
+    check("acknowledged", (await merchantPost(signedRequest(forged, MERCHANT_SECRET))).status, 200);
+
+    // The claim is ignored and the event is filed against the account it really
+    // came from. No product, so it records there rather than creating an order.
+    check("nothing is recorded against the victim",
+      await prisma.executionLog.count({ where: { storeId: victim.id } }), 0);
+    check("it is recorded against the attacker's own store",
+      await prisma.executionLog.count({ where: { storeId: attacker.id, status: "FAILED" } }), 1);
+    check("and no order exists anywhere", await prisma.order.count(), 0);
+  }
+
   await prisma.$disconnect();
   await db.close();
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
