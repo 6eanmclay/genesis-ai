@@ -455,7 +455,17 @@ async function main() {
         result.ruledOut[0].concerns.some((c) => c.includes("doesn't connect to anything you've told me")),
         JSON.stringify(result.ruledOut[0]));
       check("nothing could-not-judge about it", result.couldNotJudge, 0);
-      check("and no row exists for it", (await rowsFor(store.id)).length, 0);
+      // PERSISTED AS OF 2026-08-21, and the earlier assertion here was that no
+      // row existed at all. That reasoning was right about the risk — a stored
+      // row for something Genesis declined must not read later like one it
+      // raised — and wrong about the fix: the answer is a status that says
+      // which, not throwing the judgement away. "I already looked at that and
+      // ruled it out" was true for exactly as long as the request before this.
+      const declined = await rowsFor(store.id);
+      check("a row IS kept", declined.length, 1);
+      check("and it says whose verdict it was", declined[0].status, "RULED_OUT");
+      check("never confusable with the owner's own decision",
+        declined.filter((r) => r.status === "DISMISSED").length, 0);
     }
 
     // -----------------------------------------------------------------------
@@ -805,7 +815,11 @@ async function main() {
 
       // Separate rows, separate reasoning, even for the same external listing.
       check("one row per business", (await rowsFor(fitness.id)).length, 1);
-      check("and none written for the other", (await rowsFor(candles.id)).length, 0);
+      // The other business now keeps its own verdict too — and it is ITS row,
+      // which is the property this section exists to protect.
+      const candleRows0 = await rowsFor(candles.id);
+      check("the other keeps its own verdict", candleRows0.map((r) => r.status), ["RULED_OUT"]);
+      check("about its own row", candleRows0.map((r) => r.storeId), [candles.id]);
 
       // Sourcing relationships are per business too. Connecting a supplier to
       // one must not connect it to the other.
@@ -835,7 +849,15 @@ async function main() {
         sources: [wholesaleSource([wholesale({ externalProductId: "wick", name: "Cotton wick spool", description: "Wick for hand-poured candles" })])],
       });
       const candleRows = await rowsFor(candles.id);
-      assert("the candle business found its own", candleRows.length === 1, JSON.stringify(candleRows.map((r) => r.name)));
+      // Its own wick, suggested; and its own verdict on the roller, ruled out.
+      // Both belong to it, which is the line that must not be crossed.
+      check("everything it holds is its own",
+        [...new Set(candleRows.map((r) => r.storeId))], [candles.id]);
+      check("the wick it found is suggested",
+        candleRows.find((r) => r.name === "Cotton wick spool")?.status, "SUGGESTED");
+      assert("and the fitness row is not among them",
+        candleRows.every((r) => r.storeId === candles.id),
+        JSON.stringify(candleRows.map((r) => `${r.name}:${r.status}`)));
       const crossed = await adoptSourcedProduct({
         storeId: fitness.id,
         sourcedProductId: candleRows[0].id,

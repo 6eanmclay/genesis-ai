@@ -36,6 +36,8 @@ import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { runOpportunisticAiReviewIfStale } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { runTaskDetection } from "@/lib/dashboard/taskDetectors";
+import { discoverIfWorthwhile } from "@/lib/sourcing/discoveryLifecycle";
+import { refreshEconomicsIfStale } from "@/lib/sourcing/economicsProducer";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
 import { AttentionCardList } from "./AttentionCardList";
@@ -177,6 +179,21 @@ export async function HomeWorkspace({
   // should run on every opportunistic trigger, not only when the (unrelated)
   // AI-review staleness check happens to fire.
   after(() => measureDueMeasurements(store.id).catch(() => {}));
+  // P0.5 — Genesis going looking for products, on its own (2026-08-21).
+  //
+  // The same after() lifecycle as the two above, and for the sharpest version of
+  // the same reason: discovery makes real HTTP calls to real suppliers, so it can
+  // never be awaited on a page somebody is waiting for. A suggestion arriving on
+  // the next load rather than this one costs nothing.
+  //
+  // Gated hard inside discoverIfWorthwhile — knows the business, has nothing on
+  // the list already, and has not looked recently. Usually a no-op, and never a
+  // second search of a catalog that already has one.
+  after(() => discoverIfWorthwhile(store.id).catch(() => {}));
+  // And the supplier's own figures, refreshed when they have gone stale — which
+  // the freshness policy already defines, so there is no schedule here to
+  // invent or to drift from it. Same after() lifecycle, same reason.
+  after(() => refreshEconomicsIfStale(store.id).catch(() => {}));
 
   const products = await prisma.product.findMany({
     where: { storeId: store.id },

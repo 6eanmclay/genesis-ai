@@ -2815,6 +2815,96 @@ business from the URL like every other migrated screen.
 
 ---
 
+## 58. Four blockers, and what the browser found
+
+*The catalog's own follow-up. Three closed, one externally blocked and named.*
+
+### A real browser, and what it caught
+
+`verify-catalog-browser.ts` signs in through the real form, navigates real
+`/b/[slug]/catalog` URLs against a real Next server on real Postgres, and reads
+what the server actually rendered. Six sections: the right business's
+suggestions and not the other's, grouping in the owner's terms, adding a product
+through the real form at a typed price, the other business's catalog being its
+own, a dismissal sticking, and a business Genesis knows nothing about being told
+so rather than looking empty.
+
+Three things it caught that no read-model test could:
+
+**A locator matching the wrong element** — `li:has-text("ZZFOAMROLLER")` matched
+the *starting-set* list item, which carries the same product name and no form.
+Not a product defect, but the class of mistake that makes a browser test pass
+while proving nothing.
+
+**`fill()` leaving a number input empty.** Playwright's one-step fill left the
+price field blank, the form fell back to the supplier's suggested retail, and the
+adoption looked successful. Typing the digits works. So the field is fine and the
+fallback is correct — but a test that had asserted only "a product was created"
+would have called that a pass. It now asserts the value reached the field
+*before* submitting, because a price that never arrived and a price the server
+ignored look identical afterwards.
+
+**A sign-in that intermittently did not complete** when run straight after
+another browser suite: the page stayed on `/login` showing no error, which is
+precisely what a *rejected* login would not do. One retry after waiting for the
+server to settle; stable across repeated runs.
+
+### Discovery's caller, and the producer's
+
+Both use the `after()` lifecycle Home already runs, not a scheduler.
+`PRODUCT_SOURCING.md` has the gates. The one worth repeating: **the supplier
+freshness policy IS the producer's schedule.** Thirty days already means "too old
+to stand behind"; a cron would have been a second answer to a question already
+answered, and the two would drift.
+
+### Genesis's own verdict, made durable
+
+`RULED_OUT` — and the previous reasoning for *not* storing it is worth keeping
+because it was half right. A stored row for something Genesis declined would
+indeed be indistinguishable later from one it raised. The fix is a status that
+says which, not discarding the judgement.
+
+It is never confused with `DISMISSED`: one is Genesis's opinion and is
+re-evaluated every run, the other is the owner's decision and is respected
+forever. Both asserted, including a business that changes how it describes itself
+and is then offered the thing it was refused.
+
+### The one that is blocked
+
+Verifying Printful's `economics()` against the live API. Credentials exist —
+five Printful connections in production, four on Genesis's own audit accounts.
+Two things stop it, and neither should be worked around:
+
+1. **No store has an adopted Printful product**, so `economics()` correctly
+   states nothing and never reaches the API. Adopting one to make a test pass
+   would mean writing to production data.
+2. **Production credentials are encrypted with the production
+   `INTEGRATION_ENCRYPTION_KEY`**, a Vercel secret this machine does not hold.
+   Attempting it with the local key fails to decrypt, which is the credential
+   encryption working exactly as designed.
+
+`scripts/check-printful-economics-live.ts` exists, is read-only, refuses to touch
+the one connection belonging to a real customer rather than to Genesis, and is
+deliberately not part of the regression. It reports the block rather than
+pretending to have checked.
+
+### Status
+
+**VERIFIED** — `verify-catalog-browser.ts` (6 sections, real server + browser)
+and `verify-catalog-live.ts` (11 sections, real Postgres). Full regression green:
+7 pure suites, 13 live ones including both browser suites, typecheck and build.
+
+Three assertions in `verify-sourcing-live.ts` asserted that a ruled-out candidate
+wrote no row, which is the behaviour this pass deliberately changed. They were
+rewritten to assert the new contract while keeping the property they existed to
+protect — that one business's discovery never writes into another's — which is
+still true and still asserted. One assertion in `verify-economics-live.ts` was
+flaky and had been passing by luck: it searched a serialised move for "900" and
+a generated cuid eventually contained "9000". It now reads only the sentences an
+owner sees.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2869,6 +2959,7 @@ scripts/verify-economics-chat.ts          the same answer, typed into the conver
 scripts/verify-economics-producer.ts      detection, the producer contract, and price changes (real Postgres)
 scripts/verify-economics-production.ts    the card form, the first real producer, and what nextMoves costs (real Postgres)
 scripts/verify-catalog-live.ts            what the catalog shows, and what it may not claim (real Postgres)
+scripts/verify-catalog-browser.ts         the catalog through a real browser (real server + Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

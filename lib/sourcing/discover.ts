@@ -20,14 +20,19 @@ export interface DiscoveryResult {
   /**
    * Candidates Genesis looked at and decided against, with the reason.
    *
-   * Kept rather than counted, because being able to say *"I wouldn't recommend
-   * this for your store — it's technically the right category, but it doesn't
-   * fit the brand you've described"* is most of what separates a partner from a
-   * search box. Not persisted: a row for something Genesis declined would be
-   * indistinguishable later from one it raised, and the judgment is only true of
-   * the business as it was understood at the time.
+   * PERSISTED as of 2026-08-21, as `RULED_OUT`. The earlier version returned
+   * these and stored nothing, on the reasoning that a stored row for something
+   * Genesis declined would be indistinguishable later from one it raised. That
+   * reasoning was right about the risk and wrong about the fix: the answer is a
+   * status that says which, not throwing the judgement away. Without it, "I
+   * already looked at that and ruled it out" was true for exactly as long as the
+   * request that produced it.
+   *
+   * A ruled-out row is re-evaluated on every run, because the judgement is only
+   * ever true of the business as it was understood at the time — a business that
+   * changes how it describes itself gets a different answer, which is the point.
    */
-  ruledOut: { name: string; kind: ProductSourceKind; concerns: string[] }[];
+  ruledOut: { id: string; name: string; kind: ProductSourceKind; concerns: string[] }[];
   /**
    * How many could not be judged at all, because Genesis does not yet know the
    * business well enough. Deliberately not folded into ruledOut — "I don't know
@@ -142,14 +147,12 @@ export async function discoverProducts(params: {
     }
 
     const recommendation = scoreCandidate(candidate, context);
-    if (!isWorthSuggesting(recommendation)) {
-      // Returned, not stored. A row for something Genesis declined would be
-      // indistinguishable later from one it raised.
-      if (recommendation.verdict === "does_not_fit") {
-        ruledOut.push({ name: candidate.name, kind: candidate.kind, concerns: recommendation.concerns });
-      } else {
-        couldNotJudge++;
-      }
+
+    // "I DON'T KNOW YOU YET" IS NOT "THIS DOESN'T FIT YOU", and only the second
+    // is a judgement worth keeping. An unjudgeable candidate is counted and
+    // nothing is written, because there is nothing to explain later.
+    if (!isWorthSuggesting(recommendation) && recommendation.verdict !== "does_not_fit") {
+      couldNotJudge++;
       continue;
     }
 
@@ -188,6 +191,33 @@ export async function discoverProducts(params: {
       // in their store would be the same failure as re-suggesting a dismissal.
       update: shared,
     });
+
+    // WHERE GENESIS'S OWN VERDICT IS RECORDED, and only ever over its own.
+    //
+    // Scoped by status rather than written into the upsert, for the same reason
+    // upsertTask does it this way: an ADOPTED or DISMISSED row is somebody
+    // else's decision, and a re-run must not touch either. Between SUGGESTED and
+    // RULED_OUT it moves freely in both directions, because that is Genesis
+    // changing its mind about a business it now understands differently — which
+    // is exactly what it should do.
+    const verdictStatus = isWorthSuggesting(recommendation) ? "SUGGESTED" : "RULED_OUT";
+    if (row.status !== verdictStatus && (row.status === "SUGGESTED" || row.status === "RULED_OUT")) {
+      await prisma.sourcedProduct.updateMany({
+        where: { id: row.id, storeId, status: { in: ["SUGGESTED", "RULED_OUT"] } },
+        data: { status: verdictStatus },
+      });
+      row.status = verdictStatus;
+    }
+
+    if (verdictStatus === "RULED_OUT" && row.status === "RULED_OUT") {
+      ruledOut.push({
+        id: row.id,
+        name: candidate.name,
+        kind: candidate.kind,
+        concerns: recommendation.concerns,
+      });
+      continue;
+    }
 
     if (row.status === "SUGGESTED") {
       suggested.push({

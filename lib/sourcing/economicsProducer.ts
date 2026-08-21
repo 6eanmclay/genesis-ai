@@ -273,3 +273,88 @@ export async function runReadyEconomicsProducers(params: {
   }
   return results;
 }
+
+/**
+ * WHEN A PRODUCER RUNS — and the answer is not "on a schedule".
+ *
+ * The freshness policy already says how long a supplier's own statement stays
+ * current: thirty days for a catalogue, because a sync that has not run in a
+ * month does not mean the price is a month old, it means the sync has not run.
+ * That IS the schedule. Inventing a second one — a cron, an interval, a
+ * "refresh every N hours" — would be a second answer to a question already
+ * answered, and the two would drift.
+ *
+ * So a producer runs when the facts it owns have gone stale or were never
+ * stated, for products this business actually sells. Nothing else triggers it.
+ *
+ * Called from the same `after()` lifecycle as discovery, for the same reason:
+ * it makes real HTTP calls to a supplier and must never be awaited on a page
+ * somebody is waiting for.
+ */
+export async function refreshEconomicsIfStale(storeId: string): Promise<{
+  ran: string[];
+  skipped: { sourceKey: string; reason: string }[];
+}> {
+  const { prisma } = await import("@/lib/prisma");
+  const { supplierEconomicsFor, economicsKey } = await import("./economics");
+  const { fromVariantKey } = await import("./types");
+  const { reportIssue } = await import("@/lib/observability/reportIssue");
+
+  const ran: string[] = [];
+  const skipped: { sourceKey: string; reason: string }[] = [];
+
+  for (const source of getProductSources()) {
+    if (!source.capabilities.statesEconomics) continue;
+
+    // Only products the business actually sells. A supplier's terms are worth
+    // fetching for things on the shelf, not for everything it lists.
+    const adopted = await prisma.sourcedProduct.findMany({
+      where: { storeId, sourceKey: source.key, NOT: { adoptedProductId: null } },
+      select: { sourceKey: true, externalProductId: true, externalVariantId: true },
+    });
+    if (adopted.length === 0) {
+      skipped.push({ sourceKey: source.key, reason: "nothing from this source is on the shelf" });
+      continue;
+    }
+
+    const refs = adopted.map((row) => ({
+      sourceKey: row.sourceKey,
+      externalProductId: row.externalProductId,
+      externalVariantId: fromVariantKey(row.externalVariantId),
+    }));
+    const known = await supplierEconomicsFor(storeId, refs);
+
+    // Stale OR never stated. Both mean Genesis cannot currently stand behind a
+    // figure for that product, and both are answered the same way: go and ask.
+    const needsRefresh = refs.some((ref) => {
+      const economics = known.get(economicsKey(ref));
+      if (!economics) return true;
+      const price = economics.attribution.unitCost;
+      // A figure the OWNER stated is not the catalogue's to refresh, and its own
+      // window is far longer. Only the supplier's own facts age on this clock.
+      if (price.provenance !== "SUPPLIER") return price.provenance === null;
+      return price.freshness?.state === "stale";
+    });
+
+    if (!needsRefresh) {
+      skipped.push({ sourceKey: source.key, reason: "everything it states is current" });
+      continue;
+    }
+
+    try {
+      const outcome = await runEconomicsProducer(producerFromSource(source), { storeId });
+      if (outcome.status === "ran") ran.push(source.key);
+      else skipped.push({ sourceKey: source.key, reason: outcome.reason });
+    } catch (error) {
+      reportIssue("a supplier economics refresh failed", error, {
+        subsystem: "sourcing",
+        stage: "economics.refresh",
+        storeId,
+        extra: { sourceKey: source.key },
+      });
+      skipped.push({ sourceKey: source.key, reason: "the supplier could not be reached" });
+    }
+  }
+
+  return { ran, skipped };
+}

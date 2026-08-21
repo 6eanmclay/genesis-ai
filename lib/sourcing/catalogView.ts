@@ -103,6 +103,17 @@ export interface CatalogView {
     advice: string[];
     gaps: string[];
   } | null;
+  /**
+   * What Genesis looked at and decided against, with why.
+   *
+   * Most of what separates a partner from a search box is being able to say "I
+   * saw that and I wouldn't recommend it, because…". It survives the request now
+   * (`RULED_OUT`), so it can be said on a page the owner opens a week later.
+   *
+   * Re-evaluated on every discovery run, because the judgement is only ever true
+   * of the business as it was understood at the time.
+   */
+  ruledOut: { sourcedProductId: string; name: string; concerns: string[] }[];
   /** Sources that could not be searched, named rather than silently omitted. */
   blockedSources: { key: string; displayName: string; blockedOn: string[] }[];
   /** How many suggestions exist in total, including any not shown. */
@@ -161,7 +172,7 @@ export async function catalogView(
   const now = options.now ?? new Date();
   const limit = options.limit ?? 40;
 
-  const [context, posture, suggestions, ownedCount, latest] = await Promise.all([
+  const [context, posture, suggestions, ownedCount, latest, declined] = await Promise.all([
     buildSourcingContext(storeId),
     capitalPosture(storeId),
     prisma.sourcedProduct.findMany({
@@ -174,6 +185,12 @@ export async function catalogView(
       where: { storeId },
       orderBy: { discoveredAt: "desc" },
       select: { discoveredAt: true },
+    }),
+    prisma.sourcedProduct.findMany({
+      where: { storeId, status: "RULED_OUT" },
+      orderBy: { updatedAt: "desc" },
+      take: 12,
+      select: { id: true, name: true, recommendation: true },
     }),
   ]);
 
@@ -305,6 +322,16 @@ export async function catalogView(
     knowsTheBusiness: (context.ownWords ?? "").trim().length > 0,
     groups,
     startingSet,
+    ruledOut: declined.map((row) => {
+      // The reasoning is a Json snapshot, so it is read defensively — a row
+      // whose shape drifted contributes a name and no invented reason rather
+      // than a sentence nobody wrote.
+      const raw = row.recommendation as { concerns?: unknown } | null;
+      const concerns = Array.isArray(raw?.concerns)
+        ? raw.concerns.filter((c): c is string => typeof c === "string")
+        : [];
+      return { sourcedProductId: row.id, name: row.name, concerns };
+    }),
     blockedSources: describeBlockedSources(),
     totalSuggested: await prisma.sourcedProduct.count({ where: { storeId, status: "SUGGESTED" } }),
     lastDiscoveredAt: latest?.discoveredAt ?? null,

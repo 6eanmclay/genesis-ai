@@ -269,6 +269,31 @@ export async function CatalogScreen({ slug, basePath }: { slug?: string; basePat
         ))
       )}
 
+      {/* WHAT GENESIS LOOKED AT AND DECIDED AGAINST. Most of what separates a
+          partner from a search box is being able to say "I saw that, and I
+          wouldn't recommend it, because…" — and it only became sayable on a page
+          opened a week later once it was persisted rather than returned. Behind
+          a disclosure, because it is reassurance rather than work. */}
+      {view.ruledOut.length > 0 && (
+        <details className="rounded-xl border border-black/[.06] px-4 py-3 dark:border-white/[.08]">
+          <summary className="cursor-pointer list-none text-[13px] font-medium text-zinc-600 dark:text-zinc-300">
+            {view.ruledOut.length} I looked at and wouldn&apos;t recommend
+          </summary>
+          <ul className="mt-2 flex flex-col gap-2">
+            {view.ruledOut.map((item) => (
+              <li key={item.sourcedProductId}>
+                <p className="text-[13px] text-zinc-700 dark:text-zinc-200">{item.name}</p>
+                {item.concerns.map((concern, i) => (
+                  <p key={i} className={`text-[13px] text-zinc-500 dark:text-zinc-400 ${J4_VOICE}`}>
+                    {concern}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       {/* NAMED, NEVER SILENTLY OMITTED. "Why did this only search one supplier"
           has to be answerable without reading code. */}
       {view.blockedSources.length > 0 && (

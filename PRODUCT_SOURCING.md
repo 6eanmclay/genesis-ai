@@ -311,6 +311,48 @@ producer scheduling. The catalog reads the contracts as they are.
 
 ---
 
+## When Genesis goes looking, and what it remembers
+
+**Discovery has a caller** (2026-08-21). `discoverIfWorthwhile` runs from the
+same `after()` lifecycle Home already uses for the AI-review trigger and the
+measurement pass — not a scheduler, because there is one and it is the wrong
+shape for this: discovery makes real HTTP calls to suppliers, so it can never be
+awaited on a page somebody is waiting for, and a suggestion arriving on the next
+load costs nothing.
+
+Gated hard, three conditions, all cheap and all exact:
+
+1. **Genesis knows the business.** Searching on a description nobody wrote
+   returns things nobody can be told a reason for.
+2. **Nothing is on the list already.** Discovery fills an empty catalog;
+   refreshing a full one is the owner's own *Look again*, and their call.
+3. **It has not looked recently** (7 days). A business where everything found was
+   ruled out has rows but no suggestions, and must not be re-searched on every
+   page load.
+
+**`ruledOut` is persisted**, as `SourcedProductStatus.RULED_OUT`. The earlier
+version returned it and stored nothing, reasoning that a stored row for something
+Genesis declined would be indistinguishable later from one it raised. That was
+right about the risk and wrong about the fix: the answer is a status that says
+which, not throwing the judgement away. Without it, *"I already looked at that
+and ruled it out"* was true for exactly as long as the request that produced it.
+
+`RULED_OUT` is **Genesis's** verdict; `DISMISSED` is the **owner's**. They are
+never conflated, and they behave differently on purpose: a dismissal is respected
+forever, a ruled-out row is re-evaluated on every run — because the judgement is
+only ever true of the business as it was understood at the time. A business that
+starts describing itself as a bridal boutique gets the veil it was refused.
+
+**Supplier economics refresh on their own freshness policy**, not a schedule.
+Thirty days for a catalogue is already written down and already means "this is
+too old to stand behind"; that IS the schedule, and inventing a second one would
+be a second answer to a question already answered. `refreshEconomicsIfStale` runs
+from the same `after()`, only for products actually on the shelf, and only for
+facts the supplier itself owns — an owner's figure is not the catalogue's to
+refresh.
+
+---
+
 ## Where this goes next
 
 `PRODUCT_PROGRESSION.md` is the P0.5 architecture built on top of this one: the

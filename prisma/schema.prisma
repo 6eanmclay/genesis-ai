@@ -912,6 +912,14 @@ enum SourcedProductStatus {
   SUGGESTED
   DISMISSED
   ADOPTED
+  /// Genesis looked at it and decided against it, and can say why.
+  ///
+  /// Distinct from DISMISSED, which is the OWNER's decision. Conflating them
+  /// would let Genesis's own judgement read back later as something the owner
+  /// had turned down — and the two need completely different handling: a
+  /// dismissal is respected forever, this one is re-evaluated every time the
+  /// business's own description changes.
+  RULED_OUT
 }
 
 // Product media gallery (2026-08-08) — up to 10 images per product,

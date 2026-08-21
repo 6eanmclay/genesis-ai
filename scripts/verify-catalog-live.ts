@@ -392,6 +392,127 @@ async function main() {
       const funded = (await catalogView(store.id)).groups[0].items[0];
       check("now it is recommended", funded.outcome.kind, "recommended_now");
     }
+
+    // =======================================================================
+    console.log("\n10. Genesis's own verdict survives the request");
+    {
+      await reset();
+      const store = await makeStore("declined", FITNESS);
+
+      // A source offering one thing that fits and one that plainly does not.
+      const { discoverProducts } = await import("@/lib/sourcing/discover");
+      const { buildSourcingContext } = await import("@/lib/sourcing/context");
+      const source = {
+        key: SOURCE, displayName: "Test partner", kind: "WHOLESALE_DROPSHIP" as const,
+        capabilities: { customization: false, createsListings: false, shipsDirect: true, quotesCost: false, statesEconomics: false },
+        fulfillmentProvider: null, blockedOn: [] as string[],
+        async search() {
+          return {
+            ok: true as const,
+            candidates: [
+              {
+                sourceKey: SOURCE, externalProductId: "fits", externalVariantId: null,
+                kind: "WHOLESALE_DROPSHIP" as const, name: "Foam roller",
+                description: "A recovery and training tool for use at home",
+                imageUrl: null, unitCostInCents: null, suggestedRetailInCents: null,
+                currency: "USD", customizable: false, fulfillmentProvider: null,
+              },
+              {
+                sourceKey: SOURCE, externalProductId: "does-not", externalVariantId: null,
+                kind: "WHOLESALE_DROPSHIP" as const, name: "Wedding veil",
+                description: "A lace wedding veil for a bride",
+                imageUrl: null, unitCostInCents: null, suggestedRetailInCents: null,
+                currency: "USD", customizable: false, fulfillmentProvider: null,
+              },
+            ],
+          };
+        },
+      };
+
+      const run = await discoverProducts({
+        storeId: store.id,
+        context: await buildSourcingContext(store.id),
+        sources: [source],
+      });
+      assert("something was ruled out", run.ruledOut.length > 0, JSON.stringify(run.ruledOut));
+
+      // THE WHOLE POINT: it is a row now, so it is still true on a page opened
+      // later rather than only inside the request that produced it.
+      const view = await catalogView(store.id);
+      assert("and it is still there afterwards", view.ruledOut.length > 0, JSON.stringify(view.ruledOut));
+      assert("with the reason Genesis gave",
+        view.ruledOut[0].concerns.length > 0, JSON.stringify(view.ruledOut[0]));
+      // It is NOT offered as something to add.
+      assert("but never as a suggestion",
+        !view.groups.some((g) => g.items.some((i) => i.name === "Wedding veil")),
+        JSON.stringify(view.groups.map((g) => g.items.map((i) => i.name))));
+
+      // AND IT IS RE-EVALUATED, because the judgement is only ever true of the
+      // business as it was understood at the time. A business that changes what
+      // it says about itself gets a different answer.
+      await prisma.store.update({
+        where: { id: store.id },
+        data: { description: "A bridal boutique — veils, dresses and wedding accessories." },
+      });
+      await discoverProducts({
+        storeId: store.id,
+        context: await buildSourcingContext(store.id),
+        sources: [source],
+      });
+      const after = await catalogView(store.id);
+      assert("the veil is now suggested to a bridal business",
+        after.groups.some((g) => g.items.some((i) => i.name === "Wedding veil")),
+        JSON.stringify(after.groups.map((g) => g.items.map((i) => i.name))));
+
+      // A DISMISSAL IS THE OWNER'S AND IS NEVER OVERWRITTEN BY A RE-RUN.
+      const suggested = await prisma.sourcedProduct.findFirstOrThrow({
+        where: { storeId: store.id, externalProductId: "does-not" },
+      });
+      await dismissSourcedProduct({ storeId: store.id, sourcedProductId: suggested.id });
+      await discoverProducts({
+        storeId: store.id,
+        context: await buildSourcingContext(store.id),
+        sources: [source],
+      });
+      check("a dismissal survives re-discovery",
+        (await prisma.sourcedProduct.findUniqueOrThrow({ where: { id: suggested.id } })).status,
+        "DISMISSED");
+    }
+
+    // =======================================================================
+    console.log("\n11. Genesis goes looking on its own, but only with reason");
+    {
+      const { discoverIfWorthwhile } = await import("@/lib/sourcing/discoveryLifecycle");
+
+      // NOTHING TO SEARCH ON. A description nobody wrote returns things nobody
+      // can be told a reason for.
+      await reset();
+      const quiet = await makeStore("no-words", null, "USD", { tagline: "" });
+      check("a business it does not know is not searched for",
+        (await discoverIfWorthwhile(quiet.id)), { ran: false, reason: "no_description" });
+
+      // ALREADY HAS A LIST. Discovery fills an empty catalog; refreshing a full
+      // one is the owner's own "Look again".
+      await reset();
+      const full = await makeStore("has-list", FITNESS);
+      await suggest(full.id, { name: "Foam roller" });
+      check("a business with suggestions is left alone",
+        (await discoverIfWorthwhile(full.id)), { ran: false, reason: "already_has_suggestions" });
+
+      // EVERYTHING RULED OUT IS STILL A RECENT LOOK. A business where nothing
+      // fitted has rows but no suggestions, and must not be re-searched on every
+      // page load.
+      await reset();
+      const barren = await makeStore("all-ruled-out", FITNESS);
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: barren.id, sourceKey: SOURCE, externalProductId: "no",
+          kind: "WHOLESALE_DROPSHIP", name: "Wedding veil", status: "RULED_OUT", score: 0,
+        },
+      });
+      check("it is not searched again immediately",
+        (await discoverIfWorthwhile(barren.id)), { ran: false, reason: "ran_recently" });
+    }
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

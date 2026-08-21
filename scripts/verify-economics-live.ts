@@ -340,8 +340,19 @@ async function main() {
       assert("that says the recorded price breaks don't add up",
         blocked.moves[0].evidence.some((e) => e.includes("doesn't add up")),
         blocked.moves[0].evidence.join(" | "));
-      assert("and no figure from anywhere else is quoted",
-        !JSON.stringify(blocked.moves[0]).includes("900"), JSON.stringify(blocked.moves[0]));
+      // WHAT THE OWNER READS, not the whole object. The earlier version searched
+      // the serialised move for "900" and passed by luck until a generated cuid
+      // happened to contain "9000" — an assertion that can be defeated by an id
+      // is not asserting what it claims to.
+      const spoken = [
+        blocked.moves[0].recommendation,
+        blocked.moves[0].action,
+        blocked.moves[0].unlocks,
+        ...blocked.moves[0].evidence,
+        ...blocked.moves[0].why,
+        ...blocked.moves[0].blockers,
+      ].join(" | ");
+      assert("and no figure from anywhere else is quoted", !spoken.includes("900"), spoken);
     }
 
     // =======================================================================
