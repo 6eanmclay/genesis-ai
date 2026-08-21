@@ -536,7 +536,7 @@ export async function POST(request: Request) {
           // connection.
           const [dataContext, understanding, pastDecisions, pastStatements] = await Promise.all([
             buildChatDataContext(store.id),
-            getBusinessUnderstanding(store.id),
+            getBusinessUnderstanding(store.id, { viewerUserId: userId }),
             findRelevantDecisions(store.id, userMessage),
             // M9 — the owner's own past words, any age. Gap D's twin: the same
             // relevance-over-recency rule, applied to the conversation those
@@ -585,6 +585,9 @@ export async function POST(request: Request) {
                       // Gap B's reason: both paths draw on identical
                       // understanding or neither can be trusted.
                       commitments: understanding.commitments,
+                      // Patterns about the owner, not the business. Populated only for the
+                      // owner themselves; empty for anyone else with access to this store.
+                      ownerUnderstanding: understanding.ownerUnderstanding,
                       activeThoughts: understanding.activeThoughts,
                       growthPointBalance: understanding.platformRelationship.growthPointBalance,
                       growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),

@@ -390,7 +390,12 @@ export async function runCognitiveReview(params: {
   // snapshot from before this call's own Learn pass ran — the exact
   // ordering guarantee this file already held before this function existed
   // to share the read with other callers, unchanged.
-  const understanding = await getBusinessUnderstanding(storeId);
+  // REASON ADVISES THE OWNER (2026-08-21). No human is reading at this moment,
+  // but the recommendations this pass produces are written for one specific
+  // person — so the viewer is the store's owner, and J4 reasons with what it has
+  // learned about how they decide. Passing nothing here would have quietly
+  // removed owner-preference beliefs from Reason, which have fed it since M2.
+  const understanding = await getBusinessUnderstanding(storeId, { viewerUserId: store.userId });
   const {
     profile: businessProfile,
     beliefs,
@@ -476,6 +481,10 @@ export async function runCognitiveReview(params: {
     // A deadline is the one kind of fact where noticing late is the same as not
     // noticing, which is exactly the "here is what I noticed" case.
     commitments,
+    // What J4 has learned about how THIS owner decides. Named separately from
+    // beliefs so a pattern about the person is never quoted as a fact about the
+    // business — J4_OWNER_UNDERSTANDING.md's one-direction rule.
+    ownerUnderstanding: understanding.ownerUnderstanding,
     orderSummary,
     customers: customerSummaries.map((c) => ({
       orderCount: c.orderCount,

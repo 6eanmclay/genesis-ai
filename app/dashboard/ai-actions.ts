@@ -2543,7 +2543,11 @@ async function applyGenesisMessageToStore(
     // recall than the other would quietly break it again.
     const [dataContext, understanding, pastDecisions, pastStatements] = await Promise.all([
       buildChatDataContext(store.id),
-      getBusinessUnderstanding(store.id),
+      // NAMING THE VIEWER (2026-08-21). Owner-scoped beliefs are excluded by
+      // default, so this argument is what keeps J4 able to advise this owner as
+      // this owner — and what stops an employee of the same store hearing a
+      // profile of the owner's decision-making read back to them.
+      getBusinessUnderstanding(store.id, { viewerUserId: userId }),
       findRelevantDecisions(store.id, userMessage),
       // M9 — same recall on this path too, for the same reason the line above
       // exists: one path having deeper memory than the other would break Gap
@@ -2572,6 +2576,9 @@ async function applyGenesisMessageToStore(
               // this one, per J4_FOUNDATION.md's Gap B rule: one J4, not a
               // shallower one for conversation. Empty is ordinary and honest.
               commitments: understanding.commitments,
+              // Patterns about the owner, not the business. Populated only for the
+              // owner themselves; empty for anyone else with access to this store.
+              ownerUnderstanding: understanding.ownerUnderstanding,
               activeThoughts: understanding.activeThoughts,
               // Growth Points Economy — same real signal, same "context
               // only, never a gate" semantics as cognitiveLayer.ts's own

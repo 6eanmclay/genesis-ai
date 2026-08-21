@@ -22,6 +22,26 @@ import { volunteeredByJ4 } from "./proposalOrigin";
 const EVIDENCE_SATURATION_COUNT = 5; // occurrences beyond this add diminishing confidence, not none
 const INSIGHT_RECURRENCE_WEEKS_THRESHOLD = 3; // real recurrence needs distinct weeks, not a same-day burst
 const REJECTION_PATTERN_THRESHOLD = 2;
+
+/**
+ * A belief the OWNER rejected, as distinct from one the system retired.
+ *
+ * `status` is a String, not an enum, and its own schema comment already treats
+ * the vocabulary as open. A third value rather than a boolean because "retired
+ * because it did not generalize" and "retired because the person it is about
+ * says it is wrong" are different facts, and only one of them should ever come
+ * back on its own.
+ */
+export const DISMISSED = "DISMISSED";
+
+/**
+ * The entityType that marks a belief as being about the PERSON, not the business.
+ *
+ * J4_OWNER_UNDERSTANDING.md's architectural insight, applied literally: this is
+ * not a new mechanism, it is the existing one at a different scope. An owner
+ * pattern is an ordinary Belief whose recordId is a userId.
+ */
+export const OWNER_ENTITY_TYPE = "owner";
 const OUTCOME_PATTERN_THRESHOLD = 2;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -64,6 +84,32 @@ interface UpsertBeliefParams {
 // upsertObservation already established for GenesisObservation.
 async function upsertBelief(storeId: string, params: UpsertBeliefParams): Promise<void> {
   const confidence = computeConfidence(params.supportingCount, params.contradictingCount);
+
+  // A DISMISSAL BY THE OWNER OUTLIVES THE NEXT PASS (2026-08-21).
+  //
+  // J4_OWNER_UNDERSTANDING.md's one genuinely new requirement — "inferred
+  // patterns must always be editable" — and until now it was impossible. The
+  // update branch below sets status ACTIVE and clears retiredAt on every pass,
+  // deliberately, so a belief reactivates on recurrence. Correct for a belief
+  // the SYSTEM retired ("did not generalize"); wrong for one a PERSON rejected.
+  // An owner who says "no, that isn't a pattern about me" would have watched it
+  // reappear within the hour, which is worse than not offering the control.
+  //
+  // The rule, and it is not "suppress forever" — that would stop J4 learning:
+  // a dismissed belief stays dismissed while the evidence is the evidence the
+  // owner already saw and judged. If it later exceeds that, the pattern is
+  // genuinely stronger than the one they rejected, and it may come back.
+  //
+  // NO NEW COLUMN. evidenceCount on the dismissed row already records exactly
+  // how much evidence existed at the moment of dismissal.
+  const existing = await prisma.belief.findUnique({
+    where: { storeId_topicKey: { storeId, topicKey: params.topicKey } },
+    select: { status: true, evidenceCount: true },
+  });
+  if (existing?.status === DISMISSED && params.supportingCount <= existing.evidenceCount) {
+    return;
+  }
+
   await prisma.belief.upsert({
     where: { storeId_topicKey: { storeId, topicKey: params.topicKey } },
     create: {
@@ -282,11 +328,20 @@ export async function detectDecisionOutcomePattern(storeId: string): Promise<voi
   // has a canonical key, the rule has to be stated or it inverts: J4 would
   // start learning the owner's "preferences" from proposals the owner asked
   // for. Being asked about something must never create a belief.
+  // WHO the pattern is about (2026-08-21). A rejection pattern was already
+  // categorised "owner_preference" and had no way to say which person it
+  // concerned — so "what has J4 learned about ME" was unanswerable, and the
+  // privacy question the design names could not even be asked. Store.userId is
+  // the owner; an employee's decisions are not evidence about them.
+  const owner = await prisma.store.findUnique({ where: { id: storeId }, select: { userId: true } });
+
   for (const plan of planRejectionBeliefs(rejected, measured)) {
     await upsertBelief(storeId, {
       topicKey: `rejection_pattern:${plan.topicKey}`,
       claim: plan.claim,
       category: "owner_preference",
+      entityType: OWNER_ENTITY_TYPE,
+      recordId: owner?.userId ?? null,
       supportingCount: plan.supportingCount,
       contradictingCount: plan.contradictingCount,
       firstObservedAt: plan.firstObservedAt,
@@ -451,7 +506,16 @@ export function describeMaturity(belief: {
 // Reason's read contract — the only way Reason may ever consume Learn's
 // output. Includes the derived maturity label directly so every caller
 // gets it for free, never computes its own notion of maturity separately.
-export async function getBeliefs(storeId: string): Promise<
+export async function getBeliefs(
+  storeId: string,
+  opts?: {
+    /**
+     * Who is reading. Owner-scoped beliefs are returned only to the person they
+     * are about; omitting this returns business-level beliefs only.
+     */
+    viewerUserId?: string | null;
+  }
+): Promise<
   {
     id: string;
     topicKey: string;
@@ -465,8 +529,39 @@ export async function getBeliefs(storeId: string): Promise<
     lastContradictedAt: Date | null;
   }[]
 > {
+  // OWNER-SCOPED BELIEFS ARE NOT STORE-SCOPED KNOWLEDGE (2026-08-21).
+  //
+  // J4_OWNER_UNDERSTANDING.md: "an owner's own inferred behavioural profile
+  // should very plausibly be visible and editable only by that owner, never
+  // surfaced to an Employee-role member of the same store, even though both can
+  // see the store's Business Understanding freely today."
+  //
+  // Business Understanding is about what the business sells. This is a model of
+  // how one named person makes decisions, and it goes into prompts — so an
+  // employee chatting with J4 would have heard it read back to them.
+  //
+  // EXCLUDED BY DEFAULT, and a caller opts in by naming the viewer. A default
+  // that leaked unless someone remembered to pass a flag would be the wrong way
+  // round for the more sensitive of the two.
   const rows = await prisma.belief.findMany({
-    where: { storeId, status: "ACTIVE" },
+    where: {
+      storeId,
+      status: "ACTIVE",
+      // `{ not: "owner" }` ALONE IS A BUG, and the suite caught it: in SQL,
+      // NOT (entityType = 'owner') evaluates to NULL — not true — for a row
+      // whose entityType IS NULL, so the filter silently excluded every
+      // business-level belief, which is all of them. The explicit null branch
+      // is the whole difference between "not about a person" and "unknown".
+      ...(opts?.viewerUserId
+        ? {
+            OR: [
+              { entityType: null },
+              { entityType: { not: OWNER_ENTITY_TYPE } },
+              { recordId: opts.viewerUserId },
+            ],
+          }
+        : { OR: [{ entityType: null }, { entityType: { not: OWNER_ENTITY_TYPE } }] }),
+    },
     orderBy: { lastConfirmedAt: "desc" },
   });
   return rows.map((r) => ({
@@ -481,4 +576,101 @@ export async function getBeliefs(storeId: string): Promise<
     lastConfirmedAt: r.lastConfirmedAt,
     lastContradictedAt: r.lastContradictedAt,
   }));
+}
+
+/**
+ * What J4 has learned about the PERSON — only ever readable by that person.
+ *
+ * The same shape getBeliefs returns, because it is the same mechanism: an owner
+ * pattern is an ordinary Belief whose entityType is "owner". Nothing here is a
+ * second store of preferences, and nothing here is written by hand — every entry
+ * was derived from real decisions and re-derived on the next pass, which is what
+ * makes it explainable rather than mysterious.
+ *
+ * Returns nothing for anyone who is not the owner. Not an error, not a partial
+ * view — a person who is not the subject of these patterns has no reading of
+ * them at all.
+ */
+export async function getOwnerUnderstanding(storeId: string, userId: string) {
+  const store = await prisma.store.findUnique({ where: { id: storeId }, select: { userId: true } });
+  if (!store || store.userId !== userId) return [];
+
+  const rows = await prisma.belief.findMany({
+    where: { storeId, status: "ACTIVE", entityType: OWNER_ENTITY_TYPE, recordId: userId },
+    orderBy: { lastConfirmedAt: "desc" },
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    topicKey: r.topicKey,
+    claim: r.claim,
+    category: r.category,
+    confidence: r.confidence,
+    maturity: describeMaturity(r),
+    evidenceCount: r.evidenceCount,
+    firstObservedAt: r.firstObservedAt,
+    lastConfirmedAt: r.lastConfirmedAt,
+    lastContradictedAt: r.lastContradictedAt,
+    /** What this was inferred from. The reason it is arguable rather than opaque. */
+    evidenceRefs: r.evidenceRefs,
+  }));
+}
+
+/**
+ * "No, that isn't a pattern about me."
+ *
+ * The editability J4_OWNER_UNDERSTANDING.md asks for, and the reason upsertBelief
+ * now checks for DISMISSED before writing. Two properties this has to hold at
+ * once, and holding only one would be worse than offering nothing:
+ *
+ *   it sticks   — the next distill pass will not quietly undo it
+ *   it is not a permanent gag — if the evidence later grows beyond what the
+ *                 owner judged, that is a genuinely different claim and J4 is
+ *                 allowed to raise it again
+ *
+ * Only the owner may dismiss, and only a belief about themselves. An employee
+ * cannot edit the owner's profile, and nobody can quietly delete a
+ * business-level belief through this door — a business belief is not a personal
+ * one, and retiring those stays the system's own decision.
+ */
+export async function dismissOwnerBelief(params: {
+  storeId: string;
+  beliefId: string;
+  userId: string;
+  reason?: string;
+}): Promise<{ dismissed: boolean; why?: string }> {
+  const store = await prisma.store.findUnique({
+    where: { id: params.storeId },
+    select: { userId: true },
+  });
+  if (!store || store.userId !== params.userId) {
+    return { dismissed: false, why: "not_the_owner" };
+  }
+
+  const belief = await prisma.belief.findFirst({
+    where: {
+      id: params.beliefId,
+      storeId: params.storeId,
+      entityType: OWNER_ENTITY_TYPE,
+      recordId: params.userId,
+    },
+    select: { id: true },
+  });
+  if (!belief) return { dismissed: false, why: "not_an_owner_belief" };
+
+  await prisma.belief.update({
+    where: { id: belief.id, storeId: params.storeId },
+    data: {
+      status: DISMISSED,
+      retiredAt: new Date(),
+      // Plain text, matching the column's own convention. Kept distinct from the
+      // system's own reasons so "the owner disagreed" is never mistaken for
+      // "the evidence stopped supporting it".
+      retiredReason: params.reason?.trim()
+        ? `dismissed by the owner: ${params.reason.trim()}`
+        : "dismissed by the owner",
+    },
+  });
+
+  return { dismissed: true };
 }

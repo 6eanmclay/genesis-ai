@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getCommitments, type CommitmentHorizon } from "@/lib/businessAssets/commitments";
+import { getOwnerUnderstanding } from "@/lib/intelligence/learn";
 import { getBusinessProfile, type BusinessProfile } from "./profile";
 import { getBeliefs } from "@/lib/intelligence/learn";
 import { getRecentDecisionOutcomes, type RecentDecisionOutcome } from "./reasoning";
@@ -88,14 +89,46 @@ export interface BusinessUnderstanding {
    * Empty is the ordinary state and an honest one: most files state no dates.
    */
   commitments: CommitmentHorizon;
+  /**
+   * What J4 has learned about the PERSON, not the business (2026-08-21).
+   *
+   * J4_OWNER_UNDERSTANDING.md's bar: "if two businesses were identical but
+   * owned by different people, J4 would advise each owner differently."
+   *
+   * Empty unless the reader IS the owner — these are patterns about one named
+   * person's decision-making, and an employee of the same store has no reading
+   * of them. Separate from `beliefs` rather than mixed into it so a consumer
+   * can tell a pattern about the business from a pattern about the person; the
+   * two must never blend, per that document's own one-direction rule.
+   */
+  ownerUnderstanding: Awaited<ReturnType<typeof getOwnerUnderstanding>>;
   asOf: string;
 }
 
-export async function getBusinessUnderstanding(storeId: string): Promise<BusinessUnderstanding> {
-  const [profile, beliefs, recentDecisions, activeOutputs, store, currentAssets, commitments] =
-    await Promise.all([
+export async function getBusinessUnderstanding(
+  storeId: string,
+  opts?: {
+    /**
+     * Who is reading this. Owner-scoped beliefs and `ownerUnderstanding` are
+     * populated only when this is the store's own owner — omitted means a
+     * business-level view, which is the safe default for the more sensitive of
+     * the two categories.
+     */
+    viewerUserId?: string | null;
+  }
+): Promise<BusinessUnderstanding> {
+  const [
+    profile,
+    beliefs,
+    recentDecisions,
+    activeOutputs,
+    store,
+    currentAssets,
+    commitments,
+    ownerUnderstanding,
+  ] = await Promise.all([
     getBusinessProfile(storeId),
-    getBeliefs(storeId),
+    getBeliefs(storeId, { viewerUserId: opts?.viewerUserId }),
     getRecentDecisionOutcomes(storeId),
     prisma.cognitiveOutput.findMany({
       where: { storeId, status: "ACTIVE" },
@@ -115,6 +148,7 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
     }),
     currentAssetsByRole(storeId),
     getCommitments(storeId),
+    opts?.viewerUserId ? getOwnerUnderstanding(storeId, opts.viewerUserId) : Promise.resolve([]),
   ]);
 
   return {
@@ -123,6 +157,7 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
     recentDecisions,
     currentAssets,
     commitments,
+    ownerUnderstanding,
     activeThoughts: activeOutputs.map((o) => ({
       id: o.id,
       kind: o.kind,
