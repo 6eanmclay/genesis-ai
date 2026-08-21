@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { encryptCredentials, decryptCredentials } from "@/lib/integrations/credentials";
 import { PRINTFUL_API_BASE, refreshPrintfulToken, type PrintfulCredentials } from "@/lib/integrations/printful";
+import { supplierRequest } from "@/lib/sourcing/sourcingBudget";
 import { describeProviderError } from "@/lib/integrations/providerError";
 import type {
   FulfillmentCandidate,
@@ -66,6 +67,20 @@ interface PrintfulVariant {
   id: number;
   name: string;
   price: string;
+}
+
+/**
+ * Every outbound Printful request, through the one boundary that can refuse it.
+ *
+ * Nine call sites in this file and no others, which is what makes the sourcing
+ * budget a real ceiling rather than a tally: inside an unattended run the budget
+ * is asked BEFORE the request, and an exhausted budget throws instead of
+ * fetching. Outside a run — an owner asking what something costs, an order being
+ * fulfilled — there is no budget and this is a plain fetch that happens to be
+ * recorded.
+ */
+function printfulFetch(operation: string, url: string, init?: RequestInit): Promise<Response> {
+  return supplierRequest({ sourceKey: "printful", operation }, () => fetch(url, init));
 }
 
 async function resolveCredentials(params: {
@@ -153,7 +168,7 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
     // entirely even though it exists — Genesis would then reason
     // (honestly, but avoidably) about the closest thing in an
     // artificially narrow set instead of the real best fit.
-    const res = await fetch(`${PRINTFUL_API_BASE}/products?limit=100`, {
+    const res = await printfulFetch("search.catalog", `${PRINTFUL_API_BASE}/products?limit=100`, {
       headers: authHeaders(credentials, false),
     });
     if (!res.ok) throw new Error(`Printful catalog browse failed (${res.status})`);
@@ -174,7 +189,7 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
 
     const candidates: FulfillmentCandidate[] = [];
     for (const product of source) {
-      const detail = await fetch(`${PRINTFUL_API_BASE}/products/${product.id}`, {
+      const detail = await printfulFetch("search.product", `${PRINTFUL_API_BASE}/products/${product.id}`, {
         headers: authHeaders(credentials, false),
       });
       if (!detail.ok) continue;
@@ -195,7 +210,7 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
 
   async getCost({ storeId, storeDraftId, candidate }) {
     const credentials = await resolveCredentials({ storeId, storeDraftId });
-    const detail = await fetch(`${PRINTFUL_API_BASE}/products/${candidate.externalProductId}`, {
+    const detail = await printfulFetch("cost.product", `${PRINTFUL_API_BASE}/products/${candidate.externalProductId}`, {
       headers: authHeaders(credentials, false),
     });
     if (!detail.ok) throw new Error(`Printful product lookup failed (${detail.status})`);
@@ -204,7 +219,7 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
     if (!variant) throw new Error("Printful variant no longer available.");
     const costInCents = Math.round(parseFloat(variant.price) * 100);
 
-    const shipRes = await fetch(`${PRINTFUL_API_BASE}/shipping/rates`, {
+    const shipRes = await printfulFetch("cost.rates", `${PRINTFUL_API_BASE}/shipping/rates`, {
       method: "POST",
       headers: authHeaders(credentials, false),
       body: JSON.stringify({
@@ -229,7 +244,7 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
 
   async createProduct({ storeId, storeDraftId, candidate, imageUrl, retailPriceInCents }) {
     const credentials = await resolveCredentials({ storeId, storeDraftId });
-    const res = await fetch(`${PRINTFUL_API_BASE}/store/products`, {
+    const res = await printfulFetch("listings", `${PRINTFUL_API_BASE}/store/products`, {
       method: "POST",
       headers: authHeaders(credentials, true),
       body: JSON.stringify({
@@ -260,7 +275,7 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
     // real, valid print-file URL — Printful rejects both a missing file and
     // (confirmed live) a catalog candidate's own mockup `imageUrl`, which
     // has no recognized image extension.
-    const res = await fetch(`${PRINTFUL_API_BASE}/orders`, {
+    const res = await printfulFetch("order.create", `${PRINTFUL_API_BASE}/orders`, {
       method: "POST",
       headers: authHeaders(credentials, true),
       body: JSON.stringify({
@@ -322,13 +337,15 @@ export async function printfulEconomicsQuote(params: {
   // Printful states the account's currency on the store itself. Reading it is
   // one call and removes the only figure in this path that would otherwise be a
   // guess about somebody's money.
-  const storeRes = await fetch(`${PRINTFUL_API_BASE}/store`, { headers: authHeaders(credentials, false) });
+  const storeRes = await printfulFetch("economics.store", `${PRINTFUL_API_BASE}/store`, {
+    headers: authHeaders(credentials, false),
+  });
   if (!storeRes.ok) throw new Error(`Printful store lookup failed (${storeRes.status})`);
   const storeBody = (await storeRes.json()) as { result?: { currency?: unknown } };
   const currency = typeof storeBody.result?.currency === "string" ? storeBody.result.currency : null;
   if (!currency) throw new Error("Printful did not say which currency this account prices in.");
 
-  const detail = await fetch(`${PRINTFUL_API_BASE}/products/${params.externalProductId}`, {
+  const detail = await printfulFetch("economics.product", `${PRINTFUL_API_BASE}/products/${params.externalProductId}`, {
     headers: authHeaders(credentials, false),
   });
   if (!detail.ok) throw new Error(`Printful product lookup failed (${detail.status})`);
@@ -336,7 +353,7 @@ export async function printfulEconomicsQuote(params: {
   const variant = detailBody.result.variants.find((v) => String(v.id) === params.externalVariantId);
   if (!variant) throw new Error("Printful variant no longer available.");
 
-  const shipRes = await fetch(`${PRINTFUL_API_BASE}/shipping/rates`, {
+  const shipRes = await printfulFetch("economics.rates", `${PRINTFUL_API_BASE}/shipping/rates`, {
     method: "POST",
     headers: authHeaders(credentials, false),
     body: JSON.stringify({

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { buildSourcingContext } from "./context";
 import { discoverProducts } from "./discover";
+import { isBudgetExhausted } from "./sourcingBudget";
 
 // WHEN GENESIS GOES LOOKING, without anybody pressing anything.
 //
@@ -74,6 +75,10 @@ export async function discoverIfWorthwhile(storeId: string): Promise<DiscoveryLi
     const result = await discoverProducts({ storeId, context });
     return { ran: true, suggested: result.suggested.length, ruledOut: result.ruledOut.length };
   } catch (error) {
+    // A refused budget is the ceiling working, not discovery failing. Reporting
+    // it as a failure would put an alert in front of an operator for a run that
+    // did exactly what it was told, and would hide the reason the pass stopped.
+    if (isBudgetExhausted(error)) throw error;
     reportIssue("discovery failed on its own initiative", error, {
       subsystem: "sourcing",
       stage: "discovery.lifecycle",

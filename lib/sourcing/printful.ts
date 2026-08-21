@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { printfulFulfillmentConnector, printfulEconomicsQuote } from "@/lib/fulfillment/printful";
 import { fromVariantKey } from "./types";
+import { isBudgetExhausted } from "./sourcingBudget";
 import type {
   ProductSource,
   SourceEconomicsResult,
@@ -163,7 +164,13 @@ export const printfulSource: ProductSource = {
           tiers: [],
           leadTimeDays: null,
         });
-      } catch {
+      } catch (error) {
+        // A BUDGET REFUSAL IS NOT A PRODUCT THAT COULD NOT BE PRICED. This catch
+        // exists so one unpriceable product does not lose the rest — but
+        // swallowing an exhausted budget here would turn the ceiling into a
+        // suggestion, quietly continuing the loop and asking again for every
+        // remaining product. It has to leave.
+        if (isBudgetExhausted(error)) throw error;
         // One product Printful cannot price does not lose the rest, and nothing
         // is stated for it. Skipping is the honest outcome: the gap stays a gap.
         continue;
@@ -201,6 +208,9 @@ export const printfulSource: ProductSource = {
       });
       return { ok: true, unitCostInCents: estimate.costInCents, shippingInCents: estimate.shippingInCents };
     } catch (error) {
+      // Same reasoning as economics() above: a refused budget is not a supplier
+      // that failed, and reporting it as one would hide the ceiling.
+      if (isBudgetExhausted(error)) throw error;
       return {
         ok: false,
         reason: "provider_error",

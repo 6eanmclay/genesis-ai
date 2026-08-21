@@ -95,9 +95,9 @@ export async function GET(request: NextRequest) {
   //
   // Its own limit, lower than the others' 50: each store here can mean several
   // supplier HTTP round trips, where a Growth Point refresh is one write.
-  let sourcing: Awaited<ReturnType<typeof runDueSourcing>> = [];
+  let sourcing: Awaited<ReturnType<typeof runDueSourcing>> | null = null;
   try {
-    sourcing = await runDueSourcing(25);
+    sourcing = await runDueSourcing();
   } catch (error) {
     console.error("[cron/sync] sourcing pass failed:", error);
     stageErrors.push("sourcing");
@@ -131,11 +131,22 @@ export async function GET(request: NextRequest) {
     // Per-store detail, same reasoning as the two above. A store that was
     // considered and correctly did nothing reads differently from one that was
     // never reached, and only one of those is worth investigating.
-    sourcing: sourcing.map((r) => ({
-      storeId: r.storeId,
-      discovery: r.discovery.ran ? `found ${r.discovery.suggested}` : r.discovery.reason,
-      economicsRefreshed: r.economics?.ran ?? [],
-      error: r.error,
-    })),
+    // WHY IT STOPPED, not only what it did. A pass that ran out of budget and
+    // one that found nothing to do look identical in a count, and only one of
+    // them means businesses are still waiting.
+    sourcing: sourcing
+      ? {
+          runId: sourcing.runId,
+          stoppedBecause: sourcing.stoppedBecause,
+          policyVersion: sourcing.policyVersion,
+          spent: sourcing.spent,
+          stores: sourcing.stores.map((r) => ({
+            storeId: r.storeId,
+            discovery: r.discovery.ran ? `found ${r.discovery.suggested}` : r.discovery.reason,
+            economicsRefreshed: r.economics?.ran ?? [],
+            error: r.error,
+          })),
+        }
+      : null,
   });
 }

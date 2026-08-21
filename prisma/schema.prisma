@@ -805,6 +805,37 @@ enum ProgressionDecisionKind {
 // IT MUST SAY WHERE A NUMBER CAME FROM. A price a supplier published and a price
 // the owner was quoted on the phone are both usable and are not the same fact —
 // one can be refreshed, the other has to be re-asked.
+/// Every outbound request Genesis makes to a supplier, and why.
+///
+/// A THIRD AXIS, deliberately separate from AiUsageEvent and
+/// GrowthPointTransaction. Supplier HTTP is not AI cost — every column of
+/// AiUsageEvent is about tokens and models — and it is not Growth Point spend,
+/// because charging an owner for work Genesis chose to do unprompted would be a
+/// lie that balances. Keeping it apart is what makes any of the three readable.
+model SupplierRequestEvent {
+  id String @id @default(cuid())
+
+  /// The business the request was made on behalf of. Null for a call with no
+  /// business behind it, which is a real state rather than a gap.
+  storeId String?
+  /// The registered source (lib/sourcing/registry.ts), e.g. "printful".
+  sourceKey String
+  /// What was being asked for — "search", "economics.quote", "cost". Free text
+  /// rather than an enum: this is a ledger to read, not a thing to branch on.
+  operation String
+  ok        Boolean
+  durationMs Int
+
+  /// The unattended pass this belonged to, or null when a person triggered it.
+  /// What separates "Genesis spent this on its own" from "somebody asked".
+  runId String?
+
+  occurredAt DateTime @default(now())
+
+  @@index([storeId, occurredAt])
+  @@index([runId])
+}
+
 model SupplierEconomics {
   id                String @id @default(cuid())
   storeId           String

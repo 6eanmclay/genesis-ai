@@ -2974,6 +2974,78 @@ worked around.
 
 ---
 
+## 60. What a run may spend, refused before it is spent
+
+*BI milestone, increment 2. The scheduler stage makes outbound calls to third
+parties with nobody watching, and until now nothing bounded what it could cost.*
+
+### The ceiling is at the call
+
+A budget that counts requests after they are made has already spent the money it
+was meant to protect. So the boundary is `supplierRequest`, wrapping all nine
+outbound calls in `lib/fulfillment/printful.ts` — the only place in the codebase
+that fetches a supplier. It asks the budget **before** invoking, and an exhausted
+budget throws instead of fetching.
+
+That distinction is what the verification is built to prove rather than assume:
+a fake supplier counts its own invocations, and twenty attempts past a limit of
+three produce **three calls**. A tally-afterwards implementation reads twenty
+there.
+
+Two ceilings, because one is not enough: a per-run total, and a per-business
+share. Without the second, one business with a large catalogue consumes the whole
+pass and starves everything behind it — the opposite of what a bounded
+backlog-working scheduler is for.
+
+### Scoped to a run, so fulfilment is never throttled
+
+The same connector buys shipping labels and creates orders. Those must never be
+refused because a discovery pass used up its allowance, so the budget lives in an
+`AsyncLocalStorage` run scope: inside a pass it applies, outside it there is no
+budget and the call proceeds untouched. Asserted directly — eight calls outside a
+run all go through, and none is attributed to a run.
+
+### A third axis, not AI cost and not Growth Points
+
+`SupplierRequestEvent`. Folding supplier HTTP into `AiUsageEvent` would put
+network calls in a table whose every column is about tokens and models; folding
+it into `GrowthPointTransaction` would charge an owner for work Genesis chose to
+do unprompted. Both would be lies that balance. The suite asserts both tables
+stay empty while supplier requests are recorded.
+
+A **failed** request is still spend and still counts, otherwise a broken supplier
+would be free to hammer.
+
+### The refusal has to leave
+
+Four places catch errors and carry on — the per-product loop in `economics()`,
+the quote path, `discoverProducts`'s per-source catch, and the lifecycle
+wrappers. Every one of them would have turned the ceiling into a suggestion by
+swallowing the refusal and asking again for the next product or the next source.
+All four now rethrow a budget refusal specifically, and the last section proves
+it end to end through the real discovery stack: the supplier is asked **zero**
+times and nothing is written.
+
+### What the flawed first version got wrong
+
+Selection truncated to the budget, so the loop simply ran out of candidates and
+reported `completed` while businesses were still waiting — a truncated pass and a
+complete one were indistinguishable from inside. It now selects **one more than
+it can afford**: the extra candidate is never processed, only counted, which is
+how a page knows it is not the last page.
+
+A stopped run reports `budget_exhausted`, records no store as failed, writes
+nothing partial for the business it never reached, and leaves that business at
+the front of the queue for the next pass. All four asserted.
+
+### Status
+
+**VERIFIED** — `scripts/verify-sourcing-budget.ts`, 9 sections, real Postgres.
+Full regression green: 7 pure suites, 12 live including the browser suite,
+typecheck and build.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -3029,6 +3101,8 @@ scripts/verify-economics-producer.ts      detection, the producer contract, and 
 scripts/verify-economics-production.ts    the card form, the first real producer, and what nextMoves costs (real Postgres)
 scripts/verify-catalog-live.ts            what the catalog shows, and what it may not claim (real Postgres)
 scripts/verify-catalog-browser.ts         the catalog through a real browser (real server + Postgres)
+scripts/verify-sourcing-schedule.ts       who an unattended pass reaches, and that cron runs it (real Postgres)
+scripts/verify-sourcing-budget.ts         what a run may spend, refused at the call (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

@@ -299,6 +299,7 @@ export async function refreshEconomicsIfStale(storeId: string): Promise<{
   const { supplierEconomicsFor, economicsKey } = await import("./economics");
   const { fromVariantKey } = await import("./types");
   const { reportIssue } = await import("@/lib/observability/reportIssue");
+  const { isBudgetExhausted } = await import("./sourcingBudget");
 
   const ran: string[] = [];
   const skipped: { sourceKey: string; reason: string }[] = [];
@@ -346,6 +347,9 @@ export async function refreshEconomicsIfStale(storeId: string): Promise<{
       if (outcome.status === "ran") ran.push(source.key);
       else skipped.push({ sourceKey: source.key, reason: outcome.reason });
     } catch (error) {
+      // The ceiling leaves; a genuine supplier failure is reported. Conflating
+      // them would mean an exhausted run looked like a broken connector.
+      if (isBudgetExhausted(error)) throw error;
       reportIssue("a supplier economics refresh failed", error, {
         subsystem: "sourcing",
         stage: "economics.refresh",

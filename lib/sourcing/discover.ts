@@ -3,6 +3,7 @@ import { getProductSources, getProductSource } from "./registry";
 import { scoreCandidate, isWorthSuggesting, type SourcingContext } from "./recommend";
 import type { ProductSourceKind } from "@prisma/client";
 import { toVariantKey, type SourcedCandidate, type ProductSource, type SourceUnavailable } from "./types";
+import { isBudgetExhausted } from "./sourcingBudget";
 
 // Running discovery, and remembering what it found.
 //
@@ -107,11 +108,18 @@ export async function discoverProducts(params: {
         brandPositioning: context.brandPositioning,
         limit,
       })
-      .catch((error: unknown) => ({
-        ok: false as const,
-        reason: "provider_error" as const,
-        detail: error instanceof Error ? error.message.slice(0, 200) : "Search failed",
-      }));
+      .catch((error: unknown) => {
+        // A REFUSED BUDGET IS NOT AN UNAVAILABLE SOURCE. Recording it as one
+        // would put "Printful couldn't be searched" in front of an owner for a
+        // run that stopped exactly where it was told to, and would let the loop
+        // carry on asking the next source after the ceiling was reached.
+        if (isBudgetExhausted(error)) throw error;
+        return {
+          ok: false as const,
+          reason: "provider_error" as const,
+          detail: error instanceof Error ? error.message.slice(0, 200) : "Search failed",
+        };
+      });
 
     if (!result.ok) {
       const { ok: _ok, ...problem } = result;

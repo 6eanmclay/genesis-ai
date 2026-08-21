@@ -132,7 +132,7 @@ async function main() {
       const stocked = await makeStore("has-list");
       await lookedAt(stocked.id, daysAgo(2), "SUGGESTED");
 
-      const summaries = await runDueSourcing(10);
+      const summaries = (await runDueSourcing(10)).stores;
       check("both were reached", summaries.length, 2);
 
       const forStocked = summaries.find((s) => s.storeId === stocked.id)!;
@@ -171,7 +171,7 @@ async function main() {
         second.id
       );
 
-      const summaries = await runDueSourcing(10);
+      const summaries = (await runDueSourcing(10)).stores;
       check("every store was reached", summaries.length, 3);
       check("including the ones after the awkward one",
         [...summaries.map((s) => s.storeId)].sort(),
@@ -222,14 +222,15 @@ async function main() {
 
       const body = (await response.json()) as {
         stageErrors: string[];
-        sourcing: { storeId: string; discovery: string }[];
+        sourcing: { stoppedBecause: string; stores: { storeId: string; discovery: string }[] } | null;
       };
       // THE STAGE RAN, AND REACHED THIS STORE.
-      assert("the sourcing stage reported", Array.isArray(body.sourcing), JSON.stringify(body).slice(0, 200));
-      check("and it reached the store", body.sourcing.map((r) => r.storeId), [store.id]);
+      assert("the sourcing stage reported", body.sourcing !== null, JSON.stringify(body).slice(0, 200));
+      check("and it reached the store", body.sourcing?.stores.map((r) => r.storeId), [store.id]);
       // It says WHAT happened rather than only that it ran.
       assert("saying what happened to it",
-        typeof body.sourcing[0]?.discovery === "string", JSON.stringify(body.sourcing[0]));
+        typeof body.sourcing?.stores[0]?.discovery === "string", JSON.stringify(body.sourcing?.stores[0]));
+      check("and why the pass ended", body.sourcing?.stoppedBecause, "completed");
       // And it is isolated like every other stage: a failure here would be
       // named, not a 500 that silently loses the four before it.
       assert("no stage reported a failure", body.stageErrors.length === 0,
