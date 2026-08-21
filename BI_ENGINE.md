@@ -888,12 +888,15 @@ The timestamp list is capped at 20, newest first, while `subscriberCount` stays
 the true total and `firstSignupAt` stays the true oldest — a bounded list must
 never quietly become a wrong count (T6).
 
-### Pending live database verification — still open
+### Live database verification — done (2026-08-21)
 
-`getAudience`'s read is **still unexercised against real rows**, and whether the
-store has any signups at all is still unknown. Not closed by the 2026-08-21
-pass, which covered M2, M5 and M6 only. Named here rather than quietly folded
-into "the reads are done".
+`getAudience`'s read is **verified against real rows**
+(`scripts/verify-audience-recall-live.ts`), including the property the narrow
+`select` exists for: three real subscriber addresses are in the database and none
+of them appears anywhere in the serialized answer. Emptiness is asserted as
+emptiness — `daysSinceMostRecent` is `null`, never `0`, because "nobody has
+signed up in 0 days" reads as "somebody signed up today". Two businesses, two
+different counts, neither borrowing the other's.
 
 ---
 
@@ -955,11 +958,15 @@ a confident recall of something entirely unrelated. `reasoning.ts` strips those
 for the same reason; this list simply had not. Exactly the failure mode T2
 exists to prevent, caught before it ever reached a prompt.
 
-### Pending live database verification — still open
+### Live database verification — done (2026-08-21)
 
-`findRelevantMessages`' read is **still unexercised against real rows**, and how
-much history the store actually holds is still unknown. Not closed by the
-2026-08-21 pass. Named rather than assumed.
+`findRelevantMessages`' read is **verified against real rows**
+(`scripts/verify-audience-recall-live.ts`). A statement made 200 days ago is
+still recalled, which is the unbounded recall this milestone exists for; an
+unrelated question recalls nothing rather than the newest message dressed up as
+an answer; and J4's own reply sitting one day after the owner's decision is never
+quoted back as the owner's words, because the read takes only their messages.
+One business never remembers another's conversation, including concurrently.
 
 ---
 
@@ -995,8 +1002,9 @@ a to-do that authorises new scope.
   real order carries `shippingCostInCents`, and which `Order.status` values
   actually occur in production, are both still unmeasured — and stay honestly
   unknown rather than assumed.
-- **M8 and M9 are open.** `getAudience`' and `findRelevantMessages`' reads have
-  never run against real rows.
+- ~~**M8 and M9 are open.**~~ **Closed 2026-08-21** —
+  `scripts/verify-audience-recall-live.ts` exercises both reads against real
+  rows, across two businesses, with the privacy property each was written for.
 - **No production backfill has been run.** `backfill-topic-keys.ts --apply` is
   proved against a throwaway database only.
 
