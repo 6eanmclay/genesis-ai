@@ -5,6 +5,7 @@ import mammoth from "mammoth";
 import { callGenesisModel } from "@/lib/genesisModel";
 import { getBusinessProfile } from "@/lib/businessModel/profile";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
+import { planCommitments, recordCommitments } from "./commitments";
 import { EmployeeCaptureSchema, LocationCaptureSchema } from "@/lib/businessModel/factCapture";
 import { prisma } from "@/lib/prisma";
 import type { BusinessRecord } from "@prisma/client";
@@ -42,6 +43,30 @@ const ProductCaptureSchema = z.object({
   priceInCents: z.number().int().nullable(),
 });
 
+// A DATED COMMITMENT READ OUT OF THE FILE (2026-08-21).
+//
+// Deliberately NOT part of NewEntityProposalSchema below. That field answers
+// "what IS this file", and is mutually exclusive with relatedRecordId by
+// design — never both a match and a new-entity proposal at once. A commitment
+// is not an identity for the file, it is a FACT INSIDE it: a lease can match a
+// supplier already known AND carry a renewal date, and folding the two together
+// would mean losing the date exactly when the document was best understood.
+//
+// An array, because one contract routinely carries several dates.
+//
+// dueDate has no null branch anywhere in this pipeline. The prompt says it, the
+// schema says it, and the writer below drops anything that arrives without one
+// — a commitment with no date is a sentence, and the summary already holds the
+// sentences.
+const CommitmentCaptureSchema = z.object({
+  title: z.string(),
+  kind: z.string(),
+  dueDate: z.string(),
+  counterparty: z.string().nullable(),
+  amountInCents: z.number().int().nullable(),
+  sourceQuote: z.string(),
+});
+
 const NewEntityProposalSchema = z.discriminatedUnion("entityType", [
   z.object({ entityType: z.literal("contact"), data: ContactCaptureSchema }),
   z.object({ entityType: z.literal("employee"), data: EmployeeCaptureSchema }),
@@ -71,6 +96,9 @@ const AssetClassificationSchema = z.object({
   // at once. See NewEntityProposalSchema's own comment for why "product"
   // is shaped differently from the other four.
   newEntity: NewEntityProposalSchema.nullable(),
+  // Independent of everything above: a file can be matched to a known supplier
+  // and still state a renewal date, and both are worth keeping.
+  commitments: z.array(CommitmentCaptureSchema),
 });
 export type AssetClassification = z.infer<typeof AssetClassificationSchema>;
 
@@ -82,6 +110,10 @@ Decide:
 3. confidence — how much real, usable business information you were actually able to extract, not how sure you are about your own read of the file. A clear, legible invoice with a readable amount deserves high confidence. A blurry photo, a partially-legible document, or an unreadable/blank/noise file that gives you nothing real to work with deserves LOW confidence — even if you're completely sure it's unreadable/blank/noise. Being confident that there's nothing usable here is still a low-confidence result, never a high one. Never inflate this to seem helpful.
 4. relatedRecordId / relatedEntityType — you're given this business's real current products and known suppliers/customers, each with a real id. Only set these when the file clearly and specifically describes one of them (e.g. an invoice naming a supplier you were given, or a photo that's obviously of one specific listed product) — leave both null whenever the match isn't genuinely clear, rather than guessing.
 5. newEntity — only when relatedRecordId is null (nothing existing matched) and the file clearly, specifically describes ONE genuinely new real-world business entity worth remembering: a supplier or customer not already known (entityType "contact", with real roles like ["vendor"] or ["customer"]), a new employee ("employee"), a new business location ("location"), a new marketing campaign ("campaign"), or a new sellable product ("product"). Only propose this when the file is genuinely specific and clear about it — a real name plus real identifying detail, never a vague mention. Leave newEntity null for anything that doesn't cleanly fit one of these five, including contracts, policies, licenses, and SOPs — those stay real, useful, understood assets on their own; forcing them into the wrong entity type would be worse than leaving them as an asset.
+
+6. commitments — real DATED DEADLINES this business is bound by, stated in the file: a lease expiry, an insurance or licence renewal, a contract term end, a tax deadline, a warranty end. This is the one thing that must survive the file being closed, because nobody remembers it otherwise. For each: title (what falls due), kind ("lease" | "insurance" | "licence" | "contract" | "tax" | "warranty" | "subscription" | "other"), dueDate as YYYY-MM-DD, counterparty when the file names one, amountInCents when the file states an amount, and sourceQuote — the exact sentence from the file that states the date, copied verbatim so the owner can check it.
+
+   AN ACTUAL DATE OR NOTHING. If the file describes a term without stating when it ends ("a twelve-month lease", "renews annually"), that is NOT a commitment — do not compute one, do not assume a start date, return no entry for it. A wrong deadline is worse than no deadline: the owner would trust it and miss the real one. Return [] whenever the file states no dates, which is most files.
 
 Never fabricate a number, name, or date that isn't actually legible in the file. If the file is unreadable, unrelated to the business, or you genuinely can't tell what it is, say so honestly in the summary and set confidence low.`;
 
@@ -115,6 +147,11 @@ export interface AssetClassificationResult {
   // capture (internal understanding, not customer-facing, self-correcting
   // next turn).
   createdEntity: CreatedAssetEntity | null;
+  // Dated commitments actually written from this file (2026-08-21) — what was
+  // persisted, never what the model proposed. Empty is the ordinary case: most
+  // files state no dates, and one that states a term without a date states no
+  // deadline (see planCommitments' refusals).
+  commitments: { recordId: string; title: string; dueDate: string }[];
   // Set when a genuinely new, sellable product was confidently identified
   // — never written directly (an "item" BusinessRecord is computed live
   // from the real Product table, see lib/businessModel/internalMapper.ts;
@@ -214,6 +251,24 @@ export async function classifyAndExtractAsset(
     let createdEntity: CreatedAssetEntity | null = null;
     let productProposal: AssetProductProposal | null = null;
 
+    // DATED COMMITMENTS, written independently of everything below (2026-08-21).
+    //
+    // Gated on confidence for the same reason category is: a document legible
+    // enough to misread is a document whose dates can be misread. Not gated on
+    // relatedRecordId — a lease that matched a supplier already known is exactly
+    // the case where the renewal date matters most, and the newEntity branch
+    // below would have thrown it away.
+    const commitments = isHighConfidence
+      ? await recordCommitments(
+          storeId,
+          planCommitments({
+            raw: classification.commitments,
+            assetRecordId: record.id,
+            confidence: classification.confidence,
+          })
+        )
+      : [];
+
     // Only when confident, and only when nothing existing already matched
     // — newEntity and relatedRecordId are never both meaningful at once
     // (the prompt already asks for this, this is the same defense-in-depth
@@ -251,7 +306,7 @@ export async function classifyAndExtractAsset(
       }
     }
 
-    return { classification, isHighConfidence, createdEntity, productProposal };
+    return { classification, isHighConfidence, createdEntity, productProposal, commitments };
   } catch (err) {
     const Sentry = await import("@sentry/nextjs");
     Sentry.captureException(err);

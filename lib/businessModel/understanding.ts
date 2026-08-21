@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getCommitments, type CommitmentHorizon } from "@/lib/businessAssets/commitments";
 import { getBusinessProfile, type BusinessProfile } from "./profile";
 import { getBeliefs } from "@/lib/intelligence/learn";
 import { getRecentDecisionOutcomes, type RecentDecisionOutcome } from "./reasoning";
@@ -75,11 +76,24 @@ export interface BusinessUnderstanding {
   // reason stated at the top of this file — there is one answer to "what
   // does J4 know", and a designated asset is part of that answer.
   currentAssets: Record<string, DesignatedAsset>;
+  /**
+   * Dated commitments read out of the owner's own documents (2026-08-21).
+   *
+   * J4_FOUNDATION.md's last non-blocked coverage gap: a lease expiring in
+   * December was a sentence in Asset.summary and nothing J4 could act on weeks
+   * later. Part of Understand for the reason stated at the top of this file —
+   * there is one answer to "what does J4 know", and a deadline the business is
+   * bound by belongs in it.
+   *
+   * Empty is the ordinary state and an honest one: most files state no dates.
+   */
+  commitments: CommitmentHorizon;
   asOf: string;
 }
 
 export async function getBusinessUnderstanding(storeId: string): Promise<BusinessUnderstanding> {
-  const [profile, beliefs, recentDecisions, activeOutputs, store, currentAssets] = await Promise.all([
+  const [profile, beliefs, recentDecisions, activeOutputs, store, currentAssets, commitments] =
+    await Promise.all([
     getBusinessProfile(storeId),
     getBeliefs(storeId),
     getRecentDecisionOutcomes(storeId),
@@ -100,6 +114,7 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
       },
     }),
     currentAssetsByRole(storeId),
+    getCommitments(storeId),
   ]);
 
   return {
@@ -107,6 +122,7 @@ export async function getBusinessUnderstanding(storeId: string): Promise<Busines
     beliefs,
     recentDecisions,
     currentAssets,
+    commitments,
     activeThoughts: activeOutputs.map((o) => ({
       id: o.id,
       kind: o.kind,

@@ -2567,6 +2567,11 @@ async function applyGenesisMessageToStore(
               recentDecisions: understanding.recentDecisions,
               pastDecisionsRelevantToThisQuestion: pastDecisions,
               pastStatementsByTheOwnerRelevantToThisQuestion: pastStatements,
+              // DATED COMMITMENTS the owner never typed — read out of their own
+              // uploaded documents. Supplied on every reasoning path, not just
+              // this one, per J4_FOUNDATION.md's Gap B rule: one J4, not a
+              // shallower one for conversation. Empty is ordinary and honest.
+              commitments: understanding.commitments,
               activeThoughts: understanding.activeThoughts,
               // Growth Points Economy — same real signal, same "context
               // only, never a gate" semantics as cognitiveLayer.ts's own

@@ -407,6 +407,53 @@ export const ShipmentSchema = z.object({
 });
 export type Shipment = z.infer<typeof ShipmentSchema>;
 
+// A DATED COMMITMENT THE BUSINESS MADE, found inside a document (2026-08-21).
+//
+// The last non-blocked gap in J4_FOUNDATION.md's own coverage list: "if an
+// uploaded lease says it expires in December, that's understood as a sentence in
+// Asset.summary — not a date J4 holds anywhere it could act on weeks later. J4
+// can tell you what a document says right now; it can't yet proactively resurface
+// an obligation buried inside one."
+//
+// NOT AN APPOINTMENT. An appointment is a calendar event, synced from a calendar
+// the owner keeps. This is a deadline the business is bound by whether or not
+// anyone put it in a calendar — a lease expiry, an insurance renewal, a licence,
+// a contract term. Nothing syncs these, which is exactly why they get forgotten.
+//
+// NOT "obligations". lib/businessModel/obligations.ts already owns that word for
+// orders a customer is waiting on. Two unrelated things called obligations would
+// be a trap for whoever read one and reasoned about the other.
+//
+// dueDate IS REQUIRED, and it is the whole point. A commitment with no date is a
+// sentence, and a sentence is what the summary already held. Nothing here may
+// infer, round or guess a date — see the extractor: a document that states a term
+// without a date produces no commitment at all, which is the honest outcome.
+export const CommitmentSchema = z.object({
+  title: z.string(),
+  // lease | insurance | licence | contract | tax | warranty | subscription |
+  // other. A free string like every other categorical field here, so a real
+  // document naming something nobody anticipated does not break the write.
+  kind: z.string(),
+  /** ISO date. The reason this record exists. */
+  dueDate: z.string(),
+  /** Who it is with, when the document says. Never inferred from a filename. */
+  counterparty: z.string().nullable(),
+  amountInCents: z.number().int().nullable(),
+  /**
+   * THE SENTENCE IT CAME FROM, quoted from the document itself.
+   *
+   * Provenance the owner can check without reopening the file. A date extracted
+   * by a model and shown as fact, with no way to see what it was read from, is
+   * exactly the kind of confident claim this codebase refuses to make elsewhere.
+   */
+  sourceQuote: z.string(),
+  /** The asset record this was read out of, so the document is one hop away. */
+  sourceAssetRecordId: z.string().nullable(),
+  /** The extractor's own confidence, carried rather than hidden. */
+  confidence: z.number().nullable(),
+});
+export type Commitment = z.infer<typeof CommitmentSchema>;
+
 export const ENTITY_REGISTRY = {
   contact: { schema: ContactSchema, label: "Contact" },
   transaction: { schema: TransactionSchema, label: "Transaction" },
@@ -422,6 +469,7 @@ export const ENTITY_REGISTRY = {
   design: { schema: DesignSchema, label: "Design" },
   socialAccount: { schema: SocialAccountSchema, label: "Social Account" },
   shipment: { schema: ShipmentSchema, label: "Shipment" },
+  commitment: { schema: CommitmentSchema, label: "Commitment" },
 } as const;
 
 export type EntityType = keyof typeof ENTITY_REGISTRY;

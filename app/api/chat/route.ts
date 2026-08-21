@@ -580,6 +580,11 @@ export async function POST(request: Request) {
                       // date the owner has to do arithmetic on.
                       pastDecisionsRelevantToThisQuestion: pastDecisions,
                       pastStatementsByTheOwnerRelevantToThisQuestion: pastStatements,
+                      // Dated commitments read out of the owner's own uploaded
+                      // documents. Same object as the non-streaming path, for
+                      // Gap B's reason: both paths draw on identical
+                      // understanding or neither can be trusted.
+                      commitments: understanding.commitments,
                       activeThoughts: understanding.activeThoughts,
                       growthPointBalance: understanding.platformRelationship.growthPointBalance,
                       growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),

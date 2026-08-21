@@ -396,6 +396,7 @@ export async function runCognitiveReview(params: {
     beliefs,
     recentDecisions: recentDecisionOutcomes,
     platformRelationship,
+    commitments,
   } = understanding;
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
@@ -466,6 +467,15 @@ export async function runCognitiveReview(params: {
       price: p.priceInCents / 100,
       active: p.active,
     })),
+    // DATED COMMITMENTS the business is bound by, read out of its own uploaded
+    // documents (2026-08-21). Reason needs these named explicitly:
+    // J4_REASON_VALIDATION.md records that a new Understand capability does NOT
+    // reach Reason just because Understand computed it — it takes a bounded
+    // extension here, and this is it.
+    //
+    // A deadline is the one kind of fact where noticing late is the same as not
+    // noticing, which is exactly the "here is what I noticed" case.
+    commitments,
     orderSummary,
     customers: customerSummaries.map((c) => ({
       orderCount: c.orderCount,
