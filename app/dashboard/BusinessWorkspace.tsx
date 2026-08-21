@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { auth } from "@/auth";
+import { accessibleBusinesses } from "@/lib/businessContext";
 import type { Store, StoreRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
@@ -54,6 +56,21 @@ export async function BusinessWorkspace({
   slug,
   children,
 }: BusinessWorkspaceProps) {
+  // HOW MANY BUSINESSES THIS ACCOUNT REACHES (2026-08-21).
+  //
+  // Only ever used to decide whether a switch affordance exists at all. An
+  // account with one business — which is every production account today — gets
+  // exactly the shell it got before, unchanged: no control, no hint that
+  // switching is a thing. Nothing is "improved" into a workspace that was
+  // deliberately quiet.
+  //
+  // The chooser at /choose-business is what actually switches. This is only the
+  // way to reach it from inside a business, so the switch stays one deliberate
+  // act rather than a dropdown that changes context under the owner.
+  const session = await auth();
+  const reachable = session?.user ? await accessibleBusinesses(session.user.id) : [];
+  const hasOtherBusinesses = reachable.length > 1;
+
   // Filtering by real hasPermission belongs here, not in navConfig.ts —
   // that file is imported directly by the client-side DashboardShell, and
   // a value import of hasPermission would drag lib/permissions.ts's
@@ -330,6 +347,7 @@ export async function BusinessWorkspace({
       basePath={basePath}
       storeId={store.id}
       storeName={store.name}
+      hasOtherBusinesses={hasOtherBusinesses}
       storefrontUrl={storefrontUrl}
       logoUrl={store.logoUrl}
       sectionBadgeCounts={sectionBadgeCounts}

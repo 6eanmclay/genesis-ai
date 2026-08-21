@@ -111,6 +111,7 @@ export function DashboardShell({
   basePath,
   storeId,
   storeName,
+  hasOtherBusinesses,
   storefrontUrl,
   logoUrl,
   sectionBadgeCounts,
@@ -149,6 +150,14 @@ export function DashboardShell({
   basePath: string;
   storeId: string;
   storeName: string;
+  /**
+   * Whether this account reaches more than one business.
+   *
+   * False for every production account today, and false means the shell renders
+   * exactly as it did before — the switch affordance does not exist rather than
+   * being present and disabled.
+   */
+  hasOtherBusinesses: boolean;
   storefrontUrl: string | null;
   // Business Identity Generation (Arrival Experience milestone) — real
   // Store.logoUrl, honestly null until a business icon has been generated
@@ -591,10 +600,27 @@ export function DashboardShell({
   // mounted homes" pattern viewStoreLink above already uses. Sharing
   // `desktopMoreOpen` across both is safe since exactly one is ever
   // visible at a given viewport width — they never show simultaneously.
+  // Reaching the chooser from inside a business. Rendered ONLY when there is
+  // genuinely somewhere else to go — a control that exists to tell you it is
+  // unavailable is noise in a workspace whose emptiness is deliberate.
+  //
+  // A link, not a menu: switching business changes every number on the page, and
+  // BUSINESS_CONTEXT.md's rule is that it stays a deliberate act. A dropdown
+  // that swapped context in place would make it a glance.
+  const switchBusinessLink = hasOtherBusinesses ? (
+    <Link
+      href="/choose-business"
+      className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-zinc-500 transition hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 dark:text-zinc-400 dark:hover:text-zinc-50"
+    >
+      Switch
+    </Link>
+  ) : null;
+
   const primaryNavRow = (
     <>
       {genesisIcon}
       <p className="shrink-0 truncate text-sm font-semibold text-black dark:text-zinc-50">{storeName}</p>
+      {switchBusinessLink}
       {logoUrl && (
         // The business's own generated identity, distinct from Genesis's
         // (see the frozen design record's "Genesis and business have
@@ -867,6 +893,7 @@ export function DashboardShell({
         <div className="flex min-w-0 items-center gap-2.5">
           <GenesisAvatar className={GENESIS_AVATAR_SIZE.header} />
           <p className="truncate text-lg font-bold text-black dark:text-zinc-50">{storeName}</p>
+          {switchBusinessLink}
         </div>
         {viewStoreLink}
       </header>
