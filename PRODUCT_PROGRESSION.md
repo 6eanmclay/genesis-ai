@@ -155,21 +155,81 @@ Every outcome that was limited by capital records **which state it came from**,
 so J4 can say *"I'm assuming you don't want to put money in — tell me if that's
 wrong"* to one owner and not to the other.
 
-### C. Supplier economics — database, on `SourcedProduct`
+### C. Supplier economics — database, its own table (added 2026-08-20)
 
-Facts the supplier stated. Nullable throughout, and null means unknown (I2).
+Facts about what a supplier's product costs this business. Nullable throughout,
+and null means unknown (I2).
+
+Originally columns on `SourcedProduct`. Given its own table once the progression
+engine started reading it, for two reasons. A supplier's terms are a fact about
+*a product from a supplier*, not about *a suggestion Genesis once made* — the
+economics outlive the candidacy, and a product that was adopted or dismissed
+still costs what it costs. And the terms have to be identifiable independently of
+whether Genesis ever suggested the thing.
 
 ```prisma
-model SourcedProduct {
-  // ...existing...
-  /// Units required to buy at bulk price. NULL = the supplier did not say.
-  minimumOrderUnits   Int?
-  /// Per-unit cost AT that minimum. NULL = unknown. Never derived from a
-  /// percentage of unitCostInCents.
-  bulkUnitCostInCents Int?
-  leadTimeDays        Int?
+model SupplierEconomics {
+  storeId              String
+  sourceKey            String
+  externalProductId    String
+  externalVariantId    String   // "" for none, never NULL — see below
+  provenance           EconomicsProvenance
+  unitCostInCents      Int?
+  minimumOrderUnits    Int?
+  tiers                Json?    // [{ minUnits, unitCostInCents }]
+  shippingPerUnitInCents Int?
+  leadTimeDays         Int?
+  requiresCapabilities String[]
+  statedByUserId       String?
+  statedAt             DateTime
+  note                 String?
+
+  @@unique([storeId, sourceKey, externalProductId, externalVariantId])
 }
 ```
+
+**Identity is all four parts, always.** An external id alone is not an identity.
+Two suppliers can use the same one, and a variant is a different product with
+different terms. The unique key is what makes a minimum of 5000 landing on a
+product whose real minimum is 50 impossible rather than merely unlikely — and a
+wrong number about money is the kind nobody catches by reading the screen.
+`externalVariantId` is `""` rather than NULL for no-variant, because Postgres
+does not treat NULLs as equal in a unique index and the collision the key exists
+to prevent would slip straight through.
+
+**Three states, and none of them is zero** (I2, I11):
+
+| `provenance` | What it means | Where it comes from |
+|---|---|---|
+| `SUPPLIER` | A catalogue published these terms | A connector sync |
+| `OWNER` | Somebody rang the supplier and asked | `ownerStatesEconomics` — no API involved |
+| `UNAVAILABLE` | Somebody looked and there is no answer | `markEconomicsUnavailable` |
+
+`OWNER` is as real as `SUPPLIER` and is not the same fact: one can be refreshed,
+the other has to be re-asked. `stateEconomics` therefore takes provenance as a
+required argument rather than inferring it from the caller — code that guessed
+would eventually refresh away something a person went and found out.
+
+`UNAVAILABLE` resolves to nulls, but the *record* is not null. That is what makes
+it distinguishable from never having asked, and it is why J4 asks a different
+question in that case: asking the same thing again is asking somebody to repeat
+work they already did.
+
+**A partial answer stays partial.** `bulkTerms()` returns nulls rather than
+guesses. A supplier that published a unit price but no minimum has told us one
+thing and not the other, and calling the minimum 1 would turn *"I don't know"*
+into *"you can buy one"* — the exact lie I2 exists to prevent. Tiers win over
+flat figures when both exist, because a price break is what a bulk purchase would
+actually cost.
+
+**The unblock names the gap and why it matters.** `missingEconomics()` returns
+which halves are missing; `ECONOMICS_GAP_EXPLANATION` supplies the second
+sentence. *"I don't know the minimum order"* is a fact about Genesis. *"It
+decides what buying in bulk would actually cost you up front"* is a reason for
+the owner to go and find out.
+
+`SourcedProduct.minimumOrderUnits` / `bulkUnitCostInCents` remain as the
+discovery-time fallback, read only when no `SupplierEconomics` row exists.
 
 ### D. Product evidence — derived, never stored (I4, I5, I12)
 

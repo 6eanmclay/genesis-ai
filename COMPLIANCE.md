@@ -2216,6 +2216,78 @@ asserted is the deterministic half: which business's data reached the page.
 
 ---
 
+## 51. Everything could be decided, and nothing could be known
+
+*Not a defect. A gap of exactly the shape that produces one — recorded because
+the system was, for a fortnight, correct and useless at the same time.*
+
+### What was wrong
+
+Units 1–12 built a progression engine that reasons about minimum orders, bulk
+prices, margins, payback periods and affordability. All of it verified, all of it
+correct.
+
+In production it fired on nothing. No supplier this platform can reach states
+bulk pricing, so `bulkTerms()` resolved to nulls, so `assessFeasibility` returned
+`cannot_assess`, so **every deepen move in production was an unblock**. The
+system was behaving exactly as designed, and the design was honest about it:
+faced with unknown economics it said *"I can't tell you"* rather than guessing.
+
+The honest failure is still a failure. An owner who has sold sixty of something
+sees "I don't know what this costs" and nothing else, forever.
+
+### The tempting fix, and why it was refused
+
+There is an obvious way to make the whole engine light up: default a missing
+minimum to 1, or derive a bulk price as some percentage off the unit cost.
+
+Both invent a number about somebody's money. A defaulted minimum of 1 does not
+read as a guess on the screen — it reads as *"you can buy one"*, and the owner
+finds out it was 500 when they try. I2 and I11 exist for exactly this, and the
+whole point of a stated-provenance model is that there is nowhere for an invented
+figure to hide.
+
+### What was built instead
+
+Somewhere for real numbers to live, three ways for them to arrive, and one way to
+say there are none. See `PRODUCT_PROGRESSION.md` §C for the model.
+
+The load-bearing one is the least technical: **`ownerStatesEconomics`**. Somebody
+rings their supplier, asks two questions, and types in the answers. No connector,
+no API, no waiting for a supplier integration that may never exist. The move
+changes from a question into a recommendation the moment they do.
+
+Which makes the unblock's wording part of the mechanism rather than decoration.
+*"I don't know the minimum order"* is a fact about Genesis. *"It decides what
+buying in bulk would actually cost you up front"* is a reason for a person to
+pick up the phone. `ECONOMICS_GAP_EXPLANATION` is that second sentence, and it is
+the only reason the first sentence is worth showing.
+
+And when the answer is *there is no answer*, that is recorded too. `UNAVAILABLE`
+resolves to nulls but is not itself null — so J4 asks *"can you find another
+supplier?"* rather than asking the same question again next week.
+
+### Status
+
+**VERIFIED** — `scripts/verify-economics-live.ts`, real Postgres.
+
+Seven sections, of which two are the point:
+
+- **Identity is all four parts.** Two suppliers sharing one external id keep
+  separate terms; a variant-less listing does not match the first variant of
+  something else; another business sees none of it.
+- **The whole journey, in one test.** No capital, no sales, no stock → J4
+  recommends something that costs nothing up front → sixty real sales → the
+  product earns rung 1 → J4 asks the one question it needs → the owner answers →
+  `not_yet`, with the real shortfall → the owner reinvests what they earned →
+  `recommended_now` → accepted, and the product is theirs at 410 instead of 980.
+
+  Asserted at every step: **capital was never inferred from the revenue.** The
+  business took $1,080 and its posture stayed `unstated` until a person said
+  otherwise.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2260,6 +2332,10 @@ scripts/verify-sourcing-live.ts           discovery, dismissal and adoption (rea
 scripts/verify-business-context-live.ts   which business is active, and how it is chosen (real Postgres)
 scripts/verify-business-browser.ts        the whole thing through a real browser (real server + Postgres)
 scripts/verify-business-paths.ts          business-scoped navigation paths
+scripts/verify-progression.ts             evidence, policy, capital posture, earned rungs
+scripts/verify-moves.ts                   ranking, and what a move may claim
+scripts/verify-progression-live.ts        the progression engine end to end (real Postgres)
+scripts/verify-economics-live.ts          supplier economics, and the zero-capital journey (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
