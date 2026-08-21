@@ -17,11 +17,11 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
-import { adoptNewBusiness } from "@/lib/businessContext";
+import { accessTo, adoptNewBusiness } from "@/lib/businessContext";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { J4Surface } from "@/app/j4/J4Workspace";
-import { Prisma } from "@prisma/client";
+import { Prisma, type ApprovalRequest } from "@prisma/client";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import {
@@ -5487,17 +5487,58 @@ export type GenesisActionDecisionResult =
 // Meeting with J4 M7 — the real non-redirecting caller this was built for
 // in M2 finally exists: the meeting's own inline explain/approve/execute
 // UI (app/onboarding/meeting/actions.ts) calls these two directly.
-export async function performApproveGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
-  const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  const approval = await prisma.approvalRequest.findFirst({
-    where: { id: approvalRequestId, storeId, status: "PENDING_APPROVAL" },
-  });
 
-  // Already decided/reverted elsewhere (a real race, not a bug) — nothing
-  // left to do.
-  if (!approval) {
+// THE PROPOSAL'S OWN BUSINESS DECIDES (2026-08-21, BUSINESS_CONTEXT.md Phase C).
+//
+// The four decision actions below looked their proposal up as
+// `findFirst({ id, storeId })`, where storeId was the account's ACTIVE business.
+// Safe — a stranger's id matches nothing — but wrong for the case this whole
+// migration exists for: a proposal belonging to the owner's OTHER business
+// returned `not_found`, so J4 offered a real change and clicking approve said it
+// had vanished.
+//
+// A slug would not be the right fix here even where one is available. A proposal
+// belongs to exactly one business by its own row, which is more authoritative
+// than anything the URL could say — and an id plus a mismatched slug is a
+// question with no good answer.
+//
+// So: find it by id, then check the caller can actually reach the business it
+// belongs to. `accessTo` is the same single definition of the authorization
+// boundary every other site uses, and permission is checked against the role
+// held THERE rather than the role held wherever the account happens to be.
+//
+// A caller with no access gets null, and every caller turns that into exactly
+// the answer it gave before — not_found. Telling somebody a proposal exists but
+// belongs to a business that is not theirs is an answer they did not have.
+async function reachableApproval(
+  approvalRequestId: string,
+  where: Prisma.ApprovalRequestWhereInput
+): Promise<{ approval: ApprovalRequest; userId: string; storeId: string } | null> {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  const userId = session.user.id;
+
+  const approval = await prisma.approvalRequest.findFirst({
+    where: { ...where, id: approvalRequestId },
+  });
+  if (!approval) return null;
+
+  const access = await accessTo(userId, approval.storeId);
+  if (!access) return null;
+  if (!hasPermission(access.role, PERMISSIONS.ANALYTICS_VIEW)) return null;
+
+  return { approval, userId, storeId: approval.storeId };
+}
+
+export async function performApproveGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
+  // Already decided/reverted elsewhere (a real race, not a bug), or belonging to
+  // a business this caller cannot reach — both are "there is nothing here for
+  // you", and they deliberately give the same answer.
+  const reached = await reachableApproval(approvalRequestId, { status: "PENDING_APPROVAL" });
+  if (!reached) {
     return { outcome: "not_found" };
   }
+  const { approval, storeId, userId } = reached;
 
   const definition = GENESIS_ACTIONS[approval.actionType];
   if (!definition) {
@@ -5577,14 +5618,11 @@ export async function approveGenesisAction(approvalRequestId: string) {
 }
 
 export async function performRejectGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
-  const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  const approval = await prisma.approvalRequest.findFirst({
-    where: { id: approvalRequestId, storeId, status: "PENDING_APPROVAL" },
-  });
-
-  if (!approval) {
+  const reached = await reachableApproval(approvalRequestId, { status: "PENDING_APPROVAL" });
+  if (!reached) {
     return { outcome: "not_found" };
   }
+  const { approval, storeId, userId } = reached;
 
   await prisma.approvalRequest.update({
     where: { id: approval.id, storeId },
@@ -5626,16 +5664,13 @@ export async function revertApprovalRequest(
   _prevState: ActionState,
   _formData: FormData
 ): Promise<ActionState> {
-  const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  const original = await prisma.approvalRequest.findFirst({
-    where: { id: approvalRequestId, storeId, status: "EXECUTED" },
-  });
-
   // Already reverted elsewhere (a real race, not a bug) — nothing left to
   // do, so this is a no-op redirect, never a thrown error.
-  if (!original) {
+  const reached = await reachableApproval(approvalRequestId, { status: "EXECUTED" });
+  if (!reached) {
     redirect("/dashboard");
   }
+  const { approval: original, storeId, userId } = reached;
 
   try {
     const definition = GENESIS_ACTIONS[original.actionType];
@@ -5719,19 +5754,14 @@ export async function revertApprovalRequest(
 // untouched and the summary says so plainly — a normal outcome, not a
 // thrown error (there's no error boundary yet to catch one gracefully).
 export async function regenerateApprovalImage(approvalRequestId: string) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  const approval = await prisma.approvalRequest.findFirst({
-    where: {
-      id: approvalRequestId,
-      storeId,
-      status: "PENDING_APPROVAL",
-      actionType: "update_product_image",
-    },
+  const reached = await reachableApproval(approvalRequestId, {
+    status: "PENDING_APPROVAL",
+    actionType: "update_product_image",
   });
-
-  if (!approval) {
+  if (!reached) {
     redirect("/dashboard");
   }
+  const { approval, storeId } = reached;
 
   const input = approval.input as { productId: string; imageUrl: string };
   const previousValues = approval.previousValues as {
