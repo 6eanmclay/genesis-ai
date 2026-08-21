@@ -11,6 +11,7 @@ import {
 } from "./progression";
 import { findGraduationOpportunities, RECONSIDERATION_EXPLANATION } from "./graduation";
 import { assessFeasibility, decide } from "./feasibility";
+import { bulkTerms, missingEconomics, supplierEconomics, ECONOMICS_GAP_EXPLANATION } from "./economics";
 import { methodProfile } from "./methodProfile";
 import { scoreCandidate, type SourcingContext } from "./recommend";
 import { buildSourcingContext } from "./context";
@@ -99,20 +100,45 @@ export async function nextMoves(
 
     const sourced = await prisma.sourcedProduct.findFirst({
       where: { storeId, adoptedProductId: opportunity.productId },
-      select: { bulkUnitCostInCents: true, minimumOrderUnits: true },
+      select: {
+        bulkUnitCostInCents: true,
+        minimumOrderUnits: true,
+        sourceKey: true,
+        externalProductId: true,
+        externalVariantId: true,
+      },
     });
+    const stated = sourced
+      ? await supplierEconomics(storeId, {
+          sourceKey: sourced.sourceKey,
+          externalProductId: sourced.externalProductId,
+          externalVariantId: sourced.externalVariantId === "" ? null : sourced.externalVariantId,
+        })
+      : null;
 
     if (outcome.kind === "cannot_assess") {
       // NOT DROPPED — turned into the question that would resolve it. This is
       // the move most systems never model: when Genesis cannot decide, the
       // useful output is the specific thing it would need to know.
+      //
+      // And it says WHY each gap matters, not just that it exists. "I don't know
+      // the minimum order" is a fact about Genesis; "it decides what buying in
+      // bulk would actually cost you up front" is a reason for the owner to go
+      // and find out.
+      const gaps = missingEconomics(stated);
       moves.push(
         unblockMove({
           productId: opportunity.productId,
           sourcedProductId: null,
           subject: opportunity.productName,
-          missing: outcome.missing,
-          question: `What would ${opportunity.productName} cost you to buy in bulk?`,
+          missing:
+            gaps.length > 0
+              ? gaps.map((gap) => ECONOMICS_GAP_EXPLANATION[gap])
+              : outcome.missing,
+          question:
+            stated?.provenance === "UNAVAILABLE"
+              ? `Can you find another supplier for ${opportunity.productName}, or ask again what they'd charge in bulk?`
+              : `What would ${opportunity.productName} cost you to buy in bulk, and how many would you have to order?`,
           // Worth exactly what it would unlock: strong product, valuable
           // question; weak product, not worth asking about.
           blockedMoveStrength:
@@ -133,7 +159,7 @@ export async function nextMoves(
         toKind: opportunity.toKind,
         evidence: opportunity.evidence,
         outcome,
-        bulkUnitCostInCents: sourced?.bulkUnitCostInCents ?? null,
+        bulkUnitCostInCents: bulkTerms(stated).bulkUnitCostInCents ?? sourced?.bulkUnitCostInCents ?? null,
         upfrontCents:
           opportunity.feasibility.kind === "not_yet" ? opportunity.feasibility.upfrontCents : null,
         paybackWeeks:
@@ -178,13 +204,24 @@ export async function nextMoves(
       context
     );
 
+    // Economics from their own record, falling back to whatever discovery
+    // recorded. Unknown either way stays unknown.
+    const candidateEconomics = await supplierEconomics(storeId, {
+      sourceKey: candidate.sourceKey,
+      externalProductId: candidate.externalProductId,
+      externalVariantId: fromVariantKey(candidate.externalVariantId),
+    });
+    const candidateTerms = candidateEconomics
+      ? bulkTerms(candidateEconomics)
+      : {
+          minimumOrderUnits: candidate.minimumOrderUnits,
+          bulkUnitCostInCents: candidate.bulkUnitCostInCents,
+        };
+
     const feasibility = assessFeasibility({
       profile: methodProfile(candidate.kind),
       posture,
-      supplier: {
-        minimumOrderUnits: candidate.minimumOrderUnits,
-        bulkUnitCostInCents: candidate.bulkUnitCostInCents,
-      },
+      supplier: candidateTerms,
       evidence: null,
       currency: context.currency ?? posture.currency,
     });

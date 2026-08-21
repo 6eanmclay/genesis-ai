@@ -338,6 +338,7 @@ model Store {
   tasks                     Task[]
   sourcedProducts           SourcedProduct[]
   progressionDecisions      ProgressionDecision[]
+  supplierEconomics         SupplierEconomics[]
 
   @@index([planId])
 }
@@ -783,6 +784,79 @@ model ProgressionDecision {
 enum ProgressionDecisionKind {
   ACCEPTED
   DECLINED
+}
+
+// WHAT A SUPPLIER'S PRODUCT ACTUALLY COSTS (2026-08-20, P0.5).
+//
+// The progression engine can reason about minimums, bulk pricing and margins;
+// until now nothing in production could tell it any of those. This is where they
+// live, and its shape is decided by three things it must never do.
+//
+// IT MUST NEVER LET ONE SUPPLIER'S ECONOMICS REACH ANOTHER'S PRODUCT. Identity
+// is (business, source, product, variant) — all four. An external id alone is
+// not an identity: two suppliers can and do use the same one, and a minimum of
+// 5000 landing on a product whose real minimum is 50 is a wrong number about
+// money that nobody would catch.
+//
+// IT MUST NEVER TURN UNKNOWN INTO ZERO. Every figure is nullable, and absence is
+// carried through the whole pipeline as `cannot_assess` rather than as a free
+// or infinitely-profitable product.
+//
+// IT MUST SAY WHERE A NUMBER CAME FROM. A price a supplier published and a price
+// the owner was quoted on the phone are both usable and are not the same fact —
+// one can be refreshed, the other has to be re-asked.
+model SupplierEconomics {
+  id                String @id @default(cuid())
+  storeId           String
+  /// The registered source (lib/sourcing/registry.ts), e.g. "printful".
+  sourceKey         String
+  /// The supplier's own ids. "" is the no-variant sentinel, same as
+  /// SourcedProduct — a listing with no variants must match the row with no
+  /// variant, not the first variant of something else.
+  externalProductId String
+  externalVariantId String @default("")
+
+  provenance EconomicsProvenance
+
+  /// What one unit costs at no minimum. NULL = unknown, never zero.
+  unitCostInCents   Int?
+  /// The smallest order the supplier will take. NULL = unknown.
+  minimumOrderUnits Int?
+  /// Price breaks, cheapest-last: [{ minUnits, unitCostInCents }]. NULL = none
+  /// stated, which is different from a supplier that has no breaks (an empty
+  /// array). Json because the shape of a price break varies by supplier and a
+  /// table of two columns per tier would be a join for no reason.
+  tiers             Json?
+
+  shippingPerUnitInCents Int?
+  leadTimeDays           Int?
+  /// Capabilities this product would demand of the owner beyond its method's
+  /// own — an oversized item needing real storage, say. Strings from
+  /// OwnerCapability; unknown ones are ignored rather than trusted.
+  requiresCapabilities   String[] @default([])
+
+  /// Who said so, and when. An owner-provided figure carries their name so the
+  /// answer can be attributed back when it is questioned.
+  statedByUserId String?
+  statedAt       DateTime @default(now())
+  /// Free text the owner added — "quoted by email 12 Aug". Never parsed.
+  note           String?
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, sourceKey, externalProductId, externalVariantId])
+  @@index([storeId, sourceKey])
+}
+
+enum EconomicsProvenance {
+  /// The supplier's own API or catalogue said so.
+  SUPPLIER
+  /// The owner found out and told Genesis. Just as real, and re-asked rather
+  /// than refreshed.
+  OWNER
+  /// Somebody looked and there is no answer to be had. Distinct from never
+  /// having looked: this one should not be asked about again immediately.
+  UNAVAILABLE
 }
 
 enum SourcedProductStatus {

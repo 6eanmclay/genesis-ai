@@ -12,6 +12,7 @@ import {
   type ProductEvidence,
 } from "./progression";
 import { assessFeasibility, type Feasibility } from "./feasibility";
+import { bulkTerms, supplierEconomics } from "./economics";
 
 // When a business has EARNED a better way of sourcing something it already sells.
 //
@@ -248,14 +249,49 @@ async function findSupplierRow(
 
   const adopted = await prisma.sourcedProduct.findFirst({
     where: { storeId, adoptedProductId: product.id },
-    select,
+    select: { ...select, sourceKey: true, externalProductId: true, externalVariantId: true },
   });
-  if (adopted) return adopted;
+
+  // ECONOMICS COME FROM THEIR OWN RECORD FIRST (2026-08-20). SupplierEconomics
+  // is where a supplier's terms live, and it is the only place an owner can put
+  // what they found out by asking. The discovery row's own columns are a
+  // fallback for anything written before that table existed.
+  //
+  // Identity is all four parts — business, source, product, variant. An external
+  // id alone is not an identity: two suppliers can use the same one, and a
+  // minimum of 5000 landing on a product whose real minimum is 50 is a wrong
+  // number about money that nobody would catch.
+  const ref = adopted
+    ? {
+        sourceKey: adopted.sourceKey,
+        externalProductId: adopted.externalProductId,
+        externalVariantId: adopted.externalVariantId === "" ? null : adopted.externalVariantId,
+      }
+    : product.sourceKey && product.externalProductId
+      ? {
+          sourceKey: product.sourceKey,
+          externalProductId: product.externalProductId,
+          externalVariantId: product.externalVariantId,
+        }
+      : null;
+
+  if (ref) {
+    const stated = await supplierEconomics(storeId, ref);
+    if (stated) {
+      const terms = bulkTerms(stated);
+      // Even an UNAVAILABLE record is an answer: somebody looked. It resolves to
+      // nulls, which the pipeline carries as cannot_assess rather than treating
+      // as never having been asked.
+      if (terms.minimumOrderUnits !== null || terms.bulkUnitCostInCents !== null || stated.provenance === "UNAVAILABLE") {
+        return terms;
+      }
+    }
+  }
+
+  if (adopted) return { minimumOrderUnits: adopted.minimumOrderUnits, bulkUnitCostInCents: adopted.bulkUnitCostInCents };
 
   // Fallback for products adopted before the link, or created by another path.
-  // Requires BOTH the source and the external id: an external id alone is not
-  // an identity, and treating it as one is how a product picks up somebody
-  // else's price.
+  // Requires BOTH the source and the external id, for the reason above.
   if (product.sourceKey && product.externalProductId) {
     return prisma.sourcedProduct.findFirst({
       where: {
