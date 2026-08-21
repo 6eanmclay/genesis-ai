@@ -27,6 +27,7 @@ function assert(label: string, ok: boolean, detail = ""): void {
 const DAY = 86_400_000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY);
 
+
 async function main() {
   const db = await startRealPostgres();
   await db.prisma.$disconnect();
@@ -430,6 +431,207 @@ async function main() {
           JSON.stringify(earned[0].feasibility));
       }
     }
+    // -----------------------------------------------------------------------
+    console.log("\n9. A product never picks up another listing's numbers");
+    {
+      await reset();
+      const user = await makeUser("supplier@example.test");
+      const store = await makeStore(user.id, "supplier");
+
+      // Two sources, the SAME external id. Before this was hardened, a lookup on
+      // externalProductId alone could hand a product the wrong supplier's
+      // minimum — a wrong number about money, silently.
+      const adopted = await prisma.product.create({
+        data: {
+          storeId: store.id, name: "Foam roller", description: "d", priceInCents: 1_800,
+          costInCents: 980, sourceKind: "WHOLESALE_DROPSHIP",
+          sourceKey: "wholesale", externalProductId: "SHARED-ID", active: true,
+        },
+      });
+      const rightRow = await prisma.sourcedProduct.create({
+        data: {
+          storeId: store.id, sourceKey: "wholesale", externalProductId: "SHARED-ID",
+          kind: "WHOLESALE_DROPSHIP", name: "Foam roller",
+          minimumOrderUnits: 100, bulkUnitCostInCents: 410,
+          adoptedProductId: adopted.id,
+        },
+      });
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: store.id, sourceKey: "other-source", externalProductId: "SHARED-ID",
+          kind: "WHOLESALE_DROPSHIP", name: "Something else entirely",
+          minimumOrderUnits: 5000, bulkUnitCostInCents: 9999,
+        },
+      });
+      for (let i = 0; i < 40; i++) await sell(store.id, adopted.id, { when: daysAgo(56 - i) });
+
+      const [opportunity] = await findGraduationOpportunities(store.id);
+      assert("a graduation is offered", opportunity !== undefined);
+      if (opportunity?.feasibility.kind === "not_yet") {
+        // 100 x 410, the adopted listing's numbers — not 5000 x 9999.
+        check("it uses the listing this product was adopted from",
+          opportunity.feasibility.upfrontCents, 41_000);
+      } else {
+        assert("feasibility should be not_yet", false, JSON.stringify(opportunity?.feasibility));
+      }
+
+      // And with the adoption link removed, the fallback still requires the
+      // SOURCE to match, not just the id.
+      await prisma.sourcedProduct.update({
+        where: { id: rightRow.id }, data: { adoptedProductId: null },
+      });
+      const [viaFallback] = await findGraduationOpportunities(store.id);
+      if (viaFallback?.feasibility.kind === "not_yet") {
+        check("the fallback matches on source as well as id",
+          viaFallback.feasibility.upfrontCents, 41_000);
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n10. A hand-entered product loses nothing, and invents nothing");
+    {
+      await reset();
+      const user = await makeUser("manual@example.test");
+      const store = await makeStore(user.id, "manual");
+      // Typed in by the owner: no source, no external id, no supplier row.
+      const handmade = await makeProduct(store.id, "Hand-wound tensor ring", 400);
+      for (let i = 0; i < 40; i++) await sell(store.id, handmade.id, { when: daysAgo(56 - i) });
+
+      // It STILL earns its rung. Evidence is evidence, whoever entered the
+      // product — losing the progression because nobody sourced it would punish
+      // the owner for making something themselves.
+      const evidence = await productEvidence(store.id, handmade.id);
+      check("its evidence is real", evidence.unitsSold, 40);
+      check("and it earns a rung", earnedRungs(evidence, POLICY), [1]);
+
+      const [opportunity] = await findGraduationOpportunities(store.id);
+      assert("the graduation is still offered", opportunity !== undefined);
+      // And the honest consequence: nothing can be costed, so nothing is
+      // claimed. cannot_assess rather than a fabricated minimum.
+      check("but it cannot be costed", opportunity?.feasibility.kind, "cannot_assess");
+      if (opportunity?.feasibility.kind === "cannot_assess") {
+        assert("saying which facts are missing",
+          opportunity.feasibility.missing.length > 0, JSON.stringify(opportunity.feasibility));
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n11. A snapshot that cannot be read honours the decision");
+    {
+      await reset();
+      const { parseConditions } = await import("@/lib/sourcing/graduation");
+      const user = await makeUser("drift@example.test");
+      const store = await makeStore(user.id, "drift");
+      const roller = await prisma.product.create({
+        data: {
+          storeId: store.id, name: "Foam roller", description: "d", priceInCents: 1_800,
+          costInCents: 980, sourceKind: "WHOLESALE_DROPSHIP",
+          sourceKey: "w", externalProductId: "r1", active: true,
+        },
+      });
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: store.id, sourceKey: "w", externalProductId: "r1", kind: "WHOLESALE_DROPSHIP",
+          name: "Foam roller", minimumOrderUnits: 100, bulkUnitCostInCents: 410,
+          adoptedProductId: roller.id,
+        },
+      });
+      for (let i = 0; i < 40; i++) await sell(store.id, roller.id, { when: daysAgo(56 - i) });
+
+      const [offered] = await findGraduationOpportunities(store.id);
+      const posture = await capitalPosture(store.id);
+      const { conditionsOf } = await import("@/lib/sourcing/graduation");
+      const good = conditionsOf(offered, posture, { minimumOrderUnits: 100, bulkUnitCostInCents: 410 });
+      assert("a real snapshot reads back", parseConditions(good) !== null);
+
+      await recordProgressionDecision({
+        storeId: store.id, productId: roller.id, toKind: offered.toKind,
+        decision: "DECLINED", conditions: good,
+      });
+      check("declined, so not offered", (await findGraduationOpportunities(store.id)).length, 0);
+
+      // Simulate schema drift: the stored shape no longer matches.
+      await prisma.progressionDecision.updateMany({
+        where: { storeId: store.id },
+        data: { conditions: { somethingElse: true } },
+      });
+
+      // A CAST WOULD HAVE READ undefined FOR EVERY FIELD and started answering
+      // "has anything changed" by accident. Validation catches it, and the
+      // conservative half of the choice is taken: the owner said no, and that is
+      // honoured rather than re-raised because OUR schema moved.
+      check("an unreadable snapshot is rejected", parseConditions({ somethingElse: true }), null);
+      check("and the decline still stands", (await findGraduationOpportunities(store.id)).length, 0);
+
+      // Every field is genuinely checked, not just the object's presence.
+      const missingOne = { ...good } as Record<string, unknown>;
+      delete missingOne.policyVersion;
+      check("a missing field is rejected", parseConditions(missingOne), null);
+      check("a wrong type is rejected", parseConditions({ ...good, unitsSold: "40" }), null);
+      check("a null where a number belongs is rejected", parseConditions({ ...good, spendableCents: null }), null);
+      // But a legitimately nullable field stays nullable.
+      assert("a nullable field may be null", parseConditions({ ...good, paybackWeeks: null }) !== null);
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n12. Whole-catalogue evidence is one pass, and agrees with the single one");
+    {
+      await reset();
+      const { storeProductEvidence } = await import("@/lib/sourcing/progression");
+      const user = await makeUser("batch@example.test");
+      const store = await makeStore(user.id, "batch");
+
+      const products = [];
+      for (let p = 0; p < 12; p++) {
+        const product = await makeProduct(store.id, `Product ${p}`, p % 3 === 0 ? null : 400);
+        products.push(product);
+        for (let i = 0; i < 5 + p; i++) {
+          await sell(store.id, product.id, { quantity: (i % 3) + 1, when: daysAgo(40 - i) });
+        }
+      }
+
+      const batched = await storeProductEvidence(store.id);
+      check("every product is covered", batched.size, products.length);
+
+      // THE PROPERTY THAT MATTERS: the batched reader and the single one are the
+      // same arithmetic. Two copies of a margin calculation is two chances to
+      // get money wrong, so they share one.
+      for (const product of products) {
+        const single = await productEvidence(store.id, product.id);
+        const fromBatch = batched.get(product.id)!;
+        check(`${product.name}: units agree`, fromBatch.unitsSold, single.unitsSold);
+        check(`${product.name}: margin agrees`, fromBatch.netMarginCents, single.netMarginCents);
+        check(`${product.name}: rate agrees`, Math.round(fromBatch.unitsPerWeek * 100), Math.round(single.unitsPerWeek * 100));
+      }
+
+      // AND IT HOLDS AT SCALE. A per-product loop is three queries each, so a
+      // forty-product catalogue would be over a hundred; the batched reader is
+      // three, by construction — one Promise.all, visible in the source.
+      //
+      // What is asserted here is the consequence rather than a query count:
+      // a catalogue several times larger still produces correct evidence for
+      // every product, and stage is still derived from it. Counting statements
+      // would need pg_stat_statements, which is not loaded here, and inventing a
+      // number would be worse than measuring the outcome.
+      const stage = await businessStage(store.id);
+      assert("a stage is still derived", ["exploring", "selling", "proven", "committing"].includes(stage), stage);
+
+      const bigUser = await makeUser("batch-big@example.test");
+      const bigStore = await makeStore(bigUser.id, "batch-big");
+      const bigProducts = [];
+      for (let p = 0; p < 40; p++) {
+        const product = await makeProduct(bigStore.id, `Bulk ${p}`, 400);
+        bigProducts.push(product);
+        await sell(bigStore.id, product.id, { when: daysAgo(20) });
+      }
+      const bigBatch = await storeProductEvidence(bigStore.id);
+      check("a forty-product catalogue is fully covered", bigBatch.size, 40);
+      assert("every one has real evidence",
+        [...bigBatch.values()].every((e) => e.unitsSold === 1), "some product lost its sale");
+      assert("and a stage is derived for it",
+        ["exploring", "selling", "proven", "committing"].includes(await businessStage(bigStore.id)));
+    }
+
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

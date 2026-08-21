@@ -136,11 +136,48 @@ export async function productEvidence(
     prisma.product.findFirst({ where: { id: productId, storeId }, select: { costInCents: true } }),
     prisma.order.findMany({
       where: { storeId, productId },
-      select: { quantity: true, amountInCents: true, status: true, createdAt: true, shippingCostInCents: true },
+      select: {
+        productId: true,
+        quantity: true,
+        amountInCents: true,
+        status: true,
+        createdAt: true,
+        shippingCostInCents: true,
+      },
       orderBy: { createdAt: "asc" },
     }),
   ]);
 
+  return buildEvidence({
+    productId,
+    currency: store.currency,
+    costInCents: product?.costInCents ?? null,
+    orders,
+  });
+}
+
+interface EvidenceOrder {
+  quantity: number;
+  amountInCents: number;
+  status: string;
+  createdAt: Date;
+  shippingCostInCents: number | null;
+}
+
+/**
+ * The arithmetic, in one place — pure.
+ *
+ * Both the single-product and whole-store readers call this, so the batched
+ * version cannot drift from the single one. Two copies of a margin calculation
+ * is two chances to get money wrong.
+ */
+function buildEvidence(input: {
+  productId: string;
+  currency: string;
+  costInCents: number | null;
+  orders: EvidenceOrder[];
+}): ProductEvidence {
+  const { productId, currency, costInCents, orders } = input;
   const paid = orders.filter((order) => order.status === "paid");
   const refunded = orders.filter((order) => order.status === "refunded");
 
@@ -149,7 +186,10 @@ export async function productEvidence(
   const netRevenueCents = paid.reduce((sum, order) => sum + order.amountInCents, 0);
   const shippingSpentCents = paid.reduce((sum, order) => sum + (order.shippingCostInCents ?? 0), 0);
 
-  const firstSoldAt = paid[0]?.createdAt ?? null;
+  const firstSoldAt =
+    paid.length > 0
+      ? paid.reduce((earliest, o) => (o.createdAt < earliest ? o.createdAt : earliest), paid[0].createdAt)
+      : null;
   const windowDays = firstSoldAt
     ? Math.max(1, Math.ceil((Date.now() - firstSoldAt.getTime()) / MS_PER_DAY))
     : 0;
@@ -160,15 +200,13 @@ export async function productEvidence(
   // profitable, and every threshold that reads margin refuses it rather than
   // treating the absence as good news.
   const netMarginCents =
-    product?.costInCents === null || product?.costInCents === undefined
-      ? null
-      : netRevenueCents - product.costInCents * unitsSold - shippingSpentCents;
+    costInCents === null ? null : netRevenueCents - costInCents * unitsSold - shippingSpentCents;
 
   const totalHandled = unitsSold + refundedUnits;
 
   return {
     productId,
-    currency: store.currency,
+    currency,
     unitsSold,
     refundedUnits,
     orderCount: paid.length,
@@ -181,6 +219,58 @@ export async function productEvidence(
       netMarginCents === null || unitsSold === 0 ? null : Math.round(netMarginCents / unitsSold),
     returnRate: totalHandled === 0 ? 0 : refundedUnits / totalHandled,
   };
+}
+
+/**
+ * Evidence for every product in a business, in one pass.
+ *
+ * Replaces a per-product loop (2026-08-20). `businessStage()` and
+ * `findGraduationOpportunities()` both walked every product calling
+ * `productEvidence()`, which is three queries each — invisible at fifty products
+ * and a page nobody can load at five thousand. This is three queries total,
+ * whatever the catalogue size.
+ *
+ * Shares `buildEvidence` with the single-product reader, deliberately: two
+ * copies of a margin calculation is two chances to get money wrong.
+ */
+export async function storeProductEvidence(storeId: string): Promise<Map<string, ProductEvidence>> {
+  const [store, products, orders] = await Promise.all([
+    prisma.store.findUniqueOrThrow({ where: { id: storeId }, select: { currency: true } }),
+    prisma.product.findMany({ where: { storeId }, select: { id: true, costInCents: true } }),
+    prisma.order.findMany({
+      where: { storeId, productId: { not: null } },
+      select: {
+        productId: true,
+        quantity: true,
+        amountInCents: true,
+        status: true,
+        createdAt: true,
+        shippingCostInCents: true,
+      },
+    }),
+  ]);
+
+  const byProduct = new Map<string, EvidenceOrder[]>();
+  for (const order of orders) {
+    if (!order.productId) continue;
+    const existing = byProduct.get(order.productId);
+    if (existing) existing.push(order);
+    else byProduct.set(order.productId, [order]);
+  }
+
+  const evidence = new Map<string, ProductEvidence>();
+  for (const product of products) {
+    evidence.set(
+      product.id,
+      buildEvidence({
+        productId: product.id,
+        currency: store.currency,
+        costInCents: product.costInCents,
+        orders: byProduct.get(product.id) ?? [],
+      })
+    );
+  }
+  return evidence;
 }
 
 // --- policy applied to evidence --------------------------------------------
@@ -249,9 +339,12 @@ export async function businessStage(
   const paidOrders = await prisma.order.count({ where: { storeId, status: "paid" } });
   if (paidOrders === 0) return "exploring";
 
-  for (const product of products) {
-    const evidence = await productEvidence(storeId, product.id);
-    if (earnedRungs(evidence, policy).length > 0) return "proven";
+  // ONE pass over the whole catalogue (2026-08-20). This walked every product
+  // issuing three queries each; at fifty products that is invisible and at five
+  // thousand it is a page nobody can load.
+  const evidence = await storeProductEvidence(storeId);
+  for (const productEvidenceEntry of evidence.values()) {
+    if (earnedRungs(productEvidenceEntry, policy).length > 0) return "proven";
   }
   return "selling";
 }

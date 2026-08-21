@@ -28,7 +28,11 @@ export type Subsystem =
   | "integrations"
   | "scheduler"
   | "execution"
-  | "email";
+  | "email"
+  // Product sourcing and progression (2026-08-20). Its own subsystem rather than
+  // borrowing "integrations": a supplier being unreachable and a progression
+  // snapshot failing to parse are different problems for different people.
+  | "sourcing";
 
 export interface IssueContext {
   /** Which part of the system, for routing and alerting. */

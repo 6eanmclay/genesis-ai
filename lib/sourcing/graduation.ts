@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { ProductSourceKind } from "@prisma/client";
-import { methodProfile, methodsAboveRung, type OwnerCapability } from "./methodProfile";
+import { methodProfile, methodsAboveRung, isOwnerCapability, type OwnerCapability } from "./methodProfile";
+import { reportIssue } from "@/lib/observability/reportIssue";
 import { currentPolicy, type ProgressionPolicy } from "./progressionPolicy";
 import {
   capitalPosture,
@@ -55,6 +56,56 @@ export interface ProgressionConditions {
   sourceAvailable: boolean;
   currency: string;
   policyVersion: string;
+}
+
+/**
+ * Read a stored conditions snapshot, or admit that it cannot be read.
+ *
+ * NOT a cast (2026-08-20). `conditions` is Json, written and read by this file
+ * today — so a cast holds right up until the shape changes, at which point every
+ * comparison silently reads `undefined` and "has anything changed" starts
+ * answering by accident. In the core decision model that is the worst kind of
+ * failure: it is invisible and it concerns money.
+ *
+ * Returns null on any drift. The caller treats an unreadable snapshot as a
+ * decision it cannot re-evaluate, which honours the owner's decline rather than
+ * re-raising something on a shape mismatch.
+ */
+export function parseConditions(value: unknown): ProgressionConditions | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+
+  const isNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  const isNullableNumber = (v: unknown): v is number | null => v === null || isNumber(v);
+  const isString = (v: unknown): v is string => typeof v === "string";
+
+  if (raw.capitalState !== "unstated" && raw.capitalState !== "stated") return null;
+  if (!isNumber(raw.spendableCents)) return null;
+  if (!Array.isArray(raw.ownerCapabilities) || !raw.ownerCapabilities.every(isString)) return null;
+  if (!isNullableNumber(raw.minimumOrderUnits)) return null;
+  if (!isNullableNumber(raw.bulkUnitCostInCents)) return null;
+  if (!isNumber(raw.unitsSold)) return null;
+  if (!isNumber(raw.unitsPerWeek)) return null;
+  if (!isNullableNumber(raw.netMarginCents)) return null;
+  if (!isNullableNumber(raw.paybackWeeks)) return null;
+  if (typeof raw.sourceAvailable !== "boolean") return null;
+  if (!isString(raw.currency)) return null;
+  if (!isString(raw.policyVersion)) return null;
+
+  return {
+    capitalState: raw.capitalState,
+    spendableCents: raw.spendableCents,
+    ownerCapabilities: (raw.ownerCapabilities as string[]).filter(isOwnerCapability),
+    minimumOrderUnits: raw.minimumOrderUnits,
+    bulkUnitCostInCents: raw.bulkUnitCostInCents,
+    unitsSold: raw.unitsSold,
+    unitsPerWeek: raw.unitsPerWeek,
+    netMarginCents: raw.netMarginCents,
+    paybackWeeks: raw.paybackWeeks,
+    sourceAvailable: raw.sourceAvailable,
+    currency: raw.currency,
+    policyVersion: raw.policyVersion,
+  };
 }
 
 export type ReconsiderationReason =
@@ -164,6 +215,64 @@ function conditionsFrom(input: {
   };
 }
 
+interface SupplierEconomics {
+  minimumOrderUnits: number | null;
+  bulkUnitCostInCents: number | null;
+}
+
+/**
+ * The supplier listing this product came from, if any.
+ *
+ * Three attempts, strongest first, and each is scoped to the business:
+ *
+ *   1. the ADOPTION LINK, which is a fact written when the owner adopted it;
+ *   2. source key + external id + variant, which identifies a listing uniquely
+ *      within a source rather than across all of them;
+ *   3. nothing — a product the owner typed in themselves.
+ *
+ * The third is not a failure. A manually entered product genuinely has no
+ * supplier, and the honest consequence is `cannot_assess` rather than a
+ * fabricated minimum. What it must NOT do is silently pick up another listing's
+ * numbers because an external id happened to collide.
+ */
+async function findSupplierRow(
+  storeId: string,
+  product: {
+    id: string;
+    sourceKey: string | null;
+    externalProductId: string | null;
+    externalVariantId: string | null;
+  }
+): Promise<SupplierEconomics | null> {
+  const select = { minimumOrderUnits: true, bulkUnitCostInCents: true } as const;
+
+  const adopted = await prisma.sourcedProduct.findFirst({
+    where: { storeId, adoptedProductId: product.id },
+    select,
+  });
+  if (adopted) return adopted;
+
+  // Fallback for products adopted before the link, or created by another path.
+  // Requires BOTH the source and the external id: an external id alone is not
+  // an identity, and treating it as one is how a product picks up somebody
+  // else's price.
+  if (product.sourceKey && product.externalProductId) {
+    return prisma.sourcedProduct.findFirst({
+      where: {
+        storeId,
+        sourceKey: product.sourceKey,
+        externalProductId: product.externalProductId,
+        // "" is the no-variant sentinel; a product with no variant must match
+        // the listing with no variant, not the first variant of it.
+        externalVariantId: product.externalVariantId ?? "",
+      },
+      select,
+    });
+  }
+
+  return null;
+}
+
 /**
  * What this business has earned the right to do differently.
  *
@@ -180,7 +289,7 @@ export async function findGraduationOpportunities(
   const [products, posture, decisions] = await Promise.all([
     prisma.product.findMany({
       where: { storeId, active: true },
-      select: { id: true, name: true, sourceKind: true, sourceKey: true, externalProductId: true },
+      select: { id: true, name: true, sourceKind: true, sourceKey: true, externalProductId: true, externalVariantId: true },
     }),
     capitalPosture(storeId),
     prisma.progressionDecision.findMany({ where: { storeId } }),
@@ -200,14 +309,19 @@ export async function findGraduationOpportunities(
       .pop();
     if (!target) continue;
 
-    // Supplier economics for the same external product, where discovery
-    // recorded them. Unknown stays unknown, and blocks rather than defaults.
-    const sourced = product.externalProductId
-      ? await prisma.sourcedProduct.findFirst({
-          where: { storeId, externalProductId: product.externalProductId },
-          select: { minimumOrderUnits: true, bulkUnitCostInCents: true, sourceKey: true },
-        })
-      : null;
+    // WHICH SUPPLIER ROW BELONGS TO THIS PRODUCT (hardened 2026-08-20).
+    //
+    // The adoption link is the FACT: `SourcedProduct.adoptedProductId` was
+    // written when the owner adopted the candidate, and it says exactly which
+    // supplier listing became this product. The earlier version matched on
+    // `externalProductId` alone, which is a heuristic wearing a fact's clothes:
+    // it is not unique across sources, so two suppliers listing the same
+    // external id could have handed this product the wrong one's minimum — a
+    // wrong number about money, silently.
+    //
+    // The id match survives as a fallback for products adopted before the link
+    // existed, and it is scoped by sourceKey as well, which the original was not.
+    const sourced = await findSupplierRow(storeId, product);
     const supplier = {
       minimumOrderUnits: sourced?.minimumOrderUnits ?? null,
       bulkUnitCostInCents: sourced?.bulkUnitCostInCents ?? null,
@@ -239,7 +353,27 @@ export async function findGraduationOpportunities(
     if (previous) {
       // Accepted means it is done. Nothing to offer.
       if (previous.decision === "ACCEPTED") continue;
-      reconsideration = materialChange(previous.conditions as unknown as ProgressionConditions, now, policy);
+
+      const before = parseConditions(previous.conditions);
+      if (!before) {
+        // The snapshot cannot be read, so nothing can be compared. The owner
+        // declined this; honouring that is the conservative half of the choice,
+        // and re-raising on a shape mismatch would be nagging somebody because
+        // OUR schema moved.
+        //
+        // Reported rather than swallowed: a snapshot that will not parse is a
+        // real drift somebody needs to see, and silence here would hide the one
+        // failure this validation exists to catch.
+        reportIssue(`a progression decision's conditions could not be read`, null, {
+          subsystem: "sourcing",
+          stage: "progression.conditions",
+          storeId,
+          extra: { productId: product.id, decisionId: previous.id, policyVersion: previous.policyVersion },
+        });
+        continue;
+      }
+
+      reconsideration = materialChange(before, now, policy);
       // Declined, and nothing has changed. Not raised again, however much time
       // has passed — time is not a reason, and re-asking on a timer is how a
       // partner becomes a nag.
