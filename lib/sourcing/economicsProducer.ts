@@ -1,4 +1,5 @@
-import { getProductSource } from "./registry";
+import { getProductSource, getProductSources } from "./registry";
+import type { ProductSource } from "./types";
 import { ingestFromSupplier, type EconomicsRecord, type IngestReport } from "./economicsIngest";
 import type { PriceTier } from "./economics";
 import type { OwnerCapability } from "./methodProfile";
@@ -134,6 +135,17 @@ export async function runEconomicsProducer(
   }
 
   const statements = await producer.statements({ storeId: params.storeId });
+
+  // ASKED AGAIN AFTER THE CALL, deliberately. A producer that discovered its
+  // supplier was unreachable can only say so once it has tried, and reporting
+  // "had nothing to state" for a connector that was actually down would hide the
+  // one fact an operator needs. Found by verification: the real reason was being
+  // swallowed by the empty-list branch below.
+  const blockedAfter = producer.blockedOn;
+  if (blockedAfter.length > 0) {
+    return { status: "not_run", reason: `${source.displayName} is not ready: ${blockedAfter.join("; ")}` };
+  }
+
   if (statements.length === 0) {
     // Nothing to say is not a failure, and it is not an instruction to forget
     // everything either — a producer that returns nothing writes nothing.
@@ -185,4 +197,79 @@ export function producerReadiness(producer: EconomicsProducer): { ready: boolean
     blockedOn.push("it does not state which currency its figures are in");
   }
   return { ready: blockedOn.length === 0, blockedOn };
+}
+
+/**
+ * A registered source, as a producer.
+ *
+ * THE REFERENCE PATH, and the only one that exists today: Printful. A source
+ * that declares `statesEconomics` and implements `economics()` becomes a
+ * producer with no per-supplier plumbing, so the second connector is one method
+ * on a source rather than a second integration.
+ *
+ * The currency is whatever the source ANSWERED with, not whatever this file
+ * assumed — which is why it is resolved by calling `economics()` rather than
+ * declared up front. A source that cannot say is blocked, and says so.
+ */
+export function producerFromSource(source: ProductSource): EconomicsProducer {
+  let resolvedCurrency: string | null = null;
+  let unavailable: string | null = null;
+
+  return {
+    sourceKey: source.key,
+    // Filled in by the call below. Nothing writes with a blank currency: the
+    // ingest is only reached after `statements()` has returned, by which time
+    // the source has either stated one or failed.
+    get currency() {
+      return resolvedCurrency ?? "";
+    },
+    get blockedOn() {
+      const reasons = [...source.blockedOn];
+      if (!source.capabilities.statesEconomics || !source.economics) {
+        reasons.push(`${source.displayName} does not state standing supplier economics`);
+      }
+      if (unavailable) reasons.push(unavailable);
+      return reasons;
+    },
+    async statements({ storeId }) {
+      const result = await source.economics!({ storeId });
+      if (!result.ok) {
+        // Recorded rather than thrown, so the run reports "not run, and here is
+        // why" instead of taking a page down over a supplier being unreachable.
+        unavailable = result.detail ?? `${source.displayName} could not state its economics`;
+        return [];
+      }
+      resolvedCurrency = result.currency;
+      return result.statements.map((statement) => ({
+        externalProductId: statement.externalProductId,
+        externalVariantId: statement.externalVariantId,
+        unitCostInCents: statement.unitCostInCents ?? null,
+        minimumOrderUnits: statement.minimumOrderUnits ?? null,
+        tiers: statement.tiers ?? null,
+        shippingPerUnitInCents: statement.shippingPerUnitInCents ?? null,
+        leadTimeDays: statement.leadTimeDays ?? null,
+        note: statement.note ?? null,
+      }));
+    },
+  };
+}
+
+/**
+ * Every registered source that can currently state economics, for one business.
+ *
+ * Nothing calls this on a schedule yet, and that is deliberate: when a supplier
+ * sync runs is a product decision about cost and freshness, not plumbing. What
+ * exists is the path, ready for whichever caller is chosen.
+ */
+export async function runReadyEconomicsProducers(params: {
+  storeId: string;
+  now?: Date;
+}): Promise<{ sourceKey: string; outcome: ProducerRunOutcome }[]> {
+  const results: { sourceKey: string; outcome: ProducerRunOutcome }[] = [];
+  for (const source of getProductSources()) {
+    if (!source.capabilities.statesEconomics) continue;
+    const producer = producerFromSource(source);
+    results.push({ sourceKey: source.key, outcome: await runEconomicsProducer(producer, params) });
+  }
+  return results;
 }

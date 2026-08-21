@@ -35,6 +35,7 @@ export function AttentionCard({
   highlightId,
   regenerateAction,
   dismissAction,
+  economicsAction,
   currentPath,
 }: {
   card: AttentionCardData;
@@ -61,6 +62,10 @@ export function AttentionCard({
   // kind-specific action row below (Approve/Reject/"Have J4 take care of
   // it") — dismissing is never routed through any of those.
   dismissAction: (cardId: string, currentPath: string) => Promise<void>;
+  // The owner answering J4's supplier question in place (2026-08-21). Optional
+  // for the same reason regenerateAction is: only a caller whose tasks can
+  // actually include an economics question ever passes it.
+  economicsAction?: (formData: FormData) => void;
   currentPath: string;
 }) {
   const highlighted = isHighlighted(card, highlightId);
@@ -109,7 +114,15 @@ export function AttentionCard({
                   <RegenerateImageButton regenerateAction={regenerateAction} approvalId={card.approvalRequestId} />
                 )}
               </>
-            ) : card.kind === "observation" ? null : (
+            ) : card.kind === "observation" ? null : card.kind === "task" &&
+              card.economics &&
+              economicsAction ? (
+              <SupplierEconomicsAnswer
+                economics={card.economics}
+                action={economicsAction}
+                currentPath={currentPath}
+              />
+            ) : (
               <form
                 action={
                   card.kind === "issue"
@@ -186,5 +199,98 @@ export function AttentionCard({
         </form>
       </div>
     </div>
+  );
+}
+
+/**
+ * The two questions, and the two honest ways of not answering them.
+ *
+ * Rendered only for the facts still outstanding: an owner who already gave the
+ * minimum sees one field, not two. That comes from `requiredInput`, which the
+ * detection pass keeps current, so the card asks for what is missing NOW rather
+ * than what was missing when it was first raised.
+ *
+ * "I haven't found out" and "they wouldn't tell me" are separate buttons on
+ * purpose. They are different facts — one is the absence of an answer and writes
+ * nothing at all, the other is an answer and is recorded as UNAVAILABLE — and
+ * collapsing them into one control would be the interface inventing a value the
+ * owner did not give.
+ */
+function SupplierEconomicsAnswer({
+  economics,
+  action,
+  currentPath,
+}: {
+  economics: NonNullable<Extract<AttentionCardData, { kind: "task" }>["economics"]>;
+  action: (formData: FormData) => void;
+  currentPath: string;
+}) {
+  const wantsMinimum = economics.gaps.includes("minimum_order");
+  const wantsPrice = economics.gaps.includes("bulk_price");
+
+  return (
+    <form action={action} className="mt-1 flex w-full flex-wrap items-end gap-2">
+      <input type="hidden" name="dedupeKey" value={economics.dedupeKey} />
+      <input type="hidden" name="currentPath" value={currentPath} />
+
+      {wantsMinimum && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Minimum order</span>
+          <input
+            type="number"
+            name="minimumOrderUnits"
+            min={1}
+            step={1}
+            inputMode="numeric"
+            placeholder="100"
+            className="w-24 rounded-lg border border-black/[.08] bg-white px-2.5 py-1.5 text-[13px] tabular-nums text-black dark:border-white/[.145] dark:bg-black/20 dark:text-zinc-50"
+          />
+        </label>
+      )}
+
+      {wantsPrice && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            Price each ({economics.currency})
+          </span>
+          <input
+            type="number"
+            name="bulkUnitCost"
+            min={0}
+            step="0.01"
+            inputMode="decimal"
+            placeholder="4.10"
+            className="w-24 rounded-lg border border-black/[.08] bg-white px-2.5 py-1.5 text-[13px] tabular-nums text-black dark:border-white/[.145] dark:bg-black/20 dark:text-zinc-50"
+          />
+        </label>
+      )}
+
+      <button
+        type="submit"
+        name="outcome"
+        value="quoted"
+        className="rounded-full bg-[#2563eb] px-3.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+      >
+        Save
+      </button>
+      <button
+        type="submit"
+        name="outcome"
+        value="supplier_would_not_say"
+        title="Recorded as a real answer: they were asked and would not say"
+        className="rounded-full border border-black/[.08] px-3.5 py-1.5 text-xs text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
+      >
+        They wouldn&apos;t say
+      </button>
+      <button
+        type="submit"
+        name="outcome"
+        value="dont_know_yet"
+        title="Nothing is recorded and J4 keeps the question open"
+        className="rounded-full px-2 py-1.5 text-xs text-zinc-500 underline hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+      >
+        I&apos;ll find out
+      </button>
+    </form>
   );
 }

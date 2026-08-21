@@ -36,6 +36,11 @@ export const aliexpressSource: ProductSource = {
     createsListings: false,
     shipsDirect: true,
     quotesCost: true,
+    // No economics() implementation, so this is false. The "if and only if" is
+    // asserted over the registry rather than trusted — a source claiming a
+    // capability it does not implement reads as working right up until a caller
+    // believes it.
+    statesEconomics: false,
   },
   // Nobody fulfils on Genesis's behalf here — the supplier ships to the
   // customer directly and no connector routes anything to them.

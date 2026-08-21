@@ -1,6 +1,15 @@
 import { prisma } from "@/lib/prisma";
-import { printfulFulfillmentConnector } from "@/lib/fulfillment/printful";
-import type { ProductSource, SourceQuoteResult, SourceSearchResult, SourcedCandidate, SourcingIntent } from "./types";
+import { printfulFulfillmentConnector, printfulEconomicsQuote } from "@/lib/fulfillment/printful";
+import { fromVariantKey } from "./types";
+import type {
+  ProductSource,
+  SourceEconomicsResult,
+  SourceEconomicsStatement,
+  SourceQuoteResult,
+  SourceSearchResult,
+  SourcedCandidate,
+  SourcingIntent,
+} from "./types";
 
 // Printful, as a product SOURCE.
 //
@@ -30,6 +39,7 @@ export const printfulSource: ProductSource = {
     createsListings: true,
     shipsDirect: true,
     quotesCost: true,
+    statesEconomics: true,
   },
   fulfillmentProvider: "PRINTFUL",
   blockedOn: [],
@@ -83,6 +93,87 @@ export const printfulSource: ProductSource = {
         detail: error instanceof Error ? error.message.slice(0, 200) : "Printful search failed",
       };
     }
+  },
+
+  /**
+   * PRINTFUL'S STANDING TERMS — the first real economics producer (2026-08-21).
+   *
+   * Reads what this business actually sells through Printful and states, per
+   * product, only what Printful genuinely says:
+   *
+   *   unitCost   — the variant's real price.
+   *   shipping   — the real rate, or NULL when the rate lookup fails. Never 0
+   *                for unknown; `printfulEconomicsQuote` is a separate function
+   *                from `getCost` precisely so those two can be told apart.
+   *   minimum    — 1, and this is a STATED FACT rather than a default. Print on
+   *                demand genuinely has no minimum: one is what you can order.
+   *                It is the one place in this codebase where a minimum of 1 is
+   *                true rather than a missing value wearing a number, and it is
+   *                only true because the method makes it true.
+   *   tiers      — an empty array, meaning "this supplier publishes no price
+   *                breaks", which is a different statement from null.
+   *   leadTime   — NOT STATED. Printful's fulfilment time varies by product and
+   *                the API does not commit to one here, so nothing is recorded.
+   *
+   * Per product, not per catalogue: a supplier's terms are only worth fetching
+   * for things the business already sells, and Printful prices a VARIANT, so a
+   * product without one cannot be priced and is skipped rather than guessed at.
+   */
+  async economics({ storeId }: { storeId: string }): Promise<SourceEconomicsResult> {
+    const adopted = await prisma.sourcedProduct.findMany({
+      where: { storeId, sourceKey: "printful", NOT: { adoptedProductId: null } },
+      select: { externalProductId: true, externalVariantId: true },
+    });
+    if (adopted.length === 0) {
+      return { ok: true, currency: "USD", statements: [] };
+    }
+
+    const statements: SourceEconomicsStatement[] = [];
+    let currency: string | null = null;
+
+    for (const row of adopted) {
+      const variantId = fromVariantKey(row.externalVariantId);
+      if (!variantId) continue;
+
+      try {
+        const quote = await printfulEconomicsQuote({
+          storeId,
+          externalProductId: row.externalProductId,
+          externalVariantId: variantId,
+        });
+        // ONE CURRENCY PER ACCOUNT. If Printful ever answered differently for
+        // two products, that is a fact nobody can act on rather than one to
+        // average — the batch stops rather than mixing money.
+        if (currency && currency !== quote.currency) {
+          return {
+            ok: false,
+            reason: "provider_error",
+            detail: `Printful returned prices in both ${currency} and ${quote.currency}.`,
+          };
+        }
+        currency = quote.currency;
+
+        statements.push({
+          externalProductId: row.externalProductId,
+          externalVariantId: variantId,
+          unitCostInCents: quote.unitCostInCents,
+          shippingPerUnitInCents: quote.shippingPerUnitInCents,
+          // See the note above: real for print on demand, and only for it.
+          minimumOrderUnits: 1,
+          tiers: [],
+          leadTimeDays: null,
+        });
+      } catch {
+        // One product Printful cannot price does not lose the rest, and nothing
+        // is stated for it. Skipping is the honest outcome: the gap stays a gap.
+        continue;
+      }
+    }
+
+    if (!currency) {
+      return { ok: false, reason: "provider_error", detail: "Printful priced none of these products." };
+    }
+    return { ok: true, currency, statements };
   },
 
   async quote({ storeId, candidate }: { storeId: string; candidate: SourcedCandidate }): Promise<SourceQuoteResult> {

@@ -34,6 +34,15 @@ export interface SourceCapabilities {
   shipsDirect: boolean;
   /** Will the source quote a unit cost before anything is created? */
   quotesCost: boolean;
+  /**
+   * Can the source state the standing economics of products this business
+   * already sells — what they cost, in what currency, at what minimum?
+   *
+   * Distinct from `quotesCost`, which prices ONE candidate somebody is looking
+   * at. This is the supplier's own terms for things already adopted, and it is
+   * what feeds the progression engine rather than discovery.
+   */
+  statesEconomics: boolean;
 }
 
 /**
@@ -127,7 +136,36 @@ export interface ProductSource {
    * a caller believes it.
    */
   quote?(params: { storeId: string; candidate: SourcedCandidate }): Promise<SourceQuoteResult>;
+
+  /**
+   * The supplier's standing terms for products this business already sells —
+   * present if and only if `capabilities.statesEconomics` is true.
+   *
+   * Returns what it can genuinely stand behind and omits the rest. The whole
+   * economics layer is built on unknown staying unknown, and a source is the
+   * first place that could break it.
+   *
+   * The "if and only if" is asserted over the whole registry by
+   * verify-product-sourcing.ts, same as `quote`.
+   */
+  economics?(params: { storeId: string }): Promise<SourceEconomicsResult>;
 }
+
+/** What a source says about one product it supplies, in its own currency. */
+export interface SourceEconomicsStatement {
+  externalProductId: string;
+  externalVariantId: string | null;
+  unitCostInCents?: number | null;
+  minimumOrderUnits?: number | null;
+  tiers?: { minUnits: number; unitCostInCents: number }[] | null;
+  shippingPerUnitInCents?: number | null;
+  leadTimeDays?: number | null;
+  note?: string | null;
+}
+
+export type SourceEconomicsResult =
+  | { ok: true; currency: string; statements: SourceEconomicsStatement[] }
+  | ({ ok: false } & SourceUnavailable);
 
 export interface SourceQuote {
   /** What the supplier charges for one, before shipping. */

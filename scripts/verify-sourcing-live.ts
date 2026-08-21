@@ -50,7 +50,7 @@ function podSource(candidates: SourcedCandidate[]): ProductSource {
     key: "pod-test",
     displayName: "Print partner",
     kind: "PRINT_ON_DEMAND",
-    capabilities: { customization: true, createsListings: true, shipsDirect: true, quotesCost: true },
+    capabilities: { customization: true, createsListings: true, shipsDirect: true, quotesCost: true, statesEconomics: false },
     fulfillmentProvider: "PRINTFUL",
     blockedOn: [],
     async search(): Promise<SourceSearchResult> {
@@ -65,7 +65,7 @@ function wholesaleSource(candidates: SourcedCandidate[]): ProductSource {
     key: "wholesale-test",
     displayName: "Wholesale partner",
     kind: "WHOLESALE_DROPSHIP",
-    capabilities: { customization: false, createsListings: false, shipsDirect: true, quotesCost: true },
+    capabilities: { customization: false, createsListings: false, shipsDirect: true, quotesCost: true, statesEconomics: false },
     fulfillmentProvider: null,
     blockedOn: [],
     async search(): Promise<SourceSearchResult> {

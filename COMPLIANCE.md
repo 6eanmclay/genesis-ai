@@ -2672,6 +2672,85 @@ at the harness and produced exactly one `ECONNREFUSED`.
 
 ---
 
+## 56. Three instruments, two of which lied
+
+*The last three pre-catalog items. The third is mostly a story about measurement,
+and it is the part worth reading.*
+
+### The card is the form
+
+`PRODUCT_PROGRESSION.md` §C5a has the shape. The short version: every other Task
+card hands off to a conversation because the work is open-ended; this one is two
+numbers, so the card collects them and goes through the identical path the
+conversation does.
+
+`parseCardEconomicsAnswer` is pure and separately tested, because parsing is
+where a figure about somebody's money gets invented. An empty field stays absent
+rather than becoming 0. A fractional minimum is refused rather than rounded.
+Both fields blank is not a quote — it is somebody who has not found out, and it
+is recorded as such rather than as an empty answer.
+
+### The first real producer
+
+`ProductSource` gained `economics()` behind a `statesEconomics` capability,
+asserted if-and-only-if over the registry the same way `quote` already was.
+Printful implements it; AliExpress declares `false` and has nothing behind it.
+
+The judgement in it is what Printful is allowed to say. It states a minimum of
+**1**, and that is a stated fact rather than a default: print on demand genuinely
+has no minimum. It is the only place in this codebase where a minimum of 1 is
+true, and it is only true because the method makes it true.
+
+It states shipping as **null** when the rate lookup fails. `getCost` reports that
+as 0, which is right for an order estimate and wrong for a stated fact, so
+`printfulEconomicsQuote` exists as a separate function rather than a reuse — the
+economics layer has to be able to tell "free" from "we could not find out".
+
+And it reads the currency from Printful's own `/store` endpoint rather than
+assuming dollars, which is one extra call and removes the last figure in that
+path that would have been a guess.
+
+### Three instruments, two of which lied
+
+The question was whether `nextMoves`' per-candidate economics reads are a real
+bottleneck. Answering it took three attempts and the first two produced numbers
+that looked completely credible.
+
+**`pg_stat_database.xact_commit`** said 394 round trips over 25 candidates —
+about 1.2 seconds of network wait against Neon. It was nonsense: reads do not
+commit, so most of that count was autovacuum working through the rows the
+fixture had just inserted. A breakdown showed `buildSourcingContext` at 378
+"round trips", which was the tell — it writes nothing.
+
+**`pg_stat_all_tables`** was the right shape — scans of one table — and reported
+**0**, because the stats collector lags. The assertion built on it passed
+vacuously. A green test proving nothing is worse than a red one.
+
+**A counter in the layer itself** is deterministic and is what the number now
+comes from: 25 candidates + 1 graduation resolve in **3 reads**, and the
+assertion is that the count does not grow with the candidate list.
+
+So the honest answer to the original question: **yes, the pattern was one read
+per candidate, and it is now one read for all of them** — but the 1.2-second
+figure that nearly justified a much larger change was an artefact. The fix is one
+batched query and a map keyed by the same four identity parts as always;
+`bulkTerms`, ranking, fit and feasibility are untouched, and the suite asserts the
+same three moves in the same order with everything still considered.
+
+### Status
+
+**VERIFIED** — `scripts/verify-economics-production.ts`, 6 sections, real
+Postgres. Full regression green: 7 pure suites, 10 live ones, typecheck, build.
+
+One test premise was wrong and was fixed rather than the code: it tried to have
+the owner answer a question that the producer had already closed, which
+`applyEconomicsAnswer` correctly refuses. One real bug of mine was caught by the
+suite — `runEconomicsProducer` reported "had nothing to state" for a supplier
+that was actually unreachable, because it read `blockedOn` before the call that
+discovers it.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2724,6 +2803,7 @@ scripts/verify-economics-ingest.ts        the only way economics get written (re
 scripts/verify-economics-answer.ts        J4 asks, the owner answers, the progression moves (real Postgres)
 scripts/verify-economics-chat.ts          the same answer, typed into the conversation (real Postgres)
 scripts/verify-economics-producer.ts      detection, the producer contract, and price changes (real Postgres)
+scripts/verify-economics-production.ts    the card form, the first real producer, and what nextMoves costs (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

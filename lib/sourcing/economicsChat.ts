@@ -29,6 +29,8 @@ import type { AnswerResult, EconomicsAnswer } from "./economicsAnswer";
 // not a reason to pick.
 
 export interface OutstandingQuestion {
+  /** The Task's own identity, so a card can answer exactly what it asked. */
+  dedupeKey: string;
   productId: string;
   productName: string;
   sourceKey: string;
@@ -88,6 +90,7 @@ export async function outstandingEconomicsQuestions(storeId: string): Promise<Ou
     if (!product) continue;
 
     questions.push({
+      dedupeKey: task.dedupeKey,
       productId: product.id,
       productName: product.name,
       sourceKey: context.sourceKey as string,
@@ -124,10 +127,19 @@ export function describeOutstandingForJ4(questions: OutstandingQuestion[]): stri
   );
 }
 
-/** What the model is allowed to say about an answer. Identity is not on the list. */
+/** What a caller is allowed to say about an answer. Identity is not on the list. */
 export interface ChatEconomicsAnswer {
   /** The product in the owner's words, matched against the open questions here. */
   productName: string | null;
+  /**
+   * The exact question being answered, when the caller genuinely knows it.
+   *
+   * The card does — the owner clicked a specific question — and the chat does
+   * not, because a sentence names a product rather than a row. One resolution
+   * function serves both so a card and a conversation cannot disagree about
+   * which supplier an answer belongs to.
+   */
+  dedupeKey?: string | null;
   answer: EconomicsAnswer;
 }
 
@@ -166,6 +178,56 @@ export function chatAnswerFrom(input: {
       leadTimeDays: input.leadTimeDays,
       note: input.note,
     },
+  };
+}
+
+/**
+ * What the owner typed into the card, turned into an answer.
+ *
+ * PURE, AND SEPARATE FROM THE SERVER ACTION ON PURPOSE. Parsing is the one place
+ * in the card path where a figure about somebody's money could be invented — a
+ * blank field read as 0, a fraction of a unit rounded into existence — so it is
+ * a function with a test rather than a few lines inside a form handler.
+ *
+ * An empty field is a field the owner did not fill in. It is left out of the
+ * answer entirely rather than sent as 0, and `recordOwnerQuote` keeps whatever
+ * was already known about the fact nobody typed into.
+ */
+export function parseCardEconomicsAnswer(input: {
+  outcome: string;
+  minimumOrderUnits?: string | null;
+  bulkUnitCost?: string | null;
+}): EconomicsAnswer {
+  if (input.outcome === "supplier_would_not_say") return { kind: "supplier_would_not_say", note: null };
+  if (input.outcome === "dont_know_yet") return { kind: "dont_know_yet", note: null };
+
+  // A whole number of units, or nothing. Never 0, never a fraction — neither is
+  // a quantity anybody can order, and both would read as an answer.
+  const rawUnits = (input.minimumOrderUnits ?? "").trim();
+  const units = rawUnits === "" ? null : Number(rawUnits);
+  const minimumOrderUnits = units !== null && Number.isInteger(units) && units > 0 ? units : null;
+
+  // Money as a person types it — "4.10", "$4.10" — turned into cents exactly
+  // once. Anything that is not a non-negative number is not a price.
+  const rawCost = (input.bulkUnitCost ?? "").trim().replace(/[^0-9.]/g, "");
+  const cost = rawCost === "" ? null : Number(rawCost);
+  const bulkUnitCostInCents =
+    cost !== null && Number.isFinite(cost) && cost >= 0 ? Math.round(cost * 100) : null;
+
+  // A "quoted" submission with neither field filled in is not a quote. It is
+  // somebody who has not found out yet, and saying so keeps the question open
+  // instead of recording an empty answer as though it were one.
+  if (minimumOrderUnits === null && bulkUnitCostInCents === null) {
+    return { kind: "dont_know_yet", note: null };
+  }
+
+  return {
+    kind: "quoted",
+    minimumOrderUnits,
+    bulkUnitCostInCents,
+    shippingPerUnitInCents: null,
+    leadTimeDays: null,
+    note: null,
   };
 }
 
@@ -235,7 +297,8 @@ export function replyFor(question: OutstandingQuestion, result: AnswerResult): s
 }
 
 /**
- * Apply an answer the owner typed in conversation.
+ * Apply an answer the owner gave — typed in conversation, or filled into the
+ * card J4 raised.
  *
  * Resolves the identity HERE, from the open question, then runs the existing
  * `answer_supplier_economics` action through the engine — so this path gets the
@@ -243,7 +306,7 @@ export function replyFor(question: OutstandingQuestion, result: AnswerResult): s
  * and writes through `recordOwnerQuote` like everything else. There is no second
  * persistence route and nothing here touches the table directly.
  */
-export async function applyChatEconomicsAnswer(input: {
+export async function applyEconomicsAnswer(input: {
   storeId: string;
   answer: ChatEconomicsAnswer;
   /**
@@ -271,15 +334,24 @@ export async function applyChatEconomicsAnswer(input: {
     };
   }
 
+  // AN EXACT QUESTION BEATS A NAME. The card knows which question the owner
+  // clicked; a sentence only names a product. When the caller genuinely knows,
+  // nothing is matched by string at all.
+  const byKey = input.answer.dedupeKey
+    ? open.filter((q) => q.dedupeKey === input.answer.dedupeKey)
+    : null;
+
   const named = input.answer.productName?.trim().toLowerCase() ?? "";
-  const matched = named
-    ? open.filter(
-        (q) =>
-          q.productName.toLowerCase() === named ||
-          q.productName.toLowerCase().includes(named) ||
-          named.includes(q.productName.toLowerCase())
-      )
-    : open;
+  const matched =
+    byKey ??
+    (named
+      ? open.filter(
+          (q) =>
+            q.productName.toLowerCase() === named ||
+            q.productName.toLowerCase().includes(named) ||
+            named.includes(q.productName.toLowerCase())
+        )
+      : open);
 
   // ONE QUESTION, OR NONE. An answer that could belong to two products is not
   // an answer to either, and picking the likelier one would put a supplier's

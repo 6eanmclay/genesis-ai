@@ -20,6 +20,7 @@ import {
   startIssueConversation,
   startDiscoveryConversation,
   startTaskConversation,
+  answerEconomicsQuestionFromCard,
   dismissAttentionCard,
 } from "./ai-actions";
 import { getNextBestAction } from "@/lib/intelligence/nextBestAction";
@@ -293,7 +294,17 @@ export async function HomeWorkspace({
     pendingApprovals,
     nextRecommendation,
     discoveryItems,
-    tasks: openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary })),
+    tasks: openTasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      summary: t.summary,
+      // Carried so a supplier-economics question can render as the form it
+      // is rather than a link to a conversation about two numbers.
+      source: t.source,
+      dedupeKey: t.dedupeKey,
+      requiredInput: t.requiredInput,
+    })),
+    currency: store.currency,
     dismissedCardIds: dismissedCardIds as Set<string>,
   });
 
@@ -399,6 +410,7 @@ export async function HomeWorkspace({
                   issueAction={startIssueConversation}
                   discoveryAction={startDiscoveryConversation}
                   taskAction={startTaskConversation}
+                  economicsAction={answerEconomicsQuestionFromCard}
                   dismissAction={dismissAttentionCard}
                   currentPath="/dashboard"
                 />

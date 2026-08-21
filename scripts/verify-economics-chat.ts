@@ -42,7 +42,7 @@ async function main() {
   process.env.DATABASE_URL = db.url;
 
   const {
-    applyChatEconomicsAnswer, chatAnswerFrom, outstandingEconomicsQuestions,
+    applyEconomicsAnswer, chatAnswerFrom, outstandingEconomicsQuestions,
     describeOutstandingForJ4,
   } = await import("@/lib/sourcing/economicsChat");
   const { raiseEconomicsQuestions, economicsDedupeKey, ECONOMICS_TASK_SOURCE } =
@@ -237,7 +237,7 @@ async function main() {
 
       check("before: J4 is asking", (await nextMoves(store.id)).moves[0].kind, "unblock");
 
-      const outcome = await applyChatEconomicsAnswer({
+      const outcome = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({
@@ -291,7 +291,7 @@ async function main() {
       const { store } = await businessWithOpenQuestion("half-in-chat");
 
       // ONLY THE MINIMUM. This is the case a both-or-nothing schema would lose.
-      const first = await applyChatEconomicsAnswer({
+      const first = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ minimumOrderUnits: 100 })),
@@ -326,7 +326,7 @@ async function main() {
         describeOutstandingForJ4(await outstandingEconomicsQuestions(store.id)) ?? "");
 
       // Then the other half, in a second message.
-      const second = await applyChatEconomicsAnswer({
+      const second = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ bulkUnitCostInCents: 410 })),
@@ -349,7 +349,7 @@ async function main() {
       // Known minimum only.
       await reset();
       let store = (await businessWithOpenQuestion("state-min")).store;
-      await applyChatEconomicsAnswer({
+      await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id), answer: chatAnswerFrom(toolInput({ minimumOrderUnits: 100 })),
       });
@@ -360,7 +360,7 @@ async function main() {
       // Known unit cost only.
       await reset();
       store = (await businessWithOpenQuestion("state-price")).store;
-      await applyChatEconomicsAnswer({
+      await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id), answer: chatAnswerFrom(toolInput({ bulkUnitCostInCents: 410 })),
       });
@@ -371,7 +371,7 @@ async function main() {
       // Both.
       await reset();
       store = (await businessWithOpenQuestion("state-both")).store;
-      await applyChatEconomicsAnswer({
+      await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ minimumOrderUnits: 100, bulkUnitCostInCents: 410 })),
@@ -383,7 +383,7 @@ async function main() {
       // The supplier refused — a real answer, and it is "no".
       await reset();
       store = (await businessWithOpenQuestion("state-refused")).store;
-      const refused = await applyChatEconomicsAnswer({
+      const refused = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ outcome: "supplier_would_not_say", note: "wouldn't quote under 1000" })),
@@ -398,7 +398,7 @@ async function main() {
       // asked, which is a different fact and a false one.
       await reset();
       store = (await businessWithOpenQuestion("state-unknown")).store;
-      const unknown = await applyChatEconomicsAnswer({
+      const unknown = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ outcome: "dont_know_yet", note: "will ring them tomorrow" })),
@@ -429,7 +429,7 @@ async function main() {
       // A product name that matches nothing outstanding. The tempting move is
       // "there's only one open question, use it" — and that is exactly how a
       // supplier's terms land on the wrong product.
-      const wrong = await applyChatEconomicsAnswer({
+      const wrong = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ productName: "Resistance bands", minimumOrderUnits: 100, bulkUnitCostInCents: 410 })),
@@ -459,7 +459,7 @@ async function main() {
       await raiseEconomicsQuestions(store.id);
       check("two questions are open", (await outstandingEconomicsQuestions(store.id)).length, 2);
 
-      const nameless = await applyChatEconomicsAnswer({
+      const nameless = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ productName: null, minimumOrderUnits: 100, bulkUnitCostInCents: 410 })),
@@ -471,7 +471,7 @@ async function main() {
         nameless.reply.includes("Foam roller") && nameless.reply.includes("Resistance bands"), nameless.reply);
 
       // Named, it lands on exactly the one named.
-      const named = await applyChatEconomicsAnswer({
+      const named = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ productName: "resistance bands", minimumOrderUnits: 250, bulkUnitCostInCents: 300 })),
@@ -496,7 +496,7 @@ async function main() {
         },
       });
 
-      const outcome = await applyChatEconomicsAnswer({
+      const outcome = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ minimumOrderUnits: 100, bulkUnitCostInCents: 410 })),
@@ -515,7 +515,7 @@ async function main() {
       const gym = (await businessWithOpenQuestion("gym-chat")).store;
       const coil = (await businessWithOpenQuestion("coil-chat")).store;
 
-      await applyChatEconomicsAnswer({
+      await applyEconomicsAnswer({
         storeId: gym.id,
         runAction: asOwner(gym.id),
         answer: chatAnswerFrom(toolInput({ minimumOrderUnits: 100, bulkUnitCostInCents: 410 })),
@@ -542,13 +542,13 @@ async function main() {
       // Half an answer, so the question stays open and there is still something
       // for a second message to attach to. Once a question is CLOSED there is
       // deliberately nothing to answer — proven in section 7.
-      await applyChatEconomicsAnswer({
+      await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ minimumOrderUnits: 100 })),
       });
 
-      const again = await applyChatEconomicsAnswer({
+      const again = await applyEconomicsAnswer({
         storeId: store.id,
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ minimumOrderUnits: 100 })),

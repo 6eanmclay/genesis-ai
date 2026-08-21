@@ -18,6 +18,7 @@ export function AttentionCardList({
   discoveryAction,
   taskAction,
   dismissAction,
+  economicsAction,
   currentPath,
   highlightId,
   regenerateAction,
@@ -30,6 +31,8 @@ export function AttentionCardList({
   discoveryAction: (formData: FormData) => void;
   taskAction: (formData: FormData) => void;
   dismissAction: (cardId: string, currentPath: string) => Promise<void>;
+  /** Only passed by a caller whose tasks can include a supplier question. */
+  economicsAction?: (formData: FormData) => void;
   currentPath: string;
   highlightId?: string;
   regenerateAction?: (id: string) => Promise<void>;
@@ -70,6 +73,7 @@ export function AttentionCardList({
                 discoveryAction={discoveryAction}
                 taskAction={taskAction}
                 dismissAction={dismissAction}
+          economicsAction={economicsAction}
                 currentPath={currentPath}
                 highlightId={highlightId}
                 regenerateAction={regenerateAction}

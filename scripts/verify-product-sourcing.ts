@@ -140,6 +140,12 @@ console.log("\n2c. A declared capability has something behind it");
   for (const source of getProductSources()) {
     check(`${source.key}: quotesCost matches whether it can be asked`,
       typeof source.quote === "function", source.capabilities.quotesCost);
+    // Same invariant for the economics capability, and it matters more: a source
+    // claiming to state supplier terms it cannot state would have the producer
+    // writing an empty catalogue, which reads as a supplier that withdrew
+    // everything.
+    check(`${source.key}: statesEconomics matches whether it can be asked`,
+      typeof source.economics === "function", source.capabilities.statesEconomics);
     // A source that ships direct and one that does not are both legitimate, but
     // the flag has to be a real boolean rather than accidentally undefined.
     for (const [name, value] of Object.entries(source.capabilities)) {

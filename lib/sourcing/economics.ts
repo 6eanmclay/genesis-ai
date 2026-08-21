@@ -248,6 +248,27 @@ function attributionOf(
   };
 }
 
+// --- how often this layer goes to the database ------------------------------
+//
+// Instrumentation, not behaviour. `nextMoves` resolved economics one candidate
+// at a time, and the question "is that actually a problem" needed an answer that
+// was not a guess. Two instruments were tried first and both lied: Postgres's
+// xact_commit counts autovacuum and ignores reads, and pg_stat_all_tables lags
+// far enough behind that a verification read it as zero and passed vacuously.
+//
+// This counts the thing itself — how many times this module issues a query — and
+// is the only measurement of the three that is deterministic.
+let reads = 0;
+
+/** How many database reads this layer has issued since the last reset. */
+export function economicsReadCount(): number {
+  return reads;
+}
+
+export function resetEconomicsReadCount(): void {
+  reads = 0;
+}
+
 /**
  * What this business knows about one supplier product.
  *
@@ -260,6 +281,7 @@ export async function supplierEconomics(
   ref: SupplierProductRef,
   options: { now?: Date; freshnessPolicy?: EconomicsFreshnessPolicy } = {}
 ): Promise<SupplierEconomics | null> {
+  reads++;
   const row = (await prisma.supplierEconomics.findFirst({
     where: {
       storeId,
@@ -270,8 +292,15 @@ export async function supplierEconomics(
   })) as Row | null;
   if (!row) return null;
 
-  const now = options.now ?? new Date();
-  const policy = options.freshnessPolicy ?? currentFreshnessPolicy();
+  return shapeRow(
+    row,
+    options.now ?? new Date(),
+    options.freshnessPolicy ?? currentFreshnessPolicy()
+  );
+}
+
+/** One row, as the rest of the system sees it. The single definition. */
+function shapeRow(row: Row, now: Date, policy: EconomicsFreshnessPolicy): SupplierEconomics {
   const { tiers, integrity } = readTiers(row.tiers);
 
   const attribution: Record<EconomicsFact, FactAttribution> = {
@@ -314,6 +343,60 @@ export async function supplierEconomics(
     attribution,
     note: row.note,
   };
+}
+
+/**
+ * The same read, for many products at once.
+ *
+ * MEASURED, NOT GUESSED (2026-08-21). `nextMoves` resolved economics one
+ * candidate at a time, and the whole call cost 394 database round trips over
+ * 25 candidates — about 1.2 seconds of pure network waiting against Neon from a
+ * serverless function, on a call Home awaits. One statement instead of
+ * twenty-five is the whole of the fix; nothing about which economics belong to
+ * which product changes, and the map is keyed by the same four identity parts
+ * `supplierEconomics` matches on.
+ *
+ * Over-fetches deliberately: the query filters by the source keys and external
+ * ids in play and does the exact four-part match in memory, because an OR of
+ * twenty-five compound keys is a query plan nobody wants to own. A store's whole
+ * economics table is bounded by what it sells.
+ */
+export async function supplierEconomicsFor(
+  storeId: string,
+  refs: SupplierProductRef[],
+  options: { now?: Date; freshnessPolicy?: EconomicsFreshnessPolicy } = {}
+): Promise<Map<string, SupplierEconomics>> {
+  const found = new Map<string, SupplierEconomics>();
+  if (refs.length === 0) return found;
+
+  reads++;
+  const rows = (await prisma.supplierEconomics.findMany({
+    where: {
+      storeId,
+      sourceKey: { in: [...new Set(refs.map((r) => r.sourceKey))] },
+      externalProductId: { in: [...new Set(refs.map((r) => r.externalProductId))] },
+    },
+  })) as unknown as Row[];
+
+  const now = options.now ?? new Date();
+  const policy = options.freshnessPolicy ?? currentFreshnessPolicy();
+
+  for (const row of rows) {
+    found.set(
+      economicsKey({
+        sourceKey: row.sourceKey,
+        externalProductId: row.externalProductId,
+        externalVariantId: row.externalVariantId === "" ? null : row.externalVariantId,
+      }),
+      shapeRow(row, now, policy)
+    );
+  }
+  return found;
+}
+
+/** How a resolved economics row is looked up. All four parts, as always. */
+export function economicsKey(ref: SupplierProductRef): string {
+  return `${ref.sourceKey}\u0000${ref.externalProductId}\u0000${toVariantKey(ref.externalVariantId)}`;
 }
 
 /**

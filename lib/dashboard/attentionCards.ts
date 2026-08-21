@@ -1,4 +1,6 @@
 import type { AttentionItem } from "./types";
+import { ECONOMICS_GAP_EXPLANATION, type EconomicsGap } from "@/lib/sourcing/economics";
+import { ECONOMICS_TASK_SOURCE } from "@/lib/sourcing/economicsQuestions";
 import type { PendingApproval } from "./pendingApprovals";
 import type { DiscoveryItem } from "./discovery";
 import type { NextBestAction } from "@/lib/intelligence/nextBestAction";
@@ -104,6 +106,21 @@ export interface DiscoveryAttentionCard extends AttentionCardCommon {
 export interface TaskAttentionCard extends AttentionCardCommon {
   kind: "task";
   taskId: string;
+  /**
+   * Present only for a supplier-economics question, and it is what turns this
+   * card from a link into a form.
+   *
+   * Every other task hands off to a conversation because the work is open-ended.
+   * This one is two numbers, and sending somebody into a chat to type two
+   * numbers they already have in front of them is a worse answer than a field.
+   */
+  economics: {
+    dedupeKey: string;
+    /** Exactly what is still outstanding — never both when one is known. */
+    gaps: EconomicsGap[];
+    /** The business's own money, so the field can be labelled honestly. */
+    currency: string;
+  } | null;
 }
 
 // Phase 1 (2026-08-08) — Brand/Website/Products/Marketing/Settings each
@@ -309,12 +326,57 @@ export function isHighlighted(card: AttentionCard, highlightId: string | undefin
   return false;
 }
 
+/** What a task row has to carry for a card to be built from it. */
+export interface TaskCardInput {
+  id: string;
+  title: string;
+  summary: string;
+  source?: string;
+  /** The question's own identity — all four parts of the product, not the row id. */
+  dedupeKey?: string;
+  requiredInput?: unknown;
+}
+
+/**
+ * Whether this task is a supplier-economics question, and what it still needs.
+ *
+ * Reads `requiredInput`, which `raiseEconomicsQuestions` writes and keeps
+ * current — so the card asks for whatever is outstanding NOW rather than
+ * whatever was outstanding when it was first raised. Anything unreadable falls
+ * back to null and the card stays the ordinary hand-off it always was, because a
+ * form asking for a fact nobody can name is worse than a link.
+ */
+function economicsQuestionOf(
+  task: TaskCardInput,
+  currency: string | undefined
+): TaskAttentionCard["economics"] {
+  if (task.source !== ECONOMICS_TASK_SOURCE) return null;
+
+  const raw = task.requiredInput;
+  if (typeof raw !== "object" || raw === null) return null;
+  const gaps = (raw as { gaps?: unknown }).gaps;
+  if (!Array.isArray(gaps)) return null;
+
+  const known = gaps.filter((gap): gap is EconomicsGap => gap in ECONOMICS_GAP_EXPLANATION);
+  if (known.length === 0) return null;
+
+  if (!task.dedupeKey) return null;
+
+  return {
+    dedupeKey: task.dedupeKey,
+    gaps: known,
+    currency: currency ?? "USD",
+  };
+}
+
 export function buildAttentionCards(params: {
   issues: AttentionItem[];
   pendingApprovals: PendingApproval[];
   nextRecommendation: NextBestAction | null;
   discoveryItems: DiscoveryItem[];
-  tasks: { id: string; title: string; summary: string }[];
+  tasks: TaskCardInput[];
+  /** The business's own currency, for labelling anything that asks for money. */
+  currency?: string;
   // J4 Noticed dismiss/exit (2026-08-08) — see buildPageAttentionCards's
   // own identical comment; same real mechanism, same filtering point.
   dismissedCardIds?: Set<string>;
@@ -394,6 +456,7 @@ export function buildAttentionCards(params: {
       occurredAt: null,
       dotClassName: DOT_NEUTRAL,
       taskId: task.id,
+      economics: economicsQuestionOf(task, params.currency),
     });
   }
 

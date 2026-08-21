@@ -299,3 +299,65 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
     };
   },
 };
+
+/**
+ * What Printful prices in, and what one variant costs, ASKED RATHER THAN
+ * ASSUMED (2026-08-21).
+ *
+ * Separate from `getCost` deliberately, and not a duplicate of it. `getCost`
+ * exists to price an order and answers with a total; it reports a failed
+ * shipping lookup as 0, which is right for an estimate and wrong for a stated
+ * fact — 0 there can mean "free" or "we could not find out", and supplier
+ * economics has to be able to tell those apart. This returns null for the
+ * second, and returns the currency Printful actually prices this account in
+ * rather than letting anything downstream assume dollars.
+ */
+export async function printfulEconomicsQuote(params: {
+  storeId: string;
+  externalProductId: string;
+  externalVariantId: string;
+}): Promise<{ unitCostInCents: number; shippingPerUnitInCents: number | null; currency: string }> {
+  const credentials = await resolveCredentials({ storeId: params.storeId, storeDraftId: null });
+
+  // Printful states the account's currency on the store itself. Reading it is
+  // one call and removes the only figure in this path that would otherwise be a
+  // guess about somebody's money.
+  const storeRes = await fetch(`${PRINTFUL_API_BASE}/store`, { headers: authHeaders(credentials, false) });
+  if (!storeRes.ok) throw new Error(`Printful store lookup failed (${storeRes.status})`);
+  const storeBody = (await storeRes.json()) as { result?: { currency?: unknown } };
+  const currency = typeof storeBody.result?.currency === "string" ? storeBody.result.currency : null;
+  if (!currency) throw new Error("Printful did not say which currency this account prices in.");
+
+  const detail = await fetch(`${PRINTFUL_API_BASE}/products/${params.externalProductId}`, {
+    headers: authHeaders(credentials, false),
+  });
+  if (!detail.ok) throw new Error(`Printful product lookup failed (${detail.status})`);
+  const detailBody = (await detail.json()) as { result: { variants: PrintfulVariant[] } };
+  const variant = detailBody.result.variants.find((v) => String(v.id) === params.externalVariantId);
+  if (!variant) throw new Error("Printful variant no longer available.");
+
+  const shipRes = await fetch(`${PRINTFUL_API_BASE}/shipping/rates`, {
+    method: "POST",
+    headers: authHeaders(credentials, false),
+    body: JSON.stringify({
+      recipient: { address1: "19749 Dearborn St", city: "Chatsworth", country_code: "US", state_code: "CA", zip: "91311" },
+      items: [{ variant_id: Number(params.externalVariantId), quantity: 1 }],
+    }),
+  });
+
+  // NULL, NOT ZERO. A rate lookup that failed has told us nothing about
+  // delivery, and recording it as free is the exact lie the economics layer
+  // exists to prevent.
+  let shippingPerUnitInCents: number | null = null;
+  if (shipRes.ok) {
+    const shipBody = (await shipRes.json()) as { result: { rate: string }[] };
+    const standard = shipBody.result[0];
+    if (standard) shippingPerUnitInCents = Math.round(parseFloat(standard.rate) * 100);
+  }
+
+  return {
+    unitCostInCents: Math.round(parseFloat(variant.price) * 100),
+    shippingPerUnitInCents,
+    currency,
+  };
+}

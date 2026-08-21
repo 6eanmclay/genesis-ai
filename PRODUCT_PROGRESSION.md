@@ -394,6 +394,33 @@ retracting the first. `recordOwnerQuote` therefore merges with an existing
 **OWNER** row. Found by verification, not by reading: two turns is the normal
 shape of this conversation and one turn was all the write had ever seen.
 
+### C5a. Answering from the card
+
+Every other Task card hands off to a conversation, because the work behind it is
+open-ended. This one is two numbers, and sending somebody into a chat to type two
+numbers they are holding in front of them is a worse answer than a field.
+
+So the card **is** the form, and it goes through exactly the path the
+conversation does: `applyEconomicsAnswer` → `answer_supplier_economics` →
+`recordOwnerQuote`. One question system, one way to store a fact.
+
+It renders only the facts still outstanding, from `requiredInput` — an owner who
+already gave the minimum sees one field. And the two ways of not answering are
+**separate buttons**, because they are different facts: *"they wouldn't say"* is
+an answer and is recorded as `UNAVAILABLE`; *"I'll find out"* writes nothing at
+all and leaves the question standing.
+
+`parseCardEconomicsAnswer` is pure and tested on its own, because parsing is the
+one place in this path where a figure about somebody's money could be invented.
+An empty field stays absent rather than becoming 0; a fractional minimum is
+refused rather than rounded; a submission with both fields blank is not a quote
+and is treated as *"I'll find out"*.
+
+**An exact question beats a name.** The card knows which question the owner
+clicked and passes its `dedupeKey`, so nothing is matched by string. The chat
+path still matches by product name, because a sentence names a product rather
+than a row — one resolver, two entrances.
+
 ### C6a. Provenance is per fact
 
 **The limitation recorded here has been fixed** (2026-08-21). It said a partial
@@ -467,6 +494,33 @@ re-implemented per supplier.
 call, because `ingestFromSupplier` treats absence as withdrawal — a partial
 return would look identical to a supplier that had withdrawn everything it
 omitted. A producer whose API pages is responsible for assembling the pages.
+
+### C6c. The first real producer
+
+`ProductSource` gained an optional `economics()` and a `statesEconomics`
+capability, asserted if-and-only-if over the registry the same way `quote` is.
+`producerFromSource` turns any source that declares it into an
+`EconomicsProducer`, so the second connector is one method on a source rather
+than a second integration.
+
+**Printful is the reference implementation**, and what it states is chosen
+carefully:
+
+| Fact | What Printful says | Why |
+|---|---|---|
+| `unitCost` | The variant's real price | |
+| `shipping` | The real rate, or **null** when the lookup fails | `printfulEconomicsQuote` is a separate function from `getCost` precisely so "free" and "we could not find out" can be told apart. `getCost` reports a failed rate lookup as 0, which is right for an order estimate and wrong for a stated fact |
+| `minimumOrder` | **1** | A stated fact, not a default. Print on demand genuinely has no minimum: one is what you can order. It is the only place in this codebase where a minimum of 1 is true rather than a missing value wearing a number |
+| `tiers` | `[]` | Printful publishes no price breaks. An empty array says that; null would say nobody looked |
+| `leadTime` | Not stated | Printful's fulfilment time varies and the API does not commit to one here |
+| currency | Read from Printful's own `/store` | One extra call, and it removes the last figure in this path that would otherwise be a guess about somebody's money |
+
+A product Printful cannot price is **skipped**, not guessed at — the gap stays a
+gap. Two different currencies across one account stops the batch rather than
+mixing money.
+
+Nothing schedules a producer yet, and that is deliberate: when a supplier sync
+runs is a product decision about cost and freshness, not plumbing.
 
 ### C7. What a supplier price change does
 

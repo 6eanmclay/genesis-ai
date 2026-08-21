@@ -3342,12 +3342,12 @@ async function applyGenesisMessageToStore(
 
   if (chosenTool?.name === "answer_supplier_economics") {
     const parsed = AnswerSupplierEconomicsToolInputSchema.safeParse(chosenTool.input);
-    const { applyChatEconomicsAnswer, chatAnswerFrom } = await import("@/lib/sourcing/economicsChat");
+    const { applyEconomicsAnswer, chatAnswerFrom } = await import("@/lib/sourcing/economicsChat");
 
     // Defence in depth: an input that did not validate never becomes an answer
     // about somebody's money. Nothing is written and the merchant is told.
     const outcome = parsed.success
-      ? await applyChatEconomicsAnswer({ storeId: store.id, answer: chatAnswerFrom(parsed.data) })
+      ? await applyEconomicsAnswer({ storeId: store.id, answer: chatAnswerFrom(parsed.data) })
       : {
           status: "unresolved" as const,
           reply: "I didn't quite catch the figures — tell me the minimum order and the price per unit and I'll get them down.",
@@ -4505,6 +4505,48 @@ export async function dismissAttentionCard(cardId: string, currentPath: string) 
     where: { storeId_cardId: { storeId, cardId } },
     create: { storeId, cardId, dismissedByUserId: userId },
     update: { dismissedAt: new Date(), dismissedByUserId: userId },
+  });
+
+  const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
+  revalidatePath(returnTo);
+}
+
+// The owner answering J4's supplier question from the card that asked it
+// (2026-08-21).
+//
+// Every other Task card hands off to a conversation, because the work behind it
+// is open-ended. This one is two numbers. Sending somebody into a chat to type
+// two numbers they are holding in front of them is a worse answer than a field,
+// so the card collects them — and then goes through EXACTLY the same path the
+// conversation does: applyEconomicsAnswer -> answer_supplier_economics ->
+// recordOwnerQuote. No second question system and no second way to store a fact.
+//
+// PARSING IS WHERE A FIGURE ABOUT MONEY GETS INVENTED, so nothing here defaults.
+// An empty field is a field the owner did not fill in; it is left out of the
+// answer entirely rather than sent as 0, and `recordOwnerQuote` keeps whatever
+// was already known about the fact nobody typed into.
+export async function answerEconomicsQuestionFromCard(formData: FormData) {
+  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+
+  const dedupeKey = String(formData.get("dedupeKey") ?? "");
+  const outcome = String(formData.get("outcome") ?? "quoted");
+  const currentPath = String(formData.get("currentPath") ?? "/dashboard");
+
+  const { applyEconomicsAnswer, parseCardEconomicsAnswer } = await import("@/lib/sourcing/economicsChat");
+
+  await applyEconomicsAnswer({
+    storeId,
+    answer: {
+      productName: null,
+      // THE EXACT QUESTION THE OWNER CLICKED. No string matching, because the
+      // card knows precisely which supplier's product it asked about.
+      dedupeKey,
+      answer: parseCardEconomicsAnswer({
+        outcome,
+        minimumOrderUnits: String(formData.get("minimumOrderUnits") ?? ""),
+        bulkUnitCost: String(formData.get("bulkUnitCost") ?? ""),
+      }),
+    },
   });
 
   const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";

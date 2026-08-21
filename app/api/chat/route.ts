@@ -997,8 +997,8 @@ export async function POST(request: Request) {
             return;
           }
 
-          const { applyChatEconomicsAnswer, chatAnswerFrom } = await import("@/lib/sourcing/economicsChat");
-          const outcome = await applyChatEconomicsAnswer({
+          const { applyEconomicsAnswer, chatAnswerFrom } = await import("@/lib/sourcing/economicsChat");
+          const outcome = await applyEconomicsAnswer({
             storeId: store.id,
             answer: chatAnswerFrom(parsed.data),
           });
