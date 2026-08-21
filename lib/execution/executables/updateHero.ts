@@ -2,10 +2,22 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
+import { resolveOwnedImageUrl } from "@/lib/businessModel/assets";
+import { writeHomepageContent } from "@/lib/storefront/homepageContent";
 
 export interface UpdateHeroInput {
   heroHeadline: string;
   heroSubheadline: string;
+  // Priority 4 (asset-to-storefront, 2026-08-09) — the real architectural
+  // gap this closes: J4 could talk about using an uploaded photo as the
+  // hero image, but had no field anywhere in the proposal/execution
+  // pipeline to actually carry that reference through. `undefined` means
+  // "leave whatever's there untouched" (the field wasn't part of this
+  // proposal at all — matches update_product's own optional-field
+  // convention); `null` is a real, explicit "clear the hero image, fall
+  // back to the gradient." Never guessed/defaulted — only ever set when
+  // the proposal genuinely included an image change.
+  heroImageUrl?: string | null;
 }
 
 // Same opaque-JSON pattern as updateSeo.ts, targeting a different section
@@ -16,27 +28,71 @@ interface BlueprintShape {
   [key: string]: unknown;
 }
 
-export const updateHeroExecutable: Executable<UpdateHeroInput, Record<string, never>> = {
+export const updateHeroExecutable: Executable<UpdateHeroInput, { heroImageUrl: string | null }> = {
   action: EXECUTION_ACTIONS.STORE_UPDATE_HERO,
   requiredPermission: PERMISSIONS.STORE_MANAGE,
   async run(input, ctx) {
+    // AN EXPLICIT REFERENCE TO A REAL ASSET, OR NOTHING (2026-08-21).
+    //
+    // The input schema is z.string() — it cannot tell a real uploaded photo
+    // from a plausible-looking URL a model produced, and neither can verify()
+    // below, which only confirms the value round-tripped. Without this check,
+    // the failure mode is the worst kind: the owner approves "use my photo",
+    // execution reports success, and the storefront shows a broken image
+    // pointing at something that never existed.
+    //
+    // Checked HERE because Execute is the single gateway through which anything
+    // real happens (ARCHITECTURE.md) — so chat proposals, recommendation-driven
+    // proposals and autonomous ones are all covered by one check rather than
+    // three that could drift apart.
+    if ("heroImageUrl" in input && input.heroImageUrl) {
+      const owned = await resolveOwnedImageUrl(ctx.storeId, input.heroImageUrl);
+      if (!owned) {
+        // Named plainly, because the honest reading is almost always "that
+        // image isn't one of yours" rather than "something broke".
+        throw new Error(
+          "That image isn't one of this business's own files. A hero image has to be a real uploaded asset or an existing product photo."
+        );
+      }
+    }
+
+    // ONE WRITER. The merge lives in lib/storefront/homepageContent.ts, shared
+    // with the design-composition door, so a hero image applied from either
+    // place cannot drop the other's headlines.
+    const homepageContent = await writeHomepageContent(ctx.storeId, {
+      heroHeadline: input.heroHeadline,
+      heroSubheadline: input.heroSubheadline,
+      // Present only when this proposal actually carried one. `undefined` is
+      // dropped by the writer, so "not mentioned" stays distinct from an
+      // explicit `null` meaning "clear it".
+      heroImageUrl: "heroImageUrl" in input ? input.heroImageUrl : undefined,
+    });
+
+    return {
+      message:
+        "heroImageUrl" in input && input.heroImageUrl
+          ? "Updated homepage hero headline, subheadline, and image"
+          : "Updated homepage hero headline and subheadline",
+      metadata: { heroImageUrl: (homepageContent.heroImageUrl as string | null | undefined) ?? null },
+    };
+  },
+  // Priority 4's own explicit requirement — "The verification step should
+  // also confirm that the image actually exists in the resulting
+  // storefront... J4 should not report the change as completed if it only
+  // changed the text/layout while failing to apply the referenced image"
+  // (Sean). Only checks when this proposal actually included an image —
+  // a text-only hero edit has nothing image-related to verify.
+  async verify(input, ctx) {
+    if (!("heroImageUrl" in input) || !input.heroImageUrl) return { ok: true };
     const store = await prisma.store.findUniqueOrThrow({
       where: { id: ctx.storeId },
       select: { blueprint: true },
     });
     const blueprint = (store.blueprint as BlueprintShape | null) ?? {};
-    const updatedBlueprint: BlueprintShape = {
-      ...blueprint,
-      homepageContent: {
-        ...blueprint.homepageContent,
-        heroHeadline: input.heroHeadline,
-        heroSubheadline: input.heroSubheadline,
-      },
-    };
-    await prisma.store.update({
-      where: { id: ctx.storeId },
-      data: { blueprint: updatedBlueprint as object },
-    });
-    return { message: "Updated homepage hero headline and subheadline" };
+    const storedUrl = (blueprint.homepageContent as { heroImageUrl?: string | null } | undefined)?.heroImageUrl;
+    if (storedUrl !== input.heroImageUrl) {
+      return { ok: false, error: "The hero image wasn't actually saved to the storefront." };
+    }
+    return { ok: true };
   },
 };

@@ -256,3 +256,55 @@ export async function recordGeneratedAsset(params: {
   await designateAsset(params.storeId, record.id, params.role);
   return record.id;
 }
+
+/**
+ * Where an image URL a proposal wants to use actually came from, or null.
+ *
+ * THE GAP THIS CLOSES (2026-08-09, fixed 2026-08-21). Sean uploaded six real
+ * photos, J4 said "let me put these six to work in the store's design", the
+ * owner approved — and the live storefront contained none of them. The proposal
+ * carried no reference to any asset, so there was nothing to apply.
+ *
+ * Adding a heroImageUrl field is half the fix. This is the other half, and it is
+ * the half that keeps it honest: `z.string()` accepts ANY string, so a model
+ * that invents a plausible-looking URL, or repeats one it saw from another
+ * business, would have it written straight onto the storefront — and a verify()
+ * that only checks the value round-tripped would call that a success.
+ *
+ * So a URL is only usable if this store genuinely owns it. Two real sources,
+ * both already in the database:
+ *
+ *   asset    — an uploaded or generated Asset BusinessRecord's storageUrl
+ *   product  — an image already on one of this store's own products, including
+ *              its gallery, since reusing a product photo as the hero is an
+ *              ordinary thing to want and the file is just as real
+ *
+ * Returns null for anything else, and null is a refusal, never a fallback.
+ */
+export async function resolveOwnedImageUrl(
+  storeId: string,
+  url: string
+): Promise<{ source: "asset" | "product"; recordId: string } | null> {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+
+  // Filtered in SQL by storeId first: an asset belonging to another business is
+  // not merely unusable here, it must not even be found.
+  const asset = await prisma.businessRecord.findFirst({
+    where: {
+      storeId,
+      entityType: "asset",
+      data: { path: ["storageUrl"], equals: trimmed },
+    },
+    select: { id: true },
+  });
+  if (asset) return { source: "asset", recordId: asset.id };
+
+  const product = await prisma.product.findFirst({
+    where: { storeId, OR: [{ imageUrl: trimmed }, { images: { some: { url: trimmed } } }] },
+    select: { id: true },
+  });
+  if (product) return { source: "product", recordId: product.id };
+
+  return null;
+}

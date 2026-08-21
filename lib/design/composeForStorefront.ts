@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { writeHomepageContent } from "@/lib/storefront/homepageContent";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { AssetSchema } from "@/lib/businessModel/entities";
 import { designateAsset } from "@/lib/businessModel/assets";
@@ -239,10 +240,10 @@ export async function approveCompositionAsAsset(params: {
   // blueprint.homepageContent.heroImageUrl (committed), so a hero composition
   // writes that field rather than introducing a second hero path.
   //
-  // NOTE ON OVERLAP: Sean has uncommitted work on update_hero that writes the
-  // same field from an asset. That is the same destination reached from a
-  // different door, not a competing pipeline — when his work lands, the two
-  // should be consolidated onto one writer rather than left as two.
+  // CONSOLIDATED (2026-08-21). update_hero reaches this same field from the
+  // conversational door; both now go through writeHomepageContent, so there is
+  // one writer for blueprint.homepageContent rather than two that could drop
+  // each other's fields.
   if (params.role === "storefront.hero") {
     await setStorefrontHeroImage(params.storeId, params.imageUrl);
   }
@@ -258,23 +259,5 @@ export async function approveCompositionAsAsset(params: {
  * headlines, calls to action and section order.
  */
 export async function setStorefrontHeroImage(storeId: string, imageUrl: string): Promise<void> {
-  const store = await prisma.store.findUnique({ where: { id: storeId }, select: { blueprint: true } });
-  const blueprint =
-    store?.blueprint && typeof store.blueprint === "object" && !Array.isArray(store.blueprint)
-      ? (store.blueprint as Record<string, unknown>)
-      : {};
-  const homepage =
-    blueprint.homepageContent && typeof blueprint.homepageContent === "object" && !Array.isArray(blueprint.homepageContent)
-      ? (blueprint.homepageContent as Record<string, unknown>)
-      : {};
-
-  await prisma.store.update({
-    where: { id: storeId },
-    data: {
-      blueprint: {
-        ...blueprint,
-        homepageContent: { ...homepage, heroImageUrl: imageUrl },
-      } as never,
-    },
-  });
+  await writeHomepageContent(storeId, { heroImageUrl: imageUrl });
 }
