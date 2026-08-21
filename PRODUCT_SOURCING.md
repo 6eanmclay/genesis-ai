@@ -343,17 +343,30 @@ forever, a ruled-out row is re-evaluated on every run — because the judgement 
 only ever true of the business as it was understood at the time. A business that
 starts describing itself as a bridal boutique gets the veil it was refused.
 
-### The trigger is a Home load, and that is the whole of it
+### The trigger is the scheduler (2026-08-21)
 
-Stated plainly because it is a real limit, not an oversight: **discovery and the
-economics refresh fire when somebody opens Home, and at no other time.** A
-business whose owner never opens Home is never searched and never refreshed.
+Superseded. Discovery and the economics refresh used to fire only when somebody
+opened Home, which meant a business whose owner never opened Home was never
+searched and never refreshed. Both now run as a **stage of the existing
+CRON_SECRET-gated route**, alongside connector syncs, Growth Point refreshes and
+first-party intelligence cycles — the fifth independent stage in a route that was
+already built to hold them, not a second scheduler.
 
-That is the deliberate scope for this milestone (Sean, 2026-08-21). Background
-and scheduled intelligence belongs to the Business Intelligence milestone, which
-already owns a scheduler; adding a second one here would be the parallel
-mechanism this codebase keeps refusing to build, and the two would drift over
-which business gets looked at when.
+`sourcingSchedule.ts` decides only WHICH businesses a bounded pass reaches, in
+what order. It never decides whether one is due: `discoverIfWorthwhile` and
+`refreshEconomicsIfStale` already own that and are called unchanged, because two
+answers to that question would drift and the one nobody maintained would be the
+one that got it wrong.
+
+Selection is a **superset** of what the gates accept — one indexed query for "has
+this business said anything about itself", ordered least-recently-looked-at
+first with nulls first, so a business nobody has ever searched for is reached
+before one searched last week and a bounded pass works through a backlog.
+
+**Home no longer triggers either**, deliberately. Two callers would fire the same
+supplier HTTP calls twice for an owner who happens to be on Home when the cron
+runs, and the cost boundary would have two places to reason about. The catalog's
+own *Look again* is still there for anybody who does not want to wait.
 
 **Supplier economics refresh on their own freshness policy**, not a schedule.
 Thirty days for a catalogue is already written down and already means "this is

@@ -62,6 +62,29 @@ async function signIn(page: Page, baseUrl: string, email: string): Promise<void>
   }
 }
 
+/**
+ * Reload until the page reflects what the database already says, or give up.
+ *
+ * A server action revalidates and the browser re-renders, and those two are not
+ * one event to wait on. Asserting on the first paint after a click passed by
+ * luck until it did not — and a page that is eventually right is a different
+ * fact from one that is never right, so this distinguishes them rather than
+ * hiding the difference behind a sleep.
+ */
+async function reloadUntil(
+  page: Page,
+  url: string,
+  gone: string,
+  tries = 10
+): Promise<boolean> {
+  for (let i = 0; i < tries; i++) {
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    if (!(await page.content()).includes(gone)) return true;
+    await page.waitForTimeout(300);
+  }
+  return false;
+}
+
 async function main() {
   const server = await startTestServer({ timeoutMs: 180_000 });
   const prisma = server.db.prisma;
@@ -196,9 +219,8 @@ async function main() {
       check("the price reached the field", await price.inputValue(), "2400");
       await row.locator('button:text("Add to my store")').click();
       await page.waitForLoadState("networkidle");
-      // Re-navigated rather than trusting the in-place revalidation to have
-      // painted: what is under test is the server's answer, not React's timing.
-      await page.goto(`${server.baseUrl}/b/iron-gym/catalog`, { waitUntil: "domcontentloaded" });
+      // Reloaded until the page agrees with the database, not once and hoped.
+      const offGone = await reloadUntil(page, `${server.baseUrl}/b/iron-gym/catalog`, "ZZFOAMROLLER");
 
       const product = await prisma.product.findFirst({
         where: { storeId: gym.id },
@@ -217,7 +239,7 @@ async function main() {
         where: { storeId: gym.id, status: "SUGGESTED" },
       });
       check("one suggestion left", stillSuggested, 1);
-      assert("and the page no longer offers it", !html.includes("ZZFOAMROLLER"), "still offered");
+      assert("and the page no longer offers it", offGone, "still offered after 10 reloads");
       assert("while the other one still is", html.includes("ZZTRAININGTEE"));
     }
 
@@ -241,12 +263,11 @@ async function main() {
       await page.goto(`${server.baseUrl}/b/iron-gym/catalog`, { waitUntil: "domcontentloaded" });
       await page.locator('button:text("Not for me")').first().click();
       await page.waitForLoadState("networkidle");
-      await page.goto(`${server.baseUrl}/b/iron-gym/catalog`, { waitUntil: "domcontentloaded" });
+      const teeGone = await reloadUntil(page, `${server.baseUrl}/b/iron-gym/catalog`, "ZZTRAININGTEE");
 
       check("it is recorded as the owner's decision",
         await prisma.sourcedProduct.count({ where: { storeId: gym.id, status: "DISMISSED" } }), 1);
-      const html = await page.content();
-      assert("and it is off the page", !html.includes("ZZTRAININGTEE"), "still shown");
+      assert("and it is off the page", teeGone, "still shown after 10 reloads");
     }
 
     // =====================================================================

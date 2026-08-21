@@ -3,6 +3,7 @@ import { isAuthorizedCronRequest } from "@/lib/auth/cronAuth";
 import { runDueSyncs } from "@/lib/intelligence/scheduler";
 import { runDueIntelligenceCycles } from "@/lib/intelligence/cycle";
 import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
+import { runDueSourcing } from "@/lib/sourcing/sourcingSchedule";
 import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
 
 // Phase 3 Milestone 3 — the actual trigger. Secured via Vercel's own
@@ -82,6 +83,26 @@ export async function GET(request: NextRequest) {
     stageErrors.push("intelligence");
   }
 
+  // P0.5 sourcing, unattended (2026-08-21). A fifth independent stage, in the
+  // same shape as the four above: its own limit, its own try/catch, its own
+  // reported outcome. Until now discovery and the supplier-economics refresh ran
+  // only on a Home load, so a business whose owner never opened Home was never
+  // searched and never refreshed.
+  //
+  // Deliberately LAST. It is the only stage that makes outbound calls to third
+  // parties on its own initiative, and a cron invocation that runs out of time
+  // should lose this before it loses a connector sync or a Growth Point refresh.
+  //
+  // Its own limit, lower than the others' 50: each store here can mean several
+  // supplier HTTP round trips, where a Growth Point refresh is one write.
+  let sourcing: Awaited<ReturnType<typeof runDueSourcing>> = [];
+  try {
+    sourcing = await runDueSourcing(25);
+  } catch (error) {
+    console.error("[cron/sync] sourcing pass failed:", error);
+    stageErrors.push("sourcing");
+  }
+
   return NextResponse.json({
     // A stage that FAILED is reported as failed, not as a stage that found
     // nothing to do. Those look identical in the counts below, and telling
@@ -106,6 +127,15 @@ export async function GET(request: NextRequest) {
       storeId: c.storeId,
       ok: c.ok,
       insights: c.insights,
+    })),
+    // Per-store detail, same reasoning as the two above. A store that was
+    // considered and correctly did nothing reads differently from one that was
+    // never reached, and only one of those is worth investigating.
+    sourcing: sourcing.map((r) => ({
+      storeId: r.storeId,
+      discovery: r.discovery.ran ? `found ${r.discovery.suggested}` : r.discovery.reason,
+      economicsRefreshed: r.economics?.ran ?? [],
+      error: r.error,
     })),
   });
 }
