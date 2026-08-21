@@ -1,6 +1,6 @@
 import type { Executable } from "../executable";
-import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
+import type { EconomicsFact } from "@/lib/sourcing/economics";
 import {
   answerEconomicsQuestion,
   settleEconomicsQuestion,
@@ -109,21 +109,37 @@ export const answerSupplierEconomicsExecutable: Executable<
   async verify(input, ctx) {
     if (input.answer.kind === "dont_know_yet") return { ok: true };
 
-    const row = await prisma.supplierEconomics.findFirst({
-      where: {
-        storeId: ctx.storeId,
-        sourceKey: input.sourceKey,
-        externalProductId: input.externalProductId,
-        externalVariantId: input.externalVariantId ?? "",
-      },
-      select: { provenance: true },
+    const { supplierEconomics } = await import("@/lib/sourcing/economics");
+    const stated = await supplierEconomics(ctx.storeId, {
+      sourceKey: input.sourceKey,
+      externalProductId: input.externalProductId,
+      externalVariantId: input.externalVariantId ?? null,
     });
 
-    if (!row) return { ok: false, error: "nothing was recorded for that product" };
+    if (!stated) return { ok: false, error: "nothing was recorded for that product" };
 
+    // PER FACT, because the write is. An owner who gave only the minimum has
+    // stated one thing, and demanding that the price also carry their name would
+    // fail a write that did exactly what it promised.
     const expected = input.answer.kind === "supplier_would_not_say" ? "UNAVAILABLE" : "OWNER";
-    if (row.provenance !== expected) {
-      return { ok: false, error: `recorded as ${row.provenance}, expected ${expected}` };
+    const facts: EconomicsFact[] =
+      input.answer.kind === "supplier_would_not_say"
+        ? ["minimumOrder", "unitCost"]
+        : [
+            ...(input.answer.minimumOrderUnits !== null && input.answer.minimumOrderUnits !== undefined
+              ? (["minimumOrder"] as EconomicsFact[])
+              : []),
+            ...(input.answer.bulkUnitCostInCents !== null && input.answer.bulkUnitCostInCents !== undefined
+              ? (["unitCost"] as EconomicsFact[])
+              : []),
+          ];
+
+    // A refusal that found an owner's figure already on file is preserved rather
+    // than applied, which is correct and is not a failed write.
+    const landed = facts.filter((fact) => stated.attribution[fact].provenance === expected);
+    const kept = facts.filter((fact) => stated.attribution[fact].provenance === "OWNER");
+    if (landed.length === 0 && kept.length === 0) {
+      return { ok: false, error: `nothing was recorded as ${expected}` };
     }
     return { ok: true };
   },

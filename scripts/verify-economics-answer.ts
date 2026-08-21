@@ -44,7 +44,7 @@ async function main() {
     await import("@/lib/sourcing/economicsQuestions");
   const { answerEconomicsQuestion, settleEconomicsQuestion, economicChanges } =
     await import("@/lib/sourcing/economicsAnswer");
-  const { supplierEconomics, bulkTerms, NO_TERMS } = await import("@/lib/sourcing/economics");
+  const { supplierEconomics, bulkTerms, provenanceOf, NO_TERMS } = await import("@/lib/sourcing/economics");
   const { ingestFromSupplier } = await import("@/lib/sourcing/economicsIngest");
   const { nextMoves } = await import("@/lib/sourcing/nextMoves");
   const { stateCapital } = await import("@/lib/sourcing/progression");
@@ -200,8 +200,8 @@ async function main() {
 
       // PROVENANCE SURVIVES. This is the owner's fact, not a supplier's.
       const stored = await supplierEconomics(store.id, ROLLER);
-      check("recorded as the owner's", stored?.provenance, "OWNER");
-      check("attributed to them", stored?.statedByUserId ?? null, user.id);
+      check("recorded as the owner's", [provenanceOf(stored, "minimumOrder"), provenanceOf(stored, "unitCost")], ["OWNER", "OWNER"]);
+      check("attributed to them", stored?.attribution.unitCost.statedByUserId ?? null, user.id);
       check("with their note", stored?.note, "rang them");
       check("in their currency, stated", stored?.currency, "USD");
 
@@ -262,7 +262,9 @@ async function main() {
       });
 
       check("it was recorded", result.recorded?.status, "recorded");
-      check("as a refusal", (await supplierEconomics(store.id, ROLLER))?.provenance, "UNAVAILABLE");
+      check("as a refusal on both figures",
+        [provenanceOf(await supplierEconomics(store.id, ROLLER), "minimumOrder"),
+         provenanceOf(await supplierEconomics(store.id, ROLLER), "unitCost")], ["UNAVAILABLE", "UNAVAILABLE"]);
       check("which is material", result.changes, ["supplier_refused"]);
       check("and was re-evaluated", result.reevaluated, true);
       // Still nothing is known, so the question does not close — but J4 stops
@@ -335,7 +337,7 @@ async function main() {
       // KEPT, not discarded. They rang their supplier and came back with
       // something real; demanding both would throw it away.
       check("the half they have is recorded", half.recorded?.status, "recorded");
-      check("as theirs", (await supplierEconomics(store.id, ROLLER))?.provenance, "OWNER");
+      check("as theirs", provenanceOf(await supplierEconomics(store.id, ROLLER), "minimumOrder"), "OWNER");
       check("and it counts as material", half.changes, ["minimum_order_became_known"]);
       check("the question is narrowed, not closed", half.question, "narrowed");
 

@@ -4,7 +4,12 @@ import { reportIssue } from "@/lib/observability/reportIssue";
 import type { OwnerCapability } from "./methodProfile";
 import { OWNER_CAPABILITIES } from "./methodProfile";
 import { toVariantKey } from "./types";
-import { tierProblem, type PriceTier, type SupplierProductRef } from "./economics";
+import {
+  tierProblem,
+  type EconomicsFact,
+  type PriceTier,
+  type SupplierProductRef,
+} from "./economics";
 
 // THE ONLY WAY SUPPLIER ECONOMICS GET WRITTEN.
 //
@@ -20,7 +25,7 @@ import { tierProblem, type PriceTier, type SupplierProductRef } from "./economic
 //   recordOwnerQuote    — a person who asked and was told. Writes OWNER.
 //   recordUnavailable   — a person who asked and was refused. Writes UNAVAILABLE.
 //
-// TWO PROTECTIONS ARE STRUCTURAL RATHER THAN CHECKED.
+// THREE PROTECTIONS ARE STRUCTURAL RATHER THAN CHECKED.
 //
 // 1. A CONNECTOR CANNOT WRITE UNDER ANOTHER SOURCE'S KEY. `ingestFromSupplier`
 //    takes ONE sourceKey for the whole batch and stamps it onto every record;
@@ -29,11 +34,16 @@ import { tierProblem, type PriceTier, type SupplierProductRef } from "./economic
 //    because that is what it is: something Printful said. There is no code path
 //    by which one supplier's sync reaches another supplier's row.
 //
-// 2. A SYNC CANNOT ERASE WHAT A PERSON FOUND OUT. An OWNER row is what somebody
-//    got by ringing the supplier up. A catalogue sync that would overwrite it is
-//    refused and reported as `preserved`, not silently applied. This was written
-//    down as a rule the day the table was created and enforced by nothing, which
-//    is the state in which rules stop being true.
+// 2. A SYNC CANNOT ERASE WHAT A PERSON FOUND OUT — now PER FACT (2026-08-21).
+//    A catalogue that publishes a price cannot touch a minimum the owner rang up
+//    and asked for, and it does not have to give up its own price to leave that
+//    minimum alone. Before per-field provenance those two shared one column, so
+//    the sync was refused whole; now each fact is decided on its own.
+//
+// 3. AN OWNER STATES ONLY WHAT THEY SAID. Answering the second half of a
+//    question does not retract the first half, and says nothing at all about the
+//    supplier's own published figures — which therefore keep the supplier's name
+//    on them rather than quietly becoming the owner's.
 //
 // NOTHING HERE INVENTS A VALUE. Every figure is optional and absent stays
 // absent; a rejected record writes nothing at all rather than writing the half
@@ -53,7 +63,15 @@ export interface EconomicsRecord {
 }
 
 export type IngestOutcome =
-  | { status: "recorded"; externalProductId: string; externalVariantId: string | null }
+  | {
+      status: "recorded";
+      externalProductId: string;
+      externalVariantId: string | null;
+      /** The facts this write actually stated. */
+      wrote: EconomicsFact[];
+      /** Facts left alone because a person had stated them. Often empty. */
+      preserved: EconomicsFact[];
+    }
   /**
    * Refused, with the reason, and NOTHING was written.
    *
@@ -62,7 +80,7 @@ export type IngestOutcome =
    * negative price, and it must not be able to pretend the bad one was fine.
    */
   | { status: "rejected"; externalProductId: string; externalVariantId: string | null; problem: string }
-  /** An OWNER statement was left alone. Also nothing written. */
+  /** Every fact this write would have touched was a person's. Nothing written. */
   | { status: "preserved"; externalProductId: string; externalVariantId: string | null; reason: string };
 
 export interface IngestReport {
@@ -129,6 +147,44 @@ export function recordProblem(record: EconomicsRecord): string | null {
 
 // --- the write --------------------------------------------------------------
 
+/** Every fact a catalogue statement covers. */
+export const ALL_FACTS: EconomicsFact[] = [
+  "minimumOrder",
+  "unitCost",
+  "tiers",
+  "shipping",
+  "handling",
+];
+
+/** The two a bulk decision actually needs, and the two J4 asks about. */
+export const QUOTABLE_FACTS: EconomicsFact[] = ["minimumOrder", "unitCost"];
+
+function valuesFor(fact: EconomicsFact, record: EconomicsRecord): Record<string, unknown> {
+  switch (fact) {
+    case "minimumOrder":
+      return { minimumOrderUnits: record.minimumOrderUnits ?? null };
+    case "unitCost":
+      return { unitCostInCents: record.unitCostInCents ?? null };
+    case "tiers":
+      return {
+        // Prisma reads `undefined` as "leave this column alone", which would
+        // silently keep tiers a previous write put there. A writer that states
+        // this fact and gives no breaks is saying there are none.
+        tiers:
+          record.tiers === null || record.tiers === undefined
+            ? Prisma.DbNull
+            : (record.tiers as unknown as Prisma.InputJsonValue),
+      };
+    case "shipping":
+      return { shippingPerUnitInCents: record.shippingPerUnitInCents ?? null };
+    case "handling":
+      return {
+        leadTimeDays: record.leadTimeDays ?? null,
+        requiresCapabilities: record.requiresCapabilities ?? [],
+      };
+  }
+}
+
 interface WriteInput {
   storeId: string;
   sourceKey: string;
@@ -136,7 +192,17 @@ interface WriteInput {
   record: EconomicsRecord;
   statedByUserId: string | null;
   now: Date;
-  /** True for a machine sync, which may not overwrite what a person stated. */
+  /** Exactly the facts this writer is stating. Everything else is untouched. */
+  states: EconomicsFact[];
+  /**
+   * The currency these figures are in, when the writer knows its own.
+   *
+   * A connector does: a supplier quotes in the supplier's money, and it may not
+   * be the business's. An owner typing what they were quoted does not — they
+   * think in their own currency, so the business's is the honest default.
+   */
+  currency?: string;
+  /** True for a machine, which may not overwrite a fact a person stated. */
   yieldsToOwner: boolean;
 }
 
@@ -166,43 +232,50 @@ async function writeOne(input: WriteInput): Promise<IngestOutcome> {
     return { status: "rejected", ...identity, problem: "that business does not exist" };
   }
 
-  if (input.yieldsToOwner) {
-    const existing = await prisma.supplierEconomics.findFirst({
-      where: {
-        storeId: input.storeId,
-        sourceKey: input.sourceKey,
-        externalProductId: record.externalProductId,
-        externalVariantId: variantKey,
-      },
-      select: { provenance: true, statedAt: true },
-    });
-    if (existing?.provenance === "OWNER") {
-      return {
-        status: "preserved",
-        ...identity,
-        reason: `the owner stated these terms on ${existing.statedAt.toISOString().slice(0, 10)}; a catalogue sync does not overwrite what somebody asked for`,
-      };
+  const existing = await prisma.supplierEconomics.findFirst({
+    where: {
+      storeId: input.storeId,
+      sourceKey: input.sourceKey,
+      externalProductId: record.externalProductId,
+      externalVariantId: variantKey,
+    },
+  });
+  const held = existing as unknown as Record<string, unknown> | null;
+
+  // PER FACT, NOT PER ROW. A catalogue that publishes a price no longer has to
+  // be refused wholesale because the owner once rang up about the minimum.
+  const wrote: EconomicsFact[] = [];
+  const preserved: EconomicsFact[] = [];
+  const data: Record<string, unknown> = { currency: input.currency ?? store.currency };
+
+  for (const fact of input.states) {
+    const heldBy = held?.[`${fact}Provenance`] as EconomicsProvenance | null | undefined;
+
+    if (input.yieldsToOwner && heldBy === "OWNER") {
+      preserved.push(fact);
+      continue;
     }
+
+    Object.assign(data, valuesFor(fact, record));
+    data[`${fact}Provenance`] = input.provenance;
+    data[`${fact}StatedAt`] = input.now;
+    data[`${fact}StatedById`] = input.statedByUserId;
+    wrote.push(fact);
   }
 
-  const data = {
-    provenance: input.provenance,
-    currency: store.currency,
-    unitCostInCents: record.unitCostInCents ?? null,
-    minimumOrderUnits: record.minimumOrderUnits ?? null,
-    // Prisma reads `undefined` as "leave this column alone", which on an update
-    // would silently keep tiers a previous sync wrote. Absent means absent.
-    tiers:
-      record.tiers === null || record.tiers === undefined
-        ? Prisma.DbNull
-        : (record.tiers as unknown as Prisma.InputJsonValue),
-    shippingPerUnitInCents: record.shippingPerUnitInCents ?? null,
-    leadTimeDays: record.leadTimeDays ?? null,
-    requiresCapabilities: record.requiresCapabilities ?? [],
-    statedByUserId: input.statedByUserId,
-    statedAt: input.now,
-    note: record.note ?? null,
-  };
+  if (wrote.length === 0) {
+    return {
+      status: "preserved",
+      ...identity,
+      reason:
+        "the owner stated every one of these figures themselves; a catalogue sync does not overwrite what somebody asked for",
+    };
+  }
+
+  // The note belongs to whoever last wrote something, and an absent note does
+  // not withdraw the one already there — an owner adding "and it's 410" has not
+  // retracted "quoted by phone".
+  if (record.note !== null && record.note !== undefined) data.note = record.note;
 
   await prisma.supplierEconomics.upsert({
     where: {
@@ -219,11 +292,11 @@ async function writeOne(input: WriteInput): Promise<IngestOutcome> {
       externalProductId: record.externalProductId,
       externalVariantId: variantKey,
       ...data,
-    },
-    update: data,
+    } as unknown as Prisma.SupplierEconomicsUncheckedCreateInput,
+    update: data as unknown as Prisma.SupplierEconomicsUncheckedUpdateInput,
   });
 
-  return { status: "recorded", ...identity };
+  return { status: "recorded", ...identity, wrote, preserved };
 }
 
 function report(sourceKey: string, outcomes: IngestOutcome[]): IngestReport {
@@ -245,11 +318,19 @@ function report(sourceKey: string, outcomes: IngestOutcome[]): IngestReport {
  * whole safety property: every row is stamped with the key of the connector that
  * produced it, so one supplier's sync cannot land on another supplier's product
  * however wrong its payload is.
+ *
+ * A SYNC STATES EVERY FACT IT OWNS, including the ones it has stopped
+ * mentioning. A catalogue is a complete statement of what a supplier currently
+ * offers, so a price break that has disappeared from it has been withdrawn, and
+ * carrying the old one forward would quote a price nobody sells at. Facts a
+ * person stated are the exception and are left exactly as they are.
  */
 export async function ingestFromSupplier(input: {
   storeId: string;
   sourceKey: string;
   records: EconomicsRecord[];
+  /** The supplier's own currency. Defaults to the business's when unstated. */
+  currency?: string;
   now?: Date;
 }): Promise<IngestReport> {
   const now = input.now ?? new Date();
@@ -264,6 +345,8 @@ export async function ingestFromSupplier(input: {
         record,
         statedByUserId: null,
         now,
+        currency: input.currency,
+        states: ALL_FACTS,
         yieldsToOwner: true,
       })
     );
@@ -298,16 +381,15 @@ export async function ingestFromSupplier(input: {
  * The owner rang the supplier and is telling Genesis what they said.
  *
  * The path that makes the progression engine work in production TODAY, with no
- * connector involved. Recorded as OWNER, which is what stops a later catalogue
- * sync refreshing away something a person went and found out.
+ * connector involved.
  *
- * A call with NEITHER figure is not a quote and is refused. Either one alone is
- * accepted, and that is deliberate (2026-08-20): an owner who rang their
+ * A call with NEITHER of the two quotable figures is not a quote and is refused.
+ * Either one alone is accepted, and that is deliberate: an owner who rang their
  * supplier and came back knowing the minimum but not the price has found out
  * something real, and demanding both would throw it away and ask them the same
- * two questions again. `missingEconomics` then narrows the next question to the
- * half that is still missing, which is the whole point of asking one thing at a
- * time.
+ * two questions again.
+ *
+ * ONLY THE FACTS THEY GAVE ARE TOUCHED — see protection 3 above.
  */
 export async function recordOwnerQuote(input: {
   storeId: string;
@@ -321,10 +403,9 @@ export async function recordOwnerQuote(input: {
   note?: string | null;
   now?: Date;
 }): Promise<IngestOutcome> {
-  if (
-    (input.minimumOrderUnits === null || input.minimumOrderUnits === undefined) &&
-    (input.bulkUnitCostInCents === null || input.bulkUnitCostInCents === undefined)
-  ) {
+  const given = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;
+
+  if (!given(input.minimumOrderUnits) && !given(input.bulkUnitCostInCents)) {
     return {
       status: "rejected",
       externalProductId: input.ref.externalProductId,
@@ -333,40 +414,11 @@ export async function recordOwnerQuote(input: {
     };
   }
 
-  // AN OWNER ADDING A FACT IS NOT AN OWNER RESTATING THE RECORD.
-  //
-  // `writeOne` treats an absent figure as absent, which is right for a connector:
-  // a sync that stops mentioning a price break has withdrawn it, and carrying the
-  // old one forward would quote a price the supplier no longer offers.
-  //
-  // A person is the opposite case. J4 asks for the half it is missing, so an
-  // owner who told us the minimum on Monday and rings back on Tuesday with the
-  // price is ANSWERING THE SECOND QUESTION, not retracting the first — and
-  // treating Tuesday's message as the whole record silently erased Monday's.
-  // Found by verification, not by reading: two turns is the normal shape of this
-  // conversation and one turn was all the write had ever seen.
-  //
-  // Merged ONLY from an existing OWNER row. A supplier's figure carried into a
-  // row stamped OWNER would relabel the supplier's number as the owner's, and
-  // provenance that can be quietly reassigned is provenance that means nothing.
-  // See PRODUCT_PROGRESSION.md C6 for what that costs and why it is not fixed here.
-  const existing = await prisma.supplierEconomics.findFirst({
-    where: {
-      storeId: input.storeId,
-      sourceKey: input.ref.sourceKey,
-      externalProductId: input.ref.externalProductId,
-      externalVariantId: toVariantKey(input.ref.externalVariantId),
-    },
-    select: {
-      provenance: true,
-      minimumOrderUnits: true,
-      unitCostInCents: true,
-      shippingPerUnitInCents: true,
-      leadTimeDays: true,
-      note: true,
-    },
-  });
-  const carried = existing?.provenance === "OWNER" ? existing : null;
+  const states: EconomicsFact[] = [];
+  if (given(input.minimumOrderUnits)) states.push("minimumOrder");
+  if (given(input.bulkUnitCostInCents)) states.push("unitCost");
+  if (given(input.shippingPerUnitInCents)) states.push("shipping");
+  if (given(input.leadTimeDays) || (input.requiresCapabilities?.length ?? 0) > 0) states.push("handling");
 
   return writeOne({
     storeId: input.storeId,
@@ -375,17 +427,16 @@ export async function recordOwnerQuote(input: {
     record: {
       externalProductId: input.ref.externalProductId,
       externalVariantId: input.ref.externalVariantId,
-      minimumOrderUnits: input.minimumOrderUnits ?? carried?.minimumOrderUnits ?? null,
-      unitCostInCents: input.bulkUnitCostInCents ?? carried?.unitCostInCents ?? null,
-      shippingPerUnitInCents: input.shippingPerUnitInCents ?? carried?.shippingPerUnitInCents ?? null,
-      leadTimeDays: input.leadTimeDays ?? carried?.leadTimeDays ?? null,
+      minimumOrderUnits: input.minimumOrderUnits ?? null,
+      unitCostInCents: input.bulkUnitCostInCents ?? null,
+      shippingPerUnitInCents: input.shippingPerUnitInCents ?? null,
+      leadTimeDays: input.leadTimeDays ?? null,
       requiresCapabilities: input.requiresCapabilities ?? [],
-      // The newer note wins, and the older one is kept when this turn added none
-      // — an owner answering "and it's 410" has not withdrawn "quoted by phone".
-      note: input.note ?? carried?.note ?? null,
+      note: input.note ?? null,
     },
     statedByUserId: input.userId ?? null,
     now: input.now ?? new Date(),
+    states,
     // An owner correcting their own earlier answer is the point.
     yieldsToOwner: false,
   });
@@ -398,10 +449,16 @@ export async function recordOwnerQuote(input: {
  * will not say" are different states, and only the first is worth putting in
  * front of an owner again next week — see `economicsPolicy.ts` for what happens
  * when "next week" becomes "two months".
+ *
+ * PER FACT, because a refusal usually is. A supplier that publishes a price and
+ * will not discuss minimums has refused one thing, not both, and recording it as
+ * both would throw away a price somebody could still use.
  */
 export async function recordUnavailable(input: {
   storeId: string;
   ref: SupplierProductRef;
+  /** Defaults to the two figures a bulk decision actually needs. */
+  facts?: EconomicsFact[];
   userId?: string | null;
   note?: string | null;
   now?: Date;
@@ -417,10 +474,10 @@ export async function recordUnavailable(input: {
     },
     statedByUserId: input.userId ?? null,
     now: input.now ?? new Date(),
+    states: input.facts ?? QUOTABLE_FACTS,
     // Recording that a person could not get an answer must not quietly delete
-    // the answer a person previously got. If terms are on file and somebody is
-    // now being refused, the terms on file are still the last thing anybody
-    // actually knew.
+    // the answer a person previously got. If a figure is on file because
+    // somebody asked for it, that is still the last thing anybody actually knew.
     yieldsToOwner: true,
   });
 }

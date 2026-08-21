@@ -7,7 +7,12 @@ import {
   type SupplierProductRef,
   type SupplierTerms,
 } from "./economics";
-import { recordOwnerQuote, recordUnavailable, type IngestOutcome } from "./economicsIngest";
+import {
+  QUOTABLE_FACTS,
+  recordOwnerQuote,
+  recordUnavailable,
+  type IngestOutcome,
+} from "./economicsIngest";
 import { economicsDedupeKey, ECONOMICS_TASK_SOURCE } from "./economicsQuestions";
 import { findGraduationOpportunities } from "./graduation";
 import { nextMoves } from "./nextMoves";
@@ -120,9 +125,15 @@ export function economicChanges(before: SupplierTerms, after: SupplierTerms): Ec
   // A refusal is material in the other direction: it is the difference between
   // "nobody has asked" and "we asked and there is no answer", and it changes
   // what J4 says next from a question into a suggestion to look elsewhere.
-  if (before.provenance !== "UNAVAILABLE" && after.provenance === "UNAVAILABLE") {
-    changes.push("supplier_refused");
-  }
+  //
+  // PER FACT, because a refusal usually is: a supplier that quotes a price and
+  // will not discuss minimums has refused one thing, not both.
+  const refusedNow = QUOTABLE_FACTS.filter(
+    (fact) =>
+      before.attribution[fact].provenance !== "UNAVAILABLE" &&
+      after.attribution[fact].provenance === "UNAVAILABLE"
+  );
+  if (refusedNow.length > 0) changes.push("supplier_refused");
 
   return changes;
 }

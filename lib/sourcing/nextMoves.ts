@@ -17,7 +17,9 @@ import {
   supplierEconomics,
   ECONOMICS_GAP_EXPLANATION,
   NO_TERMS,
+  type SupplierEconomics,
 } from "./economics";
+import { QUOTABLE_FACTS } from "./economicsIngest";
 import { methodProfile } from "./methodProfile";
 import { scoreCandidate, type SourcingContext } from "./recommend";
 import { buildSourcingContext } from "./context";
@@ -62,11 +64,14 @@ export interface NextMoves {
  * repeat work they did last week is how an assistant becomes noise; never asking
  * again is how a closed door stays closed forever.
  */
-function unblockQuestion(
-  productName: string,
-  stated: { provenance: string; freshness: { state: string; ageDays: number } } | null
-): string {
-  if (stated?.provenance !== "UNAVAILABLE") {
+function unblockQuestion(productName: string, stated: SupplierEconomics | null): string {
+  // WHICH FACTS WERE ACTUALLY REFUSED, not "was this record a refusal". A
+  // supplier can quote a price and decline to discuss minimums, and asking the
+  // owner to go back for both would be asking them to repeat half the work.
+  const refused = QUOTABLE_FACTS.filter(
+    (fact) => stated?.attribution[fact].provenance === "UNAVAILABLE"
+  );
+  if (refused.length === 0) {
     return `What would ${productName} cost you to buy in bulk, and how many would you have to order?`;
   }
 
@@ -74,8 +79,13 @@ function unblockQuestion(
   // wouldn't say" is a reason not to ask again next week; past the window it
   // stops being a reason not to ask at all. Suppliers change their minds, and by
   // now this owner may be a customer worth quoting.
-  if (stated.freshness.state === "stale") {
-    const months = Math.max(1, Math.round(stated.freshness.ageDays / 30));
+  const oldest = refused
+    .map((fact) => stated!.attribution[fact].freshness)
+    .filter((f): f is NonNullable<typeof f> => f !== null)
+    .sort((a, b) => b.ageDays - a.ageDays)[0];
+
+  if (oldest?.state === "stale") {
+    const months = Math.max(1, Math.round(oldest.ageDays / 30));
     return `It's been ${months === 1 ? "a month" : `${months} months`} since they wouldn't quote you on ${productName}. Worth asking again?`;
   }
 

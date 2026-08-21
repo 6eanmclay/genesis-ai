@@ -38,7 +38,7 @@ async function main() {
 
   const { ingestFromSupplier, recordOwnerQuote, recordUnavailable, recordProblem } =
     await import("@/lib/sourcing/economicsIngest");
-  const { supplierEconomics, bulkTerms } = await import("@/lib/sourcing/economics");
+  const { supplierEconomics, bulkTerms, provenanceOf } = await import("@/lib/sourcing/economics");
   const { prismaSystem: prisma } = await import("@/lib/prisma");
 
   async function reset() {
@@ -199,24 +199,29 @@ async function main() {
       });
       check("the owner's quote is recorded", quoted.status, "recorded");
 
-      // THE RULE THAT WAS WRITTEN DOWN AND ENFORCED BY NOTHING. A catalogue sync
-      // that would overwrite a person's answer is refused — an OWNER figure is
-      // something somebody obtained, and it has to be re-asked rather than
-      // refreshed.
+      // THE RULE THAT WAS WRITTEN DOWN AND ENFORCED BY NOTHING, now enforced PER
+      // FACT. A catalogue sync cannot touch a figure a person obtained — but it
+      // no longer has to give up everything else to leave that figure alone,
+      // which is exactly what one provenance column forced.
       const sync = await ingestFromSupplier({
         storeId: store.id, sourceKey: "w",
         records: [{ externalProductId: "roller-1", minimumOrderUnits: 500, unitCostInCents: 900 }],
       });
-      check("the sync did not apply", sync.preserved, 1);
-      check("and nothing was recorded", sync.recorded, 0);
-      assert("the refusal says why",
-        sync.outcomes[0].status === "preserved" &&
-          (sync.outcomes[0] as { reason: string }).reason.includes("does not overwrite"),
-        JSON.stringify(sync.outcomes[0]));
+      const outcome = sync.outcomes[0];
+      assert("the sync ran", outcome.status === "recorded", JSON.stringify(outcome));
+      if (outcome.status === "recorded") {
+        check("and left the owner's two figures alone",
+          [...outcome.preserved].sort(), ["minimumOrder", "unitCost"]);
+        // It DID state everything the owner had not claimed: those facts are the
+        // catalogue's to keep current, and refusing them would be the whole-row
+        // refusal this change exists to end.
+        check("while stating what nobody had claimed",
+          [...outcome.wrote].sort(), ["handling", "shipping", "tiers"]);
+      }
 
       const kept = await supplierEconomics(store.id, productRef);
       check("the owner's figures stand", [kept?.minimumOrderUnits, kept?.unitCostInCents], [50, 380]);
-      check("as the owner's", kept?.provenance, "OWNER");
+      check("as the owner's", [provenanceOf(kept, "minimumOrder"), provenanceOf(kept, "unitCost")], ["OWNER", "OWNER"]);
       check("with their note", kept?.note, "quoted by phone");
 
       // THE OWNER MAY ALWAYS CORRECT THEMSELVES. The rule protects a person from
@@ -265,7 +270,7 @@ async function main() {
       });
       check("a catalogue that now quotes supersedes the refusal", answered.recorded, 1);
       check("and it becomes a supplier fact",
-        (await supplierEconomics(store.id, ref("w", "p2")))?.provenance, "SUPPLIER");
+        provenanceOf(await supplierEconomics(store.id, ref("w", "p2")), "unitCost"), "SUPPLIER");
     }
 
     // -----------------------------------------------------------------------
@@ -323,7 +328,7 @@ async function main() {
       const merged = await supplierEconomics(store.id, productRef);
       check("Monday's minimum survives Tuesday's price",
         [merged?.minimumOrderUnits, merged?.unitCostInCents], [100, 410]);
-      check("and it is all still theirs", merged?.provenance, "OWNER");
+      check("and it is all still theirs", [provenanceOf(merged, "minimumOrder"), provenanceOf(merged, "unitCost")], ["OWNER", "OWNER"]);
       check("with the note they gave", merged?.note, "quoted by phone");
 
       // A correction still wins — the rule protects a person from being erased,
@@ -351,12 +356,11 @@ async function main() {
       check("a withdrawn supplier figure does not linger",
         (await supplierEconomics(machine.store.id, ref("w", "p1")))?.minimumOrderUnits, null);
 
-      // THE LIMIT, ASSERTED SO IT CANNOT SURPRISE ANYBODY. A partial owner answer
-      // over a SUPPLIER row drops the supplier's other figure, because one row
-      // carries one provenance and carrying 410 into a row stamped OWNER would
-      // relabel the supplier's number as the owner's. Honest, and lossy — the
-      // fix is per-field provenance, which is a real schema change and is NOT
-      // done here. See PRODUCT_PROGRESSION.md C6.
+      // THE LIMIT THAT USED TO BE HERE IS GONE (2026-08-21). A partial owner
+      // answer over a supplier's row used to drop the supplier's other figure,
+      // because one row carried one provenance and carrying 410 into a row
+      // stamped OWNER would have relabelled the supplier's number as the
+      // owner's. Per-field provenance is what makes both true at once.
       await ingestFromSupplier({
         storeId: machine.store.id, sourceKey: "w",
         records: [{ externalProductId: "p2", unitCostInCents: 410 }],
@@ -365,9 +369,25 @@ async function main() {
         storeId: machine.store.id, ref: ref("w", "p2"), minimumOrderUnits: 100,
       });
       const mixed = await supplierEconomics(machine.store.id, ref("w", "p2"));
-      check("the owner's fact is theirs", [mixed?.provenance, mixed?.minimumOrderUnits], ["OWNER", 100]);
-      check("and the supplier's figure is dropped rather than relabelled",
-        mixed?.unitCostInCents, null);
+      check("the owner's fact is theirs",
+        [provenanceOf(mixed, "minimumOrder"), mixed?.minimumOrderUnits], ["OWNER", 100]);
+      check("the supplier's fact is still the supplier's",
+        [provenanceOf(mixed, "unitCost"), mixed?.unitCostInCents], ["SUPPLIER", 410]);
+      // BOTH FIGURES USABLE, EACH ATTRIBUTED TO WHOEVER ACTUALLY SAID IT. This
+      // is the whole point of the change: the decision now has everything it
+      // needs, and nothing in it is credited to the wrong party.
+      check("and a bulk decision has what it needs",
+        [bulkTerms(mixed).minimumOrderUnits, bulkTerms(mixed).bulkUnitCostInCents], [100, 410]);
+
+      // And the sync that follows refreshes ITS figure without touching theirs.
+      await ingestFromSupplier({
+        storeId: machine.store.id, sourceKey: "w",
+        records: [{ externalProductId: "p2", unitCostInCents: 380 }],
+      });
+      const refreshed = await supplierEconomics(machine.store.id, ref("w", "p2"));
+      check("the catalogue updates its own price", refreshed?.unitCostInCents, 380);
+      check("and the owner's minimum is untouched",
+        [provenanceOf(refreshed, "minimumOrder"), refreshed?.minimumOrderUnits], ["OWNER", 100]);
     }
 
   } finally {

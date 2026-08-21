@@ -47,7 +47,7 @@ async function main() {
   } = await import("@/lib/sourcing/economicsChat");
   const { raiseEconomicsQuestions, economicsDedupeKey, ECONOMICS_TASK_SOURCE } =
     await import("@/lib/sourcing/economicsQuestions");
-  const { supplierEconomics, bulkTerms } = await import("@/lib/sourcing/economics");
+  const { supplierEconomics, bulkTerms, provenanceOf } = await import("@/lib/sourcing/economics");
   const { nextMoves } = await import("@/lib/sourcing/nextMoves");
   const { stateCapital } = await import("@/lib/sourcing/progression");
   const {
@@ -251,7 +251,7 @@ async function main() {
 
       // THE SAME PERSISTENCE PATH AS THE CARD. Provenance proves it.
       const stored = await supplierEconomics(store.id, ROLLER);
-      check("recorded as the owner's own", stored?.provenance, "OWNER");
+      check("recorded as the owner's own", [provenanceOf(stored, "minimumOrder"), provenanceOf(stored, "unitCost")], ["OWNER", "OWNER"]);
       check("with the figures they gave",
         [bulkTerms(stored).minimumOrderUnits, bulkTerms(stored).bulkUnitCostInCents], [100, 410]);
       check("and their words kept", stored?.note, "rang them this morning");
@@ -388,7 +388,7 @@ async function main() {
         runAction: asOwner(store.id),
         answer: chatAnswerFrom(toolInput({ outcome: "supplier_would_not_say", note: "wouldn't quote under 1000" })),
       });
-      check("recorded as unavailable", (await supplierEconomics(store.id, ROLLER))?.provenance, "UNAVAILABLE");
+      check("recorded as unavailable", provenanceOf(await supplierEconomics(store.id, ROLLER), "unitCost"), "UNAVAILABLE");
       check("and quotes nothing", bulkTerms(await supplierEconomics(store.id, ROLLER)).bulkUnitCostInCents, null);
       assert("the reply says they wouldn't quote",
         refused.reply.includes("wouldn't quote you"), refused.reply);

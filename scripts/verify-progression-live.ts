@@ -3,7 +3,7 @@ import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
 // TYPE ONLY. Everything from lib/ is imported dynamically below, after
 // DATABASE_URL points at the harness — a value import here would load Prisma
 // against whatever the environment happened to hold.
-import type { SupplierTerms } from "@/lib/sourcing/economics";
+import type { FactAttribution, SupplierTerms } from "@/lib/sourcing/economics";
 
 // Progression against a real database:
 //
@@ -36,6 +36,13 @@ function assert(label: string, ok: boolean, detail = ""): void {
  * explicitly unknown, which is the honest default and the one this whole layer
  * is about.
  */
+const unstated: FactAttribution = {
+  provenance: null,
+  statedAt: null,
+  statedByUserId: null,
+  freshness: null,
+};
+
 function terms(
   minimumOrderUnits: number | null,
   bulkUnitCostInCents: number | null,
@@ -47,9 +54,18 @@ function terms(
     shippingPerUnitInCents: null,
     leadTimeDays: null,
     requiresCapabilities: [],
-    provenance: null,
     currency: null,
-    freshness: null,
+    // Written out rather than spread from the exported UNSTATED, because that is
+    // a VALUE, and a value import from lib/ at module scope loads Prisma before
+    // DATABASE_URL points at the harness. Caused exactly one ECONNREFUSED here
+    // before it was caught.
+    attribution: {
+      minimumOrder: unstated,
+      unitCost: unstated,
+      tiers: unstated,
+      shipping: unstated,
+      handling: unstated,
+    },
     integrity: { ok: true },
     ...rest,
   };

@@ -1,5 +1,5 @@
 import type { SourcingMethodProfile, OwnerCapability } from "./methodProfile";
-import type { SupplierTerms } from "./economics";
+import { ECONOMICS_FACTS, type EconomicsFact, type SupplierTerms } from "./economics";
 import type { CapitalPosture, ProductEvidence } from "./progression";
 import { spendableCents } from "./progression";
 import { framingFor } from "./framing";
@@ -106,20 +106,41 @@ export interface FeasibilityInput {
  * window is. Here is the consequence: the recommendation still stands, and it
  * arrives carrying its own age.
  */
+/** How an owner would name each fact when told its figures have aged. */
+const FACT_LABEL: Record<EconomicsFact, string> = {
+  minimumOrder: "the minimum order",
+  unitCost: "the price",
+  tiers: "the price breaks",
+  shipping: "the delivery cost",
+  handling: "how long they take",
+};
+
 function stalenessCaveat(supplier: SupplierTerms): string | null {
-  const freshness = supplier.freshness;
-  if (!freshness || freshness.state === "fresh") return null;
+  // THE OLDEST STALE FACT SPEAKS FOR THE REST. Per-fact freshness means a
+  // decision can rest on a price from this morning and a minimum from February,
+  // and listing every one of them would bury the point under bookkeeping. One
+  // sentence, naming the fact that has aged furthest and who stated it, is what
+  // an owner would actually want to hear before spending money.
+  const stale = ECONOMICS_FACTS
+    .map((fact) => ({ fact, at: supplier.attribution[fact] }))
+    .filter((entry) => entry.at.freshness?.state === "stale")
+    .sort((a, b) => (b.at.freshness!.ageDays ?? 0) - (a.at.freshness!.ageDays ?? 0));
 
-  const months = Math.max(1, Math.round(freshness.ageDays / 30));
+  const oldest = stale[0];
+  if (!oldest) return null;
+
+  const months = Math.max(1, Math.round(oldest.at.freshness!.ageDays / 30));
   const howLong = months === 1 ? "about a month ago" : `about ${months} months ago`;
+  const what = FACT_LABEL[oldest.fact];
+  const alsoOthers = stale.length > 1 ? ` (and ${stale.length - 1} other figure${stale.length > 2 ? "s" : ""})` : "";
 
-  if (supplier.provenance === "OWNER") {
-    return `These are the terms you gave me ${howLong} — worth checking that's still the price before you order.`;
+  if (oldest.at.provenance === "OWNER") {
+    return `You gave me ${what}${alsoOthers} ${howLong} — worth checking that's still right before you order.`;
   }
-  if (supplier.provenance === "UNAVAILABLE") {
-    return `They wouldn't quote you ${howLong}. Worth asking again.`;
+  if (oldest.at.provenance === "UNAVAILABLE") {
+    return `They wouldn't tell you ${what} ${howLong}. Worth asking again.`;
   }
-  return `This is what their catalogue said ${howLong}, and it hasn't updated since — worth confirming before you order.`;
+  return `Their catalogue last stated ${what}${alsoOthers} ${howLong} and hasn't updated since — worth confirming before you order.`;
 }
 
 /**

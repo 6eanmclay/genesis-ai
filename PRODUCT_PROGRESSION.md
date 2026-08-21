@@ -360,6 +360,13 @@ The owner can answer J4's question by typing it. Same Task, same
 `recordOwnerQuote`, same progression — the conversation is a second entrance to
 one path, never a second path.
 
+`raiseEconomicsQuestions` runs inside **`runTaskDetection`** — the detection pass
+Home already awaits on every load, so a real product condition raises the
+question with nobody running anything. It is gated on one indexed count (does
+this business have an active product naming a supplier listing?), which is exact
+rather than a heuristic: a question can only ever concern such a product, and
+everything past the gate genuinely might have a deepen worth unblocking.
+
 `answer_supplier_economics` is a tool on the existing unified chat call, and the
 open questions are put in the model's context the same way pending approvals
 already are, because a model with no signal that something is outstanding reads
@@ -387,27 +394,110 @@ retracting the first. `recordOwnerQuote` therefore merges with an existing
 **OWNER** row. Found by verification, not by reading: two turns is the normal
 shape of this conversation and one turn was all the write had ever seen.
 
-#### The limit, named rather than worked around
+### C6a. Provenance is per fact
 
-Merging happens **only from an OWNER row**, and that leaves a real gap.
+**The limitation recorded here has been fixed** (2026-08-21). It said a partial
+owner answer over a supplier's row dropped the supplier's other figure, because
+one row carried one provenance. That is no longer true, and the fix is the
+architectural prerequisite for any real supplier ingestion.
 
-If a catalogue published a price and the owner supplies only the minimum, the
-owner's answer supersedes the row and **the supplier's price is dropped** rather
-than carried into a record stamped `OWNER`. Carrying it would relabel the
-supplier's number as the owner's, and provenance that can be quietly reassigned
-is provenance that means nothing.
+One row, several facts, and they do not arrive together:
 
-The honest fix is **per-field provenance** — which figure came from whom, and
-when — and that is a real schema change with real ripple: `bulkTerms`, the
-freshness windows, the "a sync may not overwrite an owner" precedence rule and
-every test that reads `provenance` all assume one answer per row. It is **not
-done here**, it is asserted in `verify-economics-ingest.ts` §7 so it cannot
-surprise anybody, and the consequence in practice is that J4 asks for the dropped
-figure again rather than quoting one it cannot attribute.
+| Fact | Columns |
+|---|---|
+| `minimumOrder` | `minimumOrderUnits` |
+| `unitCost` | `unitCostInCents` |
+| `tiers` | `tiers` |
+| `shipping` | `shippingPerUnitInCents` |
+| `handling` | `leadTimeDays`, `requiresCapabilities` |
 
-**Out of scope, deliberately:** a price update volunteered when no question is
-outstanding. The tool answers questions J4 asked; resolving an unprompted product
-name against the whole catalogue is a wider mechanism and is not built.
+Each carries its own `Provenance`, `StatedAt` and `StatedById`. The row-level
+trio is **gone**: "who last wrote this row" answered a question nothing should
+have been asking, because every decision needs to know who stated the particular
+figure it is about.
+
+What that buys, all of which was impossible before:
+
+- **A catalogue price and an owner's minimum coexist**, each with the right name
+  on it. Neither is dropped and neither is relabelled.
+- **Freshness is judged per fact.** A price from this morning is not made stale
+  by a minimum from February. The caveat names the fact that has aged furthest.
+- **`UNAVAILABLE` is per fact.** A supplier that publishes a price and will not
+  discuss minimums has refused one thing, not both — and J4 asks about the one
+  thing rather than sending the owner back for both.
+- **A sync yields to the owner per fact.** It no longer has to be refused whole
+  to leave one figure alone, so a catalogue can keep its own facts current.
+
+**A value without a provenance is not a value.** Nothing writes one; the reader
+treats the pair as unstated, the same way it treats malformed price breaks. That
+is what stops a hand-edit or an import producing a figure nobody will stand
+behind.
+
+Safe to migrate destructively because the production table was empty — row count
+confirmed by querying the live database, not assumed. There was no row whose
+single provenance would have had to be spread across five facts, and guessing
+which fact an old value described is precisely what this change exists to stop.
+
+### C6b. What a producer must provide
+
+`economicsProducer.ts` defines the contract a supplier connector has to satisfy
+and **the single door it comes through**. No connector is built.
+
+| Requirement | Rule |
+|---|---|
+| Identity | `externalProductId` required; `externalVariantId` null when the listing has none. **No `sourceKey`** — see below |
+| Currency | **Required on the producer**, not the record. The supplier's own money is stored as the supplier's own money; Genesis never converts |
+| Price / MOQ | Optional, and absent means absent. Never 1-as-a-default, never 0-for-unknown |
+| Tiers | Optional. An empty array means "no price breaks", which is not null |
+| Shipping | Optional. A stated `0` means included |
+| Capabilities | From `OwnerCapability`; anything else rejects the record |
+| Freshness | Not supplied. Stamped at ingest, per fact |
+| Provenance | Not supplied. `SUPPLIER`, decided by the writer |
+| Malformed data | Rejected per record, reported, and **nothing partial is written**. The rest of the catalogue still lands |
+| Readiness | `blockedOn: string[]`, declared not discovered — same convention as `ProductSource` |
+
+**The boundary is the point.** A producer never sees Prisma, never picks a
+provenance, and has no field in which to name a source: `runEconomicsProducer`
+takes the key from the registry entry, checks it is registered, and hands the
+statements to `ingestFromSupplier`. Everything that decides whether a number can
+be trusted lives on this side of the door, tested once rather than
+re-implemented per supplier.
+
+**A sync is a complete statement.** A producer returns its whole catalogue in one
+call, because `ingestFromSupplier` treats absence as withdrawal — a partial
+return would look identical to a supplier that had withdrawn everything it
+omitted. A producer whose API pages is responsible for assembling the pages.
+
+### C7. What a supplier price change does
+
+**THE DECISION (2026-08-21): a supplier's own fact is theirs to change. It
+updates in place, silently, and raises no question.**
+
+Asking an owner to approve a price they do not control is asking them to approve
+the weather. A rise does the same nothing, because Genesis does not model
+reordering — there is no decision to revisit, and inventing an interruption would
+be inventing a mechanism.
+
+A price change reaches the owner by exactly one existing route: **the
+reconsideration mechanism**, when it materially changes a decision they actually
+declined. No catalogue feed, no change alert, no new question type.
+
+Two things a supplier change can never do, both tested:
+
+1. **Touch a fact a person stated.** Structural, per fact.
+2. **Decide anything.** A cheaper price is a better recommendation, never an
+   accepted one. Nothing graduates a product but the owner.
+
+And one thing it *does* do, which is the honest counterpart: **withdrawing a
+figure reopens the gap.** A catalogue that stops publishing a price has not
+changed the price — Genesis no longer knows it, and the response is the same one
+it gives when nobody ever said. The question comes back automatically, asking
+only for the half that vanished.
+
+**Out of scope, deliberately:** a general catalogue-change system. This covers
+economics facts on products a business already sells. Discovery-side changes —
+listings appearing, disappearing or being renamed — are a separate concern and
+are not built.
 
 ### C3. Freshness — `economicsPolicy.ts`
 

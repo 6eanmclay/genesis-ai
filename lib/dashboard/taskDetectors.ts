@@ -1,3 +1,4 @@
+import { prisma } from "@/lib/prisma";
 import { upsertTask, resolveStaleTasks } from "./tasks";
 
 // Store.blueprint is opaque Json — same read-site cast pattern
@@ -79,4 +80,35 @@ export async function runTaskDetection(
 
   await resolveStaleTasks(storeId, "state_issue", freshDedupeKeys.filter((k) => k !== "task.no_logo"));
   await resolveStaleTasks(storeId, "brand_gap", freshDedupeKeys.filter((k) => k === "task.no_logo"));
+
+  // P0.5 — the supplier-economics question, raised from the same pass as every
+  // other thing Genesis needs from an owner (2026-08-21).
+  //
+  // THIS IS THE DETECTION PASS, so this is where it belongs. A separate
+  // scheduler for one question would be a second thing to run, a second thing
+  // to forget to run, and a second answer to "why did this card appear now".
+  //
+  // GATED, because it is not free. raiseEconomicsQuestions runs the whole
+  // progression engine, and Home awaits this call so the cards are current on
+  // THIS load rather than lagging a view behind. The gate is exact rather than a
+  // heuristic: a question can only concern a product that names a supplier
+  // listing, so a store with none cannot produce one, and one indexed count
+  // settles it. Everything past the gate is a store that genuinely might have a
+  // deepen worth unblocking.
+  const sourcedProducts = await prisma.product.count({
+    where: {
+      storeId,
+      active: true,
+      // BOTH parts present. Prisma reads a NOT array as "not all of these",
+      // which would have let a product with a source and no external id through.
+      sourceKey: { not: null },
+      externalProductId: { not: null },
+    },
+  });
+  if (sourcedProducts > 0) {
+    const { raiseEconomicsQuestions } = await import("@/lib/sourcing/economicsQuestions");
+    // Its own source and its own stale sweep, so it can neither be retired by
+    // the sweeps above nor retire anything they own.
+    await raiseEconomicsQuestions(storeId);
+  }
 }

@@ -2572,6 +2572,106 @@ is behind it.
 
 ---
 
+## 55. The four gaps before the catalog
+
+*Closed in order, and one of them deleted a limitation §54 had recorded as
+permanent-for-now.*
+
+### 1. The question had no production caller
+
+`raiseEconomicsQuestions` was complete and nothing ran it, so in production no
+question was ever raised — the loop worked end to end for anybody who could open
+a console.
+
+It now runs inside **`runTaskDetection`**, the pass Home already awaits on every
+load. That is the correct home rather than a scheduler: a separate timer for one
+question would be a second thing to run, a second thing to forget to run, and a
+second answer to "why did this card appear now".
+
+**Gated, because it is not free** — it runs the whole progression engine, and
+Home awaits it. The gate is one indexed count: does this business have an active
+product that names a supplier listing? Exact rather than a heuristic, because a
+question can only ever concern such a product. Both directions asserted.
+
+### 2. Per-field provenance, which §54 said was not done
+
+It is done. `PRODUCT_PROGRESSION.md` §C6a has the model.
+
+The failing case §54 recorded — a partial owner answer dropping the supplier's
+other figure — is now a passing test asserting the opposite: the owner's minimum
+is `OWNER`, the supplier's price is `SUPPLIER`, both are usable, and the next
+sync refreshes the supplier's own figure without touching the owner's.
+
+Three consequences fell out that were not the point but are worth as much:
+freshness is judged per fact, so a price from this morning is not aged by a
+minimum from February; `UNAVAILABLE` is per fact, so a supplier who quotes a
+price and refuses a minimum is asked about the minimum alone; and a sync no
+longer has to be refused whole to leave one figure alone.
+
+The row-level `provenance`/`statedAt`/`statedByUserId` trio is **gone**. "Who
+last wrote this row" answered a question nothing should have been asking.
+
+Destructive migration, safe because the table was empty in production — row count
+queried on the live database, not assumed. There was no row whose one provenance
+would have had to be spread across five facts, and guessing which fact an old
+value described is precisely what the change exists to prevent.
+
+### 3. The producer contract
+
+Defined, not built. `economicsProducer.ts` names exactly what a legitimate
+producer must provide — the table is in §C6b — and provides the one door it comes
+through.
+
+The load-bearing part is what a producer **cannot** supply: no `sourceKey` (the
+key comes from the registry entry, checked against it), no provenance, no
+freshness, and no access to Prisma. A connector supplying its own source key is a
+connector that could supply somebody else's, and everything that decides whether
+a number can be trusted stays on this side of the door where it is tested once.
+
+Currency moved onto the **producer**, and that is a real correction: the previous
+version stamped every row with the business's currency, which is right for an
+owner typing what they were quoted and wrong for a supplier that quotes in its
+own money. A EUR producer writing to a USD business now stores EUR, and
+`assessFeasibility` refuses to compare rather than applying a rate nobody
+supplied. Asserted end to end.
+
+### 4. What a supplier price change does
+
+**Decided: a supplier's own fact is theirs to change. It updates in place,
+silently, and raises no question.** Asking an owner to approve a price they do
+not control is asking them to approve the weather; a rise does the same nothing,
+because Genesis does not model reordering and there is no decision to revisit.
+
+A price change reaches the owner by exactly one existing route — the
+reconsideration mechanism, when it materially changes a decision they actually
+declined. No catalogue feed, no alert, no new question type.
+
+The honest counterpart, and the one case that DOES ask: **withdrawing a figure
+reopens the gap.** A catalogue that stops publishing a price has not changed the
+price — Genesis no longer knows it, and the response is the same one it gives
+when nobody ever said. The question returns automatically, asking only for the
+half that vanished.
+
+Out of scope and named as such: a general catalogue-change system.
+
+### Status
+
+**VERIFIED** — `scripts/verify-economics-producer.ts`, 7 sections, real Postgres,
+covering items 1, 3 and 4; item 2's write rules are in
+`verify-economics-ingest.ts`, where they belong.
+
+Full regression green: 7 pure suites, 9 live ones, typecheck and build.
+
+Three test premises were wrong and were fixed rather than the code, all three
+because per-field provenance made the old behaviour obsolete: a sync being
+refused wholesale, the dropped-supplier-figure limitation, and a decision
+snapshot hand-built from a shape that no longer carries attribution. One real
+mistake of my own was caught the same way — a value import from `lib/` at module
+scope in a verification script, which loads Prisma before `DATABASE_URL` points
+at the harness and produced exactly one `ECONNREFUSED`.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2623,6 +2723,7 @@ scripts/verify-economics-live.ts          supplier economics, and the zero-capit
 scripts/verify-economics-ingest.ts        the only way economics get written (real Postgres)
 scripts/verify-economics-answer.ts        J4 asks, the owner answers, the progression moves (real Postgres)
 scripts/verify-economics-chat.ts          the same answer, typed into the conversation (real Postgres)
+scripts/verify-economics-producer.ts      detection, the producer contract, and price changes (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

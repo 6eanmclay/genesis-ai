@@ -816,8 +816,6 @@ model SupplierEconomics {
   externalProductId String
   externalVariantId String @default("")
 
-  provenance EconomicsProvenance
-
   /// What currency these figures are in.
   ///
   /// EXPLICIT, never assumed from the business. A supplier who quotes in EUR to
@@ -827,35 +825,77 @@ model SupplierEconomics {
   /// across currencies rather than applying a rate nobody supplied.
   currency String
 
-  /// What one unit costs at no minimum. NULL = unknown, never zero.
-  unitCostInCents   Int?
-  /// The smallest order the supplier will take. NULL = unknown.
-  minimumOrderUnits Int?
-  /// Price breaks, cheapest-last: [{ minUnits, unitCostInCents }]. NULL = none
-  /// stated, which is different from a supplier that has no breaks (an empty
-  /// array). Json because the shape of a price break varies by supplier and a
-  /// table of two columns per tier would be a join for no reason.
-  tiers             Json?
+  // PROVENANCE IS PER FACT, NOT PER ROW (2026-08-21).
+  //
+  // One row, several facts, and they do not arrive together. A catalogue can
+  // publish a price and say nothing about the minimum; the owner then rings and
+  // is told the minimum. Under one provenance column those two could not
+  // coexist: the owner's answer either overwrote the supplier's price or was
+  // stamped with the supplier's name. Both are lies about where a number came
+  // from, and a number about somebody's money is exactly where that matters.
+  //
+  // Each fact below therefore carries its own provenance, its own statedAt (so
+  // freshness is judged per fact — a price from this morning is not made stale
+  // by a minimum from February) and its own author. A NULL provenance means
+  // nobody has said anything about that fact, which is the honest starting
+  // state and is different in kind from a stated UNAVAILABLE.
+  //
+  // A VALUE WITHOUT A PROVENANCE IS NOT A VALUE. Nothing writes one; the reader
+  // treats the pair as unusable and says so, the same way it treats malformed
+  // price breaks.
 
+  /// The smallest order the supplier will take.
+  minimumOrderUnits      Int?
+  minimumOrderProvenance EconomicsProvenance?
+  minimumOrderStatedAt   DateTime?
+  minimumOrderStatedById String?
+
+  /// What one unit costs at that minimum. Never zero for unknown.
+  unitCostInCents      Int?
+  unitCostProvenance   EconomicsProvenance?
+  unitCostStatedAt     DateTime?
+  unitCostStatedById   String?
+
+  /// Price breaks, [{ minUnits, unitCostInCents }]. NULL = none stated, which is
+  /// different from a supplier that has no breaks (an empty array). Json because
+  /// the shape of a price break varies by supplier and a table of two columns
+  /// per tier would be a join for no reason.
+  tiers            Json?
+  tiersProvenance  EconomicsProvenance?
+  tiersStatedAt    DateTime?
+  tiersStatedById  String?
+
+  /// Delivery per unit on a bulk order. A stated 0 means "included" and is not
+  /// the same as unknown.
   shippingPerUnitInCents Int?
-  leadTimeDays           Int?
-  /// Capabilities this product would demand of the owner beyond its method's
-  /// own — an oversized item needing real storage, say. Strings from
-  /// OwnerCapability; unknown ones are ignored rather than trusted.
-  requiresCapabilities   String[] @default([])
+  shippingProvenance     EconomicsProvenance?
+  shippingStatedAt       DateTime?
+  shippingStatedById     String?
 
-  /// Who said so, and when. An owner-provided figure carries their name so the
-  /// answer can be attributed back when it is questioned.
-  statedByUserId String?
-  statedAt       DateTime @default(now())
+  /// How long the supplier takes, and what this product demands of the owner
+  /// beyond its method's own — an oversized item needing real storage, say.
+  /// One fact: both describe what handling this product involves, and nobody
+  /// states one without the other being part of the same conversation.
+  leadTimeDays         Int?
+  requiresCapabilities String[]             @default([])
+  handlingProvenance   EconomicsProvenance?
+  handlingStatedAt     DateTime?
+  handlingStatedById   String?
+
   /// Free text the owner added — "quoted by email 12 Aug". Never parsed.
-  note           String?
+  note String?
+
+  /// When this row was last touched by anything. Audit only: every decision
+  /// reads the per-fact statedAt above, because "when did somebody tell us the
+  /// price" and "when did this row last change" are different questions.
+  updatedAt DateTime @default(now()) @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   @@unique([storeId, sourceKey, externalProductId, externalVariantId])
   @@index([storeId, sourceKey])
 }
+
 
 enum EconomicsProvenance {
   /// The supplier's own API or catalogue said so.

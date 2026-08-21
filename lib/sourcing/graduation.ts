@@ -297,7 +297,7 @@ async function findSupplierRow(
             productId: product.id,
             sourceKey: stated.sourceKey,
             externalProductId: stated.externalProductId,
-            provenance: stated.provenance,
+            provenance: stated.attribution.tiers.provenance,
           },
         });
         // Returned rather than falling through. A record whose price breaks are
@@ -307,16 +307,10 @@ async function findSupplierRow(
         return terms;
       }
 
-      // Even an UNAVAILABLE record is an answer: somebody looked. It resolves to
+      // Even an UNAVAILABLE fact is an answer: somebody looked. It resolves to
       // nulls, which the pipeline carries as cannot_assess rather than treating
       // as never having been asked.
-      if (
-        terms.minimumOrderUnits !== null ||
-        terms.bulkUnitCostInCents !== null ||
-        stated.provenance === "UNAVAILABLE"
-      ) {
-        return terms;
-      }
+      if (anyTermsRecorded(terms)) return terms;
     }
   }
 

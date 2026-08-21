@@ -44,7 +44,7 @@ async function main() {
 
   const {
     supplierEconomics, bulkTerms, missingEconomics, readTiers, tierProblem,
-    integrityDiagnostic, anyTermsRecorded, NO_TERMS,
+    integrityDiagnostic, anyTermsRecorded, provenanceOf, NO_TERMS,
   } = await import("@/lib/sourcing/economics");
   const { ingestFromSupplier, recordOwnerQuote, recordUnavailable } =
     await import("@/lib/sourcing/economicsIngest");
@@ -175,7 +175,7 @@ async function main() {
         records: [{ externalProductId: "p1", minimumOrderUnits: 100, unitCostInCents: 410 }],
       });
       const fromSupplier = await supplierEconomics(store.id, p);
-      check("recorded as the supplier's own", fromSupplier?.provenance, "SUPPLIER");
+      check("recorded as the supplier's own", [provenanceOf(fromSupplier, "minimumOrder"), provenanceOf(fromSupplier, "unitCost")], ["SUPPLIER", "SUPPLIER"]);
       check("with real terms",
         [bulkTerms(fromSupplier).minimumOrderUnits, bulkTerms(fromSupplier).bulkUnitCostInCents], [100, 410]);
 
@@ -185,7 +185,7 @@ async function main() {
         userId: user.id, note: "quoted by email",
       });
       const fromOwner = await supplierEconomics(store.id, p);
-      check("recorded as the owner's", fromOwner?.provenance, "OWNER");
+      check("recorded as the owner's", [provenanceOf(fromOwner, "minimumOrder"), provenanceOf(fromOwner, "unitCost")], ["OWNER", "OWNER"]);
       check("and their figures are used",
         [bulkTerms(fromOwner).minimumOrderUnits, bulkTerms(fromOwner).bulkUnitCostInCents], [50, 380]);
       check("with their note kept", fromOwner?.note, "quoted by email");
@@ -195,7 +195,7 @@ async function main() {
       const p2 = ref("w", "p2");
       await recordUnavailable({ storeId: store.id, ref: p2, note: "supplier will not quote" });
       const unavailable = await supplierEconomics(store.id, p2);
-      check("recorded as unavailable", unavailable?.provenance, "UNAVAILABLE");
+      check("recorded as unavailable", [provenanceOf(unavailable, "minimumOrder"), provenanceOf(unavailable, "unitCost")], ["UNAVAILABLE", "UNAVAILABLE"]);
       check("and resolves to nothing",
         [bulkTerms(unavailable).minimumOrderUnits, bulkTerms(unavailable).bulkUnitCostInCents], [null, null]);
       assert("while remaining a real record", unavailable !== null);
@@ -274,9 +274,16 @@ async function main() {
       for (const [id, json] of rows) {
         await prisma.$executeRawUnsafe(
           `INSERT INTO "SupplierEconomics"
-             ("id","storeId","sourceKey","externalProductId","externalVariantId","provenance","currency",
-              "unitCostInCents","minimumOrderUnits","tiers","requiresCapabilities","statedAt")
-           VALUES (gen_random_uuid()::text, $1, 'w', $2, '', 'SUPPLIER', 'USD', 410, 100, ${json}, ARRAY[]::TEXT[], NOW())`,
+             ("id","storeId","sourceKey","externalProductId","externalVariantId","currency",
+              "unitCostInCents","unitCostProvenance","unitCostStatedAt",
+              "minimumOrderUnits","minimumOrderProvenance","minimumOrderStatedAt",
+              "tiers","tiersProvenance","tiersStatedAt",
+              "requiresCapabilities","updatedAt")
+           VALUES (gen_random_uuid()::text, $1, 'w', $2, '', 'USD',
+                   410, 'SUPPLIER', NOW(),
+                   100, 'SUPPLIER', NOW(),
+                   ${json}, 'SUPPLIER', NOW(),
+                   ARRAY[]::TEXT[], NOW())`,
           store.id, id
         );
       }
@@ -472,7 +479,7 @@ async function main() {
       assert("but it says how old the figures are",
         stale.moves[0].caveats.some((c) => c.includes("months ago")), stale.moves[0].caveats.join(" | "));
       assert("and whose figures they are",
-        stale.moves[0].caveats.some((c) => c.includes("you gave me")), stale.moves[0].caveats.join(" | "));
+        stale.moves[0].caveats.some((c) => c.includes("You gave me")), stale.moves[0].caveats.join(" | "));
 
       // A fresh quote for the same product carries nothing.
       await recordOwnerQuote({
@@ -503,7 +510,7 @@ async function main() {
       // window, "they wouldn't say" stops being a reason not to ask.
       await prisma.supplierEconomics.updateMany({
         where: { storeId: store.id },
-        data: { statedAt: daysAgo(120) },
+        data: { minimumOrderStatedAt: daysAgo(120), unitCostStatedAt: daysAgo(120) },
       });
       const aged = await nextMoves(store.id);
       check("still a question", aged.moves[0].kind, "unblock");
@@ -617,9 +624,11 @@ async function main() {
       const opportunity = (await findGraduationOpportunities(store.id))[0];
       await recordProgressionDecision({
         storeId: store.id, productId: roller.id, toKind: opportunity.toKind, decision: "ACCEPTED",
-        conditions: conditionsOf(opportunity, await capitalPosture(store.id), {
-          ...NO_TERMS, minimumOrderUnits: 100, bulkUnitCostInCents: 410, provenance: "OWNER",
-        }),
+        conditions: conditionsOf(
+          opportunity,
+          await capitalPosture(store.id),
+          bulkTerms(await supplierEconomics(store.id, ref("w", "roller-1")))
+        ),
       });
       await prisma.product.update({
         where: { id: roller.id }, data: { sourceKind: "WHOLESALE_STOCKED", costInCents: 410 },
@@ -633,7 +642,7 @@ async function main() {
       check("the product is theirs now", finalProduct.sourceKind, "WHOLESALE_STOCKED");
       check("at the better cost", finalProduct.costInCents, 410);
       check("and the numbers came from the owner",
-        (await supplierEconomics(store.id, ref("w", "roller-1")))?.provenance, "OWNER");
+        provenanceOf(await supplierEconomics(store.id, ref("w", "roller-1")), "unitCost"), "OWNER");
     }
 
     // =======================================================================
@@ -653,9 +662,14 @@ async function main() {
       check("and it is out of reach", first.feasibility.kind, "not_yet");
       await recordProgressionDecision({
         storeId: store.id, productId: first.productId, toKind: first.toKind, decision: "DECLINED",
-        conditions: conditionsOf(first, await capitalPosture(store.id), {
-          ...NO_TERMS, minimumOrderUnits: 500, bulkUnitCostInCents: 410, provenance: "OWNER",
-        }),
+        // THE REAL TERMS, read back the way the engine reads them. A hand-built
+        // shape here would snapshot conditions the engine never saw, and the
+        // very next pass would read that difference as the world having moved.
+        conditions: conditionsOf(
+          first,
+          await capitalPosture(store.id),
+          bulkTerms(await supplierEconomics(store.id, ref("w", "roller-1")))
+        ),
       });
 
       check("declined, so not raised again",
