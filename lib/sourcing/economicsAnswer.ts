@@ -1,5 +1,12 @@
 import { prisma } from "@/lib/prisma";
-import { bulkTerms, supplierEconomics, type SupplierProductRef, type SupplierTerms } from "./economics";
+import {
+  bulkTerms,
+  gapsInTerms,
+  supplierEconomics,
+  type EconomicsGap,
+  type SupplierProductRef,
+  type SupplierTerms,
+} from "./economics";
 import { recordOwnerQuote, recordUnavailable, type IngestOutcome } from "./economicsIngest";
 import { economicsDedupeKey, ECONOMICS_TASK_SOURCE } from "./economicsQuestions";
 import { findGraduationOpportunities } from "./graduation";
@@ -70,6 +77,14 @@ export interface AnswerResult {
   reevaluated: boolean;
   /** The question's own state afterwards. */
   question: "closed" | "still_open" | "narrowed";
+  /**
+   * What Genesis STILL does not know about this product.
+   *
+   * Carried on the result rather than recomputed by whoever reports back,
+   * because a reply that says what was learned without saying what is still
+   * missing is the half of the truth that sounds like all of it.
+   */
+  stillMissing: EconomicsGap[];
   /** Present only when `reevaluated`. What the owner would now be told. */
   nowRecommends: string | null;
 }
@@ -142,6 +157,9 @@ export async function answerEconomicsQuestion(input: {
       changes: [],
       reevaluated: false,
       question: "still_open",
+      // Unchanged, because nothing was written. Whatever was missing before
+      // this reply is exactly what is missing after it.
+      stillMissing: gapsInTerms(before),
       nowRecommends: null,
     };
   }
@@ -172,6 +190,7 @@ export async function answerEconomicsQuestion(input: {
       changes: [],
       reevaluated: false,
       question: "still_open",
+      stillMissing: gapsInTerms(before),
       nowRecommends: null,
     };
   }
@@ -187,6 +206,7 @@ export async function answerEconomicsQuestion(input: {
       changes,
       reevaluated: false,
       question: after.minimumOrderUnits !== null && after.bulkUnitCostInCents !== null ? "closed" : "still_open",
+      stillMissing: gapsInTerms(after),
       nowRecommends: null,
     };
   }
@@ -203,13 +223,14 @@ export async function answerEconomicsQuestion(input: {
     (move) => move.productId !== null && move.productId === productId
   );
 
-  const stillMissing = after.minimumOrderUnits === null || after.bulkUnitCostInCents === null;
+  const incomplete = after.minimumOrderUnits === null || after.bulkUnitCostInCents === null;
 
   return {
     recorded,
     changes,
     reevaluated: true,
-    question: answer.kind === "supplier_would_not_say" ? "still_open" : stillMissing ? "narrowed" : "closed",
+    question: answer.kind === "supplier_would_not_say" ? "still_open" : incomplete ? "narrowed" : "closed",
+    stillMissing: gapsInTerms(after),
     nowRecommends: forThisProduct?.recommendation ?? moves.moves[0]?.recommendation ?? null,
   };
 }

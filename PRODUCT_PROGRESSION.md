@@ -354,6 +354,61 @@ owner is not owed another interruption for it.
 **The card is settled from the result, never from the reply.** A question closes
 only when the thing it asked for is actually known.
 
+### C6. Answering in conversation
+
+The owner can answer J4's question by typing it. Same Task, same
+`recordOwnerQuote`, same progression — the conversation is a second entrance to
+one path, never a second path.
+
+`answer_supplier_economics` is a tool on the existing unified chat call, and the
+open questions are put in the model's context the same way pending approvals
+already are, because a model with no signal that something is outstanding reads
+*"100 minimum, four ten each"* as a non-sequitur.
+
+**The model never supplies an identity.** A supplier product is identified by
+business, source, external id and variant, and a language model cannot know the
+last three. The tool schema has no field for them; the model names the product in
+the merchant's own words and `economicsChat.ts` resolves that against the question
+actually asked. If it does not resolve to exactly one, **nothing is written** and
+J4 asks which — an ambiguous answer is not a reason to pick.
+
+**The reply is built in code, not by the model**, and always says two things:
+what was learned, and what is still unknown. A reply reporting the fact it just
+recorded without the remaining gap is the half of the truth that sounds like all
+of it, and it is how an owner comes away thinking the question is closed when it
+is not. `AnswerResult.stillMissing` is what carries the second half.
+
+**An owner adding a fact is not an owner restating the record.** `writeOne`
+treats an absent figure as absent, which is right for a connector — a sync that
+stops mentioning a price break has withdrawn it. A person is the opposite case:
+J4 asks for the half it is missing, so somebody who gave the minimum on Monday
+and rings back with the price on Tuesday is answering the second question, not
+retracting the first. `recordOwnerQuote` therefore merges with an existing
+**OWNER** row. Found by verification, not by reading: two turns is the normal
+shape of this conversation and one turn was all the write had ever seen.
+
+#### The limit, named rather than worked around
+
+Merging happens **only from an OWNER row**, and that leaves a real gap.
+
+If a catalogue published a price and the owner supplies only the minimum, the
+owner's answer supersedes the row and **the supplier's price is dropped** rather
+than carried into a record stamped `OWNER`. Carrying it would relabel the
+supplier's number as the owner's, and provenance that can be quietly reassigned
+is provenance that means nothing.
+
+The honest fix is **per-field provenance** — which figure came from whom, and
+when — and that is a real schema change with real ripple: `bulkTerms`, the
+freshness windows, the "a sync may not overwrite an owner" precedence rule and
+every test that reads `provenance` all assume one answer per row. It is **not
+done here**, it is asserted in `verify-economics-ingest.ts` §7 so it cannot
+surprise anybody, and the consequence in practice is that J4 asks for the dropped
+figure again rather than quoting one it cannot attribute.
+
+**Out of scope, deliberately:** a price update volunteered when no question is
+outstanding. The tool answers questions J4 asked; resolving an unprompted product
+name against the whole catalogue is a wider mechanism and is not built.
+
 ### C3. Freshness — `economicsPolicy.ts`
 
 `statedAt` existed from the first version of this table and **nothing read it**.

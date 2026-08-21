@@ -333,6 +333,41 @@ export async function recordOwnerQuote(input: {
     };
   }
 
+  // AN OWNER ADDING A FACT IS NOT AN OWNER RESTATING THE RECORD.
+  //
+  // `writeOne` treats an absent figure as absent, which is right for a connector:
+  // a sync that stops mentioning a price break has withdrawn it, and carrying the
+  // old one forward would quote a price the supplier no longer offers.
+  //
+  // A person is the opposite case. J4 asks for the half it is missing, so an
+  // owner who told us the minimum on Monday and rings back on Tuesday with the
+  // price is ANSWERING THE SECOND QUESTION, not retracting the first — and
+  // treating Tuesday's message as the whole record silently erased Monday's.
+  // Found by verification, not by reading: two turns is the normal shape of this
+  // conversation and one turn was all the write had ever seen.
+  //
+  // Merged ONLY from an existing OWNER row. A supplier's figure carried into a
+  // row stamped OWNER would relabel the supplier's number as the owner's, and
+  // provenance that can be quietly reassigned is provenance that means nothing.
+  // See PRODUCT_PROGRESSION.md C6 for what that costs and why it is not fixed here.
+  const existing = await prisma.supplierEconomics.findFirst({
+    where: {
+      storeId: input.storeId,
+      sourceKey: input.ref.sourceKey,
+      externalProductId: input.ref.externalProductId,
+      externalVariantId: toVariantKey(input.ref.externalVariantId),
+    },
+    select: {
+      provenance: true,
+      minimumOrderUnits: true,
+      unitCostInCents: true,
+      shippingPerUnitInCents: true,
+      leadTimeDays: true,
+      note: true,
+    },
+  });
+  const carried = existing?.provenance === "OWNER" ? existing : null;
+
   return writeOne({
     storeId: input.storeId,
     sourceKey: input.ref.sourceKey,
@@ -340,12 +375,14 @@ export async function recordOwnerQuote(input: {
     record: {
       externalProductId: input.ref.externalProductId,
       externalVariantId: input.ref.externalVariantId,
-      minimumOrderUnits: input.minimumOrderUnits ?? null,
-      unitCostInCents: input.bulkUnitCostInCents ?? null,
-      shippingPerUnitInCents: input.shippingPerUnitInCents ?? null,
-      leadTimeDays: input.leadTimeDays ?? null,
+      minimumOrderUnits: input.minimumOrderUnits ?? carried?.minimumOrderUnits ?? null,
+      unitCostInCents: input.bulkUnitCostInCents ?? carried?.unitCostInCents ?? null,
+      shippingPerUnitInCents: input.shippingPerUnitInCents ?? carried?.shippingPerUnitInCents ?? null,
+      leadTimeDays: input.leadTimeDays ?? carried?.leadTimeDays ?? null,
       requiresCapabilities: input.requiresCapabilities ?? [],
-      note: input.note ?? null,
+      // The newer note wins, and the older one is kept when this turn added none
+      // — an owner answering "and it's 410" has not withdrawn "quoted by phone".
+      note: input.note ?? carried?.note ?? null,
     },
     statedByUserId: input.userId ?? null,
     now: input.now ?? new Date(),

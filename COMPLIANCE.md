@@ -2487,6 +2487,91 @@ product nor another business.
 
 ---
 
+## 54. Tuesday's answer erased Monday's
+
+*The conversational end of the loop, and the one real defect building it found.*
+
+### What was wired
+
+`answer_supplier_economics` is now a tool on the existing unified chat call, and
+the open questions are put in the model's context the same way pending approvals
+already are. `PRODUCT_PROGRESSION.md` §C6 has the shape.
+
+Nothing new was needed to make it work, and that is worth recording because it
+was the thing to check first. `create_product_from_design` is `always_ask` with
+`maxAuthorityTier: always_ask`, and `route.ts` already executes it directly
+through the engine on an explicit instruction in conversation. So the tier
+governs whether **Genesis** may act unsupervised; an owner typing the fact is the
+ask being answered, not a reason to make them approve their own sentence.
+
+### The model is not allowed to name a supplier
+
+The tool schema has no `sourceKey` and no `externalProductId`. A language model
+cannot know either, and letting it emit one would mean a hallucinated string
+deciding which supplier's terms an owner's answer lands on — the exact
+wrong-number-about-money failure the four-part identity key exists to prevent.
+
+The model names the product in the merchant's own words; the server resolves that
+against the question it actually asked. Anything that does not resolve to exactly
+one question writes **nothing** and asks which — asserted with a name that
+matches no open question, and with two questions open and no name given.
+
+### The defect
+
+An owner who answered in two turns lost the first answer.
+
+`writeOne` treats an absent figure as absent, which is correct for a connector: a
+sync that stops publishing a price break has withdrawn it, and carrying the old
+one forward would quote a price nobody offers. A person is the opposite case —
+J4 deliberately asks only for the half it is missing, so the second message is
+answering the second question, not restating the record.
+
+Nothing about this is visible when reading the write. It was found because the
+verification walked two turns, which is the normal shape of the conversation and
+more than the write had ever seen.
+
+`recordOwnerQuote` now merges with an existing OWNER row. A correction still
+wins — the rule protects a person from being erased, not from changing their
+mind — and a connector's absent-means-absent behaviour is unchanged, asserted in
+both directions.
+
+### The limit, named rather than worked around
+
+Merging happens only from an OWNER row. If a catalogue published a price and the
+owner supplies only the minimum, the supplier's price is **dropped** rather than
+carried into a record stamped `OWNER`, because carrying it would relabel the
+supplier's number as the owner's.
+
+The honest fix is per-field provenance, which is a real schema change rippling
+through `bulkTerms`, the freshness windows, the sync-may-not-overwrite-an-owner
+rule and every test that reads `provenance`. **It is not done here.** It is
+asserted in `verify-economics-ingest.ts` §7 so the behaviour is recorded rather
+than discovered, and the practical consequence is that J4 asks again for the
+figure it dropped rather than quoting one it cannot attribute.
+
+### And one test premise that was wrong
+
+A restatement after the question had already closed came back "I don't have an
+outstanding supplier question", and that is correct: the tool answers questions
+J4 asked. The test was rewritten to restate while the question is still open. An
+unprompted price update with nothing outstanding is out of scope and is named as
+such in §C6, not quietly half-supported.
+
+### Status
+
+**VERIFIED** — `scripts/verify-economics-chat.ts`, 9 sections, real Postgres,
+plus `verify-economics-ingest.ts` §7 for the erasure regression.
+
+`execute()` resolves permission from a live session a script cannot have — the
+constraint `verify-orders-live.ts` already records. It is solved the same way:
+the suite drives the executable with the exact ctx `execute()` would build once
+`requireStorePermission` approved, through an injection point that production
+never passes. Without it the conversational path could only be proven as far as
+the engine's front door, and everything that decides where an owner's money goes
+is behind it.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2537,6 +2622,7 @@ scripts/verify-progression-live.ts        the progression engine end to end (rea
 scripts/verify-economics-live.ts          supplier economics, and the zero-capital journey (real Postgres)
 scripts/verify-economics-ingest.ts        the only way economics get written (real Postgres)
 scripts/verify-economics-answer.ts        J4 asks, the owner answers, the progression moves (real Postgres)
+scripts/verify-economics-chat.ts          the same answer, typed into the conversation (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

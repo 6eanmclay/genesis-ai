@@ -52,6 +52,7 @@ import { performApprovePendingChanges } from "@/app/dashboard/ai-actions";
 import {
   buildStoreChatUnifiedTools,
   firstToolUse,
+  AnswerSupplierEconomicsToolInputSchema,
   textOf,
   type BusinessFactCaptureInput,
   type RequestImageChangeInput,
@@ -369,6 +370,17 @@ export async function POST(request: Request) {
           unifiedContextParts.push(
             `(Awaiting your decision — ${pendingApprovalBatch.summaries.length} change${pendingApprovalBatch.summaries.length === 1 ? "" : "s"} you already proposed: ${pendingApprovalBatch.summaries.map((s) => `"${s}"`).join(", ")}. If the merchant now clearly authorizes you to proceed with these, call approve_pending_changes.)`
           );
+        }
+        // The supplier questions J4 itself asked and is still waiting on
+        // (2026-08-21). Same purpose as the pending-approval line above: without
+        // it the model has no way to know there is something real to answer, and
+        // "100 minimum, four ten each" reads as a non-sequitur rather than the
+        // reply to a question it asked yesterday.
+        const { outstandingEconomicsQuestions, describeOutstandingForJ4 } =
+          await import("@/lib/sourcing/economicsChat");
+        const economicsLine = describeOutstandingForJ4(await outstandingEconomicsQuestions(store.id));
+        if (economicsLine) {
+          unifiedContextParts.push(economicsLine);
         }
         const conversationMessages = existingMessages.map((m) => ({
           role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
@@ -972,6 +984,61 @@ export async function POST(request: Request) {
         // something in words, while looking straight at it, must not be asked
         // to approve it again — a second confirmation here would be the
         // product asking "are you sure" about the sentence they just said.
+        if (chosenTool?.name === "answer_supplier_economics") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "answer_supplier_economics" });
+          emit({ type: "status", text: "Noting that down…" });
+
+          const parsed = AnswerSupplierEconomicsToolInputSchema.safeParse(chosenTool.input);
+          if (!parsed.success) {
+            // Defence in depth: never build an answer about somebody's money out
+            // of a shape that did not validate.
+            emit({ type: "fallback" });
+            controller.close();
+            return;
+          }
+
+          const { applyChatEconomicsAnswer, chatAnswerFrom } = await import("@/lib/sourcing/economicsChat");
+          const outcome = await applyChatEconomicsAnswer({
+            storeId: store.id,
+            answer: chatAnswerFrom(parsed.data),
+          });
+
+          // THE REPLY IS CODE-BUILT, not the model's. It has to say both what was
+          // learned and what is still unknown, and the model wrote its text
+          // before any of that was known — the same reason the auto-execute path
+          // overrides its own inline "Done".
+          const reply = outcome.reply;
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "SUCCESS",
+            verified: false,
+            message: reply,
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: {
+              kind: "answer_supplier_economics",
+              resolved: outcome.status,
+              ...(outcome.status === "applied"
+                ? {
+                    productId: outcome.question.productId,
+                    changes: outcome.result.changes,
+                    reevaluated: outcome.result.reevaluated,
+                    stillMissing: outcome.result.stillMissing,
+                  }
+                : {}),
+            },
+          });
+          revalidatePath("/dashboard");
+          emit({ type: "token", delta: reply });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "answer_supplier_economics" });
+          controller.close();
+          return;
+        }
+
         if (chosenTool?.name === "approve_design_as_product") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "approve_design_as_product" });
           const parsedApproval = ApproveDesignAsProductInputSchema.safeParse(chosenTool.input);

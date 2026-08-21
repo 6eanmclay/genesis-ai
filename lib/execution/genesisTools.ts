@@ -239,6 +239,58 @@ export const ManageBusinessAssetInputSchema = z.object({
 });
 export type ManageBusinessAssetInput = z.infer<typeof ManageBusinessAssetInputSchema>;
 
+// The merchant answering J4's own question about what a supplier charges.
+//
+// NO IDENTITY FIELDS, deliberately. A supplier product is identified by business,
+// source, external id and variant, and a language model cannot know the last
+// three — letting it emit a sourceKey would mean a hallucinated string deciding
+// which supplier's terms an owner's answer lands on. The model names the product
+// in the merchant's own words and the server resolves it against the question it
+// actually asked (lib/sourcing/economicsChat.ts).
+//
+// EVERY FIGURE NULLABLE, also deliberately. An owner who rang their supplier and
+// came back with one of the two answers has found out something real; a schema
+// that demanded both would either lose it or invite the model to fill in the
+// half nobody said.
+export const AnswerSupplierEconomicsToolInputSchema = z.object({
+  productName: z
+    .string()
+    .nullable()
+    .describe("The product the merchant is talking about, in their own words. Null only if they genuinely did not say and there is more than one question outstanding."),
+  outcome: z
+    .enum(["quoted", "supplier_would_not_say", "dont_know_yet"])
+    .describe("What actually happened: they were given figures, the supplier refused to say, or they have not found out yet."),
+  minimumOrderUnits: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe("How many units the supplier makes them order at once. Null if they did not say."),
+  bulkUnitCostInCents: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe("What one unit costs at that quantity, IN CENTS — $4.10 is 410. Null if they did not say."),
+  shippingPerUnitInCents: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe("Delivery per unit on that order, in cents. 0 only if they actually said delivery is included; null if they did not mention it."),
+  leadTimeDays: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe("How many days the supplier takes to deliver. Null if they did not say."),
+  note: z
+    .string()
+    .nullable()
+    .describe("Anything else the merchant said about the quote, in their words. Null if nothing."),
+});
+export type AnswerSupplierEconomicsToolInput = z.infer<typeof AnswerSupplierEconomicsToolInputSchema>;
+
 export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "look_up_business_data",
   "capture_business_fact",
@@ -250,6 +302,7 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "edit_store_content",
   "manage_business_asset",
   "refine_storefront",
+  "answer_supplier_economics",
 ] as const;
 export type StoreChatUnifiedToolName = (typeof STORE_CHAT_UNIFIED_TOOL_NAMES)[number];
 
@@ -350,6 +403,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant wants to GO somewhere or DO something that lives on a particular screen, and no other tool actually performs the work. A question phrased as 'how do I...' or 'where do I...' about reaching a screen or doing something on one is asking to BE TAKEN THERE, not asking for instructions — answering it with directions when you could simply take them is the failure this tool exists to prevent — 'how do I upload my logo', 'take me to my products', 'where do I change my website', 'I want to see my orders', 'how do I make a hoodie' (when they are asking where to start rather than asking you to make one). Pick destination: studio for creating anything visual, studio.upload when they want to bring their OWN file in, storefront for the website and brand presentation, commerce for products and orders, office for the conversation history and business record, account for settings and billing. Put what they actually want into intent, in their words, so the screen arrives ready. DO NOT call this when you can just do the thing — 'make me a logo', 'put it on a hoodie', 'make a collage' all have their own tools and should use them, because taking someone to a screen to do what you could have done yourself is worse than doing it. And DO NOT call this for a question about advice or reasoning: 'what makes a good hoodie design', 'why would I put my logo on a mug', 'what colours work best' all want an answer, not a trip. The line is what the question is ABOUT — a screen or a decision means take them, an opinion or an explanation means answer them.",
       input_schema: z.toJSONSchema(TakeMeThereInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "answer_supplier_economics",
+      description:
+        "Call this when the merchant is telling you what a supplier charges for a product you have ASKED them about — a minimum order quantity, a price per unit in bulk, that the supplier refused to quote, or that they have not found out yet. Only call it when there is genuinely a supplier question outstanding (you will see it noted in the context below); an unprompted remark about pricing is ordinary conversation. Set outcome to what really happened: 'quoted' if they were given figures, 'supplier_would_not_say' if the supplier refused, 'dont_know_yet' if the merchant has not asked or does not know. GIVE ONLY THE FIGURES THEY ACTUALLY STATED and leave every other field null — half an answer is genuinely useful and will be kept, and a number they did not say is worse than no number, because they will act on it. Prices are in CENTS: 'four pounds ten' or '$4.10' is 410. Set productName to the product in their own words; leave it null only when they did not say and you cannot tell. Never call this to ASK the question — you have already asked it.",
+      input_schema: z.toJSONSchema(AnswerSupplierEconomicsToolInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "refine_storefront",

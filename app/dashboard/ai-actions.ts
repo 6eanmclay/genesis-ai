@@ -73,6 +73,7 @@ import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import {
+  AnswerSupplierEconomicsToolInputSchema,
   buildStoreChatUnifiedTools,
   firstToolUse,
   textOf,
@@ -2418,6 +2419,16 @@ async function applyGenesisMessageToStore(
       `(Awaiting your decision — ${pendingApprovalBatch.summaries.length} change${pendingApprovalBatch.summaries.length === 1 ? "" : "s"} you already proposed: ${pendingApprovalBatch.summaries.map((s) => `"${s}"`).join(", ")}. If the merchant now clearly authorizes you to proceed with these, call approve_pending_changes.)`
     );
   }
+  // The supplier questions J4 itself asked and is still waiting on (2026-08-21).
+  // Mirrors route.ts's identical addition, for the same reason the pending-
+  // approval signal is duplicated: this path runs both as the streaming route's
+  // fallback and genuinely fresh, and J4 must recognise an answer either way.
+  const { outstandingEconomicsQuestions, describeOutstandingForJ4 } =
+    await import("@/lib/sourcing/economicsChat");
+  const economicsLine = describeOutstandingForJ4(await outstandingEconomicsQuestions(store.id));
+  if (economicsLine) {
+    unifiedContextParts.push(economicsLine);
+  }
   // Prompt caching (Response Modes plan, Phase 1) — real measurement
   // (scripts/measure-ttft-large-prompt.ts) found this call's ~13KB system
   // prompt roughly doubles TTFT uncached; a cache_control breakpoint here
@@ -3315,6 +3326,60 @@ async function applyGenesisMessageToStore(
       userId,
       storeId: store.id,
       metadata: { kind: "manage_business_asset", hadAsset: !!mostRecentAsset, role: manageAssetResult.role },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
+      likelyRephraseOf,
+      stageDurationsMs,
+    });
+
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
+
+  if (chosenTool?.name === "answer_supplier_economics") {
+    const parsed = AnswerSupplierEconomicsToolInputSchema.safeParse(chosenTool.input);
+    const { applyChatEconomicsAnswer, chatAnswerFrom } = await import("@/lib/sourcing/economicsChat");
+
+    // Defence in depth: an input that did not validate never becomes an answer
+    // about somebody's money. Nothing is written and the merchant is told.
+    const outcome = parsed.success
+      ? await applyChatEconomicsAnswer({ storeId: store.id, answer: chatAnswerFrom(parsed.data) })
+      : {
+          status: "unresolved" as const,
+          reply: "I didn't quite catch the figures — tell me the minimum order and the price per unit and I'll get them down.",
+        };
+
+    // CODE-BUILT, not the model's. The reply has to say both what was learned
+    // and what is still unknown, and the model wrote its text before either was
+    // known — the same reason the auto-execute path overrides its own "Done".
+    const reply = outcome.reply;
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: reply },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "SUCCESS",
+      verified: false,
+      message: reply,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: {
+        kind: "answer_supplier_economics",
+        resolved: outcome.status,
+        ...(outcome.status === "applied"
+          ? {
+              productId: outcome.question.productId,
+              changes: outcome.result.changes,
+              reevaluated: outcome.result.reevaluated,
+              stillMissing: outcome.result.stillMissing,
+            }
+          : {}),
+      },
     });
     await logChatTurnEvent({
       userId,

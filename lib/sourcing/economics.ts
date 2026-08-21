@@ -341,8 +341,15 @@ export const ECONOMICS_GAP_EXPLANATION: Record<EconomicsGap, string> = {
     "what their price breaks actually are — what's recorded doesn't add up, so I've stopped using it rather than quote you a figure I can't stand behind",
 };
 
-export function missingEconomics(economics: SupplierEconomics | null): EconomicsGap[] {
-  const terms = bulkTerms(economics);
+/**
+ * What is still outstanding, given terms already resolved.
+ *
+ * Split out from `missingEconomics` so a caller holding `SupplierTerms` — the
+ * answer path, which has just written and re-read them — asks the same question
+ * the same way rather than re-deriving "what is missing" a second time. Two
+ * definitions of outstanding is how a card and a conversation start disagreeing.
+ */
+export function gapsInTerms(terms: SupplierTerms): EconomicsGap[] {
   const gaps: EconomicsGap[] = [];
   // Named FIRST, because it is not the same problem as an absence: something is
   // recorded and it is wrong, and that is the thing worth fixing.
@@ -350,6 +357,10 @@ export function missingEconomics(economics: SupplierEconomics | null): Economics
   if (terms.minimumOrderUnits === null) gaps.push("minimum_order");
   if (terms.bulkUnitCostInCents === null) gaps.push("bulk_price");
   return gaps;
+}
+
+export function missingEconomics(economics: SupplierEconomics | null): EconomicsGap[] {
+  return gapsInTerms(bulkTerms(economics));
 }
 
 /**

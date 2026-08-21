@@ -299,6 +299,77 @@ async function main() {
       check("withdrawn lead time too", after?.leadTimeDays, null);
       check("and what was restated stands", after?.minimumOrderUnits, 100);
     }
+
+    // -----------------------------------------------------------------------
+    console.log("\n7. An owner adding a fact does not retract the last one");
+    {
+      await reset();
+      const { user, store } = await makeStore("ingest-merge");
+      const productRef = ref("w", "roller-1");
+
+      // Monday: they rang and got the minimum.
+      await recordOwnerQuote({
+        storeId: store.id, ref: productRef, minimumOrderUnits: 100, userId: user.id, note: "quoted by phone",
+      });
+      check("the minimum is on file",
+        (await supplierEconomics(store.id, productRef))?.minimumOrderUnits, 100);
+
+      // Tuesday: they ring back with the price. THIS IS ANSWERING THE SECOND
+      // QUESTION, not restating the record — and before this was fixed,
+      // Tuesday's message silently erased Monday's answer.
+      await recordOwnerQuote({
+        storeId: store.id, ref: productRef, bulkUnitCostInCents: 410, userId: user.id,
+      });
+      const merged = await supplierEconomics(store.id, productRef);
+      check("Monday's minimum survives Tuesday's price",
+        [merged?.minimumOrderUnits, merged?.unitCostInCents], [100, 410]);
+      check("and it is all still theirs", merged?.provenance, "OWNER");
+      check("with the note they gave", merged?.note, "quoted by phone");
+
+      // A correction still wins — the rule protects a person from being erased,
+      // not from changing their own mind.
+      await recordOwnerQuote({
+        storeId: store.id, ref: productRef, minimumOrderUnits: 50, userId: user.id,
+      });
+      const corrected = await supplierEconomics(store.id, productRef);
+      check("a correction replaces the old figure",
+        [corrected?.minimumOrderUnits, corrected?.unitCostInCents], [50, 410]);
+
+      // AND A SYNC STILL MEANS WHAT IT SAID. Absent is absent for a connector: a
+      // supplier that stops publishing a figure has withdrawn it, and carrying
+      // the old one forward would quote a price nobody offers any more.
+      await reset();
+      const machine = await makeStore("ingest-merge-sync");
+      await ingestFromSupplier({
+        storeId: machine.store.id, sourceKey: "w",
+        records: [{ externalProductId: "p1", minimumOrderUnits: 100, unitCostInCents: 410 }],
+      });
+      await ingestFromSupplier({
+        storeId: machine.store.id, sourceKey: "w",
+        records: [{ externalProductId: "p1", unitCostInCents: 410 }],
+      });
+      check("a withdrawn supplier figure does not linger",
+        (await supplierEconomics(machine.store.id, ref("w", "p1")))?.minimumOrderUnits, null);
+
+      // THE LIMIT, ASSERTED SO IT CANNOT SURPRISE ANYBODY. A partial owner answer
+      // over a SUPPLIER row drops the supplier's other figure, because one row
+      // carries one provenance and carrying 410 into a row stamped OWNER would
+      // relabel the supplier's number as the owner's. Honest, and lossy — the
+      // fix is per-field provenance, which is a real schema change and is NOT
+      // done here. See PRODUCT_PROGRESSION.md C6.
+      await ingestFromSupplier({
+        storeId: machine.store.id, sourceKey: "w",
+        records: [{ externalProductId: "p2", unitCostInCents: 410 }],
+      });
+      await recordOwnerQuote({
+        storeId: machine.store.id, ref: ref("w", "p2"), minimumOrderUnits: 100,
+      });
+      const mixed = await supplierEconomics(machine.store.id, ref("w", "p2"));
+      check("the owner's fact is theirs", [mixed?.provenance, mixed?.minimumOrderUnits], ["OWNER", 100]);
+      check("and the supplier's figure is dropped rather than relabelled",
+        mixed?.unitCostInCents, null);
+    }
+
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();
