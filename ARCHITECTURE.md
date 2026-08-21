@@ -338,6 +338,19 @@ A frozen 4-tier capability roadmap governs what gets built, in order:
 
 Deliberately built as an extension of existing systems, not a parallel one — researched and scoped this way on purpose (VISION.md's Chapter 3, planned 2026-08-04) before any code was written.
 
+**What of this is actually BUILT, as of 2026-08-21** — the section below was written as a design, before any code, and reads in the present tense throughout, which is easy to mistake for a description of what exists:
+
+| | State |
+|---|---|
+| Campaign planning (`planMarketingCampaign`, M1–M2) | **Built.** J4 plans a real campaign from real business understanding and brand voice, and persists each channel as a `campaign` `BusinessRecord` through `persistSyncedRecords`. Reachable from both chat paths via the `plan_campaign` tool |
+| `campaign` as a first-class entity | **Built.** In the registry, extended additively so Mailchimp's existing sync is unchanged |
+| The connected-data reads over campaigns | **Built and verified** — `scripts/verify-connected-summaries-live.ts` |
+| `lib/marketing/channels/`, the `PublishChannel` interface | **Not built.** The directory does not exist. Described below as the intended shape, not as code |
+| `execute_campaign` as a `GENESIS_ACTIONS` entry | **Not built.** No such action is registered; it appears only in a comment |
+| Actually sending anything | **Externally blocked** on a real Resend account (M3) |
+
+The design below stands unchanged — nothing about it has been revised. Only its tense was misleading.
+
 **Campaign is the central abstraction; publishing channels are adapters beneath it.** A campaign is planned, drafted, and priced entirely independent of which platforms it will eventually reach — channel selection is a later, separate decision, and the architecture must never let one channel's shape (email's subject lines, a social platform's character limit) leak into how a campaign itself is modeled. Concretely: `campaign` is a real, pre-existing `EntityType` (`lib/businessModel/entities.ts`) — already populated today via Mailchimp's own real sync — extended additively (`status`, `content`, `scheduledAt`, `groupId`, every new field nullable) to also support planning, not just synced history. A planned campaign is written as a real `BusinessRecord` with `sourceProvider: "internal"`, the same precedent goals/challenges already established (`lib/businessModel/internalMapper.ts`) — campaign planning becomes real business understanding automatically, with no new top-level Prisma model and no parallel reasoning path.
 
 **Publishing is a genuinely separate contract from the existing Connector Framework, not a branch inside it.** Every real `IntegrationConnector` (`lib/integrations/`) is strictly inbound — `sync()` only ever pulls data in, by explicit design. Outbound publishing needs its own interface, mirroring the precedent `lib/fulfillment/` already set by staying a separate registry from `lib/integrations/` specifically because Printful's own writes are outbound. `lib/marketing/channels/`'s `PublishChannel` interface is that same pattern applied a second time: a channel-agnostic content contract from day one (never shaped around email's own fields), so a future social-platform adapter is "write an adapter, add one registry line" — exactly how a new `IntegrationConnector` is added today.
