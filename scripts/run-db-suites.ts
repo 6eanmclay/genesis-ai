@@ -113,6 +113,7 @@ function needsDatabase(file: string): boolean {
   if (file === "verify-audience-recall-live.ts") return false;
   if (file === "verify-readiness-lifecycle-live.ts") return false;
   if (file === "verify-growth-points-live.ts") return false;
+  if (file === "verify-growth-point-refresh-live.ts") return false;
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
 
