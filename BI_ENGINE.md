@@ -960,3 +960,72 @@ exists to prevent, caught before it ever reached a prompt.
 `findRelevantMessages`' read is **still unexercised against real rows**, and how
 much history the store actually holds is still unknown. Not closed by the
 2026-08-21 pass. Named rather than assumed.
+
+---
+
+## 15. The milestone, closed (2026-08-21)
+
+**Status: COMPLETE within the approved scope.** Closed at `66078f1`, after four
+approved increments. This section is the acceptance record; the sections above
+are the design, and none of them is superseded.
+
+### What is complete and verified
+
+| | Evidence |
+|---|---|
+| Discovery and the economics refresh run unattended | A fifth stage on the existing scheduler (`app/api/cron/sync/route.ts`), `verify-sourcing-schedule.ts` |
+| A real ceiling on supplier cost | `lib/sourcing/sourcingBudget.ts`, `verify-sourcing-budget.ts` — refused *before* the request, so a stopped pass writes nothing partial |
+| Belief as persistent business memory | `verify-business-memory-live.ts` — grounded beliefs, real `evidenceRefs`, record identity surviving re-derivation |
+| Real `BusinessEvent` emission and its dedupe | `verify-business-memory-live.ts` §§1–4 — one event per execution, idempotent, pointed at the owned record |
+| The three BI reads | `verify-bi-reads-live.ts` — 37 assertions against real Postgres |
+| Regression, typecheck, build | `verify-regressions.ts` ALL PASS; `tsc --noEmit` 0 errors; `next build` compiled |
+| The database-backed harness | `run-db-suites.ts` 13/13 |
+
+### What remains open — and stays open
+
+These are **recorded, not scheduled**. None of them is a gap to be closed by
+expanding this milestone, and a future contributor should not treat this list as
+a to-do that authorises new scope.
+
+- **M4's observation lifecycle is unasserted.** `computeInsights` executes
+  against real Postgres, so the path runs; no assertion covers
+  `detectStorefrontReadiness`' own observation lifecycle. A path that runs is
+  not a behaviour that is proved, which is exactly why it is worded this way.
+- **M5 and M6 are verified as reads, not as production coverage.** Whether any
+  real order carries `shippingCostInCents`, and which `Order.status` values
+  actually occur in production, are both still unmeasured — and stay honestly
+  unknown rather than assumed.
+- **M8 and M9 are open.** `getAudience`' and `findRelevantMessages`' reads have
+  never run against real rows.
+- **No production backfill has been run.** `backfill-topic-keys.ts --apply` is
+  proved against a throwaway database only.
+
+### Externally blocked
+
+**The Printful live-API check**, unchanged and unweakened.
+`scripts/check-printful-economics-live.ts` remains the legitimate read-only
+path. Per Sean's explicit instruction, the blocker is not to be worked around by
+weakening production credential encryption, creating fake production data, or
+adopting a Printful product to manufacture a passing test.
+
+### Two harness facts worth not rediscovering
+
+**`PGLiteSocketServer.maxConnections` defaults to 1.** Three suites were
+recorded here for months as an unfixable PGlite limitation; the real cause was
+the server refusing the second pooled client, and the error — "Server has closed
+the connection" — names whichever query happened to be second, never the pool
+that opened it. Production was never involved.
+
+**Two suites this harness cannot honestly run** are excluded and named rather
+than left failing: `verify-stripe-webhook-e2e` (needs a running Next server) and
+`verify-catalog-browser` (brings its own Postgres and server, must run
+unelevated). Both have their own documented entry points.
+
+### One thing this document must keep saying
+
+Nothing in this milestone converts an absence into a value. A missing cost is an
+exclusion, never a zero; a store with nothing costed reports `null`, never "broke
+even"; an unrecognised order status is counted and **named**, never assumed to be
+an obligation. The suites assert those three sentences directly, and the
+profitability fixture is built so that every wrong reading lands on a different
+number rather than on a missing one.
