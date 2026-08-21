@@ -16,8 +16,8 @@ import { sourceHeroImageCandidate } from "@/lib/productImagery";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
-import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
-import { accessTo, adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
+import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
+import { adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { J4Surface } from "@/app/j4/J4Workspace";
@@ -5553,16 +5553,10 @@ async function reachableApproval(
   if (!session?.user) redirect("/login");
   const userId = session.user.id;
 
-  const approval = await prisma.approvalRequest.findFirst({
-    where: { ...where, id: approvalRequestId },
-  });
-  if (!approval) return null;
-
-  const access = await accessTo(userId, approval.storeId);
-  if (!access) return null;
-  if (!hasPermission(access.role, PERMISSIONS.ANALYTICS_VIEW)) return null;
-
-  return { approval, userId, storeId: approval.storeId };
+  // The rule itself lives in lib/permissions.ts, so it can be exercised by a
+  // verification suite. This function is only the session half.
+  const reached = await approvalAccessibleTo(userId, approvalRequestId, where);
+  return reached ? { approval: reached.approval, userId, storeId: reached.storeId } : null;
 }
 
 export async function performApproveGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {

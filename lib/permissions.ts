@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { accessTo, resolveBusiness } from "@/lib/businessContext";
-import type { Store, StoreRole } from "@prisma/client";
+import type { ApprovalRequest, Prisma, Store, StoreRole } from "@prisma/client";
 
 // Canonical permission names — call sites always use PERMISSIONS.X, never a
 // raw string, so the list can grow without scattered typo-prone literals.
@@ -122,9 +122,6 @@ export async function requireStorePermission(
   }
   const userId = session.user.id;
 
-  let store: Store | null;
-  let role: StoreRole | null;
-
   const resolution = await resolveBusiness(userId, storeId);
 
   // AMBIGUOUS IS NOT AN ERROR AND NOT A GUESS (2026-08-20). An account with more
@@ -143,12 +140,8 @@ export async function requireStorePermission(
     throw new Error("Store not found");
   }
 
-  store = resolution.store;
-  role = resolution.role;
+  const { store, role } = resolution;
 
-  if (!store || !role) {
-    throw new Error("Store not found");
-  }
   if (!hasPermission(role, permission)) {
     throw new Error("You don't have permission to do this.");
   }
@@ -313,4 +306,45 @@ export async function requireStorePageAccess(
   }
 
   return { userId: session.user.id, store: resolution.store, role: resolution.role };
+}
+
+/**
+ * The proposal this person may act on, or null — the decision, without the session.
+ *
+ * A PROPOSAL BELONGS TO ITS OWN BUSINESS (2026-08-21). The decision actions used
+ * to look one up as `findFirst({ id, storeId: active })`, so a proposal belonging
+ * to the owner's OTHER business returned nothing: J4 offered a real change and
+ * clicking approve said it had vanished.
+ *
+ * The row decides which business, because it is more authoritative than anything
+ * the URL could say, and the caller is then checked against THAT business — with
+ * the role they hold there, not the role they hold wherever the account happens
+ * to be.
+ *
+ * Split out from the server actions that use it so the rule is reachable by a
+ * verification suite: those actions call auth(), which a script cannot provide,
+ * and an authorization rule that can only be exercised through a browser is a
+ * rule that mostly is not exercised.
+ *
+ * Null covers three different situations on purpose — no such proposal, not this
+ * account's business, insufficient role — and every caller turns all three into
+ * the same answer. Telling somebody a proposal exists but belongs to a business
+ * that is not theirs is an answer they did not have.
+ */
+export async function approvalAccessibleTo(
+  userId: string,
+  approvalRequestId: string,
+  where: Prisma.ApprovalRequestWhereInput,
+  permission: Permission = PERMISSIONS.ANALYTICS_VIEW
+): Promise<{ approval: ApprovalRequest; storeId: string; role: StoreRole } | null> {
+  const approval = await prisma.approvalRequest.findFirst({
+    where: { ...where, id: approvalRequestId },
+  });
+  if (!approval) return null;
+
+  const access = await accessTo(userId, approval.storeId);
+  if (!access) return null;
+  if (!hasPermission(access.role, permission)) return null;
+
+  return { approval, storeId: approval.storeId, role: access.role };
 }
