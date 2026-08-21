@@ -818,6 +818,15 @@ model SupplierEconomics {
 
   provenance EconomicsProvenance
 
+  /// What currency these figures are in.
+  ///
+  /// EXPLICIT, never assumed from the business. A supplier who quotes in EUR to
+  /// a business that sells in USD has stated a real fact, and reading it as USD
+  /// would be a wrong number about money that looks exactly like a right one.
+  /// Written from the owning Store at ingest; feasibility refuses to compare
+  /// across currencies rather than applying a rate nobody supplied.
+  currency String
+
   /// What one unit costs at no minimum. NULL = unknown, never zero.
   unitCostInCents   Int?
   /// The smallest order the supplier will take. NULL = unknown.

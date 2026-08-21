@@ -62,6 +62,10 @@ import {
   editProductExecutable,
   type EditProductInput,
 } from "./executables/products";
+import {
+  answerSupplierEconomicsExecutable,
+  type AnswerSupplierEconomicsInput,
+} from "./executables/answerSupplierEconomics";
 
 // The minimal subset of Store.blueprint relevant to the actions registered
 // below — shared between generateGenesisRecommendations.ts (which fetches
@@ -316,8 +320,62 @@ export const GENESIS_ACTIONS: Record<
     | CreateProductInput
     | DeleteProductInput
     | EditProductInput
+    | AnswerSupplierEconomicsInput
   >
 > = {
+  // The owner answering J4's question about what a supplier charges (2026-08-20).
+  //
+  // The last link in the chain the economics layer was missing: J4 raises the
+  // question as a Task (lib/sourcing/economicsQuestions.ts), this records the
+  // answer, and the progression is recomputed only if something material moved.
+  //
+  // "operations", not "money". It moves nothing and reaches no provider — it
+  // records a fact about a supplier that later informs advice. The advice can be
+  // about spending thousands, which is why the tier below is what it is.
+  //
+  // always_ask AND LOCKED THERE, and this is the strongest lock in the registry
+  // for a reason that is the opposite of every other one: the others are locked
+  // because the change is too visible or too irreversible for Genesis to make
+  // alone. This one is locked because Genesis CANNOT make it at all. The value
+  // comes from a conversation between an owner and their supplier; anything
+  // Genesis produced here would be an invented number about somebody's money,
+  // and an autonomous tier would be a route for exactly that.
+  answer_supplier_economics: {
+    executable: answerSupplierEconomicsExecutable,
+    inputSchema: z.object({
+      sourceKey: z.string().min(1),
+      externalProductId: z.string().min(1),
+      externalVariantId: z.string().nullable().optional(),
+      answer: z.discriminatedUnion("kind", [
+        z.object({
+          kind: z.literal("quoted"),
+          // Nullable, not optional-with-a-default. An owner who came back with
+          // one of the two answers has found out something real, and the schema
+          // has to be able to carry a half-answer without inventing the half
+          // that is missing.
+          minimumOrderUnits: z.number().int().positive().nullable().optional(),
+          bulkUnitCostInCents: z.number().int().nonnegative().nullable().optional(),
+          shippingPerUnitInCents: z.number().int().nonnegative().nullable().optional(),
+          leadTimeDays: z.number().int().nonnegative().nullable().optional(),
+          note: z.string().nullable().optional(),
+        }),
+        z.object({ kind: z.literal("supplier_would_not_say"), note: z.string().nullable().optional() }),
+        z.object({ kind: z.literal("dont_know_yet"), note: z.string().nullable().optional() }),
+      ]),
+    }),
+    // There is no "current value" to diff against, and that is not an omission.
+    // The whole premise is that nothing is known — a diff would be rendering the
+    // absence of a fact as though it were a previous one.
+    getCurrentValues: () => ({
+      sourceKey: "",
+      externalProductId: "",
+      externalVariantId: null,
+      answer: { kind: "dont_know_yet" as const },
+    }),
+    category: "operations",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
   update_seo: {
     executable: updateSeoExecutable,
     inputSchema: z.object({ seoTitle: z.string(), seoMetaDescription: z.string() }),

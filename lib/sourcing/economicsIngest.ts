@@ -151,6 +151,21 @@ async function writeOne(input: WriteInput): Promise<IngestOutcome> {
   const problem = recordProblem(record);
   if (problem) return { status: "rejected", ...identity, problem };
 
+  // WHICH CURRENCY, ANSWERED RATHER THAN ASSUMED. Taken from the business that
+  // owns the row, because that is the only currency any writer here is actually
+  // stating figures in today: an owner types what their supplier quoted them,
+  // and a connector states what its catalogue lists in the store's own
+  // currency. Recording it makes the assumption visible and checkable instead
+  // of implicit, so the day a supplier quotes in something else, feasibility
+  // refuses rather than reading it as the wrong money.
+  const store = await prisma.store.findUnique({
+    where: { id: input.storeId },
+    select: { currency: true },
+  });
+  if (!store) {
+    return { status: "rejected", ...identity, problem: "that business does not exist" };
+  }
+
   if (input.yieldsToOwner) {
     const existing = await prisma.supplierEconomics.findFirst({
       where: {
@@ -172,6 +187,7 @@ async function writeOne(input: WriteInput): Promise<IngestOutcome> {
 
   const data = {
     provenance: input.provenance,
+    currency: store.currency,
     unitCostInCents: record.unitCostInCents ?? null,
     minimumOrderUnits: record.minimumOrderUnits ?? null,
     // Prisma reads `undefined` as "leave this column alone", which on an update
@@ -285,15 +301,19 @@ export async function ingestFromSupplier(input: {
  * connector involved. Recorded as OWNER, which is what stops a later catalogue
  * sync refreshing away something a person went and found out.
  *
- * Both figures are required here, unlike the connector path: this call exists
- * because somebody asked the two questions, and a call with neither answer is
- * not a quote.
+ * A call with NEITHER figure is not a quote and is refused. Either one alone is
+ * accepted, and that is deliberate (2026-08-20): an owner who rang their
+ * supplier and came back knowing the minimum but not the price has found out
+ * something real, and demanding both would throw it away and ask them the same
+ * two questions again. `missingEconomics` then narrows the next question to the
+ * half that is still missing, which is the whole point of asking one thing at a
+ * time.
  */
 export async function recordOwnerQuote(input: {
   storeId: string;
   ref: SupplierProductRef;
-  minimumOrderUnits: number;
-  bulkUnitCostInCents: number;
+  minimumOrderUnits?: number | null;
+  bulkUnitCostInCents?: number | null;
   shippingPerUnitInCents?: number | null;
   leadTimeDays?: number | null;
   requiresCapabilities?: OwnerCapability[];
@@ -301,6 +321,18 @@ export async function recordOwnerQuote(input: {
   note?: string | null;
   now?: Date;
 }): Promise<IngestOutcome> {
+  if (
+    (input.minimumOrderUnits === null || input.minimumOrderUnits === undefined) &&
+    (input.bulkUnitCostInCents === null || input.bulkUnitCostInCents === undefined)
+  ) {
+    return {
+      status: "rejected",
+      externalProductId: input.ref.externalProductId,
+      externalVariantId: input.ref.externalVariantId,
+      problem: "neither the minimum nor the price was given, which is not a quote",
+    };
+  }
+
   return writeOne({
     storeId: input.storeId,
     sourceKey: input.ref.sourceKey,
@@ -308,8 +340,8 @@ export async function recordOwnerQuote(input: {
     record: {
       externalProductId: input.ref.externalProductId,
       externalVariantId: input.ref.externalVariantId,
-      minimumOrderUnits: input.minimumOrderUnits,
-      unitCostInCents: input.bulkUnitCostInCents,
+      minimumOrderUnits: input.minimumOrderUnits ?? null,
+      unitCostInCents: input.bulkUnitCostInCents ?? null,
       shippingPerUnitInCents: input.shippingPerUnitInCents ?? null,
       leadTimeDays: input.leadTimeDays ?? null,
       requiresCapabilities: input.requiresCapabilities ?? [],

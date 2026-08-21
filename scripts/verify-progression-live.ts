@@ -48,6 +48,7 @@ function terms(
     leadTimeDays: null,
     requiresCapabilities: [],
     provenance: null,
+    currency: null,
     freshness: null,
     integrity: { ok: true },
     ...rest,

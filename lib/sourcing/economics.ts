@@ -52,6 +52,8 @@ export interface SupplierEconomics {
   externalProductId: string;
   externalVariantId: string | null;
   provenance: EconomicsProvenance;
+  /** What currency these figures are in. Stated, never assumed. */
+  currency: string;
   unitCostInCents: number | null;
   minimumOrderUnits: number | null;
   /** Null when none were stated OR when what was stored is unusable — see `integrity`. */
@@ -60,6 +62,14 @@ export interface SupplierEconomics {
   shippingPerUnitInCents: number | null;
   leadTimeDays: number | null;
   requiresCapabilities: OwnerCapability[];
+  /**
+   * Who said so, when a person did.
+   *
+   * Exposed on the read shape because an owner-provided figure is only worth
+   * more than a catalogue's if it can be attributed back when it is questioned.
+   * Null for a connector sync, which had no person behind it.
+   */
+  statedByUserId: string | null;
   statedAt: Date;
   freshness: Freshness;
   note: string | null;
@@ -184,6 +194,7 @@ export async function supplierEconomics(
     externalProductId: row.externalProductId,
     externalVariantId: row.externalVariantId === "" ? null : row.externalVariantId,
     provenance: row.provenance,
+    currency: row.currency,
     unitCostInCents: row.unitCostInCents,
     minimumOrderUnits: row.minimumOrderUnits,
     tiers,
@@ -191,6 +202,7 @@ export async function supplierEconomics(
     shippingPerUnitInCents: row.shippingPerUnitInCents,
     leadTimeDays: row.leadTimeDays,
     requiresCapabilities: row.requiresCapabilities.filter(isOwnerCapability),
+    statedByUserId: row.statedByUserId,
     statedAt: row.statedAt,
     freshness: freshnessOf(
       row.provenance,
@@ -220,6 +232,15 @@ export interface SupplierTerms {
   requiresCapabilities: OwnerCapability[];
   /** Null when nothing has ever been recorded for this product. */
   provenance: EconomicsProvenance | null;
+  /**
+   * The currency the figures above are in, or null when nothing was recorded.
+   *
+   * Carried all the way to `assessFeasibility` so it can refuse to compare a
+   * supplier's EUR quote against a business that sells in USD. Nothing in this
+   * codebase converts currency, and a figure whose currency was assumed is a
+   * wrong number about money that looks exactly like a right one.
+   */
+  currency: string | null;
   freshness: Freshness | null;
   integrity: TierIntegrity;
 }
@@ -231,6 +252,7 @@ export const NO_TERMS: SupplierTerms = {
   leadTimeDays: null,
   requiresCapabilities: [],
   provenance: null,
+  currency: null,
   freshness: null,
   integrity: { ok: true },
 };
@@ -251,6 +273,7 @@ export function bulkTerms(economics: SupplierEconomics | null): SupplierTerms {
     leadTimeDays: economics.leadTimeDays,
     requiresCapabilities: economics.requiresCapabilities,
     provenance: economics.provenance,
+    currency: economics.currency,
     freshness: economics.freshness,
     integrity: economics.integrity,
   };

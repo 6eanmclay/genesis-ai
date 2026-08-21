@@ -291,6 +291,69 @@ product, the variant, the provenance and the specific problem, via `reportIssue`
 buy at that tier, and picking the cheapest is still right. Rejecting it would be
 Genesis deciding it knows the supplier's business better than the supplier does.
 
+### C5. Asking, and being answered — the loop
+
+`nextMoves` could produce the right question from the day the economics layer
+landed. Nothing carried it anywhere an owner could answer it, so in production it
+was a sentence with no destination.
+
+```
+nextMoves -> unblock
+  -> raiseEconomicsQuestions()      Task (source: supplier_economics)
+     -> owner replies
+        -> answer_supplier_economics  (GENESIS_ACTIONS, always_ask, locked)
+           -> answerEconomicsQuestion()
+              -> recordOwnerQuote / recordUnavailable / nothing at all
+                 -> economicChanges(before, after)
+                    -> re-evaluate ONLY if something material moved
+                       -> settleEconomicsQuestion()  close, or leave standing
+```
+
+**No second mechanism at any step.** The question is a `Task`, which is where
+everything else Genesis needs from an owner already lives — `requiredInput` and
+the `AWAITING_INPUT` status had been declared in the schema for exactly this and
+written by nothing. The answer is a registered action, so it gets a permission
+check, an `ExecutionLog` row and an actor rather than a direct table write. The
+fact is stored by `recordOwnerQuote`, unchanged.
+
+**One question per blocked product, and only the half that is missing.** The
+gaps come from `missingEconomics`, the same function the unblock move uses, so
+the card and the conversation can never disagree about what is outstanding. An
+owner who has already given the minimum is asked about the price.
+
+**Three answers, and one writes nothing.**
+
+| Answer | What is recorded |
+|---|---|
+| `quoted` | `recordOwnerQuote` — provenance `OWNER`, attributed, in the business's currency |
+| `supplier_would_not_say` | `recordUnavailable` — provenance `UNAVAILABLE` |
+| `dont_know_yet` | **Nothing.** The question stays open |
+
+The third is the one a system like this usually gets wrong. *"I don't know"* is
+not an answer about the supplier, it is the absence of one, and there is nowhere
+honest to put it — recording `UNAVAILABLE` would be Genesis claiming somebody
+asked and was refused, which is a different fact and a false one. It is a real
+branch rather than the absence of a call, so there is somewhere to test that
+nothing was written.
+
+**Half an answer is kept.** `recordOwnerQuote` now accepts either figure alone
+and rejects only a call with **neither** — "a call with neither answer is not a
+quote" is unchanged. An owner who rang their supplier and came back knowing the
+minimum but not the price has found out something real; demanding both would
+throw it away and ask them the same two questions again.
+
+**Re-evaluation is earned.** `economicChanges` compares the terms before and
+after and re-runs the progression only when something moved, using the same
+"becoming known counts as much as improving" rule `materialChange` already
+applies. An owner confirming figures Genesis already had has told us something
+useful about our data and nothing new about their business, and rerunning to
+reach the same three moves is work nobody can tell apart from no work at all.
+A **worse** quote is recorded but is not material — it unblocks nothing, and the
+owner is not owed another interruption for it.
+
+**The card is settled from the result, never from the reply.** A question closes
+only when the thing it asked for is actually known.
+
 ### C3. Freshness — `economicsPolicy.ts`
 
 `statedAt` existed from the first version of this table and **nothing read it**.
@@ -767,7 +830,7 @@ posture, decisions and graduations are all per-business (I7).
 |---|---|
 | Thresholds | Kept as the **initial policy**, versioned and configurable, never hardcoded as domain truth. Evidence and policy are now separate types with separate functions (I12) |
 | Re-offering | The fixed 50% rule is **gone**. Reconsideration is triggered by a **material change** in a named condition, and the reason is recorded so J4 can explain it (I9) |
-| Currency | Modelled on the business. One per business in P0.5, named and local rather than global and assumed (I13) |
+| Currency | Modelled on the business, AND on every supplier statement (added 2026-08-20). `SupplierEconomics.currency` is NOT NULL, written from the owning Store at ingest. `assessFeasibility` returns `cannot_assess` with `matching_currency` when they differ — nothing in this codebase converts, and applying a rate nobody supplied would turn a real quote into a fabricated figure that looks just as trustworthy (I13) |
 | Order quantity | `Order.quantity` added. Evidence counts units, not orders (I14). No line items, no carts, no inventory |
 | Unknown vs zero | New invariant I11. The system may *act* as though capital is zero; it must never *record* an unstated posture as a stated one |
 

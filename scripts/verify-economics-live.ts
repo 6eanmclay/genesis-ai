@@ -274,9 +274,9 @@ async function main() {
       for (const [id, json] of rows) {
         await prisma.$executeRawUnsafe(
           `INSERT INTO "SupplierEconomics"
-             ("id","storeId","sourceKey","externalProductId","externalVariantId","provenance",
+             ("id","storeId","sourceKey","externalProductId","externalVariantId","provenance","currency",
               "unitCostInCents","minimumOrderUnits","tiers","requiresCapabilities","statedAt")
-           VALUES (gen_random_uuid()::text, $1, 'w', $2, '', 'SUPPLIER', 410, 100, ${json}, ARRAY[]::TEXT[], NOW())`,
+           VALUES (gen_random_uuid()::text, $1, 'w', $2, '', 'SUPPLIER', 'USD', 410, 100, ${json}, ARRAY[]::TEXT[], NOW())`,
           store.id, id
         );
       }

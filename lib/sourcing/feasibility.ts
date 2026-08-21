@@ -75,7 +75,19 @@ export type Feasibility =
       confidence: EconomicsConfidence;
     };
 
-export type MissingFact = "minimum_order" | "bulk_price" | "product_cost";
+export type MissingFact =
+  | "minimum_order"
+  | "bulk_price"
+  | "product_cost"
+  /**
+   * The supplier's figures are in a different currency from the business.
+   *
+   * A gap rather than a refusal, and it belongs here rather than anywhere that
+   * produces a number: nothing in this codebase converts currency, and applying
+   * a rate nobody supplied would turn a real quote into a fabricated one that
+   * looks exactly as trustworthy.
+   */
+  | "matching_currency";
 
 export interface FeasibilityInput {
   profile: SourcingMethodProfile;
@@ -184,6 +196,14 @@ export function assessFeasibility(input: FeasibilityInput): Feasibility {
   const missing: MissingFact[] = [];
   if (supplier.minimumOrderUnits === null) missing.push("minimum_order");
   if (supplier.bulkUnitCostInCents === null) missing.push("bulk_price");
+
+  // CURRENCY IS CHECKED, NOT ASSUMED. Comparing a supplier's figure against what
+  // this business can spend only means anything if both are the same money.
+  // Null is "nothing was recorded", which the two checks above already caught.
+  if (supplier.currency !== null && supplier.currency !== currency) {
+    missing.push("matching_currency");
+  }
+
   if (missing.length > 0) return { kind: "cannot_assess", missing };
 
   const minimumUnits = supplier.minimumOrderUnits!;
@@ -270,6 +290,7 @@ const MISSING_LABEL: Record<MissingFact, string> = {
   minimum_order: "how many the supplier requires per order",
   bulk_price: "what they charge at that quantity",
   product_cost: "what this product costs you today",
+  matching_currency: "what those figures come to in the currency you sell in — I won't guess at an exchange rate",
 };
 
 const CAPABILITY_LABEL: Record<OwnerCapability, string> = {

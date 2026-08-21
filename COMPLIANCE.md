@@ -2381,6 +2381,112 @@ sitting in the discovery row never appears in what the owner is shown.
 
 ---
 
+## 53. A question with nowhere to send the answer
+
+*The gap I named at the end of §52 and then closed. Not a defect in anything
+built — a defect in what it added up to.*
+
+### What was wrong
+
+Everything worked and nothing was reachable. `nextMoves` produced exactly the
+right question — *"what would this cost you to buy in bulk, and how many would
+you have to order?"* — and a repo-wide search found no caller outside
+`lib/sourcing/` and `scripts/`. The question was a sentence with no destination,
+and the only way to answer it in production was for a developer to open a
+console.
+
+So the honest state of the economics layer was: correct, verified, and inert.
+
+### What was built
+
+The loop, and nothing beside it. `PRODUCT_PROGRESSION.md` §C5 has the diagram.
+
+**No second mechanism at any step**, which was the constraint that shaped every
+choice:
+
+- **The question is a `Task`** — where everything else Genesis needs from an
+  owner already lives. `requiredInput` and the `AWAITING_INPUT` status had been
+  in the schema since M1 and written by nothing; `requiredInput` now has its
+  first real producer. A separate table for "questions about suppliers" would
+  have been a parallel inbox nobody merges.
+- **The answer is a registered action** rather than a direct write, so it gets a
+  permission check, an `ExecutionLog` row and an actor. A supplier's terms decide
+  whether Genesis tells somebody to spend thousands; *who told us this, and when*
+  has to be answerable afterwards.
+- **The fact is stored by `recordOwnerQuote`**, unchanged in everything but one
+  respect, below.
+
+### The tier, locked for the opposite of the usual reason
+
+`answer_supplier_economics` is `always_ask` with `maxAuthorityTier: always_ask`.
+
+Every other lock in the registry is there because the change is too visible or
+too irreversible for Genesis to make alone. This one is locked because **Genesis
+cannot make it at all.** The value comes from a conversation between an owner and
+their supplier. An autonomous tier would not be a convenience, it would be a
+route for Genesis to fill in a number about somebody's money — the exact thing
+the whole economics layer exists to make impossible.
+
+### "I don't know" is not an answer about the supplier
+
+The branch a system like this usually gets wrong, because there is an obvious
+place to put it and the obvious place is a lie.
+
+Recording `UNAVAILABLE` when the owner says *"I haven't found out yet"* would be
+Genesis claiming somebody asked and was refused. That is a different fact, it is
+false, and it would stop J4 asking — which is precisely the wrong outcome, since
+the person who said they'd find out is the one most likely to.
+
+So `dont_know_yet` writes **nothing at all** and the question stays open. It is a
+real branch rather than the absence of a call, specifically so there is somewhere
+to assert that nothing was written.
+
+### One contract changed, deliberately
+
+`recordOwnerQuote` demanded both figures. It now accepts either alone and rejects
+only a call with **neither** — its own stated rule, *"a call with neither answer
+is not a quote"*, is untouched.
+
+The reason is the owner, not the code. Somebody who rang their supplier and came
+back knowing the minimum but not the price has found out something real, and
+refusing it would throw that away and ask them the same two questions again.
+`missingEconomics` then narrows the next card to the half still outstanding,
+which is what "ask only the specific missing question" actually requires.
+
+### Currency, which had been implicit
+
+`SupplierEconomics` had no currency column, so every figure was implicitly in the
+business's own. A supplier quoting in EUR to a business selling in USD would have
+been read as USD — a wrong number about money that looks exactly like a right one.
+
+Now `NOT NULL`, written from the owning Store at ingest, with no default and no
+backfill: the table was empty in production (confirmed by counting rows on the
+live database), so there was no row to invent a currency for. A default would
+have been the invention.
+
+A mismatch produces `cannot_assess` with `matching_currency`, never a conversion.
+Nothing in this codebase has an exchange rate.
+
+### And three models joined the isolation map
+
+`sourcedProduct`, `supplierEconomics` and `progressionDecision` were absent from
+`TENANT_SCOPED_MODELS`, so collection reads on them were unguarded. All three
+were written store-scoped throughout; they are now guarded structurally, so a
+future query that forgets cannot run rather than merely being unlikely to exist.
+
+### Status
+
+**VERIFIED** — `scripts/verify-economics-answer.ts`, 10 sections, real Postgres.
+
+The complete loop, plus the four things it would be easy to get quietly wrong:
+"I don't know" writing nothing (asserted at the row-count level, and asserted
+specifically not to be a refusal); a restatement re-evaluating nothing while
+still storing the current truth; a partial answer being kept and the next card
+asking only for the rest; and an answer landing on neither another supplier's
+product nor another business.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2430,6 +2536,7 @@ scripts/verify-moves.ts                   ranking, and what a move may claim
 scripts/verify-progression-live.ts        the progression engine end to end (real Postgres)
 scripts/verify-economics-live.ts          supplier economics, and the zero-capital journey (real Postgres)
 scripts/verify-economics-ingest.ts        the only way economics get written (real Postgres)
+scripts/verify-economics-answer.ts        J4 asks, the owner answers, the progression moves (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

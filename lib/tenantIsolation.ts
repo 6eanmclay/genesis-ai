@@ -102,6 +102,16 @@ const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
   // deliberately excluded: it's global platform config, not a store's own
   // data, so no store-scoping requirement applies to it.
   growthPointTransaction: ["storeId"],
+
+  // P0.5 sourcing, added 2026-08-20. Every one of these holds a fact about what
+  // a business sells or what it would cost them, and a collection read that
+  // omitted the store would return another business's supplier terms — the
+  // narrowest, most expensive kind of leak this map exists to prevent. All three
+  // were built store-scoped throughout; adding them here means a future query
+  // that forgets cannot compile-and-run rather than merely being unlikely.
+  sourcedProduct: ["storeId"],
+  supplierEconomics: ["storeId"],
+  progressionDecision: ["storeId"],
 };
 
 function isRealFilterObject(value: unknown): value is Record<string, unknown> {

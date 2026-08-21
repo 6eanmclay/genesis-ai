@@ -19,6 +19,18 @@ export interface TaskInput {
   actionType?: string | null;
   trustLevel?: string;
   actionHref?: string | null;
+  /**
+   * Exactly what this task needs from the owner before its action can run.
+   *
+   * The column has existed since M1 and was written by nothing. First real
+   * producer is the supplier-economics question (lib/sourcing/
+   * economicsQuestions.ts), which puts the outstanding facts here so the card
+   * asks for the half that is missing rather than both halves every time.
+   *
+   * Refreshed on re-detection, unlike `context`: what is still outstanding is
+   * the part most likely to have changed since the question was first raised.
+   */
+  requiredInput?: Record<string, unknown> | null;
   priority: "FAILED" | "WARNING" | "opportunity";
 }
 
@@ -51,6 +63,7 @@ export async function upsertTask(storeId: string, task: TaskInput): Promise<void
       actionType: task.actionType ?? null,
       trustLevel: task.trustLevel ?? "recommend",
       actionHref: task.actionHref ?? null,
+      requiredInput: task.requiredInput ?? undefined,
       priority: task.priority,
     },
     update: {
@@ -60,6 +73,7 @@ export async function upsertTask(storeId: string, task: TaskInput): Promise<void
       relatedRecordId: task.relatedRecordId ?? null,
       relatedAssetId: task.relatedAssetId ?? null,
       actionHref: task.actionHref ?? null,
+      requiredInput: task.requiredInput ?? undefined,
       priority: task.priority,
       // status intentionally absent — see this function's own comment on
       // why an already-active row is never touched here.
