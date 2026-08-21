@@ -3,11 +3,15 @@
 *One Genesis account, several businesses. The architecture, and the exact plan
 for finishing it.*
 
-**Status.** Phase 0 complete and live (`933db80`, `385370a`, `COMPLIANCE.md`
-§49). Phase A's foundations are in: the explicit permission layer
-(`requireBusiness`, `requireBusinessPage`) and business-scoped navigation paths,
-both verified. Phase B is answered — by testing, it turned out not to be needed.
-The route itself and the 28-screen migration are the remaining bulk.
+**Status (2026-08-21).** Phases 0, A, B, C and D are complete. Phase B was
+answered by testing — it turned out not to be needed. Phase C is done, including
+the five route handlers and `/j4/room`, and it surfaced five real defects rather
+than being a mechanical rebase (see below). Phase D shipped the switcher and the
+chooser: `setActiveBusiness` and `accessibleBusinesses` had **no callers**, so an
+ambiguous account was told to choose and given nowhere to do it.
+
+What remains is Phase E — broadening adversarial coverage across every surface —
+and the deliberate exceptions: onboarding and the legacy `/dashboard` composer.
 
 ---
 
@@ -189,14 +193,42 @@ The redirect detail is not incidental. A slug-bound action that sent the owner
 back to `/dashboard/orders` would have disconnected the right business and then
 shown them a different one.
 
-**All 15 screens migrated.** Zero screens and zero writes in `actions.ts`
-resolve implicitly. Remaining: 10 sites in `ai-actions.ts`, 3 in
-`j4/proposal-actions.ts`, 5 API routes, and `/j4/room`. Onboarding and the legacy
-dashboard stay implicit deliberately. Two of the four Orders actions are
-among them — `submitUspsCredentials` and `recheckUsps` go through `execute()`,
-which resolves the business internally (`lib/execution/engine.ts`, the one
-implicit site outside the app directory). That is a deeper change than binding a
-slug and is its own step.
+**Phase C is complete (2026-08-21).** All 15 screens, every write in
+`actions.ts` and `connectionsActions.ts`, the seven chat-turn actions in
+`ai-actions.ts`, the four proposal decisions, all five route handlers and
+`/j4/room`. Onboarding and the legacy `/dashboard` composer stay implicit
+deliberately — they send no slug and resolve the active business exactly as
+before.
+
+**`engine.ts` was never the problem.** This document said it "resolves the
+business internally". It does not, and never did: it has always accepted
+`opts.storeId` and forwards it. Twelve actions resolved `businessId` from the
+slug and then **did not pass it**, so permission was checked against the business
+named in the URL while the executable ran against the active one. Seven of them
+write real payment or carrier credentials. That is the direction "refused, never
+substituted" cannot catch, because both businesses are reachable: nothing is
+denied, the write simply lands somewhere else.
+
+**Four more defects the migration surfaced**, each the same shape from a
+different angle:
+
+| Where | What it did |
+|---|---|
+| `/api/chat` POST | The surface was fixed in August to render the named business; **sending** a message still resolved the active one, so the conversation on screen and the turn that was written belonged to different businesses |
+| The four proposal decisions | Looked up `findFirst({ id, storeId: active })`, so a proposal in the owner's *other* business returned `not_found` — J4 offered a real change and approving it said it had vanished |
+| `/j4/room` | Sent an ambiguous account to `/onboarding` — telling an owner to create a business when they have several |
+| Four route handlers | `resolveUserStore` returns null for both "no business" and "several, none named", so the two were indistinguishable everywhere |
+
+**Verified against real Postgres:** `verify-execute-binding-live.ts` (the engine
+contract: an explicit storeId decides where the write lands, and is still not a
+capability), `verify-route-business-live.ts` (a named business beats the active
+one; naming is not choosing), `verify-business-switcher-live.ts` (including the
+two-tab test).
+
+**Still resolving implicitly, deliberately:** onboarding, the legacy `/dashboard`
+page and its composer. **Not yet executed:** the proposal-decision path needs a
+signed-in session, so it is typechecked and built but covered only by the browser
+suite.
 
 **Verified by:** the adversarial suite in Phase E, run after each section.
 
@@ -229,9 +261,9 @@ state, and passes only when the context is genuinely carried per request.
   `"/dashboard/products"` as data, written when they were created. The Products
   screen queries on that string, so rebasing the filter would stop it matching
   any existing row. Their own migration, and a data one rather than a code one.
-- **`lib/execution/engine.ts`** resolves the business internally, so every action
-  routed through `execute()` — including two of the four Orders actions — is
-  still implicit. The one such site outside `app/`.
+- ~~**`lib/execution/engine.ts`** resolves the business internally.~~ **Wrong,
+  corrected 2026-08-21.** It has always accepted `opts.storeId`. The implicitness
+  was twelve callers omitting it, all now bound and the contract proved live.
 - ~~No screen has been exercised through a real browser session.~~ **Done**
   (§50). A real server, a real Postgres, a real browser, a real sign-in through
   the login form. It found a defect nothing else could: `J4Surface` resolved the
