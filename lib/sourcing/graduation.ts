@@ -12,7 +12,14 @@ import {
   type ProductEvidence,
 } from "./progression";
 import { assessFeasibility, type Feasibility } from "./feasibility";
-import { bulkTerms, supplierEconomics } from "./economics";
+import {
+  anyTermsRecorded,
+  bulkTerms,
+  integrityDiagnostic,
+  supplierEconomics,
+  NO_TERMS,
+  type SupplierTerms,
+} from "./economics";
 
 // When a business has EARNED a better way of sourcing something it already sells.
 //
@@ -216,10 +223,6 @@ function conditionsFrom(input: {
   };
 }
 
-interface SupplierEconomics {
-  minimumOrderUnits: number | null;
-  bulkUnitCostInCents: number | null;
-}
 
 /**
  * The supplier listing this product came from, if any.
@@ -244,7 +247,7 @@ async function findSupplierRow(
     externalProductId: string | null;
     externalVariantId: string | null;
   }
-): Promise<SupplierEconomics | null> {
+): Promise<SupplierTerms> {
   const select = { minimumOrderUnits: true, bulkUnitCostInCents: true } as const;
 
   const adopted = await prisma.sourcedProduct.findFirst({
@@ -279,21 +282,59 @@ async function findSupplierRow(
     const stated = await supplierEconomics(storeId, ref);
     if (stated) {
       const terms = bulkTerms(stated);
+
+      // BROKEN PRICE DATA IS AN OPERATOR'S PROBLEM AND AN OWNER'S BLOCKER, and
+      // it is neither if nobody says it out loud. The owner gets an honest "I
+      // can't quote you on this"; whoever maintains the connector gets the row,
+      // the store and the reason.
+      const diagnostic = integrityDiagnostic(storeId, stated);
+      if (diagnostic) {
+        reportIssue(diagnostic, null, {
+          subsystem: "sourcing",
+          stage: "economics.tiers",
+          storeId,
+          extra: {
+            productId: product.id,
+            sourceKey: stated.sourceKey,
+            externalProductId: stated.externalProductId,
+            provenance: stated.provenance,
+          },
+        });
+        // Returned rather than falling through. A record whose price breaks are
+        // unusable does not get quietly replaced by an older figure from the
+        // discovery row — that would answer the question with data we did not
+        // ask for, and it would look exactly like a good answer.
+        return terms;
+      }
+
       // Even an UNAVAILABLE record is an answer: somebody looked. It resolves to
       // nulls, which the pipeline carries as cannot_assess rather than treating
       // as never having been asked.
-      if (terms.minimumOrderUnits !== null || terms.bulkUnitCostInCents !== null || stated.provenance === "UNAVAILABLE") {
+      if (
+        terms.minimumOrderUnits !== null ||
+        terms.bulkUnitCostInCents !== null ||
+        stated.provenance === "UNAVAILABLE"
+      ) {
         return terms;
       }
     }
   }
 
-  if (adopted) return { minimumOrderUnits: adopted.minimumOrderUnits, bulkUnitCostInCents: adopted.bulkUnitCostInCents };
+  // Fallbacks below carry no provenance, freshness, shipping or lead time —
+  // they predate all of it, and NO_TERMS spreads the honest nulls rather than
+  // letting a partial shape imply those questions were answered.
+  if (adopted) {
+    return {
+      ...NO_TERMS,
+      minimumOrderUnits: adopted.minimumOrderUnits,
+      bulkUnitCostInCents: adopted.bulkUnitCostInCents,
+    };
+  }
 
   // Fallback for products adopted before the link, or created by another path.
   // Requires BOTH the source and the external id, for the reason above.
   if (product.sourceKey && product.externalProductId) {
-    return prisma.sourcedProduct.findFirst({
+    const row = await prisma.sourcedProduct.findFirst({
       where: {
         storeId,
         sourceKey: product.sourceKey,
@@ -304,9 +345,16 @@ async function findSupplierRow(
       },
       select,
     });
+    if (row) {
+      return {
+        ...NO_TERMS,
+        minimumOrderUnits: row.minimumOrderUnits,
+        bulkUnitCostInCents: row.bulkUnitCostInCents,
+      };
+    }
   }
 
-  return null;
+  return NO_TERMS;
 }
 
 /**
@@ -357,11 +405,11 @@ export async function findGraduationOpportunities(
     //
     // The id match survives as a fallback for products adopted before the link
     // existed, and it is scoped by sourceKey as well, which the original was not.
-    const sourced = await findSupplierRow(storeId, product);
-    const supplier = {
-      minimumOrderUnits: sourced?.minimumOrderUnits ?? null,
-      bulkUnitCostInCents: sourced?.bulkUnitCostInCents ?? null,
-    };
+    // The WHOLE terms, not two of the columns. Shipping, lead time and the
+    // capabilities this particular product demands were being dropped here for
+    // the first fortnight of the table's life: stored, read out of the database,
+    // and then discarded one line before the only function that could use them.
+    const supplier = await findSupplierRow(storeId, product);
 
     const feasibility = assessFeasibility({
       profile: target,
@@ -376,7 +424,7 @@ export async function findGraduationOpportunities(
       supplier,
       evidence,
       feasibility,
-      sourceAvailable: sourced !== null,
+      sourceAvailable: anyTermsRecorded(supplier),
       policyVersion: policy.version,
     });
 
@@ -460,7 +508,7 @@ export async function recordProgressionDecision(params: {
 export function conditionsOf(
   opportunity: GraduationOpportunity,
   posture: CapitalPosture,
-  supplier: { minimumOrderUnits: number | null; bulkUnitCostInCents: number | null },
+  supplier: SupplierTerms,
   policy: ProgressionPolicy = currentPolicy()
 ): ProgressionConditions {
   return conditionsFrom({
@@ -468,7 +516,12 @@ export function conditionsOf(
     supplier,
     evidence: opportunity.evidence,
     feasibility: opportunity.feasibility,
-    sourceAvailable: supplier.minimumOrderUnits !== null || supplier.bulkUnitCostInCents !== null,
+    // The SAME test the live path uses. These two disagreed before — one asked
+    // whether a row existed, the other whether it held figures — so an
+    // UNAVAILABLE record counted as "no source" when a decision was recorded and
+    // as "source present" when it was reconsidered, and the day a supplier
+    // finally quoted, nothing registered as having changed.
+    sourceAvailable: anyTermsRecorded(supplier),
     policyVersion: policy.version,
   });
 }

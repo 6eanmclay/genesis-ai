@@ -54,6 +54,17 @@ export interface BusinessMove {
   action: string;
   /** What this unlocks — the progression consequence, not a restatement. */
   unlocks: string;
+  /**
+   * What the owner should know about where these figures came from.
+   *
+   * SEPARATE FROM `blockers`, and the distinction is load-bearing. A blocker is
+   * a reason this cannot happen yet. A caveat is a reason to check something
+   * before acting on a number that is otherwise sound — "these are the terms you
+   * gave me five months ago". Folding the second into the first would turn every
+   * ageing quote into an obstacle; leaving it out entirely is how a recommendation
+   * to spend real money stops saying where its figures came from.
+   */
+  caveats: string[];
   score: number;
   /** The product this concerns: an owned one for deepen, a candidate otherwise. */
   productId: string | null;
@@ -61,6 +72,11 @@ export interface BusinessMove {
   outcome: Outcome;
   /** Present when this is being raised again, and says why. */
   reconsideration: string | null;
+}
+
+/** Caveats from whichever outcome carries them. Never re-derived here. */
+function caveatsOf(outcome: Outcome): string[] {
+  return "caveats" in outcome ? outcome.caveats : [];
 }
 
 function pct(value: number): string {
@@ -160,6 +176,8 @@ export function deepenMove(input: DeepenInput): BusinessMove {
     score -= input.paybackWeeks * movePolicy.paybackWeekPenalty;
   }
   if (input.outcome.kind === "not_yet") score *= movePolicy.notYetMultiplier;
+  const caveats = caveatsOf(input.outcome);
+  if (caveats.length > 0) score *= movePolicy.qualifiedConfidenceMultiplier;
   score = Math.max(0, score);
 
   const framing = framingFor(input.toKind);
@@ -185,6 +203,7 @@ export function deepenMove(input: DeepenInput): BusinessMove {
       improvement !== null
         ? `About ${pct(improvement)} off every unit, on something already selling.`
         : `Better margins on the product you already sell most of.`,
+    caveats,
     score,
     productId: input.productId,
     sourcedProductId: null,
@@ -219,6 +238,8 @@ export function candidateMove(input: CandidateInput): BusinessMove {
   let score = fit.score * movePolicy.fitWeight;
   if (kind === "widen") score += input.concentration * movePolicy.concentrationWeight;
   if (input.outcome.kind === "not_yet") score *= movePolicy.notYetMultiplier;
+  const caveats = caveatsOf(input.outcome);
+  if (caveats.length > 0) score *= movePolicy.qualifiedConfidenceMultiplier;
   score = Math.max(0, score);
 
   const evidence =
@@ -240,6 +261,7 @@ export function candidateMove(input: CandidateInput): BusinessMove {
       kind === "start"
         ? `Your first real sales, without buying anything up front.`
         : `A second thing to sell to the customers you already have.`,
+    caveats,
     score,
     productId: null,
     sourcedProductId: input.sourcedProductId,
@@ -278,6 +300,8 @@ export function unblockMove(input: UnblockInput): BusinessMove {
     blockers: [],
     action: input.question,
     unlocks: `Whether ${input.subject} is worth buying properly, and what that would cost.`,
+    // A question has no figures, so there is nothing to qualify.
+    caveats: [],
     // Deliberately the raw strength. Whether that is enough to LEAD is decided
     // by the ranker against the best actionable move, not here.
     score: input.blockedMoveStrength,

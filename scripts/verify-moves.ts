@@ -52,10 +52,10 @@ function evidence(over: Partial<ProductEvidence> = {}): ProductEvidence {
   };
 }
 
-const affordable: Outcome = { kind: "recommended_now", reasons: ["It's working."] };
+const affordable: Outcome = { kind: "recommended_now", caveats: [], reasons: ["It's working."] };
 const notYet = (weeks: number): Outcome => ({
   kind: "not_yet", reasons: ["It's working."], blockers: ["It needs money up front."],
-  plan: `About ${weeks} weeks.`, capitalBasis: "assumed_because_unstated",
+  plan: `About ${weeks} weeks.`, capitalBasis: "assumed_because_unstated", caveats: [],
 });
 
 const fit = (score: number): Recommendation => ({

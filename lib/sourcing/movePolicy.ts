@@ -55,6 +55,21 @@ export interface MovePolicy {
    * actually take, because a question is not an action.
    */
   unblockLeadMarginPoints: number;
+  /**
+   * Multiplier applied to a move whose figures carry caveats.
+   *
+   * Stale economics, an unknown delivery charge, an unknown lead time: none of
+   * them makes a move wrong, and none of them is nothing. Between two moves the
+   * owner could take today, the one resting on figures somebody confirmed this
+   * month should come first — but only just, because the qualified one may still
+   * be the better business decision by a wide margin.
+   *
+   * DELIBERATELY CLOSE TO 1. This is a tiebreaker, not a penalty. Anything
+   * harsher would let a missing shipping figure bury a move worth thousands, and
+   * a system that hides the best option until its paperwork is perfect is a
+   * system nobody gets value from.
+   */
+  qualifiedConfidenceMultiplier: number;
   /** How many moves are offered. Three: enough to choose, not a catalogue. */
   moveCount: number;
 }
@@ -76,6 +91,7 @@ export const CURRENT_MOVE_POLICY: MovePolicy = {
   concentrationWeight: 18,
 
   notYetMultiplier: 0.55,
+  qualifiedConfidenceMultiplier: 0.9,
   unblockLeadMarginPoints: 10,
   moveCount: 3,
 };

@@ -11,7 +11,13 @@ import {
 } from "./progression";
 import { findGraduationOpportunities, RECONSIDERATION_EXPLANATION } from "./graduation";
 import { assessFeasibility, decide } from "./feasibility";
-import { bulkTerms, missingEconomics, supplierEconomics, ECONOMICS_GAP_EXPLANATION } from "./economics";
+import {
+  bulkTerms,
+  missingEconomics,
+  supplierEconomics,
+  ECONOMICS_GAP_EXPLANATION,
+  NO_TERMS,
+} from "./economics";
 import { methodProfile } from "./methodProfile";
 import { scoreCandidate, type SourcingContext } from "./recommend";
 import { buildSourcingContext } from "./context";
@@ -47,6 +53,33 @@ export interface NextMoves {
   consideredCount: number;
   /** Named, never silently omitted. */
   blockedSources: { key: string; displayName: string; blockedOn: string[] }[];
+}
+
+/**
+ * The question to ask, which depends on what already happened.
+ *
+ * Three different situations, three different sentences. Asking somebody to
+ * repeat work they did last week is how an assistant becomes noise; never asking
+ * again is how a closed door stays closed forever.
+ */
+function unblockQuestion(
+  productName: string,
+  stated: { provenance: string; freshness: { state: string; ageDays: number } } | null
+): string {
+  if (stated?.provenance !== "UNAVAILABLE") {
+    return `What would ${productName} cost you to buy in bulk, and how many would you have to order?`;
+  }
+
+  // THE ONE PLACE STALENESS CHANGES BEHAVIOUR RATHER THAN WORDING. "They
+  // wouldn't say" is a reason not to ask again next week; past the window it
+  // stops being a reason not to ask at all. Suppliers change their minds, and by
+  // now this owner may be a customer worth quoting.
+  if (stated.freshness.state === "stale") {
+    const months = Math.max(1, Math.round(stated.freshness.ageDays / 30));
+    return `It's been ${months === 1 ? "a month" : `${months} months`} since they wouldn't quote you on ${productName}. Worth asking again?`;
+  }
+
+  return `Can you find another supplier for ${productName}, or ask again what they'd charge in bulk?`;
 }
 
 export async function nextMoves(
@@ -135,10 +168,7 @@ export async function nextMoves(
             gaps.length > 0
               ? gaps.map((gap) => ECONOMICS_GAP_EXPLANATION[gap])
               : outcome.missing,
-          question:
-            stated?.provenance === "UNAVAILABLE"
-              ? `Can you find another supplier for ${opportunity.productName}, or ask again what they'd charge in bulk?`
-              : `What would ${opportunity.productName} cost you to buy in bulk, and how many would you have to order?`,
+          question: unblockQuestion(opportunity.productName, stated),
           // Worth exactly what it would unlock: strong product, valuable
           // question; weak product, not worth asking about.
           blockedMoveStrength:
@@ -214,6 +244,10 @@ export async function nextMoves(
     const candidateTerms = candidateEconomics
       ? bulkTerms(candidateEconomics)
       : {
+          // Discovery's own columns, which carry no provenance and no date.
+          // NO_TERMS spreads the honest nulls for everything they cannot answer
+          // rather than a partial shape that implies those questions were asked.
+          ...NO_TERMS,
           minimumOrderUnits: candidate.minimumOrderUnits,
           bulkUnitCostInCents: candidate.bulkUnitCostInCents,
         };

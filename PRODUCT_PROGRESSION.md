@@ -231,6 +231,121 @@ the owner to go and find out.
 `SourcedProduct.minimumOrderUnits` / `bulkUnitCostInCents` remain as the
 discovery-time fallback, read only when no `SupplierEconomics` row exists.
 
+### C1. The write contract — `economicsIngest.ts`
+
+Three things will eventually write here: a supplier connector, an owner-entry
+flow, and a bulk import. They are not one caller with different arguments — they
+differ in **what they are allowed to say** — so there is one entry point each,
+and each decides its own provenance.
+
+| Writer | Provenance | May overwrite |
+|---|---|---|
+| `ingestFromSupplier` | `SUPPLIER` | another `SUPPLIER` row, or an `UNAVAILABLE` one |
+| `recordOwnerQuote` | `OWNER` | anything, including the owner's own earlier answer |
+| `recordUnavailable` | `UNAVAILABLE` | a `SUPPLIER` row, never an `OWNER` one |
+
+Two protections are **structural rather than checked**:
+
+1. **A connector cannot write under another source's key.** `ingestFromSupplier`
+   takes one `sourceKey` for the whole batch and stamps it onto every record.
+   The records have no `sourceKey` field to get wrong, so there is no code path
+   by which one supplier's sync reaches another supplier's row.
+2. **A sync cannot erase what a person found out.** An `OWNER` row is what
+   somebody got by ringing the supplier up; a catalogue sync that would overwrite
+   it is refused and reported as `preserved`. This rule was written down the day
+   the table was created and enforced by nothing — which is the state in which
+   rules stop being true.
+
+A bad record is **rejected as data, not thrown**: a sync of four hundred products
+must not lose three hundred and ninety-nine because one had a negative price, and
+must not be able to pretend the bad one was fine. A rejected record writes
+**nothing at all**, never the half that parsed — a row that is half-believable is
+the most dangerous shape this table can hold, because it looks answered.
+
+Absence survives a re-sync. Prisma reads `undefined` as *leave this column
+alone*, so a later sync that says nothing about price breaks writes an explicit
+null; otherwise the engine would go on quoting a break the supplier had withdrawn.
+
+### C2. Broken price breaks block, they do not fall back
+
+`readTiers` returns `{ tiers, integrity }`. When the stored JSON cannot be
+believed — not a list, an entry with no quantity, a non-numeric price, or **two
+different prices for the same quantity** — `integrity` carries the problem and
+`bulkTerms` quotes **nothing at all**, including the flat `unitCostInCents` and
+`minimumOrderUnits` sitting in the same row.
+
+That refusal is the point. The earlier version fell through to the flat figures,
+so a corrupt price-break table produced a confident-looking unit cost with
+nothing indicating anything was wrong. **A plausible figure derived from data we
+have just established is broken is worse than no figure at all.** The same
+applies to the discovery-row fallback: a record whose tiers are unusable is not
+quietly replaced by an older number from `SourcedProduct`.
+
+The owner gets `unusable_tiers` — *"what's recorded doesn't add up, so I've
+stopped using it rather than quote you a figure I can't stand behind"*. Whoever
+maintains the connector gets `integrityDiagnostic`: the store, the source, the
+product, the variant, the provenance and the specific problem, via `reportIssue`.
+
+**Not validated:** whether a bigger order costs less per unit. A supplier quoting
+500 at a higher unit price than 100 is odd but not contradictory — nobody would
+buy at that tier, and picking the cheapest is still right. Rejecting it would be
+Genesis deciding it knows the supplier's business better than the supplier does.
+
+### C3. Freshness — `economicsPolicy.ts`
+
+`statedAt` existed from the first version of this table and **nothing read it**.
+That is the quiet failure mode of a timestamp: a quote obtained in February and
+one obtained this morning were the same fact to the engine, and a recommendation
+to spend $410 rested equally on both.
+
+Versioned like the progression thresholds, because it is judgement:
+
+| Provenance | Stale after | Why that window |
+|---|---|---|
+| `SUPPLIER` | 30 days | A connector syncs on a schedule. Month-old catalogue data does not mean the price is a month old — it means **the sync has not run**, which is a fact about Genesis worth surfacing |
+| `OWNER` | 120 days | Roughly how long a trade quote tends to be honoured, and long enough that nobody is re-interrogating their supplier monthly for no reason |
+| `UNAVAILABLE` | 60 days | "They wouldn't say" is worth leaving alone for a couple of months, and then worth asking again |
+
+**THE DECISION: stale data does not block. It qualifies.**
+
+Blocking was the tempting rule and it is wrong. A business that recorded its
+economics five months ago would lose its recommendation entirely and be told *"I
+don't know"* — replacing a slightly old truth with a total absence, which is
+strictly less true. What an owner needs is the recommendation **and** its age.
+
+So staleness produces a **caveat**, not a blocker, and the distinction is
+load-bearing: a blocker is a reason this cannot happen yet; a caveat is a reason
+to check something before acting on a number that is otherwise sound. Caveats
+survive `recommended_now` deliberately — the outcome that actually causes
+somebody to spend money must not be the one that says least about where its
+figures came from.
+
+The one place staleness changes **behaviour** rather than wording is
+`UNAVAILABLE`. Inside the window J4 asks *"can you find another supplier?"*; past
+it, *"it's been three months since they wouldn't quote you — worth asking
+again?"* Suppliers change their minds, and by then the owner may be a customer
+worth quoting.
+
+### C4. What the stored figures actually do
+
+Three columns were stored, read out of the database, and then discarded one line
+before the only function that could use them. What each does now:
+
+| Field | Effect on `assessFeasibility` |
+|---|---|
+| `shippingPerUnitInCents` | Money that leaves the owner's hands to get the order, so it is added to the unit cost: `upfront = minimum x (bulk + shipping)`, and the bulk margin is computed against the landed cost. A **stated 0 is an answer** — "delivery included" — and is not the same as null |
+| `leadTimeDays` | Part of payback. The clock starts when the money leaves, not when the boxes arrive; a supplier who takes six weeks to ship is six weeks of an owner's money sitting in transit earning nothing |
+| `requiresCapabilities` | Unioned with the method's own. Stocked wholesale needs somewhere to keep stock whatever the product is; **this** product may need more — an item that ships on a pallet needs real storage. Applies at rung 0 too, where nothing is bought but artwork may still be required |
+
+**Unknown shipping and lead time qualify rather than block**, and this is the
+judgement call in `feasibility.ts`. Requiring them would send every stocked
+recommendation back to `cannot_assess` — the exact paralysis this layer was built
+to end — over a delivery charge that is usually a fraction of the order. Instead
+the figure carries a `costBasis`: when shipping is unknown the total is a floor
+and the owner reads **"at least $410"**, never a bare total that claims a
+completeness it does not have.
+
+
 ### D. Product evidence — derived, never stored (I4, I5, I12)
 
 **Evidence is what happened. It contains no judgement and no thresholds.**
@@ -663,7 +778,20 @@ posture, decisions and graduations are all per-business (I7).
    not have. Now cheap to change: one constant, one version bump.
 2. **What counts as "enough to change payback by a week"** in the material-change
    table. A week is a guess at the granularity an owner would notice.
-3. **Where `Order.quantity` comes from for PayPal.** Stripe line items state a
+3. **Does unknown shipping block affordability?** Today it does not: if the
+   owner has $450 and the known cost is $410, the answer is `affordable` with the
+   figure marked as a floor. If delivery then turns out to be $60 they are $20
+   short. Blocking instead would mean nobody gets a stocked recommendation until
+   somebody records a delivery charge, which is the paralysis this whole layer
+   exists to end. **This is the one rule in the economics layer I decided rather
+   than derived**, and it is the first thing to revisit if it bites.
+4. **The three freshness windows** (30 / 120 / 60 days). Judgement, in the same
+   category as the 20/28 rung-1 thresholds and cheap to change for the same
+   reason: one constant, one version bump.
+5. **`qualifiedConfidenceMultiplier` at 0.9.** Deliberately close to 1 — a
+   tiebreaker, not a penalty. Anything harsher would let a missing shipping
+   figure bury a move worth thousands.
+6. **Where `Order.quantity` comes from for PayPal.** Stripe line items state a
    quantity; PayPal's capture response is per purchase unit and this codebase
    creates one order per product. Writing `1` is correct for what the checkout
    actually sells today, and the moment a cart exists this needs revisiting.

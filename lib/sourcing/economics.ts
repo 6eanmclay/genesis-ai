@@ -2,25 +2,44 @@ import { prisma } from "@/lib/prisma";
 import type { EconomicsProvenance } from "@prisma/client";
 import { isOwnerCapability, type OwnerCapability } from "./methodProfile";
 import { toVariantKey } from "./types";
+import {
+  currentFreshnessPolicy,
+  freshnessOf,
+  type EconomicsFreshnessPolicy,
+  type Freshness,
+} from "./economicsPolicy";
 
 // WHAT A SUPPLIER'S PRODUCT COSTS — the layer the progression engine was waiting
 // for.
 //
-// Units 1-12 can reason about minimums, bulk pricing, margins and payback. In
-// production none of it fires, because nothing knows what anything costs: no
+// The engine can reason about minimums, bulk pricing, margins and payback. In
+// production none of it fired, because nothing knew what anything cost: no
 // supplier API this platform can reach states bulk pricing, and the honest
-// consequence has been `cannot_assess` on every deepen.
+// consequence was `cannot_assess` on every deepen.
 //
 // This does not fix that by inventing numbers. It gives the numbers somewhere to
 // live, three ways for them to arrive, and one way to say they are not available
 // — and the most immediately useful of the three needs no API at all: the owner
 // rings the supplier and tells Genesis what they said.
+//
+// THIS FILE READS. `economicsIngest.ts` is the only thing that writes.
 
-/** A price break. Cheapest tiers have the highest `minUnits`. */
+/** A price break. */
 export interface PriceTier {
   minUnits: number;
   unitCostInCents: number;
 }
+
+/**
+ * Whether the stored tier data can be believed.
+ *
+ * A separate state from "no tiers", and the distinction is the whole point.
+ * Tiers that did not parse used to fall through to the flat figures, so a
+ * corrupt price-break table produced a confident-looking unit price with no
+ * indication anything was wrong. A plausible figure derived from data we have
+ * just established is broken is worse than no figure at all.
+ */
+export type TierIntegrity = { ok: true } | { ok: false; problem: string };
 
 /**
  * Everything known about what one supplier's product costs this business.
@@ -35,11 +54,14 @@ export interface SupplierEconomics {
   provenance: EconomicsProvenance;
   unitCostInCents: number | null;
   minimumOrderUnits: number | null;
+  /** Null when none were stated OR when what was stored is unusable — see `integrity`. */
   tiers: PriceTier[] | null;
+  integrity: TierIntegrity;
   shippingPerUnitInCents: number | null;
   leadTimeDays: number | null;
   requiresCapabilities: OwnerCapability[];
   statedAt: Date;
+  freshness: Freshness;
   note: string | null;
 }
 
@@ -50,20 +72,88 @@ export interface SupplierProductRef {
   externalVariantId: string | null;
 }
 
-function parseTiers(value: unknown): PriceTier[] | null {
-  if (!Array.isArray(value)) return null;
+// --- tier validation --------------------------------------------------------
+
+/**
+ * Why a set of price breaks cannot be used, or null if it can.
+ *
+ * Shared by the writer and the reader deliberately. The writer rejects bad tiers
+ * at the boundary; the reader still has to cope with them, because rows can
+ * arrive from an import, a migration, or a connector written before this
+ * existed. Validating in one place means the two can never disagree about what
+ * "valid" means.
+ *
+ * NOT VALIDATED: whether a bigger order costs less per unit. A supplier quoting
+ * 500 at a HIGHER unit price than 100 is odd but not contradictory — nobody
+ * would buy at that tier, and `bulkTerms` picking the cheapest is still the
+ * right answer. Rejecting it would be Genesis deciding it knows the supplier's
+ * business better than the supplier does.
+ */
+export function tierProblem(tiers: PriceTier[]): string | null {
+  const seen = new Set<number>();
+  for (const tier of tiers) {
+    if (!Number.isInteger(tier.minUnits) || tier.minUnits < 1) {
+      return `a price break for ${JSON.stringify(tier.minUnits)} units, which is not a quantity anybody can order`;
+    }
+    if (!Number.isInteger(tier.unitCostInCents) || tier.unitCostInCents < 0) {
+      return `a price of ${JSON.stringify(tier.unitCostInCents)} at ${tier.minUnits} units, which is not a price`;
+    }
+    // TWO PRICES FOR THE SAME QUANTITY. This is the true contradiction: there is
+    // no way to know which one an order of that size would be charged, and
+    // picking either is picking a number about somebody's money at random.
+    if (seen.has(tier.minUnits)) {
+      return `two different prices for the same quantity (${tier.minUnits} units)`;
+    }
+    seen.add(tier.minUnits);
+  }
+  return null;
+}
+
+type TierRead = { tiers: PriceTier[] | null; integrity: TierIntegrity };
+
+/**
+ * Read stored tiers, and say plainly when they cannot be read.
+ *
+ * Never throws and never guesses. An unusable record resolves to no tiers AND a
+ * problem, and it is the problem — not the absence — that the rest of the
+ * pipeline acts on.
+ */
+export function readTiers(value: unknown): TierRead {
+  if (value === null || value === undefined) return { tiers: null, integrity: { ok: true } };
+  if (!Array.isArray(value)) {
+    return { tiers: null, integrity: { ok: false, problem: "the price breaks aren't a list" } };
+  }
+
   const tiers: PriceTier[] = [];
   for (const entry of value) {
-    if (typeof entry !== "object" || entry === null) return null;
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return {
+        tiers: null,
+        integrity: { ok: false, problem: "a price break that isn't a quantity and a price" },
+      };
+    }
     const raw = entry as Record<string, unknown>;
-    if (typeof raw.minUnits !== "number" || !Number.isFinite(raw.minUnits)) return null;
-    if (typeof raw.unitCostInCents !== "number" || !Number.isFinite(raw.unitCostInCents)) return null;
+    if (typeof raw.minUnits !== "number" || !Number.isFinite(raw.minUnits)) {
+      return { tiers: null, integrity: { ok: false, problem: "a price break with no usable quantity" } };
+    }
+    if (typeof raw.unitCostInCents !== "number" || !Number.isFinite(raw.unitCostInCents)) {
+      return { tiers: null, integrity: { ok: false, problem: `no usable price at ${raw.minUnits} units` } };
+    }
     tiers.push({ minUnits: raw.minUnits, unitCostInCents: raw.unitCostInCents });
   }
-  // Ascending by quantity, so "the cheapest tier this order qualifies for" is a
-  // scan rather than a sort at every call site.
-  return tiers.sort((a, b) => a.minUnits - b.minUnits);
+
+  const problem = tierProblem(tiers);
+  if (problem) return { tiers: null, integrity: { ok: false, problem } };
+
+  // An empty array is valid and means "this supplier has no price breaks",
+  // which is different from "nobody recorded any".
+  return {
+    tiers: tiers.sort((a, b) => a.minUnits - b.minUnits),
+    integrity: { ok: true },
+  };
 }
+
+// --- reading ----------------------------------------------------------------
 
 /**
  * What this business knows about one supplier product.
@@ -74,7 +164,8 @@ function parseTiers(value: unknown): PriceTier[] | null {
  */
 export async function supplierEconomics(
   storeId: string,
-  ref: SupplierProductRef
+  ref: SupplierProductRef,
+  options: { now?: Date; freshnessPolicy?: EconomicsFreshnessPolicy } = {}
 ): Promise<SupplierEconomics | null> {
   const row = await prisma.supplierEconomics.findFirst({
     where: {
@@ -86,6 +177,8 @@ export async function supplierEconomics(
   });
   if (!row) return null;
 
+  const { tiers, integrity } = readTiers(row.tiers);
+
   return {
     sourceKey: row.sourceKey,
     externalProductId: row.externalProductId,
@@ -93,14 +186,54 @@ export async function supplierEconomics(
     provenance: row.provenance,
     unitCostInCents: row.unitCostInCents,
     minimumOrderUnits: row.minimumOrderUnits,
-    tiers: parseTiers(row.tiers),
+    tiers,
+    integrity,
     shippingPerUnitInCents: row.shippingPerUnitInCents,
     leadTimeDays: row.leadTimeDays,
     requiresCapabilities: row.requiresCapabilities.filter(isOwnerCapability),
     statedAt: row.statedAt,
+    freshness: freshnessOf(
+      row.provenance,
+      row.statedAt,
+      options.now ?? new Date(),
+      options.freshnessPolicy ?? currentFreshnessPolicy()
+    ),
     note: row.note,
   };
 }
+
+/**
+ * Everything the feasibility check needs about a supplier, in one shape.
+ *
+ * One type flows from the database through graduation into `assessFeasibility`
+ * and out into what the owner reads, so a fact cannot be silently dropped on the
+ * way — which is exactly what happened to shipping, lead time and per-product
+ * capabilities for the first fortnight of this table's life.
+ */
+export interface SupplierTerms {
+  minimumOrderUnits: number | null;
+  bulkUnitCostInCents: number | null;
+  /** Per unit, on the bulk order. Null = unknown. A stated 0 means "included". */
+  shippingPerUnitInCents: number | null;
+  leadTimeDays: number | null;
+  /** Demanded by THIS product, beyond whatever its method demands. */
+  requiresCapabilities: OwnerCapability[];
+  /** Null when nothing has ever been recorded for this product. */
+  provenance: EconomicsProvenance | null;
+  freshness: Freshness | null;
+  integrity: TierIntegrity;
+}
+
+export const NO_TERMS: SupplierTerms = {
+  minimumOrderUnits: null,
+  bulkUnitCostInCents: null,
+  shippingPerUnitInCents: null,
+  leadTimeDays: null,
+  requiresCapabilities: [],
+  provenance: null,
+  freshness: null,
+  integrity: { ok: true },
+};
 
 /**
  * The bulk terms a feasibility check needs, resolved from tiers or flat figures.
@@ -110,14 +243,29 @@ export async function supplierEconomics(
  * is 1 would turn "I don't know" into "you can buy one" — which is exactly the
  * lie this whole layer exists to avoid.
  */
-export function bulkTerms(
-  economics: SupplierEconomics | null
-): { minimumOrderUnits: number | null; bulkUnitCostInCents: number | null } {
-  if (!economics) return { minimumOrderUnits: null, bulkUnitCostInCents: null };
+export function bulkTerms(economics: SupplierEconomics | null): SupplierTerms {
+  if (!economics) return NO_TERMS;
+
+  const base = {
+    shippingPerUnitInCents: economics.shippingPerUnitInCents,
+    leadTimeDays: economics.leadTimeDays,
+    requiresCapabilities: economics.requiresCapabilities,
+    provenance: economics.provenance,
+    freshness: economics.freshness,
+    integrity: economics.integrity,
+  };
+
+  // BROKEN TIER DATA POISONS THE WHOLE RECORD, deliberately. Falling back to the
+  // flat figures here would answer a question about price breaks with a number
+  // from somewhere else, and it would look exactly like a good answer. If any
+  // part of what a supplier said about price is unusable, none of it is quoted.
+  if (!economics.integrity.ok) {
+    return { ...base, minimumOrderUnits: null, bulkUnitCostInCents: null };
+  }
 
   // An explicit UNAVAILABLE is a real answer and it is "no". Somebody looked.
   if (economics.provenance === "UNAVAILABLE") {
-    return { minimumOrderUnits: null, bulkUnitCostInCents: null };
+    return { ...base, minimumOrderUnits: null, bulkUnitCostInCents: null };
   }
 
   // The best real price break is the cheapest tier stated. Tiers win over flat
@@ -127,131 +275,72 @@ export function bulkTerms(
     const cheapest = tiers.reduce((best, tier) =>
       tier.unitCostInCents < best.unitCostInCents ? tier : best
     );
-    return { minimumOrderUnits: cheapest.minUnits, bulkUnitCostInCents: cheapest.unitCostInCents };
+    return {
+      ...base,
+      minimumOrderUnits: cheapest.minUnits,
+      bulkUnitCostInCents: cheapest.unitCostInCents,
+    };
   }
 
   return {
+    ...base,
     minimumOrderUnits: economics.minimumOrderUnits,
     bulkUnitCostInCents: economics.unitCostInCents,
   };
 }
 
+/**
+ * Has anybody ever said anything about this product's economics?
+ *
+ * Deliberately true for an UNAVAILABLE record. "We asked and they refused" is
+ * something somebody said, and treating it as silence would mean the day a
+ * supplier finally quotes, nothing registers as having changed.
+ */
+export function anyTermsRecorded(terms: SupplierTerms): boolean {
+  return (
+    terms.provenance !== null ||
+    terms.minimumOrderUnits !== null ||
+    terms.bulkUnitCostInCents !== null
+  );
+}
+
+// --- gaps, in the owner's words ---------------------------------------------
+
+export type EconomicsGap = "minimum_order" | "bulk_price" | "unusable_tiers";
+
 /** Which parts are missing, in the owner's words, and why each one matters. */
-export const ECONOMICS_GAP_EXPLANATION: Record<"minimum_order" | "bulk_price", string> = {
+export const ECONOMICS_GAP_EXPLANATION: Record<EconomicsGap, string> = {
   minimum_order:
     "how many the supplier makes you order at once — it decides what buying in bulk would actually cost you up front",
   bulk_price:
     "what they charge per unit at that quantity — it decides whether buying in bulk is worth doing at all",
+  unusable_tiers:
+    "what their price breaks actually are — what's recorded doesn't add up, so I've stopped using it rather than quote you a figure I can't stand behind",
 };
 
-export function missingEconomics(
-  economics: SupplierEconomics | null
-): ("minimum_order" | "bulk_price")[] {
+export function missingEconomics(economics: SupplierEconomics | null): EconomicsGap[] {
   const terms = bulkTerms(economics);
-  const missing: ("minimum_order" | "bulk_price")[] = [];
-  if (terms.minimumOrderUnits === null) missing.push("minimum_order");
-  if (terms.bulkUnitCostInCents === null) missing.push("bulk_price");
-  return missing;
-}
-
-// --- writing ----------------------------------------------------------------
-
-export interface StateEconomicsInput {
-  storeId: string;
-  ref: SupplierProductRef;
-  provenance: EconomicsProvenance;
-  unitCostInCents?: number | null;
-  minimumOrderUnits?: number | null;
-  tiers?: PriceTier[] | null;
-  shippingPerUnitInCents?: number | null;
-  leadTimeDays?: number | null;
-  requiresCapabilities?: OwnerCapability[];
-  statedByUserId?: string | null;
-  note?: string | null;
+  const gaps: EconomicsGap[] = [];
+  // Named FIRST, because it is not the same problem as an absence: something is
+  // recorded and it is wrong, and that is the thing worth fixing.
+  if (!terms.integrity.ok) gaps.push("unusable_tiers");
+  if (terms.minimumOrderUnits === null) gaps.push("minimum_order");
+  if (terms.bulkUnitCostInCents === null) gaps.push("bulk_price");
+  return gaps;
 }
 
 /**
- * Record what somebody found out.
+ * The diagnostic an operator needs, as opposed to the sentence an owner reads.
  *
- * The only writer, and it takes provenance as a required argument rather than
- * inferring it from the caller. A supplier's published price and a price the
- * owner was quoted are both real and are not the same fact: one can be
- * refreshed, the other has to be re-asked, and code that guesses which is which
- * would eventually refresh away something a person went and found out.
+ * Says which record and what is wrong with it, because "some product somewhere
+ * has bad price breaks" is not something anybody can act on.
  */
-export async function stateEconomics(input: StateEconomicsInput): Promise<void> {
-  const variantKey = toVariantKey(input.ref.externalVariantId);
-  const data = {
-    provenance: input.provenance,
-    unitCostInCents: input.unitCostInCents ?? null,
-    minimumOrderUnits: input.minimumOrderUnits ?? null,
-    tiers: input.tiers === undefined || input.tiers === null ? undefined : input.tiers,
-    shippingPerUnitInCents: input.shippingPerUnitInCents ?? null,
-    leadTimeDays: input.leadTimeDays ?? null,
-    requiresCapabilities: input.requiresCapabilities ?? [],
-    statedByUserId: input.statedByUserId ?? null,
-    statedAt: new Date(),
-    note: input.note ?? null,
-  };
-
-  await prisma.supplierEconomics.upsert({
-    where: {
-      storeId_sourceKey_externalProductId_externalVariantId: {
-        storeId: input.storeId,
-        sourceKey: input.ref.sourceKey,
-        externalProductId: input.ref.externalProductId,
-        externalVariantId: variantKey,
-      },
-    },
-    create: {
-      storeId: input.storeId,
-      sourceKey: input.ref.sourceKey,
-      externalProductId: input.ref.externalProductId,
-      externalVariantId: variantKey,
-      ...data,
-    },
-    update: data,
-  });
-}
-
-/**
- * The owner found out and is telling Genesis.
- *
- * The path that makes the progression engine work in production TODAY, with no
- * supplier API involved: somebody rings their supplier, asks two questions, and
- * types in the answers. Recorded as OWNER so it is never silently overwritten by
- * a later catalogue sync that knows less than the person who asked.
- */
-export async function ownerStatesEconomics(input: {
-  storeId: string;
-  ref: SupplierProductRef;
-  minimumOrderUnits: number;
-  bulkUnitCostInCents: number;
-  userId?: string | null;
-  note?: string | null;
-}): Promise<void> {
-  await stateEconomics({
-    storeId: input.storeId,
-    ref: input.ref,
-    provenance: "OWNER",
-    minimumOrderUnits: input.minimumOrderUnits,
-    unitCostInCents: input.bulkUnitCostInCents,
-    statedByUserId: input.userId ?? null,
-    note: input.note ?? null,
-  });
-}
-
-/**
- * Somebody looked and there is no answer to be had.
- *
- * Deliberately recordable. "Nobody has asked" and "we asked and this supplier
- * will not say" are different states, and only the first is worth putting in
- * front of an owner again next week.
- */
-export async function markEconomicsUnavailable(
-  storeId: string,
-  ref: SupplierProductRef,
-  note?: string
-): Promise<void> {
-  await stateEconomics({ storeId, ref, provenance: "UNAVAILABLE", note: note ?? null });
+export function integrityDiagnostic(storeId: string, economics: SupplierEconomics): string | null {
+  if (economics.integrity.ok) return null;
+  const variant = economics.externalVariantId ? `/${economics.externalVariantId}` : "";
+  return (
+    `Unusable supplier price breaks: ${economics.sourceKey}:${economics.externalProductId}${variant}` +
+    ` (store ${storeId}, stated ${economics.statedAt.toISOString()} as ${economics.provenance})` +
+    ` — ${economics.integrity.problem}.`
+  );
 }

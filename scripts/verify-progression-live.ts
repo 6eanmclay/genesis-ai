@@ -1,5 +1,9 @@
 import { startRealPostgres } from "@/scripts/lib/realPostgres";
 import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
+// TYPE ONLY. Everything from lib/ is imported dynamically below, after
+// DATABASE_URL points at the harness — a value import here would load Prisma
+// against whatever the environment happened to hold.
+import type { SupplierTerms } from "@/lib/sourcing/economics";
 
 // Progression against a real database:
 //
@@ -22,6 +26,32 @@ function check(label: string, actual: unknown, expected: unknown): void {
 function assert(label: string, ok: boolean, detail = ""): void {
   if (!ok) failures++;
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  — ${detail}` : ""}`);
+}
+
+/**
+ * Supplier terms for a case that only cares about the two figures.
+ *
+ * Written out rather than spread from NO_TERMS because that is a value, and
+ * values from lib/ cannot be imported at module scope here. Every other field is
+ * explicitly unknown, which is the honest default and the one this whole layer
+ * is about.
+ */
+function terms(
+  minimumOrderUnits: number | null,
+  bulkUnitCostInCents: number | null,
+  rest: Partial<SupplierTerms> = {}
+): SupplierTerms {
+  return {
+    minimumOrderUnits,
+    bulkUnitCostInCents,
+    shippingPerUnitInCents: null,
+    leadTimeDays: null,
+    requiresCapabilities: [],
+    provenance: null,
+    freshness: null,
+    integrity: { ok: true },
+    ...rest,
+  };
 }
 
 const DAY = 86_400_000;
@@ -279,7 +309,7 @@ async function main() {
       const posture = await capitalPosture(store.id);
       await recordProgressionDecision({
         storeId: store.id, productId: roller.id, toKind: offered.toKind, decision: "DECLINED",
-        conditions: conditionsOf(offered, posture, { minimumOrderUnits: 200, bulkUnitCostInCents: 700 }),
+        conditions: conditionsOf(offered, posture, terms(200, 700)),
       });
 
       check("after declining, it is not offered again", (await findGraduationOpportunities(store.id)).length, 0);
@@ -305,7 +335,7 @@ async function main() {
       // a genuinely fresh decision rather than a stale one.
       await recordProgressionDecision({
         storeId: store.id, productId: roller.id, toKind: faster[0].toKind, decision: "DECLINED",
-        conditions: conditionsOf(faster[0], posture, { minimumOrderUnits: 200, bulkUnitCostInCents: 700 }),
+        conditions: conditionsOf(faster[0], posture, terms(200, 700)),
       });
       check("and it stays down again", (await findGraduationOpportunities(store.id)).length, 0);
 
@@ -323,7 +353,7 @@ async function main() {
       // An accepted graduation is done, not re-offered.
       await recordProgressionDecision({
         storeId: store.id, productId: roller.id, toKind: again[0].toKind, decision: "ACCEPTED",
-        conditions: conditionsOf(again[0], posture, { minimumOrderUnits: 50, bulkUnitCostInCents: 410 }),
+        conditions: conditionsOf(again[0], posture, terms(50, 410)),
       });
       check("an accepted graduation is not offered again",
         (await findGraduationOpportunities(store.id)).length, 0);
@@ -399,7 +429,7 @@ async function main() {
       check("dropshipping is available to them",
         assessFeasibility({
           profile: methodProfile("WHOLESALE_DROPSHIP"), posture,
-          supplier: { minimumOrderUnits: null, bulkUnitCostInCents: null },
+          supplier: terms(null, null),
           evidence: null, currency: "USD",
         }).kind,
         "affordable");
@@ -541,7 +571,7 @@ async function main() {
       const [offered] = await findGraduationOpportunities(store.id);
       const posture = await capitalPosture(store.id);
       const { conditionsOf } = await import("@/lib/sourcing/graduation");
-      const good = conditionsOf(offered, posture, { minimumOrderUnits: 100, bulkUnitCostInCents: 410 });
+      const good = conditionsOf(offered, posture, terms(100, 410));
       assert("a real snapshot reads back", parseConditions(good) !== null);
 
       await recordProgressionDecision({
@@ -773,7 +803,8 @@ async function main() {
         where: { storeId: blockStore.id, adoptedProductId: strong.id },
         select: { minimumOrderUnits: true, bulkUnitCostInCents: true },
       });
-      check("the supplier facts are still unknown", stillUnknown, { minimumOrderUnits: null, bulkUnitCostInCents: null });
+      check("the supplier facts are still unknown", stillUnknown,
+        { minimumOrderUnits: null, bulkUnitCostInCents: null });
     }
 
     // -----------------------------------------------------------------------

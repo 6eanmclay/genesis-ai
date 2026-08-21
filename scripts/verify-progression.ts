@@ -6,10 +6,11 @@ import {
 } from "@/lib/sourcing/methodProfile";
 import { currentPolicy, rungPolicy } from "@/lib/sourcing/progressionPolicy";
 import { earnedRungs, spendableCents, type CapitalPosture, type ProductEvidence } from "@/lib/sourcing/progression";
-import { assessFeasibility, decide, type Feasibility } from "@/lib/sourcing/feasibility";
+import { assessFeasibility, decide, FIRM, type Feasibility } from "@/lib/sourcing/feasibility";
 import { materialChange, type ProgressionConditions } from "@/lib/sourcing/graduation";
 import { framingFor } from "@/lib/sourcing/framing";
 import type { Recommendation } from "@/lib/sourcing/recommend";
+import { NO_TERMS, type SupplierTerms } from "@/lib/sourcing/economics";
 
 // The progression model's rules. No database, no network:
 //
@@ -69,6 +70,22 @@ const fits = (reasons = ["It matches how you describe your business."]): Recomme
   concerns: [],
   basedOn: ["own_words"],
 });
+
+/**
+ * Supplier terms for a case that only cares about the two figures.
+ *
+ * Spreads NO_TERMS so everything else — shipping, lead time, provenance,
+ * freshness, per-product capabilities — is explicitly unknown rather than
+ * accidentally absent. A test that quietly stopped compiling when those fields
+ * arrived would have been a test asserting on a shape nobody uses.
+ */
+function terms(
+  minimumOrderUnits: number | null,
+  bulkUnitCostInCents: number | null,
+  rest: Partial<SupplierTerms> = {}
+): SupplierTerms {
+  return { ...NO_TERMS, minimumOrderUnits, bulkUnitCostInCents, ...rest };
+}
 
 // ---------------------------------------------------------------------------
 console.log("\n1. Every sourcing method declares what it would cost");
@@ -175,7 +192,7 @@ console.log("\n4. Starting with nothing is always possible");
   for (const profile of zeroCapitalMethods()) {
     const capable: CapitalPosture = { ...UNSTATED, capabilities: profile.requiresCapabilities };
     check(`${profile.kind} is affordable with no money at all`,
-      assessFeasibility({ profile, posture: capable, supplier: { minimumOrderUnits: null, bulkUnitCostInCents: null }, evidence: null, currency: "USD" }).kind,
+      assessFeasibility({ profile, posture: capable, supplier: terms(null, null), evidence: null, currency: "USD" }).kind,
       "affordable");
   }
 
@@ -185,7 +202,7 @@ console.log("\n4. Starting with nothing is always possible");
     assessFeasibility({
       profile: methodProfile("WHOLESALE_DROPSHIP"),
       posture: UNSTATED,
-      supplier: { minimumOrderUnits: null, bulkUnitCostInCents: null },
+      supplier: terms(null, null),
       evidence: null,
       currency: "USD",
     }).kind,
@@ -200,7 +217,7 @@ console.log("\n5. An unknown supplier fact blocks rather than becoming a zero");
 
   const noMinimum = assessFeasibility({
     profile: stocked, posture,
-    supplier: { minimumOrderUnits: null, bulkUnitCostInCents: 400 },
+    supplier: terms(null, 400),
     evidence: null, currency: "USD",
   });
   check("an unknown minimum cannot be assessed", noMinimum.kind, "cannot_assess");
@@ -209,7 +226,7 @@ console.log("\n5. An unknown supplier fact blocks rather than becoming a zero");
 
   const noPrice = assessFeasibility({
     profile: stocked, posture,
-    supplier: { minimumOrderUnits: 100, bulkUnitCostInCents: null },
+    supplier: terms(100, null),
     evidence: null, currency: "USD",
   });
   check("an unknown bulk price cannot be assessed", noPrice.kind, "cannot_assess");
@@ -225,7 +242,7 @@ console.log("\n6. Fits, and cannot be done yet");
     unitsSold: 40, windowDays: 56, unitsPerWeek: 5,
     netRevenueCents: 40 * 1_800, netMarginCents: 40 * 900, marginPerUnitCents: 900,
   });
-  const supplier = { minimumOrderUnits: 100, bulkUnitCostInCents: 410 };
+  const supplier = terms(100, 410);
 
   const broke = assessFeasibility({
     profile: stocked, posture: { ...UNSTATED, capabilities: ["hold_stock"] },
@@ -274,11 +291,11 @@ console.log("\n6. Fits, and cannot be done yet");
 // ---------------------------------------------------------------------------
 console.log("\n7. Fit is decided before feasibility, always");
 {
-  const affordable: Feasibility = { kind: "affordable" };
+  const affordable: Feasibility = { kind: "affordable", confidence: FIRM };
   const notYet: Feasibility = {
     kind: "not_yet", currency: "USD", upfrontCents: 41_000, shortfallCents: 41_000,
     capitalBasis: "assumed_because_unstated", missingCapabilities: [],
-    paybackWeeks: 5, unitsToGo: 60,
+    paybackWeeks: 5, unitsToGo: 60, costBasis: "complete", confidence: FIRM,
   };
 
   const wrong: Recommendation = {

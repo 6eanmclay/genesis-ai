@@ -2288,6 +2288,99 @@ Seven sections, of which two are the point:
 
 ---
 
+## 52. Stored, read, and then thrown away
+
+*Four gaps I named myself at the end of §51 and then closed. Recorded because
+three of the four are the same defect wearing different clothes: something the
+system knew, and did not use.*
+
+### Decorative columns
+
+`shippingPerUnitInCents`, `leadTimeDays` and `requiresCapabilities` were written
+to the database, selected back out, and discarded one line before
+`assessFeasibility` — the only function that could have used any of them.
+
+That is worse than not storing them. A column that exists reads as a fact the
+system accounts for. An owner told an order costs $410 would have been told the
+same thing whether or not somebody had recorded that delivery adds $6,000 to it.
+
+What each does now is in `PRODUCT_PROGRESSION.md` §C4. The one worth restating:
+**lead time is part of payback**, because the clock starts when the money leaves,
+not when the boxes arrive. A supplier who takes four weeks to ship is four more
+weeks of an owner's money sitting in transit.
+
+### The judgement call, named rather than buried
+
+Unknown shipping could have blocked. It does not.
+
+Requiring it would have sent every stocked recommendation back to
+`cannot_assess` — the exact paralysis §51 was written about — over a delivery
+charge that is usually a fraction of the order. So the total is computed from
+what is known and marked as a **floor**: the owner reads *"at least $410"*, never
+a bare total claiming a completeness it does not have.
+
+This is the one rule in the economics layer I decided rather than derived, and it
+is recorded in the open-questions list as mine.
+
+### Broken data that looked like good data
+
+`parseTiers` returned null on anything malformed, and `bulkTerms` then fell
+through to the flat `unitCostInCents` in the same row. So a corrupt price-break
+table produced a confident 100 x 410 with nothing indicating the price breaks
+were nonsense.
+
+Now an unusable record quotes **nothing at all** — including the flat figures
+beside it, and including the discovery row that would otherwise have been the
+fallback. The owner gets *"what's recorded doesn't add up, so I've stopped using
+it rather than quote you a figure I can't stand behind"*; whoever maintains the
+connector gets the store, the source, the product and the specific problem.
+
+The true contradiction, worth naming because it is not obvious: **two different
+prices for the same quantity**. There is no way to know which an order of that
+size would be charged, and picking either is picking a number about somebody's
+money at random. A bigger order costing *more* per unit is not rejected — that is
+odd, not contradictory, and Genesis does not know the supplier's business better
+than the supplier does.
+
+### A timestamp nobody read
+
+`statedAt` was written from day one and read by nothing. A quote obtained in
+February and one obtained this morning were the same fact to the engine.
+
+**Stale data qualifies; it does not block** — the reasoning is in
+`PRODUCT_PROGRESSION.md` §C3, and the short version is that replacing a slightly
+old truth with "I don't know" is strictly less true. The caveat survives all the
+way to `recommended_now`, deliberately: the outcome that actually causes somebody
+to spend money must not be the one that says least about where its figures came
+from.
+
+### And the write path that did not exist
+
+`stateEconomics` took provenance as an argument, so any caller could write any
+provenance anywhere. Two rules that were written down in §C the day the table was
+created were enforced by nothing.
+
+Both are now structural rather than checked. `ingestFromSupplier` takes one
+`sourceKey` for the batch and stamps it onto every record — the records have no
+such field, so there is no code path by which one supplier's sync reaches
+another's row. And a catalogue sync that would overwrite an `OWNER` figure is
+refused and reported as `preserved`, because an owner's answer has to be
+re-asked, not refreshed.
+
+### Status
+
+**VERIFIED** — `scripts/verify-economics-ingest.ts` (6 sections) and
+`scripts/verify-economics-live.ts` (11 sections), both against real Postgres,
+plus the full regression.
+
+Malformed tier data is tested by writing it **past** the validator with raw SQL,
+which is the only way it can exist: an import, a migration, or a connector
+written before the validator did. Six shapes, each asserted to quote nothing and
+to name itself in a diagnostic — and one assertion that the plausible figure
+sitting in the discovery row never appears in what the owner is shown.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2336,6 +2429,7 @@ scripts/verify-progression.ts             evidence, policy, capital posture, ear
 scripts/verify-moves.ts                   ranking, and what a move may claim
 scripts/verify-progression-live.ts        the progression engine end to end (real Postgres)
 scripts/verify-economics-live.ts          supplier economics, and the zero-capital journey (real Postgres)
+scripts/verify-economics-ingest.ts        the only way economics get written (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
