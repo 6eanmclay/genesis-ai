@@ -17,7 +17,7 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
-import { accessTo, adoptNewBusiness } from "@/lib/businessContext";
+import { accessTo, adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { J4Surface } from "@/app/j4/J4Workspace";
@@ -2200,16 +2200,8 @@ async function applyGenesisMessageToStore(
   const stageDurationsMs: Record<string, number | null> = {};
   const dbFetchStartedAt = Date.now();
 
-  const named = slug
-    ? await prisma.store.findUnique({ where: { slug }, select: { id: true } })
-    : null;
-  // A slug that names nothing, or names a business this account cannot reach,
-  // is refused rather than falling back to one it can.
-  const resolved = slug
-    ? named
-      ? await accessTo(userId, named.id)
-      : null
-    : await resolveUserStore(userId);
+  // Refused, never substituted — the rule lives in businessFromSlug.
+  const resolved = slug ? await businessFromSlug(userId, slug) : await resolveUserStore(userId);
   if (!resolved) {
     redirectKeepingChatOpen(returnTo);
   }
@@ -4075,12 +4067,9 @@ async function businessForTurn(
   formData: FormData
 ): Promise<{ store: Store; role: StoreRole } | null> {
   const slug = (formData.get("slug") as string | null)?.trim();
-  if (slug) {
-    const named = await prisma.store.findUnique({ where: { slug }, select: { id: true } });
-    if (!named) return null;
-    const access = await accessTo(userId, named.id);
-    return access ? { store: access.store, role: access.role } : null;
-  }
+  // businessFromSlug owns the refusal rule, so this cannot drift from the chat
+  // route's copy of it — there is no copy any more.
+  if (slug) return businessFromSlug(userId, slug);
   return resolveUserStore(userId);
 }
 

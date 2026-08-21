@@ -7,7 +7,7 @@ import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
-import { resolveBusiness } from "@/lib/businessContext";
+import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
@@ -194,16 +194,14 @@ export async function POST(request: Request) {
   // The slug is authoritative when the client sends one. The legacy /dashboard
   // route has no slug and still resolves the active business, exactly as before.
   const requestedSlug = typeof body?.slug === "string" ? body.slug.trim() : "";
-  const named = requestedSlug
-    ? await prisma.store.findUnique({ where: { slug: requestedSlug }, select: { id: true } })
-    : null;
-  // A slug that names nothing is refused rather than falling back — substituting
-  // a different business is worse than failing, because it succeeds.
+  // businessFromSlug owns the refusal rule: a slug naming nothing, or naming a
+  // business this account cannot reach, is null and null is not a fallback.
+  const named = requestedSlug ? await businessFromSlug(userId, requestedSlug) : null;
   if (requestedSlug && !named) {
     return new Response(JSON.stringify({ type: "error", message: "No permission." }), { status: 403 });
   }
 
-  const resolution = await resolveBusiness(userId, named?.id);
+  const resolution = await resolveBusiness(userId, named?.store.id);
   // More than one business and nothing saying which is a question, not a guess.
   // Said as its own status so the client can send the person to choose rather
   // than showing them a permission error they cannot act on.

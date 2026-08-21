@@ -199,3 +199,32 @@ export async function setActiveBusiness(
 export async function adoptNewBusiness(userId: string, storeId: string): Promise<void> {
   await setActiveBusiness(userId, storeId);
 }
+
+/**
+ * The business a request named, by slug — or null.
+ *
+ * ONE IMPLEMENTATION OF THE RULE (2026-08-21). Three call sites had grown their
+ * own copy of "look the slug up, then check access": the chat route, the
+ * chat-turn actions, and the non-streaming send fallback. Three copies of an
+ * authorization rule is three chances for one of them to be lenient, and the
+ * lenient one is the one nobody notices.
+ *
+ * REFUSED, NEVER SUBSTITUTED. A slug naming nothing, and a slug naming a real
+ * business this account cannot reach, both return null — and null means "no
+ * business", never "use the one they can reach". Succeeding with a different
+ * business than the one asked for is worse than failing, because it succeeds.
+ *
+ * Deliberately NOT falling back to the active business here. Callers that have a
+ * legacy no-slug path decide that for themselves, visibly, at their own call
+ * site — a fallback hidden inside this function would be exactly the ambient
+ * resolution the whole module exists to remove.
+ */
+export async function businessFromSlug(userId: string, slug: string): Promise<BusinessAccess | null> {
+  const trimmed = slug.trim();
+  if (!trimmed) return null;
+
+  const named = await prisma.store.findUnique({ where: { slug: trimmed }, select: { id: true } });
+  if (!named) return null;
+
+  return accessTo(userId, named.id);
+}

@@ -50,7 +50,7 @@ async function main() {
   process.env[TEST_DATABASE_ENV] = "1";
   process.env.DATABASE_URL = db.url;
 
-  const { resolveBusiness, setActiveBusiness } = await import("@/lib/businessContext");
+  const { resolveBusiness, setActiveBusiness, businessFromSlug } = await import("@/lib/businessContext");
   const { prismaSystem: prisma } = await import("@/lib/prisma");
 
   const store = (userId: string, name: string, slug: string) =>
@@ -64,11 +64,9 @@ async function main() {
    * rather than a reimplementation of the decision, which would prove nothing.
    */
   async function resolveFromRequest(userId: string, requestedSlug?: string) {
-    const named = requestedSlug
-      ? await prisma.store.findUnique({ where: { slug: requestedSlug }, select: { id: true } })
-      : null;
+    const named = requestedSlug ? await businessFromSlug(userId, requestedSlug) : null;
     if (requestedSlug && !named) return { kind: "no_such_business" as const };
-    return resolveBusiness(userId, named?.id);
+    return resolveBusiness(userId, named?.store.id);
   }
 
   const owner = await prisma.user.create({ data: { email: "routes-owner@example.test" } });
@@ -102,14 +100,19 @@ async function main() {
   await store(stranger.id, "Not Yours", "not-yours");
 
   const borrowed = await resolveFromRequest(owner.id, "not-yours");
-  check("a real business belonging to someone else resolves to none", borrowed.kind, "none");
+  const missing = await resolveFromRequest(owner.id, "no-such-slug");
   assert(
-    "NOT to the caller's own business",
+    "a real business belonging to someone else is refused",
     borrowed.kind !== "resolved",
     "succeeding with a different business than the one asked for is worse than failing"
   );
-  check("a slug naming nothing at all is refused too",
-    (await resolveFromRequest(owner.id, "no-such-slug")).kind, "no_such_business");
+  check("a slug naming nothing at all is refused too", missing.kind, "no_such_business");
+  // THE SAME ANSWER FOR BOTH, deliberately. Telling somebody a business exists
+  // but is not theirs is an answer they did not have before — the rule
+  // requireBusiness already states, now holding on this path too because
+  // businessFromSlug returns null for both cases rather than distinguishing
+  // "found but unreachable" from "not found".
+  check("and the two are indistinguishable from outside", borrowed.kind, missing.kind);
 
   // ==========================================================================
   console.log("\n=== 3. Ambiguous is its own answer, not 'no business' ===\n");
@@ -152,6 +155,32 @@ async function main() {
     a.kind === "resolved" && b.kind === "resolved" && a.storeId !== b.storeId
   );
   assert("and neither is the account's active one", copper.id !== iron.id);
+
+  // ==========================================================================
+  console.log("\n=== 5. One implementation of the refusal rule ===\n");
+  // ==========================================================================
+  // businessFromSlug is the single owner of "look the slug up, then check
+  // access". Three call sites had grown their own copy — the chat route, the
+  // chat-turn actions, and the non-streaming send fallback — and three copies of
+  // an authorization rule is three chances for one to be lenient. Asserted here
+  // directly, because every one of those sites now depends on it.
+  const own = await businessFromSlug(owner.id, "iron-gym");
+  assert("a business you own resolves", own?.store.slug === "iron-gym");
+  check("with the role you hold there", own?.role, "OWNER");
+
+  check("a slug naming nothing is null", await businessFromSlug(owner.id, "no-such-slug"), null);
+  check("a real business you cannot reach is null", await businessFromSlug(owner.id, "not-yours"), null);
+  check("an empty slug is null", await businessFromSlug(owner.id, ""), null);
+  check("whitespace is not a slug", await businessFromSlug(owner.id, "   "), null);
+  // The whole point: null is a refusal, not a signal to fall back.
+  assert(
+    "and null never means 'use the one they can reach'",
+    (await businessFromSlug(owner.id, "not-yours")) === null,
+    "the caller decides what to do with null, visibly, at its own call site"
+  );
+  // Surrounding whitespace is trimmed rather than failing — a form field can
+  // carry it, and refusing there would be pedantry rather than safety.
+  assert("a padded slug still resolves", (await businessFromSlug(owner.id, "  iron-gym  "))?.store.slug === "iron-gym");
 
   await prisma.$disconnect();
   await db.close();
