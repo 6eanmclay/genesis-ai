@@ -343,6 +343,18 @@ forever, a ruled-out row is re-evaluated on every run — because the judgement 
 only ever true of the business as it was understood at the time. A business that
 starts describing itself as a bridal boutique gets the veil it was refused.
 
+### The trigger is a Home load, and that is the whole of it
+
+Stated plainly because it is a real limit, not an oversight: **discovery and the
+economics refresh fire when somebody opens Home, and at no other time.** A
+business whose owner never opens Home is never searched and never refreshed.
+
+That is the deliberate scope for this milestone (Sean, 2026-08-21). Background
+and scheduled intelligence belongs to the Business Intelligence milestone, which
+already owns a scheduler; adding a second one here would be the parallel
+mechanism this codebase keeps refusing to build, and the two would drift over
+which business gets looked at when.
+
 **Supplier economics refresh on their own freshness policy**, not a schedule.
 Thirty days for a catalogue is already written down and already means "this is
 too old to stand behind"; that IS the schedule, and inventing a second one would
@@ -350,6 +362,28 @@ be a second answer to a question already answered. `refreshEconomicsIfStale` run
 from the same `after()`, only for products actually on the shelf, and only for
 facts the supplier itself owns — an owner's figure is not the catalogue's to
 refresh.
+
+---
+
+## Genesis's verdict is an opinion; the owner's is a decision
+
+`RULED_OUT` is **not a prohibition**, and the catalog says so out loud: *"My
+opinion, not a rule. You know things about your business I don't — add any of
+these anyway if I've got it wrong."*
+
+Every ruled-out row carries an **Add anyway** form — the same action, the same
+price field, the same fallback as any other adoption. `adoptSourcedProduct` never
+checked `RULED_OUT` and now says why in its own comment: a recommendation the
+owner cannot overrule is not a recommendation, it is a rule Genesis made about
+somebody else's business.
+
+`DISMISSED` still binds, and that is the entire reason the two statuses are
+separate. One is an opinion, re-evaluated on every discovery run. The other is a
+decision, respected forever. Only the decision is a rule.
+
+The list is capped at the same limit the suggestions use, and the page renders
+*"Showing 40 of 45"* whenever it is short — a truncated list of things Genesis
+decided against would otherwise read as the whole of what it decided against.
 
 ---
 

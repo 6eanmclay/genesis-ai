@@ -36,6 +36,14 @@ export async function adoptSourcedProduct(params: {
     return { ok: false, reason: "not_found", detail: "That suggestion isn't in this store." };
   }
 
+  // RULED_OUT IS NOT CHECKED HERE, AND THAT IS THE POINT (2026-08-21).
+  //
+  // Genesis's own verdict is a recommendation, and a recommendation the owner
+  // cannot overrule is not a recommendation — it is a rule Genesis made about
+  // somebody else's business. The owner knows things Genesis does not, and the
+  // whole reason `RULED_OUT` is a separate status from `DISMISSED` is that one
+  // is an opinion and the other is a decision. Only the decision binds.
+  //
   // Adopting something the owner threw away would undo a decision they made.
   if (candidate.status === "DISMISSED") {
     return {

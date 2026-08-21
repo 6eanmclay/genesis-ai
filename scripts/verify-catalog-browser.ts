@@ -268,6 +268,44 @@ async function main() {
           html.includes("don't know enough about your business"),
         html.slice(0, 300));
     }
+
+    // =====================================================================
+    console.log("\n7. The owner can overrule Genesis from the page");
+    {
+      await page.goto(`${server.baseUrl}/b/iron-gym/catalog`, { waitUntil: "domcontentloaded" });
+      const html = await page.content();
+      assert("the page says the verdict is an opinion",
+        html.includes("My opinion, not a rule"), "no override offered");
+
+      // OPENED FIRST, because that is what a person does. The ruled-out list
+      // sits behind a disclosure — it is reassurance rather than work — so
+      // nothing inside it is visible or clickable until the summary is clicked.
+      await page.locator(`summary:has-text("wouldn\'t recommend")`).first().click();
+
+      // THE REAL BUTTON, in the real disclosure, on the ruled-out row.
+      const declined = page
+        .locator('li:has(button:text("Add anyway"))')
+        .filter({ hasText: "ZZWEDDINGVEIL" })
+        .first();
+      const price = declined.locator('input[name="priceInCents"]');
+      await price.click();
+      await price.pressSequentially("4500");
+      check("the price reached the field", await price.inputValue(), "4500");
+      await declined.locator('button:text("Add anyway")').click();
+      await page.waitForLoadState("networkidle");
+      await page.goto(`${server.baseUrl}/b/iron-gym/catalog`, { waitUntil: "domcontentloaded" });
+
+      const overruled = await prisma.product.findFirst({
+        where: { storeId: gym.id, name: "ZZWEDDINGVEIL" },
+      });
+      assert("the product Genesis advised against is now real", overruled !== null);
+      check("at the owner's price", overruled?.priceInCents, 4_500);
+      check("and for the right business", overruled?.storeId, gym.id);
+      check("the row records that they took it",
+        (await prisma.sourcedProduct.findFirstOrThrow({
+          where: { storeId: gym.id, externalProductId: "gym-3" },
+        })).status, "ADOPTED");
+    }
   } finally {
     if (browser) await browser.close();
     await server.close();

@@ -113,7 +113,21 @@ export interface CatalogView {
    * Re-evaluated on every discovery run, because the judgement is only ever true
    * of the business as it was understood at the time.
    */
-  ruledOut: { sourcedProductId: string; name: string; concerns: string[] }[];
+  ruledOut: {
+    sourcedProductId: string;
+    name: string;
+    concerns: string[];
+    /**
+     * Carried so the override is a real one.
+     *
+     * Adding anyway needs a price like any other adoption, and a form with no
+     * fallback would refuse for a reason that has nothing to do with the
+     * owner's judgement.
+     */
+    suggestedRetailInCents: number | null;
+  }[];
+  /** How many were ruled out in total, so a capped list never reads as all of them. */
+  totalRuledOut: number;
   /** Sources that could not be searched, named rather than silently omitted. */
   blockedSources: { key: string; displayName: string; blockedOn: string[] }[];
   /** How many suggestions exist in total, including any not shown. */
@@ -189,8 +203,11 @@ export async function catalogView(
     prisma.sourcedProduct.findMany({
       where: { storeId, status: "RULED_OUT" },
       orderBy: { updatedAt: "desc" },
-      take: 12,
-      select: { id: true, name: true, recommendation: true },
+      // The SAME limit the suggestions use. The earlier 12 was a number with no
+      // reasoning behind it, and a silently truncated list of things Genesis
+      // decided against reads as the whole of what it decided against.
+      take: limit,
+      select: { id: true, name: true, recommendation: true, suggestedRetailInCents: true },
     }),
   ]);
 
@@ -330,8 +347,14 @@ export async function catalogView(
       const concerns = Array.isArray(raw?.concerns)
         ? raw.concerns.filter((c): c is string => typeof c === "string")
         : [];
-      return { sourcedProductId: row.id, name: row.name, concerns };
+      return {
+        sourcedProductId: row.id,
+        name: row.name,
+        concerns,
+        suggestedRetailInCents: row.suggestedRetailInCents,
+      };
     }),
+    totalRuledOut: await prisma.sourcedProduct.count({ where: { storeId, status: "RULED_OUT" } }),
     blockedSources: describeBlockedSources(),
     totalSuggested: await prisma.sourcedProduct.count({ where: { storeId, status: "SUGGESTED" } }),
     lastDiscoveredAt: latest?.discoveredAt ?? null,

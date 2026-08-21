@@ -277,9 +277,13 @@ export async function CatalogScreen({ slug, basePath }: { slug?: string; basePat
       {view.ruledOut.length > 0 && (
         <details className="rounded-xl border border-black/[.06] px-4 py-3 dark:border-white/[.08]">
           <summary className="cursor-pointer list-none text-[13px] font-medium text-zinc-600 dark:text-zinc-300">
-            {view.ruledOut.length} I looked at and wouldn&apos;t recommend
+            {view.totalRuledOut} I looked at and wouldn&apos;t recommend
           </summary>
-          <ul className="mt-2 flex flex-col gap-2">
+          <p className={`mt-1 text-[13px] text-zinc-500 dark:text-zinc-400 ${J4_VOICE}`}>
+            My opinion, not a rule. You know things about your business I
+            don&apos;t — add any of these anyway if I&apos;ve got it wrong.
+          </p>
+          <ul className="mt-2 flex flex-col gap-3">
             {view.ruledOut.map((item) => (
               <li key={item.sourcedProductId}>
                 <p className="text-[13px] text-zinc-700 dark:text-zinc-200">{item.name}</p>
@@ -288,9 +292,43 @@ export async function CatalogScreen({ slug, basePath }: { slug?: string; basePat
                     {concern}
                   </p>
                 ))}
+                {/* THE OVERRIDE, AND IT IS A REAL ONE. A recommendation the
+                    owner cannot overrule is not a recommendation — it is a rule
+                    Genesis made about somebody else's business. Same action,
+                    same price field, same fallback as any other adoption. */}
+                <form action={adoptFromCatalog} className="mt-1.5 flex items-center gap-2">
+                  {hidden}
+                  <input type="hidden" name="sourcedProductId" value={item.sourcedProductId} />
+                  <input
+                    type="number"
+                    name="priceInCents"
+                    min={1}
+                    step={1}
+                    placeholder={
+                      item.suggestedRetailInCents !== null
+                        ? String(item.suggestedRetailInCents)
+                        : "price in cents"
+                    }
+                    aria-label={`What you'll charge for ${item.name}, in cents`}
+                    className="w-32 rounded-lg border border-black/[.08] bg-white px-2.5 py-1.5 text-[13px] tabular-nums text-black dark:border-white/[.145] dark:bg-black/20 dark:text-zinc-50"
+                  />
+                  <SubmitButton
+                    pendingText="Adding…"
+                    className="rounded-full border border-black/[.08] px-3.5 py-1.5 text-xs text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
+                  >
+                    Add anyway
+                  </SubmitButton>
+                </form>
               </li>
             ))}
           </ul>
+          {/* NO SILENT TRUNCATION. A shortened list of things Genesis decided
+              against would read as the whole of what it decided against. */}
+          {view.totalRuledOut > view.ruledOut.length && (
+            <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">
+              Showing {view.ruledOut.length} of {view.totalRuledOut}.
+            </p>
+          )}
         </details>
       )}
 

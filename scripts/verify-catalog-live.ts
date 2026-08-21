@@ -513,6 +513,79 @@ async function main() {
       check("it is not searched again immediately",
         (await discoverIfWorthwhile(barren.id)), { ran: false, reason: "ran_recently" });
     }
+
+    // =======================================================================
+    console.log("\n12. Genesis's verdict is an opinion, not a rule");
+    {
+      await reset();
+      const store = await makeStore("override", FITNESS);
+      const declined = await prisma.sourcedProduct.create({
+        data: {
+          storeId: store.id, sourceKey: SOURCE, externalProductId: "veil",
+          kind: "WHOLESALE_DROPSHIP", name: "Wedding veil", status: "RULED_OUT", score: 0,
+          suggestedRetailInCents: 4_500,
+          recommendation: { verdict: "does_not_fit", concerns: ["It doesn't fit the brand you've described."] },
+        },
+      });
+
+      const view = await catalogView(store.id);
+      check("it is shown as ruled out", view.ruledOut.map((r) => r.name), ["Wedding veil"]);
+      check("and never as a suggestion", view.groups.length, 0);
+      // THE OVERRIDE HAS TO BE REACHABLE, which means the row carries what an
+      // adoption needs. A form with no fallback price would refuse for a reason
+      // that has nothing to do with the owner's judgement.
+      check("carrying what an adoption needs", view.ruledOut[0].suggestedRetailInCents, 4_500);
+
+      // THE OWNER OVERRULES IT. Genesis's opinion does not bind; only the
+      // owner's own decision does.
+      const adopted = await adoptSourcedProduct({
+        storeId: store.id, sourcedProductId: declined.id, priceInCents: 5_000,
+      });
+      assert("adding anyway works", adopted.ok, JSON.stringify(adopted));
+      const product = await prisma.product.findFirstOrThrow({ where: { storeId: store.id } });
+      check("at the owner's price", product.priceInCents, 5_000);
+      check("the row is theirs now",
+        (await prisma.sourcedProduct.findUniqueOrThrow({ where: { id: declined.id } })).status, "ADOPTED");
+      check("and it has left the ruled-out list", (await catalogView(store.id)).ruledOut, []);
+
+      // A DISMISSAL STILL BINDS, and that is the whole reason the two statuses
+      // are separate. One is Genesis's opinion; the other is the owner's
+      // decision, and only the decision is a rule.
+      const second = await prisma.sourcedProduct.create({
+        data: {
+          storeId: store.id, sourceKey: SOURCE, externalProductId: "veil-2",
+          kind: "WHOLESALE_DROPSHIP", name: "Another veil", status: "DISMISSED", score: 0,
+          suggestedRetailInCents: 4_500,
+        },
+      });
+      const refused = await adoptSourcedProduct({ storeId: store.id, sourcedProductId: second.id });
+      check("the owner's own decision still binds", refused.ok, false);
+      check("for the right reason", refused.ok ? null : refused.reason, "dismissed");
+    }
+
+    // =======================================================================
+    console.log("\n13. Nothing about the ruled-out list is silently truncated");
+    {
+      await reset();
+      const store = await makeStore("many-declined", FITNESS);
+      for (let i = 0; i < 45; i++) {
+        await prisma.sourcedProduct.create({
+          data: {
+            storeId: store.id, sourceKey: SOURCE, externalProductId: `veil-${i}`,
+            kind: "WHOLESALE_DROPSHIP", name: `Wedding veil ${i}`, status: "RULED_OUT", score: 0,
+          },
+        });
+      }
+
+      const view = await catalogView(store.id, { limit: 40 });
+      check("the count is the real one", view.totalRuledOut, 45);
+      check("while the list is capped", view.ruledOut.length, 40);
+      // The page renders "Showing 40 of 45" from exactly these two numbers, so a
+      // shortened list can never read as the whole of what Genesis decided
+      // against.
+      assert("and the two disagree, which is what makes the cap sayable",
+        view.totalRuledOut > view.ruledOut.length);
+    }
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

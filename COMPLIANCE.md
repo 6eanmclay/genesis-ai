@@ -2905,6 +2905,75 @@ owner sees.
 
 ---
 
+## 59. An opinion the owner can overrule
+
+*Two follow-ups from §58, and one blocker formally accepted as external.*
+
+### Genesis was making rules about somebody else's business
+
+`RULED_OUT` was correct in the domain and wrong on the page. `adoptSourcedProduct`
+had never checked it — only `DISMISSED` binds — so an owner could always have
+overruled the verdict. The catalog simply never offered a way, which in practice
+made Genesis's opinion a prohibition.
+
+Every ruled-out row now carries **Add anyway**: the same action, price field and
+fallback as any other adoption. The section says what it is — *"My opinion, not a
+rule. You know things about your business I don't."*
+
+The distinction the two statuses exist for is now asserted in both directions: a
+ruled-out product adopts, and a dismissed one still refuses. One is an opinion,
+re-evaluated every run; the other is a decision, respected forever.
+
+The 12-item cap is gone, replaced by the same limit the suggestions use, and the
+page renders "Showing 40 of 45" whenever the list is short. A silently truncated
+list of things Genesis decided against reads as all of them.
+
+### The trigger, recorded rather than left implicit
+
+Discovery and the economics refresh fire **on a Home load and at no other time**.
+A business whose owner never opens Home is never searched and never refreshed.
+
+That is the deliberate scope for this milestone, not an oversight. Scheduled and
+background intelligence belongs to the Business Intelligence milestone, which
+already owns a scheduler; a second one here would be the parallel mechanism this
+codebase keeps refusing to build.
+
+### Printful's live API — accepted as EXTERNALLY BLOCKED
+
+Formally closed as external, on Sean's instruction, and the three things that
+would have "fixed" it are all refused on the record:
+
+- **Not** by weakening credential encryption.
+- **Not** by creating fake production data.
+- **Not** by adopting a Printful product solely to manufacture a passing test.
+
+What blocks it: no store has an adopted Printful product, so `economics()`
+correctly states nothing and never reaches the API; and production credentials
+are encrypted with the production `INTEGRATION_ENCRYPTION_KEY`, a Vercel secret
+this machine does not hold. The local key fails to decrypt them, which is the
+encryption working as designed.
+
+`scripts/check-printful-economics-live.ts` is kept: read-only, outside the
+regression, and it refuses to touch the one connection belonging to a real
+customer rather than to Genesis. What it verifies when a key and an adopted
+product both exist: that `/store` states a currency, that a variant price parses,
+and that a failed rate lookup reports null rather than free.
+
+### Status
+
+**VERIFIED** — `verify-catalog-live.ts` (13 sections) and
+`verify-catalog-browser.ts` (7 sections, real server + browser, including the
+override exercised through the real disclosure and the real form). Full
+regression green.
+
+The browser suite caught one more thing worth recording: the ruled-out list sits
+behind a `<details>`, so nothing inside it is clickable until the summary is
+clicked. The first version of the test failed on an invisible element — which is
+what a person would have hit too, and is why the disclosure is opened rather than
+worked around.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
