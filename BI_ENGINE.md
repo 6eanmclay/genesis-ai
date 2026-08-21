@@ -501,12 +501,9 @@ would have broken the gate's stated intent.
 ### Live database verification — where M1–M4 actually stand (2026-08-21)
 
 M1's end-to-end check, M2's backfill and M3's emission have all since run
-against a real database and pass. **M4's detector is the one that has not:**
-`computeInsights` executes against real Postgres inside
-`verify-business-memory-live.ts` §8, so the code path is exercised, but no
-assertion covers `detectStorefrontReadiness`' own observation lifecycle. That
-distinction is the whole point of recording it — a path that runs is not a
-behaviour that is proved.
+against a real database and pass. **M4's detector has since been closed too** —
+`verify-readiness-lifecycle-live.ts` asserts the observation lifecycle end to
+end, which the earlier "path exercised" wording was deliberately holding open.
 
 Still true, and unchanged: **no production backfill was run and no paid path
 executed.**
@@ -718,7 +715,7 @@ consolidated pass alongside connector authentication, per Sean's decision.
 | M1 | `scripts/verify-intelligence-cycle.ts` — store selection, cursor advance and non-reprocessing against real rows | **Verified** — passes in `run-db-suites`, and `verify-business-memory-live.ts` proves Learn runs live |
 | M2 | `scripts/backfill-topic-keys.ts` — dry run and `--apply`, never executed | **Verified** — `verify-bi-reads-live.ts` §1, both modes |
 | M3 | Real `BusinessEvent` emission from a real execution, and its Prisma dedupe query | **Verified** — `verify-business-memory-live.ts` §§1–4 |
-| M4 | `detectStorefrontReadiness` against a real store, and the observation lifecycle | **Path exercised, lifecycle unasserted** — `computeInsights` runs against real Postgres in `verify-business-memory-live.ts` §8, but no assertion covers the observation lifecycle |
+| M4 | `detectStorefrontReadiness` against a real store, and the observation lifecycle | **Verified** — `verify-readiness-lifecycle-live.ts` covers the full lifecycle: raise, keep-saying, resolve, recur with the same row identity, and stop when the finding stops being true |
 | M5 | `getProfitability`'s reads, and real cost coverage on production products | **Verified against real rows** — `verify-bi-reads-live.ts` §2. Coverage *on production data* is a separate, still-open question |
 | M6 | `getObligations`' reads, and which real `Order.status` values actually occur | **Verified against real rows** — `verify-bi-reads-live.ts` §3. Which statuses occur *in production* is still unmeasured |
 
@@ -994,10 +991,13 @@ These are **recorded, not scheduled**. None of them is a gap to be closed by
 expanding this milestone, and a future contributor should not treat this list as
 a to-do that authorises new scope.
 
-- **M4's observation lifecycle is unasserted.** `computeInsights` executes
-  against real Postgres, so the path runs; no assertion covers
-  `detectStorefrontReadiness`' own observation lifecycle. A path that runs is
-  not a behaviour that is proved, which is exactly why it is worded this way.
+- ~~**M4's observation lifecycle is unasserted.**~~ **Closed 2026-08-21** —
+  `verify-readiness-lifecycle-live.ts`. The lifecycle turned out to be subtler
+  than "raise once, do not repeat": a standing finding **keeps** being produced
+  for as long as it is true, because `notifyFromInsights` resolves anything
+  missing from the current set. Suppressing a still-true finding as "already
+  said" would silently retract it the very next cycle. The suite asserts both
+  halves, including that an empty cycle really does resolve it.
 - **M5 and M6 are verified as reads, not as production coverage.** Whether any
   real order carries `shippingCostInCents`, and which `Order.status` values
   actually occur in production, are both still unmeasured — and stay honestly
