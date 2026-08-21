@@ -3239,12 +3239,22 @@ assumes otherwise:
   needs a Stripe test key.
 - **`confirmSelectedRate`'s live re-quote.** The logic is proven; the round trip
   needs an EasyPost key.
-- **Cross-tenant paths composed under one live HTTP session.** Server actions and
-  the permission matrix are each proven; the two together are not, because a
-  server action needs an action ID from a rendered page.
-- **Three suites** (`brand-logo-flow`, `social-connections-pipeline`,
-  `product-image-gallery-e2e`) that parallelise reads and cannot run on PGlite.
-  They would likely pass on the real-Postgres harness; nobody has moved them.
+- **Cross-tenant SERVER ACTIONS composed under one live HTTP session.** Narrowed
+  2026-08-21. The page-level half is now proven, not inferred:
+  `scripts/verify-business-browser.ts` signs in through the real login form
+  against a real server and a real Postgres, and asserts that another account's
+  business answers 404 — with no business's products quietly shown instead — that
+  two tabs hold two businesses through three rounds of navigation, and that all
+  fifteen migrated sections render inside a business. What remains unproven is
+  narrower than this bullet used to claim: INVOKING a server action
+  cross-tenant, which still needs an action ID from a rendered page.
+- ~~**Three suites** that parallelise reads and cannot run on PGlite.~~
+  **Closed 2026-08-21.** Not a limitation of the suites and not a PGlite
+  limitation either: `PGLiteSocketServer` defaults `maxConnections` to 1 and
+  refuses the second pooled client, and the error it produces names whichever
+  query happened to be second rather than the pool that opened it. One option in
+  `scripts/lib/testDatabase.ts` fixed all three, with nothing in production and
+  nothing in the suites touched. The harness runs 13 of 13.
 - **Email delivery.** Everything up to the provider handoff is proven; the
   handoff is externally blocked.
 
