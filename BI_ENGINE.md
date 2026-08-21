@@ -198,7 +198,7 @@ an engine that is running.
 
 ## 6. M1 as built (2026-08-18)
 
-**Status: IMPLEMENTED, pending live database verification.**
+**Status: IMPLEMENTED and live-verified (2026-08-21).** `verify-intelligence-cycle.ts` passes in `run-db-suites`, and `verify-business-memory-live.ts` proves Learn runs against a real database — unconditionally, and before Reason.
 
 The selection semantics are proved and accepted
 (`scripts/verify-intelligence-selection.ts`, 11/11, no database required). The
@@ -428,9 +428,12 @@ Uploads, chat decisions and general owner activity emit nothing. Those are a
 separate event-source milestone, to be evaluated once this plumbing is proven
 against a real database.
 
-**Pending, on the same footing as M1's end-to-end check and M2's backfill:**
-none of the three has been exercised against a live database. No production
-backfill was run and no paid path was executed.
+**Live-verified since (2026-08-21):** M3's emission by
+`verify-business-memory-live.ts` §§1–4 and M2's backfill by
+`verify-bi-reads-live.ts` §1. M4's detector runs against real Postgres but its
+observation lifecycle carries no assertion — recorded as *path exercised,
+lifecycle unasserted*. **No production backfill has been run and no paid path
+executed.**
 
 ---
 
@@ -495,12 +498,18 @@ on... Governing those would suppress useful, unrelated help under a rule written
 for redesigns." Forcing it under a redesign cooldown to make the mapping tidy
 would have broken the gate's stated intent.
 
-### Still pending live database verification
+### Live database verification — where M1–M4 actually stand (2026-08-21)
 
-M1's end-to-end check, M2's backfill, M3's emission and M4's detector have all
-been proved at the logic level and none has run against a live database. Per
-Sean's decision, production/cloud verification and connector authentication are
-being handled together later. No backfill was run and no paid path executed.
+M1's end-to-end check, M2's backfill and M3's emission have all since run
+against a real database and pass. **M4's detector is the one that has not:**
+`computeInsights` executes against real Postgres inside
+`verify-business-memory-live.ts` §8, so the code path is exercised, but no
+assertion covers `detectStorefrontReadiness`' own observation lifecycle. That
+distinction is the whole point of recording it — a path that runs is not a
+behaviour that is proved.
+
+Still true, and unchanged: **no production backfill was run and no paid path
+executed.**
 
 ---
 
@@ -666,22 +675,58 @@ property worth having — **Learn runs before Reason and unconditionally, so a
 business's memory does not depend on an AI provider being reachable.** The
 beliefs asserted there were distilled during a pass that then failed.
 
+### The reads — done (2026-08-21)
+
+`scripts/verify-bi-reads-live.ts` closes the three that were left, against real
+Postgres. Its subject is deliberately narrow: the **reads**, never the
+arithmetic, which the M2, M5 and M6 suites already prove pure.
+
+**The backfill, as an operator would run it.** Six `ApprovalRequest` rows
+covering every branch, and the dry run is asserted on *every field of every
+row* rather than on `topicKey` alone — a dry run that wrote anything at all is
+a dry run that lied, and which field it touched is not knowable in advance.
+`--apply` writes the two derivable keys, leaves the bookkeeping action, the
+unmapped action and the empty `update_product` null, and does not overwrite a
+hand-authored key. Re-running writes nothing.
+
+**A refunded order is a loss, not revenue.** Four orders where every wrong
+reading lands on a different number, so the expected value discriminates rather
+than merely matching: the correct answer is **-100**, refund-as-revenue gives
++3,900, refund-excluded-entirely gives +2,500, and unknown-cost-as-zero gives
++2,200. Both wrong readings were **executed as negative controls** and produced
+exactly +3,900 and +2,200 — the suite fails when it should.
+
+**An unknown cost is an exclusion.** A store with nothing costed returns
+`null`, never `0`: zero reads as "broke even", which is a claim nobody made.
+
+**The address stays out.** Every obligations fixture carries a real shipping
+address in the row, and the assertion is that no part of it appears anywhere in
+the serialized answer — not that `shippingAddress` is absent from the `select`,
+which is readable from the source and proves nothing about what came back.
+Real `status` values bucket as designed: paid+unfulfilled is owed, refunded is
+counted apart, and an unrecognised status is counted and **named**, never
+assumed owed.
+
 ### The original list, for the record
 
 Every milestone below was proved at the logic level and **none had been exercised
 against a live database**. Recorded together here, to be handled in one
 consolidated pass alongside connector authentication, per Sean's decision.
 
-| Milestone | What remains unverified |
-|---|---|
-| M1 | `scripts/verify-intelligence-cycle.ts` — store selection, cursor advance and non-reprocessing against real rows |
-| M2 | `scripts/backfill-topic-keys.ts` — dry run and `--apply`, never executed |
-| M3 | Real `BusinessEvent` emission from a real execution, and its Prisma dedupe query |
-| M4 | `detectStorefrontReadiness` against a real store, and the observation lifecycle |
-| M5 | `getProfitability`'s reads, and real cost coverage on production products |
-| M6 | `getObligations`' reads, and which real `Order.status` values actually occur |
+| Milestone | What remained unverified | Now |
+|---|---|---|
+| M1 | `scripts/verify-intelligence-cycle.ts` — store selection, cursor advance and non-reprocessing against real rows | **Verified** — passes in `run-db-suites`, and `verify-business-memory-live.ts` proves Learn runs live |
+| M2 | `scripts/backfill-topic-keys.ts` — dry run and `--apply`, never executed | **Verified** — `verify-bi-reads-live.ts` §1, both modes |
+| M3 | Real `BusinessEvent` emission from a real execution, and its Prisma dedupe query | **Verified** — `verify-business-memory-live.ts` §§1–4 |
+| M4 | `detectStorefrontReadiness` against a real store, and the observation lifecycle | **Path exercised, lifecycle unasserted** — `computeInsights` runs against real Postgres in `verify-business-memory-live.ts` §8, but no assertion covers the observation lifecycle |
+| M5 | `getProfitability`'s reads, and real cost coverage on production products | **Verified against real rows** — `verify-bi-reads-live.ts` §2. Coverage *on production data* is a separate, still-open question |
+| M6 | `getObligations`' reads, and which real `Order.status` values actually occur | **Verified against real rows** — `verify-bi-reads-live.ts` §3. Which statuses occur *in production* is still unmeasured |
 
-No production backfill has been run and no paid path executed.
+Two things that table must not be read as claiming. **No production backfill has
+been run** — `--apply` is proved against a throwaway database, not against
+Sean's own store. And the M5/M6 rows prove the reads, not production coverage:
+whether any real order carries `shippingCostInCents` is still unknown, and stays
+honestly unknown rather than assumed.
 
 ---
 
@@ -766,12 +811,17 @@ T10 proves M5's path is untouched behaviourally, not just textually: the
 block is compared against `summarizeMarginCoverage` computed independently from
 the same input with no M7 data involved.
 
-### Pending live verification
+### Live verification — the read done, production coverage still open
 
-Joins the consolidated list: `getProfitability`'s new `Order` read is unexercised
-against real rows, and **whether any production order has `shippingCostInCents`
-recorded at all is unknown** — coverage may legitimately be "none" until a real
-label is bought.
+`getProfitability`'s `Order` read is **verified against real rows**
+(`verify-bi-reads-live.ts` §2): postage is counted for every order that recorded
+a label, including the refunded one and the one whose product cost is unknown,
+because that money was spent either way.
+
+What is still open is a different question, and it stays open: **whether any
+production order has `shippingCostInCents` recorded at all is unknown.**
+Coverage may legitimately be "none" until a real label is bought, and "none" is
+the honest answer the code already gives rather than a gap to be filled.
 
 ---
 
@@ -838,11 +888,12 @@ The timestamp list is capped at 20, newest first, while `subscriberCount` stays
 the true total and `firstSignupAt` stays the true oldest — a bounded list must
 never quietly become a wrong count (T6).
 
-### Pending live database verification
+### Pending live database verification — still open
 
-Joins the consolidated table: `getAudience`'s read is unexercised against real
-rows, and **whether the store has any signups at all is unknown** until the
-verification pass.
+`getAudience`'s read is **still unexercised against real rows**, and whether the
+store has any signups at all is still unknown. Not closed by the 2026-08-21
+pass, which covered M2, M5 and M6 only. Named here rather than quietly folded
+into "the reads are done".
 
 ---
 
@@ -904,8 +955,8 @@ a confident recall of something entirely unrelated. `reasoning.ts` strips those
 for the same reason; this list simply had not. Exactly the failure mode T2
 exists to prevent, caught before it ever reached a prompt.
 
-### Pending live database verification
+### Pending live database verification — still open
 
-Joins the consolidated table: `findRelevantMessages`' read is unexercised
-against real rows, and how much history the store actually holds is unknown
-until the pass.
+`findRelevantMessages`' read is **still unexercised against real rows**, and how
+much history the store actually holds is still unknown. Not closed by the
+2026-08-21 pass. Named rather than assumed.

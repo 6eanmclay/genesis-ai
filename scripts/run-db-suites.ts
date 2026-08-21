@@ -17,31 +17,24 @@ import { join } from "path";
 // harness. Sequentially and deliberately: PGlite queues per connection, so
 // concurrent clients interleave and tear each other's transactions down.
 //
-// RESULT AS OF 2026-08-20: 8 of 12 pass. The other four are reported honestly
-// rather than papered over, because which ones fail and why is the useful part:
+// RESULT AS OF 2026-08-21: every suite this runner can honestly run, passes.
 //
-//   stripe-webhook-e2e          needs a running dev server — it POSTs to the
-//                               webhook route over HTTP. A database is not
-//                               enough; this one wants `next dev`.
-//   brand-logo-flow              hit a PGlite limitation, diagnosed and
-//   social-connections-pipeline  confirmed in isolation 2026-08-20:
-//   product-image-gallery-e2e    CONCURRENT QUERIES close the connection.
-//                                Prisma's pg adapter uses a pool, so a
-//                                Promise.all of three counts opens more than
-//                                one connection to PGlite's wire server and it
-//                                drops them. All three run code that
-//                                legitimately parallelises reads (reasoning.ts,
-//                                understanding.ts, the image executables'
-//                                Promise.all of updates).
+// It said 8 of 12 for a day, and three of the four failures were recorded here
+// as an unfixable PGlite limitation: "CONCURRENT QUERIES close the connection —
+// capping the pool at one would fix the harness by changing how production
+// talks to Neon, the wrong trade."
 //
-//                                A harness limitation, NOT a defect: real
-//                                Postgres handles concurrent queries, which is
-//                                the entire point of a pool. Capping the pool
-//                                at one would fix the harness by changing how
-//                                production talks to Neon — the wrong trade. So
-//                                these three stay uncovered here, and are named
-//                                rather than hidden.
+// The diagnosis was right and the conclusion was wrong. PGLiteSocketServer
+// takes a `maxConnections` option and DEFAULTS IT TO 1, refusing the second
+// client; the pool was never the thing that needed capping. One option in
+// scripts/lib/testDatabase.ts fixed all three, with nothing in production and
+// nothing in the suites touched. See the comment there.
 //
+// What that leaves is 13 of 13, and two suites this runner honestly cannot run:
+// verify-stripe-webhook-e2e (needs a server it does not start) and
+// verify-catalog-browser (brings its own Postgres and server, like the rest of
+// that list). Both are excluded and named below rather than left failing.
+
 // The finding that mattered more than the count: these suites were written to
 // run against PRODUCTION. Eleven of twelve reach for "a real store", "a real
 // product", "a real user" via bare findFirst — which is why none of them had
@@ -64,6 +57,20 @@ function needsDatabase(file: string): boolean {
   // Running it from here would fail for a reason that has nothing to do with
   // the code under test.
   if (file === "verify-order-webhook-live.ts") return false;
+  // ENVIRONMENTAL, and named rather than left failing (2026-08-21).
+  //
+  // verify-stripe-webhook-e2e POSTs to `${BASE_URL}/api/webhooks/stripe` over
+  // HTTP. A database is not enough — it wants a running Next server, which this
+  // runner deliberately does not start, so it fails with ECONNREFUSED for a
+  // reason that has nothing to do with the code under test. Exactly the
+  // situation verify-order-webhook-live.ts is excluded for, and excluded the
+  // same way:
+  //
+  //   npm run dev
+  //   npx tsx scripts/verify-stripe-webhook-e2e.ts
+  //
+  // NOT a passing result and not claimed as one. It is unrun.
+  if (file === "verify-stripe-webhook-e2e.ts") return false;
   // Same: brings its own real Postgres and must run unelevated.
   if (file === "verify-confirmation-live.ts") return false;
   if (file === "verify-checkout-live.ts") return false;
@@ -75,6 +82,13 @@ function needsDatabase(file: string): boolean {
   if (file === "verify-sourcing-live.ts") return false;
   if (file === "verify-business-context-live.ts") return false;
   if (file === "verify-business-browser.ts") return false;
+  // Same category, and MISSED when it was added (found 2026-08-21): it brings
+  // its own real Postgres AND a Next server via startTestServer, and its own
+  // header names run-unelevated.ps1 as its entry point. It had been failing
+  // here with "Execution of PostgreSQL by a user with administrative
+  // permissions is not permitted" — an environment message about the shell,
+  // with nothing to say about the catalog.
+  if (file === "verify-catalog-browser.ts") return false;
   if (file === "verify-progression-live.ts") return false;
   if (file === "verify-economics-live.ts") return false;
   if (file === "verify-economics-ingest.ts") return false;
@@ -86,6 +100,7 @@ function needsDatabase(file: string): boolean {
   if (file === "verify-sourcing-schedule.ts") return false;
   if (file === "verify-sourcing-budget.ts") return false;
   if (file === "verify-business-memory-live.ts") return false;
+  if (file === "verify-bi-reads-live.ts") return false;
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
 

@@ -76,7 +76,31 @@ export async function startTestDatabase(): Promise<TestDatabase> {
   // database must genuinely be up first or the first handshake fails.
   await db.waitReady;
   const port = pickPort();
-  const server = new PGLiteSocketServer({ db, port, host: "127.0.0.1" });
+  // MORE THAN ONE CONNECTION, because Prisma's pg adapter is a POOL (2026-08-21).
+  //
+  // PGLiteSocketServer defaults `maxConnections` to 1 and REJECTS the second
+  // client outright, which the pg pool surfaces as "Server has closed the
+  // connection" — a message that points at the query unlucky enough to be
+  // second rather than at the pool that opened it. Three suites failed here for
+  // months and were recorded as an unfixable PGlite limitation, because the
+  // symptom names the wrong thing.
+  //
+  // Nothing about that was a defect in the code under test. `getBusinessProfile`
+  // parallelises its record reads, the image executables parallelise their
+  // updates — all correct against a real pooled Postgres, and all of it
+  // arriving here as a second connection the server had been told to refuse.
+  //
+  // The server queues across handlers (`queryQueue.enqueue(handlerId, ...)`),
+  // so raising the cap serialises the work rather than running it concurrently
+  // against the single PGlite session. Slower than real Postgres, and correct,
+  // which is the right trade for a harness.
+  //
+  // THE ALTERNATIVE WAS CAPPING THE POOL, and it was the wrong one: the only
+  // seam for that is `new PrismaPg(...)` in lib/prisma.ts, so the harness would
+  // have been changing how PRODUCTION talks to Neon in order to make a test
+  // pass. Neither `?connection_limit=1` nor `?max=1` reaches a pg Pool built
+  // from a connection string — both were tried and both still failed.
+  const server = new PGLiteSocketServer({ db, port, host: "127.0.0.1", maxConnections: 20 });
   await server.start();
 
   // PGlite's wire server accepts any credentials; the database name is fixed.
