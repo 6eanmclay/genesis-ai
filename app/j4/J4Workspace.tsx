@@ -1589,6 +1589,13 @@ export function J4Workspace({
       }`}
       style={{ backgroundColor: GENESIS_ATMOSPHERE.bg }}
     >
+      {/* The business this composer belongs to, travelling with every action it
+          submits (2026-08-21). Server actions here take FormData, so this is
+          how the slug reaches them without changing a signature apiece —
+          upload, voice memo and the non-streaming send all read it. Absent on
+          the legacy /dashboard route, where the active business is still the
+          right answer. */}
+      {slug ? <input type="hidden" name="slug" value={slug} /> : null}
       <input type="hidden" name="currentPath" value={currentPath} />
       {/* Tells the server whether finishing this turn is allowed to move the
           owner. The layer's answer is no, always. */}

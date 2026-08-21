@@ -21,7 +21,7 @@ import { accessTo, adoptNewBusiness } from "@/lib/businessContext";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { J4Surface } from "@/app/j4/J4Workspace";
-import { Prisma, type ApprovalRequest } from "@prisma/client";
+import { Prisma, type ApprovalRequest, type Store, type StoreRole } from "@prisma/client";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import {
@@ -2173,7 +2173,17 @@ async function applyGenesisMessageToStore(
   // question a second time, which could genuinely disagree with the first
   // answer and silently downgrade a real rename instruction into pure
   // conversation.
-  preClassifiedTool?: "edit_store_content"
+  preClassifiedTool?: "edit_store_content",
+  /**
+   * The business this turn belongs to, when the composer knew (2026-08-21).
+   *
+   * The non-streaming fallback resolved the account's ACTIVE business, so a
+   * message sent from one business's workspace could be written against
+   * another — the same defect the streaming route carried until the slug
+   * started travelling with the POST. Undefined on the legacy /dashboard
+   * composer, which keeps the old behaviour.
+   */
+  slug?: string
 ) {
   // Family-beta instrumentation (v20) — see logChatTurnEvent's own comment.
   const turnStartedAt = Date.now();
@@ -2190,7 +2200,16 @@ async function applyGenesisMessageToStore(
   const stageDurationsMs: Record<string, number | null> = {};
   const dbFetchStartedAt = Date.now();
 
-  const resolved = await resolveUserStore(userId);
+  const named = slug
+    ? await prisma.store.findUnique({ where: { slug }, select: { id: true } })
+    : null;
+  // A slug that names nothing, or names a business this account cannot reach,
+  // is refused rather than falling back to one it can.
+  const resolved = slug
+    ? named
+      ? await accessTo(userId, named.id)
+      : null
+    : await resolveUserStore(userId);
   if (!resolved) {
     redirectKeepingChatOpen(returnTo);
   }
@@ -4039,6 +4058,32 @@ async function applyGenesisMessageToStore(
   redirectKeepingChatOpen(returnTo);
 }
 
+
+// THE BUSINESS A CHAT TURN BELONGS TO (2026-08-21, BUSINESS_CONTEXT.md Phase C).
+//
+// These actions take FormData, so the slug travels as a hidden field on the
+// composer rather than as a parameter on seven signatures. J4Workspace writes it
+// whenever it knows which business it is (every screen under /b/[slug]); the
+// legacy /dashboard composer writes nothing and keeps resolving the active
+// business, exactly as before.
+//
+// Refused, never substituted: a slug this account cannot reach returns null and
+// every caller treats that as "no business", rather than quietly running the
+// turn against one they can reach.
+async function businessForTurn(
+  userId: string,
+  formData: FormData
+): Promise<{ store: Store; role: StoreRole } | null> {
+  const slug = (formData.get("slug") as string | null)?.trim();
+  if (slug) {
+    const named = await prisma.store.findUnique({ where: { slug }, select: { id: true } });
+    if (!named) return null;
+    const access = await accessTo(userId, named.id);
+    return access ? { store: access.store, role: access.role } : null;
+  }
+  return resolveUserStore(userId);
+}
+
 export async function sendStoreMessage(formData: FormData) {
   const session = await auth();
   if (!session?.user) {
@@ -4085,7 +4130,8 @@ export async function sendStoreMessage(formData: FormData) {
       returnTo,
       confirmedOverride,
       audioUrl ? { audioUrl } : undefined,
-      preClassifiedTool
+      preClassifiedTool,
+      (formData.get("slug") as string | null)?.trim() || undefined
     )
   );
 }
@@ -4137,7 +4183,7 @@ async function uploadBusinessAssetFromChatTurn(formData: FormData) {
   // (or single-file callers, unchanged) still redirects exactly as before.
   const skipRedirect = formData.get("skipRedirect") === "true";
 
-  const resolved = await resolveUserStore(session.user.id);
+  const resolved = await businessForTurn(session.user.id, formData);
   if (!resolved) {
     if (skipRedirect) return;
     redirectKeepingChatOpen(returnTo);
@@ -4308,7 +4354,7 @@ async function uploadVoiceMemoTurn(formData: FormData) {
   const currentPath = (formData.get("currentPath") as string) || "/dashboard";
   const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
 
-  const resolved = await resolveUserStore(session.user.id);
+  const resolved = await businessForTurn(session.user.id, formData);
   if (!resolved) {
     redirectKeepingChatOpen(returnTo);
   }
@@ -4399,7 +4445,7 @@ async function uploadPhotoBatchFromChatTurn(formData: FormData) {
   const currentPath = (formData.get("currentPath") as string) || "/dashboard";
   const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
 
-  const resolved = await resolveUserStore(session.user.id);
+  const resolved = await businessForTurn(session.user.id, formData);
   if (!resolved) {
     redirectKeepingChatOpen(returnTo);
   }
@@ -4590,7 +4636,7 @@ export async function startTaskConversation(formData: FormData) {
   const currentPath = (formData.get("currentPath") as string) || "/dashboard";
   const returnTo = currentPath.startsWith("/dashboard") ? currentPath : "/dashboard";
 
-  const resolved = await resolveUserStore(session.user.id);
+  const resolved = await businessForTurn(session.user.id, formData);
   if (!resolved) {
     redirectKeepingChatOpen(returnTo);
   }
@@ -4662,7 +4708,7 @@ export async function startIssueConversation(formData: FormData) {
     throw new Error("Missing issue.");
   }
 
-  const resolved = await resolveUserStore(session.user.id);
+  const resolved = await businessForTurn(session.user.id, formData);
   if (!resolved) {
     redirect("/j4");
   }
@@ -4696,7 +4742,7 @@ export async function startDiscoveryConversation(formData: FormData) {
     throw new Error("Missing finding.");
   }
 
-  const resolved = await resolveUserStore(session.user.id);
+  const resolved = await businessForTurn(session.user.id, formData);
   if (!resolved) {
     redirect("/j4");
   }
