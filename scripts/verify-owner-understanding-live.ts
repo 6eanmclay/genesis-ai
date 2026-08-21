@@ -240,6 +240,33 @@ async function main() {
   });
   check("one owner's dismissal is not another's", theirBelief.status, "ACTIVE");
 
+  // ==========================================================================
+  console.log("\n=== 7. How far back an owner pattern reaches ===\n");
+  // ==========================================================================
+  // J4_OWNER_UNDERSTANDING.md lists "evidence window for owner-level patterns"
+  // as an open question, worrying that getRecentDecisionOutcomes' 14-day window
+  // was sized for the recommendation engine and would be too short for a pattern
+  // about a person. Measured here rather than assumed: that window is on a
+  // DIFFERENT read, and belief formation applies no date filter at all.
+  await reset();
+  const { user: veteran, store: old_store } = await business("veteran-store");
+  await declined(old_store.id, "storefront_hero", daysAgo(400));
+  await declined(old_store.id, "storefront_hero", daysAgo(365));
+  await detectDecisionOutcomePattern(old_store.id);
+
+  const ancient = await getOwnerUnderstanding(old_store.id, veteran.id);
+  check("evidence from over a year ago still forms a pattern", ancient.length, 1);
+  check("counting both ancient decisions", ancient[0].evidenceCount, 2);
+  assert(
+    "so the 14-day window does not bound owner patterns",
+    ancient.length === 1,
+    "getRecentDecisionOutcomes is a different read, answering a different question"
+  );
+  // And the window that DOES exist still bounds what it is for.
+  const { getRecentDecisionOutcomes } = await import("@/lib/businessModel/reasoning");
+  check("while 'what was settled lately' stays deliberately bounded",
+    (await getRecentDecisionOutcomes(old_store.id)).length, 0);
+
   await reset();
   await prisma.$disconnect();
   await db.close();
