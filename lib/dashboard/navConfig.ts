@@ -199,6 +199,11 @@ export const STOREFRONT_SECTIONS: NavSection[] = [
 export const COMMERCE_SECTIONS: NavSection[] = [
   { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
   { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
+  // What you COULD sell, next to what you do. Deliberately its own section
+  // rather than a tab inside Products: one is the shelf as it stands and the
+  // other is what Genesis thinks should be on it, and folding the second into
+  // the first would make a recommendation look like inventory.
+  { key: "catalog", label: "What you could sell", href: "/dashboard/catalog", permission: "products:manage" },
   { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
   { key: "analytics", label: "Revenue", href: "/dashboard/analytics", permission: "analytics:view" },
 ];

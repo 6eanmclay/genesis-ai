@@ -259,6 +259,58 @@ What does **not** exist yet is any notion of *which business am I in*. See
 
 ---
 
+## The catalog screen
+
+Built 2026-08-21, and it is the first thing in this document an owner can
+actually see. Everything above it existed and was verified for weeks with no
+route to it.
+
+`catalogView` assembles what the screen renders, and **decides nothing**. Every
+judgement on the page comes from a function that already made it:
+
+| Question | Answered by |
+|---|---|
+| does this belong here | `scoreCandidate` |
+| could this business do it | `assessFeasibility` |
+| in that order, combined | `decide` |
+| what does this method mean for me | `framingFor` |
+| what should a first shelf look like | `recommendStartingSet` |
+| what does it cost, and who said so | `bulkTerms` + per-fact attribution |
+
+A screen that formed its own opinion about affordability would be a second
+opinion able to disagree with the one the owner is reading in chat. So the page
+is a renderer, and the read model is a caller.
+
+**Grouped by what it means, never by supplier**, using the same `framingFor`
+table above — branded first, because that is the move it calls *build your
+brand*, and a first shelf made entirely of resold stock has nothing of the owner
+in it. No empty group is emitted.
+
+**Economics carry their attribution to the surface.** A row says *"$4.10 each ·
+100 minimum · you told me"* or *"· from their catalogue"*, because those are
+different claims and somebody deciding whether to spend money is entitled to know
+which one they are reading. An unpriced row says *"I don't know what this costs
+yet"* and offers to go and ask. A supplier quoting in another currency is shown
+in that currency and the row says Genesis will not compare it — the same refusal
+`assessFeasibility` makes, in the owner's words.
+
+**One exception to never naming a supplier**, and it is deliberate: a source that
+could not be searched IS named, under *"places I couldn't look"*. The alternative
+is searching less than the page claims to and saying nothing about it.
+
+**The starting set only appears for a business with nothing on its shelf.**
+Offering "I'd start with these five" to somebody with forty products is not
+advice.
+
+Four verbs, all of them already built: add (the owner's price wins), not for me
+(recorded, so it does not come back), what does it cost (on demand, and it
+re-scores), and look again (idempotent by construction).
+
+**Not built, deliberately:** a supplier UI, inventory, any new connector, and
+producer scheduling. The catalog reads the contracts as they are.
+
+---
+
 ## Where this goes next
 
 `PRODUCT_PROGRESSION.md` is the P0.5 architecture built on top of this one: the

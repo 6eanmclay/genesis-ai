@@ -2751,6 +2751,70 @@ discovers it.
 
 ---
 
+## 57. The catalog, and what it was allowed to decide
+
+*The screen everything since §41 was built for.*
+
+### What it is
+
+Not a grid of things a supplier sells. Every row is a recommendation with its
+reasoning attached, and **the screen decides none of it** — `catalogView`
+assembles the page by calling the functions that already make those judgements,
+and adds no judgement of its own. `PRODUCT_SOURCING.md` has the table.
+
+That constraint did real work. Affordability, fit, framing and provenance all
+arrive already decided, so the catalog cannot disagree with what J4 says in chat
+about the same product. A screen with its own opinion about whether something is
+affordable would have been a second opinion able to drift.
+
+### The four things a catalog gets wrong
+
+Each has a section in the verification.
+
+**Naming a supplier.** The whole recommendation surface is searched for every
+registered source's display name and key. One exception is deliberate and
+asserted separately: a source that could not be searched IS named, under "places
+I couldn't look", because the alternative is searching less than the page claims
+to and saying nothing.
+
+**Inventing a price.** A row with nothing recorded says so and claims nobody said
+it. A supplier's figure is credited to their catalogue; an owner's to the owner;
+a refusal reads as "nobody would say" and shows no number. The mixed case — the
+owner's minimum beside the supplier's price, each with the right name on it — is
+asserted, and is only possible because of per-field provenance.
+
+**Claiming a fit it cannot judge.** A business that has described itself as
+nothing gets "I don't know enough about your business yet", not "nothing fits
+you" — different sentences, and only one of them is the owner's problem. The
+suggestion is still listed, still honest about why it cannot be judged, because
+hiding it would be pretending nothing was found.
+
+**Letting one business see another's shelf.** Two businesses on one account, one
+suggestion each, and neither view contains the other's.
+
+### Three test premises were wrong, and one design question was real
+
+The premises: a print-on-demand candidate was expected to fail a currency check
+that correctly never runs at rung 0 (nothing is bought, so there is no figure to
+compare); a store meant to have said nothing about itself still had a tagline,
+which is part of "the business in its own words"; and the supplier-name sweep
+covered the blocked-sources list, where naming is the entire point.
+
+The design question was that third one. `describeBlockedSources` was built to
+answer "why did this only search one supplier" without reading code, and the
+answer necessarily contains a supplier's name. Keeping it means one place on the
+page names a supplier to the owner. That is the lesser cost: the alternative is a
+page that quietly searched half of what it implies.
+
+### Status
+
+**VERIFIED** — `scripts/verify-catalog-live.ts`, 9 sections, real Postgres. Full
+regression green: 7 pure suites, 11 live ones, typecheck, build. Both routes
+build — `/dashboard/catalog` and `/b/[slug]/catalog`, the latter resolving its
+business from the URL like every other migrated screen.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -2804,6 +2868,7 @@ scripts/verify-economics-answer.ts        J4 asks, the owner answers, the progre
 scripts/verify-economics-chat.ts          the same answer, typed into the conversation (real Postgres)
 scripts/verify-economics-producer.ts      detection, the producer contract, and price changes (real Postgres)
 scripts/verify-economics-production.ts    the card form, the first real producer, and what nextMoves costs (real Postgres)
+scripts/verify-catalog-live.ts            what the catalog shows, and what it may not claim (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.
