@@ -1,5 +1,6 @@
 import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { resolveBusiness } from "@/lib/businessContext";
 
 // Growth Points Economy (Chapter 2) — referrals. A real shareable code
 // (User.referralCode, generated lazily here on first access — most users
@@ -62,33 +63,49 @@ export async function recordReferralSignup(code: string, referredUserId: string)
 // PENDING -> REWARDED exactly once (guarded by the where clause below), so
 // a re-run (the meeting route can't re-trigger completion, but this stays
 // safe even if it ever did) never double-rewards.
-export async function rewardReferralIfEligible(referredUserId: string): Promise<void> {
+export async function rewardReferralIfEligible(
+  referredUserId: string,
+  /**
+   * The business the referred owner just finished onboarding.
+   *
+   * PASSED IN, NOT PICKED (2026-08-21). This used to resolve by
+   * most-recently-updated, and the comment it replaced said so plainly: "a
+   * defensible answer, not a correct one". Growth Points are per-business, so a
+   * wrong pick credits real points to the wrong balance — and recency is exactly
+   * the mechanism BUSINESS_CONTEXT.md removed everywhere else.
+   *
+   * The caller already has this store resolved: completeFirstMeeting passes the
+   * same one to grantBusinessPartnerTrialIfEligible on the very next line. The
+   * business whose onboarding just completed is the business the reward is for.
+   */
+  referredStoreId: string
+): Promise<void> {
   const referral = await prisma.referral.findFirst({
     where: { referredUserId, status: "PENDING" },
-    // ORDERED, and both sides (2026-08-20). `take: 1` with no orderBy returns
-    // whichever row Postgres hands back first, which is only ever the right one
-    // while an account has exactly one business — an assumption the schema has
-    // never enforced and that the product is deliberately moving away from.
-    // Points are per-business (GrowthPointTransaction.storeId), so picking the
-    // wrong one credits the wrong business's balance.
-    //
-    // Most-recently-updated matches resolveUserStore, so a reward lands on the
-    // business the owner is actually working in rather than an arbitrary one.
-    // It is a defensible answer, not a correct one — see COMPLIANCE.md §48 for
-    // why "which business is this for" needs a real answer rather than a
-    // convention repeated in each call site.
-    include: {
-      referrer: {
-        include: { stores: { select: { id: true, planId: true }, orderBy: { updatedAt: "desc" }, take: 1 } },
-      },
-    },
+    select: { id: true, referrerUserId: true },
   });
   if (!referral) return;
 
-  const referrerStore = referral.referrer.stores[0];
-  const referredStore = await prisma.store.findFirst({
-    where: { userId: referredUserId },
-    orderBy: { updatedAt: "desc" },
+  // THE REFERRER IS NOT HERE. Nobody is holding a session for them, so their
+  // business cannot be passed in — it has to be resolved. resolveBusiness gives
+  // the one they explicitly chose, or their only one, and ASKS rather than
+  // guessing when an account reaches several and has chosen none.
+  //
+  // Ambiguous means the reward is not granted and the referral stays PENDING,
+  // which is the honest outcome: crediting an arbitrary business would be the
+  // recency defect wearing a different hat, and flipping it to REWARDED without
+  // paying would silently lose their reward.
+  //
+  // KNOWN AND NOT SOLVED HERE: nothing retries a PENDING referral today, so an
+  // ambiguous referrer's reward waits for a retry that does not exist yet. Named
+  // rather than papered over — it is unreachable for every production account,
+  // all of which hold exactly one business.
+  const referrerResolution = await resolveBusiness(referral.referrerUserId);
+  if (referrerResolution.kind !== "resolved") return;
+
+  const referrerStore = { id: referrerResolution.storeId, planId: referrerResolution.store.planId };
+  const referredStore = await prisma.store.findUnique({
+    where: { id: referredStoreId },
     select: { id: true, planId: true },
   });
   if (!referrerStore || !referredStore) return;

@@ -98,7 +98,8 @@ export async function completeFirstMeeting(): Promise<void> {
   // genuinely finished" signal a referral reward waits for, not bare
   // signup. A no-op for the overwhelming majority who arrived without a
   // referral code.
-  await rewardReferralIfEligible(userId);
+  // The store this meeting completed for, not whichever was touched last.
+  await rewardReferralIfEligible(userId, store.id);
   // Business Partner Preview — the same real completion signal grants the
   // store's one-time 7-day trial (a no-op if this account already has an
   // active trial elsewhere, or if this store already has one).
