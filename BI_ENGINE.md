@@ -642,9 +642,33 @@ appears anywhere in the serialized output.
 
 ---
 
-## Pending live database verification — consolidated
+## Live database verification — done (2026-08-21)
 
-Every milestone below is proved at the logic level and **none has been exercised
+`scripts/verify-business-memory-live.ts` is the consolidated live pass, focused
+on the property the layer turns on rather than re-testing arithmetic that is
+already pure and proved: **facts → events → insights → recommendations →
+observations → beliefs**, with Belief as the persistent understanding layer and
+never a second source of truth.
+
+What it proves against real Postgres: an owner's economics answer becomes exactly
+one `BusinessEvent`, idempotent per execution and pointed at the owned record;
+the three kinds of answer stay three different facts; adoption reaches the
+pipeline too, inside the same transaction as the product; repeated evidence
+distils into a `Belief` whose `evidenceRefs` are all real rows; `recordId` and
+`entityType` survive re-derivation and are read back by `getEntityHistory`; no
+ungrounded belief can exist; no supplier figure reaches a belief; and one
+business never learns another's lesson.
+
+**One external boundary found and recorded rather than worked around:**
+`runIntelligenceCycle` ends with the AI recommendation stage, so a harness with
+no provider credentials cannot complete a pass. What that proves anyway is the
+property worth having — **Learn runs before Reason and unconditionally, so a
+business's memory does not depend on an AI provider being reachable.** The
+beliefs asserted there were distilled during a pass that then failed.
+
+### The original list, for the record
+
+Every milestone below was proved at the logic level and **none had been exercised
 against a live database**. Recorded together here, to be handled in one
 consolidated pass alongside connector authentication, per Sean's decision.
 

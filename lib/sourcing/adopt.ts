@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
+import { internalItemId } from "@/lib/businessModel/internalMapper";
 import { fromVariantKey } from "./types";
 
 // Turning something Genesis found into something the store sells.
@@ -139,6 +141,31 @@ export async function adoptSourcedProduct(params: {
       where: { id: candidate.id, storeId },
       data: { adoptedProductId: product.id },
     });
+
+    // SOMETHING HAPPENED IN THIS BUSINESS, so the memory pipeline hears about it
+    // (2026-08-21). Adopting a suggestion creates a real owned product without
+    // going through `create_product`, so the execution engine never saw it and
+    // the event log had a hole exactly where a first-party store's catalogue
+    // comes from.
+    //
+    // The SAME seam every other event uses — writeBusinessEvents — inside the
+    // SAME transaction as the product and the claim, so an event can never
+    // describe an adoption that did not commit. No new event system, no second
+    // ledger, and nothing about SupplierEconomics is copied: this records that
+    // an item was added and where it came from, not what it costs.
+    await writeBusinessEvents(tx, storeId, "internal", [
+      {
+        recordId: internalItemId(product.id),
+        entityType: "item",
+        eventType: "item.created",
+        summary: `Product added from a suggestion: ${candidate.name}`,
+        data: {
+          sourcedProductId: candidate.id,
+          sourceKey: candidate.sourceKey,
+          externalProductId: candidate.externalProductId,
+        },
+      },
+    ]);
 
     return { won: true as const, productId: product.id };
   });

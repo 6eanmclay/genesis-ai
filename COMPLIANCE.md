@@ -3046,6 +3046,86 @@ typecheck and build.
 
 ---
 
+## 61. The layer whose job is remembering had a hole where sourcing was
+
+*BI milestone, increment 3. Belief as persistent business memory.*
+
+### What was lost
+
+`recordExecutionEvent` maps an execution to a `BusinessEvent` through a
+five-entry allow-list — the product actions. Everything else returns null. So an
+owner telling Genesis what their supplier charges produced **no event**, and
+therefore no change detection, no insight and no belief: a real fact about the
+business, learned from a person and immediately forgotten by the layer whose
+whole job is remembering.
+
+Adoption had the same hole from the other direction. It creates a real owned
+product without going through `create_product`, so the execution engine never saw
+it — the event log was empty exactly where a first-party store's catalogue comes
+from.
+
+Both now write through `writeBusinessEvents`, the seam every other event already
+uses. No second event system, no second ledger. The adoption event is written
+inside the **same transaction** as the product and the claim, so an event can
+never describe an adoption that did not commit.
+
+### The half-built read, and why it returned nothing
+
+`reasoning.ts` documented `Belief.recordId`/`entityType` as a gap: the per-record
+read had existed since Learn's Phase 2 and always returned `[]`.
+
+The cause was one line. `upsertBelief`'s **create** branch set both fields and its
+**update** branch did not — and beliefs are re-derived on every pass, so any
+belief that existed for more than one cycle lost its record identity. The read
+was fine. Nothing had ever been readable through it.
+
+### Belief is not a second source of truth
+
+The rule the whole increment turns on, and it is asserted rather than asserted-in-
+prose: **no supplier figure reaches a belief.** A price lives in
+`SupplierEconomics` and nowhere else; a belief is a pattern across what happened,
+grounded by real evidence ids. The event payload carries the supplier's identity
+— enough to trace an answer back — and none of its numbers.
+
+The three answers also stay three different facts. "They quoted me", "they
+wouldn't say" and "I haven't found out" become three distinct event types rather
+than collapsing into "the owner replied", because the difference between them is
+the whole reason the answer path has three branches.
+
+### Verification, and one boundary it found
+
+`scripts/verify-business-memory-live.ts`, 9 sections, real Postgres — the
+consolidated live pass the BI Engine had been missing since M1. `BI_ENGINE.md`
+had said plainly that none of its nine milestones had ever touched a database.
+
+It found one thing worth recording: **`runIntelligenceCycle` cannot complete
+without an AI provider.** Its last stage is the one AI call in the engine, and a
+harness has no credentials. That is an external boundary like the Printful one,
+not something to paper over with a fake key — and what it proves anyway is the
+property that matters: Learn runs before Reason and unconditionally, so a
+business's memory does not depend on a provider being reachable. The beliefs
+asserted in that section were distilled during a pass that then failed.
+
+### A claim of mine that was wrong
+
+I reported the BI suites as pure-logic-only, based on grepping for
+`startRealPostgres`. That was the wrong probe: several of them are database-backed
+through the shared `run-db-suites` harness instead, and `intelligence-cycle`
+passes there. Corrected by running the harness rather than re-reading the grep.
+
+The same run showed four pre-existing failures — `brand-logo-flow`,
+`product-image-gallery-e2e`, `social-connections-pipeline`, `stripe-webhook-e2e`,
+all external-dependency. **Confirmed pre-existing by stashing this increment and
+re-running the baseline**, rather than assumed from their names.
+
+### Status
+
+**VERIFIED** — `verify-business-memory-live.ts` (9 sections, real Postgres), plus
+15 separately-hosted live suites, 15 harness suites (11 pass, 4 pre-existing
+external failures), 15 pure suites, typecheck and build.
+
+---
+
 ## Verification
 
 Everything above marked Compliant is covered by the deterministic suites, run
@@ -3103,6 +3183,7 @@ scripts/verify-catalog-live.ts            what the catalog shows, and what it ma
 scripts/verify-catalog-browser.ts         the catalog through a real browser (real server + Postgres)
 scripts/verify-sourcing-schedule.ts       who an unattended pass reaches, and that cron runs it (real Postgres)
 scripts/verify-sourcing-budget.ts         what a run may spend, refused at the call (real Postgres)
+scripts/verify-business-memory-live.ts    facts to events to beliefs, and what a belief may not hold (real Postgres)
 ```
 
 No item here is marked compliant on the strength of reading the code alone.

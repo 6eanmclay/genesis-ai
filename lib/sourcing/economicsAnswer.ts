@@ -92,6 +92,18 @@ export interface AnswerResult {
   stillMissing: EconomicsGap[];
   /** Present only when `reevaluated`. What the owner would now be told. */
   nowRecommends: string | null;
+  /**
+   * The owned product this answer was about, when the listing has become one.
+   *
+   * Surfaced so the execution that recorded the answer can point its
+   * BusinessEvent at the record understanding already knows, rather than at a
+   * supplier reference nothing else in the model recognises. Null is honest and
+   * common: an answer about a candidate nobody has adopted concerns no product.
+   *
+   * NOT a second copy of anything. The figures stay in SupplierEconomics; this
+   * is only which record the event is about.
+   */
+  productId: string | null;
 }
 
 /**
@@ -172,6 +184,7 @@ export async function answerEconomicsQuestion(input: {
       // this reply is exactly what is missing after it.
       stillMissing: gapsInTerms(before),
       nowRecommends: null,
+      productId: await productIdFor(storeId, ref),
     };
   }
 
@@ -203,6 +216,7 @@ export async function answerEconomicsQuestion(input: {
       question: "still_open",
       stillMissing: gapsInTerms(before),
       nowRecommends: null,
+      productId: await productIdFor(storeId, ref),
     };
   }
 
@@ -219,6 +233,7 @@ export async function answerEconomicsQuestion(input: {
       question: after.minimumOrderUnits !== null && after.bulkUnitCostInCents !== null ? "closed" : "still_open",
       stillMissing: gapsInTerms(after),
       nowRecommends: null,
+      productId: await productIdFor(storeId, ref),
     };
   }
 
@@ -243,6 +258,7 @@ export async function answerEconomicsQuestion(input: {
     question: answer.kind === "supplier_would_not_say" ? "still_open" : incomplete ? "narrowed" : "closed",
     stillMissing: gapsInTerms(after),
     nowRecommends: forThisProduct?.recommendation ?? moves.moves[0]?.recommendation ?? null,
+    productId,
   };
 }
 

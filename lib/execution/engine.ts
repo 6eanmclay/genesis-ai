@@ -293,6 +293,10 @@ export async function execute<TInput, TMetadata>(
       actionType: opts.actionType,
       input,
       status,
+      // Some actions only know which record they concerned once they have run.
+      // Passing what the executable returned lets the mapping stay pure while
+      // still pointing at a real record.
+      metadata: result.metadata,
     });
 
     return result;

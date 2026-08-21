@@ -89,6 +89,15 @@ async function upsertBelief(storeId: string, params: UpsertBeliefParams): Promis
       lastContradictedAt: params.lastContradictedAt,
       evidenceRefs: params.evidenceRefs,
       data: params.data ? (params.data as Prisma.InputJsonValue) : Prisma.DbNull,
+      // CARRIED ON UPDATE TOO (2026-08-21). `create` set these and `update` did
+      // not, so a belief first derived before its evidence carried a record
+      // identity could never acquire one — it would be re-derived every pass,
+      // correctly, and stay unreadable by the per-record read in reasoning.ts
+      // that was built specifically to ask "what has Genesis learned about THIS
+      // item?". The read has existed since Learn's Phase 2 and returned nothing
+      // for a reason nobody could see from either side.
+      recordId: params.recordId ?? null,
+      entityType: params.entityType ?? null,
       status: "ACTIVE",
       retiredAt: null,
       retiredReason: null,

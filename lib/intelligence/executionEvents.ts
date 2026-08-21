@@ -60,6 +60,57 @@ function readString(input: unknown, field: string): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/** What kind of answer it was — the only thing worth remembering about one. */
+const ANSWER_EVENT: Readonly<Record<string, { eventType: string; said: string }>> = {
+  quoted: { eventType: "supplier.terms_answered", said: "answered what their supplier charges" },
+  supplier_would_not_say: {
+    eventType: "supplier.terms_refused",
+    said: "reported that their supplier would not quote",
+  },
+  dont_know_yet: { eventType: "supplier.terms_unknown", said: "has not found out what their supplier charges" },
+};
+
+function mapEconomicsAnswer(
+  input: unknown,
+  metadata: unknown,
+  executionId: string
+): BusinessEventInput | null {
+  const answer = readNested(input, "answer");
+  const kind = readString(answer, "kind");
+  if (!kind) return null;
+
+  const shape = ANSWER_EVENT[kind];
+  if (!shape) return null;
+
+  // WHICH RECORD, from what the execution discovered rather than what it was
+  // asked. An answer about a candidate nobody has adopted concerns no owned
+  // product, and a null recordId is the honest result — the event is still
+  // worth having, it just is not about a record understanding knows.
+  const result = readNested(metadata, "result");
+  const productId = readString(result, "productId");
+
+  return {
+    recordId: productId ? internalItemId(productId) : null,
+    entityType: "item",
+    eventType: shape.eventType,
+    summary: `The owner ${shape.said}.`,
+    // The supplier's identity, NOT its figures. Enough to tell two answers
+    // apart and to trace one back, and nothing a consumer could mistake for a
+    // price.
+    data: {
+      executionId,
+      actionType: "answer_supplier_economics",
+      sourceKey: readString(input, "sourceKey"),
+      externalProductId: readString(input, "externalProductId"),
+    },
+  };
+}
+
+function readNested(value: unknown, field: string): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return (value as Record<string, unknown>)[field] ?? null;
+}
+
 /**
  * The canonical event for an executed action, or null when there is no honest
  * mapping — the pure decision, provable without a database.
@@ -77,6 +128,16 @@ export function mapExecutionToEvent(params: {
   input: unknown;
   status: string;
   executionId: string;
+  /**
+   * The executable's own metadata, when it has any.
+   *
+   * Needed because some actions know which record they concern only AFTER they
+   * have run: an owner answering a supplier question names a product in their
+   * own words, and which owned record that resolved to is something the
+   * execution discovered rather than something its input carried. Still pure —
+   * this function reads what it is handed and touches no database.
+   */
+  metadata?: unknown;
 }): BusinessEventInput | null {
   const { actionType, input, status, executionId } = params;
 
@@ -84,6 +145,21 @@ export function mapExecutionToEvent(params: {
   // execute() is called without a registry actionType on plenty of internal
   // paths (syncs, drafts). No action type is no honest mapping.
   if (!actionType) return null;
+
+  // AN OWNER TELLING GENESIS WHAT A SUPPLIER CHARGES IS SOMETHING THAT HAPPENED
+  // (2026-08-21). It was invisible to the memory pipeline: no event, therefore
+  // no change detection, no insight and no belief — a real fact about the
+  // business, learned by a person and immediately forgotten by the layer whose
+  // whole job is remembering.
+  //
+  // NO FIGURE IS COPIED HERE. SupplierEconomics stays the system of record for
+  // what anything costs; the event records that an answer was given, about which
+  // product, and what kind of answer it was. A belief distilled from these can
+  // only ever be a pattern across them — "this keeps going unanswered" — never a
+  // price living in a second table.
+  if (actionType === "answer_supplier_economics") {
+    return mapEconomicsAnswer(input, params.metadata, executionId);
+  }
 
   const item = ITEM_ACTIONS[actionType];
   if (!item) return null;
@@ -151,6 +227,8 @@ export async function recordExecutionEvent(
     actionType: string | null | undefined;
     input: unknown;
     status: string;
+    /** What the executable returned, for actions that discover their record. */
+    metadata?: unknown;
   },
   sink: ExecutionEventSink = prismaExecutionEventSink
 ): Promise<void> {
@@ -163,6 +241,7 @@ export async function recordExecutionEvent(
       input: params.input,
       status: params.status,
       executionId,
+      metadata: params.metadata,
     });
     if (!event) return;
 
