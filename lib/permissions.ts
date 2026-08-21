@@ -133,7 +133,11 @@ export async function requireStorePermission(
   // two need completely different responses: one is "choose a business", the
   // other is "this business does not exist".
   if (resolution.kind === "ambiguous") {
-    throw new Error("Choose which business this is for before continuing.");
+    // Still a throw, not a redirect: this is the ACTION path, and an action that
+    // navigated instead of failing would report success for a write it never
+    // made. The message now names somewhere real — /choose-business exists as of
+    // Phase D, so "choose" is an instruction rather than a dead end.
+    throw new Error("Choose which business this is for before continuing — open /choose-business.");
   }
   if (resolution.kind === "none") {
     throw new Error("Store not found");
@@ -292,13 +296,21 @@ export async function requireStorePageAccess(
     redirect("/login");
   }
 
-  const resolved = await resolveUserStore(session.user.id);
-  if (!resolved) {
+  // AMBIGUOUS AND NONE ARE DIFFERENT ROUTING FACTS (2026-08-21). Both used to
+  // arrive here as a null from resolveUserStore and both were sent to
+  // /dashboard — which resolves the same way, so an account reaching two
+  // businesses with nothing saying which had no page that could load. Asking
+  // the question is only useful if somewhere can answer it.
+  const resolution = await resolveBusiness(session.user.id);
+  if (resolution.kind === "ambiguous") {
+    redirect("/choose-business");
+  }
+  if (resolution.kind === "none") {
     redirect("/dashboard");
   }
-  if (permission && !hasPermission(resolved.role, permission)) {
+  if (permission && !hasPermission(resolution.role, permission)) {
     redirect("/dashboard");
   }
 
-  return { userId: session.user.id, store: resolved.store, role: resolved.role };
+  return { userId: session.user.id, store: resolution.store, role: resolution.role };
 }
