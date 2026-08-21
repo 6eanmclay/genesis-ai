@@ -184,6 +184,32 @@ model Store {
   // selectFulfillmentStrategy() and lib/onboarding/pricing.ts's
   // recommendPrice() — a real branching input, not narrative flavor text
   // like blueprint.brandIdentity.brandPersonality.
+  // THE BUSINESS'S OWN CURRENCY (2026-08-20, P0.5).
+  //
+  // Every money value belonging to this business — product costs, margins,
+  // supplier minimums, the owner's investable capital — is in it. One per
+  // business, and the assumption is named here rather than assumed everywhere:
+  // no progression function reads a currency from anywhere else, and none sums
+  // or compares across two. Lifting the one-per-business limit later is then a
+  // contained change rather than an excavation.
+  currency                     String    @default("USD")
+  // WHAT THE OWNER HAS SAID THEY CAN INVEST (2026-08-20, P0.5).
+  //
+  // NEVER inferred from revenue. A business with real sales may have nothing
+  // spare, and recommending a bulk order on the strength of turnover would be
+  // Genesis telling somebody to spend money it has no idea they have.
+  //
+  // NULL means UNSTATED, which is NOT the same fact as a stated zero even
+  // though both behave identically. The pair of columns is what keeps three
+  // states apart: unstated (both null), explicitly zero (0 with a statedAt),
+  // and explicitly positive. Collapsing the first two would destroy the only
+  // signal that says "worth asking about".
+  investableCapitalCents       Int?
+  capitalStatedAt              DateTime?
+  // Capabilities the owner has confirmed — holding stock, providing artwork,
+  // managing a supplier. Absent means unknown, which is treated as "cannot" for
+  // feasibility and as "worth asking" for everything else. Never inferred.
+  ownerCapabilities            String[]  @default([])
   brandPositioning             String?
   // Onboarding v2, Creative Direction — the durable creative identity the
   // owner chose from Genesis's three generated directions: {name,
@@ -311,6 +337,7 @@ model Store {
   growthPointTransactions   GrowthPointTransaction[]
   tasks                     Task[]
   sourcedProducts           SourcedProduct[]
+  progressionDecisions      ProgressionDecision[]
 
   @@index([planId])
 }
@@ -589,10 +616,11 @@ model Product {
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
-  store       Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  orders      Order[]
-  images      ProductImage[]
-  sourcedFrom SourcedProduct[]
+  store                Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  orders               Order[]
+  images               ProductImage[]
+  sourcedFrom          SourcedProduct[]
+  progressionDecisions ProgressionDecision[]
 }
 
 // How a product comes into existence and reaches the customer.
@@ -613,6 +641,19 @@ enum ProductSourceKind {
   WHOLESALE_STOCKED
   // Nothing ships. No parcel, no label, no address.
   DIGITAL
+  // BOUGHT IN BULK WITH THE OWNER'S OWN BRANDING ON IT (2026-08-20, P0.5).
+  //
+  // Rung 2. Real capital, a real minimum, and stock that cannot be resold
+  // generically if it does not move — which is what separates it from
+  // WHOLESALE_STOCKED above.
+  //
+  // Added with no connector behind it, deliberately. The rung has to exist in
+  // the model before a supplier for it does; the reverse is how one supplier's
+  // shape ends up dictating the architecture. See PRODUCT_PROGRESSION.md.
+  PRIVATE_LABEL
+  // Rung 3. Made to the owner's own specification by a manufacturer they
+  // manage. Distinct from OWNER_MADE, which is the owner making it themselves.
+  CONTRACT_MANUFACTURED
 }
 
 // A product Genesis has FOUND, from any source — not one the store sells.
@@ -667,6 +708,16 @@ model SourcedProduct {
   // at discovery so adoption never has to re-resolve a source — which would be
   // both wrong (there is more than one possible print partner) and fragile (a
   // de-registered source would strand a suggestion the owner is looking at).
+  // SUPPLIER ECONOMICS (2026-08-20, P0.5) — what the supplier stated, and
+  // nothing else. NULL means the supplier did not say.
+  //
+  // Never defaulted, averaged, or derived from unitCostInCents. An unknown
+  // minimum blocks a bulk recommendation rather than becoming a free one, which
+  // is the difference between a system that says "I don't know what this would
+  // cost you" and one that quietly says "nothing".
+  minimumOrderUnits      Int?
+  bulkUnitCostInCents    Int?
+  leadTimeDays           Int?
   fulfillmentProvider    IntegrationProvider?
 
   // WHY J4 RAISED THIS. Written by the recommender, read by the owner-facing
@@ -696,6 +747,42 @@ model SourcedProduct {
 
   @@unique([storeId, sourceKey, externalProductId, externalVariantId])
   @@index([storeId, status, score])
+}
+
+// THE OWNER'S ANSWER TO A GRADUATION (2026-08-20, P0.5).
+//
+// A graduation is derived from evidence, but the answer to one has to persist or
+// it is offered again next week. See PRODUCT_PROGRESSION.md §G and §H.
+model ProgressionDecision {
+  id            String                  @id @default(cuid())
+  storeId       String
+  productId     String
+  /// The rung that was offered.
+  toKind        ProductSourceKind
+  decision      ProgressionDecisionKind
+  /// Which policy version produced the offer. A later threshold change does not
+  /// rewrite this — it means the next offer was judged differently, and the
+  /// record says which. Evidence and policy are separate; so is their history.
+  policyVersion String
+  /// The CONDITIONS as they stood, not just the evidence: capital, capabilities,
+  /// supplier minimum and price, demand, margin, source availability, currency.
+  /// This is what "has anything material changed" is answered against, and it is
+  /// why reconsideration is not a percentage — an owner who said no to £1,400
+  /// has not changed their mind because units went up, but may well have because
+  /// the supplier dropped its minimum. Json for the same reason `recommendation`
+  /// is: the set of conditions will grow.
+  conditions    Json
+  decidedAt     DateTime                @default(now())
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, productId])
+}
+
+enum ProgressionDecisionKind {
+  ACCEPTED
+  DECLINED
 }
 
 enum SourcedProductStatus {
@@ -750,6 +837,21 @@ model Order {
   storeId                 String
   productId               String?
   productName             String
+  // HOW MANY UNITS THIS ORDER IS FOR (2026-08-20, P0.5).
+  //
+  // Progression evidence counts units, not orders: one order for 100 is not the
+  // same evidence as 100 orders for one, and a bulk-purchase recommendation
+  // built on the wrong one would tell an owner to buy a case on the strength of
+  // a single sale.
+  //
+  // Defaulting to 1 is not a guess. Every order this platform has ever written
+  // came from a checkout that sells one product with no quantity control, so
+  // each genuinely is one unit — the default records what was already true
+  // rather than inventing a value.
+  //
+  // amountInCents stays the ORDER TOTAL. Per-unit revenue is amountInCents /
+  // quantity, computed where needed and never stored twice.
+  quantity                Int                 @default(1)
   amountInCents           Int
   buyerEmail              String
   status                  String              @default("paid")

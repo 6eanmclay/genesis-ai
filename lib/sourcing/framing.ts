@@ -71,6 +71,24 @@ const FRAMING: Record<ProductSourceKind, SourcingFraming> = {
     customizable: true,
     holdsInventory: true,
   },
+  PRIVATE_LABEL: {
+    label: "Your own label",
+    intent: "Make it yours",
+    explanation:
+      "You buy these in bulk with your own branding on them. Better margins than reselling somebody else's, and the stock is yours — if it doesn't sell it can't be sold as anything else.",
+    bestFor: "Products you already know sell, that you want to own outright.",
+    customizable: true,
+    holdsInventory: true,
+  },
+  CONTRACT_MANUFACTURED: {
+    label: "Made to your specification",
+    intent: "Own how it's made",
+    explanation:
+      "A manufacturer makes these to your design, for you. The best margins available and the most to lose — setup costs are real and they are spent before anything sells.",
+    bestFor: "A proven product you want to control completely.",
+    customizable: true,
+    holdsInventory: true,
+  },
   DIGITAL: {
     label: "Digital products",
     intent: "Sell without shipping",
