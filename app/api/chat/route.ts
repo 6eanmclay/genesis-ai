@@ -1076,12 +1076,20 @@ export async function POST(request: Request) {
 
           // Through the engine, so this is a recorded, verified execution like
           // every other real change — not a bare prisma write in a chat route.
-          const result = await execute(createProductFromDesignExecutable, {
-            designId: latestDesign.id,
-            name: parsedApproval.data.name,
-            priceInCents: parsedApproval.data.priceInCents,
-            ...(parsedApproval.data.description ? { description: parsedApproval.data.description } : {}),
-          });
+          const result = await execute(
+            createProductFromDesignExecutable,
+            {
+              designId: latestDesign.id,
+              name: parsedApproval.data.name,
+              priceInCents: parsedApproval.data.priceInCents,
+              ...(parsedApproval.data.description ? { description: parsedApproval.data.description } : {}),
+            },
+            // The business this turn is about, not the account's active one
+            // (2026-08-21). Every other line in this handler already uses
+            // store.id; this call resolved separately, so a product approved in
+            // conversation about one business could be created in another.
+            { storeId: store.id }
+          );
 
           // execute() never throws for a failure inside run(); it returns a
           // FAILED result. Discarding it would tell the owner their product

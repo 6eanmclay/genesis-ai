@@ -82,7 +82,7 @@ export function ConnectorCard({
           log={statusDisplay}
           actions={
             <>
-              <form action={verifyIntegration.bind(null, provider)}>
+              <form action={verifyIntegration.bind(null, slug, provider)}>
                 <SubmitButton
                   pendingText="Checking..."
                   className="rounded-full border border-black/[.08] px-4 py-1.5 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
@@ -91,7 +91,7 @@ export function ConnectorCard({
                   Recheck
                 </SubmitButton>
               </form>
-              <form action={syncIntegration.bind(null, provider)}>
+              <form action={syncIntegration.bind(null, slug, provider)}>
                 <SubmitButton
                   pendingText="Syncing..."
                   className="rounded-full border border-black/[.08] px-4 py-1.5 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
@@ -126,7 +126,7 @@ export function ConnectorCard({
         <p className="font-medium text-black dark:text-zinc-50">{entry.name}</p>
         <p className="mt-1 text-xs text-zinc-500">{entry.description}</p>
         <form
-          action={submitIntegrationCredentials.bind(null, provider)}
+          action={submitIntegrationCredentials.bind(null, slug, provider)}
           className="mt-3 flex flex-col gap-2"
         >
           {formFields.map((field) => (
@@ -165,7 +165,7 @@ export function ConnectorCard({
           Last attempt failed: {lastAttemptFailedMessage}
         </p>
       )}
-      <form action={connectIntegration.bind(null, provider)} className="mt-3">
+      <form action={connectIntegration.bind(null, slug, provider)} className="mt-3">
         <SubmitButton
           pendingText={entry.authMethod === "oauth" ? "Redirecting..." : "Connecting..."}
           className={`px-4 py-1.5 text-xs ${ACCENT_BUTTON}`}

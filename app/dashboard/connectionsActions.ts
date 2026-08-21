@@ -11,8 +11,9 @@ import {
   verifyExecutable,
   syncExecutable,
 } from "@/lib/execution/adapters/integrationExecutable";
-import { requireBusinessOrActive, requireStorePermission, PERMISSIONS } from "@/lib/permissions";
+import { requireBusinessOrActive, PERMISSIONS } from "@/lib/permissions";
 import { logProductEvent } from "@/lib/telemetry/events";
+import { LEGACY_BUSINESS_BASE, businessBasePath } from "@/lib/dashboard/navConfig";
 
 // Phase 3 Milestone 2 — the framework's own Server Action layer: 5 generic,
 // provider-parameterized actions, not one dedicated set per connector.
@@ -42,23 +43,43 @@ async function logConnectAttempt(
   });
 }
 
-export async function connectIntegration(provider: IntegrationProvider) {
-  const result = await execute(connectExecutable(getConnector(provider)), {});
+
+// BOUND TO THE NAMED BUSINESS (2026-08-21, BUSINESS_CONTEXT.md Phase C).
+//
+// disconnectIntegration migrated in Phase C and the other four did not, in this
+// same file, for this same screen — so ConnectorCard bound a slug into exactly
+// one of its five buttons. Connect, verify, sync and credential submission all
+// still called execute() with no storeId, which resolved the account's ACTIVE
+// business instead of the one the card belonged to.
+//
+// The consequence is the same one that made disconnect worth migrating first,
+// arriving from the other direction: credentials written to, or a sync run
+// against, a business the owner was not looking at.
+//
+// The redirect follows the business too. An action that connected the right
+// business and then showed the owner a different one would look like it failed.
+const connectionsPath = (slug?: string) =>
+  `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/connections`;
+
+export async function connectIntegration(slug: string | undefined, provider: IntegrationProvider) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
+  const result = await execute(connectExecutable(getConnector(provider)), {}, { storeId });
   await logConnectAttempt(provider, "integration.connect_attempt", result);
   if (result.redirectUrl) {
     redirect(result.redirectUrl);
   }
   redirect(
     result.status === "FAILED"
-      ? `/dashboard/connections?integration_error=${provider.toLowerCase()}`
-      : `/dashboard/connections?integration_connected=${provider.toLowerCase()}`
+      ? `${connectionsPath(slug)}?integration_error=${provider.toLowerCase()}`
+      : `${connectionsPath(slug)}?integration_connected=${provider.toLowerCase()}`
   );
 }
 
-export async function verifyIntegration(provider: IntegrationProvider) {
-  const result = await execute(verifyExecutable(getConnector(provider)), undefined);
+export async function verifyIntegration(slug: string | undefined, provider: IntegrationProvider) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
+  const result = await execute(verifyExecutable(getConnector(provider)), undefined, { storeId });
   await logConnectAttempt(provider, "integration.recheck_attempt", result);
-  redirect("/dashboard/connections");
+  redirect(connectionsPath(slug));
 }
 
 // MIGRATED — see BUSINESS_CONTEXT.md Phase C. Disconnecting a supplier from the
@@ -66,22 +87,25 @@ export async function verifyIntegration(provider: IntegrationProvider) {
 export async function disconnectIntegration(slug: string | undefined, provider: IntegrationProvider) {
   const { storeId } = await requireBusinessOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
   await getConnector(provider).disconnect(storeId);
-  redirect("/dashboard/connections");
+  redirect(connectionsPath(slug));
 }
 
-export async function syncIntegration(provider: IntegrationProvider) {
-  const result = await execute(syncExecutable(getConnector(provider)), undefined);
+export async function syncIntegration(slug: string | undefined, provider: IntegrationProvider) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
+  const result = await execute(syncExecutable(getConnector(provider)), undefined, { storeId });
   await logConnectAttempt(provider, "integration.sync_attempt", result);
-  redirect("/dashboard/connections");
+  redirect(connectionsPath(slug));
 }
 
 // The generic version of submitPaypalCredentials — collects every FormData
 // entry into params rather than hardcoding field names, since a "form"-kind
 // ConnectResult's fields vary by connector (Mailchimp has 1, PayPal has 3).
 export async function submitIntegrationCredentials(
+  slug: string | undefined,
   provider: IntegrationProvider,
   formData: FormData
 ) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
   const params: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
     if (typeof value === "string") {
@@ -89,12 +113,12 @@ export async function submitIntegrationCredentials(
     }
   }
 
-  const result = await execute(connectExecutable(getConnector(provider)), { params });
+  const result = await execute(connectExecutable(getConnector(provider)), { params }, { storeId });
   await logConnectAttempt(provider, "integration.connect_attempt", result);
 
   redirect(
     result.status === "FAILED"
-      ? `/dashboard/connections?integration_error=${provider.toLowerCase()}`
-      : `/dashboard/connections?integration_connected=${provider.toLowerCase()}`
+      ? `${connectionsPath(slug)}?integration_error=${provider.toLowerCase()}`
+      : `${connectionsPath(slug)}?integration_connected=${provider.toLowerCase()}`
   );
 }

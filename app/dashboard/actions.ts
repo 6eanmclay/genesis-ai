@@ -4,7 +4,7 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireBusinessOrActive, requireStorePermission } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE, businessBasePath } from "@/lib/dashboard/navConfig";
 import { getConnector } from "@/lib/integrations/registry";
 import { execute } from "@/lib/execution/engine";
@@ -339,9 +339,24 @@ export async function toggleOrderFulfilled(orderId: string) {
   redirect("/dashboard/orders");
 }
 
+// BOUND TO THE NAMED BUSINESS (2026-08-21, BUSINESS_CONTEXT.md Phase C).
+//
+// The seven connector actions below already resolved `businessId` from the slug
+// — and then called execute() without it, so execute() re-resolved the account's
+// ACTIVE business on its own. Permission was checked against the business named
+// in the URL while the executable ran against a different one.
+//
+// Not theoretical, and worse than an ordinary mis-route: these actions write
+// real payment and carrier credentials. On /b/copper-coil/payments, connecting
+// Stripe would have attached the credentials to whichever business happened to
+// be active. BUSINESS_CONTEXT.md's own rule — "a named business the account
+// cannot reach is refused, never substituted" — was being broken in the one
+// direction nothing checks, because both businesses ARE reachable.
+//
+// The fix is the argument execute() has always accepted.
 export async function connectStripe(slug?: string) {
   const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
-  const result = await execute(connectExecutable(getConnector("STRIPE")), {});
+  const result = await execute(connectExecutable(getConnector("STRIPE")), {}, { storeId: businessId });
   await logConnectAttempt("stripe", "integration.connect_attempt", result);
   if (result.redirectUrl) {
     redirect(result.redirectUrl);
@@ -365,7 +380,7 @@ export async function disconnectStripe(slug?: string) {
 
 export async function recheckStripe(slug?: string) {
   const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
-  const result = await execute(verifyExecutable(getConnector("STRIPE")), undefined);
+  const result = await execute(verifyExecutable(getConnector("STRIPE")), undefined, { storeId: businessId });
   await logConnectAttempt("stripe", "integration.recheck_attempt", result);
 
   redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments`);
@@ -373,7 +388,7 @@ export async function recheckStripe(slug?: string) {
 
 export async function connectPaypal(slug?: string) {
   const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
-  const result = await execute(connectExecutable(getConnector("PAYPAL")), {});
+  const result = await execute(connectExecutable(getConnector("PAYPAL")), {}, { storeId: businessId });
   await logConnectAttempt("paypal", "integration.connect_attempt", result);
   if (result.redirectUrl) {
     redirect(result.redirectUrl); // never true for PayPal today — kept for structural symmetry with connectStripe
@@ -396,9 +411,11 @@ export async function submitPaypalCredentials(
     throw new Error("Client ID and Secret are required");
   }
 
-  const result = await execute(connectExecutable(getConnector("PAYPAL")), {
-    params: { clientId, clientSecret, environment },
-  });
+  const result = await execute(
+    connectExecutable(getConnector("PAYPAL")),
+    { params: { clientId, clientSecret, environment } },
+    { storeId: businessId }
+  );
   await logConnectAttempt("paypal", "integration.connect_attempt", result);
 
   // PayPal never leaves this app (no OAuth round-trip), so this is the one
@@ -423,7 +440,7 @@ export async function disconnectPaypal(slug?: string) {
 
 export async function recheckPaypal(slug?: string) {
   const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.PAYMENTS_MANAGE, slug);
-  const result = await execute(verifyExecutable(getConnector("PAYPAL")), undefined);
+  const result = await execute(verifyExecutable(getConnector("PAYPAL")), undefined, { storeId: businessId });
   await logConnectAttempt("paypal", "integration.recheck_attempt", result);
 
   redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/payments`);
@@ -439,9 +456,11 @@ export async function submitUspsCredentials(
     throw new Error("EasyPost API Key is required");
   }
 
-  const result = await execute(connectExecutable(getConnector("EASYPOST")), {
-    params: { apiKey },
-  });
+  const result = await execute(
+    connectExecutable(getConnector("EASYPOST")),
+    { params: { apiKey } },
+    { storeId: businessId }
+  );
   await logConnectAttempt("usps", "integration.connect_attempt", result);
 
   redirect(
@@ -466,7 +485,7 @@ export async function disconnectUsps(slug?: string) {
 
 export async function recheckUsps(slug?: string) {
   const { storeId: businessId } = await requireBusinessOrActive(PERMISSIONS.ORDERS_MANAGE, slug);
-  const result = await execute(verifyExecutable(getConnector("EASYPOST")), undefined);
+  const result = await execute(verifyExecutable(getConnector("EASYPOST")), undefined, { storeId: businessId });
   await logConnectAttempt("usps", "integration.recheck_attempt", result);
 
   redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/orders`);
