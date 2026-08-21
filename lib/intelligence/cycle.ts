@@ -176,9 +176,24 @@ export async function runDueIntelligenceCycles(
     try {
       summaries.push(await runIntelligenceCycle(storeId));
     } catch {
-      // Left honestly as a failed pass rather than swallowed silently. The
-      // cursor does not advance on a throw, so the store stays due and the
-      // same events are retried next pass instead of being lost.
+      // Left honestly as a failed pass rather than swallowed silently.
+      //
+      // WHAT A FAILED PASS DOES AND DOES NOT UNDO (corrected 2026-08-21 — this
+      // comment previously claimed "the cursor does not advance on a throw, so
+      // the same events are retried next pass", which is not what happens and
+      // would have someone assume a failed pass is fully retried).
+      //
+      // The cursor belongs to the INSIGHT ENGINE, and computeInsights advances
+      // it once it has genuinely processed its events. A throw after that point
+      // — the AI review stage is the usual one, since it needs a provider —
+      // leaves the cursor advanced, correctly: those events really were
+      // consumed by the consumer that owns the cursor. What failed was a later
+      // stage that owns no cursor of its own.
+      //
+      // So `ok: false` means "this pass did not complete", never "nothing
+      // happened". Insights may already have been recorded and beliefs already
+      // distilled, both of which are real and durable. The one thing a failed
+      // pass never does is claim insights it did not produce.
       summaries.push({ storeId, ok: false, insights: 0 });
     }
   }
