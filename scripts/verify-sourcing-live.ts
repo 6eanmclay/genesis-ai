@@ -35,6 +35,7 @@ function assert(label: string, ok: boolean, detail = ""): void {
 }
 
 const CUBIT: SourcingContext = {
+  currency: "USD",
   ownWords:
     "Hand-wound copper tensor rings and coils for energy work and meditation. Every ring is made by hand from solid copper.",
   classifications: ["Wellness", "Handmade goods"],
@@ -464,7 +465,8 @@ async function main() {
       const store = await makeStore("unknown-business");
       // A brand-new store: nothing described, nothing sold, nothing classified.
       const blank: SourcingContext = {
-        ownWords: "",
+        currency: "USD",
+  ownWords: "",
         classifications: [],
         brandPositioning: "other",
         sells: [],

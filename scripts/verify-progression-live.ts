@@ -632,6 +632,272 @@ async function main() {
         ["exploring", "selling", "proven", "committing"].includes(await businessStage(bigStore.id)));
     }
 
+    // -----------------------------------------------------------------------
+    console.log("\n13. The next move follows the business's own journey");
+    {
+      const { nextMoves } = await import("@/lib/sourcing/nextMoves");
+
+      // --- a business with nothing: START ---------------------------------
+      await reset();
+      const newUser = await makeUser("journey-new@example.test");
+      const newStore = await prisma.store.create({
+        data: {
+          userId: newUser.id, name: "Iron Gym", slug: "journey-new", tagline: "t",
+          description: "A fitness and recovery brand for people who train at home.",
+          brandPositioning: "minimalist", currency: "USD",
+        },
+      });
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: newStore.id, sourceKey: "w", externalProductId: "band-1",
+          kind: "WHOLESALE_DROPSHIP", name: "Resistance band set",
+          description: "Bands for training and recovery at home",
+          score: 20, status: "SUGGESTED",
+        },
+      });
+
+      const beginning = await nextMoves(newStore.id);
+      check("a business with no sales is exploring", beginning.stage, "exploring");
+      assert("and is offered something", beginning.moves.length > 0, JSON.stringify(beginning.moves.map((m) => m.kind)));
+      check("the first move is to start", beginning.moves[0].kind, "start");
+      assert("costing nothing up front",
+        beginning.moves[0].evidence.some((e) => e.includes("nothing")), beginning.moves[0].evidence.join(" | "));
+      assert("and promising first sales",
+        beginning.moves[0].unlocks.includes("first real sales"), beginning.moves[0].unlocks);
+
+      // --- one proven product, an obvious complement: WIDEN ----------------
+      await reset();
+      const widenUser = await makeUser("journey-widen@example.test");
+      const widenStore = await prisma.store.create({
+        data: {
+          userId: widenUser.id, name: "Iron Gym", slug: "journey-widen", tagline: "t",
+          description: "A fitness and recovery brand for people who train at home.",
+          brandPositioning: "minimalist", currency: "USD",
+        },
+      });
+      const roller = await prisma.product.create({
+        data: {
+          storeId: widenStore.id, name: "Foam roller for recovery", description: "recovery and training",
+          priceInCents: 1_800, costInCents: 980, sourceKind: "WHOLESALE_DROPSHIP",
+          sourceKey: "w", externalProductId: "roller-1", active: true,
+        },
+      });
+      // Sourced, but with NO bulk economics stated — so no deepen is possible,
+      // only an unblock, and it must not outrank a good widen for a product
+      // whose numbers we do not have.
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: widenStore.id, sourceKey: "w", externalProductId: "roller-1",
+          kind: "WHOLESALE_DROPSHIP", name: "Foam roller for recovery",
+          adoptedProductId: roller.id, status: "ADOPTED",
+        },
+      });
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: widenStore.id, sourceKey: "w", externalProductId: "band-2",
+          kind: "WHOLESALE_DROPSHIP", name: "Resistance bands for recovery training",
+          description: "Bands for recovery and training at home",
+          score: 25, status: "SUGGESTED",
+        },
+      });
+      for (let i = 0; i < 40; i++) await sell(widenStore.id, roller.id, { when: daysAgo(56 - i) });
+
+      const widening = await nextMoves(widenStore.id);
+      check("with one product proven, the business is proven", widening.stage, "proven");
+      const kinds = widening.moves.map((m) => m.kind);
+      assert("a widen is offered", kinds.includes("widen"), kinds.join(", "));
+      assert("naming what it sits beside",
+        widening.moves.find((m) => m.kind === "widen")!.evidence.some((e) => e.includes("Foam roller")),
+        JSON.stringify(widening.moves.find((m) => m.kind === "widen")!.evidence));
+
+      // --- the same product with real bulk economics: DEEPEN ---------------
+      await prisma.sourcedProduct.updateMany({
+        where: { storeId: widenStore.id, adoptedProductId: roller.id },
+        data: { minimumOrderUnits: 100, bulkUnitCostInCents: 300 },
+      });
+      await stateCapital(widenStore.id, 60_000, ["hold_stock"]);
+
+      const deepening = await nextMoves(widenStore.id);
+      const deepenMoveFound = deepening.moves.find((m) => m.kind === "deepen");
+      assert("a deepen is now possible", deepenMoveFound !== undefined,
+        deepening.moves.map((m) => m.kind).join(", "));
+      // THE SAME BUSINESS, DIFFERENT EVIDENCE. Learning the supplier's numbers
+      // turned an unanswerable question into the best move available.
+      check("and it leads", deepening.moves[0].kind, "deepen");
+      assert("explaining what it unlocks",
+        deepening.moves[0].unlocks.includes("%"), deepening.moves[0].unlocks);
+      assert("with the evidence behind it",
+        deepening.moves[0].evidence.some((e) => e.includes("40 sold")), deepening.moves[0].evidence.join(" | "));
+      assert("and what the owner would actually do",
+        deepening.moves[0].action.toLowerCase().includes("bulk"), deepening.moves[0].action);
+
+      // --- unknown economics on a strong product: UNBLOCK ------------------
+      await reset();
+      const blockUser = await makeUser("journey-block@example.test");
+      const blockStore = await prisma.store.create({
+        data: {
+          userId: blockUser.id, name: "Iron Gym", slug: "journey-block", tagline: "t",
+          description: "A fitness and recovery brand for people who train at home.",
+          brandPositioning: "minimalist", currency: "USD",
+        },
+      });
+      const strong = await prisma.product.create({
+        data: {
+          storeId: blockStore.id, name: "Foam roller", description: "recovery",
+          priceInCents: 1_800, costInCents: 980, sourceKind: "WHOLESALE_DROPSHIP",
+          sourceKey: "w", externalProductId: "roller-9", active: true,
+        },
+      });
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: blockStore.id, sourceKey: "w", externalProductId: "roller-9",
+          kind: "WHOLESALE_DROPSHIP", name: "Foam roller",
+          adoptedProductId: strong.id, status: "ADOPTED",
+          // Deliberately unknown. Nothing invents them.
+          minimumOrderUnits: null, bulkUnitCostInCents: null,
+        },
+      });
+      // Sells VERY hard, so the missing numbers are the most valuable thing
+      // Genesis could learn about this business.
+      for (let i = 0; i < 200; i++) await sell(blockStore.id, strong.id, { when: daysAgo(120 - i * 0.5) });
+
+      const blocked = await nextMoves(blockStore.id);
+      check("the question leads when the product is strong and the numbers are missing",
+        blocked.moves[0].kind, "unblock");
+      assert("phrased as something the owner can answer",
+        blocked.moves[0].action.includes("cost"), blocked.moves[0].action);
+      assert("and says what it would unlock",
+        blocked.moves[0].unlocks.includes("worth buying properly"), blocked.moves[0].unlocks);
+      // NOTHING WAS INVENTED. The unknown stayed unknown and became a question.
+      const stillUnknown = await prisma.sourcedProduct.findFirst({
+        where: { storeId: blockStore.id, adoptedProductId: strong.id },
+        select: { minimumOrderUnits: true, bulkUnitCostInCents: true },
+      });
+      check("the supplier facts are still unknown", stillUnknown, { minimumOrderUnits: null, bulkUnitCostInCents: null });
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n14. Three moves, one business, honouring what was turned down");
+    {
+      const { nextMoves } = await import("@/lib/sourcing/nextMoves");
+      await reset();
+      const user = await makeUser("three@example.test");
+      const store = await prisma.store.create({
+        data: {
+          userId: user.id, name: "Iron Gym", slug: "three", tagline: "t",
+          description: "A fitness and recovery brand for training at home.",
+          brandPositioning: "minimalist", currency: "USD",
+        },
+      });
+      const proven = await prisma.product.create({
+        data: {
+          storeId: store.id, name: "Foam roller for recovery", description: "recovery training",
+          priceInCents: 1_800, costInCents: 980, sourceKind: "WHOLESALE_DROPSHIP", active: true,
+        },
+      });
+      for (let i = 0; i < 40; i++) await sell(store.id, proven.id, { when: daysAgo(56 - i) });
+
+      // Six candidates, all fitting.
+      for (let i = 0; i < 6; i++) {
+        await prisma.sourcedProduct.create({
+          data: {
+            storeId: store.id, sourceKey: "w", externalProductId: `cand-${i}`,
+            kind: "WHOLESALE_DROPSHIP", name: `Recovery training accessory ${i}`,
+            description: "For recovery and training at home", score: 20 - i, status: "SUGGESTED",
+          },
+        });
+      }
+
+      const result = await nextMoves(store.id);
+      // THREE. Not nine. The ranking is the intelligence; a longer list is a
+      // catalogue again, which is the thing this is not.
+      check("exactly three moves", result.moves.length, 3);
+      assert("more were considered than shown", result.consideredCount > 3, String(result.consideredCount));
+      const subjects = result.moves.map((m) => m.productId ?? m.sourcedProductId);
+      check("each about a different thing", new Set(subjects).size, subjects.length);
+
+      // A dismissed candidate is the owner's decision, honoured by the same
+      // mechanism discovery uses. No second ledger.
+      const shown = result.moves.find((m) => m.sourcedProductId !== null)!;
+      await prisma.sourcedProduct.updateMany({
+        where: { id: shown.sourcedProductId! }, data: { status: "DISMISSED", dismissedAt: new Date() },
+      });
+      const after = await nextMoves(store.id);
+      assert("a dismissed candidate is not raised again",
+        !after.moves.some((m) => m.sourcedProductId === shown.sourcedProductId),
+        after.moves.map((m) => m.sourcedProductId).join(", "));
+      check("and the list is still full", after.moves.length, 3);
+
+      // Blocked sources are named rather than silently missing.
+      assert("sources that cannot be reached are named",
+        after.blockedSources.length > 0, JSON.stringify(after.blockedSources));
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n15. Two businesses on one account get different advice");
+    {
+      const { nextMoves } = await import("@/lib/sourcing/nextMoves");
+      await reset();
+      const owner = await makeUser("advice@example.test");
+      const gym = await prisma.store.create({
+        data: {
+          userId: owner.id, name: "Iron Gym", slug: "advice-gym", tagline: "t",
+          description: "A fitness and recovery brand for training at home.",
+          brandPositioning: "minimalist", currency: "USD",
+        },
+      });
+      const coil = await prisma.store.create({
+        data: {
+          userId: owner.id, name: "Copper & Coil", slug: "advice-coil", tagline: "t",
+          description: "Hand-wound copper tensor rings for energy work.",
+          brandPositioning: "minimalist", currency: "GBP",
+        },
+      });
+
+      // The gym has proven something and has real bulk economics.
+      const roller = await prisma.product.create({
+        data: {
+          storeId: gym.id, name: "Foam roller for recovery", description: "recovery training",
+          priceInCents: 1_800, costInCents: 980, sourceKind: "WHOLESALE_DROPSHIP",
+          sourceKey: "w", externalProductId: "r-adv", active: true,
+        },
+      });
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: gym.id, sourceKey: "w", externalProductId: "r-adv", kind: "WHOLESALE_DROPSHIP",
+          name: "Foam roller for recovery", adoptedProductId: roller.id, status: "ADOPTED",
+          minimumOrderUnits: 100, bulkUnitCostInCents: 300,
+        },
+      });
+      for (let i = 0; i < 40; i++) await sell(gym.id, roller.id, { when: daysAgo(56 - i) });
+      await stateCapital(gym.id, 60_000, ["hold_stock"]);
+
+      // The coil business has just started, with one candidate.
+      await prisma.sourcedProduct.create({
+        data: {
+          storeId: coil.id, sourceKey: "w", externalProductId: "wire-1",
+          kind: "WHOLESALE_DROPSHIP", name: "Solid copper wire spool",
+          description: "Copper wire for hand-wound rings", score: 22, status: "SUGGESTED",
+        },
+      });
+
+      const gymAdvice = await nextMoves(gym.id);
+      const coilAdvice = await nextMoves(coil.id);
+
+      check("the gym is proven", gymAdvice.stage, "proven");
+      check("the coil business is exploring", coilAdvice.stage, "exploring");
+      check("the gym is told to own what works", gymAdvice.moves[0].kind, "deepen");
+      check("the coil business is told to start", coilAdvice.moves[0].kind, "start");
+
+      // Nothing crosses. Capital stated on one leaves the other alone, and no
+      // move mentions the other business's product.
+      check("capital is per business", (await capitalPosture(coil.id)).state, "unstated");
+      assert("no advice mentions the other business's product",
+        !JSON.stringify(coilAdvice).includes("Foam roller") &&
+          !JSON.stringify(gymAdvice).includes("copper wire"),
+        "cross-business leakage");
+    }
+
   } finally {
     await prisma.$disconnect().catch(() => {});
     await db.close();

@@ -28,7 +28,7 @@ export async function buildSourcingContext(storeId: string): Promise<SourcingCon
   const [store, understanding] = await Promise.all([
     prisma.store.findUnique({
       where: { id: storeId },
-      select: { brandPositioning: true, description: true, tagline: true },
+      select: { brandPositioning: true, description: true, tagline: true, currency: true },
     }),
     getBusinessUnderstanding(storeId),
   ]);
@@ -71,6 +71,7 @@ export async function buildSourcingContext(storeId: string): Promise<SourcingCon
     .filter((name): name is string => typeof name === "string" && name.trim().length > 0);
 
   return {
+    currency: store?.currency ?? "USD",
     ownWords,
     classifications,
     // "other" is the honest default: it is a real slug meaning the owner has not

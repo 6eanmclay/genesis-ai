@@ -32,6 +32,7 @@ function assert(label: string, ok: boolean, detail = ""): void {
 
 // A real business, in its own words. Cubit & Coil, which is what P0.5 is for.
 const CUBIT: SourcingContext = {
+  currency: "USD",
   ownWords:
     "Hand-wound copper tensor rings and coils for energy work and meditation. Every ring is made by hand from solid copper.",
   classifications: ["Wellness", "Handmade goods"],
@@ -250,7 +251,8 @@ console.log("\n6. An unknown cost is not a zero");
 console.log("\n7. A store Genesis knows nothing about gets no suggestions");
 {
   const blank: SourcingContext = {
-    ownWords: "",
+    currency: "USD",
+  ownWords: "",
     classifications: [],
     brandPositioning: "other",
     sells: [],
@@ -273,7 +275,8 @@ console.log("\n7a. Matching a category is not understanding a business");
   // it. Found by a test written for two businesses on one account, which is
   // where a shallow match stops being invisible.
   const candles: SourcingContext = {
-    ownWords: "Small-batch soy candles poured by hand in Vermont.",
+    currency: "USD",
+  ownWords: "Small-batch soy candles poured by hand in Vermont.",
     classifications: ["Home & Garden"],
     brandPositioning: "luxury",
     sells: [],
@@ -307,7 +310,8 @@ console.log("\n7a. Matching a category is not understanding a business");
   // "this doesn't fit your business" on the strength of a slug is a judgment
   // nobody gave Genesis the standing to make.
   const categoryOnly: SourcingContext = {
-    ownWords: "",
+    currency: "USD",
+  ownWords: "",
     classifications: ["Home & Garden"],
     brandPositioning: "other",
     sells: [],
@@ -333,7 +337,7 @@ console.log("\n7b. A bad fit is said out loud, and not knowing is said different
   assert("saying so", duplicate.concerns.some((c) => c.includes("already sell")), JSON.stringify(duplicate));
 
   // But a store nothing is known about gets neither answer.
-  const blank: SourcingContext = { ownWords: "", classifications: [], brandPositioning: "other", sells: [], proven: [] };
+  const blank: SourcingContext = { currency: "USD", ownWords: "", classifications: [], brandPositioning: "other", sells: [], proven: [] };
   const cannotSay = scoreCandidate(candidate({ name: "Copper Wire Spool" }), blank);
   check("an unknown business cannot be judged", cannotSay.verdict, "unknown");
   // Telling a new owner their product "doesn't fit the brand" before any brand

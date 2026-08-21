@@ -33,6 +33,15 @@ import type { SourcedCandidate } from "./types";
  * grounded in is a matter of record instead of whatever happened to be reachable.
  */
 export interface SourcingContext {
+  /**
+   * The business's own currency (2026-08-20).
+   *
+   * Carried here rather than read from somewhere else, for the same reason every
+   * money type carries it: no function downstream should have to assume one, and
+   * a default buried in a helper is how a business's figures quietly become
+   * somebody else's.
+   */
+  currency: string;
   /** The business's own words: description, brand story, USP, audience. */
   ownWords: string;
   /** Category and revenue-stream labels the business classified itself as. */
