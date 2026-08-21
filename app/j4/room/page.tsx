@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
+import { PERMISSIONS, hasPermission } from "@/lib/permissions";
+import { resolveBusiness } from "@/lib/businessContext";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { sendStoreMessage, uploadVoiceMemo } from "@/app/dashboard/ai-actions";
 import { J4Room } from "./J4Room";
@@ -28,12 +29,18 @@ export default async function J4RoomPage() {
     redirect("/login");
   }
 
-  const resolved = await resolveUserStore(session.user.id);
-  if (!resolved) {
+  // AMBIGUOUS IS NOT "NO BUSINESS" (2026-08-21). resolveUserStore returns null
+  // for both, so an account reaching two businesses with nothing saying which
+  // was sent to /onboarding — told to create a business when it has several.
+  const resolution = await resolveBusiness(session.user.id);
+  if (resolution.kind === "ambiguous") {
+    redirect("/choose-business");
+  }
+  if (resolution.kind === "none") {
     // No real store yet — same real gap /j4/page.tsx already handles.
     redirect("/onboarding");
   }
-  const { store, role } = resolved;
+  const { store, role } = resolution;
   if (!hasPermission(role, PERMISSIONS.GENESIS_CHAT)) {
     redirect("/dashboard");
   }

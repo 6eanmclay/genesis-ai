@@ -1,7 +1,8 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { resolveUserStore, hasPermission, PERMISSIONS } from "@/lib/permissions";
+import { hasPermission, PERMISSIONS } from "@/lib/permissions";
+import { resolveBusiness } from "@/lib/businessContext";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
 import { ALLOWED_VOICE_MEMO_CONTENT_TYPES, MAX_VOICE_MEMO_BYTES } from "@/lib/voice/voiceMemoFile";
 
@@ -28,8 +29,16 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (!session?.user) {
           throw new Error("Not authenticated.");
         }
-        const resolved = await resolveUserStore(session.user.id);
-        if (!resolved || !hasPermission(resolved.role, PERMISSIONS.GENESIS_CHAT)) {
+        // AMBIGUOUS IS ITS OWN ANSWER (2026-08-21). resolveUserStore returned
+        // null for both "no business" and "more than one and nothing says
+        // which", so the two were indistinguishable here. Both still refuse —
+        // failing closed is right — but they are no longer the same fact, and
+        // nothing silently picks a business to upload into.
+        const resolution = await resolveBusiness(session.user.id);
+        if (resolution.kind === "ambiguous") {
+          throw new Error("Choose which business this is for before uploading.");
+        }
+        if (resolution.kind === "none" || !hasPermission(resolution.role, PERMISSIONS.GENESIS_CHAT)) {
           throw new Error("You don't have permission to do this.");
         }
         return {

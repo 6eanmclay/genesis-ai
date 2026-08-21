@@ -328,6 +328,7 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   return (
     <J4Workspace
       surface={surface}
+      slug={slug}
       storeName={store.name}
       messages={messages.map((m) => ({ id: m.id, role: m.role, content: m.content, changes: m.changes }))}
       sendMessage={sendStoreMessage}

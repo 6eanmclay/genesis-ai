@@ -770,6 +770,7 @@ function J4ResponseIndicator({
 }
 
 export function J4Workspace({
+  slug,
   storeName,
   messages,
   sendMessage,
@@ -788,6 +789,14 @@ export function J4Workspace({
   surface,
   proposal,
 }: {
+  /**
+   * The business this workspace is for, when it was named in the URL.
+   *
+   * Sent with every chat POST so the turn is written against the business on
+   * screen rather than the account's active one — the surface was fixed for
+   * that in August, the path that WRITES was not.
+   */
+  slug?: string;
   storeName: string;
   messages: Message[];
   sendMessage: (formData: FormData) => void;
@@ -1233,7 +1242,7 @@ export function J4Workspace({
         // workspacePath is what the owner is looking at while asking. The
         // server matches it against a closed registry and ignores anything
         // it does not recognise, so this is a hint, never a channel.
-        body: JSON.stringify({ message: text, requestId, audioUrl: audioUrl ?? undefined, workspacePath: currentPath }),
+        body: JSON.stringify({ message: text, requestId, audioUrl: audioUrl ?? undefined, workspacePath: currentPath, slug }),
       });
     } catch (err) {
       reportDiag(requestId, tStart, "client_fetch_threw", { message: err instanceof Error ? err.message : String(err) });

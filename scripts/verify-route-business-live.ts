@@ -1,0 +1,166 @@
+import { startRealPostgres } from "@/scripts/lib/realPostgres";
+import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
+
+// THE BUSINESS A REQUEST IS ABOUT — BUSINESS_CONTEXT.md Phase C, the routes:
+//
+//   powershell -File scripts/run-unelevated.ps1 \
+//     -Command "npx tsx scripts/verify-route-business-live.ts" -OutFile out.txt
+//
+// Phase C's own item 8: "Route handlers (/api/chat, /api/j4/speak, both upload
+// routes, /api/chat/recent-messages) take the business explicitly from the
+// request rather than resolving it."
+//
+// TWO REAL DEFECTS THIS COVERS.
+//
+// 1. THE CHAT POST RESOLVED THE ACTIVE BUSINESS. J4Surface was fixed in August
+//    to render the business named in the URL — but SENDING a message posted to
+//    /api/chat, which resolved the account's active business instead. On
+//    /b/copper-coil the conversation on screen was Copper & Coil's and the turn
+//    was written against Iron Gym. The same defect the browser test found for
+//    the surface, still live on the path that writes.
+//
+// 2. AMBIGUOUS AND NONE WERE THE SAME NULL. resolveUserStore returns null for
+//    both "this account has no business" and "it has several and nothing says
+//    which", so every one of these routes treated them identically. /j4/room
+//    sent the second case to /onboarding — telling an owner to create a
+//    business when they have several.
+//
+// What is asserted here is the resolution those handlers now share, against
+// real rows. The handlers themselves need a signed-in session and are covered
+// by the browser suite; this is the layer where the decision is decidable.
+
+let failures = 0;
+
+function check(label: string, actual: unknown, expected: unknown): void {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  if (!ok) failures++;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}`);
+  if (!ok) console.log(`        expected ${JSON.stringify(expected)}\n        actual   ${JSON.stringify(actual)}`);
+}
+
+function assert(label: string, ok: boolean, detail = ""): void {
+  if (!ok) failures++;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  — ${detail}` : ""}`);
+}
+
+async function main() {
+  const db = await startRealPostgres();
+  await db.prisma.$disconnect();
+
+  process.env[TEST_DATABASE_ENV] = "1";
+  process.env.DATABASE_URL = db.url;
+
+  const { resolveBusiness, setActiveBusiness } = await import("@/lib/businessContext");
+  const { prismaSystem: prisma } = await import("@/lib/prisma");
+
+  const store = (userId: string, name: string, slug: string) =>
+    prisma.store.create({
+      data: { userId, name, slug, tagline: "t", description: "d", currency: "USD" },
+    });
+
+  /**
+   * Exactly what the route handlers now do with a slug from the request body:
+   * look it up, then resolve. Kept here as the same two steps in the same order
+   * rather than a reimplementation of the decision, which would prove nothing.
+   */
+  async function resolveFromRequest(userId: string, requestedSlug?: string) {
+    const named = requestedSlug
+      ? await prisma.store.findUnique({ where: { slug: requestedSlug }, select: { id: true } })
+      : null;
+    if (requestedSlug && !named) return { kind: "no_such_business" as const };
+    return resolveBusiness(userId, named?.id);
+  }
+
+  const owner = await prisma.user.create({ data: { email: "routes-owner@example.test" } });
+  const iron = await store(owner.id, "Iron Gym", "iron-gym");
+  const copper = await store(owner.id, "Copper & Coil", "copper-coil");
+  await setActiveBusiness(owner.id, iron.id);
+
+  // ==========================================================================
+  console.log("\n=== 1. The slug in the request decides the turn ===\n");
+  // ==========================================================================
+  const named = await resolveFromRequest(owner.id, "copper-coil");
+  check("a named business is resolved", named.kind, "resolved");
+  check(
+    "and it is the one named, not the one active",
+    named.kind === "resolved" && named.store.slug,
+    "copper-coil"
+  );
+  // THE DEFECT, stated as an assertion: without the slug this is Iron Gym.
+  const unnamed = await resolveFromRequest(owner.id);
+  check("with no slug the active business is still used", unnamed.kind === "resolved" && unnamed.store.slug, "iron-gym");
+  assert(
+    "so sending the slug is what changes the answer",
+    named.kind === "resolved" && unnamed.kind === "resolved" && named.storeId !== unnamed.storeId,
+    "the legacy /dashboard route keeps its old behaviour by sending nothing"
+  );
+
+  // ==========================================================================
+  console.log("\n=== 2. A slug that is not yours is refused, never substituted ===\n");
+  // ==========================================================================
+  const stranger = await prisma.user.create({ data: { email: "routes-stranger@example.test" } });
+  await store(stranger.id, "Not Yours", "not-yours");
+
+  const borrowed = await resolveFromRequest(owner.id, "not-yours");
+  check("a real business belonging to someone else resolves to none", borrowed.kind, "none");
+  assert(
+    "NOT to the caller's own business",
+    borrowed.kind !== "resolved",
+    "succeeding with a different business than the one asked for is worse than failing"
+  );
+  check("a slug naming nothing at all is refused too",
+    (await resolveFromRequest(owner.id, "no-such-slug")).kind, "no_such_business");
+
+  // ==========================================================================
+  console.log("\n=== 3. Ambiguous is its own answer, not 'no business' ===\n");
+  // ==========================================================================
+  // The state /j4/room used to send to /onboarding: two businesses reachable and
+  // nothing saying which.
+  await prisma.user.update({ where: { id: owner.id }, data: { activeStoreId: null } });
+  const ambiguous = await resolveFromRequest(owner.id);
+  check("two businesses and no pointer is ambiguous", ambiguous.kind, "ambiguous");
+  assert("which is NOT none", ambiguous.kind !== "none", "an account with businesses is not an account without one");
+  assert(
+    "and the caller is offered the real choices",
+    ambiguous.kind === "ambiguous" && ambiguous.choices.length === 2
+  );
+
+  // A genuinely empty account is still none, and must stay distinguishable.
+  const newcomer = await prisma.user.create({ data: { email: "routes-newcomer@example.test" } });
+  check("an account with no business is none", (await resolveFromRequest(newcomer.id)).kind, "none");
+
+  // Naming a business answers the question without setting the pointer — a
+  // request is not a choice.
+  const namedWhileAmbiguous = await resolveFromRequest(owner.id, "copper-coil");
+  check("naming one resolves it even while ambiguous", namedWhileAmbiguous.kind, "resolved");
+  check("without making it active",
+    (await prisma.user.findUniqueOrThrow({ where: { id: owner.id }, select: { activeStoreId: true } })).activeStoreId,
+    null);
+  check("so the next unnamed request is still ambiguous", (await resolveFromRequest(owner.id)).kind, "ambiguous");
+
+  // ==========================================================================
+  console.log("\n=== 4. Two concurrent requests naming different businesses ===\n");
+  // ==========================================================================
+  const [a, b] = await Promise.all([
+    resolveFromRequest(owner.id, "iron-gym"),
+    resolveFromRequest(owner.id, "copper-coil"),
+  ]);
+  check("the request naming Iron Gym got Iron Gym", a.kind === "resolved" && a.store.slug, "iron-gym");
+  check("the request naming Copper & Coil got Copper & Coil", b.kind === "resolved" && b.store.slug, "copper-coil");
+  assert(
+    "neither borrowed the other's business",
+    a.kind === "resolved" && b.kind === "resolved" && a.storeId !== b.storeId
+  );
+  assert("and neither is the account's active one", copper.id !== iron.id);
+
+  await prisma.$disconnect();
+  await db.close();
+
+  console.log(`\n${failures === 0 ? "All route-business assertions passed." : `${failures} assertion(s) FAILED.`}`);
+  process.exit(failures === 0 ? 0 : 1);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

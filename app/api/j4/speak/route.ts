@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { resolveUserStore, hasPermission, PERMISSIONS } from "@/lib/permissions";
+import { hasPermission, PERMISSIONS } from "@/lib/permissions";
+import { resolveBusiness } from "@/lib/businessContext";
 import { openJ4VoiceOutputSession } from "@/lib/voice/j4VoiceOutput";
 
 // J4 Voice Output (2026-08-08) — "Add voice playback for J4 responses...
@@ -30,10 +31,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const resolved = await resolveUserStore(session.user.id);
-  if (!resolved || !hasPermission(resolved.role, PERMISSIONS.GENESIS_CHAT)) {
+  const resolution = await resolveBusiness(session.user.id);
+  if (resolution.kind === "ambiguous") {
+    return NextResponse.json({ error: "Choose which business this is for first." }, { status: 409 });
+  }
+  if (resolution.kind === "none" || !hasPermission(resolution.role, PERMISSIONS.GENESIS_CHAT)) {
     return NextResponse.json({ error: "You don't have permission to do this." }, { status: 403 });
   }
+  const resolved = resolution;
 
   const body = (await request.json().catch(() => null)) as { text?: string } | null;
   const text = body?.text?.trim();

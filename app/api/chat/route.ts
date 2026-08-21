@@ -6,7 +6,8 @@ import type { RefineStorefrontInput } from "@/lib/execution/executables/refineSt
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
+import { PERMISSIONS, hasPermission } from "@/lib/permissions";
+import { resolveBusiness } from "@/lib/businessContext";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
@@ -164,7 +165,7 @@ function diagLog(requestId: string, turnStartedAt: number, event: string, meta?:
 export async function POST(request: Request) {
   const turnStartedAt = Date.now();
   const body = (await request.json().catch(() => null)) as
-    | { message?: string; requestId?: string; audioUrl?: string; workspacePath?: string }
+    | { message?: string; requestId?: string; audioUrl?: string; workspacePath?: string; slug?: string }
     | null;
   const requestId = body?.requestId ?? "unknown";
   diagLog(requestId, turnStartedAt, "request_received");
@@ -181,12 +182,43 @@ export async function POST(request: Request) {
     return new Response(JSON.stringify({ type: "error", message: "Empty message." }), { status: 400 });
   }
 
-  const resolved = await resolveUserStore(userId);
-  if (!resolved || !hasPermission(resolved.role, PERMISSIONS.GENESIS_CHAT)) {
+  // THE BUSINESS THIS TURN IS ABOUT, TAKEN FROM THE REQUEST (2026-08-21,
+  // BUSINESS_CONTEXT.md Phase C).
+  //
+  // J4Surface was fixed in August to render the business named in the URL — but
+  // SENDING a message still posted here, where the account's ACTIVE business was
+  // resolved instead. So on /b/copper-coil the conversation on screen was Copper
+  // & Coil's and the reply was written against Iron Gym: the same defect the
+  // browser test found for the surface, still live on the path that writes.
+  //
+  // The slug is authoritative when the client sends one. The legacy /dashboard
+  // route has no slug and still resolves the active business, exactly as before.
+  const requestedSlug = typeof body?.slug === "string" ? body.slug.trim() : "";
+  const named = requestedSlug
+    ? await prisma.store.findUnique({ where: { slug: requestedSlug }, select: { id: true } })
+    : null;
+  // A slug that names nothing is refused rather than falling back — substituting
+  // a different business is worse than failing, because it succeeds.
+  if (requestedSlug && !named) {
+    return new Response(JSON.stringify({ type: "error", message: "No permission." }), { status: 403 });
+  }
+
+  const resolution = await resolveBusiness(userId, named?.id);
+  // More than one business and nothing saying which is a question, not a guess.
+  // Said as its own status so the client can send the person to choose rather
+  // than showing them a permission error they cannot act on.
+  if (resolution.kind === "ambiguous") {
+    diagLog(requestId, turnStartedAt, "business_ambiguous");
+    return new Response(
+      JSON.stringify({ type: "error", message: "Choose which business this is for first." }),
+      { status: 409 }
+    );
+  }
+  if (resolution.kind === "none" || !hasPermission(resolution.role, PERMISSIONS.GENESIS_CHAT)) {
     diagLog(requestId, turnStartedAt, "permission_failed");
     return new Response(JSON.stringify({ type: "error", message: "No permission." }), { status: 403 });
   }
-  const { store, role } = resolved;
+  const { store, role } = resolution;
   diagLog(requestId, turnStartedAt, "auth_and_store_resolved", { storeId: store.id });
 
   // 2026-08-08 — voice-memo streaming convergence: a transcribed memo is
