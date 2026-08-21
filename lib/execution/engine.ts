@@ -297,6 +297,11 @@ export async function execute<TInput, TMetadata>(
       // Passing what the executable returned lets the mapping stay pure while
       // still pointing at a real record.
       metadata: result.metadata,
+      // WHO made the change, carried onto the event (2026-08-21). ctx.actorType
+      // is already the authoritative answer here — it decided the whole
+      // authorization path above — and this is the only place it is in hand at
+      // the same moment the event is written.
+      actorType: ctx.actorType,
     });
 
     return result;

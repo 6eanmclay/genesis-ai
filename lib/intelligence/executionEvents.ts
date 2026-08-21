@@ -73,7 +73,8 @@ const ANSWER_EVENT: Readonly<Record<string, { eventType: string; said: string }>
 function mapEconomicsAnswer(
   input: unknown,
   metadata: unknown,
-  executionId: string
+  executionId: string,
+  actorType: string | null
 ): BusinessEventInput | null {
   const answer = readNested(input, "answer");
   const kind = readString(answer, "kind");
@@ -100,6 +101,7 @@ function mapEconomicsAnswer(
     data: {
       executionId,
       actionType: "answer_supplier_economics",
+      actorType,
       sourceKey: readString(input, "sourceKey"),
       externalProductId: readString(input, "externalProductId"),
     },
@@ -128,6 +130,23 @@ export function mapExecutionToEvent(params: {
   input: unknown;
   status: string;
   executionId: string;
+  /**
+   * WHO made this change — "USER" | "GENESIS" | "SYSTEM" (2026-08-21).
+   *
+   * J4_OWNER_UNDERSTANDING.md named this as a real gap: "there's no current
+   * mechanism distinguishing 'the owner edited something Genesis created' from
+   * any other store mutation — this signal doesn't exist as its own tracked
+   * event yet."
+   *
+   * It was RECONSTRUCTABLE — every event already carries its executionId, and
+   * ExecutionLog carries actorType — but a signal that requires a join nobody
+   * writes is a signal nobody uses. Recording it on the event makes the fact
+   * itself queryable, which is what "its own tracked event" means.
+   *
+   * NO NEW COLUMN and no new detector: it goes in the event's existing `data`,
+   * beside executionId and actionType, and forms no belief on its own.
+   */
+  actorType?: string | null;
   /**
    * The executable's own metadata, when it has any.
    *
@@ -158,7 +177,7 @@ export function mapExecutionToEvent(params: {
   // only ever be a pattern across them — "this keeps going unanswered" — never a
   // price living in a second table.
   if (actionType === "answer_supplier_economics") {
-    return mapEconomicsAnswer(input, params.metadata, executionId);
+    return mapEconomicsAnswer(input, params.metadata, executionId, params.actorType ?? null);
   }
 
   const item = ITEM_ACTIONS[actionType];
@@ -177,7 +196,7 @@ export function mapExecutionToEvent(params: {
     summary: name ? `Product ${item.verb}: ${name}` : `Product ${item.verb}`,
     // executionId is what makes this idempotent, and it is genuinely useful
     // provenance besides — it ties the event to its own ExecutionLog row.
-    data: { executionId, actionType },
+    data: { executionId, actionType, actorType: params.actorType ?? null },
   };
 }
 
@@ -229,6 +248,8 @@ export async function recordExecutionEvent(
     status: string;
     /** What the executable returned, for actions that discover their record. */
     metadata?: unknown;
+    /** "USER" | "GENESIS" | "SYSTEM" — who made the change. */
+    actorType?: string | null;
   },
   sink: ExecutionEventSink = prismaExecutionEventSink
 ): Promise<void> {
@@ -253,4 +274,114 @@ export async function recordExecutionEvent(
       extra: { executionId, actionType: params.actionType ?? null },
     });
   }
+}
+
+/** One time the owner changed something Genesis had made. */
+export interface OwnerEditOfGenesisWork {
+  recordId: string;
+  entityType: string;
+  /** What Genesis did, and when. */
+  genesisEventId: string;
+  genesisAt: Date;
+  /** What the owner did to it afterwards, and when. */
+  ownerEventId: string;
+  ownerAt: Date;
+  /** Whole days between the two. Zero is "the same day", not "no gap". */
+  daysLater: number;
+}
+
+/** The shape the planner needs — deliberately not a Prisma type. */
+export interface ActorEvent {
+  id: string;
+  recordId: string | null;
+  entityType: string;
+  occurredAt: Date;
+  actorType: string | null;
+}
+
+const EDIT_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Where the owner changed something Genesis had made — pure.
+ *
+ * THE SIGNAL, precisely: a GENESIS-authored change to a record, followed later
+ * by a USER-authored change to the SAME record. That is a real correction, and
+ * it is the one signal J4_OWNER_UNDERSTANDING.md named as missing.
+ *
+ * WHAT THIS DELIBERATELY IS NOT. It forms no belief, scores nothing, and calls
+ * nothing a preference. An owner tidying a headline Genesis wrote is not
+ * evidence that they dislike Genesis writing headlines — it might be, across
+ * many instances, and deciding that is a question this codebase's standing rule
+ * says needs a real threshold nobody has chosen. So the fact is recorded and
+ * readable, and the inference is left unmade.
+ *
+ * Only the FIRST owner edit after each Genesis change is reported. A record
+ * edited five times is one correction with four revisions, not five corrections.
+ *
+ * An event with no recordId is store-level and cannot be paired with anything.
+ */
+export function planOwnerEdits(events: ActorEvent[]): OwnerEditOfGenesisWork[] {
+  const byRecord = new Map<string, ActorEvent[]>();
+  for (const event of events) {
+    if (!event.recordId) continue;
+    const list = byRecord.get(event.recordId);
+    if (list) list.push(event);
+    else byRecord.set(event.recordId, [event]);
+  }
+
+  const edits: OwnerEditOfGenesisWork[] = [];
+  for (const [recordId, list] of byRecord) {
+    const ordered = [...list].sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
+
+    let genesis: ActorEvent | null = null;
+    for (const event of ordered) {
+      if (event.actorType === "GENESIS") {
+        // A later Genesis change resets what the owner would be correcting.
+        genesis = event;
+        continue;
+      }
+      if (event.actorType === "USER" && genesis) {
+        edits.push({
+          recordId,
+          entityType: event.entityType,
+          genesisEventId: genesis.id,
+          genesisAt: genesis.occurredAt,
+          ownerEventId: event.id,
+          ownerAt: event.occurredAt,
+          daysLater: Math.floor((event.occurredAt.getTime() - genesis.occurredAt.getTime()) / EDIT_DAY_MS),
+        });
+        // Consumed: the next owner edit is a revision of their own work, not a
+        // second correction of Genesis's.
+        genesis = null;
+      }
+    }
+  }
+
+  return edits.sort((a, b) => b.ownerAt.getTime() - a.ownerAt.getTime());
+}
+
+/**
+ * Every time this business's owner changed something Genesis had made.
+ *
+ * Reads the events themselves rather than joining ExecutionLog: actorType is
+ * recorded on the event as of 2026-08-21, which is what makes this a query
+ * rather than a reconstruction. Events written before that carry no actorType
+ * and are simply not matched — an absence, never guessed at.
+ */
+export async function findOwnerEditsOfGenesisWork(storeId: string): Promise<OwnerEditOfGenesisWork[]> {
+  const rows = await prisma.businessEvent.findMany({
+    where: { storeId, recordId: { not: null } },
+    orderBy: { occurredAt: "asc" },
+    select: { id: true, recordId: true, entityType: true, occurredAt: true, data: true },
+  });
+
+  return planOwnerEdits(
+    rows.map((row) => ({
+      id: row.id,
+      recordId: row.recordId,
+      entityType: row.entityType,
+      occurredAt: row.occurredAt,
+      actorType: readString(row.data, "actorType"),
+    }))
+  );
 }
