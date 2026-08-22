@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import type { Store, StoreRole } from "@prisma/client";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
+import { buildCommerceLead } from "@/lib/dashboard/commerceLead";
+import { getPreviousBriefingAnchor, getChangeSetSince } from "@/lib/dashboard/genesisBriefingComposer";
 import { getOrderSummary } from "@/lib/dashboard/whatHappened";
 import { OrderSummaryCard } from "../OrderSummaryCard";
 import { OrdersList, type OrderRow } from "../OrdersList";
@@ -68,7 +70,20 @@ export async function OrdersWorkspace({
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
   const canManage = hasPermission(role, PERMISSIONS.ORDERS_MANAGE);
 
-  const [summary, rawOrders, uspsIntegration] = await Promise.all([
+  // COMMERCE'S LEAD (2026-08-22) — the room architecture's "one line: what
+  // changed since you were last here", and the last piece of that decision.
+  //
+  // Reuses the Daily Operating Rhythm's existing anchor and change-set rather
+  // than introducing a second definition of "since you were last here". Two
+  // answers to that question would drift, and the one that drifted would be the
+  // one nobody was reading.
+  //
+  // REVENUE_VIEW gates it the same way it gates the summary card directly
+  // below: a role that may not see revenue must not read it off the lead
+  // instead. getChangeSetSince computes revenue, so a caller without the
+  // permission is never given the change-set at all rather than being handed it
+  // and trusted to look away.
+  const [summary, rawOrders, uspsIntegration, changeSet] = await Promise.all([
     getOrderSummary(store.id, { includeRevenue: canViewRevenue }),
     prisma.order.findMany({
       where: { storeId: store.id },
@@ -93,7 +108,11 @@ export async function OrdersWorkspace({
     canManage
       ? prisma.storeIntegration.findUnique({ where: { storeId_provider: { storeId: store.id, provider: "EASYPOST" } } })
       : Promise.resolve(null),
+    canViewRevenue
+      ? getPreviousBriefingAnchor(store.id).then((anchor) => getChangeSetSince(store.id, anchor))
+      : Promise.resolve(null),
   ]);
+  const lead = changeSet ? buildCommerceLead(changeSet, store.currency) : null;
   const orders: OrderRow[] = rawOrders.map((order) => ({
     id: order.id,
     productName: order.productName,
@@ -118,6 +137,23 @@ export async function OrdersWorkspace({
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Orders</h1>
+
+      {/* Commerce's lead. Rendered above everything the room holds, because
+          that is what a lead is — the first thing the eye lands on, before
+          scrolling. Absent entirely when there is no honest line to write
+          (see buildCommerceLead: no prior anchor means no period to speak
+          about), rather than a placeholder holding its place. */}
+      {lead && (
+        <p
+          className={`mt-3 text-sm ${
+            lead.quiet
+              ? "text-zinc-500 dark:text-zinc-400"
+              : "font-medium text-black dark:text-zinc-50"
+          }`}
+        >
+          {lead.text}
+        </p>
+      )}
 
       <div className="mt-6 max-w-md">
         <OrderSummaryCard summary={summary} />
