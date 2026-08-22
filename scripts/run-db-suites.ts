@@ -91,6 +91,7 @@ function needsDatabase(file: string): boolean {
   if (file === "verify-catalog-browser.ts") return false;
   // Same again: its own Postgres, its own Next server, its own browser.
   if (file === "verify-office-browser.ts") return false;
+  if (file === "verify-rooms-browser.ts") return false;
   if (file === "verify-progression-live.ts") return false;
   if (file === "verify-economics-live.ts") return false;
   if (file === "verify-economics-ingest.ts") return false;

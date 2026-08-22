@@ -149,13 +149,29 @@ This is the standing "preserve simplicity" rule applied to navigation: polish it
 
 The orb stays centred between the four rooms, present in all of them, and is never one of them.
 
-## Still open — the next design discussion
+## ✅ SETTLED — the room architecture is LOCKED, 2026-08-22
 
-**How the rooms actually feel different from one another while remaining one Genesis.** Not decided here, and not to be settled by implementation. Rooms that look identical are tabs with better names, and rooms that look unrelated are separate products.
+This section was *"Still open — the next design discussion… not to be settled by implementation."* It was settled by decision, in `J4_FOUR_ROOMS_DESIGN.md`, and Sean signed off on all five points explicitly: **"Lock the room architecture accordingly. Do not reopen these decisions unless implementation reveals a direct contradiction with an existing verified invariant."**
 
-The constraint that shapes this discussion: **the difference has to come from what each room is for, not from how the owner gets there.** Storefront is a canvas, Orders is a ledger, Studio is a workbench, Products is a catalogue — those are genuinely different kinds of work and can look it. The bar above them stays the same four labels in the same place, every time.
+**The rooms are Storefront · Studio · (J4 · Office) · Commerce · Account.** The four-metaphor line this section used to carry — *"Storefront is a canvas, Orders is a ledger, Studio is a workbench, Products is a catalogue"* — predates the 2026-08-17 merge and is superseded. Products and Orders are **one room, Commerce**: *"selling and fulfilling are one job to an owner; they were two tabs because they are two tables."* Account is a real primary room that opens a sheet in place. **Do not restore the old model.**
 
-The Office is included, and is the harder half: it has to feel like J4's own space without becoming a fifth visual style, and it is the only surface that appears *on top of* a room rather than beside it.
+**A room's character comes from what it is made of, not from what colour it is** — Level B, "Material". Three variables, none of which the owner has to learn:
+
+| Room | The lead | Density | The ground |
+|---|---|---|---|
+| **Storefront** | The real rendered site | One thing, edge to edge | A neutral mat — the room recedes so the site is the brightest thing |
+| **Studio** | The piece being made, beside its alternatives | One thing, large, comparable | The darkest room — work in progress is the light source |
+| **Commerce** | What changed since you were last here | Many rows, tight, tabular figures | A flat sheet, ruled rather than carded |
+
+**The invariants this locks, all of them enforced by `scripts/verify-rooms.ts` and `verify-rooms-browser.ts` rather than by this document:**
+
+- **One place.** The ground is resolved in `lib/dashboard/rooms.ts` and applied once, by `DashboardShell`. **No per-page styling** — a screen that painted its own ground is how three rooms quietly become three products.
+- **No room depends on hue.** Blue is J4's alone. Every ground is neutral, and the suite fails on any room that reaches for a colour.
+- **The navigation never changes.** Four labels, same place, same tap, in every room. The *sections* differ by room; the bar does not.
+- **Arrival and Account are not rooms.** Both take the default ground, deliberately. Arrival is a third kind of surface; Account is configured, not visited.
+- **The Office gets no character, permanently.** It renders *on top of* a room, so anything varying with what is underneath would read as the room's — which is how it becomes a fifth room. `GENESIS_ATMOSPHERE` stays its single source, and the browser suite asserts the Office is pixel-identical over all three rooms.
+
+Two follow-on corrections shipped alongside, both cases of a registry that did not follow the rooms: J4 could not tell which room the owner was standing in on any `/b/<slug>/…` route (`a59e038`), and `ACTION_SECTIONS` still named Website/Identity/Marketing (`735f40d`).
 
 ---
 

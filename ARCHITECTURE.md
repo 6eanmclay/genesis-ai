@@ -72,10 +72,14 @@ Five real phases, in order:
 | `lib/storefront/targets.ts` → `GENESIS_ACTIONS` | A target names a retired action. J4 highlights part of the storefront, sounds certain, and has no verb behind it — the exact failure that file's own invariant exists to prevent |
 | `lib/storefront/dimensions.ts` → `lib/theme.ts` | A value is offered that theme.ts no longer renders. It is chosen, shown on an approval card that looks legitimate, approved — and then renders as undefined CSS |
 | `lib/onboarding/discoveryFlow.ts`'s `ECOMMERCE_SLUGS` → `lib/businessTaxonomy.ts` | Renaming a revenue-stream slug silently sends every product business down the non-ecommerce path |
+| `lib/j4/workspaceContext.ts` → `lib/dashboard/navConfig.ts` | A room the registry never learned about. J4 stands in it and knows nothing — indistinguishable from a screen with nothing worth saying, because "no context" is an ordinary outcome |
+| `ACTION_SECTIONS` (`lib/execution/genesisActions.ts`) → `lib/dashboard/navConfig.ts` | J4 names a place the owner cannot see; or, worse, an action with no entry at all gets no nav badge, no focusable approval and an attention card with no Review link |
 
 **Why the compiler cannot help.** In each case the values are typed against a union or an enum, which catches a typo. What it cannot catch is a name that is still a valid member of the *type* while no longer being a live key in the *runtime* registry — and `dimensions.ts` says why it is a literal at all: "TypeScript types are erased at runtime and this needs to validate real model output." The erasure that forces the duplication is the same erasure that makes it uncheckable.
 
-**The rule going forward.** A registry that mirrors another must carry a runtime cross-check asserting every referenced name resolves in the registry it mirrors. All three above are now guarded — `scripts/verify-storefront-scope.ts`, `scripts/verify-dimensions.ts`, `scripts/verify-taxonomy.ts` — and all three are currently clean. **Do not refactor them to derive from their source**; the literals exist for the runtime-validation reason above, and the cross-check is the cheaper and more honest fix.
+**The rule going forward.** A registry that mirrors another must carry a runtime cross-check asserting every referenced name resolves in the registry it mirrors. All five above are now guarded — `scripts/verify-storefront-scope.ts`, `scripts/verify-dimensions.ts`, `scripts/verify-taxonomy.ts`, `scripts/verify-workspace-context.ts`, `scripts/verify-action-sections.ts` — and all five are currently clean.
+
+**The last two were added on 2026-08-22, and they are the first instances found to have ACTUALLY DRIFTED** rather than merely being able to. Both had the same cause: the product moved to the rooms and a registry did not follow. `workspaceContext` never learned Studio or the catalog and resolved nothing at all on `/b/<slug>/…`, where every owner has been since 2026-08-20. `ACTION_SECTIONS` still said "Website" three days after the bar stopped saying it, and was missing `refine_storefront` and `answer_supplier_economics` outright. Neither was a type error, and neither failed loudly — which is the whole point of the invariant. **Do not refactor them to derive from their source**; the literals exist for the runtime-validation reason above, and the cross-check is the cheaper and more honest fix.
 
 **The invariant this protects, stated plainly:** Genesis must never present an action as executable unless a real registered executable stands behind it, and must never claim a change outside what the proposal actually authorises. A dangling registry reference is how either becomes possible without anybody writing a line of wrong logic.
 
@@ -92,6 +96,22 @@ The same sprint established a second standing rule, and it applies wherever a mo
 **A partial truth must never be phrased as a whole one.** `replyFor` always states both what was learned and what is still unknown, because a reply reporting the fact it just recorded, without the other half, "is the part of the truth that sounds like all of it".
 
 Every one of these is asserted by a suite that fails when the property is broken, and each was proved by breaking it deliberately at least once.
+
+
+## Standing invariant: a room is made of something, and the Office is not (2026-08-22)
+
+**The room architecture is LOCKED.** Five decisions, signed off by Sean on 2026-08-22, recorded in `J4_FOUR_ROOMS_DESIGN.md` and settled in `GENESIS_SURFACES.md`. Not to be reopened "unless implementation reveals a direct contradiction with an existing verified invariant."
+
+The bar is **Storefront · Studio · (J4 · Office) · Commerce · Account**, and **Commerce holds both the ledger and the catalogue**. The older four-metaphor framing (Storefront/Orders/Studio/Products) predates the 2026-08-17 merge and must not be restored.
+
+**A room's character comes from what it is made of, not from what colour it is.** Three variables — the lead, the density, the ground — resolved in `lib/dashboard/rooms.ts` and applied **in exactly one place**, `DashboardShell`. The prohibition is half the decision: **no per-page styling**, because a screen that paints its own ground is how three rooms quietly become three products.
+
+**Two exemptions, both deliberate, both asserted:**
+
+- **Arrival and Account take the default ground.** Arrival is "a third kind of surface, neither a room nor a tab"; Account is configured rather than visited. Giving either a character would be inventing work.
+- **The Office gets no character at all, permanently.** It is the only surface that renders *on top of* a room, so anything about it that varied with what is underneath would read as belonging to the room — which is precisely how it becomes a fifth room. `GENESIS_ATMOSPHERE` is its single source. `scripts/verify-rooms-browser.ts` opens it over all three rooms and asserts the computed background is identical.
+
+**And the constraint that outranks all of it: blue marks J4 and nothing else.** No room's identity may depend on hue — "a room that glows blue steals the one signal the owner has learned to read." `scripts/verify-rooms.ts` fails on any room ground that is not neutral, and on any two rooms that share one.
 
 
 ## Permissions & Roles

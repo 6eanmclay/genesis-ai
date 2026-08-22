@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
 import { ACCOUNT_SENTINEL_HREF, PRIMARY_TAB_COUNT, isSentinelHref } from "@/lib/dashboard/navConfig";
+import { roomSurface } from "@/lib/dashboard/rooms";
 import { NavIcon } from "./NavIcon";
 import { J4Icon, type J4IconName } from "./J4Icon";
 import { signOutOfGenesis } from "./actions";
@@ -968,8 +969,17 @@ export function DashboardShell({
 
             {secondaryNav}
 
+            {/* THE ROOM'S OWN GROUND (2026-08-22, decision 1 / Level B).
+                Resolved once, here, and nowhere else: locking Level B locked
+                the prohibition that comes with it, because a screen that
+                painted its own ground is how three rooms quietly become three
+                products. Arrival and Account fall through to the default,
+                which is correct rather than missing — neither is a room.
+                The Office is untouched by this and permanently exempt
+                (decision 3): it renders on top of a room, so a ground that
+                varied with what is underneath would read as the room's. */}
             <main
-              className={`pb-28 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
+              className={`${roomSurface(pathname, basePath)} pb-28 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
                 // Home clears only the 64px header + 40px secondary nav; the
                 // other routes also clear MobileGenesisPresence's 76px bar.
                 isHome
