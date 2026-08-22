@@ -164,8 +164,21 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
 
   const surfaceLabel = (key: string) => SURFACES[key]?.label ?? key;
 
+  // NO GROUND OF ITS OWN (2026-08-22). The root below painted bg-[#faf9f7] /
+  // dark:bg-[#17171a] across its full height, covering the ground
+  // DashboardShell had already resolved for the Studio room — so Studio's
+  // locked character ("the darkest room, so work in progress is the light
+  // source") was never once visible to an owner.
+  //
+  // Decision 1 of the room architecture prohibits exactly this: "no per-page
+  // styling. A screen that painted its own ground is how three rooms quietly
+  // become three products." Found by asserting that what the owner SEES is the
+  // ground the room resolved — the earlier check only compared rooms to each
+  // other, and passed, because a self-painted ground is still distinct.
+  //
+  // The text colours stay. Those are content, not ground.
   return (
-    <div className="min-h-screen bg-[#faf9f7] pb-32 text-zinc-900 dark:bg-[#17171a] dark:text-zinc-100">
+    <div className="min-h-screen pb-32 text-zinc-900 dark:text-zinc-100">
       <div className="mx-auto max-w-5xl px-5 pt-8 lg:px-8">
         <header>
           <h1 className="text-[28px] font-semibold tracking-tight">Studio</h1>

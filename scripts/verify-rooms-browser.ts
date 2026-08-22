@@ -139,6 +139,59 @@ async function main() {
     }
 
     // -----------------------------------------------------------------------
+    console.log("\n1b. The ground the owner actually sees");
+    // -----------------------------------------------------------------------
+    // <main> carrying the right background is not the same as the owner seeing
+    // it. A screen whose own root paints a full-height ground covers the room's
+    // entirely — which is exactly what Decision 1 prohibits ("no per-page
+    // styling... a screen that painted its own ground is how three rooms
+    // quietly become three products"), and is invisible to a check that only
+    // reads <main>.
+    //
+    // So this reads the element the owner is actually looking at: the first
+    // child of <main> that paints an opaque ground across the full width.
+    const visible: Record<string, string> = {};
+    for (const [room, path] of [
+      ["storefront", "/website"],
+      ["studio", "/studio"],
+      ["commerce", "/orders"],
+    ] as const) {
+      await visit(page, `${base}${path}`);
+      visible[room] = await page.evaluate(() => {
+        const main = document.querySelector("main");
+        if (!main) return "(no main)";
+        let painted: Element = main;
+        for (const child of Array.from(main.querySelectorAll("div"))) {
+          const style = getComputedStyle(child);
+          const rect = child.getBoundingClientRect();
+          const opaque =
+            style.backgroundColor !== "rgba(0, 0, 0, 0)" && style.backgroundColor !== "transparent";
+          if (opaque && rect.width >= main.clientWidth * 0.9 && rect.height >= 400) {
+            painted = child;
+            break;
+          }
+        }
+        return getComputedStyle(painted).backgroundColor;
+      });
+    }
+    const seenGrounds = ["storefront", "studio", "commerce"].map((r) => visible[r]);
+    check("no two rooms LOOK the same to the owner", new Set(seenGrounds).size, seenGrounds.length);
+
+    // AND WHAT THEY SEE IS THE GROUND THE ROOM RESOLVED. Distinctness alone is
+    // not enough, and asserting only that passed for the wrong reason on the
+    // first run: Studio's own screen painted #faf9f7 over its room's ground,
+    // which is still distinct from the other two while being nothing the room
+    // decided. That is precisely what Decision 1 prohibits, and the check that
+    // catches it is comparing the painted ground to <main>'s own.
+    for (const room of ["storefront", "studio", "commerce"] as const) {
+      assert(
+        `${room} shows the ground its room resolved`,
+        visible[room] === ground[room],
+        `sees ${visible[room]}, room resolved ${ground[room]}`
+      );
+    }
+
+    // -----------------------------------------------------------------------
     console.log("\n2. The rooms are visibly different from one another");
     // -----------------------------------------------------------------------
     // THE ASSERTION THAT MATTERS. Level B is "the ground changes per room"; if
