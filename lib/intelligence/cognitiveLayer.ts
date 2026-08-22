@@ -126,7 +126,13 @@ const GENESIS_ACTION_HREFS = [
 // excluded regardless of the complexity ceiling — see the system prompt
 // below for why (holistic creative rewrites, or a structurally different
 // mechanism entirely).
-const ProposedActionSchema = z.discriminatedUnion("actionType", [
+// Exported for verification only (2026-08-22). This union and
+// PROPOSABLE_ACTION_TYPES below are two hand-maintained spellings of the same
+// seven actions, and `satisfies readonly GenesisActionType[]` checks that each
+// entry is a valid action TYPE — never that the two lists agree with each
+// other. scripts/verify-cognitive-proposals.ts asserts that, in both
+// directions. See ARCHITECTURE.md, "Standing invariant: the mirrored registry".
+export const ProposedActionSchema = z.discriminatedUnion("actionType", [
   z.object({
     actionType: z.literal("update_seo"),
     input: z.object({ seoTitle: z.string(), seoMetaDescription: z.string() }),
