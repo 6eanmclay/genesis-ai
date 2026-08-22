@@ -23,6 +23,7 @@ import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/fac
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
+import { businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import {
   getOpenProposal,
   reviseProposal,
@@ -1362,15 +1363,52 @@ export async function POST(request: Request) {
         if (chosenTool?.name === "take_me_there") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "take_me_there" });
           const parsedNav = TakeMeThereInputSchema.safeParse(chosenTool.input);
+          // THE OFFICE IS NOT A PLACE THIS CAN GO (corrected 2026-08-22).
+          //
+          // It used to be `office: { href: "/dashboard/studio", label: "the
+          // Office" }` — so J4 said "Taking you to the Office" and took the
+          // owner to Studio instead. One thing said, another done, which is the
+          // navigation form of the rule that Genesis must never claim a change
+          // it did not make.
+          //
+          // There is no correct href to substitute. The Office is an overlay
+          // opened by the control beneath J4, over whichever room the owner is
+          // already in — "Tap Office → the Office, full screen, nothing behind
+          // it" — and it deliberately has no route of its own. So this answers
+          // instead of navigating, which is also the more useful reply: the
+          // owner learns where the door is rather than arriving in the wrong
+          // room.
+          if (parsedNav.success && parsedNav.data.destination === "office") {
+            const reply =
+              conversationalReply ||
+              "The Office is always one tap away — it's the control just beneath me, wherever you are. No need to go anywhere.";
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+            if (!streamedAnyText) emit({ type: "token", delta: reply });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "take_me_there" });
+            controller.close();
+            return;
+          }
+
           const DESTINATIONS: Record<string, { href: string; label: string }> = {
             studio: { href: "/dashboard/studio", label: "Studio" },
             "studio.upload": { href: "/dashboard/studio#bring-your-own", label: "Studio" },
             storefront: { href: "/dashboard/website", label: "your storefront" },
             commerce: { href: "/dashboard/orders", label: "Commerce" },
-            office: { href: "/dashboard/studio", label: "the Office" },
             account: { href: "/dashboard/settings", label: "your account" },
           };
-          const target = parsedNav.success ? DESTINATIONS[parsedNav.data.destination] : null;
+          const chosenDestination = parsedNav.success
+            ? DESTINATIONS[parsedNav.data.destination] ?? null
+            : null;
+          // Addressed within the business the owner is actually in. These hrefs
+          // are authored as the legacy spelling, and /dashboard/... resolves the
+          // ACCOUNT'S ACTIVE business — so J4 navigating an owner who is in one
+          // business could land them in another. Same defect as ffa0962's
+          // review links, on the one path where J4 moves the owner itself.
+          const target = chosenDestination
+            ? { ...chosenDestination, href: sectionHref(chosenDestination.href, businessBasePath(store.slug)) }
+            : null;
 
           if (!target) {
             const reply = conversationalReply || "I'm not sure where you want to go. Tell me what you're trying to do and I'll take you there.";

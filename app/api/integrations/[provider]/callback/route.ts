@@ -91,8 +91,14 @@ export async function GET(
           status: "FAILED",
           verified: false,
           message: oauthError
-            ? (OAUTH_ERROR_MESSAGES[oauthError] ??
-                `${connector.displayName} couldn't complete the connection (${oauthError}).`)
+            // hasOwnProperty (2026-08-22): oauthError is a raw query param, so
+            // ?error=constructor resolved to the inherited Object constructor —
+            // truthy, so `??` never fired, and a FUNCTION was written into the
+            // merchant's ExecutionLog as the failure message they then read.
+            ? (Object.prototype.hasOwnProperty.call(OAUTH_ERROR_MESSAGES, oauthError)
+                ? OAUTH_ERROR_MESSAGES[oauthError]
+                : undefined) ??
+              `${connector.displayName} couldn't complete the connection (${oauthError}).`
             : !verified.ok
               ? oauthStateFailureMessage(verified.reason)
               : "The connection link was invalid or had expired. Please try again.",
