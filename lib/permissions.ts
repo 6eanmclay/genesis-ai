@@ -47,7 +47,12 @@ export const PERMISSIONS = {
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
-const ROLE_PERMISSIONS: Record<StoreRole, Permission[]> = {
+// EXPORTED so the access review can READ this table rather than restate it
+// (2026-08-22, Security & Trust). A second copy of an authorization table is
+// two answers to one question, and the drifted one would be the one nobody is
+// reading — here that means showing an owner the wrong idea of who can spend
+// their money.
+export const ROLE_PERMISSIONS: Record<StoreRole, Permission[]> = {
   OWNER: Object.values(PERMISSIONS),
   EMPLOYEE: [
     PERMISSIONS.PRODUCTS_MANAGE,
