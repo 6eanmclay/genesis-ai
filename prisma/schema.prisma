@@ -59,6 +59,18 @@ model User {
   // REAUTHENTICATION_WINDOW_MS, and clears it again on success so one
   // confirmation does not authorise an unbounded series of them.
   reauthenticatedAt DateTime?
+  // TWO-FACTOR AUTHENTICATION (Security & Trust, 2026-08-22, D6: opt-in).
+  //
+  // The TOTP seed, ENCRYPTED AT REST with the same AES-256 helper that protects
+  // integration credentials — it is a bearer secret exactly as those are, and
+  // anyone holding it can mint valid codes forever. Null means 2FA has never
+  // been set up on this account.
+  totpSecret        String?
+  // Null until the owner has proved they can produce a code from the secret.
+  // A secret WITHOUT this is an abandoned enrolment, not protection: treating
+  // one as enabled would lock somebody out with a code they never verified.
+  totpEnabledAt     DateTime?
+  recoveryCodes     RecoveryCode[]
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -228,6 +240,33 @@ model UserSession {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, lastSeenAt])
+}
+
+// A ONE-TIME WAY BACK IN (Security & Trust, 2026-08-22).
+//
+// Threat case T5, and by volume the likeliest real incident once 2FA exists: an
+// owner loses the phone holding their second factor. Getting this wrong locks a
+// real business out of its own storefront and payments, which is why enrolment
+// and recovery ship together and were never split.
+//
+// HASHED, exactly like a password, and for the same reason: a table of usable
+// recovery codes is a table of passwords. Shown to the owner once at generation
+// and never again — "regenerate" is the only path back, and it invalidates
+// every previous code.
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  /// bcrypt of the code. The code itself is never stored anywhere.
+  codeHash  String
+  /// Set the moment it is spent. A used code is KEPT rather than deleted, so
+  /// "you have 3 of 8 codes left" stays answerable and the history can say a
+  /// code was used.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model PasswordResetToken {
