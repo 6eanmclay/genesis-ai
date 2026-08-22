@@ -1,3 +1,5 @@
+import { legacyPathFor } from "@/lib/dashboard/navConfig";
+
 // What the owner is currently looking at (2026-08-14).
 //
 // The second half of Sean's correction to J4's mental model. The first half
@@ -38,12 +40,28 @@ const WORKSPACES = {
     showing: "the business identity: the business name, its description, and its brand and creative direction",
   },
   "/dashboard/website": {
-    label: "Website",
+    // "Storefront", not "Website" (2026-08-22). The room bar has said Storefront
+    // since 2026-08-15; J4 was still telling owners they were looking at a place
+    // whose name is nowhere on their screen.
+    label: "Storefront",
     showing: "the storefront canvas: the live storefront and the sections it is built from",
+  },
+  "/dashboard/studio": {
+    // Added 2026-08-22. Studio joined the room bar on 2026-08-16 and was never
+    // added here, so J4 was blind in it from the day it shipped.
+    label: "Studio",
+    showing: "the studio: the piece being made, and the alternatives beside it",
   },
   "/dashboard/products": {
     label: "Products",
     showing: "the product catalog: each product's name, description, price and images",
+  },
+  "/dashboard/catalog": {
+    // Added 2026-08-22, same omission as Studio. Deliberately described as what
+    // COULD be sold: reading it as inventory is the exact confusion its own
+    // section comment exists to prevent.
+    label: "What you could sell",
+    showing: "products Genesis suggests the business could add, which are not in the catalog yet",
   },
   "/dashboard/customers": {
     label: "Customers",
@@ -62,7 +80,9 @@ const WORKSPACES = {
     showing: "how the business gets paid: its payment provider connections",
   },
   "/dashboard/analytics": {
-    label: "Analytics",
+    // "Revenue" is what the section is called inside Commerce; "Analytics" is
+    // what the route is called. J4 says the owner's word.
+    label: "Revenue",
     showing: "the business numbers: revenue, orders and how they are trending",
   },
   "/dashboard/connections": {
@@ -105,8 +125,23 @@ export function resolveWorkspaceContext(path: unknown): WorkspaceContext | null 
   // routine part of these URLs (see app/dashboard/layout.tsx's focusHref) and
   // should never cost the owner their context.
   const pathname = path.split(/[?#]/)[0];
-  if (!Object.prototype.hasOwnProperty.call(WORKSPACES, pathname)) return null;
-  return WORKSPACES[pathname as WorkspacePath];
+  // THEN normalise the business out of it (2026-08-22).
+  //
+  // Business-in-the-URL shipped 2026-08-20 and moved every owner from
+  // /dashboard/website to /b/<slug>/website. This registry is keyed by the
+  // legacy paths and matched exactly, so from that day J4 resolved NOTHING on
+  // any route an owner actually used: "make this bolder" stopped being a
+  // complete sentence everywhere at once, silently, with no error anywhere.
+  //
+  // Normalise-then-match, NOT a looser matcher. Which business the owner is in
+  // has no bearing on what kind of screen they are looking at, so the base is
+  // dropped and the exact match below is left exactly as strict as it was.
+  // Relaxing it to a prefix match would "fix" this too — and would make
+  // /b/x/products/abc resolve to the product catalog, which is the confident
+  // wrong answer this whole file exists to refuse.
+  const normalized = legacyPathFor(pathname);
+  if (!Object.prototype.hasOwnProperty.call(WORKSPACES, normalized)) return null;
+  return WORKSPACES[normalized as WorkspacePath];
 }
 
 /**

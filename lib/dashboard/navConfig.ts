@@ -264,3 +264,35 @@ export function sectionHref(href: string, basePath: string): string {
 export function sectionsFor(sections: NavSection[], basePath: string): NavSection[] {
   return sections.map((section) => ({ ...section, href: sectionHref(section.href, basePath) }));
 }
+
+/**
+ * The inverse of sectionHref: which section a business-scoped path IS.
+ *
+ * `/b/iron-gym/orders` → `/dashboard/orders`, `/b/iron-gym` → `/dashboard`.
+ * A path that is already legacy, or was never a dashboard route at all, comes
+ * back untouched.
+ *
+ * WHY THIS LIVES HERE rather than as a regex wherever it is needed. The shape
+ * of a business path is stated exactly once, in businessBasePath, and this is
+ * the only other place that has to know it. A second spelling somewhere else
+ * would be the mirrored-registry problem in miniature — two rules about the
+ * same URL shape, and the one that drifts is the one nobody is looking at.
+ *
+ * DELIBERATELY NOT a canonicaliser: it moves the base and nothing else. The
+ * remainder is returned exactly as given, including any deeper segments, so a
+ * caller matching against a closed registry still gets to refuse
+ * `/dashboard/products/abc` on its own terms. Loosening that here would turn
+ * every consumer into a prefix matcher without any of them asking for it.
+ */
+export function legacyPathFor(path: string): string {
+  if (!path.startsWith("/b/")) return path;
+  const rest = path.slice("/b/".length);
+  const slash = rest.indexOf("/");
+  // "/b/" alone, or "/b//orders" — no slug, so not a business path.
+  const slug = slash === -1 ? rest : rest.slice(0, slash);
+  if (slug.length === 0) return path;
+  const remainder = slash === -1 ? "" : rest.slice(slash);
+  // "/b/iron-gym" and "/b/iron-gym/" are both the business's own root.
+  if (remainder === "" || remainder === "/") return LEGACY_BUSINESS_BASE;
+  return `${LEGACY_BUSINESS_BASE}${remainder}`;
+}
