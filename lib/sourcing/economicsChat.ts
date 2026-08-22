@@ -261,7 +261,12 @@ export function replyFor(question: OutstandingQuestion, result: AnswerResult): s
     return `No problem — I haven't written anything down for ${question.productName}, so I'll keep the question open until you find out.${remaining}`;
   }
   if (result.recorded.status === "rejected") {
-    return `I couldn't record that: ${result.recorded.problem}.${remaining}`;
+    // NAMES THE PRODUCT, like every other branch here (2026-08-21). It was the
+    // one reply that did not, and describeOutstandingForJ4 can legitimately have
+    // several questions open at once — so "I couldn't record that: that price is
+    // lower than their own bulk tier" left an owner who had just answered three
+    // of them with no way to tell which one had failed.
+    return `I couldn't record that for ${question.productName}: ${result.recorded.problem}.${remaining}`;
   }
   if (result.recorded.status === "preserved") {
     return `I've kept what you told me before about ${question.productName} — ${result.recorded.reason}.${remaining}`;
