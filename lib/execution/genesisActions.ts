@@ -860,8 +860,54 @@ export { FIELD_LABELS } from "./fieldLabels";
 // "Identity" here (the user-facing word in the nav secondary-nav
 // correction, lib/dashboard/navConfig.ts's YOUR_BUSINESS_SECTIONS) even
 // though the key/route/file underneath stay "brand".
+//
+// RE-KEYED TO THE ROOMS, 2026-08-22 (decision 5 of the locked room
+// architecture). The rule, in Sean's words: "J4 must never describe a change in
+// terms of a place the owner cannot actually see." Four entries said "Website",
+// a word that has not been on the room bar since 2026-08-15 — the section is
+// called Storefront, so that is what J4 says. scripts/verify-action-sections.ts
+// now asserts it against navConfig rather than trusting this comment.
+//
+// WHAT DELIBERATELY DID NOT MOVE, and why, because both were proposed and both
+// turned out to be wrong against what this map actually means. Its subject is
+// the first line above — which section OWNS the Approve/Reject/Regenerate
+// controls — not which room a concept belongs to:
+//
+//   update_seo stays on Marketing. The design proposal argued it belongs in
+//   Storefront ("the search listing is how the business looks to someone who
+//   has not arrived yet"), which is true about the concept and false about the
+//   controls: app/dashboard/marketing/page.tsx is what renders the SEO
+//   approvals, its DelegatedAuthority grant, and the revert affordances for
+//   already-executed ones. Re-keying it would have deep-linked owners to a page
+//   with none of that on it. Marketing is a real, visible destination, so the
+//   naming rule is satisfied where it stands.
+//
+//   update_goal_status / resolve_challenge stay on the arrival screen. Moving
+//   them to the Office was proposed on the strength of Understanding existing
+//   there now, but the Office is an overlay with no route of its own, so `href`
+//   would have had nowhere to point — and their controls genuinely are on
+//   arrival (RecommendationsPanel). The arrival screen has no owner-visible
+//   label in the room model, which is why "Home" survives here as a named
+//   exception in the verification suite rather than being quietly renamed to
+//   something equally invisible.
 export const ACTION_SECTIONS: Record<string, { key: string; label: string; href: string }> = {
-  update_hero: { key: "website", label: "Website", href: "/dashboard/website" },
+  update_hero: { key: "website", label: "Storefront", href: "/dashboard/website" },
+  // THE NEXT TWO WERE MISSING ENTIRELY until 2026-08-22, found by the suite
+  // rather than by reading. Both are authorizationTier "always_ask", so both
+  // genuinely produce ApprovalRequests an owner has to decide — and every
+  // consumer of this map degrades silently when the lookup misses: no nav badge
+  // (BusinessWorkspace skips a falsy key), no focusable approval
+  // (focusableApprovals drops it), and an attention card with no Review link at
+  // all (reviewHref falls back to null). A pending storefront refinement — one
+  // of J4's most visible capabilities — arrived with no way to navigate to it.
+  refine_storefront: { key: "website", label: "Storefront", href: "/dashboard/website" },
+  // Supplier economics is answered through J4's own card rather than on a page,
+  // so this names where the owner SEES the result: the catalog renders each
+  // item's economics, and it is a real section of Commerce. Deliberately not
+  // Products — "what you could sell" and "what you do sell" are different
+  // shelves, and folding one into the other would make a supplier quote look
+  // like inventory.
+  answer_supplier_economics: { key: "catalog", label: "What you could sell", href: "/dashboard/catalog" },
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
   update_brand_logo: { key: "brand", label: "Identity", href: "/dashboard/brand" },
   create_product_from_design: { key: "products", label: "Products", href: "/dashboard/products" },
@@ -869,11 +915,11 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_product: { key: "products", label: "Products", href: "/dashboard/products" },
   create_product: { key: "products", label: "Products", href: "/dashboard/products" },
   delete_product: { key: "products", label: "Products", href: "/dashboard/products" },
-  update_theme: { key: "website", label: "Website", href: "/dashboard/website" },
-  update_homepage_content: { key: "website", label: "Website", href: "/dashboard/website" },
+  update_theme: { key: "website", label: "Storefront", href: "/dashboard/website" },
+  update_homepage_content: { key: "website", label: "Storefront", href: "/dashboard/website" },
   update_brand_identity: { key: "brand", label: "Identity", href: "/dashboard/brand" },
   update_store_identity: { key: "brand", label: "Identity", href: "/dashboard/brand" },
-  update_section_order: { key: "website", label: "Website", href: "/dashboard/website" },
+  update_section_order: { key: "website", label: "Storefront", href: "/dashboard/website" },
   // Phase 2 Milestone 1 — Settings was genuinely empty before this ("nothing
   // to configure here yet"); store policies and design direction are
   // business-configuration content, not creative identity (Brand) or
