@@ -21,6 +21,7 @@ import {
   sectionPaddingClass,
   contentGapClass,
   heroLayoutOf,
+  heroLayoutRendersImage,
   ctaEmphasisOf,
   sectionLayoutFor,
   headingScaleClass,
@@ -654,7 +655,9 @@ export default async function StorefrontPage({
     const heading = homepage?.heroHeadline || storeName;
     const subheading = homepage?.heroSubheadline || storeTagline || storeDescription;
 
-    if (heroLayout === "split") {
+    // The one predicate updateHero's verify() also reads, so a check that says
+    // the image is live cannot disagree with the renderer that shows it.
+    if (heroLayoutRendersImage(heroLayout)) {
       // Priority 4 fix — the hero used to fall back straight to
       // products[0]'s own image, coupling storefront identity to array
       // order and to whichever product happened to get a real photo. A

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { AssetSchema } from "@/lib/businessModel/entities";
+import { DEFAULT_THEME, heroLayoutOf, heroLayoutRendersImage, type Theme } from "@/lib/theme";
 
 // What J4 can actually see about a storefront's composition (2026-08-18).
 //
@@ -17,9 +18,18 @@ import { AssetSchema } from "@/lib/businessModel/entities";
 // severity constant in a library — same discipline the BI engine already
 // follows, and the reason "J4 doesn't surface everything he can detect" holds.
 //
-// DELIBERATELY DOES NOT READ blueprint.homepageContent.heroImageUrl. That field
-// exists only in Sean's uncommitted working tree, not in HEAD. Depending on it
-// would entangle this with in-flight work and break a clean checkout.
+// IT NOW READS blueprint.homepageContent.heroImageUrl (2026-08-22). This
+// comment used to say the opposite — "that field exists only in Sean's
+// uncommitted working tree, not in HEAD" — which was true when it was written
+// and stopped being true when updateHero.ts landed. A stale reason to skip a
+// fact is worse than no reason, because it reads as a decision.
+//
+// The fact it was missing matters: hasHeroGraphic below is about an ASSET the
+// owner owns with the role storefront.hero, which is a different question from
+// whether the storefront actually shows a hero image. J4 could truthfully
+// report "Hero composition: yes" about a page that has none, and then reason
+// from it — the exact acknowledge-then-ignore gap this whole area exists to
+// close.
 
 export interface StorefrontFinding {
   key: string;
@@ -41,6 +51,15 @@ export interface StorefrontEvaluation {
   /** Images the owner has that are NOT product photos — the editorial pool. */
   editorialImageCount: number;
   hasLogo: boolean;
+  /**
+   * Is a hero image ACTUALLY VISIBLE on the storefront right now?
+   *
+   * Not "is one saved" — three of the four hero layouts render no image at all,
+   * and the default is one of them. Read through the same predicate the
+   * storefront itself renders through, so J4's read of the page and the page
+   * cannot disagree.
+   */
+  heroImageIsLive: boolean;
   hasHeroGraphic: boolean;
   hasFeatureGraphic: boolean;
   /** Distinct product categories, which is what makes grouping possible. */
@@ -49,7 +68,7 @@ export interface StorefrontEvaluation {
 }
 
 export async function evaluateStorefront(storeId: string): Promise<StorefrontEvaluation> {
-  const [products, assetRows] = await Promise.all([
+  const [products, assetRows, store] = await Promise.all([
     prisma.product.findMany({
       where: { storeId },
       select: { name: true, imageUrl: true, description: true },
@@ -59,7 +78,13 @@ export async function evaluateStorefront(storeId: string): Promise<StorefrontEva
       orderBy: { syncedAt: "desc" },
       select: { data: true },
     }),
+    prisma.store.findUnique({ where: { id: storeId }, select: { blueprint: true, theme: true } }),
   ]);
+
+  const homepage = (store?.blueprint as { homepageContent?: { heroImageUrl?: string | null } } | null)
+    ?.homepageContent;
+  const theme = (store?.theme as Theme | null) ?? DEFAULT_THEME;
+  const heroImageIsLive = Boolean(homepage?.heroImageUrl) && heroLayoutRendersImage(heroLayoutOf(theme));
 
   const productImageUrls = new Set(products.map((p) => p.imageUrl).filter(Boolean) as string[]);
 
@@ -197,6 +222,7 @@ export async function evaluateStorefront(storeId: string): Promise<StorefrontEva
     productCount: products.length,
     productsWithImages,
     editorialImageCount,
+    heroImageIsLive,
     hasLogo,
     hasHeroGraphic,
     hasFeatureGraphic,
@@ -215,6 +241,11 @@ export function summariseEvaluation(evaluation: StorefrontEvaluation): string {
     `${evaluation.productCount} products, ${evaluation.productsWithImages} with photos.`,
     `${evaluation.editorialImageCount} non-product images available.`,
     `Logo: ${evaluation.hasLogo ? "yes" : "none"}. Hero composition: ${evaluation.hasHeroGraphic ? "yes" : "none"}. Featured section: ${evaluation.hasFeatureGraphic ? "yes" : "none"}.`,
+    // Said separately from "hero composition" above, and deliberately, because
+    // they are different facts: one is an image the owner owns, the other is
+    // what a visitor sees. Collapsing them is how J4 ends up describing a page
+    // that does not exist.
+    `Hero image live on the storefront: ${evaluation.heroImageIsLive ? "yes" : "no"}.`,
   ];
   if (evaluation.categories.length > 0) {
     lines.push(`Possible groupings: ${evaluation.categories.join(", ")}.`);

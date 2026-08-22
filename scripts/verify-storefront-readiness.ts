@@ -41,6 +41,7 @@ function evaluation(findings: StorefrontFinding[], over: Partial<StorefrontEvalu
     productCount: 5,
     productsWithImages: 2,
     editorialImageCount: 0,
+    heroImageIsLive: false,
     hasLogo: false,
     hasHeroGraphic: false,
     hasFeatureGraphic: false,

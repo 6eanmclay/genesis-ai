@@ -172,6 +172,28 @@ export function heroLayoutOf(theme: Theme): Composition["heroLayout"] {
   return compositionOf(theme).heroLayout;
 }
 
+/**
+ * Does this hero layout render an image at all? (2026-08-22)
+ *
+ * ONE ANSWER, in one place, because two of them is the defect this exists to
+ * close. Of the four hero layouts, only `split` has an image slot — the other
+ * three render a headline, a subheadline and a call to action, and nothing
+ * else. The default is `centered`.
+ *
+ * So a hero image applied to a default-themed store is written to the record,
+ * round-trips perfectly, and appears nowhere. updateHero's verify() confirmed
+ * exactly that round-trip and reported success, which is the failure Sean named
+ * directly: "the verification step should confirm the image actually exists in
+ * the resulting storefront... J4 should not report the change as completed if
+ * it only changed the text/layout while failing to apply the referenced image."
+ *
+ * The storefront and that verify() now read this same function, so the check
+ * cannot say yes while the renderer says no.
+ */
+export function heroLayoutRendersImage(layout: Composition["heroLayout"]): boolean {
+  return layout === "split";
+}
+
 export function ctaEmphasisOf(theme: Theme): Composition["ctaEmphasis"] {
   return compositionOf(theme).ctaEmphasis;
 }

@@ -4,6 +4,7 @@ import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
 import { resolveOwnedImageUrl } from "@/lib/businessModel/assets";
 import { writeHomepageContent } from "@/lib/storefront/homepageContent";
+import { DEFAULT_THEME, heroLayoutOf, heroLayoutRendersImage, type Theme } from "@/lib/theme";
 
 export interface UpdateHeroInput {
   heroHeadline: string;
@@ -86,12 +87,38 @@ export const updateHeroExecutable: Executable<UpdateHeroInput, { heroImageUrl: s
     if (!("heroImageUrl" in input) || !input.heroImageUrl) return { ok: true };
     const store = await prisma.store.findUniqueOrThrow({
       where: { id: ctx.storeId },
-      select: { blueprint: true },
+      select: { blueprint: true, theme: true },
     });
     const blueprint = (store.blueprint as BlueprintShape | null) ?? {};
     const storedUrl = (blueprint.homepageContent as { heroImageUrl?: string | null } | undefined)?.heroImageUrl;
     if (storedUrl !== input.heroImageUrl) {
       return { ok: false, error: "The hero image wasn't actually saved to the storefront." };
+    }
+
+    // SAVED IS NOT SHOWN (2026-08-22), and the difference is the whole point of
+    // this step.
+    //
+    // The check above only proved the value round-tripped. Three of the four
+    // hero layouts render no image at all, and the default is one of them — so
+    // on an ordinary store this used to save the photo, confirm the save, and
+    // report success while the storefront the owner then opened looked exactly
+    // as it had before. That is precisely the outcome Sean described: J4 said
+    // it would use the photo, said it had, and the site did not have it.
+    //
+    // Read through the same predicate the storefront renders through, so this
+    // cannot pass while the page shows nothing.
+    const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
+    if (!heroLayoutRendersImage(heroLayoutOf(theme))) {
+      return {
+        ok: false,
+        // Named as the real situation rather than a failure: the image is
+        // genuinely saved and will appear the moment the layout can show one.
+        // Silently switching the layout instead would be Genesis redesigning
+        // the storefront on the strength of a photo — a bigger change than the
+        // owner approved.
+        error:
+          "The hero image was saved, but this storefront's hero layout doesn't display one — it needs the split hero layout to appear.",
+      };
     }
     return { ok: true };
   },

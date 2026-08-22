@@ -23,8 +23,12 @@ import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
 //   "The verify step must confirm the image actually exists in the resulting
 //    storefront - J4 should not report success if it only changed text"
 //        -> §4: verify() fails when the image did not land
+//        -> §5: and fails when it DID land on a storefront that cannot show
+//           it, which is the same broken promise reached from the other
+//           direction — and the more dangerous one, because every part of the
+//           system agrees it worked
 //
-// §5 covers the consolidation the codebase itself asked for: one writer for
+// §6 covers the consolidation the codebase itself asked for: one writer for
 // blueprint.homepageContent, so neither door drops the other's fields.
 
 let failures = 0;
@@ -63,6 +67,8 @@ async function main() {
   const { setStorefrontHeroImage } = await import("@/lib/design/composeForStorefront");
   const { ingestBusinessAsset } = await import("@/lib/businessAssets/ingest");
   const { prismaSystem: prisma } = await import("@/lib/prisma");
+  const { DEFAULT_THEME } = await import("@/lib/theme");
+  const { Prisma } = await import("@prisma/client");
 
   async function reset() {
     const tables = await prisma.$queryRaw<{ tablename: string }[]>`
@@ -86,6 +92,15 @@ async function main() {
         tagline: "t",
         description: "d",
         currency: "USD",
+        // A HERO LAYOUT THAT CAN ACTUALLY SHOW AN IMAGE (2026-08-22).
+        //
+        // Added because its absence was hiding a real defect. Three of the four
+        // hero layouts render no image at all and the default is one of them,
+        // so this suite's own "the upload reaches the storefront, end to end"
+        // was being proved against a store whose storefront would never have
+        // displayed it. verify() agreed, because it only checked the value had
+        // round-tripped. §6 below now covers the case this fixture used to be.
+        theme: { ...DEFAULT_THEME, composition: { ...DEFAULT_THEME.composition!, heroLayout: "split" } },
         blueprint: {
           theme: { primary: "#123456" },
           homepageContent: {
@@ -220,7 +235,51 @@ async function main() {
     { ok: true });
 
   // ==========================================================================
-  console.log("\n=== 5. One writer, two doors ===\n");
+  console.log("\n=== 5. Saved is not the same as shown ===\n");
+  // ==========================================================================
+  // THE GAP SEAN REPORTED, in its second form. §4 covers the image failing to
+  // save. This covers the image saving perfectly and still not being there: on
+  // a store using any hero layout but `split` — including the default every
+  // store starts on — the field round-trips and the page renders nothing.
+  //
+  // Before this, verify() confirmed the round-trip and reported success. J4
+  // said it would use the photo, said it had, and the storefront did not have
+  // it. That is the same broken promise as a failed write, reached from the
+  // opposite direction — and it is the more dangerous one, because everything
+  // in the system agrees it worked.
+  //
+  // Theme cleared to null rather than set to a chosen layout: that is the real
+  // "no composition of its own yet" state, and it is resolved through the same
+  // DEFAULT_THEME fallback the storefront uses — so this asserts against what a
+  // store genuinely falls back to, not against a layout picked to fail.
+  const plain = await business("hero-default-layout");
+  await prisma.store.update({ where: { id: plain.id }, data: { theme: Prisma.DbNull } });
+  const PLAIN_UPLOAD = "https://blob.example.test/uploads/shop-front.png";
+  await ingestBusinessAsset(plain.id, {
+    url: PLAIN_UPLOAD,
+    originalFilename: "shop-front.png",
+    contentType: "image/png",
+  });
+  await updateHeroExecutable.run(
+    { heroHeadline: "x", heroSubheadline: "y", heroImageUrl: PLAIN_UPLOAD },
+    ctx(plain.id)
+  );
+  check("the image really is saved", (await homepageOf(plain.id)).heroImageUrl, PLAIN_UPLOAD);
+
+  const unseen = await updateHeroExecutable.verify!(
+    { heroHeadline: "x", heroSubheadline: "y", heroImageUrl: PLAIN_UPLOAD },
+    ctx(plain.id)
+  );
+  check("but verify refuses to call it done", unseen.ok, false);
+  assert("and says why the owner will not see it", (unseen.error ?? "").includes("layout"), unseen.error ?? "");
+  assert(
+    "so J4 cannot report a photo is on a page that does not show one",
+    unseen.ok === false,
+    "saved and shown are different claims, and only one is what the owner asked for"
+  );
+
+  // ==========================================================================
+  console.log("\n=== 6. One writer, two doors ===\n");
   // ==========================================================================
   // A text-only hero edit must leave an existing image alone — "not mentioned"
   // is not "remove it".
