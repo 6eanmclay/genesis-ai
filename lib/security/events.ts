@@ -158,12 +158,13 @@ export interface RecordSecurityEventInput {
  * caller carries on.
  */
 export async function recordSecurityEvent(input: RecordSecurityEventInput): Promise<void> {
+  const device = describeDevice(input.userAgent);
   try {
     await prisma.securityEvent.create({
       data: {
         userId: input.userId,
         kind: input.kind,
-        device: describeDevice(input.userAgent),
+        device,
         sessionInstanceId: input.sessionInstanceId ?? null,
         detail: input.detail ? (input.detail as object) : undefined,
       },
@@ -172,6 +173,29 @@ export async function recordSecurityEvent(input: RecordSecurityEventInput): Prom
     reportIssue(`security event ${input.kind} could not be recorded`, error, {
       subsystem: "security",
       stage: "security_event.write",
+      extra: { kind: input.kind, userId: input.userId },
+    });
+  }
+
+  // AND TELL THEM, when it is the kind of thing worth interrupting somebody
+  // about. Deliberately here rather than at each call site: an event that is
+  // recorded but not notified would be a silent decision made in whichever
+  // caller forgot, and the list of what deserves a mail belongs in one place.
+  //
+  // Awaited but never allowed to throw — notifyOfSecurityEvent swallows its
+  // own failures for the same reason this function does. Recording and
+  // notifying are both bookkeeping around an act the owner asked for, and
+  // neither may fail it.
+  //
+  // Imported lazily to keep a cycle out of the module graph: notifications
+  // reads SECURITY_EVENT_LABEL from this file.
+  try {
+    const { notifyOfSecurityEvent } = await import("./notifications");
+    await notifyOfSecurityEvent({ userId: input.userId, kind: input.kind, device });
+  } catch (error) {
+    reportIssue(`security notification ${input.kind} could not be attempted`, error, {
+      subsystem: "security",
+      stage: "security_notification.dispatch",
       extra: { kind: input.kind, userId: input.userId },
     });
   }
