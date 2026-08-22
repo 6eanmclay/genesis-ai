@@ -1221,6 +1221,24 @@ model Order {
   labelUrl                String?
   // What the LABEL cost the owner. Written only when a label is purchased.
   // Read by M7 profitability — do not conflate with what the customer paid.
+  // WHERE THE PARCEL ACTUALLY IS (Shipping & Fulfilment, 2026-08-22, S3).
+  //
+  // The last arrow of the commerce chain, and the one that has never had an
+  // answer. Until now the system knew a label had been bought and a tracking
+  // number existed; whether the thing ARRIVED was unknowable, so the order
+  // lifecycle stopped at "shipped" and stayed there forever.
+  //
+  // Written only by the carrier's own tracking updates — never inferred from
+  // elapsed time, which would be Genesis guessing at somebody's delivery.
+  // Null throughout means no carrier has told us anything yet, which is a
+  // different fact from "not delivered" and is kept distinguishable.
+  //
+  // The vocabulary is lib/businessModel/entities.ts's ShipmentSchema.status,
+  // a free string for the reason that file already documents: a carrier
+  // inventing a new state must not break ingestion.
+  shipmentStatus          String?
+  deliveredAt             DateTime?
+  lastScanAt              DateTime?
   shippingCostInCents     Int?
   // What the CUSTOMER chose and was charged at checkout (2026-08-20). The gap
   // between this and shippingCostInCents is the store's shipping margin.
