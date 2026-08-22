@@ -283,6 +283,35 @@ async function main() {
     }
 
     // -----------------------------------------------------------------------
+    console.log("\n5b. A review link never changes which business you are in");
+    // -----------------------------------------------------------------------
+    // ACTION_SECTIONS stores the legacy "/dashboard/..." spelling of every
+    // section, and that route resolves the ACCOUNT'S ACTIVE business. This
+    // account is active in the gym, so a raw link followed from inside Copper &
+    // Coil landed on the gym's version of that screen — same layout, same
+    // controls, different business, and nothing anywhere saying so. Visiting
+    // /b/<slug> deliberately does not set the active business, which is the
+    // whole point of the route, so this could never self-correct.
+    {
+      const context = await signedInContext();
+      const page = await context.newPage();
+      await page.goto(`${server.baseUrl}/b/${coil.slug}/website`, { waitUntil: "domcontentloaded" });
+
+      const stray = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("a[href]"))
+          .map((a) => a.getAttribute("href") ?? "")
+          .filter((href) => href.startsWith("/dashboard"))
+      );
+      check("no link inside a business points at the legacy route", [...new Set(stray)], []);
+      assert(
+        "so nothing on this page can move the owner to their active business",
+        stray.length === 0,
+        "the account is active in Iron Gym, and this is Copper & Coil"
+      );
+      await context.close();
+    }
+
+    // -----------------------------------------------------------------------
     console.log("\n6. The legacy route still works");
     {
       const context = await signedInContext();

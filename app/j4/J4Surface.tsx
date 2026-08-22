@@ -6,6 +6,7 @@ import { accessTo } from "@/lib/businessContext";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
+import { LEGACY_BUSINESS_BASE, businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import { sendStoreMessage, uploadBusinessAssetFromChat, uploadPhotoBatchFromChat, uploadVoiceMemo } from "@/app/dashboard/ai-actions";
 import { getBusinessUnderstanding, type BusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { J4Workspace, type J4Surface as J4SurfaceKind, type UnderstandingGroup } from "./J4Workspace";
@@ -344,7 +345,14 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
         id: a.id,
         summary: a.summary,
         createdAt: a.createdAt.toISOString(),
-        href: ACTION_SECTIONS[a.actionType]?.href ?? null,
+        // Inside the business the owner is looking at (2026-08-22).
+        // ACTION_SECTIONS stores the legacy "/dashboard/..." spelling, and a
+        // Decisions row that followed it would resolve the ACCOUNT'S ACTIVE
+        // business — so opening a decision from the Office could move the owner
+        // to a different business than the one whose Office they are in.
+        href: ACTION_SECTIONS[a.actionType]
+          ? sectionHref(ACTION_SECTIONS[a.actionType].href, slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE)
+          : null,
       }))}
       ideas={ideas.map((o) => ({ id: o.id, summary: o.summary, href: o.actionHref }))}
       information={information}

@@ -1,3 +1,4 @@
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { startRealPostgres } from "@/scripts/lib/realPostgres";
 import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
 import type { ProductSource, SourceEconomicsResult, SourceSearchResult } from "@/lib/sourcing/types";
@@ -169,7 +170,7 @@ async function main() {
 
   const cardsFor = async (storeId: string, currency = "USD") => {
     const tasks = await getOpenTasks(storeId);
-    return buildAttentionCards({
+    return buildAttentionCards({ basePath: LEGACY_BUSINESS_BASE,
       issues: [], pendingApprovals: [], nextRecommendation: null, discoveryItems: [],
       tasks: tasks.map((t) => ({
         id: t.id, title: t.title, summary: t.summary,

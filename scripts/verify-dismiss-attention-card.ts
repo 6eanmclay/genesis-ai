@@ -1,3 +1,4 @@
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { prismaSystem } from "../lib/prisma";
@@ -23,7 +24,7 @@ async function main() {
   console.log("Testing against real observation:", cardId, observation.summary);
 
   // Before dismissal — card should be present.
-  const before = buildPageAttentionCards({
+  const before = buildPageAttentionCards({ basePath: LEGACY_BUSINESS_BASE,
     approvals: [],
     observations: [{ dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
     dismissedCardIds: await getDismissedCardIds(observation.storeId),
@@ -39,7 +40,7 @@ async function main() {
     update: { dismissedAt: new Date() },
   });
 
-  const after = buildPageAttentionCards({
+  const after = buildPageAttentionCards({ basePath: LEGACY_BUSINESS_BASE,
     approvals: [],
     observations: [{ dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
     dismissedCardIds: await getDismissedCardIds(observation.storeId),
@@ -56,7 +57,7 @@ async function main() {
 
   // Cleanup.
   await prismaSystem.dismissedAttentionCard.delete({ where: { storeId_cardId: { storeId: observation.storeId, cardId } } });
-  const restored = buildPageAttentionCards({
+  const restored = buildPageAttentionCards({ basePath: LEGACY_BUSINESS_BASE,
     approvals: [],
     observations: [{ dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
     dismissedCardIds: await getDismissedCardIds(observation.storeId),

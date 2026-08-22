@@ -4,7 +4,7 @@ import { accessibleBusinesses } from "@/lib/businessContext";
 import type { Store, StoreRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
-import { COMMERCE_SECTIONS, NAV_SECTIONS, ROOM_SECTIONS, STOREFRONT_SECTIONS, sectionsFor } from "@/lib/dashboard/navConfig";
+import { COMMERCE_SECTIONS, NAV_SECTIONS, ROOM_SECTIONS, STOREFRONT_SECTIONS, sectionHref, sectionsFor } from "@/lib/dashboard/navConfig";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOrderSummary, getRevenueTrend } from "@/lib/dashboard/whatHappened";
 import { getNewCustomerCount } from "@/lib/dashboard/customers";
@@ -199,7 +199,11 @@ export async function BusinessWorkspace({
       return {
         id: approval.id,
         section: section.key,
-        href: section.href,
+        // Rebased onto this workspace's own business (2026-08-22). See
+        // attentionCards' reviewHref for the full reasoning: ACTION_SECTIONS
+        // stores the legacy spelling, and following one from inside
+        // /b/<slug>/... lands on the ACCOUNT'S ACTIVE business instead.
+        href: sectionHref(section.href, basePath),
         summary: approval.summary,
         noticedSummary: approval.topicKey
           ? observationSummaryByTopicKey.get(approval.topicKey) ?? null
@@ -264,7 +268,9 @@ export async function BusinessWorkspace({
     // means no badge for that section, which is a missing dot; crashing the
     // whole dashboard is not a proportionate response to a missing dot.
     if (!owning) continue;
-    const sectionHref = owning.href;
+    // Shadowing the imported helper would be a trap, so this is named for what
+    // it is: the section's route inside THIS business.
+    const ownHref = sectionHref(owning.href, basePath);
     const urgentObs = liveObservations.filter(
       (o) => o.genesisState === "urgent" && o.actionHref && sectionKeyByHref.get(o.actionHref) === key
     );
@@ -282,12 +288,12 @@ export async function BusinessWorkspace({
             : "idle";
     const focusHref =
       state === "urgent"
-        ? `${sectionHref}?focus=${urgentObs[0].dedupeKey}`
+        ? `${ownHref}?focus=${urgentObs[0].dedupeKey}`
         : state === "needs_decision"
-          ? `${sectionHref}?focus=${oldestApprovalIdBySection[key]}`
+          ? `${ownHref}?focus=${oldestApprovalIdBySection[key]}`
           : state === "opportunity"
-            ? `${sectionHref}?focus=${opportunityObs[0].dedupeKey}`
-            : sectionHref;
+            ? `${ownHref}?focus=${opportunityObs[0].dedupeKey}`
+            : ownHref;
     sectionNavState[key] = {
       state,
       count: urgentObs.length + approvalCount + opportunityObs.length,
@@ -306,7 +312,8 @@ export async function BusinessWorkspace({
   sectionNavState.home = {
     state: yourBusinessState.state,
     count: yourBusinessChildren.reduce((sum, s) => sum + s.count, 0),
-    focusHref: "/dashboard",
+    // The business the owner is in, not the legacy route (2026-08-22).
+    focusHref: basePath,
   };
 
   // Merged focus-target list DashboardShell resolves "?focus=" against —
@@ -323,7 +330,9 @@ export async function BusinessWorkspace({
         kind: "observation" as const,
         id: o.dedupeKey,
         section: key,
-        href: o.actionHref!,
+        // Same rebasing as the approvals above — an observation stores the
+        // legacy href it was written with, which is not where this owner is.
+        href: sectionHref(o.actionHref!, basePath),
         summary: o.summary,
         noticedSummary: null as string | null,
       };

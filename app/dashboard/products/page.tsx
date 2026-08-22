@@ -90,6 +90,7 @@ export async function ProductsScreen({
   // Phase 1 (2026-08-08) — see brand/page.tsx for the same real reasoning:
   // one unified card list instead of two separate sections/components.
   const productCards = buildPageAttentionCards({
+    basePath,
     approvals: productApprovals,
     observations: productObservations,
     highlightId: focus,

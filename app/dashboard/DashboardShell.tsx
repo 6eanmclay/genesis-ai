@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { NavSection } from "@/lib/dashboard/navConfig";
-import { ACCOUNT_SENTINEL_HREF, PRIMARY_TAB_COUNT, isSentinelHref } from "@/lib/dashboard/navConfig";
+import { ACCOUNT_SENTINEL_HREF, PRIMARY_TAB_COUNT, isSentinelHref, sectionHref } from "@/lib/dashboard/navConfig";
 import { roomSurface } from "@/lib/dashboard/rooms";
 import { NavIcon } from "./NavIcon";
 import { J4Icon, type J4IconName } from "./J4Icon";
@@ -730,7 +730,12 @@ export function DashboardShell({
             visible regardless of value (including 0 — never hidden just
             because there's nothing to show yet). */}
         <Link
-          href="/dashboard/growth-points"
+          // Inside this business (2026-08-22), not the legacy route. Found by
+          // verify-business-browser rather than by tracing consumers: it is
+          // shell chrome rather than a nav section, so it was never in the list
+          // sectionsFor rebases. The balance is per-business, and following the
+          // legacy href showed the ACTIVE business's balance instead.
+          href={sectionHref("/dashboard/growth-points", basePath)}
           className="hidden items-center gap-1.5 rounded-full border border-black/[.08] px-3 py-2 text-sm text-zinc-600 transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05] sm:flex"
           title="Growth Points"
         >

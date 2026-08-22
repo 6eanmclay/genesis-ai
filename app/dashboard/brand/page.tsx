@@ -91,6 +91,7 @@ export async function BrandScreen({
   // card's own approvalRequestId/dedupeKey, so an invalid/stale focus
   // value is already a safe no-op, same as before.
   const brandCards = buildPageAttentionCards({
+    basePath,
     approvals: identityApprovals,
     observations: brandObservations,
     highlightId: focus,

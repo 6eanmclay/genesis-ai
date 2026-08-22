@@ -5,6 +5,7 @@ import type { PendingApproval } from "./pendingApprovals";
 import type { DiscoveryItem } from "./discovery";
 import type { NextBestAction } from "@/lib/intelligence/nextBestAction";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
+import { sectionHref } from "@/lib/dashboard/navConfig";
 import { prisma } from "@/lib/prisma";
 
 // J4 Noticed dismiss/exit (2026-08-08) — one real, shared fetch for every
@@ -193,7 +194,7 @@ export const ATTENTION_ZONE_CAP = 5;
 // buildPageAttentionCards (a single secondary page, uncapped) — one real
 // approval always becomes one real proposal card, regardless of which
 // caller built it.
-function buildProposalCard(approval: PendingApproval): ProposalAttentionCard {
+function buildProposalCard(approval: PendingApproval, basePath: string): ProposalAttentionCard {
   const section = ACTION_SECTIONS[approval.actionType];
   return {
     id: `proposal:${approval.id}`,
@@ -207,7 +208,13 @@ function buildProposalCard(approval: PendingApproval): ProposalAttentionCard {
     actionType: approval.actionType,
     input: approval.input,
     previousValues: approval.previousValues,
-    reviewHref: section?.href ?? null,
+    // Addressed within the business the owner is actually looking at
+    // (2026-08-22). ACTION_SECTIONS stores the legacy "/dashboard/..." spelling,
+    // and following one of those from inside /b/<slug>/... resolves the
+    // ACCOUNT'S ACTIVE business instead — which, with two tabs open on two
+    // businesses, is a Review link that quietly changes which business the
+    // owner is editing.
+    reviewHref: section ? sectionHref(section.href, basePath) : null,
     groupId: approval.groupId,
   };
 }
@@ -256,6 +263,14 @@ function buildObservationCard(obs: { dedupeKey: string; genesisState: string; su
 // already served, just applied before the normal rank/recency sort
 // instead of only affecting styling.
 export function buildPageAttentionCards(params: {
+  /**
+   * Where this workspace lives — "/dashboard" or "/b/<slug>".
+   *
+   * Required rather than defaulted on purpose: a default would let a call site
+   * that was never updated keep producing legacy links, silently, which is the
+   * exact shape of the bug this parameter exists to close.
+   */
+  basePath: string;
   approvals: PendingApproval[];
   observations: { dedupeKey: string; genesisState: string; summary: string }[];
   highlightId?: string;
@@ -266,7 +281,7 @@ export function buildPageAttentionCards(params: {
   dismissedCardIds?: Set<string>;
 }): AttentionCard[] {
   const all: AttentionCard[] = [
-    ...params.approvals.map(buildProposalCard),
+    ...params.approvals.map((a) => buildProposalCard(a, params.basePath)),
     ...params.observations.map(buildObservationCard),
   ].filter((card) => !params.dismissedCardIds?.has(card.id));
 
@@ -370,6 +385,14 @@ function economicsQuestionOf(
 }
 
 export function buildAttentionCards(params: {
+  /**
+   * Where this workspace lives — "/dashboard" or "/b/<slug>".
+   *
+   * Required rather than defaulted on purpose: a default would let a call site
+   * that was never updated keep producing legacy links, silently, which is the
+   * exact shape of the bug this parameter exists to close.
+   */
+  basePath: string;
   issues: AttentionItem[];
   pendingApprovals: PendingApproval[];
   nextRecommendation: NextBestAction | null;
@@ -429,7 +452,7 @@ export function buildAttentionCards(params: {
     // Already carried as the lead recommendation above — never show the
     // same real ApprovalRequest twice.
     if (params.nextRecommendation?.approvalRequestId === approval.id) continue;
-    all.push(buildProposalCard(approval));
+    all.push(buildProposalCard(approval, params.basePath));
   }
 
   for (const item of params.discoveryItems) {

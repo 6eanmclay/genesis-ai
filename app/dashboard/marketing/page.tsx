@@ -71,8 +71,8 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
   // approval vs. a broader social-presence proposal) rather than merged
   // into one — only the card rendering changes, not this page's own
   // structure. No observations on this page (unchanged).
-  const seoCards = buildPageAttentionCards({ approvals: seoApprovals, observations: [], dismissedCardIds });
-  const marketingAssetsCards = buildPageAttentionCards({ approvals: marketingAssetsApprovals, observations: [], dismissedCardIds });
+  const seoCards = buildPageAttentionCards({ basePath, approvals: seoApprovals, observations: [], dismissedCardIds });
+  const marketingAssetsCards = buildPageAttentionCards({ basePath, approvals: marketingAssetsApprovals, observations: [], dismissedCardIds });
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
   const seoTitle = blueprint?.marketingAssets?.seoTitle;

@@ -1,3 +1,4 @@
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import "dotenv/config";
 import { randomUUID } from "crypto";
@@ -75,7 +76,7 @@ async function main() {
     const testApprovals = pending.filter((p) => created.includes(p.id));
     if (testApprovals.length !== 3) throw new Error(`Expected 3 pending test approvals, got ${testApprovals.length}`);
 
-    const cards = buildPageAttentionCards({ approvals: testApprovals, observations: [] });
+    const cards = buildPageAttentionCards({ basePath: LEGACY_BUSINESS_BASE, approvals: testApprovals, observations: [] });
     if (cards.length !== 3) throw new Error(`Expected 3 cards, got ${cards.length}`);
 
     const groups = groupAttentionCards(cards);

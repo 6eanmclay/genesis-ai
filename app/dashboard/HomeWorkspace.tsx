@@ -303,6 +303,7 @@ export async function HomeWorkspace({
   // when the role doesn't have access), so this needs no extra permission
   // branching of its own.
   const attentionCards = buildAttentionCards({
+    basePath,
     issues: attention.recentOutcomes,
     pendingApprovals,
     nextRecommendation,

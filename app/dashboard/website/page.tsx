@@ -147,6 +147,7 @@ export async function WebsiteScreen({
   // a generic text card — that would be a real regression, not a
   // consistency improvement).
   const websiteObservationCards = buildPageAttentionCards({
+    basePath,
     approvals: [],
     observations: websiteObservations,
     highlightId: focus,

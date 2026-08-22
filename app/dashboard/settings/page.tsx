@@ -51,8 +51,8 @@ export async function SettingsScreen({ slug, basePath }: { slug?: string; basePa
   // Phase 1 (2026-08-08) — same compact card language as every other
   // secondary page now uses; kept as two separate lists under their own
   // existing headings, only the card rendering changes.
-  const storeContentCards = buildPageAttentionCards({ approvals: storeContentApprovals, observations: [], dismissedCardIds });
-  const designDirectionCards = buildPageAttentionCards({ approvals: designDirectionApprovals, observations: [], dismissedCardIds });
+  const storeContentCards = buildPageAttentionCards({ basePath, approvals: storeContentApprovals, observations: [], dismissedCardIds });
+  const designDirectionCards = buildPageAttentionCards({ basePath, approvals: designDirectionApprovals, observations: [], dismissedCardIds });
 
   const blueprint = store.blueprint as BlueprintContextSubset | null;
   const storeContent = blueprint?.storeContent;
