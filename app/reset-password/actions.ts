@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { recordSecurityEvent, SECURITY_EVENTS } from "@/lib/security/events";
 import {
   verifyPasswordResetToken,
   consumePasswordResetToken,
@@ -67,6 +68,9 @@ export async function resetPassword(
         passwordChangedAt: new Date(),
       },
     });
+    // The owner's own history. Written after the update rather than before,
+    // so a recorded password change always corresponds to one that happened.
+    await recordSecurityEvent({ userId, kind: SECURITY_EVENTS.passwordChanged });
     await consumePasswordResetToken(token);
     // Burn every OTHER outstanding reset link for this account, not just the
     // one used. If an attacker requested a reset and the real owner then reset

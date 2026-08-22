@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { recordSecurityEvent, SECURITY_EVENTS } from "@/lib/security/events";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { createPasswordResetToken } from "@/lib/auth/passwordReset";
 import { sendPasswordResetEmail } from "@/lib/email/passwordReset";
@@ -81,6 +82,10 @@ export async function requestPasswordReset(
       const baseUrl = await getBaseUrl();
       const resetUrl = `${baseUrl}/reset-password?token=${rawToken}`;
       await sendPasswordResetEmail(email, resetUrl);
+      // Recorded only for a real account, matching the refusal rule directly
+      // above: the response never reveals whether an address exists, and
+      // neither does the absence of a row.
+      await recordSecurityEvent({ userId: user.id, kind: SECURITY_EVENTS.passwordResetRequested });
     }
 
     return { status: "success" };

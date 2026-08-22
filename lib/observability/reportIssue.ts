@@ -32,7 +32,12 @@ export type Subsystem =
   // Product sourcing and progression (2026-08-20). Its own subsystem rather than
   // borrowing "integrations": a supplier being unreachable and a progression
   // snapshot failing to parse are different problems for different people.
-  | "sourcing";
+  | "sourcing"
+  // Account security (2026-08-22, Security & Trust). Its own subsystem rather
+  // than borrowing "execution": a sign-in being throttled and a Genesis action
+  // failing are different problems, read by different people, and a security
+  // failure that hid inside execution noise is one nobody would go looking for.
+  | "security";
 
 export interface IssueContext {
   /** Which part of the system, for routing and alerting. */

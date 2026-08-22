@@ -67,6 +67,7 @@ model User {
   referralsReceived          Referral[]                  @relation("ReferralsReceived")
   businessPartnerTrialGrants BusinessPartnerTrialGrant[]
   passwordResetTokens        PasswordResetToken[]
+  securityEvents             SecurityEvent[]
 }
 
 model Account {
@@ -134,6 +135,49 @@ model AuthAttempt {
 
   // Serves both the count-in-window query and the expiry sweep.
   @@index([bucket, occurredAt])
+}
+
+// WHAT HAPPENED TO AN ACCOUNT (Security & Trust, 2026-08-22).
+//
+// ACCOUNT-SCOPED, AND THAT IS THE WHOLE REASON THIS EXISTS SEPARATELY FROM
+// ExecutionLog. ExecutionLog answers "what did Genesis do to this business" —
+// it is keyed by storeId and its actor vocabulary is USER/GENESIS/SYSTEM.
+// "Somebody signed in as me from a Mac at 4am" is not about a business and has
+// no store to hang on; an account with three businesses has one sign-in
+// history, not three. Putting these rows in ExecutionLog would have made every
+// security question a per-business question, which is the wrong shape for the
+// only thing an owner actually asks: what happened to MY account.
+//
+// APPEND-ONLY BY CONVENTION AND BY ABSENCE — there is no updatedAt, no status
+// to move, and nothing in lib/security/ that updates or deletes a row. A
+// security log that can be edited is a security log an attacker edits.
+//
+// Deliberately carries NO IP ADDRESS and no location (D4, approved). Device is
+// a coarse label derived from the user-agent at write time — "Windows · Chrome"
+// — never the raw string, which is a fingerprint. What an owner needs is enough
+// to recognise their own session, not a dossier on themselves.
+model SecurityEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  /// A value from SECURITY_EVENTS in lib/security/events.ts. A free String
+  /// rather than an enum, matching ExecutionLog.action's own convention — but
+  /// unlike that one, every value is asserted to have an owner-facing label,
+  /// so a new kind cannot reach a merchant as a raw identifier.
+  kind      String
+  /// Coarse and human, e.g. "Windows · Chrome". Null when the event had no
+  /// request behind it (a scheduled revocation, say) — which is a real
+  /// difference from an unrecognised device and is kept distinguishable.
+  device    String?
+  /// Which sign-in this happened in, when there was one. Lets the history and
+  /// the session list refer to the same thing.
+  sessionInstanceId String?
+  /// Anything specific the event needs — never a secret, asserted by suite.
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model PasswordResetToken {

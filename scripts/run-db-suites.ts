@@ -134,7 +134,12 @@ function needsDatabase(file: string): boolean {
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
 
-async function runSuite(file: string, url: string): Promise<{ file: string; ok: boolean; tail: string }> {
+async function runSuite(
+  file: string,
+  url: string,
+  /** Print the suite's own output verbatim — used when a filter names one suite. */
+  streamOutput = false
+): Promise<{ file: string; ok: boolean; tail: string }> {
   return new Promise((resolve) => {
     // Through the shell, because tsx is not a local dependency here — it runs
     // from the npx cache, so there is no stable path to hand to execFile.
@@ -152,6 +157,7 @@ async function runSuite(file: string, url: string): Promise<{ file: string; ok: 
         const lines = output
           .split("\n")
           .filter((line) => !/^\s+at |node_modules|^\s*$/.test(line));
+        if (streamOutput) console.log(output);
         resolve({
           file,
           ok: !error,
@@ -246,16 +252,31 @@ async function main() {
   // queue behind.
   await db.prisma.$disconnect();
 
+  // An optional substring filter, so one suite can be run against this harness
+  // without standing up a second copy of it:
+  //
+  //   npx tsx scripts/run-db-suites.ts security-events
+  //
+  // Added while building Security & Trust, where what you need from a failing
+  // suite is its own output and what the summary gives you is six lines of
+  // stack. No argument is the unchanged default and still runs everything.
+  const only = process.argv[2] ?? null;
   const suites = readdirSync(SCRIPTS_DIR)
     .filter((f) => f.startsWith("verify-") && f.endsWith(".ts"))
     .filter(needsDatabase)
+    .filter((f) => (only ? f.includes(only) : true))
     .sort();
+
+  if (only && suites.length === 0) {
+    console.error(`No database-backed suite matches "${only}".`);
+    process.exit(1);
+  }
 
   console.log(`Running ${suites.length} database-backed suites against the test database.\n`);
 
   const results: { file: string; ok: boolean; tail: string }[] = [];
   for (const file of suites) {
-    const result = await runSuite(file, db.url);
+    const result = await runSuite(file, db.url, suites.length === 1);
     results.push(result);
     console.log(`${result.ok ? "PASS" : "FAIL"}  ${file.replace(/^verify-|\.ts$/g, "")}`);
     if (!result.ok) console.log(`        ${result.tail}`);

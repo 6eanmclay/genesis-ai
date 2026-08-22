@@ -3,6 +3,7 @@ import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
+import { recordSecurityEvent, SECURITY_EVENTS } from "@/lib/security/events";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { isTokenIssuedBeforePasswordChange } from "@/lib/auth/passwordReset";
@@ -55,8 +56,28 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const forwarded = request?.headers?.get?.("x-forwarded-for") ?? null;
         const ip = forwarded ? (forwarded.split(",")[0]?.trim() || null) : null;
 
+        const userAgent = request?.headers?.get?.("user-agent") ?? null;
+
         const { throttled, buckets } = await checkSignInThrottle({ email, ip });
         if (throttled) {
+          // Recorded against the account when one exists. An attacker
+          // hammering an address the owner really owns is exactly what the
+          // owner needs to see in their own history.
+          //
+          // No event at all for an address with no account: there is nobody to
+          // tell, and writing one would let anyone who can guess addresses grow
+          // this table.
+          const throttledUser = await prisma.user.findUnique({
+            where: { email },
+            select: { id: true },
+          });
+          if (throttledUser) {
+            await recordSecurityEvent({
+              userId: throttledUser.id,
+              kind: SECURITY_EVENTS.signInBlocked,
+              userAgent,
+            });
+          }
           // Deliberately the same `null` as a wrong password. A distinct
           // "too many attempts" response would confirm the address exists and
           // is worth attacking — and this path is reached by addresses that
@@ -78,6 +99,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (!isValid) {
           await recordFailedAttempt(buckets);
+          // A real account, a real wrong password. This is the line an owner
+          // reads when they want to know whether somebody has been trying.
+          await recordSecurityEvent({
+            userId: user.id,
+            kind: SECURITY_EVENTS.signInFailed,
+            userAgent,
+          });
           return null;
         }
 
@@ -85,6 +113,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // it right is not left one slip away from a lockout for the next
         // quarter of an hour.
         await clearAttempts(buckets);
+        // The sign-in itself. Recorded here rather than in the jwt callback
+        // because this is the only place that holds the request, and therefore
+        // the only place that can say which device it came from.
+        await recordSecurityEvent({
+          userId: user.id,
+          kind: SECURITY_EVENTS.signedIn,
+          userAgent,
+        });
         return user;
       },
     }),
