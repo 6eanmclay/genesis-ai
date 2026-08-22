@@ -11,7 +11,14 @@ function formatCents(cents: number): string {
 // model today, so this deliberately doesn't invent a "mark as shipped"
 // action — just the real order, and a deep-link to the full untouched
 // Orders page for anything more.
-export function RecentOrdersCard({ orders }: { orders: RecentOrder[] }) {
+export function RecentOrdersCard({
+  orders,
+  basePath,
+}: {
+  orders: RecentOrder[];
+  /** The business the owner is standing in — never the account's last active one. */
+  basePath: string;
+}) {
   if (orders.length === 0) {
     return null;
   }
@@ -37,7 +44,7 @@ export function RecentOrdersCard({ orders }: { orders: RecentOrder[] }) {
         ))}
       </ul>
       <Link
-        href="/dashboard/orders"
+        href={`${basePath}/orders`}
         className="self-start text-xs font-medium text-[var(--brand-accent,#2563eb)] underline"
       >
         View all orders

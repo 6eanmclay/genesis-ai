@@ -361,7 +361,7 @@ export async function HomeWorkspace({
               <p className="mt-1 text-xs text-zinc-500">active products</p>
             </div>
           )}
-          <Link href="/dashboard/website" className="group">
+          <Link href={`${basePath}/website`} className="group">
             <p
               className={
                 store.published
@@ -443,6 +443,7 @@ export async function HomeWorkspace({
       {/* Business Journey — real progress, not a software setup checklist. */}
       {isOwnerManager && canViewOrders && orderSummary && (
         <BusinessJourney
+          basePath={basePath}
           published={store.published}
           hasActiveProducts={(inventorySnapshot?.activeCount ?? 0) > 0}
           stripeIntegration={stripeIntegration}
@@ -457,7 +458,7 @@ export async function HomeWorkspace({
           <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
             Recent orders
           </h2>
-          <RecentOrdersCard orders={recentOrders} />
+          <RecentOrdersCard orders={recentOrders} basePath={basePath} />
         </>
       )}
 

@@ -326,6 +326,25 @@ async function main() {
     assert("there are tappable links on screen", onTheBar.length > 0, String(onTheBar.length));
     assert("orders is one tap away", onTheBar.some((h) => h.endsWith("/orders")), onTheBar.join(" "));
 
+    // NO LINK LEAVES THE BUSINESS THE OWNER IS STANDING IN.
+    //
+    // This suite found the defect that prompted this assertion: /dashboard/*
+    // and /b/<slug>/* links side by side on one screen. /dashboard/* is the
+    // legacy route, which resolves whichever business the ACCOUNT last made
+    // active — so from inside Business A those links are a door into Business
+    // B, while the page around them still says Business A's name. With one
+    // business it is invisible, which is exactly why it needs a test rather
+    // than an eye.
+    //
+    // Asserted behaviourally rather than by grepping for the string, so it
+    // holds for any future leak regardless of which component introduces it.
+    const legacy = onTheBar.filter((h) => h.startsWith("/dashboard/"));
+    assert(
+      "no link on a business page goes to the account-scoped route",
+      legacy.length === 0,
+      legacy.join(" ")
+    );
+
     // PRODUCTS IS NOT ON THE BAR, AND THAT IS THE DESIGN. The mobile shell
     // carries four tabs plus an overflow sheet; the first run of this suite
     // failed here and the navigation was right — the assertion was, because it

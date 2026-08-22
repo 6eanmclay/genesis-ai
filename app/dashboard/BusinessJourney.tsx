@@ -43,12 +43,27 @@ function ChecklistRow({ items }: { items: ChecklistItem[] }) {
 // (revenue trend, repeat customers, best sellers, conversion) to observe
 // genuine milestones from — not built here.
 export function BusinessJourney({
+  basePath,
   published,
   hasActiveProducts,
   stripeIntegration,
   paypalIntegration,
   allTimeOrderCount,
 }: {
+  /**
+   * THE BUSINESS THE OWNER IS ACTUALLY STANDING IN (2026-08-22).
+   *
+   * These three links used to be hardcoded to /dashboard/*, which is the
+   * legacy route that resolves whichever business the ACCOUNT last made
+   * active. On the /b/[slug] route that is a link out of the business the
+   * owner is looking at. With one business it is invisible; with two it lands
+   * them in the other one's storefront, products or payments — while the page
+   * around them still says the first business's name.
+   *
+   * Found by the mobile browser suite, which saw /dashboard/* and /b/<slug>/*
+   * links side by side on one screen.
+   */
+  basePath: string;
   published: boolean;
   hasActiveProducts: boolean;
   stripeIntegration: { status: string } | null;
@@ -103,9 +118,9 @@ export function BusinessJourney({
       <p className="text-lg font-medium text-black dark:text-zinc-50">{leadSentence}</p>
       <ChecklistRow
         items={[
-          { label: "Storefront live", done: published, href: "/dashboard/website" },
-          { label: "Products ready", done: hasActiveProducts, href: "/dashboard/products" },
-          { label: "Payments connected", done: paymentConnected, href: "/dashboard/payments" },
+          { label: "Storefront live", done: published, href: `${basePath}/website` },
+          { label: "Products ready", done: hasActiveProducts, href: `${basePath}/products` },
+          { label: "Payments connected", done: paymentConnected, href: `${basePath}/payments` },
           { label: "First sale", done: false },
         ]}
       />
