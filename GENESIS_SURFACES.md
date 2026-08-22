@@ -518,20 +518,30 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 - **J4 at 88px**, permanent and unmistakable on every workspace, rendered globally through `DashboardShell`. Not Overview only, and correct as it stands.
 - The four interactions stay distinct and must never be merged: **orb = continuous Talk mode · mic = voice message · text = typed message · expand = conversation and history**.
 
-## ▶ START HERE: Understanding → Office (specified, deliberately not started)
+## ✅ DONE: Understanding → Office (built 2026-08-16, verified in a browser 2026-08-22)
 
-Verified by reading the code, not guessed. Do these in order; **step 6 is last**, because doing it earlier orphans the only route to this content.
+All six steps are in the code, and the acceptance step below has now actually been run.
 
-1. `app/j4/J4Workspace.tsx:73` — add `"understanding"` to the `Category` union.
-2. `categoryTabs` (~line 1511) — add `{ key: "understanding", label: "Understanding", count: 0 }`. Count stays 0: it is a reference view, not a queue to clear, same as Conversation.
-3. `app/j4/J4Surface.tsx` (~110–140) — call `getBusinessUnderstanding(storeId)` from `lib/businessModel/understanding.ts:72` and thread it down exactly as `information` is.
-4. `J4Workspace` props interface (~782) — accept it beside `information`.
-5. Render branch (~1715, the `shownCategory === "conversation" ? …` chain) — add the branch, with a `CategoryEmptyState` for a store J4 does not know yet.
-6. `lib/dashboard/navConfig.ts` — remove the `understanding` entry from `NAV_SECTIONS`. It is marked in-code as a staging post.
+1. ✅ `app/j4/J4Workspace.tsx` — `"understanding"` is in the `Category` union.
+2. ✅ `categoryTabs` — `{ key: "understanding", label: "Understanding", count: 0 }`. Count stays 0: it is a reference view, not a queue to clear, same as Conversation.
+3. ✅ `app/j4/J4Surface.tsx` — `getBusinessUnderstanding(storeId)` runs inside the existing `Promise.all` and is threaded down exactly as `information` is.
+4. ✅ `J4Workspace` props — accepted beside `information`.
+5. ✅ Render branch — Understanding is the final branch, and **Information was made an explicit branch of its own at the same time** so that adding a category to the union could never render Information under it silently.
+6. ✅ `lib/dashboard/navConfig.ts` — the `understanding` entry is gone, replaced by a comment saying it is a view inside the Office now.
 
 **Then open the Office and tap all six views.** `tsc` passes whether or not the wiring is right — that is the entire lesson of `6b68cff`, where the category rail rendered, highlighted on tap, and changed nothing because one line upstream still pinned the view. Rendering is not working.
 
-Nothing about the architecture, navigation, Office, J4 or the rooms is in scope while doing this. After it is verified: the four rooms — canvas, ledger, catalog, workbench.
+That is now `scripts/verify-office-browser.ts`, and it does exactly that against a real Postgres, a real Next server and a real browser: it signs in, opens the Office from the orb, taps each of the six views, and asserts each one shows **its own** seeded record and **no other view's**. Two more things it establishes, neither of which a unit test can:
+
+- **It can tell an open Office from a closed one.** The Office stays mounted while closed (Talk Mode sends through its composer without opening it), so its whole markup is in the DOM of every dashboard page. That control runs first; without it every content assertion would pass against an Office nobody opened.
+- **Both doors work.** The door is `Office` under the orb on mobile and the `J4 Portal` pill on desktop — two different controls behind two mutually exclusive breakpoints, so either can break while the other keeps working.
+
+Confirmed by negative control: reintroducing the `6b68cff` line produces 12 failures across four sections. Two things the suite established that the design did not previously state:
+
+- A pending proposal appears **both** as a row in Decisions and as the proposal on the table at the end of Conversation. That is the architecture ("THE proposal on the table — one, never a stack"), not a leak — a proposal belongs where it was raised — and it is now asserted as a requirement rather than tolerated.
+- Understanding renders **every group, including the empty ones**, each in its own words. "Nothing designated yet" is real information about what J4 understands; hiding empty groups would quietly overstate it.
+
+Nothing about the architecture, navigation, Office, J4 or the rooms was in scope while doing this. **Next: the four rooms — canvas, ledger, catalog, workbench** — whose design question is still open below and is not to be settled by implementation.
 
 ---
 

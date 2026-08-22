@@ -89,6 +89,8 @@ function needsDatabase(file: string): boolean {
   // permissions is not permitted" — an environment message about the shell,
   // with nothing to say about the catalog.
   if (file === "verify-catalog-browser.ts") return false;
+  // Same again: its own Postgres, its own Next server, its own browser.
+  if (file === "verify-office-browser.ts") return false;
   if (file === "verify-progression-live.ts") return false;
   if (file === "verify-economics-live.ts") return false;
   if (file === "verify-economics-ingest.ts") return false;
