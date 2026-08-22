@@ -83,10 +83,25 @@ const EXTENSION_CONTENT_TYPE: Record<string, string> = {
 // when neither signal resolves to a supported type — the real "genuinely
 // unsupported file" case, unchanged from before this fix.
 export function resolveAssetContentType(file: { type: string; name: string }): string | null {
-  if (ALLOWED_CONTENT_TYPES[file.type]) return file.type;
+  // hasOwnProperty on both lookups (2026-08-22), and the second one was
+  // genuinely reachable: `ext` comes from the FILENAME, so a file called
+  // "notes.constructor" made `EXTENSION_CONTENT_TYPE[ext]` resolve to the
+  // inherited Object constructor. That is truthy, so `?? null` never fired and
+  // this returned a FUNCTION — from a signature that promises `string | null`.
+  // Instead of being cleanly refused as an unsupported file, it went on into
+  // the upload carrying that as its content type.
+  //
+  // The first lookup is the same shape against a browser-reported type. A real
+  // browser will not report "constructor", but this function's whole reason for
+  // existing is that File.type cannot be trusted — so it should not be trusted
+  // to be a plausible MIME string either. Note what the truthy branch does:
+  // it returns `file.type` VERBATIM, so a prototype key would have been handed
+  // back as an allowed content type.
+  if (Object.prototype.hasOwnProperty.call(ALLOWED_CONTENT_TYPES, file.type)) return file.type;
   const ext = file.name.split(".").pop()?.toLowerCase();
-  const fallback = ext ? EXTENSION_CONTENT_TYPE[ext] : undefined;
-  return fallback ?? null;
+  if (!ext || !Object.prototype.hasOwnProperty.call(EXTENSION_CONTENT_TYPE, ext)) return null;
+  const fallback = EXTENSION_CONTENT_TYPE[ext];
+  return typeof fallback === "string" ? fallback : null;
 }
 
 export interface UploadedAssetFile {
