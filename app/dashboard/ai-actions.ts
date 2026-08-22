@@ -4946,7 +4946,19 @@ export async function confirmStoreDraftCore(
       ? { pricing: onboardingState.pricing }
       : null;
 
-  const baseSlug = slugify(storeName);
+  // A NAME WITH NO LATIN LETTERS STILL NEEDS A URL (2026-08-22).
+  //
+  // slugify maps to a-z0-9, so a business named entirely in a non-Latin script
+  // — 工房, الحرفي, Мастерская — slugifies to an empty string. Without this
+  // fallback the store was created with slug: "", which made its storefront
+  // /store/ and its workspace /b/ — the second of which is not a business path
+  // at all, so the owner could not reach their own business by its route.
+  //
+  // "store" rather than anything derived, because there is nothing left of the
+  // name to derive from and a fabricated transliteration would be a guess about
+  // somebody's business. The dedupe loop below then does its ordinary job, so
+  // the second such business becomes store-1.
+  const baseSlug = slugify(storeName) || "store";
   let slug = baseSlug;
   let suffix = 1;
   while (await prisma.store.findUnique({ where: { slug } })) {
