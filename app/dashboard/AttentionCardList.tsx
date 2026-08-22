@@ -20,6 +20,7 @@ export function AttentionCardList({
   dismissAction,
   economicsAction,
   currentPath,
+  slug,
   highlightId,
   regenerateAction,
 }: {
@@ -30,10 +31,19 @@ export function AttentionCardList({
   issueAction: (formData: FormData) => void;
   discoveryAction: (formData: FormData) => void;
   taskAction: (formData: FormData) => void;
-  dismissAction: (cardId: string, currentPath: string) => Promise<void>;
+  dismissAction: (cardId: string, currentPath: string, slug?: string) => Promise<void>;
   /** Only passed by a caller whose tasks can include a supplier question. */
   economicsAction?: (formData: FormData) => void;
   currentPath: string;
+  /**
+   * The business this card belongs to, when the screen knows it.
+   *
+   * Undefined on the legacy /dashboard route, which keeps resolving the
+   * account's active business. Present on every /b/[slug] screen, where it is
+   * authoritative — visiting a business deliberately does NOT make it active,
+   * so without this the card acts on whichever one the account last chose.
+   */
+  slug?: string;
   highlightId?: string;
   regenerateAction?: (id: string) => Promise<void>;
 }) {
@@ -75,6 +85,7 @@ export function AttentionCardList({
                 dismissAction={dismissAction}
           economicsAction={economicsAction}
                 currentPath={currentPath}
+                slug={slug}
                 highlightId={highlightId}
                 regenerateAction={regenerateAction}
               />

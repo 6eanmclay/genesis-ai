@@ -104,6 +104,7 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
               currentPath={`${basePath}/marketing`}
+              slug={slug}
             />
           </div>
         </>
@@ -126,6 +127,7 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
               currentPath={`${basePath}/marketing`}
+              slug={slug}
             />
           </div>
         </>

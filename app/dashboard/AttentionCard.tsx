@@ -37,6 +37,7 @@ export function AttentionCard({
   dismissAction,
   economicsAction,
   currentPath,
+  slug,
 }: {
   card: AttentionCardData;
   approveAction: (id: string) => Promise<void>;
@@ -61,12 +62,21 @@ export function AttentionCard({
   // present on every card kind uniformly, deliberately separate from the
   // kind-specific action row below (Approve/Reject/"Have J4 take care of
   // it") — dismissing is never routed through any of those.
-  dismissAction: (cardId: string, currentPath: string) => Promise<void>;
+  dismissAction: (cardId: string, currentPath: string, slug?: string) => Promise<void>;
   // The owner answering J4's supplier question in place (2026-08-21). Optional
   // for the same reason regenerateAction is: only a caller whose tasks can
   // actually include an economics question ever passes it.
   economicsAction?: (formData: FormData) => void;
   currentPath: string;
+  /**
+   * The business this card belongs to, when the screen knows it.
+   *
+   * Undefined on the legacy /dashboard route, which keeps resolving the
+   * account's active business. Present on every /b/[slug] screen, where it is
+   * authoritative — visiting a business deliberately does NOT make it active,
+   * so without this the card acts on whichever one the account last chose.
+   */
+  slug?: string;
 }) {
   const highlighted = isHighlighted(card, highlightId);
   const hasExpandableDetail =
@@ -137,9 +147,18 @@ export function AttentionCard({
                 {card.kind === "task" && (
                   <>
                     <input type="hidden" name="taskId" value={card.taskId} />
-                    <input type="hidden" name="currentPath" value="/dashboard" />
+                    <input type="hidden" name="currentPath" value={currentPath} />
                   </>
                 )}
+                {/* WHICH BUSINESS THIS CARD BELONGS TO (2026-08-22).
+                    The same hidden field the composer already sends and
+                    businessForTurn already reads — "refused, never
+                    substituted". Without it, a card acted on from Business A's
+                    page ran against whichever business the ACCOUNT last made
+                    active, and visiting /b/[slug] deliberately does not change
+                    that. Absent on the legacy route, which keeps resolving the
+                    active business exactly as before. */}
+                {slug && <input type="hidden" name="slug" value={slug} />}
                 <button
                   type="submit"
                   className="rounded-full bg-[#2563eb] px-3.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
@@ -187,7 +206,7 @@ export function AttentionCard({
             position, every card kind. Hides this card from the Noticed
             presentation only; the real underlying record is completely
             untouched (see dismissAttentionCard's own comment). */}
-        <form action={dismissAction.bind(null, card.id, currentPath)}>
+        <form action={dismissAction.bind(null, card.id, currentPath, slug)}>
           <button
             type="submit"
             aria-label="Dismiss — hide this for now"

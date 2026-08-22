@@ -427,7 +427,8 @@ export async function HomeWorkspace({
                   taskAction={startTaskConversation}
                   economicsAction={answerEconomicsQuestionFromCard}
                   dismissAction={dismissAttentionCard}
-                  currentPath="/dashboard"
+                  currentPath={basePath}
+                  slug={slug}
                 />
                 {attentionCards.overflowCount > 0 && (
                   <p className="mt-1 text-xs text-zinc-500">

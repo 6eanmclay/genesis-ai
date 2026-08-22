@@ -135,6 +135,7 @@ export async function BrandScreen({
               highlightId={focus}
               dismissAction={dismissAttentionCard}
               currentPath={`${basePath}/brand`}
+              slug={slug}
             />
           </div>
         </>

@@ -420,6 +420,7 @@ export async function WebsiteScreen({
               highlightId={focus}
               dismissAction={dismissAttentionCard}
               currentPath={`${basePath}/website`}
+              slug={slug}
             />
           </div>
         </>

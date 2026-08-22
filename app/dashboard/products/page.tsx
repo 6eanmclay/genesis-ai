@@ -123,6 +123,7 @@ export async function ProductsScreen({
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
               currentPath={`${basePath}/products`}
+              slug={slug}
             />
           </div>
         </>

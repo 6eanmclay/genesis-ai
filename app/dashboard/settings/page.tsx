@@ -99,6 +99,7 @@ export async function SettingsScreen({ slug, basePath }: { slug?: string; basePa
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
               currentPath={`${basePath}/settings`}
+              slug={slug}
             />
           </div>
         </>
@@ -143,6 +144,7 @@ export async function SettingsScreen({ slug, basePath }: { slug?: string; basePa
               regenerateAction={regenerateApprovalImage}
               dismissAction={dismissAttentionCard}
               currentPath={`${basePath}/settings`}
+              slug={slug}
             />
           </div>
         </>

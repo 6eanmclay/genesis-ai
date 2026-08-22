@@ -16,7 +16,7 @@ import { sourceHeroImageCandidate } from "@/lib/productImagery";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
-import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireStorePermission, resolveUserStore } from "@/lib/permissions";
+import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
 import { adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -4551,8 +4551,13 @@ async function uploadPhotoBatchFromChatTurn(formData: FormData) {
 // lookups, a business review, this page's own Decisions/Tasks/etc. list
 // where one exists) is completely unaffected — the real record stays
 // exactly as available to J4 as it always was.
-export async function dismissAttentionCard(cardId: string, currentPath: string) {
-  const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+export async function dismissAttentionCard(cardId: string, currentPath: string, slug?: string) {
+  // THE BUSINESS THE OWNER IS LOOKING AT, not the one the account last chose
+  // (2026-08-22). Visiting /b/[slug] deliberately does not set the active
+  // business — that write happens only at /choose-business — so resolving the
+  // active one here dismissed a card on a business the owner was not even
+  // looking at, and left the card they clicked exactly where it was.
+  const { storeId, userId } = await requireBusinessOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
 
   await prisma.dismissedAttentionCard.upsert({
     where: { storeId_cardId: { storeId, cardId } },
@@ -4560,7 +4565,13 @@ export async function dismissAttentionCard(cardId: string, currentPath: string) 
     update: { dismissedAt: new Date(), dismissedByUserId: userId },
   });
 
-  const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
+  // /b/[slug] belongs on this list. Without it every business-route path fell
+  // through to "/dashboard", so the page the owner was actually on was never
+  // revalidated and the dismissed card stayed on screen until a hard reload.
+  const returnTo =
+    currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") || currentPath.startsWith("/b/")
+      ? currentPath
+      : "/dashboard";
   revalidatePath(returnTo);
 }
 
@@ -4579,7 +4590,13 @@ export async function dismissAttentionCard(cardId: string, currentPath: string) 
 // answer entirely rather than sent as 0, and `recordOwnerQuote` keeps whatever
 // was already known about the fact nobody typed into.
 export async function answerEconomicsQuestionFromCard(formData: FormData) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE);
+  // Same reason as dismissAttentionCard below: the card now sends the business
+  // it belongs to, and supplier economics written against the wrong one is a
+  // real number attached to a business that never quoted it.
+  const { storeId } = await requireBusinessOrActive(
+    PERMISSIONS.PRODUCTS_MANAGE,
+    (formData.get("slug") as string | null)?.trim() || undefined
+  );
 
   const dedupeKey = String(formData.get("dedupeKey") ?? "");
   const outcome = String(formData.get("outcome") ?? "quoted");
@@ -4602,7 +4619,13 @@ export async function answerEconomicsQuestionFromCard(formData: FormData) {
     },
   });
 
-  const returnTo = currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") ? currentPath : "/dashboard";
+  // /b/[slug] belongs on this list. Without it every business-route path fell
+  // through to "/dashboard", so the page the owner was actually on was never
+  // revalidated and the dismissed card stayed on screen until a hard reload.
+  const returnTo =
+    currentPath.startsWith("/dashboard") || currentPath.startsWith("/j4") || currentPath.startsWith("/b/")
+      ? currentPath
+      : "/dashboard";
   revalidatePath(returnTo);
 }
 

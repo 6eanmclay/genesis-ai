@@ -182,6 +182,72 @@ async function main() {
   // carry it, and refusing there would be pedantry rather than safety.
   assert("a padded slug still resolves", (await businessFromSlug(owner.id, "  iron-gym  "))?.store.slug === "iron-gym");
 
+  // ==========================================================================
+  console.log("\n=== 6. And the surfaces that act actually send it ===\n");
+  // ==========================================================================
+  // Section 1 proves that sending the slug is what changes the answer. That is
+  // worth nothing where nobody sends it — which is exactly what J4's attention
+  // cards were doing (found 2026-08-22).
+  //
+  // Every card on every screen posts to a server action. None of them carried
+  // the business, so dismissing a card, answering a supplier's economics
+  // question, or turning a card into a conversation all resolved the ACCOUNT's
+  // active business. Visiting /b/[slug] deliberately does not make a business
+  // active — that write happens only at /choose-business — so from inside
+  // Business A those actions ran against Business B, and the card the owner
+  // clicked stayed exactly where it was.
+  //
+  // Checked structurally because this is a wiring fact, not a decidable one:
+  // the resolution is already proved above, and what failed was that no caller
+  // reached it. A behavioural test would need a signed-in session; this needs
+  // only to know whether the field is on the form.
+  const { readFileSync } = await import("fs");
+  const { join } = await import("path");
+  const source = (file: string) => readFileSync(join(process.cwd(), file), "utf8");
+
+  const card = source("app/dashboard/AttentionCard.tsx");
+  assert(
+    "the card puts the business on the form the action reads",
+    /name="slug"/.test(card),
+    "businessForTurn reads exactly this field, and reads nothing else"
+  );
+  assert(
+    "and the dismiss action is given it too",
+    /dismissAction\.bind\(null, card\.id, currentPath, slug\)/.test(card),
+    "dismiss takes arguments rather than FormData, so it is bound instead"
+  );
+
+  // Every screen that shows cards, so a new one cannot quietly opt out.
+  const SCREENS = [
+    "app/dashboard/HomeWorkspace.tsx",
+    "app/dashboard/brand/page.tsx",
+    "app/dashboard/marketing/page.tsx",
+    "app/dashboard/products/page.tsx",
+    "app/dashboard/settings/page.tsx",
+    "app/dashboard/website/page.tsx",
+  ];
+  for (const screen of SCREENS) {
+    const text = source(screen);
+    const lists = (text.match(/<AttentionCardList/g) ?? []).length;
+    const passes = (text.match(/slug=\{slug\}/g) ?? []).length;
+    assert(
+      `${screen.split("/").slice(-2).join("/")} passes the business to every card list`,
+      lists > 0 && passes >= lists,
+      `${lists} list(s), ${passes} slug prop(s)`
+    );
+  }
+
+  // AND NOBODY HARDCODES THE LEGACY PATH. HomeWorkspace pinned
+  // currentPath="/dashboard" while rendering a business page, so the
+  // revalidation after a dismiss targeted a page the owner was not on.
+  for (const screen of SCREENS) {
+    assert(
+      `${screen.split("/").slice(-2).join("/")} does not pin the legacy path on a card`,
+      !/currentPath="\/dashboard"/.test(source(screen)),
+      "revalidating /dashboard from /b/<slug> leaves the dismissed card on screen"
+    );
+  }
+
   await prisma.$disconnect();
   await db.close();
 
