@@ -51,6 +51,14 @@ model User {
   // issued before this timestamp is refused. Null for accounts that have never
   // reset, which is the same as "no reason to refuse anything".
   passwordChangedAt DateTime?
+  // WHEN THIS PERSON LAST PROVED THEY ARE STILL THEMSELVES (Security & Trust,
+  // 2026-08-22). A live session is not proof: it is what an attacker who
+  // phished a password or stole a laptop is already holding. Every
+  // security-sensitive action — turning 2FA off, regenerating recovery codes,
+  // changing who can reach a business — requires a confirmation newer than
+  // REAUTHENTICATION_WINDOW_MS, and clears it again on success so one
+  // confirmation does not authorise an unbounded series of them.
+  reauthenticatedAt DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
