@@ -448,7 +448,7 @@ export async function WebsiteScreen({
                     <p className="text-xs font-medium text-zinc-500">
                       Genesis has {group.length} related changes from one idea
                     </p>
-                    <form action={approveGenesisActionGroup.bind(null, groupKey)}>
+                    <form action={approveGenesisActionGroup.bind(null, groupKey, slug)}>
                       <button
                         type="submit"
                         className="rounded-full bg-[var(--brand-accent,var(--foreground))] px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"

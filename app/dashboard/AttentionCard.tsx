@@ -40,8 +40,8 @@ export function AttentionCard({
   slug,
 }: {
   card: AttentionCardData;
-  approveAction: (id: string) => Promise<void>;
-  rejectAction: (id: string) => Promise<void>;
+  approveAction: (id: string, slug?: string) => Promise<void>;
+  rejectAction: (id: string, slug?: string) => Promise<void>;
   issueAction: (formData: FormData) => void;
   discoveryAction: (formData: FormData) => void;
   taskAction: (formData: FormData) => void;
@@ -104,7 +104,7 @@ export function AttentionCard({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {card.kind === "proposal" ? (
               <>
-                <form action={approveAction.bind(null, card.approvalRequestId)}>
+                <form action={approveAction.bind(null, card.approvalRequestId, slug)}>
                   <button
                     type="submit"
                     className="rounded-full bg-[#2563eb] px-3.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
@@ -112,7 +112,7 @@ export function AttentionCard({
                     Approve
                   </button>
                 </form>
-                <form action={rejectAction.bind(null, card.approvalRequestId)}>
+                <form action={rejectAction.bind(null, card.approvalRequestId, slug)}>
                   <button
                     type="submit"
                     className="rounded-full border border-black/[.08] px-3.5 py-1.5 text-xs text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"

@@ -217,6 +217,23 @@ async function main() {
     "dismiss takes arguments rather than FormData, so it is bound instead"
   );
 
+  // The approve/reject controls are bound rather than posted, so they carry the
+  // business as a bound argument. Approving was ALREADY correctly scoped — the
+  // approval row names its own business — but "Approve all" was not: the group
+  // lookup resolved the active business and then searched inside it, so from
+  // Business A's page it matched nothing and did nothing, silently. And every
+  // one of the three then redirected to /dashboard, dropping the owner out of
+  // the business they were working in.
+  assert("approve carries the business", /approveAction\.bind\(null, card\.approvalRequestId, slug\)/.test(card));
+  assert("so does reject", /rejectAction\.bind\(null, card\.approvalRequestId, slug\)/.test(card));
+  const list = source("app/dashboard/AttentionCardList.tsx");
+  assert("and so does approve-all", /approveGroupAction\.bind\(null, group\.groupId, slug\)/.test(list));
+  assert(
+    "including the one call site that binds the group action directly",
+    /approveGenesisActionGroup\.bind\(null, groupKey, slug\)/.test(source("app/dashboard/website/page.tsx")),
+    "a bound action missing an argument silently receives FormData in its place"
+  );
+
   // Every screen that shows cards, so a new one cannot quietly opt out.
   const SCREENS = [
     "app/dashboard/HomeWorkspace.tsx",

@@ -27,7 +27,7 @@ export function AttentionCardList({
   cards: AttentionCardData[];
   approveAction: (id: string) => Promise<void>;
   rejectAction: (id: string) => Promise<void>;
-  approveGroupAction: (groupId: string) => Promise<void>;
+  approveGroupAction: (groupId: string, slug?: string) => Promise<void>;
   issueAction: (formData: FormData) => void;
   discoveryAction: (formData: FormData) => void;
   taskAction: (formData: FormData) => void;
@@ -62,7 +62,7 @@ export function AttentionCardList({
           {group.groupId && group.cards.length > 1 && (
             <div className="flex items-center justify-between">
               <p className="text-xs text-zinc-500 dark:text-zinc-400">{group.cards.length} changes from one idea</p>
-              <form action={approveGroupAction.bind(null, group.groupId)}>
+              <form action={approveGroupAction.bind(null, group.groupId, slug)}>
                 <button
                   type="submit"
                   className="rounded-full bg-[#2563eb] px-3 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"

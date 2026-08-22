@@ -17,6 +17,7 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
+import { businessBasePath } from "@/lib/dashboard/navConfig";
 import { adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -5391,8 +5392,18 @@ async function logApprovalDecisionEvent(params: {
 // matching performApproveGenesisAction's own established
 // core-function/redirecting-wrapper split below — never a second approval
 // system, never a re-analysis.
-export async function performApproveGenesisActionGroup(groupId: string): Promise<GroupApprovalResult> {
-  const { storeId, userId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+export async function performApproveGenesisActionGroup(
+  groupId: string,
+  // THE BUSINESS THE GROUP BELONGS TO (2026-08-22).
+  //
+  // This resolved the ACCOUNT's active business and then looked for the group
+  // inside it. From Business A's page with B active, that query matched nothing
+  // — so "Approve all" on A's cards returned totalMembers 0 and did nothing at
+  // all, silently. Fail-closed, which is the right direction to fail, but the
+  // owner clicked a button and got no changes and no error.
+  slug?: string
+): Promise<GroupApprovalResult> {
+  const { storeId, userId } = await requireBusinessOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
   const members = await prisma.approvalRequest.findMany({
     where: { storeId, groupId, status: "PENDING_APPROVAL" },
     orderBy: { createdAt: "asc" },
@@ -5494,15 +5505,18 @@ export async function performApproveGenesisActionGroup(groupId: string): Promise
   return { totalMembers: members.length, succeeded, failed };
 }
 
-export async function approveGenesisActionGroup(groupId: string) {
-  const result = await performApproveGenesisActionGroup(groupId);
+export async function approveGenesisActionGroup(groupId: string, slug?: string) {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
+  const result = await performApproveGenesisActionGroup(groupId, slug);
   if (result.totalMembers > 0) {
-    const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+    // Resolved ONCE, above, and shared. The second lookup this replaced asked
+    // for the active business again, so J4's confirmation of what it had just
+    // done to Business A was written into Business B's conversation.
     await prisma.storeMessage.create({
       data: { storeId, role: "assistant", content: describeGroupApprovalResult(result) },
     });
   }
-  redirect("/dashboard");
+  redirect(slug ? `${businessBasePath(slug)}` : "/dashboard");
 }
 
 // J4 conversational approval (2026-08-09) — the real function behind
@@ -5682,9 +5696,13 @@ export async function performApproveGenesisAction(approvalRequestId: string): Pr
   return { outcome: "executed", message: result.message, metadata: result.metadata };
 }
 
-export async function approveGenesisAction(approvalRequestId: string) {
+export async function approveGenesisAction(approvalRequestId: string, slug?: string) {
+  // The APPROVAL carries its own business, so execution was already correctly
+  // scoped and is untouched. Only the destination was wrong: approving a card
+  // from Business A's page landed the owner on the legacy dashboard, which
+  // shows whichever business the account last made active.
   await performApproveGenesisAction(approvalRequestId);
-  redirect("/dashboard");
+  redirect(slug ? `${businessBasePath(slug)}` : "/dashboard");
 }
 
 export async function performRejectGenesisAction(approvalRequestId: string): Promise<GenesisActionDecisionResult> {
@@ -5715,9 +5733,9 @@ export async function performRejectGenesisAction(approvalRequestId: string): Pro
   return { outcome: "executed", message: "Rejected", metadata: null };
 }
 
-export async function rejectGenesisAction(approvalRequestId: string) {
+export async function rejectGenesisAction(approvalRequestId: string, slug?: string) {
   await performRejectGenesisAction(approvalRequestId);
-  redirect("/dashboard");
+  redirect(slug ? `${businessBasePath(slug)}` : "/dashboard");
 }
 
 // Phase 6 — undo for any EXECUTED action, reusing the exact same
