@@ -63,6 +63,22 @@ Five real phases, in order:
 
 ---
 
+## Standing invariant: the mirrored registry (2026-08-21)
+
+**A hand-maintained registry that mirrors another registry, where the type system appears to enforce the mirror but cannot.** Found three times during the verification sprint, in three unrelated parts of the codebase, always with the same signature: the file documents the mirror, the compiler checks the *shape*, and nothing checks the *membership*.
+
+| Mirror | What a drift would do |
+|---|---|
+| `lib/storefront/targets.ts` → `GENESIS_ACTIONS` | A target names a retired action. J4 highlights part of the storefront, sounds certain, and has no verb behind it — the exact failure that file's own invariant exists to prevent |
+| `lib/storefront/dimensions.ts` → `lib/theme.ts` | A value is offered that theme.ts no longer renders. It is chosen, shown on an approval card that looks legitimate, approved — and then renders as undefined CSS |
+| `lib/onboarding/discoveryFlow.ts`'s `ECOMMERCE_SLUGS` → `lib/businessTaxonomy.ts` | Renaming a revenue-stream slug silently sends every product business down the non-ecommerce path |
+
+**Why the compiler cannot help.** In each case the values are typed against a union or an enum, which catches a typo. What it cannot catch is a name that is still a valid member of the *type* while no longer being a live key in the *runtime* registry — and `dimensions.ts` says why it is a literal at all: "TypeScript types are erased at runtime and this needs to validate real model output." The erasure that forces the duplication is the same erasure that makes it uncheckable.
+
+**The rule going forward.** A registry that mirrors another must carry a runtime cross-check asserting every referenced name resolves in the registry it mirrors. All three above are now guarded — `scripts/verify-storefront-scope.ts`, `scripts/verify-dimensions.ts`, `scripts/verify-taxonomy.ts` — and all three are currently clean. **Do not refactor them to derive from their source**; the literals exist for the runtime-validation reason above, and the cross-check is the cheaper and more honest fix.
+
+**The invariant this protects, stated plainly:** Genesis must never present an action as executable unless a real registered executable stands behind it, and must never claim a change outside what the proposal actually authorises. A dangling registry reference is how either becomes possible without anybody writing a line of wrong logic.
+
 ## Permissions & Roles
 
 Three conceptual roles: **Owner**, **Employee**, **Customer** — but only two are ever stored:
