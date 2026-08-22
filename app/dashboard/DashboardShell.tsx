@@ -746,6 +746,16 @@ export function DashboardShell({
           <span className="tabular-nums">{growthPointBalance}</span>
         </Link>
         {viewStoreLink}
+        {/* Account security. Beside Sign out because both are about the ACCOUNT
+            rather than this business — an account with three businesses has one
+            password and one sign-in history, so this link is deliberately not
+            business-scoped like everything above it. */}
+        <Link
+          href="/account/security"
+          className="rounded-lg border border-black/[.08] px-3 py-2 text-sm text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
+        >
+          Security
+        </Link>
         <form action={signOutOfGenesis}>
           <button
             type="submit"

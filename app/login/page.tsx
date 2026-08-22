@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signIn } from "next-auth/react";
+import { signIn, getSession } from "next-auth/react";
 import Link from "next/link";
 
 // useSearchParams() requires a Suspense boundary for static generation
@@ -53,17 +53,43 @@ function LoginForm() {
     setError("");
     setLoading(true);
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      // Sent only on the second step. Its absence on the first is what lets the
-      // server tell "no code supplied" from "wrong code" without ever telling
-      // the caller which one happened.
-      ...(needsCode ? { token: code } : {}),
-      redirect: false,
-    });
+    // BOTH FAILURE SHAPES, because next-auth gives both (2026-08-22).
+    //
+    // This read `result?.error` alone, and a refused credential sign-in THROWS
+    // rather than returning one — so a wrong password produced no message at
+    // all: the form simply sat there. Found by the security browser suite,
+    // which expected the second-factor prompt and got a page with nothing on
+    // it. A caught throw and a returned error are the same event to the person
+    // typing, and they are now treated as one.
+    let failed = false;
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        // Sent only on the second step. Its absence on the first is what lets
+        // the server tell "no code supplied" from "wrong code" without ever
+        // telling the caller which one happened.
+        ...(needsCode ? { token: code } : {}),
+        redirect: false,
+      });
+      // AND THE ONLY ANSWER THAT CANNOT BE WRONG: is there a session now?
+      //
+      // `result.error` alone was not enough. A refused credential sign-in
+      // reports back in more than one shape, and one of them looks like
+      // success — so the page pushed to /dashboard, middleware bounced it
+      // straight back to /login, and the person saw a form that had apparently
+      // done nothing. That was true for every wrong password before this
+      // milestone; the security browser suite found it while waiting for a
+      // second-factor prompt that never came.
+      //
+      // A session either exists or it does not, and it is what the next screen
+      // depends on anyway.
+      failed = Boolean(result?.error) || !(await getSession());
+    } catch {
+      failed = true;
+    }
 
-    if (result?.error) {
+    if (failed) {
       if (!needsCode) {
         // The password may well have been right, with a second factor still to
         // come. Ask for it rather than declaring the password wrong.
