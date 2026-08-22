@@ -3,6 +3,8 @@ import {
   DEFAULT_GROUND,
   roomForPath,
   roomSurface,
+  COMMERCE_LIST,
+  COMMERCE_ROW,
   type RoomKey,
 } from "@/lib/dashboard/rooms";
 import {
@@ -132,6 +134,27 @@ for (const key of Object.keys(ROOM_CHARACTER) as RoomKey[]) {
   assert(`${key} declares a ground`, ROOM_CHARACTER[key].ground.trim().length > 0);
   assert(`${key} declares a density`, ROOM_CHARACTER[key].density.trim().length > 0);
 }
+
+// ============================================================================
+console.log("\n=== 3b. The density tokens are read by something ===\n");
+// ============================================================================
+// Every room declared a `--room-gap` from the day the room work shipped, and
+// nothing anywhere consumed one — three declarations that looked built and
+// were not. This is the assertion that stops that recurring: the token has to
+// be REFERENCED, not merely set.
+check("Commerce packs its rows to nothing", ROOM_CHARACTER.commerce.density, "[--room-gap:0px]");
+assert("and the ledger list actually reads that token", COMMERCE_LIST.includes("var(--room-gap)"), COMMERCE_LIST);
+assert(
+  "so changing the room's density really moves the rows",
+  COMMERCE_LIST.includes("gap-[var(--room-gap)]"),
+  "a hardcoded gap here would make the token decorative again"
+);
+assert("rows are separated by a rule rather than by space", COMMERCE_LIST.includes("divide-y"), COMMERCE_LIST);
+assert(
+  "and a row is not a box",
+  !COMMERCE_ROW.includes("border") && !COMMERCE_ROW.includes("rounded"),
+  COMMERCE_ROW
+);
 
 // ============================================================================
 console.log("\n=== 4. Blue is J4's, and no room may borrow it ===\n");

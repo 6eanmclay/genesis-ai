@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
+import { COMMERCE_LIST, COMMERCE_LIST_MARKER, COMMERCE_ROW } from "@/lib/dashboard/rooms";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { toggleProductActive, deleteProduct } from "../actions";
 import {
@@ -134,7 +135,7 @@ export async function ProductsScreen({
           No products yet. Add your first one below.
         </p>
       ) : (
-        <ul className="mt-4 flex max-w-4xl flex-col gap-4">
+        <ul className={`mt-4 max-w-4xl ${COMMERCE_LIST}`} {...COMMERCE_LIST_MARKER}>
           {products.map((product) => (
             <li
               key={product.id}
@@ -148,7 +149,7 @@ export async function ProductsScreen({
               // price, description, save) / sm:flex-row for a real
               // two-column desktop layout, now inside a wide enough <ul>
               // for the description to actually have room.
-              className="flex flex-col gap-4 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145] sm:flex-row"
+              className={`flex flex-col gap-4 sm:flex-row ${COMMERCE_ROW}`}
             >
               <div className="flex w-full shrink-0 flex-col gap-2 sm:w-64">
                 {/* Product media gallery (2026-08-08) — "a proper product

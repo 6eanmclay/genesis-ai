@@ -139,3 +139,47 @@ export function roomSurface(pathname: string, basePath: string): string {
   const character = ROOM_CHARACTER[room];
   return `${character.ground} ${character.density}`;
 }
+
+// COMMERCE'S DENSITY, MADE LOAD-BEARING (2026-08-22, approved by Sean).
+//
+// ROOM_CHARACTER has declared `--room-gap` since the room work shipped, and
+// until now nothing read it — three tokens that looked built and were not. This
+// is what consumes Commerce's, and the room's own prose is the specification:
+//
+//   "A tinted ground makes cards float, and floating cards are what turn a
+//    ledger into a feed. So the ground is the paper itself, and rows are
+//    separated by rules rather than by gaps between objects."
+//
+// THE TOKEN IS THE MECHANISM, not decoration. The list's gap IS `--room-gap`,
+// so Commerce's 0px is what closes the rows up against their rules. Change that
+// one value and the rows separate — which is the difference between a density
+// system and three hardcoded classnames that happen to agree today.
+//
+// Hierarchy therefore has to come from type, columns and spacing rather than
+// from a container per row: with no border and no radius, a row is distinguished
+// by what is set in it, not by the box around it.
+export const COMMERCE_LIST = "flex flex-col gap-[var(--room-gap)] divide-y divide-black/[.06] dark:divide-white/[.08]";
+
+/**
+ * One row on that sheet.
+ *
+ * Vertical padding only. Horizontal padding would rebuild the card's inset and
+ * pull the rows away from the page's own edge, which is the thing that made
+ * them read as objects floating on a ground rather than lines on paper.
+ *
+ * `first:pt-0` because the first row sits directly under its heading and a full
+ * pad above it reads as a gap the rule below does not have.
+ */
+export const COMMERCE_ROW = "py-4 first:pt-0";
+
+/**
+ * The marker every Commerce ledger list carries.
+ *
+ * Added because these screens render more than one <ul> — an attention-card
+ * list sits above the ledger on Products and Customers — and a verification
+ * suite that took "the first list with rows" measured the wrong one, passing on
+ * Orders and failing on the other two for a reason that had nothing to do with
+ * the treatment. Naming the ledger explicitly is more honest than a positional
+ * guess, and it says what the element IS rather than where it happens to sit.
+ */
+export const COMMERCE_LIST_MARKER = { "data-room-list": "commerce" } as const;

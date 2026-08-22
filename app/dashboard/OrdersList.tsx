@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { toggleOrderFulfilled, purchaseShippingLabel } from "./actions";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
 import { formatMoney } from "@/lib/money";
+import { COMMERCE_LIST, COMMERCE_LIST_MARKER, COMMERCE_ROW } from "@/lib/dashboard/rooms";
 
 const STATUS_LABEL: Record<string, string> = {
   paid: "Paid",
@@ -122,7 +123,7 @@ function OrderRowCard({
   const isFulfilled = order.fulfillmentStatus === "fulfilled";
 
   return (
-    <li className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+    <li className={COMMERCE_ROW}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           {/* HOW MANY, next to what (2026-08-22, P1.7). The lifecycle the
@@ -246,7 +247,7 @@ export function OrdersList({
           <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
             Needs fulfillment ({unfulfilled.length})
           </h3>
-          <ul className="mt-3 flex flex-col gap-3">
+          <ul className={`mt-3 ${COMMERCE_LIST}`} {...COMMERCE_LIST_MARKER}>
             {unfulfilled.map((order) => (
               <OrderRowCard
                 key={order.id}
@@ -265,7 +266,7 @@ export function OrdersList({
           <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
             Fulfilled ({fulfilled.length})
           </h3>
-          <ul className="mt-3 flex flex-col gap-3">
+          <ul className={`mt-3 ${COMMERCE_LIST}`} {...COMMERCE_LIST_MARKER}>
             {fulfilled.map((order) => (
               <OrderRowCard
                 key={order.id}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { CustomerSummary, RecentOrder } from "@/lib/dashboard/types";
 import { formatMoney } from "@/lib/money";
+import { COMMERCE_LIST, COMMERCE_LIST_MARKER, COMMERCE_ROW } from "@/lib/dashboard/rooms";
 
 function CustomerRow({
   customer,
@@ -19,7 +20,7 @@ function CustomerRow({
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <li className="rounded-lg border border-black/[.08] px-3 py-2 dark:border-white/[.145]">
+    <li className={COMMERCE_ROW}>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -89,7 +90,7 @@ export function CustomersList({
     return <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">No customers yet.</p>;
   }
   return (
-    <ul className="mt-4 flex max-w-md flex-col gap-2">
+    <ul className={`mt-4 max-w-md ${COMMERCE_LIST}`} {...COMMERCE_LIST_MARKER}>
       {customers.map((customer) => (
         <CustomerRow
           key={customer.buyerEmail}

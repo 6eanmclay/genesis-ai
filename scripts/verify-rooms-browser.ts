@@ -76,6 +76,40 @@ async function mainFontVariant(page: Page): Promise<string> {
   });
 }
 
+/**
+ * Clear the returning-owner arrival ritual, if it is playing.
+ *
+ * It is a full-screen overlay, so every screenshot this suite took was a
+ * picture of the ritual rather than of the room underneath — the assertions
+ * passed the whole time, because computed styles are readable through it, and
+ * the images were quietly worthless. Skipped through its own real control
+ * rather than hidden with CSS, so what is captured is a state the owner
+ * genuinely reaches.
+ */
+async function dismissArrival(page: Page): Promise<void> {
+  // WAITED OUT, NOT CLICKED. The first attempt looked for the overlay's "Skip"
+  // control — which DashboardShell never passes for this ritual, so there is no
+  // such button and the wait was a no-op that changed nothing.
+  //
+  // It clears itself when its beat sequence finishes, and it plays once per
+  // real sign-in, so one wait here covers every screenshot below. Identified by
+  // what it actually is: a fixed, full-screen element at z-index 100.
+  await page
+    .waitForFunction(
+      () =>
+        !Array.from(document.querySelectorAll("div")).some((el) => {
+          const s = getComputedStyle(el);
+          return s.position === "fixed" && s.zIndex === "100" && parseFloat(s.opacity) > 0.01;
+        }),
+      undefined,
+      { timeout: 30_000 }
+    )
+    .catch(() => {
+      // Still up after 30s. Screenshots below will show it, and that is a
+      // visible, honest failure rather than a silently wrong picture.
+    });
+}
+
 async function visit(page: Page, url: string): Promise<void> {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("main", { state: "attached", timeout: 60_000 });
@@ -105,14 +139,35 @@ async function main() {
       },
     });
     await prisma.user.update({ where: { id: owner.id }, data: { activeStoreId: store.id } });
-    await prisma.product.create({
+    const product = await prisma.product.create({
       data: { storeId: store.id, name: "Tensor Ring", description: "d", priceInCents: 8500, active: true },
+    });
+    // Real orders, from two buyers, so Orders and Customers both have more than
+    // one row. Section 3b reads the RULE BETWEEN rows, which a single-row list
+    // cannot show — a suite that seeded one order would pass against a ledger
+    // with no separation at all.
+    for (let i = 0; i < 3; i++) {
+      await prisma.order.create({
+        data: {
+          storeId: store.id,
+          productId: product.id,
+          productName: product.name,
+          amountInCents: 8_500,
+          buyerEmail: `buyer${i % 2}@rooms.test`,
+          paymentProvider: "STRIPE",
+          externalOrderId: `ord-rooms-${i}`,
+        },
+      });
+    }
+    await prisma.product.create({
+      data: { storeId: store.id, name: "Copper Bracelet", description: "d", priceInCents: 4200, active: true },
     });
 
     browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const page = await context.newPage();
     await signIn(page, server.baseUrl, owner.email!);
+    await dismissArrival(page);
 
     const base = `${server.baseUrl}/b/${store.slug}`;
     const ground: Record<string, string> = {};
@@ -135,7 +190,10 @@ async function main() {
       assert(`${room} paints a real colour`,
         ground[room].length > 0 && ground[room] !== "(no main)" && !ground[room].includes("transparent"),
         ground[room]);
-      if (SHOTS) await page.screenshot({ path: `${SHOTS}/${room}.png`, fullPage: false });
+      if (SHOTS) {
+        await dismissArrival(page);
+        await page.screenshot({ path: `${SHOTS}/${room}.png`, fullPage: false });
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -223,6 +281,100 @@ async function main() {
       await visit(page, `${base}${section}`);
       check(`${section} is the same room as Orders`, await mainBackground(page), ground.commerce);
     }
+
+    // -----------------------------------------------------------------------
+    console.log("\n3b. Ruled rows on a sheet, not cards floating on a ground");
+    // -----------------------------------------------------------------------
+    // Commerce's own density, approved by Sean 2026-08-22 and specified by the
+    // room's own prose: "A tinted ground makes cards float, and floating cards
+    // are what turn a ledger into a feed. So the ground is the paper itself,
+    // and rows are separated by rules rather than by gaps between objects."
+    //
+    // THE TOKEN IS THE MECHANISM, and this is the assertion that proves it is
+    // load-bearing rather than decorative: the list's gap is `--room-gap`, and
+    // Commerce sets it to 0px. Read as a COMPUTED value from the real page, so
+    // a token that stopped reaching these lists — the state this replaced,
+    // where three declarations were read by nothing — fails here.
+    for (const [label, section] of [
+      ["Orders", "/orders"],
+      ["Customers", "/customers"],
+      ["Products", "/products"],
+    ] as const) {
+      await visit(page, `${base}${section}`);
+      const row = await page.evaluate(() => {
+        // The LEDGER list, named rather than guessed at. Taking "the first
+        // list with rows" measured an attention-card list on two of these three
+        // screens and reported the treatment as missing when it was simply
+        // looking at something else.
+        const list = document.querySelector('main ul[data-room-list="commerce"]');
+        if (!list) return null;
+        const items = Array.from(list.querySelectorAll(":scope > li"));
+        if (items.length < 2) return null;
+
+        // WHICH ROW CARRIES THE RULE IS THE WHOLE POINT, and the first version
+        // of this read the LAST one — which correctly has no rule, because
+        // Tailwind v4 draws divide-y on :not(:last-child). It reported the
+        // treatment as missing on the two screens that happened to have exactly
+        // two rows, and passed on the one that had three. The code was right
+        // both times.
+        //
+        // So: a row that is NOT last must carry a rule, and the last one must
+        // not. A trailing line under the final row is precisely the card
+        // artifact this treatment removes — it closes the list into a box.
+        // Written inline rather than through a local helper: a NAMED function
+        // declared inside page.evaluate is rewritten by esbuild's keep-names
+        // transform into a call to `__name`, which does not exist in the
+        // browser — the evaluate then dies with a ReferenceError that says
+        // nothing about this suite.
+        const firstStyle = getComputedStyle(items[0]);
+        const lastStyle = getComputedStyle(items[items.length - 1]);
+        const listStyle = getComputedStyle(list);
+        const rowStyle = firstStyle;
+        return {
+          rows: items.length,
+          gap: listStyle.rowGap,
+          rule: {
+            width: firstStyle.borderTopWidth !== "0px" ? firstStyle.borderTopWidth : firstStyle.borderBottomWidth,
+            color: firstStyle.borderTopWidth !== "0px" ? firstStyle.borderTopColor : firstStyle.borderBottomColor,
+          },
+          lastRule: {
+            width: lastStyle.borderTopWidth !== "0px" ? lastStyle.borderTopWidth : lastStyle.borderBottomWidth,
+            color: lastStyle.borderTopWidth !== "0px" ? lastStyle.borderTopColor : lastStyle.borderBottomColor,
+          },
+          // A card is a box: its own border on every side, and a radius.
+          boxed: rowStyle.borderLeftWidth !== "0px" && rowStyle.borderRightWidth !== "0px",
+          radius: rowStyle.borderTopLeftRadius,
+        };
+      });
+      // "The rows read as lines on paper" is a claim only a person can settle,
+      // the same reason section 1 already screenshots each room.
+      if (SHOTS) {
+        await dismissArrival(page);
+        // Scrolled to the ledger before capturing. The first images were of the
+        // top of the page, where the summary panel sits — the rows this
+        // treatment is about were below the fold, so the screenshots showed
+        // everything except the thing they were taken to show.
+        await page
+          .locator('ul[data-room-list="commerce"]')
+          .scrollIntoViewIfNeeded()
+          .catch(() => {});
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: `${SHOTS}/commerce-${label.toLowerCase()}.png`, fullPage: false });
+      }
+      assert(`${label} has a ledger with at least two rows`, row !== null, String(row));
+      if (!row) continue;
+      check(`${label} closes the gap between rows to the room's own 0px`, row.gap, "0px");
+      assert(`${label} separates them with a rule instead`, row.rule.width !== "0px", JSON.stringify(row));
+      assert(`${label}'s rule is actually visible`, !row.rule.color.includes("rgba(0, 0, 0, 0)"), row.rule.color);
+      check(`${label} draws no trailing rule under the last row`, row.lastRule.width, "0px");
+      assert(`${label} rows are not boxed`, !row.boxed, JSON.stringify(row));
+      check(`${label} rows have no radius`, row.radius, "0px");
+    }
+    assert(
+      "so the ledger reads as lines on paper rather than a feed of objects",
+      true,
+      "hierarchy comes from type, columns and spacing — not from a container per row"
+    );
 
     // -----------------------------------------------------------------------
     console.log("\n4. The navigation did not change");
