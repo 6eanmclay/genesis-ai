@@ -5,6 +5,7 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { recordSecurityEvent, describeDevice, SECURITY_EVENTS } from "@/lib/security/events";
 import { standingFor, touchSession } from "@/lib/security/sessions";
+import { isTwoFactorEnabled, verifySecondFactor } from "@/lib/security/twoFactor";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { isTokenIssuedBeforePasswordChange } from "@/lib/auth/passwordReset";
@@ -39,6 +40,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        // The second factor, sent by the login form only when the account has
+        // one. Absent for every account without 2FA, which is the majority.
+        token: { label: "Authentication code", type: "text" },
       },
       authorize: async (credentials, request) => {
         if (!credentials?.email || !credentials?.password) {
@@ -110,6 +114,34 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return null;
         }
 
+        // THE SECOND FACTOR, AND IT IS NOT BYPASSABLE (Security & Trust, D6).
+        //
+        // Enforced HERE, in authorize, because this is the single gate every
+        // credential sign-in passes through — there is no partially
+        // authenticated state that can read anything, no "skip for now", and no
+        // query parameter that reaches past it. A session simply does not exist
+        // until the factor is satisfied.
+        //
+        // The password has already been verified at this point, so a missing or
+        // wrong code is refused with the SAME null as a wrong password. A
+        // distinct answer would confirm to somebody holding a stolen password
+        // that they had the right one and only needed the phone.
+        if (await isTwoFactorEnabled(user.id)) {
+          const token = typeof credentials.token === "string" ? credentials.token : "";
+          if (!token) {
+            // Cleared deliberately: the password WAS right, so leaving failed
+            // attempts against it would lock an owner out for going to fetch
+            // their phone.
+            await clearAttempts(buckets);
+            return null;
+          }
+          const challenge = await verifySecondFactor({ userId: user.id, token, userAgent });
+          if (!challenge.passed) {
+            await recordFailedAttempt(buckets);
+            return null;
+          }
+        }
+
         // Cleared on success, so someone who mistypes nine times and then gets
         // it right is not left one slip away from a lockout for the next
         // quarter of an hour.
@@ -126,7 +158,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // that callback has no request of its own and this is the only bridge
         // NextAuth gives between them. Reduced to the coarse label here — the
         // raw agent never leaves this function.
-        return { ...user, device: describeDevice(userAgent) };
+        return { ...user, device: describeDevice(userAgent), twoFactor: await isTwoFactorEnabled(user.id) };
       },
     }),
   ],
@@ -142,6 +174,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // (ProductEvent.sessionInstanceId). Persists for the JWT's lifetime,
         // not per browser tab; see the v20 plan for that known tradeoff.
         token.sessionInstanceId = randomUUID();
+        // D2, approved: the claim lives in the JWT, so it inherits the
+        // revocation path for free rather than costing a database read on every
+        // authenticated request to answer a question that cannot change
+        // mid-session. Reaching this branch at all means the factor was
+        // satisfied in authorize — a session is never minted without it.
+        token.twoFactorVerified = (user as { twoFactor?: boolean }).twoFactor === true;
         // The record of this sign-in, so the owner can see it and end it. Only
         // on this branch is the device knowable — the refresh branch below has
         // no request behind it, which is why `update` there never overwrites a

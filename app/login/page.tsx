@@ -41,6 +41,12 @@ function LoginForm() {
     oauthErrorCode ? (OAUTH_ERROR_MESSAGES[oauthErrorCode] ?? DEFAULT_OAUTH_ERROR_MESSAGE) : ""
   );
   const [loading, setLoading] = useState(false);
+  // THE SECOND STEP, shown only after a first attempt is refused. Asking every
+  // account for a code up front would tell anybody who types an address whether
+  // that account has 2FA — and the server refuses "no code" and "wrong
+  // password" identically, so reaching this step reveals nothing on its own.
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,11 +56,23 @@ function LoginForm() {
     const result = await signIn("credentials", {
       email,
       password,
+      // Sent only on the second step. Its absence on the first is what lets the
+      // server tell "no code supplied" from "wrong code" without ever telling
+      // the caller which one happened.
+      ...(needsCode ? { token: code } : {}),
       redirect: false,
     });
 
     if (result?.error) {
-      setError("Invalid email or password");
+      if (!needsCode) {
+        // The password may well have been right, with a second factor still to
+        // come. Ask for it rather than declaring the password wrong.
+        setNeedsCode(true);
+        setError("");
+        setLoading(false);
+        return;
+      }
+      setError("That code didn't work. Check your authenticator app, or use one of your recovery codes.");
       setLoading(false);
       return;
     }
@@ -112,6 +130,32 @@ function LoginForm() {
               Forgot password?
             </Link>
           </div>
+
+          {needsCode && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="code" className="text-sm text-black dark:text-zinc-50">
+                Authentication code
+              </label>
+              <input
+                id="code"
+                name="token"
+                type="text"
+                autoComplete="one-time-code"
+                inputMode="text"
+                autoFocus
+                placeholder="123456"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+              />
+              {/* Recovery codes are letters and TOTP codes are digits, so one
+                  field takes both — a separate "use a recovery code" mode would
+                  be a decision to make while locked out of your own business. */}
+              <p className="text-xs text-zinc-500">
+                From your authenticator app, or one of your recovery codes.
+              </p>
+            </div>
+          )}
 
           {error && <p className="text-sm text-red-600">{error}</p>}
 

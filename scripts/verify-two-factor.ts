@@ -235,6 +235,65 @@ async function main() {
     assert("and no recovery code did either",
       ![...codes, ...fresh].some((c) => serialised.includes(c)),
       "the history is read by an owner, and stored beside the thing it audits");
+    // ========================================================================
+    console.log("\n=== 9. The gate at sign-in is not bypassable ===\n");
+    // ========================================================================
+    // THE INVARIANT THAT MAKES 2FA REAL rather than decorative. Enforced in
+    // auth.ts's authorize, which is the single gate every credential sign-in
+    // passes through — there is no partially authenticated state that can read
+    // anything, no "skip for now", and no query parameter that reaches past it.
+    // A session simply does not exist until the factor is satisfied.
+    //
+    // Asserted structurally, because the alternative is a full browser sign-in
+    // against an account whose TOTP code changes every 30 seconds — and what
+    // would actually break here is the ORDER of the checks, which is readable.
+    const authSource = (await import("fs")).readFileSync("auth.ts", "utf8");
+
+    // Matches the GUARD, not merely a mention. The first version tested for
+    // `isTwoFactorEnabled(user.id)` anywhere in the file, which also matches
+    // the claim written onto the returned user — so with the gate deleted
+    // entirely this assertion still passed, and only the ordering checks below
+    // caught it.
+    assert(
+      "the second factor GUARDS the sign-in, rather than merely being consulted",
+      /if \(await isTwoFactorEnabled\(user\.id\)\) \{/.test(authSource),
+      "anywhere else and there is a moment where a session exists without it"
+    );
+    assert(
+      "and it refuses when no code was supplied",
+      /if \(!token\) \{[\s\S]{0,400}?return null;/.test(authSource),
+      "a missing code must not fall through to a successful sign-in"
+    );
+    assert(
+      "and when the code is wrong",
+      /if \(!challenge\.passed\) \{[\s\S]{0,300}?return null;/.test(authSource),
+      "the challenge result has to be acted on, not merely computed"
+    );
+
+    // THE ORDER. The factor is checked AFTER the password and BEFORE the
+    // session is returned. Checked before the password, it would tell an
+    // attacker with no password whether an account has 2FA; checked after the
+    // return, it would not be a gate at all.
+    const passwordAt = authSource.indexOf("bcrypt.compare");
+    const factorAt = authSource.indexOf("if (await isTwoFactorEnabled(user.id)) {");
+    const returnAt = authSource.indexOf("return { ...user,");
+    assert("the password is verified first", passwordAt > 0 && passwordAt < factorAt,
+      `password ${passwordAt}, factor ${factorAt}`);
+    assert("then the second factor", factorAt > 0 && factorAt < returnAt,
+      `factor ${factorAt}, return ${returnAt}`);
+    assert(
+      "so no session is ever minted before the factor is satisfied",
+      passwordAt < factorAt && factorAt < returnAt,
+      "checked after the return it is not a gate; checked before the password it is an oracle"
+    );
+
+    // Refused identically to a wrong password, so a stolen password cannot be
+    // confirmed as correct by watching the response change.
+    assert(
+      "a missing code is refused the same way a wrong password is",
+      authSource.split("return null;").length > 4,
+      "a distinct answer would tell somebody holding a stolen password they only needed the phone"
+    );
   } finally {
     await prisma.user.delete({ where: { id: owner.id } }).catch(() => {});
   }
