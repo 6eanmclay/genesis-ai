@@ -1,11 +1,11 @@
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+﻿import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { RECOMMENDATION_MESSAGES } from "./recommendations";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 
 export interface RecommendationExplanation {
   explanation: string;
-  // Deliberately a small typed object, not a bare string — room to add
+  // Deliberately a small typed object, not a bare string â€” room to add
   // fields later (e.g. generatedAt, model version) without a signature
   // change anywhere that calls this.
 }
@@ -13,15 +13,15 @@ export interface RecommendationExplanation {
 const ExplanationSchema = z.object({ explanation: z.string() });
 
 // Shared with ai-actions.ts's calibration guidance in spirit, but kept as a
-// separate local copy — this file has no other reason to depend on that
+// separate local copy â€” this file has no other reason to depend on that
 // module, and the guidance here is a one-liner, not worth an import.
-const EXPLANATION_SYSTEM_PROMPT = `You are Genesis, an expert e-commerce consultant. The merchant has been shown a recommendation on their dashboard and asked why it matters. Explain the reasoning a domain expert would give — the business impact, risk, or opportunity behind it — in 1-2 sentences. Do not simply restate the recommendation's own wording back to them.
+const EXPLANATION_SYSTEM_PROMPT = `You are Genesis, an expert e-commerce consultant. The merchant has been shown a recommendation on their dashboard and asked why it matters. Explain the reasoning a domain expert would give â€” the business impact, risk, or opportunity behind it â€” in 1-2 sentences. Do not simply restate the recommendation's own wording back to them.
 
-You are explaining ONLY the single recommendation given to you. Do not propose new or different recommendations, and do not suggest the merchant do anything beyond what was already recommended — narrating why is your only job here.
+You are explaining ONLY the single recommendation given to you. Do not propose new or different recommendations, and do not suggest the merchant do anything beyond what was already recommended â€” narrating why is your only job here.
 
 Be precise about certainty: state facts plainly, but frame any advice or generalization as guidance (e.g. "typically...", "this usually matters because...") rather than settled fact.`;
 
-// The reusable service PH-07 layer 2 is built around — a caching layer can
+// The reusable service PH-07 layer 2 is built around â€” a caching layer can
 // wrap this function later (keyed on recommendationId/storeId) without
 // touching the server action, the button component, or the panel.
 export async function getRecommendationExplanation(params: {
@@ -29,13 +29,30 @@ export async function getRecommendationExplanation(params: {
   storeId?: string;
   storeName: string;
 }): Promise<RecommendationExplanation> {
-  const message = RECOMMENDATION_MESSAGES[params.recommendationId];
-  if (!message) {
+  // hasOwnProperty rather than a bare lookup (2026-08-22), the same discipline
+  // every other closed registry here already uses â€” and this one was found
+  // failing rather than reasoned about. RECOMMENDATION_MESSAGES is a plain
+  // Record, so "constructor", "toString", "__proto__" and "hasOwnProperty" all
+  // resolved to inherited FUNCTIONS, sailed past the falsy check below, and
+  // reached the model call: a real request, really billed, carrying
+  // "function Object() { [native code] }" into the prompt as the merchant's
+  // recommendation. Confirmed by the auth error a suite run produced for each
+  // of those four ids.
+  //
+  // BOTH HALVES ARE LOAD BEARING and each alone would have caught this one:
+  // hasOwnProperty refuses the inherited key, and the typeof check refuses a
+  // non-string that reached the variable some other way. Confirmed by negative
+  // control — restoring only the bare lookup lets all five prototype ids reach
+  // the model again.
+  const message = Object.prototype.hasOwnProperty.call(RECOMMENDATION_MESSAGES, params.recommendationId)
+    ? RECOMMENDATION_MESSAGES[params.recommendationId]
+    : undefined;
+  if (typeof message !== "string" || message.length === 0) {
     throw new Error(`Unknown recommendation id: ${params.recommendationId}`);
   }
   // storeId is typed optional on this reusable service, but its one real
   // caller (ai-actions.ts's explainRecommendation) always has one via
-  // requireStorePermission — Track 0's per-store usage accounting needs a
+  // requireStorePermission â€” Track 0's per-store usage accounting needs a
   // real scope, so this fails loudly rather than silently skipping cost
   // governance for a call that, in practice, is never actually missing it.
   if (!params.storeId) {

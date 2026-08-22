@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { sectionHref } from "@/lib/dashboard/navConfig";
 import Link from "next/link";
 import type { Recommendation } from "@/lib/dashboard/types";
 import type { RecommendationExplanation } from "@/lib/dashboard/explainRecommendation";
@@ -15,9 +16,20 @@ import type { RecommendationExplanation } from "@/lib/dashboard/explainRecommend
 export function RecommendationItem({
   recommendation,
   explainAction,
+  basePath,
 }: {
   recommendation: Recommendation;
   explainAction: (id: string) => Promise<RecommendationExplanation>;
+  /**
+   * Where this workspace lives — "/dashboard" or "/b/<slug>".
+   *
+   * A recommendation's actionHref is authored as the legacy spelling, and that
+   * route resolves the ACCOUNT'S ACTIVE business rather than the one on screen.
+   * Same defect as ACTION_SECTIONS' review links (2026-08-22); this is the
+   * surface that assertion did not reach, because recommendations render on
+   * Analytics and Home rather than on the page it checked.
+   */
+  basePath: string;
 }) {
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [explanation, setExplanation] = useState<string | null>(null);
@@ -39,7 +51,7 @@ export function RecommendationItem({
       {explanation && <p className="mt-1.5 text-xs text-zinc-500">{explanation}</p>}
       <div className="mt-2.5 flex flex-wrap items-center gap-3">
         <Link
-          href={recommendation.actionHref}
+          href={sectionHref(recommendation.actionHref, basePath)}
           className="text-xs font-medium text-[var(--brand-accent,#2563eb)] underline"
         >
           {recommendation.actionLabel}

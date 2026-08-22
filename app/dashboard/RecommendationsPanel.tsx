@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { sectionHref } from "@/lib/dashboard/navConfig";
 import type { Recommendation } from "@/lib/dashboard/types";
 import type { RecommendationExplanation } from "@/lib/dashboard/explainRecommendation";
 import { RecommendationItem } from "./RecommendationItem";
@@ -15,9 +16,12 @@ import { RecommendationItem } from "./RecommendationItem";
 export function RecommendationsPanel({
   recommendations,
   explainAction,
+  basePath,
 }: {
   recommendations: Recommendation[];
   explainAction: (id: string) => Promise<RecommendationExplanation>;
+  /** See RecommendationItem's own note — every link here is business-scoped. */
+  basePath: string;
 }) {
   const [lead, ...rest] = recommendations;
 
@@ -30,7 +34,7 @@ export function RecommendationsPanel({
       ) : (
         <>
           <ul>
-            <RecommendationItem recommendation={lead} explainAction={explainAction} />
+            <RecommendationItem recommendation={lead} explainAction={explainAction} basePath={basePath} />
           </ul>
           {rest.length > 0 && (
             <p className="mt-3 border-t border-[var(--brand-accent)]/10 pt-3 text-xs text-zinc-500">
@@ -38,7 +42,7 @@ export function RecommendationsPanel({
               {rest.map((rec, i) => (
                 <span key={rec.id}>
                   {i > 0 && ", "}
-                  <Link href={rec.actionHref} className="font-medium text-[var(--brand-accent,#2563eb)] underline">
+                  <Link href={sectionHref(rec.actionHref, basePath)} className="font-medium text-[var(--brand-accent,#2563eb)] underline">
                     {rec.actionLabel}
                   </Link>
                 </span>

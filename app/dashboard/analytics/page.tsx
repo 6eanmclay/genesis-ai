@@ -169,7 +169,7 @@ export async function AnalyticsScreen({ slug, basePath }: { slug?: string; baseP
 
       <div className="mt-8">
         <h2 className="text-sm font-semibold text-black dark:text-zinc-50">From Genesis</h2>
-        <RecommendationsPanel recommendations={recommendations} explainAction={explainRecommendation} />
+        <RecommendationsPanel recommendations={recommendations} explainAction={explainRecommendation} basePath={basePath} />
       </div>
     </div>
   );
