@@ -79,6 +79,21 @@ Five real phases, in order:
 
 **The invariant this protects, stated plainly:** Genesis must never present an action as executable unless a real registered executable stands behind it, and must never claim a change outside what the proposal actually authorises. A dangling registry reference is how either becomes possible without anybody writing a line of wrong logic.
 
+### The companion rule: a model is only as truthful as the facts it is handed
+
+The same sprint established a second standing rule, and it applies wherever a model writes something an owner reads as fact. **The model is never the safeguard — the data structure handed to it is.** Three shapes recur, and each has a verified example:
+
+**An absence must stay an absence.** A missing supplier price is not zero, an unknown product cost is an exclusion rather than a zero, a store with no accounting connected has *no invoice data* rather than zero outstanding invoices, an unpriced model costs *unknown* rather than nothing, and `quantityAvailable: null` is not "out of stock" — that last one would announce every catalogue in production as depleted. Zero propagates as a claim; null propagates as an absence.
+
+**Two silences are not the same silence.** "There was no last visit" and "nothing happened since your last visit" are different facts, and `OwnerBriefingChangeSet.hasPriorAnchor` exists solely to keep them apart. Collapse them and the model is handed the exact sentence its own prompt forbids — a confident "nothing changed since we last spoke", said to somebody Genesis has never spoken to.
+
+**A model may state what was said; only code decides what is derived.** A capture schema covers what can be inferred from real text, while `status`, `identifiedAt` and reference arrays are assigned in code *after* the capture is spread. Reverse that ordering and a model can mark a goal achieved the moment it invents one, or backdate it by years. Same rule at the taxonomy layer: a category slug nobody defined is dropped, never stored.
+
+**A partial truth must never be phrased as a whole one.** `replyFor` always states both what was learned and what is still unknown, because a reply reporting the fact it just recorded, without the other half, "is the part of the truth that sounds like all of it".
+
+Every one of these is asserted by a suite that fails when the property is broken, and each was proved by breaking it deliberately at least once.
+
+
 ## Permissions & Roles
 
 Three conceptual roles: **Owner**, **Employee**, **Customer** — but only two are ever stored:
