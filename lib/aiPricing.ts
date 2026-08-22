@@ -38,14 +38,29 @@ export interface AnthropicCostInput {
 // already uses. A null costUsd on a real AiUsageEvent row means "a real
 // call happened, its dollar cost isn't known yet," not "free."
 export function computeAnthropicCost({ model, inputTokens, outputTokens }: AnthropicCostInput): number | null {
-  const rate = ANTHROPIC_RATES_PER_MILLION_TOKENS[model];
-  if (!rate) return null;
+  // hasOwnProperty, and a real shape check (2026-08-22). A bare lookup returned
+  // the inherited Object constructor for a model called "constructor" — truthy,
+  // so `if (!rate)` passed it through, and `rate.input` was undefined, making
+  // the arithmetic below return NaN.
+  //
+  // NaN is worse here than either honest answer. This file is explicit that
+  // "a null costUsd on a real AiUsageEvent row means 'a real call happened, its
+  // dollar cost isn't known yet,' not 'free'" — NaN is neither, and one NaN
+  // poisons every SUM over a store's costs after it.
+  const rate = Object.prototype.hasOwnProperty.call(ANTHROPIC_RATES_PER_MILLION_TOKENS, model)
+    ? ANTHROPIC_RATES_PER_MILLION_TOKENS[model]
+    : undefined;
+  if (!rate || typeof rate.input !== "number" || typeof rate.output !== "number") return null;
   return (inputTokens * rate.input) / 1_000_000 + (outputTokens * rate.output) / 1_000_000;
 }
 
 export function computeImageCost(model: string, imageCount: number): number | null {
-  const rate = OPENAI_IMAGE_RATE_USD[model];
-  if (rate === undefined) return null;
+  // Same guard as computeAnthropicCost above, same reason: unknown must stay
+  // unknown, and never become NaN.
+  const rate = Object.prototype.hasOwnProperty.call(OPENAI_IMAGE_RATE_USD, model)
+    ? OPENAI_IMAGE_RATE_USD[model]
+    : undefined;
+  if (typeof rate !== "number") return null;
   return rate * imageCount;
 }
 
@@ -63,7 +78,9 @@ const ELEVENLABS_RATE_USD_PER_CHARACTER: Record<string, number> = {
 };
 
 export function computeVoiceSynthesisCost(model: string, characterCount: number): number | null {
-  const rate = ELEVENLABS_RATE_USD_PER_CHARACTER[model];
-  if (rate === undefined) return null;
+  const rate = Object.prototype.hasOwnProperty.call(ELEVENLABS_RATE_USD_PER_CHARACTER, model)
+    ? ELEVENLABS_RATE_USD_PER_CHARACTER[model]
+    : undefined;
+  if (typeof rate !== "number") return null;
   return rate * characterCount;
 }

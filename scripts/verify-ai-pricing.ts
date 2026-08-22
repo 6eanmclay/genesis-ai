@@ -135,6 +135,44 @@ assert(
   computeImageCost(MODEL, 1) === null,
   "a plausible wrong number is worse than an honest absence"
 );
+// ============================================================================
+console.log("\n=== An unknown model is null, and never NaN ===\n");
+// ============================================================================
+// All three rate tables were bare Record lookups, and all three produced NaN
+// rather than null for an inherited property key. Confirmed by running it:
+//
+//     computeAnthropicCost({ model: "constructor", ... })  ->  NaN
+//     computeAnthropicCost({ model: "not-a-model", ... })  ->  null
+//
+// The truthy guard let the Object CONSTRUCTOR through, `rate.input` was
+// undefined, and the arithmetic produced NaN. This file's own contract makes
+// that the wrong answer twice over: "a null costUsd on a real AiUsageEvent row
+// means 'a real call happened, its dollar cost isn't known yet,' not 'free'."
+// NaN is neither — and unlike null it does not stay put, because one NaN turns
+// every subsequent SUM over that store's costs into NaN as well.
+const NOT_MODELS = ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"];
+for (const model of NOT_MODELS) {
+  check(`"${model}" is not a text model`,
+    computeAnthropicCost({ model, inputTokens: 1_000, outputTokens: 1_000 }), null);
+  check(`"${model}" is not an image model`, computeImageCost(model, 1), null);
+  check(`"${model}" is not a voice model`, computeVoiceSynthesisCost(model, 1_000), null);
+}
+assert(
+  "so no prototype key can put NaN into a cost column",
+  NOT_MODELS.every((m) =>
+    computeAnthropicCost({ model: m, inputTokens: 1, outputTokens: 1 }) === null &&
+    computeImageCost(m, 1) === null &&
+    computeVoiceSynthesisCost(m, 1) === null
+  ),
+  "one NaN poisons every SUM after it, which is how unknown becomes uncountable"
+);
+
+// And the honest answers are still real numbers, so the guard above cannot have
+// been achieved by refusing everything.
+assert("a real model still costs a real amount",
+  Number.isFinite(computeAnthropicCost({ model: MODEL, inputTokens: 1_000, outputTokens: 1_000 }) ?? NaN),
+  String(computeAnthropicCost({ model: MODEL, inputTokens: 1_000, outputTokens: 1_000 })));
+
 
 console.log(`\n${failures === 0 ? "All AI-pricing assertions passed." : `${failures} assertion(s) FAILED.`}`);
 process.exit(failures === 0 ? 0 : 1);
