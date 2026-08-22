@@ -40,7 +40,10 @@ const DAILY_TOKEN_CEILING = 2_000_000;
 // instead of running all day on one anonymous identity.
 const ANONYMOUS_DAILY_TOKEN_CEILING = 50_000;
 
-function ceilingFor(scope: GenesisModelScope): number {
+// Exported for verification only (2026-08-22). See scripts/verify-genesis-model.ts:
+// the anonymous ceiling is a real cost-governance boundary, and nothing asserted
+// that an anonymous scope actually lands on the tighter one.
+export function ceilingFor(scope: GenesisModelScope): number {
   return "anonymousSessionToken" in scope ? ANONYMOUS_DAILY_TOKEN_CEILING : DAILY_TOKEN_CEILING;
 }
 
@@ -159,7 +162,10 @@ function resolveErrorText(err: unknown): string {
   return `${err.message} ${causeText}`.trim();
 }
 
-function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | "durationMs" | "confirmable"> {
+// Exported for verification only (2026-08-22). Every branch decides two things
+// an owner feels: which sentence they read, and whether Genesis will keep
+// trying. Retrying a billing or auth failure is a loop against a wall.
+export function classifyAnthropicError(err: unknown): Omit<GenesisModelFailure, "ok" | "durationMs" | "confirmable"> {
   const resolvedText = resolveErrorText(err);
   if (/"type"\s*:\s*"overloaded_error"/i.test(resolvedText)) {
     return { kind: "overloaded", status: null, message: resolvedText, retryable: true };
