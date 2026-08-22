@@ -138,6 +138,15 @@ export const NAV_SECTIONS: NavSection[] = [
   // flowing IN). This is the opposite direction — money flowing FROM the
   // owner TO Genesis — hence the separate BILLING_MANAGE permission.
   { key: "billing", label: "Billing", href: "/dashboard/billing", permission: "billing:manage" },
+  // Who can reach this business (2026-08-22, Security & Trust). Its own
+  // destination rather than a tab inside Settings: "what is this business
+  // called" and "who else can spend its money" are different questions, and
+  // the second is the one an owner goes looking for deliberately.
+  //
+  // EMPLOYEES_MANAGE is OWNER-only in the permission table, so this simply
+  // does not appear for an employee — the permission existed and was read by
+  // nothing until now.
+  { key: "access", label: "Access", href: "/dashboard/access", permission: "employees:manage" },
   { key: "settings", label: "Settings", href: "/dashboard/settings", permission: "store:manage" },
 ];
 

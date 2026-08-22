@@ -41,11 +41,18 @@ function LoginForm() {
     oauthErrorCode ? (OAUTH_ERROR_MESSAGES[oauthErrorCode] ?? DEFAULT_OAUTH_ERROR_MESSAGE) : ""
   );
   const [loading, setLoading] = useState(false);
-  // THE SECOND STEP, shown only after a first attempt is refused. Asking every
-  // account for a code up front would tell anybody who types an address whether
-  // that account has 2FA — and the server refuses "no code" and "wrong
-  // password" identically, so reaching this step reveals nothing on its own.
-  const [needsCode, setNeedsCode] = useState(false);
+  // ONE FORM, ONE OPTIONAL FIELD — not a second step (2026-08-22).
+  //
+  // The first version revealed the code field only after a failed attempt, so
+  // that asking for it never told anyone whether an account had 2FA. It could
+  // not work: signIn with redirect:false still NAVIGATES on a credential
+  // error, so the page reloaded and the "now ask for a code" state was gone
+  // every time. The browser suite caught it as an intermittent failure, which
+  // is exactly what a lost-state bug looks like from outside.
+  //
+  // Shown to everyone instead. It leaks nothing — the same field is on the
+  // page for every account — and it removes a whole class of bug along with an
+  // extra round trip for the people who do have a second factor.
   const [code, setCode] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -66,10 +73,9 @@ function LoginForm() {
       const result = await signIn("credentials", {
         email,
         password,
-        // Sent only on the second step. Its absence on the first is what lets
-        // the server tell "no code supplied" from "wrong code" without ever
-        // telling the caller which one happened.
-        ...(needsCode ? { token: code } : {}),
+        // Sent whenever it was typed. Empty for the majority of accounts,
+        // which authorize treats exactly as a missing code.
+        token: code,
         redirect: false,
       });
       // AND THE ONLY ANSWER THAT CANNOT BE WRONG: is there a session now?
@@ -84,21 +90,30 @@ function LoginForm() {
       //
       // A session either exists or it does not, and it is what the next screen
       // depends on anyway.
-      failed = Boolean(result?.error) || !(await getSession());
+      // POLLED, NOT READ ONCE. The first version asked getSession() a single
+      // time and broke every sign-in: the session cookie is not always
+      // readable the instant signIn resolves, so a perfectly good sign-in
+      // reported itself failed and the form sat there asking for a code. Found
+      // by the rooms browser suite timing out on a login that had actually
+      // worked — a worse bug than the one this check was added to fix.
+      failed = Boolean(result?.error);
+      if (!failed) {
+        let session = await getSession();
+        for (let attempt = 0; attempt < 6 && !session; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          session = await getSession();
+        }
+        failed = !session;
+      }
     } catch {
       failed = true;
     }
 
     if (failed) {
-      if (!needsCode) {
-        // The password may well have been right, with a second factor still to
-        // come. Ask for it rather than declaring the password wrong.
-        setNeedsCode(true);
-        setError("");
-        setLoading(false);
-        return;
-      }
-      setError("That code didn't work. Check your authenticator app, or use one of your recovery codes.");
+      // ONE MESSAGE FOR EVERY REFUSAL. Saying "that code was wrong" would
+      // confirm to somebody holding a stolen password that they had the right
+      // one and only needed the phone.
+      setError("That didn't work. Check your email, password, and code if you use one.");
       setLoading(false);
       return;
     }
@@ -157,31 +172,29 @@ function LoginForm() {
             </Link>
           </div>
 
-          {needsCode && (
-            <div className="flex flex-col gap-1">
-              <label htmlFor="code" className="text-sm text-black dark:text-zinc-50">
-                Authentication code
-              </label>
-              <input
-                id="code"
-                name="token"
-                type="text"
-                autoComplete="one-time-code"
-                inputMode="text"
-                autoFocus
-                placeholder="123456"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
-              />
-              {/* Recovery codes are letters and TOTP codes are digits, so one
-                  field takes both — a separate "use a recovery code" mode would
-                  be a decision to make while locked out of your own business. */}
-              <p className="text-xs text-zinc-500">
-                From your authenticator app, or one of your recovery codes.
-              </p>
-            </div>
-          )}
+          <div className="flex flex-col gap-1">
+            <label htmlFor="code" className="text-sm text-black dark:text-zinc-50">
+              Authentication code <span className="text-zinc-500">(optional)</span>
+            </label>
+            <input
+              id="code"
+              name="token"
+              type="text"
+              autoComplete="one-time-code"
+              inputMode="text"
+              placeholder="123456"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className="rounded-lg border border-black/[.08] px-4 py-2 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+            />
+            {/* Recovery codes are letters and TOTP codes are digits, so one
+                field takes both — a separate "use a recovery code" mode would
+                be a decision to make while locked out of your own business. */}
+            <p className="text-xs text-zinc-500">
+              Only if you&apos;ve turned on two-factor authentication. From your authenticator app, or
+              one of your recovery codes.
+            </p>
+          </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
 

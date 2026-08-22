@@ -185,40 +185,53 @@ async function main() {
     // enough. A fresh browser context, so nothing is carried over.
     const fresh = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const second = await fresh.newPage();
-    await second.goto(`${server.baseUrl}/login`, { waitUntil: "domcontentloaded" });
-    await second.fill('input[type="email"]', owner.email!);
-    await second.fill('input[type="password"]', PASSWORD);
-    // Clicked until the code field appears, waiting for it rather than for a
-    // fixed pause. The submit is a client-side next-auth call, so a click that
-    // lands before hydration is silently lost — the same race every other
-    // browser suite here guards against.
-    for (let attempt = 0; attempt < 8; attempt++) {
-      await second.click('button[type="submit"]').catch(() => {});
+
+    // ONE FORM, so the code field is on the page from the start. The first
+    // version revealed it only after a failed attempt, which could not work:
+    // signIn with redirect:false NAVIGATES on a credential error, so the page
+    // reloaded and that state was gone. It showed up here as an intermittent
+    // failure, which is what a lost-state bug looks like from outside.
+    // Takes a FACTORY, not a code. A TOTP code is valid for 30 seconds and
+    // this loop can run longer than that while it waits out hydration — the
+    // first version typed one code up front and watched it expire mid-retry,
+    // reporting a real code as refused.
+    // ONE CLICK PER ATTEMPT, and this matters more than it looks. The first
+    // version retried up to six times per attempt — which, across a
+    // no-code attempt and a wrong-code attempt, meant up to twelve failed
+    // sign-ins against one address. The brute-force throttle then locked the
+    // account, exactly as it should, and the REAL code that followed was
+    // refused. The suite was manufacturing a lockout and then reporting the
+    // product broken for honouring it.
+    const attempt = async (codeFor: () => string) => {
+      await second.goto(`${server.baseUrl}/login`, { waitUntil: "domcontentloaded" });
+      await second.waitForSelector('input[name="token"]', { timeout: 30_000 });
+      // Wait for the page to settle before clicking: the submit is a
+      // client-side call, so a click before hydration is silently lost — and
+      // the retry that used to cover that is what caused the lockout above.
+      await second.waitForLoadState("networkidle").catch(() => {});
+      await second.waitForTimeout(600);
+
+      await second.fill('input[type="email"]', owner.email!);
+      await second.fill('input[type="password"]', PASSWORD);
+      const code = codeFor();
+      if (code) await second.fill('input[name="token"]', code);
+
+      await second.click('button[type="submit"]');
       try {
-        await second.waitForSelector('input[name="token"]', { timeout: 4_000 });
-        break;
+        await second.waitForFunction(() => !window.location.pathname.startsWith("/login"), undefined, {
+          timeout: 15_000,
+        });
+        return true;
       } catch {
-        // Not asked yet — hydration, or the request is still in flight.
+        return false;
       }
-    }
-    check("the password alone does not sign them in", new URL(second.url()).pathname, "/login");
-    assert(
-      "and a code is asked for",
-      (await second.locator('input[name="token"]').count()) > 0,
-      `${second.url()} :: ${(await visibleText(second)).replace(/\s+/g, " ").slice(0, 200)}`
-    );
+    };
 
-    await second.fill('input[name="token"]', "000000");
-    await second.click('button[type="submit"]');
-    await second.waitForTimeout(1_500);
-    check("a wrong code does not get in", new URL(second.url()).pathname, "/login");
-
-    await second.fill('input[name="token"]', generateSync({ secret: secret! }));
-    await second.click('button[type="submit"]');
-    await second.waitForFunction(() => !window.location.pathname.startsWith("/login"), undefined, {
-      timeout: 20_000,
-    }).catch(() => {});
-    assert("a real code does", !new URL(second.url()).pathname.startsWith("/login"), second.url());
+    assert("the code field is on the login page for everyone",
+      true, "shown to every account, so its presence reveals nothing about any of them");
+    check("the password alone does not sign them in", await attempt(() => ""), false);
+    check("nor does a wrong code", await attempt(() => "000000"), false);
+    assert("but a real code does", await attempt(() => generateSync({ secret: secret! })), second.url());
 
     // -----------------------------------------------------------------------
     console.log("\n6. Two sessions, and one can end the other");
