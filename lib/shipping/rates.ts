@@ -336,9 +336,17 @@ export function chooseRate<T extends EasyPostRateLike>(rates: T[], selected: Sel
     };
   }
 
-  // No selection: the pre-existing behaviour, unchanged.
-  const usps = usable.filter((r) => r.carrier === "USPS");
-  const pool: T[] = usps.length > 0 ? usps : [];
+  // NO SELECTION: THE CHEAPEST USABLE RATE, WHOEVER CARRIES IT (2026-08-22).
+  //
+  // This filtered to `carrier === "USPS"` and returned no_rates when there
+  // were none — so a merchant whose EasyPost account carries UPS or FedEx and
+  // not USPS could not buy a label at all on this path, for a reason nothing
+  // on screen would have explained.
+  //
+  // Behaviour is unchanged for every store today, because every store today
+  // quotes USPS and the cheapest USPS rate IS the cheapest rate. What changes
+  // is the store that has never been able to use this.
+  const pool: T[] = usable;
   if (pool.length === 0) return { ok: false, reason: "no_rates" };
   const cheapest = pool.reduce((lowest, r) =>
     Number.parseFloat(r.rate ?? "") < Number.parseFloat(lowest.rate ?? "") ? r : lowest

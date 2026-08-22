@@ -108,46 +108,6 @@ export async function applyShipmentUpdate(shipment: Shipment): Promise<DeliveryU
 }
 
 /**
- * Where an order is, as one word an owner can read.
- *
- * DERIVED, NEVER STORED, so it cannot drift from the fields it reads. Every
- * stage below is knowable from something real:
- *
- *   refunded   — the payment was reversed
- *   delivered  — the carrier said so
- *   shipped    — a label exists, so the parcel is genuinely in the post
- *   processing — the owner marked it fulfilled without buying a label here
- *   paid       — money arrived and nothing has happened since
- *
- * There is deliberately NO "new" stage. Every Order row in this system is
- * created by a completed payment, so an unpaid order has never existed — and a
- * stage that can never occur reads as a real one and quietly misleads.
- */
-export type OrderStage = "paid" | "processing" | "shipped" | "delivered" | "refunded";
-
-export function stageOf(order: {
-  status: string;
-  fulfillmentStatus: string;
-  trackingNumber: string | null;
-  deliveredAt: Date | null;
-}): OrderStage {
-  if (order.status === "refunded") return "refunded";
-  if (order.deliveredAt) return "delivered";
-  if (order.trackingNumber) return "shipped";
-  if (order.fulfillmentStatus === "fulfilled") return "processing";
-  return "paid";
-}
-
-/** What each stage says on screen. Owner's terms, never the system's. */
-export const STAGE_LABEL: Record<OrderStage, string> = {
-  paid: "Paid",
-  processing: "Being prepared",
-  shipped: "On its way",
-  delivered: "Delivered",
-  refunded: "Refunded",
-};
-
-/**
  * Report an ingestion failure without failing the webhook.
  *
  * A carrier that gets a 500 retries, and retrying a payload we cannot use

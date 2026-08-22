@@ -133,7 +133,12 @@ export const buyLabelViaEasyPost: LabelBuyer = async (apiKey, request) => {
   const parsed = Number.parseFloat(String(chargedRate));
 
   return {
-    carrier: bought.selected_rate?.carrier ?? rate.carrier ?? "USPS",
+    // A CARRIER IS NEVER ASSUMED. This defaulted to "USPS", which meant a
+    // parcel carried by anyone else was labelled wrongly on the owner's own
+    // order screen — and the tracking link beside it went to the wrong
+    // carrier's site. "Unknown" is the honest answer when the broker did not
+    // say, and it is one nobody misreads as a fact.
+    carrier: bought.selected_rate?.carrier ?? rate.carrier ?? "Unknown carrier",
     service: bought.selected_rate?.service
       ? humanService(String(bought.selected_rate.service))
       : rate.service

@@ -78,7 +78,7 @@ export async function purchaseLabelForOrder(
   const returnAddress = store?.returnAddress as unknown as StoreOriginAddress | null;
   if (!returnAddress) {
     throw new Error(
-      "Add your ship-from address in Settings before buying a shipping label — USPS needs a real return address."
+      "Add your ship-from address in Settings before buying a shipping label — carriers need a real return address."
     );
   }
 
@@ -89,7 +89,7 @@ export async function purchaseLabelForOrder(
     ? decryptCredentials<EasyPostCredentials>(integration.credentials)
     : null;
   if (!credentials?.apiKey) {
-    throw new Error("Connect USPS Shipping (via EasyPost) in Payments/Connections before buying a label");
+    throw new Error("Connect shipping in Payments/Connections before buying a label");
   }
 
   if (!input.weightOz || input.weightOz <= 0) {
@@ -198,7 +198,7 @@ export async function purchaseLabelForOrder(
       : await notifyCustomerShipped({
           to: order.buyerEmail,
           productName: order.productName,
-          carrier: updated.carrier ?? "USPS",
+          carrier: updated.carrier ?? "Unknown carrier",
           trackingNumber: updated.trackingNumber!,
           trackingUrl: updated.trackingUrl,
         });
@@ -212,13 +212,13 @@ export async function purchaseLabelForOrder(
 
   return {
     message: labelPurchaseMessage({
-      carrier: updated.carrier ?? "USPS",
+      carrier: updated.carrier ?? "Unknown carrier",
       trackingNumber: updated.trackingNumber!,
       notification,
     }),
     metadata: {
       orderId: order.id,
-      carrier: updated.carrier ?? "USPS",
+      carrier: updated.carrier ?? "Unknown carrier",
       trackingNumber: updated.trackingNumber!,
       shippingCostInCents: purchased.costInCents,
     },

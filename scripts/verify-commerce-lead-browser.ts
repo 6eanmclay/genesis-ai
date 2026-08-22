@@ -193,6 +193,44 @@ async function main() {
     const single = await page.evaluate(() => document.querySelector("li")?.textContent ?? null);
     assert("one of something shows no multiplier", !(single?.includes("×1") ?? true), String(single));
 
+    // -----------------------------------------------------------------------
+    console.log("\n4b. Where the parcel is, on the screen");
+    // -----------------------------------------------------------------------
+    // The lifecycle only became knowable when tracker ingestion landed. Before
+    // it an order stopped at "shipped" forever, so this asserts the two states
+    // that could not previously be told apart at all.
+    const shipped = await store("lead-shipped", { anchor: true, orders: 1 });
+    await prisma.order.updateMany({
+      where: { storeId: shipped.id },
+      data: { trackingNumber: "TRK-SHIPPED", carrier: "USPS" },
+    });
+    const arrived = await store("lead-arrived", { anchor: true, orders: 1 });
+    await prisma.order.updateMany({
+      where: { storeId: arrived.id },
+      data: {
+        trackingNumber: "TRK-ARRIVED",
+        carrier: "USPS",
+        shipmentStatus: "delivered",
+        deliveredAt: new Date(),
+      },
+    });
+
+    await page.goto(`${server.baseUrl}/b/${shipped.slug}/orders`, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(500);
+    const shippedText = await page.evaluate(() => document.querySelector("li")?.textContent ?? "");
+    assert("a parcel with a label reads as on its way", shippedText.includes("On its way"), shippedText);
+    assert("and not as delivered", !shippedText.includes("Delivered"), shippedText);
+
+    await page.goto(`${server.baseUrl}/b/${arrived.slug}/orders`, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(500);
+    const arrivedText = await page.evaluate(() => document.querySelector("li")?.textContent ?? "");
+    assert("one the carrier delivered reads as delivered", arrivedText.includes("Delivered"), arrivedText);
+    assert(
+      "so the two are genuinely distinguishable on screen",
+      shippedText.includes("On its way") && arrivedText.includes("Delivered"),
+      "before tracker ingestion every shipped order looked identical forever"
+    );
+
     // Back to the busy store, which section 5 reads the lead from.
     await page.goto(`${server.baseUrl}/b/${busy.slug}/orders`, { waitUntil: "domcontentloaded" });
 

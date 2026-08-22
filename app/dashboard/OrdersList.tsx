@@ -5,6 +5,7 @@ import { toggleOrderFulfilled, purchaseShippingLabel } from "./actions";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
 import { formatMoney } from "@/lib/money";
 import { COMMERCE_LIST, COMMERCE_LIST_MARKER, COMMERCE_ROW } from "@/lib/dashboard/rooms";
+import { stageOf, STAGE_LABEL } from "@/lib/carriage/lifecycle";
 
 const STATUS_LABEL: Record<string, string> = {
   paid: "Paid",
@@ -21,6 +22,9 @@ export interface OrderRow {
   paymentProvider: string;
   createdAt: Date;
   fulfillmentStatus: string;
+  /** From the carrier itself, never inferred. Null until one has told us anything. */
+  shipmentStatus: string | null;
+  deliveredAt: Date | null;
   shippingAddress: OrderShippingAddress | null;
   carrier: string | null;
   trackingNumber: string | null;
@@ -121,6 +125,7 @@ function OrderRowCard({
 }) {
   const [isPending, startTransition] = useTransition();
   const isFulfilled = order.fulfillmentStatus === "fulfilled";
+  const stage = stageOf(order);
 
   return (
     <li className={COMMERCE_ROW}>
@@ -154,6 +159,19 @@ function OrderRowCard({
           <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-white/10 dark:text-zinc-400">
             {STATUS_LABEL[order.status] ?? order.status}
           </span>
+          {/* WHERE THE PARCEL IS, derived rather than stored, so it cannot
+              drift from the fields it reads. Delivered outranks shipped only
+              because delivery now comes from the carrier — before the tracker
+              ingestion existed there was nothing to outrank it with. */}
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+              stage === "delivered"
+                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                : "bg-black/5 text-zinc-600 dark:bg-white/10 dark:text-zinc-400"
+            }`}
+          >
+            {STAGE_LABEL[stage]}
+          </span>
         </div>
       </div>
 
@@ -168,7 +186,7 @@ function OrderRowCard({
 
       {order.trackingNumber ? (
         <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-          Shipped via {order.carrier} — tracking {order.trackingNumber}
+          Shipped via {order.carrier ?? "an unnamed carrier"} — tracking {order.trackingNumber}
           {order.trackingUrl && (
             <>
               {" "}

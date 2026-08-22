@@ -77,7 +77,13 @@ async function main() {
       console.log("Case 2 (missing store return address is rejected before any API call): PASS");
     }
 
-    // Case 3: return address set, but USPS never connected -> real, honest error.
+    // Case 3: return address set, but no shipping connected -> real, honest error.
+    //
+    // The expected text stopped naming USPS on 2026-08-22. The message used to
+    // read "Connect USPS Shipping (via EasyPost)", which was wrong for any
+    // merchant whose broker carries UPS or FedEx — and the broker itself is
+    // never something an owner should have to know about. This assertion
+    // followed the product rather than pinning it back.
     await prismaSystem.store.update({
       where: { id: store.id },
       data: {
@@ -95,10 +101,16 @@ async function main() {
     });
     try {
       await purchaseShippingLabelExecutable.run({ orderId: orderWithAddress.id, weightOz: 4 }, ctx);
-      throw new Error("Case 3 FAILED: expected an error for USPS not connected");
+      throw new Error("Case 3 FAILED: expected an error for shipping not connected");
     } catch (err) {
-      if (!(err instanceof Error) || !err.message.includes("Connect USPS")) throw err;
-      console.log("Case 3 (USPS not connected is rejected before any API call): PASS");
+      if (!(err instanceof Error) || !err.message.includes("Connect shipping")) throw err;
+      // And it must not name a carrier: the connection is to a broker that
+      // carries several, and which one moves a given parcel is a property of
+      // the rate, not of the account.
+      if (err.message.includes("USPS")) {
+        throw new Error(`Case 3 FAILED: the message still names a carrier — ${err.message}`);
+      }
+      console.log("Case 3 (no shipping connected is rejected before any API call): PASS");
     }
 
     // Case 4: invalid weight is rejected even with everything else present.

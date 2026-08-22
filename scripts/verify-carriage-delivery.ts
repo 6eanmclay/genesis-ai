@@ -2,13 +2,10 @@ import crypto from "crypto";
 import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import { prisma, prismaSystem } from "@/lib/prisma";
 import { carriageProviderFor, getCarriageProviders, providerCan } from "@/lib/carriage/registry";
-import {
-  isValidEasyPostSignature,
-  applyShipmentUpdate,
-  stageOf,
-  STAGE_LABEL,
-  type OrderStage,
-} from "@/lib/carriage/delivery";
+import { isValidEasyPostSignature, applyShipmentUpdate } from "@/lib/carriage/delivery";
+// The pure lifecycle, from its own module: delivery.ts imports prisma and node
+// crypto, and OrdersList renders this in the browser.
+import { stageOf, STAGE_LABEL, type OrderStage } from "@/lib/carriage/lifecycle";
 
 // WHERE THE PARCEL ACTUALLY IS:
 //
