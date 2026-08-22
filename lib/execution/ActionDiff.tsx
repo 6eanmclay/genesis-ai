@@ -19,7 +19,29 @@ import { ImageLightbox } from "@/app/dashboard/ImageLightbox";
 // server-only dependencies (see fieldLabels.ts's own comment), so it was
 // always safe to render from either a Server or Client Component — this
 // just makes that explicit and adds the one real interactive island.
-export const HIDDEN_DIFF_KEYS = new Set(["productId"]);
+// Machine plumbing, never a decision (2026-08-22). These are identifiers and
+// foreign keys an action carries so an executable knows WHICH record to act on
+// — they are not the change the owner is being asked to approve, and rendering
+// them puts a cuid on an approval card under a raw camelCase heading.
+//
+// Found by scripts/verify-field-labels.ts: the row lookup is
+// `FIELD_LABELS[key] ?? key`, so every input field with no label and no entry
+// here fails silently and visibly at the same time. "productId" was the only
+// one hidden, and it was hidden for exactly this reason — the rest are the same
+// category, found by asserting the property rather than by noticing a card.
+export const HIDDEN_DIFF_KEYS = new Set([
+  "productId",
+  "designId",
+  "goalRecordId",
+  "challengeRecordId",
+  "recordId",
+  "entityType",
+  "topicKey",
+  "aiUsageEventId",
+  "sourceKey",
+  "externalProductId",
+  "externalVariantId",
+]);
 
 // A plain string array (e.g. coreValues, brandKeywords) formatted for one
 // diff row — Array.prototype.toString() joins with a bare comma, no space,

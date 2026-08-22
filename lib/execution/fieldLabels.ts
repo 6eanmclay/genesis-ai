@@ -55,4 +55,26 @@ export const FIELD_LABELS: Record<string, string> = {
   facebookDescription: "Facebook Description",
   xBio: "X (Twitter) Bio",
   priceInCents: "Price",
+  // Added 2026-08-22, found by scripts/verify-field-labels.ts rather than by
+  // seeing a card. ActionDiff renders `FIELD_LABELS[key] ?? key`, so each of
+  // these was showing an owner the machine's own camelCase name for something
+  // they were being asked to approve. Every one is a rename of the existing
+  // field, never a new concept — identifiers went to HIDDEN_DIFF_KEYS instead,
+  // because a cuid is not a decision.
+  colors: "Colours",
+  typography: "Typography",
+  layout: "Layout",
+  presentation: "Presentation",
+  composition: "Composition",
+  target: "What this changes",
+  changes: "Changes",
+  reason: "Why",
+  summary: "Summary",
+  customSection: "Custom Section",
+  sectionOrder: "Section Order",
+  status: "Status",
+  // Both update_brand_logo and update_product_image carry one, and they mean
+  // the same thing in each: what J4 asked the image model for.
+  generationPrompt: "Image Prompt",
+  answer: "Answer",
 };
