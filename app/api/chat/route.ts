@@ -691,8 +691,20 @@ export async function POST(request: Request) {
                 : entityType === "employee"
                   ? { ...input.data, status: "active", locationId: null }
                   : input.data;
-          const parsed = ENTITY_REGISTRY[entityType].schema.safeParse(fullData);
-          if (!parsed.success) {
+          // An entityType the registry does not know is a MISS, not a crash
+          // (2026-08-22). `chosenTool.input` is a cast rather than a parse, so
+          // entityType is whatever the model emitted — and a bare
+          // ENTITY_REGISTRY[entityType].schema throws TypeError on anything
+          // outside the enum, taking the whole turn down. persistSyncedRecords
+          // already handles exactly this case by skipping the record and
+          // reporting it; this is the same treatment at the earlier boundary,
+          // falling through to the ordinary reply rather than confirming a
+          // capture that never happened.
+          const captureEntry = Object.prototype.hasOwnProperty.call(ENTITY_REGISTRY, entityType)
+            ? ENTITY_REGISTRY[entityType]
+            : null;
+          const parsed = captureEntry ? captureEntry.schema.safeParse(fullData) : null;
+          if (!parsed || !parsed.success) {
             emit({ type: "fallback" });
             controller.close();
             return;

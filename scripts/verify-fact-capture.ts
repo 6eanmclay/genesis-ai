@@ -208,6 +208,41 @@ check("a location capture keeps what was actually said", location.name, "Hartlep
 check("within the real vocabulary", location.type, "warehouse");
 assert("an invented location type is refused",
   !LocationCaptureSchema.safeParse({ name: "x", type: "spaceship", address: null, city: null, state: null, postalCode: null, country: null }).success);
+// ============================================================================
+console.log("\n=== An entityType the registry does not know is a miss, not a crash ===\n");
+// ============================================================================
+// Both capture call sites (app/api/chat/route.ts and ai-actions.ts) read
+// entityType off a CAST rather than a parse — `chosenTool.input as
+// BusinessFactCaptureInput` — so it is whatever the model emitted. A bare
+// ENTITY_REGISTRY[entityType].schema then throws TypeError on anything outside
+// the enum, taking the whole chat turn down rather than dropping one bad
+// extraction.
+//
+// persistSyncedRecords already treats an unknown entityType as a skippable
+// error ("Unknown entity type"), and this asserts the shape both call sites now
+// use to reach the same outcome at the earlier boundary.
+const lookup = (entityType: string) =>
+  Object.prototype.hasOwnProperty.call(ENTITY_REGISTRY, entityType)
+    ? ENTITY_REGISTRY[entityType as keyof typeof ENTITY_REGISTRY]
+    : null;
+
+for (const known of Object.keys(ENTITY_REGISTRY)) {
+  assert(`"${known}" resolves to a real schema`, lookup(known)?.schema !== undefined);
+}
+check("an invented entity type resolves to nothing", lookup("spaceship"), null);
+check("and so does an empty one", lookup(""), null);
+// The inherited-property case, which is the one that would actually throw: a
+// bare lookup returns a FUNCTION here, and reading .schema off it is undefined,
+// so .safeParse is a TypeError rather than a refusal.
+for (const key of ["constructor", "toString", "__proto__", "valueOf"]) {
+  check(`"${key}" is not an entity type`, lookup(key), null);
+}
+assert(
+  "so a model naming something outside the vocabulary loses one capture, never the turn",
+  ["constructor", "spaceship", ""].every((k) => lookup(k) === null),
+  "the bare form threw TypeError; persistSyncedRecords had always handled this correctly one layer down"
+);
+
 
 console.log(`\n${failures === 0 ? "All fact-capture assertions passed." : `${failures} assertion(s) FAILED.`}`);
 process.exit(failures === 0 ? 0 : 1);

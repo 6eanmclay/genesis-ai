@@ -2701,13 +2701,19 @@ async function applyGenesisMessageToStore(
             ? { ...businessFactResult.data, status: "active", locationId: null }
             : businessFactResult.data; // location — Capture shape already matches LocationSchema exactly
 
-    const parsed = ENTITY_REGISTRY[entityType].schema.safeParse(fullData);
+    // Same guard as app/api/chat/route.ts (2026-08-22): entityType comes from a
+    // cast, not a parse, so an out-of-enum value would throw TypeError here
+    // rather than being dropped like every other malformed extraction.
+    const captureEntry = Object.prototype.hasOwnProperty.call(ENTITY_REGISTRY, entityType)
+      ? ENTITY_REGISTRY[entityType]
+      : null;
+    const parsed = captureEntry ? captureEntry.schema.safeParse(fullData) : null;
     // A malformed/underspecified extraction is silently dropped, exactly
     // like persistSyncedRecords already drops a bad connector record —
     // never a crash, never bad data reaching BusinessRecord. Falls through
     // to the normal chat flow below rather than confirming a capture that
     // didn't actually happen.
-    if (parsed.success) {
+    if (parsed?.success) {
       const { changes } = await persistSyncedRecords(store.id, "genesis_chat", [
         { entityType, externalId: randomUUID(), data: parsed.data },
       ]);
