@@ -34,5 +34,13 @@ import type { AiFeature } from "./aiFeatures";
 const GROWTH_CREDIT_CATALOG: Partial<Record<AiFeature, number>> = {};
 
 export function growthCreditValueFor(feature: AiFeature): number | null {
-  return GROWTH_CREDIT_CATALOG[feature] ?? null;
+  // hasOwnProperty and a typeof check (2026-08-22). The catalogue is currently
+  // EMPTY and deliberately so, which means every real feature returns null via
+  // the fallback — and an inherited key was the only input that could produce a
+  // non-null, returning a function typed as `number`. On a Growth Points path,
+  // "undecided" has to stay undecided.
+  const value = Object.prototype.hasOwnProperty.call(GROWTH_CREDIT_CATALOG, feature)
+    ? GROWTH_CREDIT_CATALOG[feature]
+    : undefined;
+  return typeof value === "number" ? value : null;
 }

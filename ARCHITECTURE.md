@@ -88,6 +88,30 @@ Five real phases, in order:
 
 **The invariant this protects, stated plainly:** Genesis must never present an action as executable unless a real registered executable stands behind it, and must never claim a change outside what the proposal actually authorises. A dangling registry reference is how either becomes possible without anybody writing a line of wrong logic.
 
+### The sibling rule: a registry lookup is only as closed as its key
+
+Found six times in one day, in six unrelated parts of the codebase, always the same two lines:
+
+```ts
+const x = SOME_REGISTRY[key];   // key comes from outside
+if (!x) return null;            // or `x ?? fallback`, or `x === undefined`
+```
+
+A plain object inherits from `Object.prototype`, so `SOME_REGISTRY["constructor"]` is a **function**, not `undefined`. Functions are truthy, are not `undefined`, and are not `null` — so they walk through every guard of that shape and come back typed as whatever the signature promised. **None of these was a type error.** Every signature said `string | null` or `number | null`, and every one could return a function.
+
+| Where | What it actually did |
+|---|---|
+| `RECOMMENDATION_MESSAGES` | A function was interpolated into a live Claude prompt, really billed |
+| `GROWTH_POINT_PURCHASE_CATALOG` | `price: undefined` reached a live `checkout.sessions.create` |
+| `OAUTH_ERROR_MESSAGES` | A function was written into a merchant's ExecutionLog as their error message; key came from a URL |
+| `ENTITY_REGISTRY` | `undefined.safeParse` — a TypeError killed the whole chat turn instead of dropping one bad capture |
+| `EXTENSION_CONTENT_TYPE` | A file named `notes.constructor` resolved to a function instead of being refused; key came from a filename |
+| `ANTHROPIC_RATES_PER_MILLION_TOKENS` and the other two rate tables | Cost came back **NaN** instead of `null` — and unlike `null`, NaN spreads through every `SUM` after it |
+
+**The rule.** If a caller can hand you a string you did not define — a filename, a URL param, a model's output, a free-text DB column — use `Object.prototype.hasOwnProperty.call`, and check the **shape** of what came back rather than its truthiness. `typeof x !== "string"` is the check; `if (!x)` is the bug.
+
+**Not a lint rule, deliberately.** The bare form is correct wherever the key is a closed union, and a rule broad enough to catch the dangerous cases flags dozens of safe ones. `scripts/verify-registry-lookups.ts` is the standing guard instead: it exercises every free-string lookup with the full prototype key set and asserts each gives its own honest refusal — plus that none returns a function and no cost returns NaN, because "is it null" would pass against both.
+
 ### The companion rule: a model is only as truthful as the facts it is handed
 
 The same sprint established a second standing rule, and it applies wherever a model writes something an owner reads as fact. **The model is never the safeguard — the data structure handed to it is.** Three shapes recur, and each has a verified example:

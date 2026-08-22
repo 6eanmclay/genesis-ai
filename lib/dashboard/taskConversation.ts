@@ -24,7 +24,18 @@ const SEED_MESSAGE_BY_DEDUPE_KEY: Record<string, string> = {
 };
 
 export function buildTaskSeedMessage(task: Pick<Task, "dedupeKey" | "summary">): string {
-  return SEED_MESSAGE_BY_DEDUPE_KEY[task.dedupeKey] ?? `${task.summary} What would you like to do?`;
+  // hasOwnProperty (2026-08-22). dedupeKey is a free string on a DB row, so a
+  // task keyed "constructor" resolved to the inherited Object constructor —
+  // truthy, so the honest fallback below never fired and a FUNCTION became the
+  // opening line of a conversation with the owner. The fallback is the whole
+  // point of this function ("an opening line must be exactly this honest,
+  // specific statement, never a fabricated claim"), and a bare lookup was the
+  // one way to skip it.
+  const bespoke = Object.prototype.hasOwnProperty.call(SEED_MESSAGE_BY_DEDUPE_KEY, task.dedupeKey)
+    ? SEED_MESSAGE_BY_DEDUPE_KEY[task.dedupeKey]
+    : undefined;
+  if (typeof bespoke === "string" && bespoke.length > 0) return bespoke;
+  return `${task.summary} What would you like to do?`;
 }
 
 // Honest statement of what the owner did (mirrors "Uploaded a photo: x.jpg"

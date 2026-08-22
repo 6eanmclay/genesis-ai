@@ -151,6 +151,21 @@ async function main() {
   assert("and restates none of the prior conversation",
     !/we discussed|you said|last time you/i.test(recap),
     "the real prior turns are already visible above it; inventing specifics is the risk");
+  // ==========================================================================
+  console.log("\n=== 6. A task key nobody wrote is still an honest opening ===\n");
+  // ==========================================================================
+  // dedupeKey is a free string on a DB row, so a bare Record lookup resolved
+  // "constructor" to the inherited Object constructor — truthy, so the honest
+  // fallback above never fired and a FUNCTION became the first line J4 says in
+  // that conversation. The fallback is the entire point of this function, and a
+  // bare lookup was the one way to skip it.
+  for (const dedupeKey of ["constructor", "toString", "__proto__", "valueOf"]) {
+    const seeded = buildTaskSeedMessage({ dedupeKey, summary: "Three orders are waiting." });
+    assert(`"${dedupeKey}" still opens from the task's own summary`,
+      seeded.startsWith("Three orders are waiting."), seeded);
+    assert(`and never returns a function (${dedupeKey})`, typeof seeded === "string", typeof seeded);
+  }
+
 
   console.log(`\n${failures === 0 ? "All copy-and-url assertions passed." : `${failures} assertion(s) FAILED.`}`);
   process.exit(failures === 0 ? 0 : 1);

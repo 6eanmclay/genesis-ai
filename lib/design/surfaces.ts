@@ -231,7 +231,13 @@ export const GARMENT_COLORS: Record<
 export const DEFAULT_GARMENT_COLOR = "grey";
 
 export function getSurface(key: string): Surface | null {
-  return SURFACES[key] ?? null;
+  // hasOwnProperty (2026-08-22): the key is a free string (a design's own
+  // `surface`, model-authored), so a bare lookup returned the inherited Object
+  // constructor for "constructor" — truthy, so `?? null` never fired and a
+  // function came back from a signature promising `Surface | null`.
+  if (!Object.prototype.hasOwnProperty.call(SURFACES, key)) return null;
+  const surface = SURFACES[key];
+  return surface && typeof surface === "object" ? surface : null;
 }
 
 // How the asset(s) sit on the surface. One asset centred is the whole of the
