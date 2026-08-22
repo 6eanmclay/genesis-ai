@@ -187,7 +187,11 @@ export const PROPOSABLE_ACTION_TYPES = [
 // fix M5's business-fact classifier proved live against the real API: a
 // loose schema lets the model skip fields; per-kind required fields make
 // the structured-output grammar itself enforce them.
-const CognitiveOutputItemSchema = z.discriminatedUnion("kind", [
+// Exported for verification only (2026-08-22): every kind this union can emit
+// has to have an owner-facing label in COGNITIVE_OUTPUT_KIND_LABEL, or
+// ActivityFeed's fallback renders the raw kind string at a merchant. See
+// scripts/verify-owner-facing-labels.ts.
+export const CognitiveOutputItemSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("explanation"),
     summary: z.string(),
