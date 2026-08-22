@@ -24,9 +24,31 @@ Genesis AI is an AI-first e-commerce platform: a merchant describes their busine
 
 ---
 
-## Security & Trust — a future milestone (planned, not started)
+## Security & Trust — BUILT AND VERIFIED 2026-08-22
 
-**Status: named and scoped 2026-08-06, explicitly not built.** Sean's own framing for why this earns a dedicated milestone rather than a scattered list of feature requests: *"As Genesis becomes a business operating environment that stores documents, financial information, integrations, and J4's understanding of a business, account security becomes a core product capability."* Follows the current foundation work (J4 Cognitive Architecture, Business Assets, the Understanding page) in priority — high, but deliberately sequenced after it, not competing with it.
+**Status: shipped.** Contract approved by Sean with six explicit decisions; built in the dependency-driven order the contract set — event log, session revocation, re-authentication, 2FA with recovery codes, the security screen, access review, member management, notifications.
+
+**What the audit of the existing architecture found, before any code was written** — the item the original scoping asked for:
+
+* **JWT session revocation already existed and worked.** `auth.ts` refuses a token whose `iat` predates `User.passwordChangedAt`, killing it on its NEXT request rather than at expiry, verified against Auth.js internals. So D1 was approved to EXTEND that mechanism rather than move every user onto database sessions. `UserSession` is a *record* of a session keyed by the `sessionInstanceId` the JWT already carries — not the session itself.
+* **The authorization model was enforced on the read side and unreachable on the write side.** `StoreMember` has been honoured by `hasPermission` everywhere for months, and nothing in the product could create one: every row that had ever existed was written by a verification script. That is why D5 rejected a review screen on its own.
+* **Three standings, not a boolean.** A token minted before `UserSession` existed carries an instance id with no row. Treating "no row" as "revoked" would have signed out every user on the platform on deploy.
+
+**Invariants this milestone holds**, each negative-controlled:
+
+* A revoked session dies on its NEXT request, and ending one device never ends the others.
+* The second factor is enforced in `authorize` — the single gate every credential sign-in passes — so no session exists until it is satisfied. Refused identically to a wrong password.
+* A recovery code works exactly once, claimed with a conditional update.
+* The TOTP seed is encrypted at rest with the same AES-256 helper as integration credentials; the suite reads the column and asserts the plaintext is not in it.
+* Security events are account-scoped and append-only, and recording never fails the act it records.
+* Removing a member ends that member's sessions — which is why member management came after revocation.
+* The access review READS `ROLE_PERMISSIONS` (now exported) rather than restating it.
+
+**Externally blocked, and recorded rather than faked:** notification *delivery* needs `RESEND_API_KEY`. Every decision — whether to notify, about what, to whom, and what it says — is proved through an injected sender; only the send itself is unverified.
+
+**Deferred from v1 by decision:** trusted devices (D3 — the one item that weakens the guarantee 2FA exists to provide); 2FA remains opt-in (D6); no IP or location is stored (D4).
+
+**Original scoping, kept for the record — 2026-08-06, then explicitly not built:** Sean's own framing for why this earns a dedicated milestone rather than a scattered list of feature requests: *"As Genesis becomes a business operating environment that stores documents, financial information, integrations, and J4's understanding of a business, account security becomes a core product capability."* Follows the current foundation work (J4 Cognitive Architecture, Business Assets, the Understanding page) in priority — high, but deliberately sequenced after it, not competing with it.
 
 Treated as one cohesive milestone, not eight unrelated features — every item below shares the same real subject (an owner's account and everything it now protects) and should ship together, not piecemeal:
 

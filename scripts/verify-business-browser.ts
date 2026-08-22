@@ -45,9 +45,25 @@ async function signIn(page: Page, baseUrl: string, email: string): Promise<void>
   await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
   await page.fill('input[type="email"]', email);
   await page.fill('input[type="password"]', PASSWORD);
-  await page.click('button[type="submit"]');
+  // RETRIED, like every other browser suite here. A single click was enough
+  // while the login page responded instantly; it now confirms a real session
+  // before deciding, which is slightly slower, and a click that lands before
+  // hydration is silently lost with nothing to wait on. One lost click used to
+  // mean a 60-second timeout and a failure that had nothing to do with the
+  // code under test.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await page.click('button[type="submit"]').catch(() => {});
+    try {
+      await page.waitForFunction(() => !window.location.pathname.startsWith("/login"), undefined, {
+        timeout: 15_000,
+      });
+      break;
+    } catch {
+      // Not signed in yet — hydration, or the request is still in flight.
+    }
+  }
   await page.waitForFunction(() => !window.location.pathname.startsWith("/login"), undefined, {
-    timeout: 60_000,
+    timeout: 30_000,
   });
   await page.waitForLoadState("domcontentloaded");
 }
@@ -247,7 +263,13 @@ async function main() {
       ];
       for (const section of sections) {
         const url = `${server.baseUrl}/b/copper-and-coil${section}`;
-        const response = await page.goto(url, { waitUntil: "domcontentloaded" });
+        // 90s, not the 30s default. This walks fifteen routes against a
+        // `next dev` server that compiles each one on first request, and on a
+        // cold machine that genuinely exceeds 30s for some of them — the
+        // failure moved to a different route on each run, which is what a
+        // compile budget looks like rather than a defect. Raised deliberately
+        // rather than left to flake and be re-run until green.
+        const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
         const status = response?.status();
         const text = await renderedContent(page);
         assert(`/b/copper-and-coil${section || " (root)"} renders`,
