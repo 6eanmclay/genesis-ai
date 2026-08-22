@@ -1,4 +1,5 @@
 import { sendOrderConfirmation } from "@/lib/orders/orderConfirmation";
+import { notifyOwnerOfSale } from "@/lib/orders/notifyOwnerOfSale";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -292,6 +293,10 @@ export async function GET(request: NextRequest) {
     // Its own idempotency claim means a double-hit on this route (back button,
     // reload) does not email the buyer twice.
     await sendOrderConfirmation({ orderId: order.id, storeId: store.id });
+    // And the owner (2026-08-22, P1.8). Same ordering as the Stripe path: the
+    // customer first, because they have nothing but this email, and the owner
+    // has the dashboard regardless.
+    await notifyOwnerOfSale({ orderId: order.id, storeId: store.id });
 
     return NextResponse.redirect(new URL(`/store/${slug}/success?order_id=${order.id}`, request.url));
   } catch (error) {

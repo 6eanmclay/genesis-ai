@@ -1059,6 +1059,13 @@ model Order {
   // so a later retry can. See lib/orders/orderConfirmation.ts.
   confirmationSentAt      DateTime?
   shipmentNotifiedAt      DateTime?
+  // The OWNER was told a sale happened (2026-08-22). A fifth state, kept apart
+  // from the four orderConfirmation.ts already names: an order can be paid,
+  // confirmed to the customer, shipped and tracked while its owner has never
+  // once been told it exists. Null means not told — true of every order
+  // predating this column, and the honest reading rather than a backfilled
+  // claim that somebody was emailed.
+  ownerNotifiedAt         DateTime?
   // The claim that stops one shipment being paid for twice (2026-08-20).
   //
   // purchaseShippingLabelExecutable guarded on `trackingNumber` — but that is

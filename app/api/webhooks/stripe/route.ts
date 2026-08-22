@@ -1,4 +1,5 @@
 import { sendOrderConfirmation } from "@/lib/orders/orderConfirmation";
+import { notifyOwnerOfSale } from "@/lib/orders/notifyOwnerOfSale";
 import { isPermanentOrderFailure } from "@/lib/orders/orderFailure";
 import { checkWebhookSecret } from "@/lib/observability/webhookConfig";
 import { reportIssue } from "@/lib/observability/reportIssue";
@@ -306,7 +307,17 @@ export async function POST(request: Request) {
           where: { paymentProvider_externalOrderId: { paymentProvider: "STRIPE", externalOrderId: session.id } },
           select: { id: true },
         });
-        if (created) await sendOrderConfirmation({ orderId: created.id, storeId });
+        if (created) {
+          await sendOrderConfirmation({ orderId: created.id, storeId });
+          // And the OWNER (2026-08-22, P1.8). Its own claim column means a
+          // redelivered event does not tell them twice, and it never throws.
+          //
+          // After the customer's, deliberately: if only one of the two can get
+          // through, the person who has just parted with money is the one who
+          // must hear something. The owner is told by the dashboard either way;
+          // the customer has nothing else.
+          await notifyOwnerOfSale({ orderId: created.id, storeId });
+        }
 
         await Promise.all([
           runDeterministicObservationSweep(storeId),
