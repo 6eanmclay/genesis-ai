@@ -83,7 +83,11 @@ interface PlanSpec {
 // column for. Provisioning its Price early would create a live $5
 // subscription granting FULL Genesis with zero points, which is precisely
 // the hole the tier exists to close.
-const PLANS: PlanSpec[] = [
+// Exported for verification (2026-08-22): scripts/verify-purchase-catalog.ts
+// asserts that every pack's per-point rate is worse than Starter's and Growth's,
+// which is the property that makes committing to a plan rational, and that this
+// list agrees with lib/growthPoints/purchaseCatalog.ts's own copy.
+export const PLANS: PlanSpec[] = [
   { name: "Starter", priceInCents: 2000, monthlyGrowthPointAllowance: 10, unlimitedActionCostCeiling: null },
   { name: "Growth", priceInCents: 4999, monthlyGrowthPointAllowance: 28, unlimitedActionCostCeiling: null },
   { name: "Business Partner", priceInCents: 9999, monthlyGrowthPointAllowance: 40, unlimitedActionCostCeiling: 2 },
@@ -96,7 +100,7 @@ interface PackageSpec {
   priceInCents: number;
 }
 
-const PACKAGES: PackageSpec[] = [
+export const PACKAGES: PackageSpec[] = [
   { key: "pack_4", label: "4 Growth Points", pointAmount: 4, priceInCents: 999 },
   { key: "pack_8", label: "8 Growth Points", pointAmount: 8, priceInCents: 1999 },
   { key: "pack_20", label: "20 Growth Points", pointAmount: 20, priceInCents: 4999 },

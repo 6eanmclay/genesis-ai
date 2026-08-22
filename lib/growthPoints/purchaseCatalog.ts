@@ -51,6 +51,23 @@ export function growthPointPackages(): [string, GrowthPointPackage][] {
 }
 
 export function growthPointPackage(key: string): (GrowthPointPackage & { stripePriceId: string }) | null {
+  // hasOwnProperty, and a real string check on the price (2026-08-22).
+  //
+  // This was a bare Record lookup, and the consequence was worse here than
+  // anywhere else it has been found, because this function's return value goes
+  // straight to Stripe. `growthPointPackage("constructor")` resolved to the
+  // inherited Object CONSTRUCTOR — truthy, so it passed the `pkg &&` guard, and
+  // its `stripePriceId` was `undefined`, which is `!== null`, so it passed the
+  // second guard too. The function was then returned as a package, and
+  // createGrowthPointCheckout handed `price: undefined` to a live
+  // checkout.sessions.create.
+  //
+  // Found by scripts/verify-purchase-catalog.ts. The typeof check is the half
+  // that matters most: "has a stripePriceId that is not null" was never the
+  // real requirement — "has a stripePriceId that is a string Stripe can charge
+  // against" is.
+  if (!Object.prototype.hasOwnProperty.call(GROWTH_POINT_PURCHASE_CATALOG, key)) return null;
   const pkg = GROWTH_POINT_PURCHASE_CATALOG[key];
-  return pkg && pkg.stripePriceId !== null ? (pkg as GrowthPointPackage & { stripePriceId: string }) : null;
+  if (!pkg || typeof pkg.stripePriceId !== "string" || pkg.stripePriceId.length === 0) return null;
+  return pkg as GrowthPointPackage & { stripePriceId: string };
 }
