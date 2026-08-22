@@ -124,6 +124,7 @@ function needsDatabase(file: string): boolean {
   if (file === "verify-autonomy-live.ts") return false;
   if (file === "verify-measurement-live.ts") return false;
   if (file === "verify-tasks-live.ts") return false;
+  if (file === "verify-change-detection-live.ts") return false;
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
 
