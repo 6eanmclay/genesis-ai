@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getOrderSummary, getRecentActivity, getProfitSummary, getFulfillmentBreakdown } from "@/lib/dashboard/whatHappened";
@@ -132,7 +133,7 @@ export async function AnalyticsScreen({ slug, basePath }: { slug?: string; baseP
           <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
             <div className="flex items-baseline gap-2">
               <p className="text-2xl font-semibold text-black dark:text-zinc-50">
-                ${(profitSummary.profitInCents / 100).toFixed(2)}
+                {formatMoney(profitSummary.profitInCents, store.currency)}
               </p>
               <p className="text-sm text-zinc-500">profit</p>
             </div>

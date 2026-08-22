@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { toggleOrderFulfilled, purchaseShippingLabel } from "./actions";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
+import { formatMoney } from "@/lib/money";
 
 const STATUS_LABEL: Record<string, string> = {
   paid: "Paid",
@@ -12,6 +13,7 @@ const STATUS_LABEL: Record<string, string> = {
 export interface OrderRow {
   id: string;
   productName: string;
+  quantity: number;
   buyerEmail: string;
   amountInCents: number | null;
   status: string;
@@ -101,11 +103,14 @@ function BuyLabelForm({ orderId }: { orderId: string }) {
 
 function OrderRowCard({
   order,
+  currency,
   canViewRevenue,
   canManage,
   canBuyLabel,
 }: {
   order: OrderRow;
+  /** The store's own, never a default that happens to be the developer's. */
+  currency: string;
   canViewRevenue: boolean;
   canManage: boolean;
   // Priority 2 (shipping, 2026-08-09) — real, both prerequisites (USPS
@@ -120,7 +125,19 @@ function OrderRowCard({
     <li className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-black dark:text-zinc-50">{order.productName}</p>
+          {/* HOW MANY, next to what (2026-08-22, P1.7). The lifecycle the
+              milestone names lists "customer / product / QUANTITY / payment
+              status / shipping address / fulfillment status / tracking / order
+              date". Every one of those was on this card except the quantity,
+              which has existed on Order since 2026-08-20 and was rendered
+              nowhere. An owner packing a hand-wound product read "Tensor Ring
+              — $255.00" and had to divide to learn it was three of them. */}
+          <p className="text-sm font-medium text-black dark:text-zinc-50">
+            {order.productName}
+            {order.quantity > 1 && (
+              <span className="ml-1.5 font-normal text-zinc-500">&times;{order.quantity}</span>
+            )}
+          </p>
           <p className="text-xs text-zinc-500">{order.buyerEmail}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -176,7 +193,7 @@ function OrderRowCard({
         <p className="text-xs text-zinc-500">
           {order.paymentProvider} &middot; {order.createdAt.toLocaleDateString()}
           {canViewRevenue && order.amountInCents !== null && (
-            <> &middot; ${(order.amountInCents / 100).toFixed(2)}</>
+            <> &middot; {formatMoney(order.amountInCents, currency)}</>
           )}
         </p>
         <div className="flex flex-wrap items-center gap-2">
@@ -204,11 +221,13 @@ function OrderRowCard({
 
 export function OrdersList({
   orders,
+  currency,
   canViewRevenue,
   canManage,
   canBuyLabel,
 }: {
   orders: OrderRow[];
+  currency: string;
   canViewRevenue: boolean;
   canManage: boolean;
   canBuyLabel: boolean;
@@ -232,6 +251,7 @@ export function OrdersList({
               <OrderRowCard
                 key={order.id}
                 order={order}
+                currency={currency}
                 canViewRevenue={canViewRevenue}
                 canManage={canManage}
                 canBuyLabel={canBuyLabel}
@@ -250,6 +270,7 @@ export function OrdersList({
               <OrderRowCard
                 key={order.id}
                 order={order}
+                currency={currency}
                 canViewRevenue={canViewRevenue}
                 canManage={canManage}
                 canBuyLabel={canBuyLabel}

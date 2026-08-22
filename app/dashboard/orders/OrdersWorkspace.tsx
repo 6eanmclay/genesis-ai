@@ -92,6 +92,7 @@ export async function OrdersWorkspace({
       select: {
         id: true,
         productName: true,
+        quantity: true,
         buyerEmail: true,
         status: true,
         paymentProvider: true,
@@ -116,6 +117,7 @@ export async function OrdersWorkspace({
   const orders: OrderRow[] = rawOrders.map((order) => ({
     id: order.id,
     productName: order.productName,
+    quantity: order.quantity,
     buyerEmail: order.buyerEmail,
     amountInCents: canViewRevenue ? ((order.amountInCents as number | null) ?? 0) : null,
     status: order.status,
@@ -310,7 +312,13 @@ export async function OrdersWorkspace({
       <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
         All orders
       </h2>
-      <OrdersList orders={orders} canViewRevenue={canViewRevenue} canManage={canManage} canBuyLabel={canBuyLabel} />
+      <OrdersList
+        orders={orders}
+        currency={store.currency}
+        canViewRevenue={canViewRevenue}
+        canManage={canManage}
+        canBuyLabel={canBuyLabel}
+      />
     </div>
   );
 }

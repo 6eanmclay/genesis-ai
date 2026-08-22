@@ -1,4 +1,5 @@
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
+import { formatMoney } from "@/lib/money";
 
 const SPARKLINE_WIDTH = 56;
 const SPARKLINE_HEIGHT = 20;
@@ -55,11 +56,14 @@ function Sparkline({ values }: { values: number[] }) {
 // interpolation bug documented in GenesisAssistant.tsx/DashboardShell.tsx
 // for why that distinction matters.
 export function BusinessPulse({
+  currency,
   revenueInCents,
   orderCount,
   revenueTrend,
   newCustomerCount,
 }: {
+  /** The store's own — this headline is the owner's money, not a default. */
+  currency: string;
   revenueInCents: number | null;
   orderCount: number | null;
   revenueTrend: number[] | null;
@@ -78,7 +82,7 @@ export function BusinessPulse({
         <div>
           <div className="flex items-center gap-2">
             <p className="text-base font-semibold" style={{ color: GENESIS_ATMOSPHERE.text }}>
-              ${(revenueInCents / 100).toFixed(2)}
+              {formatMoney(revenueInCents, currency)}
             </p>
             {revenueTrend && <Sparkline values={revenueTrend} />}
           </div>

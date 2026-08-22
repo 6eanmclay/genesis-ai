@@ -8,6 +8,7 @@ import { auth } from "@/auth";
 import { getStoreRole } from "@/lib/permissions";
 import { createCheckoutSession, subscribeToNewsletter } from "./actions";
 import { resolvePreviewTheme } from "@/lib/storefront/previewTheme";
+import { formatMoney } from "@/lib/money";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { ActionForm } from "@/app/dashboard/ActionForm";
 import {
@@ -182,6 +183,11 @@ export default async function StorefrontPage({
   // Captured as plain locals — TypeScript doesn't carry the `!store` null
   // narrowing above into nested function declarations like renderHero().
   const storeName = store.name;
+  // A shop shows its prices in its own money. Store.currency is authoritative
+  // per its own schema comment; the storefront hardcoded a dollar sign in four
+  // places and the checkout below it hardcoded a USD charge, so the two were
+  // only ever consistent by accident.
+  const currency = store.currency;
   const storeTagline = store.tagline;
   const storeDescription = store.description;
 
@@ -417,7 +423,7 @@ export default async function StorefrontPage({
                         </p>
                       )}
                       <p className="mt-2 text-lg font-semibold">
-                        ${(product.priceInCents / 100).toFixed(2)}
+                        {formatMoney(product.priceInCents, currency)}
                       </p>
                     </div>
                     <ProductActions
@@ -453,7 +459,7 @@ export default async function StorefrontPage({
                       </p>
                     )}
                     <p className="mt-4 text-2xl font-semibold">
-                      ${(products[0].priceInCents / 100).toFixed(2)}
+                      {formatMoney(products[0].priceInCents, currency)}
                     </p>
                     <ProductActions
                       slug={slug}
@@ -475,6 +481,7 @@ export default async function StorefrontPage({
                         slug={slug}
                         storeId={product.storeId}
                         product={product}
+                        currency={currency}
                         buyButtonClass={buyButtonClass}
                         detailsLinkClass={detailsLinkClass}
                         cardClass={cardClass}
@@ -492,6 +499,7 @@ export default async function StorefrontPage({
                     slug={slug}
                     storeId={product.storeId}
                     product={product}
+                    currency={currency}
                     buyButtonClass={buyButtonClass}
                     detailsLinkClass={detailsLinkClass}
                     cardClass={cardClass}
@@ -844,6 +852,7 @@ function ProductCard({
   slug,
   storeId,
   product,
+  currency,
   buyButtonClass,
   detailsLinkClass,
   cardClass,
@@ -852,6 +861,7 @@ function ProductCard({
   slug: string;
   storeId: string;
   product: StoreProduct;
+  currency: string;
   buyButtonClass: string;
   detailsLinkClass: string;
   cardClass: string;
@@ -875,7 +885,7 @@ function ProductCard({
           </p>
         )}
         <p className="mt-3 text-lg font-semibold">
-          ${(product.priceInCents / 100).toFixed(2)}
+          {formatMoney(product.priceInCents, currency)}
         </p>
         <ProductActions
           slug={slug}

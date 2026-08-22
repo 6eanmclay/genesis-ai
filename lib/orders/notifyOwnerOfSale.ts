@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { sendEmail, isEmailConfigured } from "@/lib/email/sendEmail";
 import { reportIssue } from "@/lib/observability/reportIssue";
+import { formatMoney } from "@/lib/money";
 import type { EmailSender } from "./orderConfirmation";
 
 // Telling the OWNER a sale happened (2026-08-22).
@@ -58,10 +59,7 @@ export type OwnerNotificationOutcome =
   /** No such order for that store. */
   | { sent: false; reason: "not_found" };
 
-function money(cents: number, currency: string): string {
-  const symbol = currency === "GBP" ? "£" : currency === "EUR" ? "€" : "$";
-  return `${symbol}${(cents / 100).toFixed(2)}`;
-}
+const money = formatMoney;
 
 /**
  * What the owner is told — pure, so the recipient, subject and body can be

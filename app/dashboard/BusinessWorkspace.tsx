@@ -367,6 +367,7 @@ export async function BusinessWorkspace({
       curiosityItems={curiosityItems}
       ownerBriefingSummary={ownerBriefingSummary}
       userName={userName}
+      currency={store.currency}
       revenueInCents={orderSummary?.revenueInCents ?? null}
       orderCount={orderSummary?.orderCount ?? null}
       revenueTrend={revenueTrend}

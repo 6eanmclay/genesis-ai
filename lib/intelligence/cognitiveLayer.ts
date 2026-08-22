@@ -2,6 +2,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { formatMoneyApprox } from "@/lib/money";
 import { getOrderSummary, getRecentActivity } from "@/lib/dashboard/whatHappened";
 import { getCustomerSummaries } from "@/lib/dashboard/customers";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
@@ -301,9 +302,11 @@ Every recommendation and opportunity should read as a real answer to one questio
 // item: a deterministic "prediction" CognitiveOutput row, built in code
 // (never by the model), matching the Insight Engine's own "100%
 // deterministic, no AI judgment" principle extended to this kind.
-function describeTrajectory(description: string, t: GoalTrajectory): string {
-  const target = `$${(t.targetValueInCents / 100).toLocaleString()}`;
-  const actual = `$${(t.actualSoFarInCents / 100).toLocaleString()}`;
+function describeTrajectory(description: string, t: GoalTrajectory, currency: string): string {
+  // The owner's own money. This sentence is read back to them about their own
+  // goal; a hardcoded symbol made it a claim about which currency they set it in.
+  const target = formatMoneyApprox(t.targetValueInCents, currency);
+  const actual = formatMoneyApprox(t.actualSoFarInCents, currency);
   const pace = `${t.paceRatio.toFixed(1)}x`;
   return t.onTrack
     ? `"${description}" is on track — ${actual} so far toward a ${target} goal, running at ${pace} the expected pace.`
@@ -449,7 +452,7 @@ export async function runCognitiveReview(params: {
     for (const t of goalTrajectories) {
       await communicateFinding(storeId, {
         kind: "prediction",
-        summary: describeTrajectory(descriptionByGoalId.get(t.goalId) ?? "Goal", t),
+        summary: describeTrajectory(descriptionByGoalId.get(t.goalId) ?? "Goal", t, store.currency),
         priority: t.onTrack ? "low" : "medium",
         recordId: t.goalId,
         entityType: "goal",

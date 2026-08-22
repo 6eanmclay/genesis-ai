@@ -42,7 +42,7 @@ const ORDER = {
   selectedShippingService: "Priority Mail",
   selectedShippingEstDays: 2,
 };
-const STORE = { name: "Cubit & Coil" };
+const STORE = { name: "Cubit & Coil", currency: "USD" };
 
 // ---------------------------------------------------------------------------
 console.log("\n1. It goes to the person who paid, about what they bought");
@@ -63,7 +63,7 @@ console.log("\n1. It goes to the person who paid, about what they bought");
 // ---------------------------------------------------------------------------
 console.log("\n2. One tenant's sale is never described with another's name");
 {
-  const other = buildConfirmationEmail({ order: ORDER, store: { name: "Someone Else's Shop" } });
+  const other = buildConfirmationEmail({ order: ORDER, store: { name: "Someone Else's Shop", currency: "USD" } });
   // The store name comes from the order's OWN store relation, never a
   // caller-supplied id — this asserts the seam exists and is honoured.
   assert("the store name is whatever the order's store says", other.subject.includes("Someone Else's Shop"));

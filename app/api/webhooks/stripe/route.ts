@@ -10,6 +10,7 @@ import { recordExecution } from "@/lib/execution/log";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
@@ -254,7 +255,12 @@ export async function POST(request: Request) {
             recordId: internalTransactionId(order.id),
             entityType: "transaction",
             eventType: "transaction.created",
-            summary: `Sale: ${order.productName} ($${(order.amountInCents / 100).toFixed(2)})`,
+            // Stripe's own session currency, which is what the customer was
+            // actually charged — not what this store is configured to charge.
+            // This line is read back to the owner in their activity feed, so a
+            // figure carrying the wrong symbol is a claim about which money
+            // came in.
+            summary: `Sale: ${order.productName} (${formatMoney(order.amountInCents, session.currency ?? "USD")})`,
             data: transaction.data,
           },
         ]);

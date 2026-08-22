@@ -4,6 +4,7 @@ import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import { recordExecution } from "@/lib/execution/log";
@@ -279,7 +280,9 @@ export async function GET(request: NextRequest) {
           recordId: internalTransactionId(created.id),
           entityType: "transaction",
           eventType: "transaction.created",
-          summary: `Sale: ${created.productName} ($${(created.amountInCents / 100).toFixed(2)})`,
+          // The store's own currency, which is what the PayPal order above was
+          // created in. Read back to the owner in their activity feed.
+          summary: `Sale: ${created.productName} (${formatMoney(created.amountInCents, store.currency)})`,
           data: transaction.data,
         },
       ]);

@@ -30,6 +30,7 @@ export function LiveIntelligence({
   liveObservations,
   curiosityItems,
   userName,
+  currency,
   revenueInCents,
   orderCount,
   revenueTrend,
@@ -41,6 +42,7 @@ export function LiveIntelligence({
   liveObservations: LiveObservation[];
   curiosityItems: CuriosityBrief[];
   userName: string | null;
+  currency: string;
   revenueInCents: number | null;
   orderCount: number | null;
   revenueTrend: number[] | null;
@@ -120,6 +122,7 @@ export function LiveIntelligence({
         </div>
 
         <BusinessPulse
+          currency={currency}
           revenueInCents={revenueInCents}
           orderCount={orderCount}
           revenueTrend={revenueTrend}

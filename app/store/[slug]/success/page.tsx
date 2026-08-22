@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -17,6 +18,17 @@ export default async function CheckoutSuccessPage({
   let amountInCents: number | null = null;
   let productName: string | null = null;
 
+  // WHICH MONEY THE CUSTOMER JUST SPENT (2026-08-22). Hoisted out of the
+  // Stripe branch below, which already needed the store for its connected
+  // account and is no longer the only branch that needs it.
+  //
+  // Stripe's own session.currency is preferred when there is one, because it is
+  // what was ACTUALLY charged rather than what this store is configured to
+  // charge. If those two ever disagree, a receipt that quietly reported the
+  // configuration would be the one place a customer could not catch it.
+  const store = await prisma.store.findUnique({ where: { slug } });
+  let currency = store?.currency ?? "USD";
+
   if (sessionId) {
     try {
       // Launch-readiness fix — a checkout session for a store using its own
@@ -27,7 +39,6 @@ export default async function CheckoutSuccessPage({
       // thank-you instead of the real product/amount for any connected-
       // account store. Same store-scoped Stripe client pattern already used
       // in app/store/[slug]/actions.ts's getStripeClientForStore.
-      const store = await prisma.store.findUnique({ where: { slug } });
       const integration = store
         ? await prisma.storeIntegration.findUnique({
             where: { storeId_provider: { storeId: store.id, provider: "STRIPE" } },
@@ -43,6 +54,7 @@ export default async function CheckoutSuccessPage({
       );
       amountInCents = session.amount_total;
       productName = session.line_items?.data[0]?.description ?? null;
+      if (session.currency) currency = session.currency.toUpperCase();
     } catch {
       // Invalid or missing session id — still show a generic thank-you below.
     }
@@ -65,8 +77,7 @@ export default async function CheckoutSuccessPage({
       {productName && (
         <p className="mt-3 text-zinc-600 dark:text-zinc-400">
           {productName}
-          {amountInCents != null &&
-            ` — $${(amountInCents / 100).toFixed(2)}`}
+          {amountInCents != null && ` — ${formatMoney(amountInCents, currency)}`}
         </p>
       )}
       <p className="mt-2 text-sm text-zinc-500">

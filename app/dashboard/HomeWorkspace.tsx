@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { SubmitButton } from "./SubmitButton";
 import { GenesisAssistant } from "./GenesisAssistant";
 import { CreateStoreForm } from "./CreateStoreForm";
@@ -337,7 +338,7 @@ export async function HomeWorkspace({
           {orderSummary.revenueInCents !== null && (
             <div>
               <p className="font-[var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
-                ${(orderSummary.revenueInCents / 100).toFixed(2)}
+                {formatMoney(orderSummary.revenueInCents, store.currency)}
               </p>
               <p className="mt-1 text-xs text-zinc-500">
                 {orderSummary.windowLabel.toLowerCase()} revenue

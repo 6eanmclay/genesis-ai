@@ -1,5 +1,6 @@
 "use client";
 
+import { formatMoney } from "@/lib/money";
 import { useActionState } from "react";
 import { quoteShippingOptions, checkoutWithShipping, type ShippingQuoteState } from "../../actions";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
@@ -25,11 +26,15 @@ export function ShippingStep({
   productId,
   productName,
   priceInCents,
+  currency,
 }: {
   slug: string;
   productId: string;
   productName: string;
   priceInCents: number;
+  /** The store's own. Both the product price and the carrier rates below are
+      quoted and charged in it. */
+  currency: string;
 }) {
   const [quote, quoteAction] = useActionState<ShippingQuoteState, FormData>(
     quoteShippingOptions.bind(null, slug, productId),
@@ -47,7 +52,7 @@ export function ShippingStep({
       <p className="text-[13px] text-[var(--brand-text-secondary)]">Shipping for</p>
       <h1 className="mt-1 text-[22px] font-semibold text-[var(--brand-text)]">{productName}</h1>
       <p className="mt-1 text-[15px] text-[var(--brand-text-secondary)]">
-        ${(priceInCents / 100).toFixed(2)} plus shipping
+        {formatMoney(priceInCents, currency)} plus shipping
       </p>
 
       <form action={quoteAction} className="mt-7 flex flex-col gap-3">
@@ -117,7 +122,7 @@ export function ShippingStep({
                     </span>
                   </span>
                   <span className="text-[15px] font-medium text-[var(--brand-text)]">
-                    ${(option.amountInCents / 100).toFixed(2)}
+                    {formatMoney(option.amountInCents, currency)}
                   </span>
                 </label>
               </li>

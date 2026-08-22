@@ -88,7 +88,7 @@ async function main() {
     const anchorAt = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     /** A store, optionally with a prior briefing and orders after it. */
-    const store = async (slug: string, opts: { anchor?: boolean; orders?: number } = {}) => {
+    const store = async (slug: string, opts: { anchor?: boolean; orders?: number; quantity?: number } = {}) => {
       const created = await prisma.store.create({
         data: { userId: owner.id, name: `Shop ${slug}`, slug, currency: "GBP", published: true },
       });
@@ -107,6 +107,7 @@ async function main() {
           data: {
             storeId: created.id,
             productName: "Tensor Ring",
+            quantity: opts.quantity ?? 1,
             amountInCents: 4_250,
             buyerEmail: `buyer${i}@lead.test`,
             paymentProvider: "STRIPE",
@@ -121,6 +122,10 @@ async function main() {
     const fresh = await store("lead-fresh");
     const settled = await store("lead-settled", { anchor: true });
     const busy = await store("lead-busy", { anchor: true, orders: 2 });
+    // P1.7's own list — "customer / product / QUANTITY / payment status /
+    // shipping address / fulfillment status / tracking / order date". Seeded
+    // with a real multiple so the card has something to be wrong about.
+    const bulk = await store("lead-bulk", { anchor: true, orders: 1, quantity: 3 });
     await prisma.user.update({ where: { id: owner.id }, data: { activeStoreId: fresh.id } });
 
     browser = await chromium.launch();
@@ -160,7 +165,39 @@ async function main() {
       !(busyLead?.includes("$") ?? true), String(busyLead));
 
     // -----------------------------------------------------------------------
-    console.log("\n4. The lead leads");
+    console.log("\n4. The order card says how many, and in whose money");
+    // -----------------------------------------------------------------------
+    // P1.7 names the lifecycle the owner must be able to read: "customer,
+    // product, QUANTITY, payment status, shipping address, fulfillment status,
+    // tracking, order date". Every one of those was on the card except the
+    // quantity, which has existed on Order since 2026-08-20 and rendered
+    // nowhere — an owner packing a hand-wound product read the product name and
+    // a total, and had to divide to learn it was three of them.
+    await page.goto(`${server.baseUrl}/b/${bulk.slug}/orders`, { waitUntil: "domcontentloaded" });
+    const card = await page.evaluate(() => document.querySelector("li")?.textContent ?? null);
+    assert("an order card is on the page", card !== null, String(card));
+    assert("it says how many units were bought", card?.includes("3") ?? false, String(card));
+    assert("beside the product it is a count of", card?.includes("Tensor Ring") ?? false, String(card));
+
+    // The same rendering question as the lead above, one line down: this store
+    // trades in pounds, and the figure beside the order is money its owner
+    // actually took.
+    assert("the order total is in the store's own currency", card?.includes("£42.50") ?? false, String(card));
+    assert("never the developer's", !(card?.includes("$") ?? true), String(card));
+
+    // A single-unit order must NOT carry a multiplier. "Tensor Ring ×1" is
+    // noise on every ordinary order, and every order this platform has ever
+    // written is one unit — the count earns its place only where it says
+    // something.
+    await page.goto(`${server.baseUrl}/b/${busy.slug}/orders`, { waitUntil: "domcontentloaded" });
+    const single = await page.evaluate(() => document.querySelector("li")?.textContent ?? null);
+    assert("one of something shows no multiplier", !(single?.includes("×1") ?? true), String(single));
+
+    // Back to the busy store, which section 5 reads the lead from.
+    await page.goto(`${server.baseUrl}/b/${busy.slug}/orders`, { waitUntil: "domcontentloaded" });
+
+    // -----------------------------------------------------------------------
+    console.log("\n5. The lead leads");
     // -----------------------------------------------------------------------
     // It has to be the first thing after the heading, above the summary card —
     // a "lead" further down the page is a footnote.

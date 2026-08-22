@@ -123,6 +123,7 @@ export function DashboardShell({
   curiosityItems,
   ownerBriefingSummary,
   userName,
+  currency,
   revenueInCents,
   orderCount,
   revenueTrend,
@@ -178,6 +179,8 @@ export function DashboardShell({
   // MobileGenesisPresence below.
   ownerBriefingSummary: string | null;
   userName: string | null;
+  /** The store's own. Every figure below is in it. */
+  currency: string;
   revenueInCents: number | null;
   orderCount: number | null;
   revenueTrend: number[] | null;
@@ -943,6 +946,7 @@ export function DashboardShell({
               curiosityItems={curiosityItems}
               ownerBriefingSummary={ownerBriefingSummary}
               userName={userName}
+              currency={currency}
               revenueInCents={revenueInCents}
               orderCount={orderCount}
               revenueTrend={revenueTrend}

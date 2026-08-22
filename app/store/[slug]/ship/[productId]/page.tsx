@@ -17,7 +17,7 @@ export default async function ShipPage({
 }) {
   const { slug, productId } = await params;
 
-  const store = await prisma.store.findUnique({ where: { slug }, select: { id: true, published: true } });
+  const store = await prisma.store.findUnique({ where: { slug }, select: { id: true, published: true, currency: true } });
   if (!store) notFound();
 
   const product = await prisma.product.findFirst({
@@ -38,6 +38,7 @@ export default async function ShipPage({
       productId={product.id}
       productName={product.name}
       priceInCents={product.priceInCents}
+      currency={store.currency}
     />
   );
 }

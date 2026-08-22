@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { sendEmail, isEmailConfigured } from "@/lib/email/sendEmail";
 import { reportIssue } from "@/lib/observability/reportIssue";
 
@@ -42,6 +43,10 @@ export interface ConfirmationOrder {
 
 export interface ConfirmationStore {
   name: string;
+  // The store's own currency (2026-08-22). This email quotes the customer a
+  // total they have just been charged; a hardcoded dollar sign made that
+  // figure a claim about which money left their account.
+  currency: string;
 }
 
 export type ConfirmationOutcome =
@@ -76,7 +81,7 @@ export function buildConfirmationEmail(params: {
   store: ConfirmationStore;
 }): { to: string; subject: string; html: string } {
   const { order, store } = params;
-  const total = `$${(order.amountInCents / 100).toFixed(2)}`;
+  const total = formatMoney(order.amountInCents, store.currency);
 
   // Shipping is mentioned only when the customer actually chose a service.
   // Inventing "ships in 3-5 days" for an order with no shipping selection would
@@ -171,7 +176,7 @@ export async function sendOrderConfirmation(
 
   const order = await prisma.order.findFirst({
     where: { id: orderId, storeId },
-    include: { store: { select: { name: true } } },
+    include: { store: { select: { name: true, currency: true } } },
   });
   if (!order) {
     // Deleted between the claim and the read. Nothing to release.

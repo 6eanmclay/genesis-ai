@@ -51,7 +51,16 @@ async function createStripeCheckoutSession(
     line_items: [
       {
         price_data: {
-          currency: "usd",
+          // THE STORE'S OWN CURRENCY, not the developer's (2026-08-22).
+          //
+          // Store.currency's schema comment already declares itself
+          // authoritative for "every money value belonging to this business",
+          // and both checkout rails ignored it. Nothing in the product writes
+          // that field yet, so every store is USD today and this changes no
+          // live charge — but the first store that is not would have been shown
+          // a price in one currency and charged in another, which is not a
+          // display bug, it is the wrong amount of money.
+          currency: store.currency.toLowerCase(),
           product_data: { name: product.name },
           unit_amount: product.priceInCents,
         },
@@ -75,7 +84,7 @@ async function createStripeCheckoutSession(
             {
               shipping_rate_data: {
                 type: "fixed_amount" as const,
-                fixed_amount: { amount: shipping.selected.amountInCents, currency: "usd" },
+                fixed_amount: { amount: shipping.selected.amountInCents, currency: store.currency.toLowerCase() },
                 display_name: `${shipping.selected.carrier} ${shipping.selected.service}`,
                 ...(shipping.selected.estimatedDays !== null
                   ? {
@@ -150,7 +159,9 @@ async function createPaypalCheckoutSession(
         {
           custom_id: `${store.id}:${product.id}`,
           amount: {
-            currency_code: "USD",
+            // The store's own, exactly as the Stripe rail above. Uppercase
+            // here because PayPal's API takes the ISO code as written.
+            currency_code: store.currency.toUpperCase(),
             value: (product.priceInCents / 100).toFixed(2),
           },
         },

@@ -31,6 +31,21 @@ export type ChangeRule<T extends EntityType> = (
   current: EntityDataFor<T>
 ) => EventCandidate | null;
 
+// DELIBERATELY NOT lib/money.ts's formatMoney, and deliberately still a dollar
+// sign (2026-08-22).
+//
+// Every other money string in this codebase was moved to the store's own
+// currency that day. These were not, and the difference is real: the amounts
+// below are INVOICE TOTALS FROM QUICKBOOKS, not figures this business set. The
+// currency they are actually in is QuickBooks', and this pipeline never
+// captured it — Store.currency is the wrong answer to the question, not a
+// missing one.
+//
+// Formatting them as the store's currency would be precisely the failure this
+// codebase refuses elsewhere: converting an unknown into a confident value.
+// "GBP 400.00" on an invoice QuickBooks raised in dollars is worse than a
+// dollar sign, because it looks decided. When the connector starts storing the
+// invoice's own currency, this reads it and not before.
 function formatCents(amountInCents: number | null | undefined): string | null {
   return amountInCents != null ? `$${(amountInCents / 100).toFixed(2)}` : null;
 }

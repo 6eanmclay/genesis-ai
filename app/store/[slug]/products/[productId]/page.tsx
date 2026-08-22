@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { createCheckoutSession } from "../../actions";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { ActionForm } from "@/app/dashboard/ActionForm";
@@ -108,7 +109,7 @@ export default async function ProductDetailPage({
               {product.name}
             </h1>
             <p className="mt-3 text-2xl font-semibold">
-              ${(product.priceInCents / 100).toFixed(2)}
+              {formatMoney(product.priceInCents, store.currency)}
             </p>
             {product.description && (
               <p className="mt-4 text-[var(--brand-text-secondary)]">{product.description}</p>

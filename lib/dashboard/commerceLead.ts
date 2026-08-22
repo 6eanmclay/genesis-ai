@@ -1,4 +1,5 @@
 import type { OwnerBriefingChangeSet } from "./genesisBriefingComposer";
+import { formatMoneyApprox } from "@/lib/money";
 
 // Commerce's lead — "one line: what changed since you were last here."
 //
@@ -41,12 +42,8 @@ export interface CommerceLead {
   quiet: boolean;
 }
 
-function money(cents: number, currency: string): string {
-  const symbol = currency === "GBP" ? "£" : currency === "EUR" ? "€" : "$";
-  const whole = Math.abs(cents) / 100;
-  // No pennies on a headline figure: this is a glance, not a ledger row.
-  return `${symbol}${whole.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
+// No pennies on a headline figure: this is a glance, not a ledger row.
+const money = formatMoneyApprox;
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
