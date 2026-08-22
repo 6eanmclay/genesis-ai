@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { AssetSchema } from "@/lib/businessModel/entities";
+import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { DEFAULT_THEME, heroLayoutOf, heroLayoutRendersImage, type Theme } from "@/lib/theme";
 
 // What J4 can actually see about a storefront's composition (2026-08-18).
@@ -99,7 +100,7 @@ export async function evaluateStorefront(storeId: string): Promise<StorefrontEva
     const a = parsed.data;
     if (a.supersededByAssetId) continue;
     if (a.role === "brand.logo") hasLogo = true;
-    if (a.role === "storefront.hero") hasHeroGraphic = true;
+    if (a.role === ASSET_ROLES.storefrontHero) hasHeroGraphic = true;
     if (a.role === "storefront.feature") hasFeatureGraphic = true;
     // Editorial = a real photo the owner has that is not already a product
     // image and is not scaffolding. This is the pool Sean described: "images

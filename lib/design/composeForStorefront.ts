@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { writeHomepageContent } from "@/lib/storefront/homepageContent";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { AssetSchema } from "@/lib/businessModel/entities";
@@ -244,7 +245,7 @@ export async function approveCompositionAsAsset(params: {
   // conversational door; both now go through writeHomepageContent, so there is
   // one writer for blueprint.homepageContent rather than two that could drop
   // each other's fields.
-  if (params.role === "storefront.hero") {
+  if (params.role === ASSET_ROLES.storefrontHero) {
     await setStorefrontHeroImage(params.storeId, params.imageUrl);
   }
 

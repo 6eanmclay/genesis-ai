@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { productSurfaceKeys } from "@/lib/design/surfaces";
 import type Anthropic from "@anthropic-ai/sdk";
 import { GoalCaptureSchema, ChallengeCaptureSchema, EmployeeCaptureSchema, LocationCaptureSchema } from "@/lib/businessModel/factCapture";
@@ -188,7 +189,9 @@ export const CreateCompositionInputSchema = z.object({
 // the distinction Sean called huge: "something the customer can buy" versus
 // "something that makes the store look better and tells the brand story."
 export const ApproveCompositionInputSchema = z.object({
-  role: z.enum(["storefront.hero", "storefront.feature", "brand.graphic"]),
+  // Left as literals: this is a model-facing zod enum, and the schema the
+  // model is shown must read as the exact strings it may emit.
+  role: z.enum([ASSET_ROLES.storefrontHero, "storefront.feature", "brand.graphic"]),
   summary: z.string(),
 });
 

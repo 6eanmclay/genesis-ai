@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { deriveTopicKey } from "@/lib/intelligence/topicKeys";
 import { withJ4CopyRules } from "@/lib/j4CopyRules";
-import type { Theme } from "@/lib/theme";
+import { DEFAULT_THEME, heroLayoutOf, heroLayoutRendersImage, type Theme } from "@/lib/theme";
 import type { RefineStorefrontInput } from "@/lib/execution/executables/refineStorefront";
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
@@ -34,7 +34,7 @@ import { RefineStorefrontToolInputSchema } from "@/lib/execution/genesisTools";
 import { GenerateBrandLogoInputSchema } from "@/lib/execution/genesisTools";
 import { CreateDesignInputSchema } from "@/lib/execution/genesisTools";
 import { CreateCompositionInputSchema, ApproveCompositionInputSchema } from "@/lib/execution/genesisTools";
-import { createComposition, approveCompositionAsAsset } from "@/lib/design/composeForStorefront";
+import { createComposition, approveCompositionAsAsset, setStorefrontHeroImage } from "@/lib/design/composeForStorefront";
 import { evaluateStorefront } from "@/lib/storefront/evaluate";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { ApproveDesignAsProductInputSchema } from "@/lib/execution/genesisTools";
@@ -2006,21 +2006,71 @@ export async function POST(request: Request) {
           // the canonical brand.logo role that "put my logo on a t-shirt"
           // resolves against.
           const requestedRole = input.role?.trim() ?? null;
-          const isLogoRole = Boolean(requestedRole && /logos?|mark/i.test(requestedRole));
-          const roleToAssign = requestedRole ? (isLogoRole ? ASSET_ROLES.brandLogo : requestedRole) : null;
+          // A REGEX THAT COULD NEVER MATCH (corrected 2026-08-22).
+          //
+          // This line held four literal BACKSPACE bytes (0x08) where its word
+          // boundaries were meant to be — a shell heredoc turned every \b into
+          // the control character it escapes to. It typechecks, it lints, it
+          // reads correctly in an editor, and it is false for every input, so
+          // `save this as my logo` never normalised onto brand.logo and never
+          // set Store.logoUrl. The owner's own logo was filed under whatever
+          // free text they happened to use, and `put my logo on a t-shirt` —
+          // which resolves against brand.logo — could not find it.
+          const isLogoRole = Boolean(requestedRole && /\blogos?\b|\bmark\b/i.test(requestedRole));
+
+          // THE SAME NORMALISATION, FOR THE ROLE THAT PUTS A PHOTO ON THE PAGE.
+          //
+          // The gap Sean reported, in its most direct form. Uploading photos
+          // and saying `use this as my hero` designated the role and stopped
+          // there — while the composition door, assigning the very same role,
+          // called setStorefrontHeroImage and changed the site. One role, two
+          // meanings, and the one an owner reaches through conversation was
+          // the meaningless one. J4 said it had done it, the record agreed,
+          // and the storefront never changed.
+          const isHeroRole = Boolean(requestedRole && /\bhero\b|\bbanner\b/i.test(requestedRole));
+          const roleToAssign = requestedRole
+            ? isLogoRole
+              ? ASSET_ROLES.brandLogo
+              : isHeroRole
+                ? ASSET_ROLES.storefrontHero
+                : requestedRole
+            : null;
+
+          // Whether the hero image will actually be VISIBLE once it is set.
+          // Three of the four hero layouts render no image at all and the
+          // default is one of them, so this has to be said rather than assumed
+          // — the same question updateHero's verify() asks, through the same
+          // predicate. Telling an owner their photo is on the site when the
+          // layout cannot show one is the failure this whole thread is about.
+          let heroIsVisible = false;
 
           if (mostRecentAsset && roleToAssign) {
             await designateAsset(store.id, mostRecentAsset.id, roleToAssign);
+            const parsedAsset = AssetSchema.safeParse(mostRecentAsset.data);
             if (isLogoRole) {
               // Keep Store.logoUrl in step, exactly as approving a generated
               // logo does — the column is still what every render path reads.
-              const parsedAsset = AssetSchema.safeParse(mostRecentAsset.data);
               if (parsedAsset.success) {
                 await prisma.store.update({
                   where: { id: store.id },
                   data: { logoUrl: parsedAsset.data.storageUrl },
                 });
               }
+            }
+            if (isHeroRole && parsedAsset.success) {
+              // Keep the storefront in step, exactly as the composition door
+              // already does for this same role — one writer, via
+              // writeHomepageContent, so neither drops the other's fields.
+              // Without this, designation was the whole of the change: a role
+              // on a record, and a page that never moved.
+              await setStorefrontHeroImage(store.id, parsedAsset.data.storageUrl);
+              const themed = await prisma.store.findUnique({
+                where: { id: store.id },
+                select: { theme: true },
+              });
+              heroIsVisible = heroLayoutRendersImage(
+                heroLayoutOf((themed?.theme as Theme | null) ?? DEFAULT_THEME)
+              );
             }
           }
 
@@ -2029,7 +2079,11 @@ export async function POST(request: Request) {
             : roleToAssign
               ? isLogoRole
                 ? "Done — that's your logo now. I'll use it wherever your brand shows up, and you can ask me to put it on a t-shirt or a hoodie whenever you want."
-                : `Done — I've saved that as your ${roleToAssign}. I'll know what you mean when you refer to it.`
+                : isHeroRole
+                  ? heroIsVisible
+                    ? "Done — that's the image at the top of your storefront now. Take a look and tell me if you want it different."
+                    : "I've set that as your hero image, but your storefront's current hero layout doesn't show one, so it won't appear yet. Say the word and I'll switch the layout to the split hero so it does."
+                  : `Done — I've saved that as your ${roleToAssign}. I'll know what you mean when you refer to it.`
               : `That's already saved as part of your business files. Want me to give it a specific role — like your primary logo — or is keeping it on file for now good?`;
 
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });

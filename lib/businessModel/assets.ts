@@ -33,6 +33,15 @@ export const ASSET_ROLES = {
   brandMark: "brand.mark",
   productArtwork: "product.artwork",
   productPhoto: "product.photo",
+  // THE ROLE THAT PUTS AN IMAGE ON THE PAGE (added here 2026-08-22).
+  //
+  // It already existed — as a bare string in four unrelated files
+  // (composeForStorefront, genesisTools' enum, evaluate, and the chat handler
+  // that had no idea it meant anything). Naming it here is the mirrored-registry
+  // invariant applied to a vocabulary that had drifted into four spellings of
+  // one idea, which is exactly how the two doors that assign it ended up
+  // meaning different things by it.
+  storefrontHero: "storefront.hero",
 } as const;
 
 export interface DesignatedAsset {
