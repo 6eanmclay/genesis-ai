@@ -3,7 +3,8 @@ import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
-import { recordSecurityEvent, SECURITY_EVENTS } from "@/lib/security/events";
+import { recordSecurityEvent, describeDevice, SECURITY_EVENTS } from "@/lib/security/events";
+import { standingFor, touchSession } from "@/lib/security/sessions";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { isTokenIssuedBeforePasswordChange } from "@/lib/auth/passwordReset";
@@ -121,7 +122,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           kind: SECURITY_EVENTS.signedIn,
           userAgent,
         });
-        return user;
+        // The device travels to the jwt callback on the returned user, because
+        // that callback has no request of its own and this is the only bridge
+        // NextAuth gives between them. Reduced to the coarse label here — the
+        // raw agent never leaves this function.
+        return { ...user, device: describeDevice(userAgent) };
       },
     }),
   ],
@@ -137,6 +142,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // (ProductEvent.sessionInstanceId). Persists for the JWT's lifetime,
         // not per browser tab; see the v20 plan for that known tradeoff.
         token.sessionInstanceId = randomUUID();
+        // The record of this sign-in, so the owner can see it and end it. Only
+        // on this branch is the device knowable — the refresh branch below has
+        // no request behind it, which is why `update` there never overwrites a
+        // real device label with null.
+        await touchSession({
+          userId: user.id as string,
+          sessionInstanceId: token.sessionInstanceId as string,
+          device: (user as { device?: string | null }).device ?? null,
+        });
         return token;
       }
 
@@ -162,6 +176,28 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       // @auth/core's own lib/actions/session.js, where a null return pushes
       // sessionStore.clean() and drops the cookie — this is real eviction, not
       // a flag nothing reads.
+      // AND THE SAME EVICTION, PER SESSION (Security & Trust, D1).
+      //
+      // The password check below is account-wide: it ends everything, including
+      // the owner's own session. This is the surgical version — the owner
+      // ended THIS device from their security screen, and it stops working on
+      // its very next request, which is the bar the password path already set.
+      //
+      // "unknown" is deliberately allowed through, and getting this backwards
+      // would sign out every existing user on deploy: every token minted before
+      // UserSession existed carries an instance id with no row behind it.
+      // Refusing those would be an outage delivered by a security feature.
+      if (token.id && typeof token.sessionInstanceId === "string") {
+        const standing = await standingFor(token.sessionInstanceId);
+        if (standing === "revoked") return null;
+        // Still in use. Recorded on the refresh branch because that is the only
+        // signal a stateless session gives that somebody is still there.
+        await touchSession({
+          userId: token.id as string,
+          sessionInstanceId: token.sessionInstanceId,
+        });
+      }
+
       if (token.id && typeof token.iat === "number") {
         const owner = await prisma.user.findUnique({
           where: { id: token.id as string },

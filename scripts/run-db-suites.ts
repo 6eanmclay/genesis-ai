@@ -46,6 +46,23 @@ const SCRIPTS_DIR = join(process.cwd(), "scripts");
 function needsDatabase(file: string): boolean {
   const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
   if (file === "run-db-suites.ts") return false;
+
+  // A SUITE THAT BRINGS ITS OWN DATABASE IS NOT THIS RUNNER'S TO RUN, and this
+  // is read from the source rather than from the list below (2026-08-22).
+  //
+  // Everything named in that list for this reason — the browser suites, the
+  // live-Postgres ones — shares one detectable property: it imports
+  // startTestServer or startRealPostgres. The list is hand-maintained, so
+  // verify-mobile-reliability.ts was added without an entry and ran here for a
+  // day, passing by luck against a harness DATABASE_URL it ignores, until it
+  // failed on a browser assertion that passes perfectly well standalone. That
+  // is a false failure reported against code with nothing wrong with it, which
+  // is the most expensive kind.
+  //
+  // Detecting the property removes the whole category from the list rather than
+  // adding one more line to it — the same list-versus-sweep lesson the currency
+  // guard learned the hard way.
+  if (/startTestServer|startRealPostgres/.test(source)) return false;
   // Suites that bring their own database must not be run twice here.
   if (file === "verify-db-integrity.ts" || file === "verify-ledger-live.ts") return false;
   // verify-order-webhook-live.ts brings a real Postgres AND a real Next server,

@@ -68,6 +68,7 @@ model User {
   businessPartnerTrialGrants BusinessPartnerTrialGrant[]
   passwordResetTokens        PasswordResetToken[]
   securityEvents             SecurityEvent[]
+  userSessions               UserSession[]
 }
 
 model Account {
@@ -178,6 +179,47 @@ model SecurityEvent {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+// A SESSION AN OWNER CAN SEE AND END (Security & Trust, 2026-08-22, D1).
+//
+// Sessions stay JWTs. D1 was approved on exactly that basis: auth.ts already
+// carries a working revocation mechanism — a token whose `iat` predates
+// User.passwordChangedAt is refused on its next request, verified against
+// Auth.js internals — and moving every user onto database sessions would be a
+// rewrite of authentication to gain what extending that mechanism gains.
+//
+// So this row is NOT the session. It is a RECORD OF one, keyed by the
+// sessionInstanceId the JWT already carries, and it exists to answer two
+// questions the stateless token cannot: what is signed in, and has this
+// particular one been revoked.
+//
+// REVOKED IS A TIMESTAMP, NOT A DELETED ROW. A deleted row cannot be told apart
+// from a session that never existed, and the history needs to say "you signed
+// out of a Mac on Tuesday" after the fact. Keeping it also means an eviction
+// check can distinguish "revoked" from "unknown to us", which matters because
+// they get different answers — see the resolver.
+//
+// No IP and no location, per D4 — same rule as SecurityEvent, and for the same
+// reason. `device` is the coarse label, never the raw agent.
+model UserSession {
+  id                String   @id @default(cuid())
+  userId            String
+  /// The id minted into the JWT at sign-in. Unique because one sign-in is one
+  /// session; a second row for the same instance would mean two answers to
+  /// "is this revoked".
+  sessionInstanceId String   @unique
+  device            String?
+  /// Moved forward on token refresh, which is the only signal a stateless
+  /// session gives that somebody is still using it.
+  lastSeenAt        DateTime @default(now())
+  /// Set when the owner ends this session. Null means live.
+  revokedAt         DateTime?
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, lastSeenAt])
 }
 
 model PasswordResetToken {
