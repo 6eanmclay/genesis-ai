@@ -2,19 +2,19 @@
 
 import { useState } from "react";
 import type { CustomerSummary, RecentOrder } from "@/lib/dashboard/types";
-
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+import { formatMoney } from "@/lib/money";
 
 function CustomerRow({
   customer,
   segments,
   orders,
+  currency,
 }: {
   customer: CustomerSummary;
   segments: string[];
   orders: RecentOrder[];
+  /** The store's own. This is what a real customer really paid them. */
+  currency: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -45,7 +45,7 @@ function CustomerRow({
         <div className="flex items-center gap-2">
           {customer.totalSpentInCents !== null && (
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              {formatCents(customer.totalSpentInCents)}
+              {formatMoney(customer.totalSpentInCents, currency)}
             </p>
           )}
           <span className="text-xs text-zinc-400">{expanded ? "−" : "+"}</span>
@@ -63,7 +63,7 @@ function CustomerRow({
                   {order.productName} — {order.createdAt.toLocaleDateString()}
                 </span>
                 {order.amountInCents !== null && (
-                  <span className="text-zinc-500">{formatCents(order.amountInCents)}</span>
+                  <span className="text-zinc-500">{formatMoney(order.amountInCents, currency)}</span>
                 )}
               </li>
             ))
@@ -78,8 +78,10 @@ export function CustomersList({
   customers,
   segmentsByEmail,
   ordersByEmail,
+  currency,
 }: {
   customers: CustomerSummary[];
+  currency: string;
   segmentsByEmail?: Map<string, string[]>;
   ordersByEmail?: Map<string, RecentOrder[]>;
 }) {
@@ -92,6 +94,7 @@ export function CustomersList({
         <CustomerRow
           key={customer.buyerEmail}
           customer={customer}
+          currency={currency}
           segments={segmentsByEmail?.get(customer.buyerEmail) ?? []}
           orders={ordersByEmail?.get(customer.buyerEmail) ?? []}
         />

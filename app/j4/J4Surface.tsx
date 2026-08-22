@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
 import { accessTo } from "@/lib/businessContext";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
@@ -33,9 +34,10 @@ import { getBaseUrl } from "@/lib/integrations/util";
 // show. That matters because the layer is rendered by app/dashboard/
 // layout.tsx on every dashboard page, so anything fetched here is fetched on
 // every navigation the owner makes.
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+// The store's own currency, threaded rather than assumed. These lines are read
+// back to the owner as what J4 understands about their business, so a figure
+// carrying the wrong symbol is a claim about which money the business takes.
+const formatCents = formatMoney;
 
 function formatDate(value: string | Date): string {
   return new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -59,7 +61,7 @@ function trendArrow(direction: "up" | "down" | "flat" | undefined): string {
 // sentence for that case. "I don't know your suppliers yet" is real
 // information about the state of J4's understanding — dropping empty groups
 // would quietly overstate how much it knows.
-function toUnderstandingGroups(u: BusinessUnderstanding): UnderstandingGroup[] {
+function toUnderstandingGroups(u: BusinessUnderstanding, currency: string): UnderstandingGroup[] {
   const { profile, beliefs, recentDecisions, activeThoughts, platformRelationship, currentAssets } = u;
 
   const identity: string[] = [];
@@ -110,8 +112,8 @@ function toUnderstandingGroups(u: BusinessUnderstanding): UnderstandingGroup[] {
       key: "revenue",
       label: "Revenue",
       lines: [
-        `Last 30 days — ${formatCents(profile.revenue.last30DaysInCents)}`,
-        `All time — ${formatCents(profile.revenue.allTimeInCents)}`,
+        `Last 30 days — ${formatCents(profile.revenue.last30DaysInCents, currency)}`,
+        `All time — ${formatCents(profile.revenue.allTimeInCents, currency)}`,
       ],
       empty: "No revenue recorded yet.",
     },
@@ -356,7 +358,7 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
       }))}
       ideas={ideas.map((o) => ({ id: o.id, summary: o.summary, href: o.actionHref }))}
       information={information}
-      understanding={understanding ? toUnderstandingGroups(understanding) : []}
+      understanding={understanding ? toUnderstandingGroups(understanding, store.currency) : []}
       // Rendered on the server and handed down, so the layer stays a client
       // component without needing to fetch or know about proposals itself.
       proposal={

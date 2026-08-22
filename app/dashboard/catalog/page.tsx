@@ -1,4 +1,5 @@
 import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { formatMoney } from "@/lib/money";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { catalogView, type CatalogItem } from "@/lib/sourcing/catalogView";
@@ -19,9 +20,11 @@ import { adoptFromCatalog, dismissFromCatalog, priceFromCatalog, rediscoverForCa
 // nobody building a business is asking; "can I put my brand on it, and do I have
 // to hold any of it" is the question, and that is what the group headings say.
 
-function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat("en", { style: "currency", currency, maximumFractionDigits: 2 }).format(cents / 100);
-}
+// Was Intl.NumberFormat with a currency style, which was already
+// currency-correct — but renders the same GBP figure as "£85.00" in one locale
+// and "GB£85.00" in another, against a server-rendered page with no particular
+// viewer. lib/money is the one place a price becomes a string.
+const money = formatMoney;
 
 /**
  * What Genesis knows about this one's cost, and who said it.

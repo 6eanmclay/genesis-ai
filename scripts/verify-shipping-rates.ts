@@ -59,7 +59,7 @@ console.log("\n3. Real EasyPost rates become checkout options");
   const fixture = JSON.parse(
     readFileSync(join(process.cwd(), "scripts/fixtures/easypost-rates.json"), "utf8")
   ) as { rates: unknown[] };
-  const options = toShippingOptions(fixture.rates as never);
+  const options = toShippingOptions(fixture.rates as never, "USD");
 
   check("all four usable rates survive", options.length, 4);
   check("cheapest first", options.map((o) => o.amountInCents), [745, 892, 1235, 2840]);
@@ -89,7 +89,7 @@ console.log("\n4. Unusable rates are dropped, never shown at zero");
     { id: "rate_missing", carrier: "USPS", service: "NoPrice", rate: null },
     { id: null, carrier: "USPS", service: "NoId", rate: "5.00" },
     { id: "rate_nocarrier", carrier: null, service: "Orphan", rate: "5.00" },
-  ] as never);
+  ] as never, "USD");
   check("only the real one survives", options.map((o) => o.rateId), ["rate_ok"]);
   check("priced correctly in cents", options[0].amountInCents, 910);
 }
@@ -101,7 +101,7 @@ console.log("\n5. Money is converted exactly");
     { id: "a", carrier: "USPS", service: "A", rate: "7.45" },
     { id: "b", carrier: "USPS", service: "B", rate: "10.00" },
     { id: "c", carrier: "USPS", service: "C", rate: "12.345" },
-  ] as never);
+  ] as never, "USD");
   check("cents are integers, rounded at the boundary", options.map((o) => o.amountInCents), [745, 1000, 1235]);
   assert("every amount is an integer", options.every((o) => Number.isInteger(o.amountInCents)));
 }
@@ -109,8 +109,36 @@ console.log("\n5. Money is converted exactly");
 // ---------------------------------------------------------------------------
 console.log("\n6. No rates is an empty list, not a fabricated option");
 {
-  check("nothing in, nothing out", toShippingOptions([]), []);
-  check("all-unusable in, nothing out", toShippingOptions([{ id: "x", carrier: "USPS", service: "S", rate: "0" }] as never), []);
+  check("nothing in, nothing out", toShippingOptions([], "USD"), []);
+  check("all-unusable in, nothing out", toShippingOptions([{ id: "x", carrier: "USPS", service: "S", rate: "0" }] as never, "USD"), []);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n7. The label quotes the money the customer will actually be charged");
+// ---------------------------------------------------------------------------
+// This one became wrong the day checkout started charging in Store.currency
+// (2026-08-22). The rate label was hardcoded to a dollar sign, so a GBP store
+// would show a customer "USPS Priority — $9.10" on the shipping step and then
+// charge them 9.10 in pounds. The amount was right and the currency was a lie,
+// which is the worse half to get wrong: nothing looks broken.
+{
+  const RATES = [{ id: "r", carrier: "USPS", service: "Priority", rate: "9.10", delivery_days: 2 }] as never;
+  const pounds = toShippingOptions(RATES, "GBP");
+  assert("a GBP store quotes pounds", pounds[0].label.includes("£9.10"), pounds[0].label);
+  assert("and never a dollar sign", !pounds[0].label.includes("$"), pounds[0].label);
+
+  // Told apart from the USD case, so this cannot pass against a label that
+  // ignores its currency and happens to be hardcoded to pounds.
+  const dollars = toShippingOptions(RATES, "USD");
+  assert("a USD store quotes dollars", dollars[0].label.includes("$9.10"), dollars[0].label);
+  assert("so the label really reads the store's currency", pounds[0].label !== dollars[0].label,
+    "same rate, same amount, different money");
+
+  // The AMOUNT is unchanged by any of this — the currency is how it is written,
+  // never what it is worth. A converted figure here would be Genesis inventing
+  // an exchange rate nobody gave it.
+  check("and the amount is identical either way",
+    [pounds[0].amountInCents, dollars[0].amountInCents], [910, 910]);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

@@ -82,7 +82,12 @@ export async function CustomersScreen({ slug, basePath }: { slug?: string; baseP
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Customers</h1>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{healthSentence}</p>
       <div className="mt-4 max-w-md">
-        <CustomersList customers={customers} segmentsByEmail={segmentsByEmail} ordersByEmail={ordersByEmail} />
+        <CustomersList
+          customers={customers}
+          currency={store.currency}
+          segmentsByEmail={segmentsByEmail}
+          ordersByEmail={ordersByEmail}
+        />
       </div>
     </div>
   );

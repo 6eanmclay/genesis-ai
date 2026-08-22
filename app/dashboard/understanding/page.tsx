@@ -5,12 +5,15 @@ import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 
 const CARD =
   "rounded-xl border border-black/[.08] bg-black/[.02] p-4 dark:border-white/[.145] dark:bg-white/[.03]";
+import { formatMoney } from "@/lib/money";
+
 const LABEL = "text-xs font-medium uppercase tracking-wide text-zinc-500";
 const VALUE = "mt-0.5 text-sm text-black dark:text-zinc-50";
 
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+// The store's own currency, threaded rather than assumed. This screen states
+// what Genesis understands about the business, and a revenue figure carrying
+// the wrong symbol is a claim about which money the business takes.
+const formatCents = formatMoney;
 
 function formatDate(value: string | Date): string {
   return new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -129,11 +132,11 @@ export async function UnderstandingScreen({ slug, basePath }: { slug?: string; b
           <div className={`mt-3 flex gap-6 ${CARD}`}>
             <div>
               <p className={LABEL}>Last 30 days</p>
-              <p className={VALUE}>{formatCents(profile.revenue.last30DaysInCents)}</p>
+              <p className={VALUE}>{formatCents(profile.revenue.last30DaysInCents, store.currency)}</p>
             </div>
             <div>
               <p className={LABEL}>All time</p>
-              <p className={VALUE}>{formatCents(profile.revenue.allTimeInCents)}</p>
+              <p className={VALUE}>{formatCents(profile.revenue.allTimeInCents, store.currency)}</p>
             </div>
           </div>
         </section>

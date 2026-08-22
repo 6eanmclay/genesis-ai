@@ -1,4 +1,5 @@
 import type { SourcingMethodProfile, OwnerCapability } from "./methodProfile";
+import { formatMoneyApprox } from "@/lib/money";
 import { ECONOMICS_FACTS, type EconomicsFact, type SupplierTerms } from "./economics";
 import type { CapitalPosture, ProductEvidence } from "./progression";
 import { spendableCents } from "./progression";
@@ -320,10 +321,11 @@ const CAPABILITY_LABEL: Record<OwnerCapability, string> = {
   manage_supplier: "a supplier relationship to manage",
 };
 
-function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat("en", { style: "currency", currency, maximumFractionDigits: 0 })
-    .format(cents / 100);
-}
+// Was Intl.NumberFormat with a currency style — already currency-correct, but
+// it renders the same GBP figure as "£85" in one locale and "GB£85" in another,
+// against text this platform generates server-side for no particular viewer.
+// lib/money is the one place a price becomes a string.
+const money = formatMoneyApprox;
 
 /**
  * Fit and feasibility, combined in the order that matters.

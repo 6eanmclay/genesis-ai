@@ -197,7 +197,39 @@ async function main() {
     await page.goto(`${server.baseUrl}/b/${busy.slug}/orders`, { waitUntil: "domcontentloaded" });
 
     // -----------------------------------------------------------------------
-    console.log("\n5. The lead leads");
+    console.log("\n5. Every figure in the room is in the room's own money");
+    // -----------------------------------------------------------------------
+    // The currency sweep shipped with a hand-maintained list of files, and the
+    // list missed four screens — each with its own formatCents and its own
+    // hardcoded dollar sign. Customers was one of them: it showed an owner what
+    // real people had really spent, in a currency nobody had chosen.
+    //
+    // The guard is a tree sweep now rather than a list, but a sweep proves the
+    // source contains no conversion, not that the page renders the right
+    // symbol. This reads the rendered page.
+    for (const [label, path] of [
+      ["Customers", `/b/${busy.slug}/customers`],
+      ["Revenue", `/b/${busy.slug}/analytics`],
+    ] as const) {
+      await page.goto(`${server.baseUrl}${path}`, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(400);
+      // innerText, NOT textContent. textContent includes the contents of
+      // <script> tags, and Next serialises the whole RSC payload into them —
+      // so the first version of this assertion failed on framework internals
+      // while reporting them as the page's own money.
+      const text = await page.evaluate(() => document.body.innerText ?? "");
+      assert(`${label} shows pounds, because the store trades in pounds`, text.includes("£"), label);
+      assert(
+        `${label} shows no dollar sign at all`,
+        !text.includes("$"),
+        text.split("$").slice(1).map((t) => t.slice(0, 40)).join(" | ")
+      );
+    }
+
+    await page.goto(`${server.baseUrl}/b/${busy.slug}/orders`, { waitUntil: "domcontentloaded" });
+
+    // -----------------------------------------------------------------------
+    console.log("\n6. The lead leads");
     // -----------------------------------------------------------------------
     // It has to be the first thing after the heading, above the summary card —
     // a "lead" further down the page is a footnote.

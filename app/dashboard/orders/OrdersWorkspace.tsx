@@ -158,7 +158,7 @@ export async function OrdersWorkspace({
       )}
 
       <div className="mt-6 max-w-md">
-        <OrderSummaryCard summary={summary} />
+        <OrderSummaryCard summary={summary} currency={store.currency} />
       </div>
 
       {canManage && (

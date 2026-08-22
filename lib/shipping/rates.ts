@@ -1,5 +1,6 @@
 import EasyPost from "@easypost/api";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import type { EasyPostCredentials } from "@/lib/integrations/easypost";
 
@@ -115,7 +116,7 @@ export function humanService(service: string): string {
  * Cheapest first, because that is the order a shopper reads. A rate with no
  * usable price is dropped rather than shown at zero.
  */
-export function toShippingOptions(rates: EasyPostRateLike[]): ShippingOption[] {
+export function toShippingOptions(rates: EasyPostRateLike[], currency: string): ShippingOption[] {
   const options: ShippingOption[] = [];
 
   for (const rate of rates) {
@@ -139,8 +140,8 @@ export function toShippingOptions(rates: EasyPostRateLike[]): ShippingOption[] {
       // inventing "3-5 days" would be a promise the carrier never made.
       label:
         typeof days === "number" && days > 0
-          ? `${rate.carrier} ${service} — $${(amountInCents / 100).toFixed(2)}, about ${days} day${days === 1 ? "" : "s"}`
-          : `${rate.carrier} ${service} — $${(amountInCents / 100).toFixed(2)}`,
+          ? `${rate.carrier} ${service} — ${formatMoney(amountInCents, currency)}, about ${days} day${days === 1 ? "" : "s"}`
+          : `${rate.carrier} ${service} — ${formatMoney(amountInCents, currency)}`,
     });
   }
 
@@ -200,7 +201,7 @@ export async function quoteShippingForProduct(params: {
       where: { id: params.productId, storeId: params.storeId, active: true },
       select: { weightOz: true, lengthIn: true, widthIn: true, heightIn: true },
     }),
-    prisma.store.findUnique({ where: { id: params.storeId }, select: { returnAddress: true } }),
+    prisma.store.findUnique({ where: { id: params.storeId }, select: { returnAddress: true, currency: true } }),
   ]);
 
   if (!product) return { ok: false, reason: "no_parcel_data", detail: "Product not found" };
@@ -256,7 +257,7 @@ export async function quoteShippingForProduct(params: {
       },
     });
 
-    const options = toShippingOptions((shipment?.rates ?? []) as EasyPostRateLike[]);
+    const options = toShippingOptions((shipment?.rates ?? []) as EasyPostRateLike[], store?.currency ?? "USD");
     if (options.length === 0) {
       return {
         ok: false,

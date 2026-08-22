@@ -1,9 +1,6 @@
 import Link from "next/link";
+import { formatMoney } from "@/lib/money";
 import type { RecentOrder } from "@/lib/dashboard/types";
-
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
 
 // Purely informational — orders are positive business activity, not a
 // problem needing a decision, so this never renders next to Attention/
@@ -14,10 +11,13 @@ function formatCents(cents: number): string {
 export function RecentOrdersCard({
   orders,
   basePath,
+  currency,
 }: {
   orders: RecentOrder[];
   /** The business the owner is standing in — never the account's last active one. */
   basePath: string;
+  /** The store's own — these are real sales in the owner's money. */
+  currency: string;
 }) {
   if (orders.length === 0) {
     return null;
@@ -35,7 +35,7 @@ export function RecentOrdersCard({
             <div className="text-right">
               {order.amountInCents !== null && (
                 <p className="text-sm font-medium text-black dark:text-zinc-50">
-                  {formatCents(order.amountInCents)}
+                  {formatMoney(order.amountInCents, currency)}
                 </p>
               )}
               <p className="text-xs text-zinc-500">{order.createdAt.toLocaleDateString()}</p>

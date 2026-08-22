@@ -1,4 +1,5 @@
 import type { ProductSourceKind } from "@prisma/client";
+import { formatMoneyApprox } from "@/lib/money";
 import type { Outcome } from "./feasibility";
 import type { ProductEvidence } from "./progression";
 import type { Recommendation } from "./recommend";
@@ -83,10 +84,11 @@ function pct(value: number): string {
   return `${Math.round(value)}%`;
 }
 
-function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat("en", { style: "currency", currency, maximumFractionDigits: 0 })
-    .format(cents / 100);
-}
+// Was Intl.NumberFormat with a currency style — already currency-correct, but
+// it renders the same GBP figure as "£85" in one locale and "GB£85" in another,
+// against text this platform generates server-side for no particular viewer.
+// lib/money is the one place a price becomes a string.
+const money = formatMoneyApprox;
 
 // --- evidence strength ------------------------------------------------------
 

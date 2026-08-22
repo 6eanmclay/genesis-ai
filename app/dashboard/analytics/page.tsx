@@ -120,7 +120,7 @@ export async function AnalyticsScreen({ slug, basePath }: { slug?: string; baseP
           never rendered any of it, leaving Analytics as a bare duplicate of
           Home's "From Genesis" box. Surfacing the data it already has. */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <OrderSummaryCard summary={orderSummary} />
+        <OrderSummaryCard summary={orderSummary} currency={store.currency} />
         <InventorySnapshotCard snapshot={inventorySnapshot} />
         <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
           <div className="flex items-baseline gap-2">

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/money";
 import { queryRecords, getRevenue, getAverageOpenRate } from "@/lib/businessModel/reasoning";
 import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { getNewEventsForConsumer, advanceConsumerCursor } from "./businessEvents";
@@ -29,7 +30,17 @@ const OVERDUE_INVOICE_COUNT_THRESHOLD = 3;
 const LOW_STOCK_COUNT_THRESHOLD = 1; // even one depleted item is worth mentioning
 const CANCELLATION_TREND_RATIO = 2; // "doubled"
 
-function currency(cents: number): string {
+// TWO DIFFERENT MONIES, DELIBERATELY TOLD APART (2026-08-22).
+//
+// Revenue in this file is the business's OWN, and is formatted in the currency
+// the business trades in. Invoice totals are not: they come from QuickBooks,
+// whose own currency this pipeline never captured, so Store.currency is the
+// WRONG answer to that question rather than a missing one — the same
+// distinction lib/intelligence/changeDetection.ts documents at length.
+//
+// Formatting a QuickBooks total as pounds would convert an unknown into a
+// confident value, which is worse than a dollar sign because it looks decided.
+function quickbooksAmount(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
@@ -47,6 +58,12 @@ async function detectRevenueTrend(storeId: string): Promise<Insight | null> {
     getRevenue(storeId, { since: twoWeeksAgo, until: oneWeekAgo }),
   ]);
 
+  // The business's own currency. Read here rather than threaded through every
+  // detector: this is the only one of them that states a figure belonging to
+  // the store itself.
+  const store = await prisma.store.findUnique({ where: { id: storeId }, select: { currency: true } });
+  const storeCurrency = store?.currency ?? "USD";
+
   if (lastWeek === 0) return null; // no baseline — avoid a meaningless "infinite % change"
   const change = (thisWeek - lastWeek) / lastWeek;
   if (Math.abs(change) < REVENUE_TREND_THRESHOLD) return null;
@@ -55,7 +72,7 @@ async function detectRevenueTrend(storeId: string): Promise<Insight | null> {
   return {
     type: change > 0 ? "revenue.increased" : "revenue.decreased",
     severity: change > 0 ? "opportunity" : "urgent",
-    summary: `Revenue ${direction} ${pct(change)} this week (${currency(thisWeek)} vs ${currency(lastWeek)} last week)`,
+    summary: `Revenue ${direction} ${pct(change)} this week (${formatMoney(thisWeek, storeCurrency)} vs ${formatMoney(lastWeek, storeCurrency)} last week)`,
     metrics: { thisWeekInCents: thisWeek, lastWeekInCents: lastWeek, change },
   };
 }
@@ -99,7 +116,7 @@ async function detectOverdueInvoiceCluster(storeId: string): Promise<Insight | n
   return {
     type: "invoices.overdue",
     severity: "urgent",
-    summary: `${overdue.length} invoices are now overdue, totaling ${currency(totalOwed)}`,
+    summary: `${overdue.length} invoices are now overdue, totaling ${quickbooksAmount(totalOwed)}`,
     metrics: { count: overdue.length, totalOwedInCents: totalOwed },
   };
 }

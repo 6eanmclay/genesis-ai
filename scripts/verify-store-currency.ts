@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { formatMoney, formatMoneyApprox, currencySymbol } from "@/lib/money";
 import { buildConfirmationEmail } from "@/lib/orders/orderConfirmation";
@@ -151,31 +151,98 @@ console.log("\n=== 4. Money becomes a string in exactly one place ===\n");
 // The pattern is the CONVERSION, not the dollar sign — catching `InCents / 100`
 // also catches a hand-written pound sign, which is the same defect wearing the
 // right symbol by luck.
-const COMMERCE_PATH = [
-  "app/store/[slug]/page.tsx",
-  "app/store/[slug]/products/[productId]/page.tsx",
-  "app/store/[slug]/success/page.tsx",
-  "app/store/[slug]/ship/[productId]/ShippingStep.tsx",
-  "app/dashboard/OrdersList.tsx",
-  "app/dashboard/HomeWorkspace.tsx",
-  "app/dashboard/BusinessPulse.tsx",
-  "app/dashboard/analytics/page.tsx",
-  "lib/orders/orderConfirmation.ts",
-  "lib/orders/notifyOwnerOfSale.ts",
-  "lib/dashboard/commerceLead.ts",
-];
+// A HAND-MAINTAINED LIST IS THE BUG IT WAS WRITTEN TO CATCH (corrected
+// 2026-08-22, the day after it was written).
+//
+// The first version of this guard named eleven files. It passed, and it was
+// wrong: CustomersList, OrderSummaryCard, RecentOrdersCard and the
+// Understanding screen each carried their own `formatCents` with a hardcoded
+// dollar sign, and none of them was on the list. Four screens showing an owner
+// what their customers had really spent, in a currency nobody had chosen.
+//
+// That is precisely the mirrored-registry failure ARCHITECTURE.md names as a
+// standing invariant, committed by the guard itself. So the list is gone.
+//
+// NARROWING THE ROOTS WAS THE SAME MISTAKE AGAIN, one size smaller. The second
+// version swept four directories and still missed app/j4's own Understanding
+// panel, lib/intelligence/insights.ts's revenue sentence, and — worst — the
+// shipping rate label a customer reads at checkout, which had become wrong that
+// same day when checkout started charging in Store.currency: a GBP store quoted
+// "$9.10" and charged 9.10 in pounds.
+//
+// So the roots are now the whole tree. Every file that converts cents either
+// uses lib/money or is named below WITH A REASON.
+const ROOTS = ["app", "lib"];
 
-for (const file of COMMERCE_PATH) {
-  const source = readFileSync(join(process.cwd(), file), "utf8");
-  const offenders = source
+// The conversions that are legitimately NOT display strings. Each is here
+// because it produces a NUMBER or an API value, not something a person reads —
+// and each is named individually, because "it's probably fine" is how the four
+// above survived.
+const NOT_A_DISPLAY_STRING: Record<string, string> = {
+  // Numbers and API values — nothing a person reads.
+  "app/dashboard/ai-actions.ts": "a number handed to a model, never rendered",
+  "app/dashboard/products/EditProductForm.tsx": "the value of a number input the owner types into",
+  "app/store/[slug]/actions.ts": "the decimal string PayPal's own API requires",
+  "lib/intelligence/cognitiveLayer.ts": "numbers handed to a model — price, totalSpent, revenue",
+  "lib/fulfillment/printful.ts": "the retail_price string Printful's own API requires",
+
+  // Before a store exists. Onboarding runs before a business, and therefore
+  // before a currency, has been chosen — there is no store currency to read,
+  // and inventing one would be a guess about a business that does not exist yet.
+  "app/StorefrontPreview.tsx": "a preview of a concept, rendered before any store exists",
+  "app/onboarding/business/BusinessScreen.tsx": "onboarding, before a business or its currency exists",
+  "app/onboarding/launch/LaunchScreen.tsx": "onboarding, before a business or its currency exists",
+
+  // SOMEBODY ELSE'S MONEY, and the most important two entries here. These are
+  // QuickBooks invoice totals, whose real currency QuickBooks never gave us.
+  // Store.currency is the WRONG answer, not a missing one, and formatting them
+  // as the store's currency would convert an unknown into a confident value —
+  // worse than a dollar sign, because it looks decided.
+  "lib/intelligence/changeDetection.ts": "QuickBooks invoice totals, in QuickBooks' own uncaptured currency",
+  "lib/intelligence/insights.ts": "the same QuickBooks totals; its revenue line does use lib/money",
+};
+
+function walk(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(join(process.cwd(), dir), { withFileTypes: true })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...walk(rel));
+    else if (/\.(ts|tsx)$/.test(entry.name)) out.push(rel);
+  }
+  return out;
+}
+
+const swept = ROOTS.flatMap(walk);
+assert("the sweep actually found files to check", swept.length > 20, String(swept.length));
+
+const leaks: string[] = [];
+for (const file of swept) {
+  // The one place that is SUPPOSED to convert. Excluded by name rather than by
+  // the allowlist above, because it is not an exemption — it is the rule.
+  if (file === "lib/money.ts") continue;
+  if (NOT_A_DISPLAY_STRING[file]) continue;
+  const offenders = readFileSync(join(process.cwd(), file), "utf8")
     .split("\n")
     .map((line, i) => ({ line: line.trim(), n: i + 1 }))
-    .filter((l) => /InCents\s*\/\s*100/.test(l.line) && !l.line.startsWith("//") && !l.line.startsWith("*"));
-  assert(
-    `${file} formats no money of its own`,
-    offenders.length === 0,
-    offenders.map((o) => `${o.n}: ${o.line}`).join("\n      ")
-  );
+    .filter(
+      (l) =>
+        /(InCents|cents)\s*\/\s*100/.test(l.line) &&
+        !l.line.startsWith("//") &&
+        !l.line.startsWith("*")
+    );
+  for (const o of offenders) leaks.push(`${file}:${o.n}  ${o.line}`);
+}
+assert(
+  "money becomes a string in exactly one place, across the whole owner and customer path",
+  leaks.length === 0,
+  leaks.join("\n      ")
+);
+
+// And the allowlist stays honest: an entry for a file that no longer converts
+// anything is a stale exemption, and the next real leak would hide behind it.
+for (const [file, why] of Object.entries(NOT_A_DISPLAY_STRING)) {
+  const text = readFileSync(join(process.cwd(), file), "utf8");
+  assert(`the exemption for ${file} is still doing something`, /(InCents|cents)\s*\/\s*100/.test(text), why);
 }
 
 // AND THE CHARGE ITSELF, which costs real money rather than credibility.

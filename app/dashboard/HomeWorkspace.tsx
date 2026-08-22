@@ -459,7 +459,7 @@ export async function HomeWorkspace({
           <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
             Recent orders
           </h2>
-          <RecentOrdersCard orders={recentOrders} basePath={basePath} />
+          <RecentOrdersCard orders={recentOrders} basePath={basePath} currency={store.currency} />
         </>
       )}
 
