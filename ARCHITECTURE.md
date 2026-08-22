@@ -67,7 +67,27 @@ Treated as one cohesive milestone, not eight unrelated features — every item b
 
 ---
 
-## Shipping & Fulfillment — a future milestone (planned, not started)
+## Shipping & Fulfilment — BUILT AND VERIFIED 2026-08-22
+
+**Status: shipped.** Contract approved with six decisions (S1–S6). Three findings from the audit shaped it, and two of them shrank the work:
+
+* **The rate path was already carrier-agnostic.** `toShippingOptions` passes through whatever carrier the broker quotes. Only three narrow things assumed USPS — a fallback filter, a default, and the owner-facing copy — and all three are gone. The filter was a real defect: a merchant whose broker carried UPS but not USPS could not buy a label at all on the no-selection path.
+* **EasyPost is itself the multi-carrier layer**, so S1 abstracts over **providers** (`lib/carriage/`), not carriers. There is deliberately **no `quoteRates` method**: quoting already runs through one carrier-agnostic path that resolves store, product and origin itself, and wrapping it would have meant re-plumbing checkout for a seam nothing needed.
+* **`mapTrackerToShipment` already existed**, pure and covered — and nothing called it. The gap was never the mapping; it was ingestion. An earlier report that "Delivered has no data source anywhere" was too strong and is corrected here.
+
+**`lib/carriage/` is carriage; `lib/fulfillment/` remains supplier fulfilment** (Printful — who *makes* the product). S2 kept them apart by name: one word for two things is how somebody later wires the wrong one.
+
+**`lib/carriage/lifecycle.ts` imports nothing at all, and that emptiness is load-bearing** — `OrdersList` is a client component, and importing the lifecycle from the ingestion module (which uses `prisma` and `node:crypto`) pulled a database client into the browser bundle and broke the Orders page. Found by the browser suite.
+
+**Invariants held, each negative-controlled:** the webhook signature is timing-safe and verified over the *raw* body; a replay changes nothing; an out-of-order scan cannot un-deliver a parcel; delivery means the carrier said so, never elapsed time; a carrier is never assumed; the label double-purchase claim is untouched.
+
+**Externally blocked:** live tracker delivery needs a real EasyPost account, a public URL and `EASYPOST_WEBHOOK_SECRET`. Buying a real label spends postage and stays behind an injected buyer. Carrier accounts beyond USPS need attaching before real multi-carrier quotes.
+
+**Deferred by decision:** voiding/refunding labels (S4), international and customs (S5), a second provider (S6 — generality is stated as unproven until one exists).
+
+---
+
+## Shipping & Fulfillment — the original scoping (superseded by the section above)
 
 **Status: named and scoped 2026-08-06, explicitly not built.** Sean's own framing for why this is high-priority, not just plausible: once Stripe checkout is fully live, the next real question every merchant asks is *"someone bought my product — now how do I ship it?"* Genesis should let them complete that entire workflow without leaving the platform.
 
