@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
 import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools } from "@/lib/execution/toolPolicy";
+import { handlerFor } from "@/lib/execution/toolHandlers";
 import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -19,9 +20,6 @@ import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
 import { buildTurnContext } from "@/lib/dashboard/chatTurnContext";
 import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
-import { persistSyncedRecords } from "@/lib/businessModel/sync";
-import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
-import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
@@ -50,21 +48,17 @@ import { branchBrandLogo, hasExistingLogo, proposeBrandLogo } from "@/lib/brand/
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
-import { describeApprovalExecutionForChat } from "@/lib/dashboard/pendingApprovals";
-import { performApprovePendingChanges } from "@/app/dashboard/ai-actions";
 import {
   allToolUses,
   buildStoreChatUnifiedTools,
   AnswerSupplierEconomicsToolInputSchema,
   textOf,
-  type BusinessFactCaptureInput,
   type RequestImageChangeInput,
   type RequestProductRemovalInput,
   type RequestProductContentChangeInput,
   type ManageBusinessAssetInput,
 } from "@/lib/execution/genesisTools";
 import {
-  UPLOAD_INTENT_REPLY,
   STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
   STORE_CHAT_UNIFIED_SYSTEM_PROMPT,
   extractRichContentImagePrompt,
@@ -562,29 +556,95 @@ export async function POST(request: Request) {
           return;
         }
 
-        if (chosenTool?.name === "show_upload_options") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "show_upload_options" });
-          // The model's own words if it wrote any, otherwise the standing reply.
-          // It knows what the merchant actually said; this is only a floor.
-          const reply = conversationalReply || UPLOAD_INTENT_REPLY;
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "SUCCESS",
-            verified: false,
-            message: reply,
-            retryable: false,
-            userId,
+        // MIGRATED TOOLS RUN HERE, AND MORE THAN ONE OF THEM CAN
+        // (2026-08-22, Unified Intelligence UI3).
+        //
+        // A handler returns what it did instead of writing messages, emitting
+        // and closing the stream itself — so the turn owns all of that once,
+        // however many handlers ran, and two tools in a turn is finally
+        // expressible rather than structurally impossible.
+        //
+        // Only the tools that have moved to lib/execution/toolHandlers.ts. The
+        // rest still run inline below, exactly as before: moving nineteen
+        // bespoke branches in one pass, with no coverage to catch a mistake, is
+        // how a working product breaks quietly.
+        const handlerResults: { reply: string; kind: string; metadata?: Record<string, unknown> }[] = [];
+        let unhandledByHandlers: typeof plannedTools[number] | null = null;
+        let invalidToolInput = false;
+
+        for (const tool of plannedTools) {
+          const handler = handlerFor(tool.name);
+          if (!handler) {
+            // Falls through to the inline ladder. Only ONE can, because those
+            // branches still end the turn themselves.
+            unhandledByHandlers = tool;
+            break;
+          }
+          const outcome = await handler({
             storeId: store.id,
-            metadata: { kind: "upload_intent" },
+            userId,
+            userMessage,
+            conversationalReply,
+            input: tool.input,
+            status: (text) => emit({ type: "status", text }),
           });
-          if (!streamedAnyText) emit({ type: "token", delta: reply });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "upload_intent" });
+          if (!outcome.handled) {
+            // The model's input did not make sense. Nothing was written, so the
+            // honest move is the ordinary fallback rather than confirming
+            // something that never happened.
+            invalidToolInput = true;
+            break;
+          }
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: tool.name });
+          handlerResults.push(outcome);
+        }
+
+        if (invalidToolInput) {
+          emit({ type: "fallback" });
           controller.close();
           return;
         }
+
+        // Every planned tool was handled here: end the turn once, with one
+        // user message and one assistant message per thing that was done.
+        if (handlerResults.length > 0 && !unhandledByHandlers) {
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          for (const result of handlerResults) {
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: result.reply } });
+            await recordGenesisExecution({
+              action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+              status: "SUCCESS",
+              verified: false,
+              message: result.reply,
+              retryable: false,
+              userId,
+              storeId: store.id,
+              metadata: { kind: result.kind, ...(result.metadata ?? {}) },
+            });
+            // The model may already have streamed its own words; a handler's
+            // reply follows rather than replacing them.
+            if (!streamedAnyText) {
+              emit({ type: "token", delta: result.reply });
+              streamedAnyText = true;
+            } else if (result.reply !== conversationalReply) {
+              emit({ type: "token", delta: `\n\n${result.reply}` });
+            }
+          }
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({
+            userId,
+            storeId: store.id,
+            durationMs: Date.now() - turnStartedAt,
+            outcome: "success",
+            likelyRephraseOf,
+            kind: handlerResults.map((r) => r.kind).join("+"),
+          });
+          controller.close();
+          return;
+        }
+
+        // One tool with no handler yet: the inline ladder below handles it,
+        // unchanged. chosenTool already points at the first planned tool.
 
         if (chosenTool?.name === "look_up_business_data") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "look_up_business_data" });
@@ -730,114 +790,7 @@ export async function POST(request: Request) {
           return;
         }
 
-        if (chosenTool?.name === "capture_business_fact") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "capture_business_fact" });
-          emit({ type: "status", text: "Got it — recording that…" });
-          const input = chosenTool.input as BusinessFactCaptureInput;
-          const entityType = input.entityType;
-          const todayIso = new Date().toISOString().slice(0, 10);
-          const fullData =
-            entityType === "goal"
-              ? toGoalRecordData(input.data, todayIso)
-              : entityType === "challenge"
-                ? toChallengeRecordData(input.data, todayIso)
-                : entityType === "employee"
-                  ? { ...input.data, status: "active", locationId: null }
-                  : input.data;
-          // An entityType the registry does not know is a MISS, not a crash
-          // (2026-08-22). `chosenTool.input` is a cast rather than a parse, so
-          // entityType is whatever the model emitted — and a bare
-          // ENTITY_REGISTRY[entityType].schema throws TypeError on anything
-          // outside the enum, taking the whole turn down. persistSyncedRecords
-          // already handles exactly this case by skipping the record and
-          // reporting it; this is the same treatment at the earlier boundary,
-          // falling through to the ordinary reply rather than confirming a
-          // capture that never happened.
-          const captureEntry = Object.prototype.hasOwnProperty.call(ENTITY_REGISTRY, entityType)
-            ? ENTITY_REGISTRY[entityType]
-            : null;
-          const parsed = captureEntry ? captureEntry.schema.safeParse(fullData) : null;
-          if (!parsed || !parsed.success) {
-            emit({ type: "fallback" });
-            controller.close();
-            return;
-          }
-          const { changes } = await persistSyncedRecords(
-            store.id,
-            "genesis_chat",
-            [{ entityType, externalId: randomUUID(), data: parsed.data }],
-            {
-              // OWNER, and modelExtracted TRUE. Both halves matter and neither is
-              // enough alone: the owner is the author of this goal -- nobody else can
-              // say what they are trying to do -- but the sentence J4 stored is a
-              // model's reading of what they typed, not the words themselves. A reader
-              // that saw only OWNER would quote a paraphrase back as though the owner
-              // had said it.
-              provenance: "OWNER",
-              provenanceDetail: "chat",
-              statedById: userId,
-              modelExtracted: true,
-            }
-          );
-          if (entityType === "challenge" && changes[0]) {
-            const challengeData = parsed.data as { severity: string | null; status: string; description: string };
-            const recordId = changes[0].recordId;
-            const topicKey = `challenge:${recordId}`;
-            if (challengeData.severity === "high" && challengeData.status === "active") {
-              const alreadyActive = await prisma.cognitiveOutput.findFirst({
-                where: { storeId: store.id, topicKey, status: "ACTIVE" },
-                select: { id: true },
-              });
-              const { communicateFinding } = await import("@/lib/execution/genesisAutonomy");
-              const { upsertObservation } = await import("@/lib/dashboard/genesisObservations");
-              if (!alreadyActive) {
-                await communicateFinding(store.id, {
-                  kind: "insight",
-                  summary: challengeData.description,
-                  priority: "high",
-                  topicKey,
-                  recordId,
-                  entityType: "challenge",
-                });
-              }
-              await upsertObservation(store.id, {
-                dedupeKey: topicKey,
-                genesisState: "urgent",
-                summary: challengeData.description,
-                actionHref: null,
-                recordId,
-                entityType: "challenge",
-              });
-            } else {
-              const { resolveMissingObservations } = await import("@/lib/dashboard/genesisObservations");
-              await resolveMissingObservations(store.id, [], "urgent", topicKey);
-              await prisma.cognitiveOutput.updateMany({
-                where: { storeId: store.id, topicKey, status: "ACTIVE" },
-                data: { status: "RESOLVED", resolvedAt: new Date() },
-              });
-            }
-          }
-          const reply = conversationalReply || "Got it — I'll remember that about your business.";
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "SUCCESS",
-            verified: false,
-            message: reply,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: { kind: "business_fact", entityType },
-          });
-          if (!streamedAnyText) emit({ type: "token", delta: reply });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "business_fact" });
-          controller.close();
-          return;
-        }
-
-        if (chosenTool?.name === "plan_campaign") {
+if (chosenTool?.name === "plan_campaign") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "plan_campaign" });
           emit({ type: "status", text: "Planning your campaign…" });
           const planned = await planMarketingCampaign(store.id, userMessage);
@@ -2003,45 +1956,7 @@ export async function POST(request: Request) {
         // the reply is deterministic, matching manage_business_asset's own
         // "the real outcome is reported by code, not the model" discipline
         // — an "I applied and verified this" claim must be airtight.
-        if (chosenTool?.name === "approve_pending_changes") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "approve_pending_changes" });
-          emit({ type: "status", text: "Applying the approved changes…" });
-          let finalReply: string;
-          try {
-            const result = await performApprovePendingChanges(store.id);
-            finalReply = describeApprovalExecutionForChat(result);
-          } catch (err) {
-            // requireStorePermission (inside the perform* functions) throws
-            // a plain Error for a real, insufficient-permission case —
-            // ANALYTICS_VIEW is stricter than the STORE_MANAGE gate already
-            // passed above, so an Employee role can genuinely reach here.
-            // Same honest decline wording as the STORE_MANAGE gate earlier
-            // in this route, not a generic failure.
-            finalReply =
-              err instanceof Error && err.message.includes("permission")
-                ? "Approving changes is something only the store owner can do — ask them to approve this, or to give you broader access."
-                : "Something went wrong applying those changes — they're still pending, so you can retry from the review page.";
-          }
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "SUCCESS",
-            verified: false,
-            message: finalReply,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: {},
-          });
-          emit({ type: "token", delta: finalReply });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "approve_pending_changes" });
-          controller.close();
-          return;
-        }
-
-        // Hard J4 capability requirement (2026-08-08) — "save this",
+// Hard J4 capability requirement (2026-08-08) — "save this",
         // "save this as my logo": the file is ALREADY permanently saved
         // (ingestBusinessAsset wrote a real BusinessRecord the instant the
         // upload completed, unconditionally — confirmed by direct audit

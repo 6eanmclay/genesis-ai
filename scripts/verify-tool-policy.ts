@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { buildStoreChatUnifiedTools, allToolUses, firstToolUse } from "@/lib/execution/genesisTools";
+import { MIGRATED_TOOLS } from "@/lib/execution/toolHandlers";
 import {
   TOOL_POLICY,
   policyFor,
@@ -292,9 +293,19 @@ console.log("\n=== 8. Every tool the model can emit is actually handled ===\n");
 // question a type can answer.
 const handledIn = (source: string) => catalog.filter((n) => source.includes(`"${n}"`));
 
+// THE STREAMING ROUTE HANDLES EVERY TOOL — in one of two places now. Three have
+// moved into lib/execution/toolHandlers.ts (which is what finally gave them
+// tests); the rest still run inline. A tool in NEITHER place falls through to
+// whatever comes next, silently, which is the failure this whole section exists
+// for.
 const routeHandles = handledIn(route);
-check("the streaming route handles every registered tool",
-  catalog.filter((n) => !routeHandles.includes(n)), []);
+const reachable = (n: string) => routeHandles.includes(n) || MIGRATED_TOOLS.includes(n);
+check("every registered tool is handled somewhere on the streaming path",
+  catalog.filter((n) => !reachable(n)), []);
+// AND IN EXACTLY ONE PLACE. Both would run it twice: the dispatcher first, then
+// the ladder again.
+check("and none is handled in both places at once",
+  MIGRATED_TOOLS.filter((n) => route.includes(`if (chosenTool?.name === "${n}")`)), []);
 
 // The Server Action genuinely handles fewer, and that is allowed — what is NOT
 // allowed is the gap being undeclared, because an undeclared gap is a silent
