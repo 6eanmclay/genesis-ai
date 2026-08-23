@@ -10,6 +10,7 @@ import {
   makeTakeMeThere,
   NAV_DESTINATIONS,
   OFFICE_REPLY,
+  resolveScopedProducts,
   routeToolHandlers,
   type ToolTurnContext,
 } from "@/lib/execution/toolHandlers";
@@ -54,7 +55,8 @@ function contextFor(
   storeId: string,
   userId: string,
   input: unknown,
-  conversationalReply = ""
+  conversationalReply = "",
+  products: { id: string; name: string }[] = []
 ): ToolTurnContext & { statuses: string[] } {
   const statuses: string[] = [];
   return {
@@ -64,6 +66,7 @@ function contextFor(
     conversationalReply,
     input,
     status: (text: string) => statuses.push(text),
+    products,
     statuses,
   };
 }
@@ -290,12 +293,89 @@ async function main() {
   assert("the route binds a navigation handler", typeof bound.take_me_there === "function");
 
   // ==========================================================================
+  console.log("\n=== 5c. Proposing a removal never removes anything ===\n");
+  // ==========================================================================
+  // delete_product is a hard-locked destructive-category action. This handler
+  // writes proposals and stops — and until now nothing checked that, on the one
+  // capability where being wrong is irreversible.
+  const removal = handlerFor("request_product_removal")!;
+  const ring = await prisma.product.create({
+    data: { storeId: store.id, name: "Tensor Ring", priceInCents: 8_500, active: true },
+  });
+  const cuff = await prisma.product.create({
+    data: { storeId: store.id, name: "Copper Cuff", priceInCents: 4_500, active: true },
+  });
+  const catalogue = [
+    { id: ring.id, name: ring.name },
+    { id: cuff.id, name: cuff.name },
+  ];
+
+  const proposed = await removal(
+    contextFor(store.id, owner.id, { scope: "specific", productNames: ["Tensor Ring"] }, "", catalogue)
+  );
+  assert("the proposal is handled", proposed.handled);
+  if (!proposed.handled) throw new Error("unreachable");
+
+  // THE ASSERTION THAT MATTERS MOST IN THIS FILE.
+  check("both products still exist", await prisma.product.count({ where: { storeId: store.id } }), 2);
+  const requests = await prisma.approvalRequest.findMany({
+    where: { storeId: store.id, actionType: "delete_product" },
+  });
+  check("one proposal was written", requests.length, 1);
+  check("awaiting the owner's decision", requests[0]?.status, "PENDING_APPROVAL");
+  check("for the right product", (requests[0]?.input as { productId: string }).productId, ring.id);
+  // The log must not read as a completed deletion.
+  check("logged as pending rather than done", proposed.executionStatus, "PENDING");
+  assert("and the reply says permanently, so approving is unambiguous",
+    proposed.reply.includes("permanently"), proposed.reply);
+
+  // A FRESH PROPOSAL SUPERSEDES A STALE ONE, so approving cannot delete twice
+  // and the owner is not shown the same decision more than once.
+  await removal(contextFor(store.id, owner.id, { scope: "specific", productNames: ["tensor ring"] }, "", catalogue));
+  check("re-proposing the same product does not stack up decisions",
+    await prisma.approvalRequest.count({ where: { storeId: store.id, actionType: "delete_product" } }), 1);
+
+  // Matching is trimmed and case-folded because the model is repeating a name
+  // the merchant typed, not quoting the database.
+  check("names match regardless of case and spacing",
+    resolveScopedProducts(catalogue, "specific", ["  TENSOR ring "]).map((p) => p.name), ["Tensor Ring"]);
+  check("everything means everything", resolveScopedProducts(catalogue, "all", null).length, 2);
+  // AN UNRESOLVED SCOPE PROPOSES NOTHING. Removing the wrong product is
+  // irreversible, so the honest move is a question naming what exists.
+  check("an unknown scope resolves to nothing", resolveScopedProducts(catalogue, null, null), []);
+  check("and a name that matches nothing resolves to nothing",
+    resolveScopedProducts(catalogue, "specific", ["Something else"]), []);
+
+  const unresolved = await removal(
+    contextFor(store.id, owner.id, { scope: "specific", productNames: ["Something else"] }, "", catalogue)
+  );
+  assert("an unmatched name is handled", unresolved.handled);
+  if (!unresolved.handled) throw new Error("unreachable");
+  check("it proposes nothing",
+    await prisma.approvalRequest.count({ where: { storeId: store.id, actionType: "delete_product" } }), 1);
+  check("and is recorded as a failure", unresolved.outcome, "failure");
+  assert("while naming what the store actually has",
+    unresolved.reply.includes("Tensor Ring") && unresolved.reply.includes("Copper Cuff"), unresolved.reply);
+  assert("and never guesses at the closest match",
+    !unresolved.reply.toLowerCase().includes("did you mean copper"), unresolved.reply);
+
+  // "All" is a real scope and must reach every active product.
+  await removal(contextFor(store.id, owner.id, { scope: "all", productNames: null }, "", catalogue));
+  check("removing everything proposes one decision per product",
+    await prisma.approvalRequest.count({ where: { storeId: store.id, actionType: "delete_product" } }), 2);
+  check("and still deletes nothing", await prisma.product.count({ where: { storeId: store.id } }), 2);
+
+  // ==========================================================================
   console.log("\n=== 6. Handlers stay inside the store they were given ===\n");
   // ==========================================================================
   check("the neighbour has no goals", (await queryRecords(other.id, "goal")).length, 0);
   check("nor challenges", (await queryRecords(other.id, "challenge")).length, 0);
   check("nor anything J4 is watching",
     await prisma.genesisObservation.count({ where: { storeId: other.id } }), 0);
+  check("nor a decision awaiting them",
+    await prisma.approvalRequest.count({ where: { storeId: other.id } }), 0);
+  check("nor a product",
+    await prisma.product.count({ where: { storeId: other.id } }), 0);
 
   // ==========================================================================
   console.log("\n=== 7. A migrated tool has exactly one home ===\n");

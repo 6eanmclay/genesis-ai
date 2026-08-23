@@ -5,6 +5,8 @@ import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { UPLOAD_INTENT_REPLY } from "@/lib/dashboard/storeChatUnified";
 import { TakeMeThereInputSchema, type BusinessFactCaptureInput } from "@/lib/execution/genesisTools";
+import { GENESIS_ACTIONS } from "@/lib/execution/genesisActions";
+import { deriveTopicKey } from "@/lib/intelligence/topicKeys";
 
 // WHAT A TOOL ACTUALLY DOES, SEPARATED FROM HOW THE TURN ENDS
 // (2026-08-22, Unified Intelligence UI3).
@@ -51,6 +53,14 @@ export interface ToolTurnContext {
   input: unknown;
   /** A progress line for the owner while real work happens. */
   status: (text: string) => void;
+  /**
+   * The store's active products, as the turn already fetched them.
+   *
+   * Passed in rather than re-queried: the turn needs them anyway to tell the
+   * model what exists, and a handler reading them again would be a second
+   * answer to "what does this store sell" one query later.
+   */
+  products: { id: string; name: string }[];
 }
 
 export type ToolTurnResult =
@@ -78,6 +88,15 @@ export type ToolTurnResult =
       outcome?: "success" | "failure";
       /** What the execution log records, when it differs from what was said. */
       logMessage?: string;
+      /**
+       * How the execution log records this.
+       *
+       * PENDING is the honest status for a PROPOSAL: real work happened and
+       * nothing changed yet. Defaulting everything to SUCCESS would record a
+       * proposed deletion as a completed one.
+       */
+      executionStatus?: "SUCCESS" | "PENDING" | "WARNING";
+      retryable?: boolean;
     }
   | {
       /**
@@ -366,6 +385,112 @@ export function makeTakeMeThere(resolveHref: (href: string) => string): ToolHand
 }
 
 /**
+ * Resolve which products a scoped request is actually about.
+ *
+ * Shared because request_image_change, request_product_removal and
+ * request_product_content_change all take the identical scope shape, and three
+ * copies of a matching rule is three chances for "the wipes" to match on one
+ * path and not another.
+ *
+ * Matching is trimmed and case-folded because the model is repeating a name the
+ * merchant typed, not quoting the database.
+ */
+export function resolveScopedProducts<T extends { name: string }>(
+  products: T[],
+  scope: "all" | "specific" | null | undefined,
+  productNames: string[] | null | undefined
+): T[] {
+  if (scope === "all") return products;
+  if (scope !== "specific") return [];
+  const wanted = (productNames ?? []).map((n) => n.trim().toLowerCase());
+  return products.filter((p) => wanted.includes(p.name.trim().toLowerCase()));
+}
+
+/**
+ * Propose removing products. NEVER removes one.
+ *
+ * delete_product is a hard-locked destructive-category action, so this writes
+ * one ApprovalRequest per resolved product and stops. The owner's real
+ * confirmation is the existing Approve control on Products, not a second
+ * bespoke confirmation here — and the reply says permanently, every time,
+ * because a proposal the owner skims should still be unambiguous about what
+ * approving it does.
+ */
+const requestProductRemoval: ToolHandler = async (ctx) => {
+  const input = ctx.input as { scope?: "all" | "specific" | null; productNames?: string[] | null };
+  const targets = resolveScopedProducts(ctx.products, input?.scope, input?.productNames);
+
+  if (targets.length === 0) {
+    // ASKING IS THE RIGHT ANSWER. Removing the wrong product is irreversible,
+    // so an unresolved name gets a question naming what actually exists —
+    // never a guess at the closest match.
+    return {
+      handled: true,
+      reply:
+        input?.scope === "specific"
+          ? `I want to make sure I remove the right one — which product did you mean? Your active products are: ${ctx.products
+              .map((p) => p.name)
+              .join(", ")}.`
+          : ctx.conversationalReply || "Which product would you like me to remove?",
+      kind: "product_removal_request",
+      outcome: "failure",
+    };
+  }
+
+  const groupId = randomUUID();
+  for (const product of targets) {
+    // A fresh proposal supersedes an earlier still-pending one for the same
+    // product, so approving does not delete twice and the owner is not shown
+    // the same decision more than once.
+    await prisma.approvalRequest.deleteMany({
+      where: {
+        storeId: ctx.storeId,
+        actionType: "delete_product",
+        status: "PENDING_APPROVAL",
+        input: { path: ["productId"], equals: product.id },
+      },
+    });
+    await prisma.approvalRequest.create({
+      data: {
+        storeId: ctx.storeId,
+        recommendationId: null,
+        actionType: "delete_product",
+        // The same canonical derivation the backfill uses, so a decision made
+        // in conversation enters the belief system identically to one made
+        // last January.
+        topicKey: deriveTopicKey("delete_product", null),
+        input: { productId: product.id, name: product.name },
+        previousValues: { productId: product.id, name: product.name },
+        summary: `Remove "${product.name}" — this permanently deletes it`,
+        authorizationTier: GENESIS_ACTIONS.delete_product.authorizationTier,
+        groupId,
+      },
+    });
+  }
+
+  const names = targets.map((p) => p.name);
+  const lead =
+    ctx.conversationalReply ||
+    (names.length > 1
+      ? `I've proposed removing ${names.length} products: ${names.join(", ")}.`
+      : `I've proposed removing "${names[0]}".`);
+  const trailer =
+    names.length > 1
+      ? "These are grouped as one idea on Products — review and approve each to permanently delete them."
+      : "You'll find it waiting for your review on Products — approve it to permanently delete it.";
+
+  return {
+    handled: true,
+    reply: `${lead} ${trailer}`,
+    kind: "product_removal_request",
+    // PENDING, not SUCCESS: something real happened and nothing was deleted.
+    executionStatus: "PENDING",
+    logMessage: `Proposed removing ${names.join(", ")}`,
+    metadata: { groupId, productIds: targets.map((p) => p.id) },
+  };
+};
+
+/**
  * The tools that have moved out of the inline ladder.
  *
  * A hand-maintained mirror of what route.ts still handles inline — every name
@@ -377,6 +502,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   show_upload_options: showUploadOptions,
   capture_business_fact: captureBusinessFact,
   approve_pending_changes: makeApprovePendingChanges(),
+  request_product_removal: requestProductRemoval,
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the
   // ACCOUNT'S ACTIVE business rather than the one the owner is in, so it is

@@ -53,7 +53,6 @@ import {
   AnswerSupplierEconomicsToolInputSchema,
   textOf,
   type RequestImageChangeInput,
-  type RequestProductRemovalInput,
   type RequestProductContentChangeInput,
   type ManageBusinessAssetInput,
 } from "@/lib/execution/genesisTools";
@@ -594,6 +593,10 @@ export async function POST(request: Request) {
             conversationalReply,
             input: tool.input,
             status: (text) => emit({ type: "status", text }),
+            // The turn already fetched these to tell the model what exists;
+            // a handler reading them again would be a second answer to the
+            // same question one query later.
+            products: currentProducts.map((p) => ({ id: p.id, name: p.name })),
           });
           if (!outcome.handled) {
             // The model's input did not make sense. Nothing was written, so the
@@ -620,9 +623,12 @@ export async function POST(request: Request) {
             await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: result.reply } });
             await recordGenesisExecution({
               action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-              status: "SUCCESS",
+              // PENDING is the honest status for a PROPOSAL: real work happened
+              // and nothing changed yet. Defaulting to SUCCESS would record a
+              // proposed deletion as a completed one.
+              status: result.executionStatus ?? "SUCCESS",
               verified: false,
-              retryable: false,
+              retryable: result.retryable ?? false,
               userId,
               storeId: store.id,
               message: result.logMessage ?? result.reply,
@@ -945,95 +951,6 @@ if (chosenTool?.name === "plan_campaign") {
         // request_image_change above, and the owner's real confirmation is
         // the existing Approve action on Products, not a second bespoke
         // confirmation UI.
-        if (chosenTool?.name === "request_product_removal") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "request_product_removal" });
-          const input = chosenTool.input as RequestProductRemovalInput;
-          const targetProducts =
-            input.scope === "all"
-              ? currentProducts
-              : input.scope === "specific"
-                ? currentProducts.filter((p) =>
-                    (input.productNames ?? []).map((n) => n.trim().toLowerCase()).includes(p.name.trim().toLowerCase())
-                  )
-                : [];
-
-          if (targetProducts.length === 0) {
-            const clarification =
-              input.scope === "specific"
-                ? `I want to make sure I remove the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
-                : conversationalReply || "Which product would you like me to remove?";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
-            if (!streamedAnyText) emit({ type: "token", delta: clarification });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "product_removal_request" });
-            controller.close();
-            return;
-          }
-
-          const groupId = randomUUID();
-          for (const product of targetProducts) {
-            // A fresh proposal supersedes any earlier still-pending one for
-            // the same product, same dedupe rule request_image_change's own
-            // loop already follows above.
-            await prisma.approvalRequest.deleteMany({
-              where: {
-                storeId: store.id,
-                actionType: "delete_product",
-                status: "PENDING_APPROVAL",
-                input: { path: ["productId"], equals: product.id },
-              },
-            });
-            await prisma.approvalRequest.create({
-              data: {
-                storeId: store.id,
-                recommendationId: null,
-                actionType: "delete_product",
-                // M2 — the same canonical derivation the backfill uses, so a decision made in
-                // conversation enters the belief system identically to one made last January.
-                // Null where no honest name exists.
-                topicKey: deriveTopicKey("delete_product", null),
-                input: { productId: product.id, name: product.name },
-                previousValues: { productId: product.id, name: product.name },
-                summary: `Remove "${product.name}" — this permanently deletes it`,
-                authorizationTier: GENESIS_ACTIONS.delete_product.authorizationTier,
-                groupId,
-              },
-            });
-          }
-
-          const names = targetProducts.map((p) => p.name);
-          const replyParts = [
-            conversationalReply ||
-              (names.length > 1
-                ? `I've proposed removing ${names.length} products: ${names.join(", ")}.`
-                : `I've proposed removing "${names[0]}".`),
-          ];
-          replyParts.push(
-            names.length > 1
-              ? `These are grouped as one idea on Products — review and approve each to permanently delete them.`
-              : `You'll find it waiting for your review on Products — approve it to permanently delete it.`
-          );
-          const finalReply = replyParts.join(" ");
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "PENDING",
-            verified: false,
-            message: `Proposed removing ${names.join(", ")}`,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: { groupId, productIds: targetProducts.map((p) => p.id) },
-          });
-          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "product_removal_request" });
-          controller.close();
-          return;
-        }
-
         // Storefront Canvas, step 3 reachability (2026-08-12) — the merchant
         // asking for one small structural or presentational improvement.
         //
