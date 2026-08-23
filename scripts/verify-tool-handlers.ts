@@ -16,6 +16,9 @@ import {
   makeCreateDesign,
   makeGenerateBrandLogo,
   makeImproveStorefront,
+  makeManageBusinessAsset,
+  isLogoRoleName,
+  isHeroRoleName,
   NAV_DESTINATIONS,
   OFFICE_REPLY,
   resolveScopedProducts,
@@ -720,6 +723,125 @@ async function main() {
   if (!spoke.handled) throw new Error("unreachable");
   assert("and the generated list does not talk over it",
     spoke.reply.startsWith("Your hero is doing"), spoke.reply);
+
+  // ==========================================================================
+  console.log("\n=== 5h. Saving a file, and the regex that could never match ===\n");
+  // ==========================================================================
+  // THE BUG THIS SECTION EXISTS FOR. The logo-role regex once held four literal
+  // BACKSPACE bytes (0x08) where its word boundaries belonged — a shell heredoc
+  // turned every \\b into the control character it escapes to. It typechecked,
+  // it linted, it read correctly in an editor, and it was false for EVERY
+  // input. So "save this as my logo" never normalised onto brand.logo, never
+  // set Store.logoUrl, and "put my logo on a t-shirt" could not find the logo
+  // the owner had just handed over.
+  //
+  // The only test that would have caught it is one asserting the regex MATCHES.
+  assert("the logo role matches the obvious words",
+    isLogoRoleName("logo") && isLogoRoleName("my logo") && isLogoRoleName("primary logo"),
+    "this is the assertion the backspace-byte bug needed");
+  assert("and the plural, and the other word for it",
+    isLogoRoleName("logos") && isLogoRoleName("brand mark"));
+  assert("case does not matter", isLogoRoleName("LOGO") && isLogoRoleName("Brand Mark"));
+  // Word boundaries are load-bearing: a role that merely contains the letters
+  // is not a logo.
+  check("but a word that only contains it is not", isLogoRoleName("logotype-ish catalogue"), false);
+  check("and nothing is not a logo", isLogoRoleName(null), false);
+
+  assert("the hero role matches too",
+    isHeroRoleName("hero") && isHeroRoleName("hero image") && isHeroRoleName("banner"));
+  check("and an unrelated role is neither",
+    [isLogoRoleName("supplier agreement"), isHeroRoleName("supplier agreement")], [false, false]);
+
+  // ---- The handler itself -------------------------------------------------
+  const assetStore = await prisma.store.create({
+    data: { userId: owner.id, name: "Asset Shop", slug: `th-asset-${uniq()}` },
+  });
+
+  // Nothing uploaded: say so, rather than confirming a save that did not happen.
+  const nothingUploaded = await makeManageBusinessAsset({})(
+    contextFor(assetStore.id, owner.id, { role: "logo" })
+  );
+  assert("saving with nothing uploaded is handled", nothingUploaded.handled);
+  if (!nothingUploaded.handled) throw new Error("unreachable");
+  assert("and says there is nothing to save",
+    nothingUploaded.reply.includes("don't see anything uploaded"), nothingUploaded.reply);
+
+  await prisma.businessRecord.create({
+    data: {
+      storeId: assetStore.id, entityType: "asset", sourceProvider: "genesis_upload",
+      externalId: `a-${uniq()}`,
+      data: {
+        fileType: "photo", category: "brand_asset", storageUrl: "https://example.test/logo.png",
+        originalFilename: "logo.png", summary: null, extractionConfidence: null,
+        relatedRecordId: null, relatedEntityType: null, role: null, origin: "uploaded",
+        supersedesAssetId: null, supersededByAssetId: null, generationPrompt: null,
+        aiUsageEventId: null, createdAt: new Date().toISOString(),
+      } as never,
+      provenance: "OWNER", modelExtracted: false,
+    },
+  });
+
+  // THE PATH THE BUG BROKE: saying "my logo" must reach brand.logo AND set
+  // Store.logoUrl, because that column is what every render path reads.
+  const designated: { role: string }[] = [];
+  const savedAsLogo = await makeManageBusinessAsset({
+    designate: async (_s, _r, role) => {
+      designated.push({ role });
+    },
+  })(contextFor(assetStore.id, owner.id, { role: "my logo" }));
+  assert("saving as a logo is handled", savedAsLogo.handled);
+  if (!savedAsLogo.handled) throw new Error("unreachable");
+  check("it normalises onto the canonical brand role", designated.map((d) => d.role), ["brand.logo"]);
+  const withLogo = await prisma.store.findUniqueOrThrow({ where: { id: assetStore.id } });
+  check("and Store.logoUrl is kept in step", withLogo.logoUrl, "https://example.test/logo.png");
+
+  // A ROLE NOBODY ANTICIPATED IS KEPT AS THEY SAID IT. The vocabulary is open.
+  designated.length = 0;
+  const custom = await makeManageBusinessAsset({
+    designate: async (_s, _r, role) => {
+      designated.push({ role });
+    },
+  })(contextFor(assetStore.id, owner.id, { role: "supplier agreement" }));
+  check("an unanticipated role is kept verbatim", designated.map((d) => d.role), ["supplier agreement"]);
+  assert("and named back to them", custom.handled && custom.reply.includes("supplier agreement"));
+
+  // NO ROLE: kept on file, and the question is asked rather than a role guessed.
+  const noRole = await makeManageBusinessAsset({})(contextFor(assetStore.id, owner.id, { role: null }));
+  assert("a file with no stated role is handled", noRole.handled);
+  if (!noRole.handled) throw new Error("unreachable");
+  assert("kept on file, with the question asked rather than a role guessed",
+    noRole.reply.includes("already saved") && noRole.reply.includes("specific role"), noRole.reply);
+
+  // ---- The hero, and the honesty about whether it will SHOW ---------------
+  // Sean's report in its most direct form: designation used to be the whole of
+  // the change — a role on a record and a page that never moved.
+  let heroSetTo: string | null = null;
+  const heroVisible = await makeManageBusinessAsset({
+    designate: async () => {},
+    setHero: async (_s, url) => {
+      heroSetTo = url;
+    },
+    heroWouldShow: async () => true,
+  })(contextFor(assetStore.id, owner.id, { role: "hero image" }));
+  check("the storefront is actually changed, not just the record", heroSetTo, "https://example.test/logo.png");
+  assert("and the owner is told it is up", heroVisible.handled && heroVisible.reply.includes("top of your storefront"));
+
+  // THREE OF THE FOUR HERO LAYOUTS RENDER NO IMAGE, and the default is one of
+  // them. Telling an owner their photo is on the site when the layout cannot
+  // show one is the failure this whole thread is about.
+  const heroHidden = await makeManageBusinessAsset({
+    designate: async () => {},
+    setHero: async () => {},
+    heroWouldShow: async () => false,
+  })(contextFor(assetStore.id, owner.id, { role: "hero" }));
+  assert("a hero that will not render is handled", heroHidden.handled);
+  if (!heroHidden.handled) throw new Error("unreachable");
+  assert("and J4 says it will not appear yet, rather than claiming it is up",
+    heroHidden.reply.includes("won't appear yet"), heroHidden.reply);
+  assert("offering the fix rather than performing it",
+    heroHidden.reply.includes("Say the word"), heroHidden.reply);
+
+  await prisma.store.deleteMany({ where: { id: assetStore.id } });
 
   // ==========================================================================
   console.log("\n=== 6. Handlers stay inside the store they were given ===\n");

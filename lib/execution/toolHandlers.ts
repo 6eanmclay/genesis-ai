@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
-import { ENTITY_REGISTRY, DesignSchema } from "@/lib/businessModel/entities";
+import { ENTITY_REGISTRY, DesignSchema, AssetSchema } from "@/lib/businessModel/entities";
+import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { getSurface } from "@/lib/design/surfaces";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { UPLOAD_INTENT_REPLY } from "@/lib/dashboard/storeChatUnified";
@@ -1207,6 +1208,144 @@ export function makeGenerateBrandLogo(deps?: {
 }
 
 /**
+ * Does this role mean the owner's brand mark?
+ *
+ * A REGEX THAT COULD NEVER MATCH shipped here once (corrected 2026-08-22). The
+ * line held four literal BACKSPACE bytes (0x08) where its word boundaries were
+ * meant to be — a shell heredoc turned every \b into the control character it
+ * escapes to. It typechecks, it lints, it reads correctly in an editor, and it
+ * is false for every input. So "save this as my logo" never normalised onto
+ * brand.logo, never set Store.logoUrl, and "put my logo on a t-shirt" could not
+ * find the logo the owner had just given it.
+ *
+ * Exported so a suite can assert it MATCHES, which is the only kind of test
+ * that would have caught that.
+ */
+export function isLogoRoleName(role: string | null): boolean {
+  return Boolean(role && /\blogos?\b|\bmark\b/i.test(role));
+}
+
+/**
+ * Does this role mean the image at the top of the storefront?
+ *
+ * Same normalisation, for the role Sean reported as broken in its most direct
+ * form: uploading a photo and saying "use this as my hero" designated the role
+ * and stopped there, while the composition door — assigning the very same role
+ * — changed the site. One role, two meanings, and the one an owner reaches
+ * through conversation was the meaningless one.
+ */
+export function isHeroRoleName(role: string | null): boolean {
+  return Boolean(role && /\bhero\b|\bbanner\b/i.test(role));
+}
+
+/**
+ * Keep a file the owner uploaded, and give it a job.
+ *
+ * THE OWNER-BRINGS-THEIR-OWN path, which matters as much as generating one: an
+ * owner who already has a logo has already answered the question.
+ *
+ * The role vocabulary stays open, matching AssetSchema — whatever they called
+ * it is kept. Only the two roles that MEAN something elsewhere are normalised:
+ * the logo, which every render path reads off Store.logoUrl, and the hero,
+ * which has to actually reach the storefront rather than sitting on a record.
+ */
+export function makeManageBusinessAsset(deps?: {
+  designate?: (storeId: string, recordId: string, role: string) => Promise<void>;
+  setHero?: (storeId: string, url: string) => Promise<void>;
+  heroWouldShow?: (storeId: string) => Promise<boolean>;
+}): ToolHandler {
+  return async (ctx) => {
+    const input = ctx.input as { role?: string | null };
+    const mostRecentAsset = await prisma.businessRecord.findFirst({
+      where: { storeId: ctx.storeId, entityType: "asset" },
+      orderBy: { syncedAt: "desc" },
+    });
+
+    const requestedRole = input?.role?.trim() || null;
+    const isLogo = isLogoRoleName(requestedRole);
+    const isHero = isHeroRoleName(requestedRole);
+    const roleToAssign = requestedRole
+      ? isLogo
+        ? ASSET_ROLES.brandLogo
+        : isHero
+          ? ASSET_ROLES.storefrontHero
+          : requestedRole
+      : null;
+
+    // Whether the hero image will actually be VISIBLE once set. Three of the
+    // four hero layouts render no image at all and the default is one of them,
+    // so this is asked rather than assumed. Telling an owner their photo is on
+    // the site when the layout cannot show one is the failure to avoid.
+    let heroIsVisible = false;
+
+    if (mostRecentAsset && roleToAssign) {
+      const designate =
+        deps?.designate ??
+        (async (storeId: string, recordId: string, role: string) => {
+          const { designateAsset } = await import("@/lib/businessModel/assets");
+          return designateAsset(storeId, recordId, role);
+        });
+      await designate(ctx.storeId, mostRecentAsset.id, roleToAssign);
+
+      const parsedAsset = AssetSchema.safeParse(mostRecentAsset.data);
+      if (isLogo && parsedAsset.success) {
+        // Keep Store.logoUrl in step, exactly as approving a generated logo
+        // does — the column is still what every render path reads.
+        await prisma.store.update({
+          where: { id: ctx.storeId },
+          data: { logoUrl: parsedAsset.data.storageUrl },
+        });
+      }
+      if (isHero && parsedAsset.success) {
+        const setHero =
+          deps?.setHero ??
+          (async (storeId: string, url: string) => {
+            const { setStorefrontHeroImage } = await import("@/lib/design/composeForStorefront");
+            return setStorefrontHeroImage(storeId, url);
+          });
+        await setHero(ctx.storeId, parsedAsset.data.storageUrl);
+
+        const wouldShow =
+          deps?.heroWouldShow ??
+          (async (storeId: string) => {
+            const { heroLayoutRendersImage, heroLayoutOf } = await import("@/lib/theme");
+            const { DEFAULT_THEME } = await import("@/lib/theme");
+            const themed = await prisma.store.findUnique({
+              where: { id: storeId },
+              select: { theme: true },
+            });
+            return heroLayoutRendersImage(
+              heroLayoutOf((themed?.theme as Parameters<typeof heroLayoutOf>[0]) ?? DEFAULT_THEME)
+            );
+          });
+        heroIsVisible = await wouldShow(ctx.storeId);
+      }
+    }
+
+    const reply = !mostRecentAsset
+      ? "I don't see anything uploaded yet to save — share a photo or document and I'll take it from there."
+      : roleToAssign
+        ? isLogo
+          ? "Done — that's your logo now. I'll use it wherever your brand shows up, and you can ask me to put it on a t-shirt or a hoodie whenever you want."
+          : isHero
+            ? heroIsVisible
+              ? "Done — that's the image at the top of your storefront now. Take a look and tell me if you want it different."
+              // NEVER "it's on your site" WHEN IT IS NOT VISIBLE. The layout is
+              // a real reason and the fix is offered rather than performed.
+              : "I've set that as your hero image, but your storefront's current hero layout doesn't show one, so it won't appear yet. Say the word and I'll switch the layout to the split hero so it does."
+            : `Done — I've saved that as your ${roleToAssign}. I'll know what you mean when you refer to it.`
+        : "That's already saved as part of your business files. Want me to give it a specific role — like your primary logo — or is keeping it on file for now good?";
+
+    return {
+      handled: true,
+      reply,
+      kind: "manage_business_asset",
+      metadata: { kind: "manage_business_asset", hadAsset: !!mostRecentAsset, role: input?.role ?? null },
+    };
+  };
+}
+
+/**
  * The tools that have moved out of the inline ladder.
  *
  * A hand-maintained mirror of what route.ts still handles inline — every name
@@ -1227,6 +1366,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   improve_storefront: makeImproveStorefront(),
   create_design: makeCreateDesign(),
   generate_brand_logo: makeGenerateBrandLogo(),
+  manage_business_asset: makeManageBusinessAsset(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the
   // ACCOUNT'S ACTIVE business rather than the one the owner is in, so it is
