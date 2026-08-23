@@ -13,6 +13,7 @@ import {
 import { recordGeneratedAsset } from "@/lib/businessModel/assets";
 import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
 import { STORE_CHAT_UNIFIED_SYSTEM_PROMPT } from "@/lib/dashboard/storeChatUnified";
+import { buildTurnContext } from "@/lib/dashboard/chatTurnContext";
 
 // WHAT J4 KNOWS AT THE MOMENT IT DECIDES:
 //
@@ -272,24 +273,62 @@ async function main() {
   const action = read(join("app", "dashboard", "ai-actions.ts"));
 
   for (const [name, source] of [["the streaming route", route], ["the Server Action", action]] as const) {
-    assert(`${name} builds the digest`, source.includes("digestOf(understanding)"));
-    assert(`${name} sends it with the decision`, source.includes("unifiedContextParts.push(renderDigest(digest))"));
+    assert(`${name} assembles its turn through the shared builder`, source.includes("buildTurnContext({"));
+    // NOT BY HAND. The two paths each built this list themselves and had already
+    // drifted — one told J4 about a proposal on the table and the other did not,
+    // so the same push-back refined an existing idea on one path and started a
+    // fresh one on the other.
+    assert(`${name} no longer assembles context lines itself`,
+      !source.includes("unifiedContextParts.push("),
+      "every line must come from one place or they will diverge again");
     // FETCHED ONCE. Re-fetching in the data branch would make this a genuine
     // extra query on every turn rather than the same read moved earlier.
-    // THE VIEWER, NOT THE OWNER. A negative control found nothing testing
-    // this: swapping viewerUserId to store.userId builds every digest as
-    // though the owner were reading it, so an employee would be handed a
-    // profile of their employer's decision-making. Section 5 proves
-    // getBusinessUnderstanding withholds it; this proves the call site asks.
-    assert(`${name} builds the digest for the authenticated viewer`,
-      source.includes("getBusinessUnderstanding(store.id, { viewerUserId: userId })"),
+    // THE VIEWER, NOT THE OWNER. A negative control found nothing testing this:
+    // passing the store owner builds every digest as though the owner were
+    // reading it, so an employee would be handed a profile of their employer's
+    // decision-making. Section 5 proves getBusinessUnderstanding withholds it;
+    // this proves the call site asks for the right person.
+    assert(`${name} builds the turn for the authenticated viewer`,
+      /userId,/.test(source.slice(source.indexOf("buildTurnContext({"), source.indexOf("buildTurnContext({") + 400)),
       "anything else builds it as though somebody else were reading");
     assert(`${name} never builds it as the store owner`,
       !source.includes("viewerUserId: store.userId"));
-    assert(`${name} does not fetch understanding twice`,
-      source.split("getBusinessUnderstanding(store.id").length - 1 === 1,
-      `${source.split("getBusinessUnderstanding(store.id").length - 1} call sites`);
+    // FETCHED ONCE. The builder returns the object so the data branch reuses it
+    // rather than reading again.
+    assert(`${name} does not read understanding directly at all`,
+      !source.includes("getBusinessUnderstanding(store.id"),
+      "the builder owns that read");
   }
+
+  // ==========================================================================
+  console.log("\n=== 8. The builder is what makes both paths identical ===\n");
+  // ==========================================================================
+  // Asserted on the builder's real output rather than by comparing two files,
+  // which is exactly what let them drift in the first place.
+  const built = await buildTurnContext({
+    storeId: store.id,
+    userId: owner.id,
+    userMessage: "what should I do next?",
+    activeProductNames: "Tensor Ring",
+  });
+  check("the message leads", built.parts[0], "what should I do next?");
+  assert("the products follow", built.parts[1].startsWith("(Active products:"));
+  assert("and what J4 knows comes with it",
+    built.parts.some((p) => p.includes("What you know about this business")),
+    built.parts.map((p) => p.slice(0, 40)).join(" | "));
+  // ORDER IS FIXED, not incidental: the same business asking twice must produce
+  // the same prompt, or the ephemeral cache on the conversation prefix stops
+  // hitting and two identical turns become impossible to compare.
+  const again = await buildTurnContext({
+    storeId: store.id,
+    userId: owner.id,
+    userMessage: "what should I do next?",
+    activeProductNames: "Tensor Ring",
+  });
+  check("and it is stable across calls", again.parts, built.parts);
+  // The canonical object comes back so no caller re-reads it.
+  assert("the builder hands back the understanding it fetched",
+    built.understanding.profile.identity.name === "Copper & Coil");
 
   // Data with no rule for reading it is just more context.
   assert("the prompt tells the model to decide with it",

@@ -20,7 +20,6 @@ import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActi
 import { mayInvokeTool, refusalMessage } from "@/lib/execution/toolPolicy";
 import { businessBasePath } from "@/lib/dashboard/navConfig";
 import { adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
-import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { J4Surface } from "@/app/j4/J4Workspace";
 import { Prisma, type ApprovalRequest, type Store, type StoreRole } from "@prisma/client";
@@ -60,9 +59,8 @@ import {
 } from "@/lib/genesisModel";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
-import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
-import { digestOf, renderDigest, digestIsSubstantive } from "@/lib/businessModel/digest";
+import { buildTurnContext } from "@/lib/dashboard/chatTurnContext";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
@@ -2332,54 +2330,21 @@ async function applyGenesisMessageToStore(
   // (real permission reason, not a performance one) — everything below
   // requires store:manage and only runs after that gate.
   const activeProductNames = currentProducts.map((p) => p.name).join(", ") || "none";
-  // WHAT J4 KNOWS, BEFORE IT DECIDES — same change, same reason, same single
-  // read as the streaming route. Both paths draw on identical understanding or
-  // neither can be trusted, and a fallback that decided with less context than
-  // the primary would answer the same question differently depending on which
-  // one happened to serve it.
-  const understanding = await getBusinessUnderstanding(store.id, { viewerUserId: userId });
+  // WHAT J4 IS TOLD, ASSEMBLED ONCE — the same builder the streaming route uses.
+  // Both paths draw on identical understanding or neither can be trusted, and
+  // holding that by hand across two files demonstrably did not work: this path
+  // was missing the proposal-on-the-table line entirely.
+  const turn = await buildTurnContext({
+    storeId: store.id,
+    userId,
+    userMessage,
+    activeProductNames,
+    workspacePath: returnTo,
+    pendingSummary: pending?.summary ?? null,
+  });
+  const { understanding } = turn;
+  const unifiedContextParts = turn.parts;
 
-  const unifiedContextParts = [userMessage, `(Active products: ${activeProductNames})`];
-  const digest = digestOf(understanding);
-  if (digestIsSubstantive(digest)) {
-    unifiedContextParts.push(renderDigest(digest));
-  }
-  // What the owner is looking at (2026-08-14) — mirrors route.ts's own
-  // identical addition, for the same reason the pending-approval signal is
-  // duplicated below: this path runs both as the streaming route's fallback
-  // and genuinely fresh, and J4 must resolve "this" the same way either
-  // time. Derived from returnTo, which for every caller is the owner's real
-  // current path, so nothing new has to be threaded down.
-  const workspaceLine = describeWorkspaceForJ4(returnTo);
-  if (workspaceLine) {
-    unifiedContextParts.push(workspaceLine);
-  }
-  if (pending) {
-    unifiedContextParts.push(
-      `(You previously proposed this change, awaiting confirmation: "${pending.summary}")`
-    );
-  }
-  // J4 conversational approval (2026-08-09) — mirrors route.ts's own
-  // identical addition (see that file's comment). This fallback's unified
-  // call can run genuinely fresh (not just as route.ts's own fallback —
-  // sendStoreMessage can reach this directly), so it needs the same
-  // "something's really pending" signal independently.
-  const pendingApprovalBatch = await resolveMostRecentPendingApprovalBatch(store.id);
-  if (pendingApprovalBatch) {
-    unifiedContextParts.push(
-      `(Awaiting your decision — ${pendingApprovalBatch.summaries.length} change${pendingApprovalBatch.summaries.length === 1 ? "" : "s"} you already proposed: ${pendingApprovalBatch.summaries.map((s) => `"${s}"`).join(", ")}. If the merchant now clearly authorizes you to proceed with these, call approve_pending_changes.)`
-    );
-  }
-  // The supplier questions J4 itself asked and is still waiting on (2026-08-21).
-  // Mirrors route.ts's identical addition, for the same reason the pending-
-  // approval signal is duplicated: this path runs both as the streaming route's
-  // fallback and genuinely fresh, and J4 must recognise an answer either way.
-  const { outstandingEconomicsQuestions, describeOutstandingForJ4 } =
-    await import("@/lib/sourcing/economicsChat");
-  const economicsLine = describeOutstandingForJ4(await outstandingEconomicsQuestions(store.id));
-  if (economicsLine) {
-    unifiedContextParts.push(economicsLine);
-  }
   // Prompt caching (Response Modes plan, Phase 1) — real measurement
   // (scripts/measure-ttft-large-prompt.ts) found this call's ~13KB system
   // prompt roughly doubles TTFT uncached; a cache_control breakpoint here

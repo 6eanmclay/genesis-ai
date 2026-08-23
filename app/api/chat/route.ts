@@ -15,9 +15,8 @@ import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { GENESIS_ACTIONS } from "@/lib/execution/genesisActions";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
-import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
-import { digestOf, renderDigest, digestIsSubstantive } from "@/lib/businessModel/digest";
+import { buildTurnContext } from "@/lib/dashboard/chatTurnContext";
 import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
@@ -25,7 +24,6 @@ import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
-import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import {
   getOpenProposal,
@@ -52,7 +50,7 @@ import { branchBrandLogo, hasExistingLogo, proposeBrandLogo } from "@/lib/brand/
 import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
-import { resolveMostRecentPendingApprovalBatch, describeApprovalExecutionForChat } from "@/lib/dashboard/pendingApprovals";
+import { describeApprovalExecutionForChat } from "@/lib/dashboard/pendingApprovals";
 import { performApprovePendingChanges } from "@/app/dashboard/ai-actions";
 import {
   buildStoreChatUnifiedTools,
@@ -334,87 +332,29 @@ export async function POST(request: Request) {
         });
         const pending = store.pendingChange as { summary: string } | null;
         const activeProductNames = currentProducts.map((p) => p.name).join(", ") || "none";
-        // WHAT J4 KNOWS, BEFORE IT DECIDES (2026-08-22, Unified Intelligence UI1).
+        // WHAT J4 IS TOLD, ASSEMBLED ONCE (2026-08-22, Unified Intelligence UI4).
         //
-        // This used to be fetched INSIDE the look_up_business_data branch —
-        // after the tool had already been chosen — so the deciding call saw the
-        // message, the product NAMES, and nothing else about the business. J4
-        // picked blind and discovered the business afterwards.
+        // This list used to be built here line by line, and identically-but-not-
+        // quite in app/dashboard/ai-actions.ts. By the time it was extracted the
+        // two had already diverged — this path told J4 about a proposal on the
+        // table and the other did not, so the same push-back refined an existing
+        // idea here and started a fresh one there.
         //
-        // Fetched ONCE here and reused by whichever branch runs, so this is not
-        // an added read on the data path: it is the same read, moved earlier.
-        // On the other branches it is a real addition, and a deliberate one —
-        // per Sean's direction, correctness before call count.
-        //
-        // Viewer-scoped, which is now load-bearing rather than incidental: with
-        // the store:manage gate moved onto individual tools, a member without it
-        // reaches this line, and getBusinessUnderstanding is what withholds
-        // owner-scoped beliefs from anyone who is not the owner.
-        const understanding = await getBusinessUnderstanding(store.id, { viewerUserId: userId });
+        // The builder also fetches the canonical understanding, ONCE, and hands
+        // it back: the data branch below reuses this object rather than reading
+        // it again.
+        const turn = await buildTurnContext({
+          storeId: store.id,
+          // The authenticated viewer, never the store owner — see the builder.
+          userId,
+          userMessage,
+          activeProductNames,
+          workspacePath: body?.workspacePath,
+          pendingSummary: pending?.summary ?? null,
+        });
+        const { understanding } = turn;
+        const unifiedContextParts = turn.parts;
 
-        const unifiedContextParts = [userMessage, `(Active products: ${activeProductNames})`];
-        const digest = digestOf(understanding);
-        // Omitted entirely for a business J4 knows nothing real about yet. A
-        // brand-new store produces one line of identity, and sending it every
-        // turn teaches the model nothing while costing context on every message.
-        if (digestIsSubstantive(digest)) {
-          unifiedContextParts.push(renderDigest(digest));
-        }
-        // What the owner is looking at while asking (2026-08-14). J4 opens
-        // over the workspace now rather than replacing it, so "make this
-        // bolder" is a complete sentence — but only if J4 is told what
-        // "this" is. Resolved through a closed registry
-        // (lib/j4/workspaceContext.ts): an unrecognised path adds nothing,
-        // and the browser's own string never reaches the prompt.
-        const workspaceLine = describeWorkspaceForJ4(body?.workspacePath);
-        if (workspaceLine) {
-          unifiedContextParts.push(workspaceLine);
-        }
-        // The proposal currently on the table, if any (2026-08-14). Without
-        // this, J4 answers "I don't like that, keep it handmade" as though it
-        // were a brand new request, having no idea there is a specific
-        // proposal being argued with. The revision itself is decided in code
-        // from the target, not here — this exists so J4's own words are those
-        // of someone revising their own idea rather than proposing a fresh
-        // one at a person who just pushed back.
-        const proposalOnTable = await getOpenProposal(store.id);
-        if (proposalOnTable && !proposalOnTable.settled) {
-          const c = proposalOnTable.current;
-          unifiedContextParts.push(
-            `(You have a proposal on the table right now, version ${c.revision}, which the merchant can see below this conversation: "${c.summary}"${
-              c.rationale ? ` Your reasoning was: "${c.rationale}"` : ""
-            } If they are pushing back on it, refine THIS proposal rather than starting a new one: call refine_storefront again for the same target ("${c.target ?? "the storefront"}") with the change they asked for, and speak as someone improving their own idea, not proposing a new one.)`
-          );
-        }
-        if (pending) {
-          unifiedContextParts.push(`(You previously proposed this change, awaiting confirmation: "${pending.summary}")`);
-        }
-        // J4 conversational approval (2026-08-09) — real evidence this was
-        // missing: Sean said "I approve all together, make the change" and
-        // the model, with no signal that anything was actually pending,
-        // called request_product_content_change again instead of executing
-        // what it had just proposed. This is the model's only way to know
-        // there's something real to authorize, distinct from pendingChange
-        // above (that's the lighter, non-ApprovalRequest confirmation loop
-        // edit_store_content uses; this is the real, structured, groupId-
-        // backed proposal system every other tool here writes into).
-        const pendingApprovalBatch = await resolveMostRecentPendingApprovalBatch(store.id);
-        if (pendingApprovalBatch) {
-          unifiedContextParts.push(
-            `(Awaiting your decision — ${pendingApprovalBatch.summaries.length} change${pendingApprovalBatch.summaries.length === 1 ? "" : "s"} you already proposed: ${pendingApprovalBatch.summaries.map((s) => `"${s}"`).join(", ")}. If the merchant now clearly authorizes you to proceed with these, call approve_pending_changes.)`
-          );
-        }
-        // The supplier questions J4 itself asked and is still waiting on
-        // (2026-08-21). Same purpose as the pending-approval line above: without
-        // it the model has no way to know there is something real to answer, and
-        // "100 minimum, four ten each" reads as a non-sequitur rather than the
-        // reply to a question it asked yesterday.
-        const { outstandingEconomicsQuestions, describeOutstandingForJ4 } =
-          await import("@/lib/sourcing/economicsChat");
-        const economicsLine = describeOutstandingForJ4(await outstandingEconomicsQuestions(store.id));
-        if (economicsLine) {
-          unifiedContextParts.push(economicsLine);
-        }
         const conversationMessages = existingMessages.map((m) => ({
           role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
           content: m.content,
