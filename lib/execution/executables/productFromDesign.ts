@@ -48,6 +48,27 @@ interface ProductFromDesignMetadata {
 // the transaction, and a provider failure must not cost the owner the product
 // they just approved. It is recorded honestly in metadata instead, so a later
 // retry knows what still needs registering.
+/**
+ * Turn a duplicate into a sentence the owner can act on.
+ *
+ * A raw unique-violation would surface as a database error string, and the
+ * owner's own word for what happened is "I already did that" rather than a
+ * constraint name.
+ */
+async function createOnce<T>(create: () => Promise<T>): Promise<T> {
+  try {
+    return await create();
+  } catch (err) {
+    if (
+      typeof err === "object" && err !== null && "code" in err &&
+      (err as { code?: unknown }).code === "P2002"
+    ) {
+      throw new Error("That design is already one of your products.");
+    }
+    throw err;
+  }
+}
+
 export const createProductFromDesignExecutable: Executable<
   CreateProductFromDesignInput,
   ProductFromDesignMetadata
@@ -68,7 +89,19 @@ export const createProductFromDesignExecutable: Executable<
     const productCount = await prisma.product.count({ where: { storeId: ctx.storeId } });
     const surfaceLabel = SURFACES[design.surface]?.label ?? design.surface;
 
-    const product = await prisma.product.create({
+    // ONE PRODUCT PER DESIGN, refused by the database (D3, 2026-08-23).
+    //
+    // A `Product_one_per_design` unique index over richContent->>'designId'
+    // makes the second concurrent approval fail instead of succeeding. Checking
+    // first and creating second would not have helped: that is the same
+    // read-then-write window the two callers were already racing through.
+    //
+    // The throw matters as much as the constraint. execute() catches it, records
+    // FAILED, and — because growth points are only deducted on a non-FAILED
+    // outcome — the owner is not charged for the attempt that created nothing.
+    // So the invariant holds in both halves: not two products, and not two
+    // charges.
+    const product = await createOnce(async () => prisma.product.create({
       data: {
         storeId: ctx.storeId,
         name: input.name,
@@ -85,7 +118,7 @@ export const createProductFromDesignExecutable: Executable<
           sourceAssetIds: design.assetIds,
         },
       },
-    });
+    }));
 
     // Position 0 of the gallery, same as every other product-creating path —
     // the scalar column and the ProductImage table must not disagree.
