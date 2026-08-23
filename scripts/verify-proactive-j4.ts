@@ -4,6 +4,8 @@ import { speakNewFindings, proactiveMessageFor } from "@/lib/intelligence/proact
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
 import { messageStateOf } from "@/lib/j4/messageState";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 // J4 SPEAKING FIRST, and only when it should:
 //
@@ -244,6 +246,52 @@ async function main() {
   }
   assert("a second open delivery for one finding is refused",
     refused, "idempotency that depends on remembering to check is not idempotency");
+
+  // ==========================================================================
+  console.log("\n=== The cycle actually calls it ===\n");
+  // ==========================================================================
+  // EVERYTHING ABOVE TESTS speakNewFindings DIRECTLY, which says nothing about
+  // whether anything calls it. That is the exact gap that let two defects live
+  // this week: approvalAccessibleTo was correct and app/j4 did not use it, and
+  // firstRefusedTool was correct while one caller narrowed its argument. A rule
+  // nothing invokes is a rule that does not run.
+  //
+  // Asserted from source because the cycle's other stages reach a model and a
+  // scheduler, which this suite has no business exercising to prove one call.
+  const cycleSource = readFileSync(
+    join(process.cwd(), "lib", "intelligence", "cycle.ts"), "utf8"
+  );
+  assert("the intelligence cycle speaks new findings",
+    cycleSource.includes("await speakNewFindings(storeId)"),
+    "without this J4 computes everything and says none of it");
+  // AFTER the findings sweep, not before: speaking about the set from before
+  // this pass would announce something that may have just stopped being true.
+  assert("and does so after the findings sweep",
+    cycleSource.indexOf("notifyFromInsights(storeId") < cycleSource.indexOf("speakNewFindings(storeId"),
+    "speaking before the sweep would announce a finding that may have just resolved");
+  assert("and reports what it said",
+    cycleSource.includes("spoken: spoke.spoken"),
+    "a cycle summary that cannot say whether J4 spoke is a cycle nobody can audit");
+
+  // ==========================================================================
+  console.log("\n=== Authorization is the conversation's, not a new one ===\n");
+  // ==========================================================================
+  // A proactive message is an ordinary StoreMessage in the store's one
+  // conversation, so it inherits that surface's GENESIS_CHAT gate exactly. What
+  // must NOT exist is a second read path that renders proactive messages
+  // somewhere the conversation's own check does not run.
+  const proactiveSource = readFileSync(
+    join(process.cwd(), "lib", "intelligence", "proactive.ts"), "utf8"
+  );
+  assert("proactive messages are written as ordinary conversation rows",
+    proactiveSource.includes('role: "assistant"') &&
+      !proactiveSource.includes("prismaSystem"),
+    "a proactive write that bypassed the tenant client would bypass its guard too");
+  assert("and nothing here reads an active-business pointer",
+    !proactiveSource.includes("activeStoreId") &&
+      !proactiveSource.includes("resolveUserStore") &&
+      !proactiveSource.includes("requireStorePermission"),
+    "the cycle has no session; a pointer read here would be guessing at a business");
 
   // ==========================================================================
   console.log("\n=== The sentence itself ===\n");
