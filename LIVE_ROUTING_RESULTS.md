@@ -88,6 +88,23 @@ Options, none taken, each a real decision:
 The first is closest to how everything else in this codebase resolved: when prose
 could not be relied on, a rule was.
 
+## Status of the policy refusal, recorded plainly
+
+> **Turn-level guard verified; refusal branch not yet exercised by the live
+> model.**
+
+That is the whole claim. The guard is proven end-to-end on a constructed plan;
+no live model choice has ever entered it.
+
+**The ~55-call routing re-run is explicitly NOT being spent** (Sean, 2026-08-23).
+This harness and `verify-j4-routing.ts` feed different context representations —
+a one-line business description against a full `UnderstandingDigest` — so the
+comparison would not be clean at any price. The one row that routed correctly is
+evidence of something, and not enough to call the original defect fixed.
+
+**The 48/50 model-choice discrepancy is therefore UNRESOLVED**, and stays that
+way until the two harnesses are fed the same context.
+
 ## The turn level, measured 2026-08-23
 
 The runs above measure MODEL CHOICE. What an owner experiences is the turn, and
