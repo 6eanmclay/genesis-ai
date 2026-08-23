@@ -10,9 +10,16 @@ import { CURRENT_EXECUTION_SCHEMA_VERSION, type ExecutionResult } from "./types"
 // needs it to link a DEDUCTION GrowthPointTransaction back to the exact
 // ExecutionLog row it paid for (lib/execution/engine.ts).
 export async function recordExecution<TMetadata>(
-  result: ExecutionResult<TMetadata>
+  result: ExecutionResult<TMetadata>,
+  // WHICH CLIENT TO WRITE ON, when the caller is already inside a transaction.
+  //
+  // Added 2026-08-23 for proactive delivery, which must write an execution row,
+  // a message and a delivery claim as one unit — a conflict on the claim has to
+  // take the message with it, or the owner sees a finding twice. Defaults to the
+  // ordinary client, so every existing caller is unchanged.
+  client: Pick<typeof prisma, "executionLog"> = prisma
 ): Promise<{ id: string }> {
-  return prisma.executionLog.create({
+  return client.executionLog.create({
     data: {
       executionId: result.executionId,
       storeId: result.storeId,

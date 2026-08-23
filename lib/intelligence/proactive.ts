@@ -164,39 +164,60 @@ async function speakOneFinding(
 ): Promise<boolean> {
   const content = proactiveMessageFor(finding);
 
-  // THE EXECUTION ROW FIRST, so the message carries it — the same order and the
-  // same reason as persistToolTurn. PENDING, not SUCCESS: J4 has raised
-  // something and nothing has changed, which is what UI6's "Waiting for you"
-  // state exists to say. Recording this as a success would be claiming a change
-  // that was never even proposed.
-  const logged = await recordGenesisExecution({
-    action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-    status: "PENDING",
-    verified: false,
-    message: content,
-    // Nothing to retry — J4 spoke, and the owner has it.
-    retryable: false,
-    // No session. The cycle is Genesis acting on its own, which
-    // recordGenesisExecution already represents as actorType GENESIS.
-    userId: null,
-    storeId,
-    metadata: { kind: "proactive_finding", observationId: finding.id, genesisState: finding.genesisState },
-  });
-
   try {
-    const message = await prisma.storeMessage.create({
-      data: { storeId, role: "assistant", content, executionLogId: logged.id },
-    });
+    // ALL THREE WRITES OR NONE (fixed 2026-08-23).
+    //
+    // These ran in sequence, and the unique index protected only the last one.
+    // Two cycles overlapping both found the same fresh finding, both wrote an
+    // execution row, both wrote a MESSAGE, and only then did one lose the claim
+    // — so the owner saw the same finding twice and the loser's message stayed.
+    // Reproduced before fixing: three concurrent passes produced three messages,
+    // three execution rows and one delivery.
+    //
+    // The claim is what decides, so a conflict on it has to take the message
+    // with it. A transaction is the whole fix: no new state, no schema change,
+    // and nothing left behind by the cycle that lost.
+    //
+    // THE ORDER STILL MATTERS INSIDE IT. The execution row first, because the
+    // message carries its id — the same order and reason as persistToolTurn.
+    // PENDING, not SUCCESS: J4 has raised something and nothing has changed,
+    // which is what UI6's "Waiting for you" state exists to say.
+    await prisma.$transaction(async (tx) => {
+      const logged = await recordGenesisExecution(
+        {
+          action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+          status: "PENDING",
+          verified: false,
+          message: content,
+          // Nothing to retry — J4 spoke, and the owner has it.
+          retryable: false,
+          // No session. The cycle is Genesis acting on its own, which
+          // recordGenesisExecution already represents as actorType GENESIS.
+          userId: null,
+          storeId,
+          metadata: {
+            kind: "proactive_finding",
+            observationId: finding.id,
+            genesisState: finding.genesisState,
+          },
+        },
+        tx
+      );
 
-    await prisma.proactiveDelivery.create({
-      data: { storeId, observationId: finding.id, storeMessageId: message.id },
+      const message = await tx.storeMessage.create({
+        data: { storeId, role: "assistant", content, executionLogId: logged.id },
+      });
+
+      await tx.proactiveDelivery.create({
+        data: { storeId, observationId: finding.id, storeMessageId: message.id },
+      });
     });
     return true;
   } catch (err) {
-    // THE UNIQUE INDEX DID ITS JOB. Two cycles overlapping is the ordinary way
-    // this happens, and losing the race is not a failure — it means the owner
-    // has already been told. Swallowed deliberately rather than surfaced,
-    // because there is nothing wrong and nobody to tell.
+    // THE UNIQUE INDEX DID ITS JOB and the transaction undid the rest. Losing
+    // the race is not a failure — it means the owner has already been told.
+    // Swallowed deliberately rather than surfaced, because there is nothing
+    // wrong and nobody to tell.
     if (isDuplicateDelivery(err)) return false;
     throw err;
   }

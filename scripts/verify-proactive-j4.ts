@@ -231,6 +231,49 @@ async function main() {
     concurrent.reduce((sum, r) => sum + r.spoken, 0), 0);
   check("and no message was added", (await assistantMessages(shop.id)).length, before);
 
+  // THE RACE THAT ACTUALLY HAPPENS, and why its regression is a source
+  // assertion rather than a runtime one.
+  //
+  // The concurrency check above ran against a finding that had ALREADY been
+  // spoken, so all three passes correctly found nothing — it passed while the
+  // defect was live. The real window is two cycles overlapping on a FRESH
+  // finding: both saw it, both wrote an execution row, both wrote a MESSAGE, and
+  // only then did one lose the claim. Reproduced standalone before the fix:
+  // three concurrent passes produced THREE messages, three execution rows and
+  // one delivery. The owner told the same thing three times.
+  //
+  // The fix is a transaction: the claim decides, so a conflict on it takes the
+  // message and the execution row with it. Confirmed on the same reproduction
+  // afterwards — one message, one execution row, one delivery.
+  //
+  // That reproduction cannot live here. This harness serves PGlite over a single
+  // connection, and three concurrent interactive transactions leave it returning
+  // another model's rows for the next query — a harness fact (see BI_ENGINE.md
+  // on maxConnections), not a product one. Asserting the shape is what is
+  // honestly available, and it is the thing that would regress.
+  const proactiveSrc = readFileSync(
+    join(process.cwd(), "lib", "intelligence", "proactive.ts"), "utf8"
+  );
+  assert("the three writes are one unit",
+    proactiveSrc.includes("await prisma.$transaction(async (tx) => {"),
+    "written in sequence, a lost claim leaves the message behind and the owner is told twice");
+  for (const write of ["tx.storeMessage.create(", "tx.proactiveDelivery.create("]) {
+    assert(`${write.split("(")[0]} runs on the transaction`,
+      proactiveSrc.includes(write),
+      "a write on the ordinary client is not rolled back by the claim conflict");
+  }
+  // Sliced rather than matched across a newline: this file is CRLF and an
+  // assertion spanning a line break silently never matches. That mistake has
+  // been made four times in this repository now.
+  const logCall = proactiveSrc.slice(proactiveSrc.indexOf("recordGenesisExecution("));
+  assert("including the execution row",
+    logCall.slice(0, logCall.indexOf("      );")).includes("tx"),
+    "an execution row outside the transaction survives a lost claim");
+
+  assert("and a lost claim is not treated as an error",
+    proactiveSrc.includes("if (isDuplicateDelivery(err)) return false;"),
+    "losing the race means the owner has already been told");
+
   // Directly: a second open delivery for one finding is refused by the index.
   let refused = false;
   try {
