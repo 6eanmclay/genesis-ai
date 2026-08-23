@@ -96,28 +96,53 @@ Six things changed:
   `CHAT_COMPOSITION`) still runs for `edit_store_content`. It retires only when
   the tool path is shown to cover the same ground as well or better, which needs
   a real model and real conversations. Not deleted prematurely.
-- **The dispatch is being extracted, six of nineteen done.** It was a long `if`
-  ladder in a 2,215-line route file — the chain moved from model calls into code
-  branches, cheaper and the same shape. `show_upload_options`,
-  `capture_business_fact`, `approve_pending_changes`, `take_me_there`,
-  `request_product_removal` and `answer_supplier_economics` are now handlers in
-  `lib/execution/toolHandlers.ts` that RETURN what they did instead of writing
-  messages, emitting and closing the stream themselves. The route is down to
-  ~1,900 lines and twelve inline branches, and the rest fall through untouched.
+- **The dispatch is extracted — all nineteen, and shared (2026-08-23).** It was
+  a long `if` ladder in a 2,215-line route file, duplicated in a second 5,968-line
+  one. Every tool is now a handler in `lib/execution/toolHandlers.ts` that
+  RETURNS what it did instead of writing messages, emitting and closing the
+  stream itself, and both chat paths run them through one runner
+  (`lib/dashboard/runToolTurn.ts`). The route is 651 lines with zero inline
+  branches; ten duplicated branches left the Server Action.
 
-  The reason to migrate them one at a time is not caution for its own sake:
+  The reason to migrate them one at a time was not caution for its own sake:
   **the only way to reach a branch was through a model, so nineteen capabilities
   had no test of any kind** — including `approve_pending_changes`, which
   executes approved changes to a live store, and `request_product_removal`,
-  which proposes irreversible deletions. Each branch that moves gains real
-  coverage on the way, and that is what the migration is actually buying.
+  which proposes irreversible deletions. Each branch that moved gained real
+  coverage on the way, and that is what the migration was actually buying:
+  `scripts/verify-tool-handlers.ts` is 243 assertions where there were none.
 
-  What the tests immediately pinned: an approval that throws must say the
-  changes are still pending rather than claiming success; a proposed deletion is
-  logged PENDING, deletes nothing, and supersedes its own stale proposal; an
-  unresolved product name proposes nothing and asks, naming what exists rather
-  than guessing; J4 must never say one place and navigate to another; and an
-  answer about supplier economics uses the outcome's words, never the model's.
+  What the tests pinned, none of it hypothetical: an approval that throws must
+  say the changes are still pending rather than claiming success; a proposed
+  deletion is logged PENDING, deletes nothing, and supersedes its own stale
+  proposal; an unresolved product name proposes nothing and asks, naming what
+  exists rather than guessing; J4 must never say one place and navigate to
+  another; an answer about supplier economics uses the outcome's words, never
+  the model's; and the merchant's own message is written exactly once however
+  many tools ran — which was fine while only one could and silently wrong the
+  moment two did.
+
+  **The sharing is the point, not the tidying.** The Server Action had branches
+  for eleven of the nineteen; the other eight matched nothing there and fell
+  through to the legacy content pipeline, so asking for a logo on that path ran
+  a full store-content regeneration and reported it as the answer. That gap was
+  declared first (`SERVER_ACTION_TOOLS`, so it was named rather than silent) and
+  is now gone along with the list itself — see ARCHITECTURE.md on deleting a
+  mirror rather than guarding it forever. Two live drifts closed with it: the
+  route told J4 about a proposal on the table where the Server Action did not,
+  and a clarifying question that had already failed once escalated to a numbered
+  list on one path and repeated itself forever on the other.
+
+  What is deliberately NOT shared is how a turn RESPONDS — one streams tokens
+  and closes a controller, the other revalidates and redirects. Collapsing those
+  would be a worse abstraction than the duplication it replaced.
+
+  **The last fall-through is closed too.** A handler that resolves to no work
+  used to continue into the content pipeline below it, which is the original
+  defect with a different trigger: the owner shown another capability's result
+  as though it were the answer. `edit_store_content` is the single exception,
+  because that pipeline IS its implementation.
+
 - **Tool results do not return to the model.** A `tool_use` is a routing signal
   today, not a call whose result feeds the next turn of reasoning. That is the
   architecture that would let a read genuinely inform an action in one pass; the
