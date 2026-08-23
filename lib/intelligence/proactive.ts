@@ -87,6 +87,91 @@ export function proactiveMessageFor(finding: { genesisState: string; summary: st
   return `${opening} ${finding.summary}`;
 }
 
+/**
+ * The proposal this finding itself produced, if it produced one.
+ *
+ * PD4. A proactive message may carry a proposal — but only the one the finding
+ * caused, never whichever proposal happens to be newest. The conversation
+ * already renders `openProposals[0]`, so without this a message about falling
+ * revenue could sit directly above a card proposing a new hero image, and the
+ * owner would reasonably read them as one thing.
+ *
+ * THE ASSOCIATION ALREADY EXISTS; nothing new is recorded to express it. A
+ * finding and a CognitiveOutput share a key — `GenesisObservation.dedupeKey` is
+ * written as the same string as `CognitiveOutput.topicKey` by every sweep that
+ * raises both — and a proposal already points at the CognitiveOutput it came
+ * from via `approvalRequest.cognitiveOutputId`. This walks that existing chain
+ * rather than adding a second one.
+ *
+ * Returns null far more often than not, and that is the correct outcome: most
+ * findings are things to know, not things to decide. A null here means J4 says
+ * its sentence and proposes nothing, which is the whole of PD4's safety
+ * property — J4 never approves, executes or rejects, and it does not conjure a
+ * decision where the finding did not produce one.
+ */
+export async function proposalForFinding(
+  storeId: string,
+  dedupeKey: string
+): Promise<string | null> {
+  const output = await prisma.cognitiveOutput.findFirst({
+    where: { storeId, topicKey: dedupeKey, status: "ACTIVE" },
+    orderBy: { generatedAt: "desc" },
+    select: { id: true },
+  });
+  if (!output) return null;
+
+  const proposal = await prisma.approvalRequest.findFirst({
+    where: {
+      storeId,
+      cognitiveOutputId: output.id,
+      // Only something still awaiting the owner. A decided proposal is not a
+      // decision to offer, and offering one would be J4 asking twice.
+      status: "PENDING_APPROVAL",
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  return proposal?.id ?? null;
+}
+
+/**
+ * The proposal J4 last raised in conversation, if it is still open.
+ *
+ * PD4's owner-facing half. The conversation shows one proposal card, and it
+ * showed `openProposals[0]` — the newest pending proposal, related to the
+ * conversation or not. So a proactive message about falling revenue could sit
+ * directly above a card proposing a new hero image, and reading them as one
+ * thing would be the reasonable mistake.
+ *
+ * When J4 has spoken about a finding that produced a decision, THAT is the
+ * proposal the conversation is about. Returns null otherwise and the surface
+ * keeps its existing behaviour — this narrows which card is shown, it does not
+ * add a second place proposals live.
+ */
+export async function proposalJ4Raised(storeId: string): Promise<string | null> {
+  const spoken = await prisma.proactiveDelivery.findFirst({
+    where: { storeId, closedAt: null },
+    orderBy: { spokenAt: "desc" },
+    select: { storeMessage: { select: { executionLog: { select: { metadata: true } } } } },
+  });
+
+  const meta = spoken?.storeMessage?.executionLog?.metadata as
+    | { approvalRequestId?: unknown }
+    | null;
+  const id = meta?.approvalRequestId;
+  if (typeof id !== "string") return null;
+
+  // STILL OPEN, checked here rather than trusted. The message is a permanent
+  // record of what J4 said; the proposal may have been decided since, and
+  // showing a decided proposal as the thing awaiting the owner would be the
+  // execution-state dishonesty UI6 exists to prevent.
+  const open = await prisma.approvalRequest.findFirst({
+    where: { id, storeId, status: "PENDING_APPROVAL" },
+    select: { id: true },
+  });
+  return open?.id ?? null;
+}
+
 export interface ProactiveDeliverySummary {
   /** How many findings J4 spoke about. Zero is an ordinary, correct outcome. */
   spoken: number;
@@ -184,9 +269,12 @@ export async function speakNewFindings(storeId: string): Promise<ProactiveDelive
 
 async function speakOneFinding(
   storeId: string,
-  finding: { id: string; genesisState: string; summary: string }
+  finding: { id: string; genesisState: string; summary: string; dedupeKey: string }
 ): Promise<boolean> {
   const content = proactiveMessageFor(finding);
+  // Resolved before the writes so it lands in the same execution row as
+  // everything else about this turn. Null is the ordinary case.
+  const approvalRequestId = await proposalForFinding(storeId, finding.dedupeKey);
 
   try {
     // ALL THREE WRITES OR NONE (fixed 2026-08-23).
@@ -223,6 +311,10 @@ async function speakOneFinding(
             kind: "proactive_finding",
             observationId: finding.id,
             genesisState: finding.genesisState,
+            // The decision this finding produced, when it produced one. J4
+            // offers it; the owner decides it, through the same approval path
+            // as every other proposal.
+            approvalRequestId,
           },
         },
         tx

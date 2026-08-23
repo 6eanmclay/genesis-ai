@@ -15,6 +15,7 @@ import { J4Proposal } from "./J4Proposal";
 import { getOpenProposals } from "@/lib/storefront/proposals";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { messageStateOf } from "@/lib/j4/messageState";
+import { proposalJ4Raised } from "@/lib/intelligence/proactive";
 
 // J4's real conversation, rendered on either of its two surfaces
 // (2026-08-14). Extracted from app/j4/page.tsx unchanged so that both the
@@ -320,7 +321,22 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   // discussion was happening. A proposal belongs to the CONVERSATION, and the
   // conversation is on both surfaces. See GENESIS_SURFACES.md decision 4.
   const openProposals = await getOpenProposals(store.id);
-  const proposalOnTable = openProposals[0] ?? null;
+  // THE ONE J4 ACTUALLY RAISED, when it raised one (PD4, 2026-08-23).
+  //
+  // This took openProposals[0] — the newest pending proposal, related to the
+  // conversation or not. Once J4 can speak first, that is a real mismatch: a
+  // proactive message about falling revenue sitting directly above a card
+  // proposing a new hero image reads as one thing, and is not.
+  //
+  // So when J4 has spoken about a finding that produced a decision, the card is
+  // that decision. Otherwise nothing changes — this narrows which proposal is
+  // shown, it does not add a second place proposals live, and J4 still never
+  // decides one.
+  const raisedId = await proposalJ4Raised(store.id);
+  const proposalOnTable =
+    (raisedId ? openProposals.find((p) => p.current.id === raisedId) : null) ??
+    openProposals[0] ??
+    null;
   const otherPendingCount = Math.max(0, openProposals.length - 1);
   const storefrontUrl = proposalOnTable ? `${await getBaseUrl()}/store/${store.slug}` : null;
 

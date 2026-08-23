@@ -1,6 +1,11 @@
 import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import { prisma, prismaSystem } from "@/lib/prisma";
-import { speakNewFindings, proactiveMessageFor } from "@/lib/intelligence/proactive";
+import {
+  speakNewFindings,
+  proactiveMessageFor,
+  proposalForFinding,
+  proposalJ4Raised,
+} from "@/lib/intelligence/proactive";
 import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
 import { messageStateOf } from "@/lib/j4/messageState";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -406,6 +411,110 @@ async function main() {
       !head.includes("executionLogId"),
       "a proactive message carries one; filtering on it would hide exactly these");
   }
+
+  // ==========================================================================
+  console.log("\n=== PD4. A message carries its OWN proposal, or none ===\n");
+  // ==========================================================================
+  // A proactive message may carry a proposal — but only the one the finding
+  // caused. The conversation shows one card, and it showed the NEWEST pending
+  // proposal, related or not: a message about falling revenue directly above a
+  // card proposing a new hero image reads as one thing and is not.
+  //
+  // Nothing new records the association. A finding and a CognitiveOutput
+  // already share a key (dedupeKey / topicKey), and a proposal already points at
+  // the output it came from. This walks that chain.
+  const pd4 = await prisma.store.create({
+    data: { userId: owner.id, name: "Decisions", slug: `pj-d-${uniq()}` },
+  });
+
+  // A finding with no decision behind it proposes nothing. This is the ordinary
+  // case and the whole of PD4's safety property: J4 does not conjure a decision
+  // where the finding did not produce one.
+  await upsertObservation(pd4.id, {
+    dedupeKey: "insight:revenue.decreased",
+    genesisState: "urgent",
+    summary: "Revenue is down.",
+    actionHref: null,
+  });
+  check("a finding with no proposal behind it offers none",
+    await proposalForFinding(pd4.id, "insight:revenue.decreased"), null);
+
+  // AN UNRELATED PENDING PROPOSAL IS NOT OFFERED. The exact thing forbidden:
+  // a proposal exists, it is pending, and it has nothing to do with this
+  // finding — so J4 must not present it as the decision it is talking about.
+  // WITH ITS OWN COGNITIVE OUTPUT, under a different topic. A proposal with no
+  // output at all is trivially unreachable; this is the one that would actually
+  // be returned by a lookup that forgot to match the finding's key.
+  const otherTopic = await prisma.cognitiveOutput.create({
+    data: {
+      storeId: pd4.id, kind: "opportunity", summary: "Refresh the hero",
+      priority: "medium", confidence: 0.8, status: "ACTIVE",
+      topicKey: "insight:storefront.stale",
+    },
+  });
+  const unrelated = await prisma.approvalRequest.create({
+    data: {
+      storeId: pd4.id, actionType: "update_hero", input: {}, previousValues: {},
+      summary: "A new hero image", status: "PENDING_APPROVAL",
+      cognitiveOutputId: otherTopic.id,
+    },
+  });
+  check("an unrelated pending proposal is still not offered",
+    await proposalForFinding(pd4.id, "insight:revenue.decreased"), null);
+  check("and J4 raises nothing to point at",
+    await proposalJ4Raised(pd4.id), null);
+
+  // NOW A FINDING THAT DID PRODUCE A DECISION. The output carries the finding's
+  // own key, and the proposal points at the output.
+  const output = await prisma.cognitiveOutput.create({
+    data: {
+      storeId: pd4.id, kind: "opportunity", summary: "Discount the slow seller",
+      priority: "medium", confidence: 0.8, status: "ACTIVE",
+      topicKey: "insight:revenue.decreased",
+    },
+  });
+  const related = await prisma.approvalRequest.create({
+    data: {
+      storeId: pd4.id, actionType: "update_product", input: {}, previousValues: {},
+      summary: "Reduce the price of the slow seller", status: "PENDING_APPROVAL",
+      cognitiveOutputId: output.id,
+    },
+  });
+  check("the finding's own proposal is found",
+    await proposalForFinding(pd4.id, "insight:revenue.decreased"), related.id);
+  assert("and it is not the unrelated one",
+    (await proposalForFinding(pd4.id, "insight:revenue.decreased")) !== unrelated.id,
+    "offering whichever proposal is newest is the thing PD4 forbids");
+
+  check("speaking records it on the turn", (await speakNewFindings(pd4.id)).spoken, 1);
+  check("so the conversation points at that decision",
+    await proposalJ4Raised(pd4.id), related.id);
+
+  // THE OWNER STILL DECIDES. Nothing here approves, executes or rejects — the
+  // proposal is exactly as pending after J4 spoke as before.
+  const untouched = await prisma.approvalRequest.findUniqueOrThrow({ where: { id: related.id } });
+  check("J4 has not decided it", untouched.status, "PENDING_APPROVAL");
+  check("nor recorded a decider", untouched.decidedByUserId, null);
+  check("nor executed anything", untouched.executionId, null);
+
+  // AND A DECIDED PROPOSAL STOPS BEING POINTED AT. The message stays — it is a
+  // record of what J4 said — but showing a decided proposal as the thing
+  // awaiting the owner is the execution-state dishonesty UI6 exists to prevent.
+  // updateMany, not update: the tenant guard refuses a store-unscoped mutation
+  // and a unique `where: { id }` cannot carry a storeId. It caught this fixture.
+  await prisma.approvalRequest.updateMany({
+    where: { id: related.id, storeId: pd4.id },
+    data: { status: "EXECUTED", decidedByUserId: owner.id, decidedAt: new Date() },
+  });
+  check("once decided, the conversation stops offering it",
+    await proposalJ4Raised(pd4.id), null);
+  check("while what J4 said is still there",
+    (await prisma.storeMessage.findMany({ where: { storeId: pd4.id, role: "assistant" } })).length, 1);
+
+  // Cross-business: another store's proposal is never offered here.
+  check("a proposal in another business is not reachable",
+    await proposalForFinding(neighbour.id, "insight:revenue.decreased"), null);
+  await prisma.store.deleteMany({ where: { id: pd4.id } });
 
   // ==========================================================================
   console.log("\n=== The cycle actually calls it ===\n");
