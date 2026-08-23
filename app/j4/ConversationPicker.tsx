@@ -25,6 +25,8 @@ export interface ConversationOption {
   name: string | null;
   messageCount: number;
   lastMessageAt: string | null;
+  /** The anchored work's title, when the conversation has one. */
+  anchoredWork?: string | null;
 }
 
 export function ConversationPicker({

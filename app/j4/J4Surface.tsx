@@ -16,6 +16,7 @@ import { getOpenProposals } from "@/lib/storefront/proposals";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { messageStateOf } from "@/lib/j4/messageState";
 import { listConversations } from "@/lib/j4/conversations";
+import { buildContextEntries } from "@/lib/j4/contextTypes";
 import { proposalJ4Raised } from "@/lib/intelligence/proactive";
 
 // J4's real conversation, rendered on either of its two surfaces
@@ -346,6 +347,15 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   // same arrangement the proposal card already uses.
   const conversations = await listConversations(store.id);
 
+  // WHAT THE CONTEXT PANE MAY SHOW (UI6 piece 1). Built here from the
+  // understanding this render already fetched — so the pane costs no query of
+  // its own, and shows what J4 knows NOW rather than a reconstruction of what it
+  // knew when a conversation started.
+  //
+  // The closed registry decides what is eligible. Nothing outside it can reach
+  // the pane, because nothing else is read.
+  const contextEntries = understanding ? buildContextEntries(understanding) : [];
+
   const messages = recentMessages.reverse();
   const urgentObservations = observations.filter((o) => o.genesisState === "urgent");
   const ideas = observations.filter((o) => o.genesisState === "opportunity");
@@ -363,11 +373,15 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
       surface={surface}
       slug={slug}
       storeName={store.name}
+      contextEntries={contextEntries}
       conversations={conversations.map((c) => ({
         id: c.id,
         name: c.name,
         messageCount: c.messageCount,
         lastMessageAt: c.lastMessageAt ? c.lastMessageAt.toISOString() : null,
+        // The anchored work's title, when there is one. Metadata the pane names
+        // — never a link, and never something to act on.
+        anchoredWork: c.taskId ? openTasks.find((t) => t.id === c.taskId)?.title ?? null : null,
       }))}
       messages={messages.map((m) => ({
         id: m.id,

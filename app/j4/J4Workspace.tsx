@@ -9,6 +9,8 @@ import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genes
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { MESSAGE_STATE_LABEL, needsOwner, type MessageState } from "@/lib/j4/messageState";
 import { ConversationPicker, type ConversationOption } from "./ConversationPicker";
+import { ContextPane } from "./ContextPane";
+import type { ContextEntry } from "@/lib/j4/contextTypes";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
@@ -802,6 +804,7 @@ export function J4Workspace({
   surface,
   proposal,
   conversations = [],
+  contextEntries = [],
 }: {
   /**
    * The business this workspace is for, when it was named in the URL.
@@ -814,6 +817,14 @@ export function J4Workspace({
   storeName: string;
   /** The owner's conversations, newest first. */
   conversations?: ConversationOption[];
+  /**
+   * What the context pane may show, from the closed registry.
+   *
+   * Handed down already built. There is deliberately no prop by which a parent
+   * could OPEN the pane — that state is the owner's alone, and a prop like it is
+   * how "show me my context" becomes "J4 decided to interrupt me".
+   */
+  contextEntries?: ContextEntry[];
   messages: Message[];
   sendMessage: (formData: FormData) => void;
   uploadAsset: (formData: FormData) => void;
@@ -919,6 +930,11 @@ export function J4Workspace({
   // WHICH CONVERSATION THE OWNER IS IN. Null is "everything else" — the
   // ungrouped history, which is not a conversation and is not treated as one.
   const [conversationId, setConversationId] = useState<string | null>(null);
+
+  // THE PANE IS THE OWNER'S. Nothing else sets this: no effect, no timer, no
+  // server response, no J4 path. The only writer is the control the owner
+  // presses, which is what "owner-initiated" has to mean to be testable.
+  const [contextOpen, setContextOpen] = useState(false);
 
   const [localMessages, setLocalMessages] = useState<Message[]>(messages);
   // What the owner is reading: one conversation, or the ungrouped history.
@@ -1821,6 +1837,38 @@ export function J4Workspace({
         {/* THE OWNER'S CONVERSATIONS (UI6 piece 2). Above the exchange rather
             than hidden behind a menu: a conversation is only a feature if the
             owner can see the ones they have and return to one. */}
+        {/* Opening the pane is an owner action and nothing else. */}
+        {shownCategory === "conversation" && (
+          <div className="mb-2 flex justify-end">
+            <button
+              type="button"
+              data-role="open-context-pane"
+              onClick={() => setContextOpen((v) => !v)}
+              className="rounded-full border px-2.5 py-1 text-[11px] font-medium text-[#f4f2fb] transition hover:bg-white/[.06]"
+              style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+            >
+              {contextOpen ? "Hide what J4 knows" : "What J4 knows"}
+            </button>
+          </div>
+        )}
+        {shownCategory === "conversation" && contextOpen && (
+          <div className="mb-3">
+            <ContextPane
+              entries={contextEntries}
+              conversationLabel={
+                conversationId
+                  ? conversations.find((c) => c.id === conversationId)?.name ?? "This conversation"
+                  : "Everything else"
+              }
+              anchoredWork={
+                conversationId
+                  ? conversations.find((c) => c.id === conversationId)?.anchoredWork ?? null
+                  : null
+              }
+              onClose={() => setContextOpen(false)}
+            />
+          </div>
+        )}
         {shownCategory === "conversation" && conversations.length > 0 && (
           <div className="mb-3">
             <ConversationPicker
