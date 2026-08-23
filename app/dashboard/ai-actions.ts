@@ -17,7 +17,7 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
 import {
-  mayInvokeTool,
+  firstRefusedTool,
   refusalMessage,
   planToolRun,
   describeDroppedTools,
@@ -2405,13 +2405,24 @@ async function applyGenesisMessageToStore(
   // single highest-stakes capability — editing the live store — reachable with
   // no permission check at all on this path.
   //
-  // Uses the same mayInvokeTool the route uses. A permission question with two
-  // implementations is a permission question that will eventually have two
+  // Uses the same firstRefusedTool the route uses. A permission question with
+  // two implementations is a permission question that will eventually have two
   // answers.
+  //
+  // EVERY planned tool, not just the decided one. A turn runs the whole planned
+  // list, so checking only its head left the tail unauthorized — "what sold
+  // worst last month? get rid of it" plans a read then a mutation, and the read
+  // passing was enough to carry the removal behind it.
   const decidedTool = chosenTool?.name ?? preClassifiedTool ?? null;
-  if (decidedTool) {
-    const permission = mayInvokeTool(role, decidedTool);
-    if (!permission.allowed) {
+  const toolsToAuthorize = plannedTools.length > 0
+    ? plannedTools.map((t) => t.name)
+    : decidedTool
+      ? [decidedTool]
+      : [];
+  {
+    const refused = firstRefusedTool(role, toolsToAuthorize);
+    if (refused) {
+      const permission = refused.refusal;
       const declineMessage = refusalMessage(permission);
       await prisma.storeMessage.create({
         data: { storeId: store.id, role: "assistant", content: declineMessage },
@@ -2426,7 +2437,7 @@ async function applyGenesisMessageToStore(
         retryable: false,
         userId,
         storeId: store.id,
-        metadata: { refusedTool: decidedTool, reason: permission.reason },
+        metadata: { refusedTool: refused.name, reason: permission.reason },
       });
       await logChatTurnEvent({
         userId,

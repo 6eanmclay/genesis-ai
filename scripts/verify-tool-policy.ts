@@ -4,6 +4,7 @@ import { join } from "path";
 import { buildStoreChatUnifiedTools, allToolUses, firstToolUse } from "@/lib/execution/genesisTools";
 import { MIGRATED_TOOLS } from "@/lib/execution/toolHandlers";
 import {
+  firstRefusedTool,
   TOOL_POLICY,
   policyFor,
   mayInvokeTool,
@@ -262,8 +263,22 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 const route = read(join("app", "api", "chat", "route.ts"));
 const action = read(join("app", "dashboard", "ai-actions.ts"));
 
+// THE EXACT STATEMENT, per path. A first attempt asserted only that
+// `firstRefusedTool(role,` appeared, and a negative control that narrowed the
+// argument to `[chosenTool.name]` sailed straight through it — the hole this
+// section exists for, reintroduced, with the assertion still green. What
+// matters here is not that the function is called but WHAT IT IS ASKED ABOUT.
+const AUTHORIZES_THE_WHOLE_TURN = {
+  "the streaming route": "firstRefusedTool(role, plannedTools.map((t) => t.name))",
+  "the Server Action": "firstRefusedTool(role, toolsToAuthorize)",
+} as const;
+
 for (const [name, source] of [["the streaming route", route], ["the Server Action", action]] as const) {
-  assert(`${name} asks mayInvokeTool`, source.includes("mayInvokeTool("));
+  // Through firstRefusedTool, which is mayInvokeTool over the whole planned
+  // list rather than its head — see section 9.
+  assert(`${name} asks the shared permission question about every planned tool`,
+    source.includes(AUTHORIZES_THE_WHOLE_TURN[name]),
+    `expected exactly: ${AUTHORIZES_THE_WHOLE_TURN[name]}`);
   assert(`${name} uses the shared refusal copy`, source.includes("refusalMessage("));
   // THE OLD GATE IS GONE, not merely bypassed. A blanket store:manage check
   // left standing would refuse the employee before the tool check ever ran.
@@ -279,9 +294,23 @@ for (const [name, source] of [["the streaming route", route], ["the Server Actio
   // plan.dropped precisely because policy allowed them. Nothing said they had
   // gone. Its own comment claimed it applied "the same plan the streaming route
   // applies"; it planned the same and acted differently.
+  // AND AUTHORIZES EVERY ONE OF THEM. Two features that were each correct
+  // alone: authorization moved onto the capability, and a turn stopped
+  // discarding everything after the first tool. Together, the check ran on the
+  // head of the planned list and the whole list ran.
+  assert(`${name} authorizes every planned tool, not just the decided one`,
+    source.includes("firstRefusedTool(role,"),
+    "a read that passes must not carry an unauthorized mutation behind it");
+  assert(`${name} does not check only the decided tool`,
+    !source.includes("mayInvokeTool(role, chosenTool.name)") &&
+      !source.includes("mayInvokeTool(role, decidedTool)"),
+    "the decided tool is the first of several, and the rest run too");
   assert(`${name} runs every tool the plan allowed, not just the first`,
     source.includes("plannedTools = plan.run") || source.includes("const plannedTools = plan.run"),
     "a path that silently drops an allowed second request is the drift this plan exists to end");
+  assert(`${name} passes that same list to the runner`,
+    source.includes("plannedTools,"),
+    "authorizing one list and running another is two answers to one question");
   assert(`${name} does not fall back to the first emitted tool`,
     !source.includes("firstToolUse("),
     "planning what runs and then running what was emitted first is two different answers");
@@ -346,9 +375,44 @@ assert("and does not mention streams, routes or fallbacks",
 // The Server Action learns its tool two ways — its own unified call, and the
 // preClassifiedTool the route hands over. Missing the second would leave
 // editing the live store reachable with no check at all on that path.
+assert("the Server Action's authorized list is the planned list",
+  action.includes("const toolsToAuthorize = plannedTools.length > 0") &&
+    action.includes("? plannedTools.map((t) => t.name)"),
+  "a named list that stopped following the plan would authorize the wrong turn");
 assert("the Server Action checks the pre-classified tool too",
   action.includes("chosenTool?.name ?? preClassifiedTool"),
   "otherwise edit_store_content bypasses the check entirely");
+
+// ============================================================================
+console.log("\n=== 9. A turn is several tools, and the check is not one ===\n");
+// ============================================================================
+// The ordinary shape of the hole: "what sold worst last month? get rid of it"
+// plans a read and then a mutation. The read is allowed for an employee with
+// genesis:chat, and until 2026-08-23 that was the only thing asked.
+const readThenMutate = ["look_up_business_data", "request_product_removal"];
+check("policy allows both of those to be planned",
+  planToolRun(readThenMutate).run, readThenMutate);
+
+const memberRefusal = firstRefusedTool("EMPLOYEE", readThenMutate);
+assert("an employee is refused the mutation behind the read",
+  memberRefusal?.name === "request_product_removal", JSON.stringify(memberRefusal));
+// NOT the first tool. Naming the read would tell an employee their QUESTION was
+// declined, which is both wrong and the exact confusion refusalMessage exists
+// to stop.
+assert("and the refusal names what was actually refused",
+  refusalMessage(memberRefusal!.refusal).length > 0 && memberRefusal?.name !== "look_up_business_data",
+  "naming the read tells an employee their question was a change attempt");
+
+check("the owner is refused neither", firstRefusedTool("OWNER", readThenMutate), null);
+// Order does not matter: the mutation is found whichever end it sits at.
+assert("the mutation is caught first as well",
+  firstRefusedTool("EMPLOYEE", [...readThenMutate].reverse())?.name === "request_product_removal");
+check("a turn of reads only is not refused",
+  firstRefusedTool("EMPLOYEE", ["look_up_business_data", "show_upload_options"]), null);
+// An unknown name is refused rather than skipped — it came from a model.
+assert("an unknown tool is refused, not passed over",
+  firstRefusedTool("OWNER", ["look_up_business_data", "constructor"])?.name === "constructor");
+check("and nothing to check is nothing to refuse", firstRefusedTool("EMPLOYEE", []), null);
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -3,7 +3,12 @@ import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
-import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools } from "@/lib/execution/toolPolicy";
+import {
+  firstRefusedTool,
+  refusalMessage,
+  planToolRun,
+  describeDroppedTools,
+} from "@/lib/execution/toolPolicy";
 import {
   runPlannedTools,
   persistToolTurn,
@@ -450,12 +455,15 @@ export async function POST(request: Request) {
         // AUTHORIZATION, AT THE DECISION (2026-08-22, UI2). Before any handler
         // below runs, and shared with the Server Action path so one permission
         // question has exactly one answer.
-        if (chosenTool) {
-          const permission = mayInvokeTool(role, chosenTool.name);
-          if (!permission.allowed) {
+        // EVERY planned tool, not just the decided one — a turn runs the whole
+        // list, so checking its head left the tail unauthorized.
+        const refused = firstRefusedTool(role, plannedTools.map((t) => t.name));
+        if (refused) {
+          {
+            const permission = refused.refusal;
             const declineMessage = refusalMessage(permission);
             diagLog(requestId, turnStartedAt, "tool_refused", {
-              tool: chosenTool.name,
+              tool: refused.name,
               reason: permission.reason,
             });
             await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
@@ -468,7 +476,7 @@ export async function POST(request: Request) {
               retryable: false,
               userId,
               storeId: store.id,
-              metadata: { refusedTool: chosenTool.name, reason: permission.reason },
+              metadata: { refusedTool: refused.name, reason: permission.reason },
             });
             // Whatever the model streamed before choosing the tool is already on
             // the wire; the refusal follows it rather than replacing it, because

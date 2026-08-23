@@ -136,6 +136,36 @@ export function mayInvokeTool(role: StoreRole, toolName: string): ToolRefusal {
 }
 
 /**
+ * The first tool in a turn the viewer may not invoke, if there is one.
+ *
+ * A TURN IS NOW SEVERAL TOOLS, AND THE CHECK WAS ONE (found 2026-08-23). Both
+ * chat paths asked `mayInvokeTool` about the DECIDED tool — the first of the
+ * planned list — and then ran the whole list. Two features that were each
+ * correct alone: authorization moved onto the capability, and a turn stopped
+ * discarding everything after the first tool.
+ *
+ * Together they were an authorization hole with an ordinary shape. "What sold
+ * worst last month? Get rid of it" plans a read and then a mutation; the read
+ * is checked, allowed, and the removal proposal runs behind it for a member who
+ * has `genesis:chat` and not `store:manage`.
+ *
+ * The whole turn is refused rather than the offending tool skipped. Running
+ * half of what somebody asked for and declining the rest is a design decision
+ * nobody has made, and the existing answer to "you may not invoke this" is
+ * already that the turn ends.
+ */
+export function firstRefusedTool(
+  role: StoreRole,
+  toolNames: string[]
+): { name: string; refusal: Extract<ToolRefusal, { allowed: false }> } | null {
+  for (const name of toolNames) {
+    const refusal = mayInvokeTool(role, name);
+    if (!refusal.allowed) return { name, refusal };
+  }
+  return null;
+}
+
+/**
  * What to say when a tool is refused.
  *
  * SPECIFIC TO WHAT WAS ACTUALLY ASKED FOR, because the message this replaces
