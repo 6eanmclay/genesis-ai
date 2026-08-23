@@ -2,6 +2,8 @@ import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { getReviewableBeliefs } from "@/lib/intelligence/beliefReview";
+import { BeliefReview } from "./BeliefReview";
 
 const CARD =
   "rounded-xl border border-black/[.08] bg-black/[.02] p-4 dark:border-white/[.145] dark:bg-white/[.03]";
@@ -63,10 +65,24 @@ function ConfidencePill({ confidence }: { confidence: number }) {
 // `basePath` is what every link inside uses, so a page rendered for one business
 // never links into another.
 export async function UnderstandingScreen({ slug, basePath }: { slug?: string; basePath: string }) {
-  const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
+  const { store, userId } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const understanding = await getBusinessUnderstanding(store.id);
-  const { profile, beliefs, recentDecisions, activeThoughts, platformRelationship } = understanding;
+  const { profile, recentDecisions, activeThoughts, platformRelationship } = understanding;
+
+  // BELIEFS ARE READ SEPARATELY FROM UNDERSTANDING (2026-08-22, U4), and not
+  // because the data differs — it is the same table. What differs is what a
+  // PERSON needs from it versus what a PROMPT does. getBusinessUnderstanding
+  // returns claims for reasoning; this returns the evidence behind each one, the
+  // dates that say whether it still holds, and the ones the owner has already
+  // corrected, which a prompt should never see because they are no longer true.
+  const { active: activeBeliefs, contradicted: correctedBeliefs } = await getReviewableBeliefs(
+    store.id,
+    userId
+  );
+  // Only the owner may correct. STORE_MANAGE gets you onto this page; it does
+  // not make you the person J4's beliefs are about.
+  const canCorrect = store.userId === userId;
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
@@ -319,21 +335,17 @@ export async function UnderstandingScreen({ slug, basePath }: { slug?: string; b
         {/* 11. What J4 has learned */}
         <section>
           <h2 className="text-lg font-semibold text-black dark:text-zinc-50">What J4 has learned</h2>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Patterns generalized from repeated real evidence — not opinions.</p>
-          <div className={`mt-3 flex flex-col gap-3 ${CARD}`}>
-            {beliefs.length === 0 ? (
-              <p className="text-sm text-zinc-500">Nothing yet — beliefs form once a real pattern repeats.</p>
-            ) : (
-              beliefs.map((b) => (
-                <div key={b.id}>
-                  <p className="text-sm text-black dark:text-zinc-50">
-                    {b.claim}
-                    <ConfidencePill confidence={b.confidence} />
-                  </p>
-                  <p className="mt-0.5 text-xs capitalize text-zinc-500">{b.maturity.replace(/_/g, " ")}</p>
-                </div>
-              ))
-            )}
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Patterns J4 has noticed from things that actually happened. If one of them is wrong,
+            say so — it stops being used.
+          </p>
+          <div className={`mt-3 ${CARD}`}>
+            <BeliefReview
+              active={activeBeliefs}
+              contradicted={correctedBeliefs}
+              canCorrect={canCorrect}
+              slug={slug}
+            />
           </div>
         </section>
 
