@@ -44,6 +44,8 @@ async function main() {
   process.env.DATABASE_URL = db.url;
 
   const { approvalAccessibleTo, PERMISSIONS } = await import("@/lib/permissions");
+  const { readFileSync } = await import("fs");
+  const { join } = await import("path");
   const { getPendingApprovals } = await import("@/lib/dashboard/pendingApprovals");
   const { setActiveBusiness } = await import("@/lib/businessContext");
   const { prismaSystem: prisma } = await import("@/lib/prisma");
@@ -198,6 +200,61 @@ async function main() {
     (await approvalAccessibleTo(owner.id, ironProposal.id, { status: "PENDING_APPROVAL" }))?.storeId, iron.id);
   check("and Iron Gym's pending list is unchanged", (await getPendingApprovals(iron.id)).length, 1);
   check("as is Copper & Coil's", (await getPendingApprovals(copper.id)).length, 2);
+
+  // ==========================================================================
+  console.log("\n=== 5. J4's own proposal actions ask the same question ===\n");
+  // ==========================================================================
+  // THE RULE WAS RIGHT AND ONE SET OF CALLERS DID NOT ASK IT. Everything above
+  // exercises approvalAccessibleTo, which is correct and was correct while
+  // app/j4/proposal-actions.ts resolved the ACCOUNT's active business instead —
+  // the same defect app/dashboard had already fixed, still live one directory
+  // across, because nothing asserted who calls the rule.
+  //
+  // Two different failures came out of it:
+  //   - chooseDirectionInConversation looked the proposal up with the active
+  //     storeId, so a real open proposal in the business the owner was looking
+  //     at matched nothing and they were told "That proposal is no longer open."
+  //   - approve and reject executed correctly, then wrote the outcome into the
+  //     ACTIVE business's conversation: the change landed on B, B's history
+  //     stayed silent, and A gained a line about work that never happened there.
+  const j4Actions = readFileSync(
+    join(process.cwd(), "app", "j4", "proposal-actions.ts"), "utf8"
+  );
+
+  // The defective pattern, by its exact shape. Every one of the three began
+  // with this line. It survives in exactly one place — the named fallback for a
+  // proposal that resolved to nothing, where there is genuinely no business to
+  // take — and an action reaching for it again would push this above one.
+  const ACTIVE_BUSINESS_READ = "const { storeId } = await requireStorePermission(";
+  check("the active business is read in exactly one place",
+    j4Actions.split(ACTIVE_BUSINESS_READ).length - 1, 1);
+  // And that place is the fallback helper. Sliced from its declaration rather
+  // than matched across a newline, because this file is CRLF and an assertion
+  // spanning a line break silently never matches.
+  const fallbackBody = j4Actions.slice(j4Actions.indexOf("async function activeBusinessForOrphanReply"));
+  assert("and that place is the orphan-reply fallback, not an action",
+    fallbackBody.indexOf(ACTIVE_BUSINESS_READ) >= 0 && fallbackBody.indexOf(ACTIVE_BUSINESS_READ) < 200,
+    "the one remaining read must be inside the fallback helper");
+
+  // All three resolve it from the proposal instead.
+  check("all three actions resolve the proposal's own business",
+    j4Actions.split("await businessOfProposal(").length - 1, 3);
+  assert("through the shared rule this suite exercises",
+    j4Actions.includes("approvalAccessibleTo(session.user.id, approvalRequestId, where)"),
+    "a second implementation of reachability is a second answer to it");
+
+  // The fallback is only for a proposal that resolved to nothing, where there
+  // is genuinely no business to take. It must not be the primary path.
+  assert("the active business is only a fallback for an unresolvable proposal",
+    j4Actions.includes("proposalBusiness ?? (await activeBusinessForOrphanReply())"),
+    "the active business must not be where a resolvable proposal's outcome goes");
+
+  // And the direction query is scoped by the resolved business, not the active
+  // one — this is the query that returned nothing and produced the false
+  // "no longer open".
+  assert("choosing a direction queries the proposal's business",
+    j4Actions.includes("const storeId = proposalBusiness;"),
+    "querying with the active storeId is what reported a real proposal as closed");
 
   await prisma.$disconnect();
   await db.close();

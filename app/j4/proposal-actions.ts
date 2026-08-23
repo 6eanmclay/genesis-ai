@@ -1,8 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import type { Prisma } from "@prisma/client";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireStorePermission } from "@/lib/permissions";
+import { PERMISSIONS, requireStorePermission, approvalAccessibleTo } from "@/lib/permissions";
 import { performApproveGenesisAction, performRejectGenesisAction } from "@/app/dashboard/ai-actions";
 import { PROPOSAL_STATUS, parseDirections, reviseProposal } from "@/lib/storefront/proposals";
 
@@ -48,6 +51,55 @@ async function recordOutcome(storeId: string, content: string) {
 }
 
 /**
+ * The business a proposal belongs to, and whether this viewer may reach it.
+ *
+ * THE PROPOSAL'S OWN BUSINESS DECIDES (BUSINESS_CONTEXT.md Phase C). These
+ * three actions resolved the ACCOUNT's active business instead, which is a
+ * different question the moment an account has more than one — and it gave a
+ * different answer in the ordinary case:
+ *
+ *   - chooseDirectionInConversation looked the proposal up as
+ *     `findFirst({ storeId, id })` with the ACTIVE storeId, so a real open
+ *     proposal in the business the owner was actually looking at matched
+ *     nothing and they were told "That proposal is no longer open." The exact
+ *     failure this file's sibling in app/dashboard already records fixing:
+ *     "J4 offered a real change and clicking approve said it had vanished."
+ *   - approve/reject executed correctly — performApproveGenesisAction resolves
+ *     the business from the approval's row — and then wrote the outcome message
+ *     into the ACTIVE business's conversation. The change landed on B and B's
+ *     conversation stayed silent while A's gained a line about work that never
+ *     happened there.
+ *
+ * Returns null when the proposal is gone, already decided, or belongs to a
+ * business this viewer cannot reach — deliberately the same answer for all
+ * three, matching performApproveGenesisAction's own contract.
+ */
+async function businessOfProposal(
+  approvalRequestId: string,
+  where: Prisma.ApprovalRequestWhereInput = {}
+): Promise<string | null> {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  const reached = await approvalAccessibleTo(session.user.id, approvalRequestId, where);
+  return reached?.storeId ?? null;
+}
+
+/**
+ * Where to say something when the proposal itself could not be found.
+ *
+ * There is no proposal to take a business from, so this falls back to the
+ * account's active one — unchanged from what every branch here used to do, and
+ * the honest limit of what can be known: an id that resolves to nothing cannot
+ * say which conversation was asking. The conversation view knows, and will pass
+ * it when that work is done; until then this is the existing behaviour rather
+ * than a new guess.
+ */
+async function activeBusinessForOrphanReply(): Promise<string> {
+  const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+  return storeId;
+}
+
+/**
  * Applies a proposal from inside the conversation.
  *
  * The reply is written from the real result, never assumed: an execution that
@@ -55,8 +107,12 @@ async function recordOutcome(storeId: string, content: string) {
  * change landed. Verification is the executable's own, unchanged.
  */
 export async function approveProposalInConversation(approvalRequestId: string) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+  // Read BEFORE the approval runs: executing it moves the row out of
+  // PENDING_APPROVAL, and asking afterwards which business it belonged to would
+  // depend on what the status filter happened to be.
+  const proposalBusiness = await businessOfProposal(approvalRequestId);
   const result = await performApproveGenesisAction(approvalRequestId);
+  const storeId = proposalBusiness ?? (await activeBusinessForOrphanReply());
 
   if (result.outcome === "executed") {
     await recordOutcome(storeId, result.message ? `Done. ${result.message}` : "Done, and verified.");
@@ -100,7 +156,18 @@ export async function approveProposalInConversation(approvalRequestId: string) {
  * made is part of the exchange and Office must be able to show it later.
  */
 export async function chooseDirectionInConversation(approvalRequestId: string, directionId: string) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+  // The proposal's own business, not the account's active one — the whole
+  // defect was that these disagree and this branch reported the disagreement
+  // to the owner as "no longer open".
+  const proposalBusiness = await businessOfProposal(approvalRequestId, {
+    status: PROPOSAL_STATUS.pending,
+  });
+  if (!proposalBusiness) {
+    await recordOutcome(await activeBusinessForOrphanReply(), "That proposal is no longer open.");
+    revalidatePath("/dashboard", "layout");
+    return;
+  }
+  const storeId = proposalBusiness;
 
   const row = await prisma.approvalRequest.findFirst({
     where: { storeId, id: approvalRequestId, status: PROPOSAL_STATUS.pending },
@@ -148,8 +215,9 @@ export async function chooseDirectionInConversation(approvalRequestId: string, d
 
 /** Turns a proposal down from inside the conversation. */
 export async function rejectProposalInConversation(approvalRequestId: string) {
-  const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+  const proposalBusiness = await businessOfProposal(approvalRequestId);
   const result = await performRejectGenesisAction(approvalRequestId);
+  const storeId = proposalBusiness ?? (await activeBusinessForOrphanReply());
 
   await recordOutcome(
     storeId,
