@@ -47,7 +47,9 @@ Business Assets (`lib/businessAssets/`) is what prompted this section, but the q
 - `goal`, `challenge`, `employee`, `location` — canonical, from the owner telling J4 directly: chat's business-fact capture (`STORE_CHAT_BUSINESS_FACT`, `sourceProvider: "genesis_chat"`) or, as of Business Assets M5, a confident upload discovery (`sourceProvider: "genesis_upload"`).
 - `asset` — new in Business Assets M1, always canonical. Every real photo/document an owner has uploaded: `fileType`, `category`, `storageUrl`, `originalFilename`, `summary`, `extractionConfidence`, and the same `relatedRecordId`/`relatedEntityType` relationship fields every other entity type uses. `sourceProvider: "genesis_upload"` always.
 
-**How they're related.** One convention, stated once in `entities.ts`'s own top comment and never broken: any field named `xxxId` (single) or `xxxIds` (array) holds another `BusinessRecord`'s real id. No join table, no separate relationship model — `reasoning.ts`'s `findRelated` walks exactly this convention. An asset's `relatedRecordId`/`relatedEntityType` is this same mechanism, not a special case invented for uploads — an asset can point at the item or contact it's actually about, the same way an `Appointment.locationId` points at a `Location`.
+**How they're related.** One convention, stated once in `entities.ts`'s own top comment and never broken: any field named `xxxId` (single) or `xxxIds` (array) holds another `BusinessRecord`'s real id. `reasoning.ts`'s `findRelated` walks exactly this convention, and it still does. An asset's `relatedRecordId`/`relatedEntityType` is this same mechanism, not a special case invented for uploads.
+
+**Superseded in part, 2026-08-22 — see §7.** The convention is no longer the whole relationship model. It could express THAT two records were connected and never WHAT the connection was, and it answered every reverse lookup by loading every record of all fifteen entity types into memory. Those id fields are now *projected* into typed, indexed `RecordRelationship` rows. They remain the source of truth; the table is a projection of them, not a second opinion.
 
 **Canonical vs. derived knowledge — a real, load-bearing distinction, not a technicality.** Three tiers. Note this is a property of the *record*, not always the *entity type* — `contact`, above, is the real proof: two rows of the identical type, one derived, one canonical, distinguished only by `sourceProvider`.
 
@@ -185,6 +187,111 @@ and platform app review, not on anything here.
 
 None of these is a flaw in how understanding is assembled, represented, or
 delivered to its consumers. Every one is an absence of data.
+
+## 7. Where a fact came from, and how facts relate (2026-08-22)
+
+The "J4's Understanding of Your Business" milestone. Its audit finding is worth
+keeping at the top, because it changed what the milestone was: **J4 already
+understood a great deal.** `getBusinessUnderstanding` already returned identity,
+classification, offerings, revenue, customers, people, suppliers, connected
+systems, goals, challenges, locations, assets, social accounts, profitability,
+obligations and audience, plus beliefs, decisions, open thoughts, the platform
+relationship, designated assets and commitments — and it was already reused by
+Reason, chat, campaigns, brand-logo proposals and the Office.
+
+So the work was not teaching J4 more facts. It was the four things the structure
+was missing: **where a fact came from**, **how facts relate**, **how old a fact
+is**, and **whether J4's beliefs are visible to the person they are about**.
+
+**Provenance.** Every canonical record now carries `provenance`,
+`provenanceDetail`, `statedAt`, `statedById` and `modelExtracted`. Six kinds:
+`CONNECTOR`, `OWNER`, `DOCUMENT`, `DERIVED`, `INFERENCE`, `GENERATED`. Five were
+planned; `GENERATED` was found while wiring the write sites, because three of
+them produce artifacts rather than claims and `INFERENCE`'s owner-facing label
+("Something I concluded") would have been printed next to somebody's logo. An
+inference might be wrong; a design J4 composed is a file, and hedging it would be
+as dishonest as stating a guess flatly.
+
+`persistSyncedRecords` turned out to be the single door every `BusinessRecord`
+has ever been written through — twelve call sites, one function — so origin
+became a required argument there and the type system now refuses a write that
+cannot say where its facts came from. It is deliberately **not** derived from
+`sourceProvider`: "quickbooks" plainly means `CONNECTOR`, but the same mapping
+would have to decide what "genesis_chat" means, and it cannot — an owner's typed
+sentence and a model's reading of a voice memo arrive through that identical
+pipe.
+
+**Nothing is backfilled.** A row written before this has `provenance: null`,
+which is an honest unknown, and `modelExtracted` is nullable rather than
+defaulting to `false` because `false` is itself a claim ("nothing interpreted
+this") that a historical row is not entitled to make.
+
+**Relationships.** `RecordRelationship` stores a closed vocabulary of kinds —
+`belongs_to`, `involves`, `located_at`, `blocks`, `supersedes`, `derived_from`,
+`supplies`, `about` — typed and indexed from both ends. Every kind but one is
+backed by a reference field already in the registry; `supplies` is named as a
+requirement with nothing populating it yet, and says so where it is defined.
+
+Writing the projection map down surfaced what the convention had been quietly
+over-matching: `shipment.orderId` holds an `Order` id, `asset.aiUsageEventId` an
+`AiUsageEvent` id, `campaign.groupId` a provider's group — all end in `Id`, all
+were scanned on every traversal, harmless only because cuids do not collide.
+
+Projection **reconciles**. The first version only ever added, so an invoice whose
+`contactId` moved from A to B left the edge to A standing forever. `projectedFrom`
+names the record whose data maintains an edge — not a boolean, because the
+reversed projections store the edge pointing the other way and neither endpoint
+identifies who is responsible. An edge somebody *stated* has none, so a connector
+re-sync never deletes a connection the owner drew by hand.
+
+**Controlled writes.** `lib/businessModel/statements.ts` is the path a person
+uses to state a fact or draw a connection. It accepts **no provenance**: a
+caller who could pass `CONNECTOR` could make their own sentence read as
+something QuickBooks published, and one such path destroys the value of every
+honest one. Origin is derived from the actor. Authorization stays with
+`requireStorePermission`; what that file owns is the data invariants — both ends
+of a relationship really exist in this store, the type is registered, the shape
+validates.
+
+**Beliefs became visible.** `getBeliefs` had one consumer and it feeds prompts,
+so J4 reasoned from conclusions the owner could not read or contradict. The
+Understanding room now shows each claim with the real evidence behind it — four
+tables resolved into the owner-facing summaries those rows already carry — the
+dates that say whether it still holds, and a way to say "this isn't right".
+Corrections are `DISMISSED`, never `RETIRED`: the system retires a belief when
+evidence stops supporting it, and letting "the owner said no" read back later as
+"it didn't generalise" would invite the opposite response. Durability reuses the
+rule `upsertBelief` already had, so a correction survives the next distillation
+pass without a new column — and is not a permanent gag, because genuinely
+stronger evidence may raise the pattern again.
+
+**Reasoning was told.** Provenance reached the database and stopped at the
+serialiser: Reason was handed `goals.map((g) => ({ id: g.id, ...g.data }))`, the
+fact with its origin stripped off. Facts now carry a compact `source`, the rules
+for reading each kind actually present, and an honest count of what has none —
+on Reason, streaming chat, and the non-streaming fallback alike, because both
+chat paths draw on identical understanding or neither can be trusted. It is
+**not** a weighting: no honest ranking exists between "the owner said so" and
+"QuickBooks published it", and inventing one would be a fiction.
+
+`blockedGoals` joins `BusinessUnderstanding` for the same reason everything else
+in it is there. Typed relationships reasoning cannot see are an inert
+representation, and the whole point of naming `blocks` was that J4 could finally
+say "this is the thing standing between you and that".
+
+**What this milestone deliberately did not do.** No new entity types — fifteen
+exist and adding more without a business asking is manufacturing. No numeric
+confidence model over the profile. No "confirm" button on a belief, because it
+would have to move a confidence derived from real evidence. No rewriting a claim
+into the owner's words, because a belief is derived and a typed sentence is
+stated. And no part of the six-call unified-intelligence work
+(`J4_UNIFIED_INTELLIGENCE.md`), which stays a separate milestone that this one
+now feeds a clean input to.
+
+**Externally blocked, stated rather than glossed.** Whether a real model reasons
+*better* with any of this needs `ANTHROPIC_API_KEY`. Everything deterministic is
+proved: what reaches the payload, what it says, what the prompts instruct, and
+that unknown stays unknown.
 
 ## What this document deliberately does not do
 
