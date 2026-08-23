@@ -1,4 +1,5 @@
 import { speakNewFindings } from "./proactive";
+import { proposeStaffPolicyGap } from "@/lib/businessModel/staffPolicyGap";
 import { prisma, prismaSystem } from "@/lib/prisma";
 import { computeInsights, INSIGHT_ENGINE_CONSUMER } from "./insights";
 import { distillBeliefs } from "./learn";
@@ -76,6 +77,12 @@ export async function runIntelligenceCycle(storeId: string): Promise<Intelligenc
   // this is usually a cheap no-op and never a per-pass AI cost. No briefing is
   // composed from here — that stays owner-attended, exactly as before.
   await runOpportunisticAiReviewIfStale(storeId, store?.userId ?? null, insights);
+
+  // WHAT J4 IS MISSING AND CAN JUSTIFY ASKING FOR (2026-08-23). Deterministic
+  // and cheap — two reads — so it runs unconditionally here rather than inside
+  // the stale-gated AI review, and before the speaking step below so a newly
+  // justified ask can be raised and said in the same pass.
+  await proposeStaffPolicyGap(storeId);
 
   // J4 SAYS WHAT IT NOTICED, last and deterministically (Proactive J4).
   //
