@@ -17,7 +17,7 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
-import { mayInvokeTool, refusalMessage } from "@/lib/execution/toolPolicy";
+import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools } from "@/lib/execution/toolPolicy";
 import { businessBasePath } from "@/lib/dashboard/navConfig";
 import { adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -77,6 +77,7 @@ import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/fac
 import {
   AnswerSupplierEconomicsToolInputSchema,
   buildStoreChatUnifiedTools,
+  allToolUses,
   firstToolUse,
   textOf,
   type BusinessFactCaptureInput,
@@ -2390,6 +2391,7 @@ async function applyGenesisMessageToStore(
   // reaches the same store-identity/content handling every other content
   // edit does, with zero changes to that branching logic itself.
   let chosenTool: ReturnType<typeof firstToolUse> = null;
+  let droppedTools: { name: string; why: "cap" | "second_mutation" }[] = [];
   let conversationalReply = "";
   if (!preClassifiedTool) {
     const unifiedOutcome = await callGenesisModel({
@@ -2404,7 +2406,14 @@ async function applyGenesisMessageToStore(
     stageDurationsMs.unifiedTriage = unifiedOutcome.durationMs;
 
     const unifiedContent = unifiedOutcome.ok ? unifiedOutcome.message.content : [];
-    chosenTool = firstToolUse(unifiedContent);
+    // EVERY TOOL THE MODEL ASKED FOR, then what policy allows — the same plan
+    // the streaming route applies, from the same function. A path that silently
+    // dropped a second request while the other reported it would be its own
+    // kind of drift.
+    const requestedTools = allToolUses(unifiedContent);
+    const plan = planToolRun(requestedTools.map((t) => t.name));
+    droppedTools = plan.dropped;
+    chosenTool = plan.run[0] ? requestedTools.find((t) => t.name === plan.run[0]) ?? null : null;
     conversationalReply = textOf(unifiedContent);
 
     // Pure conversation — the actual fix for "I like Cubit & Coil": no tool
@@ -2509,6 +2518,15 @@ async function applyGenesisMessageToStore(
     });
     revalidatePath(returnTo);
     redirectKeepingChatOpen(returnTo);
+  }
+
+  // WHAT WAS ASKED FOR AND IS NOT HAPPENING, said out loud. Persisted as its
+  // own assistant message before the work, so the stored conversation matches
+  // what the owner is shown.
+  if (droppedTools.length > 0 && chosenTool) {
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: describeDroppedTools(droppedTools) },
+    });
   }
 
   const dataQuestionResult = chosenTool?.name === "look_up_business_data" ? { isDataQuestion: true } : null;

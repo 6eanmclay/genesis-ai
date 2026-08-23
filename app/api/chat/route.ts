@@ -7,7 +7,7 @@ import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
-import { mayInvokeTool, refusalMessage } from "@/lib/execution/toolPolicy";
+import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools } from "@/lib/execution/toolPolicy";
 import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -53,8 +53,8 @@ import { generateProductContentChanges } from "@/lib/execution/productContentGen
 import { describeApprovalExecutionForChat } from "@/lib/dashboard/pendingApprovals";
 import { performApprovePendingChanges } from "@/app/dashboard/ai-actions";
 import {
+  allToolUses,
   buildStoreChatUnifiedTools,
-  firstToolUse,
   AnswerSupplierEconomicsToolInputSchema,
   textOf,
   type BusinessFactCaptureInput,
@@ -464,8 +464,30 @@ export async function POST(request: Request) {
           return;
         }
 
-        const chosenTool = firstToolUse(unifiedOutcome.message.content);
+        // EVERY TOOL THE MODEL ASKED FOR, then what policy allows to run
+        // (2026-08-22, Unified Intelligence UI3).
+        //
+        // firstToolUse took the first block and discarded the rest — silently.
+        // A turn where the merchant asked for two things did one of them and
+        // said nothing about the other, which leaves them believing both
+        // happened. That is the same failure as reporting a change that did not
+        // occur, arriving from the other direction.
+        //
+        // planToolRun applies two rules: a cap, and AT MOST ONE MUTATION per
+        // turn. Reading twice is J4 doing its job; changing two things in one
+        // unreviewed turn is a turn nobody watched. So on a two-action message
+        // the second action is still not executed — deliberately — but it is no
+        // longer invisible.
+        const requestedTools = allToolUses(unifiedOutcome.message.content);
+        const plan = planToolRun(requestedTools.map((t) => t.name));
+        const plannedTools = plan.run
+          .map((name) => requestedTools.find((t) => t.name === name))
+          .filter((t): t is NonNullable<typeof t> => t !== undefined);
+        const chosenTool = plannedTools[0] ?? null;
         const conversationalReply = textOf(unifiedOutcome.message.content);
+        if (plan.dropped.length > 0) {
+          diagLog(requestId, turnStartedAt, "tools_dropped", { dropped: plan.dropped });
+        }
 
         // AUTHORIZATION, AT THE DECISION (2026-08-22, UI2). Before any handler
         // below runs, and shared with the Server Action path so one permission
@@ -503,6 +525,20 @@ export async function POST(request: Request) {
 
         // Pure conversation — already fully streamed above. Persist and
         // finish; no further model or tool work needed.
+        // WHAT WAS ASKED FOR AND IS NOT HAPPENING, said out loud (2026-08-22).
+        //
+        // Written as its own assistant message BEFORE the work, so it is both
+        // streamed and persisted — a notice appended only to the stream would
+        // leave the stored conversation disagreeing with what the owner read.
+        // Phrased forward-looking because that is what is true: the thing was
+        // understood, it simply is not part of this turn.
+        if (plan.dropped.length > 0 && chosenTool) {
+          const notice = describeDroppedTools(plan.dropped);
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: notice } });
+          emit({ type: "token", delta: streamedAnyText ? `\n\n${notice}` : notice });
+          streamedAnyText = true;
+        }
+
         if (!chosenTool && conversationalReply) {
           diagLog(requestId, turnStartedAt, "db_write_start", { kind: "conversational" });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });

@@ -463,11 +463,29 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
 // than one tool in a turn, the rest are deliberately ignored for now rather
 // than handled, a real open question named in the plan (how a turn with
 // multiple tool calls reports back to the owner), not silently guessed at.
+/**
+ * EVERY tool the model asked for, in the order it asked (2026-08-22).
+ *
+ * firstToolUse returned the first block and discarded the rest — silently, with
+ * no error and no log line. A turn where the merchant asked for two things did
+ * one of them and said nothing about the other, which is the same class of
+ * failure as reporting a change that did not happen: the owner is left believing
+ * something was done.
+ */
+export function allToolUses(content: Anthropic.Message["content"]): Anthropic.ToolUseBlock[] {
+  return content.filter((block): block is Anthropic.ToolUseBlock => block.type === "tool_use");
+}
+
+/**
+ * The first tool, kept because most turns have exactly one and every dispatch
+ * site is written against a single choice.
+ *
+ * NOT the whole answer any more — callers take this from the PLANNED list
+ * (lib/execution/toolPolicy.ts's planToolRun), so what runs is what policy
+ * allows rather than whatever happened to be emitted first.
+ */
 export function firstToolUse(content: Anthropic.Message["content"]): Anthropic.ToolUseBlock | null {
-  for (const block of content) {
-    if (block.type === "tool_use") return block;
-  }
-  return null;
+  return allToolUses(content)[0] ?? null;
 }
 
 export function textOf(content: Anthropic.Message["content"]): string {

@@ -196,3 +196,28 @@ export function planToolRun(
 
   return { run, dropped };
 }
+
+/**
+ * What to tell the owner about the things they asked for that are not happening.
+ *
+ * NOT AN APOLOGY AND NOT AN ERROR — the request was understood, it simply is not
+ * part of this turn. Written forward-looking because that is what is true, and
+ * because the alternative the product had until now was saying nothing at all,
+ * which left somebody who asked for two things believing both had been done.
+ *
+ * The two reasons read differently on purpose. Hitting the cap is J4 having more
+ * to do than fits in one turn; a second mutation is a deliberate refusal to
+ * change two things in one unreviewed pass, and saying so plainly is better than
+ * implying J4 merely ran out of room.
+ */
+export function describeDroppedTools(
+  dropped: { name: string; why: "cap" | "second_mutation" }[]
+): string {
+  if (dropped.length === 0) return "";
+  const count = dropped.length;
+  const thing = count === 1 ? "one other thing" : `${count} other things`;
+  const anySecondMutation = dropped.some((d) => d.why === "second_mutation");
+  return anySecondMutation
+    ? `I'm doing one of these at a time so you can see each change before the next — tell me when you want me to pick up ${thing} you asked for.`
+    : `That was more than I'll take on in one go — say the word and I'll pick up ${thing} you asked for next.`;
+}

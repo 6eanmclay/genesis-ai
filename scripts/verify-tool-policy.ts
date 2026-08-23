@@ -1,12 +1,14 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
+import { buildStoreChatUnifiedTools, allToolUses, firstToolUse } from "@/lib/execution/genesisTools";
 import {
   TOOL_POLICY,
   policyFor,
   mayInvokeTool,
   refusalMessage,
   planToolRun,
+  describeDroppedTools,
   MAX_TOOLS_PER_TURN,
 } from "@/lib/execution/toolPolicy";
 import { PERMISSIONS, ROLE_PERMISSIONS, hasPermission } from "@/lib/permissions";
@@ -208,6 +210,47 @@ check("an unknown name reaches the refusal rather than vanishing in planning",
   withUnknown.run, ["not_a_tool"]);
 
 // ============================================================================
+console.log("\n=== 6b. Nothing the model asks for vanishes silently ===\n");
+// ============================================================================
+// firstToolUse returned the first block and discarded the rest, with no error
+// and no log line. A turn where the merchant asked for two things did one of
+// them and said nothing about the other — the same class of failure as reporting
+// a change that did not happen, arriving from the other direction.
+// Shaped as the SDK's own ContentBlock, so this exercises the real signature
+// rather than a convenient stand-in.
+const blocks: Anthropic.ContentBlock[] = [
+  { type: "text", text: "sure", citations: null },
+  { type: "tool_use", id: "1", name: "request_product_content_change", input: {}, caller: { type: "direct" } },
+  { type: "tool_use", id: "2", name: "request_image_change", input: {}, caller: { type: "direct" } },
+];
+check("every tool the model asked for is read",
+  allToolUses(blocks).map((t) => t.name),
+  ["request_product_content_change", "request_image_change"]);
+check("and the first is still the first", firstToolUse(blocks)?.name, "request_product_content_change");
+check("text blocks are not mistaken for tools", allToolUses([{ type: "text", text: "hi", citations: null }]), []);
+
+// THE OWNER IS TOLD. Two changes in one turn is still refused — deliberately,
+// so each is seen before the next — but it is no longer invisible.
+const twoChangeNotice = describeDroppedTools([{ name: "request_image_change", why: "second_mutation" }]);
+assert("a dropped second change produces a real sentence",
+  twoChangeNotice.length > 20 && twoChangeNotice.trim().endsWith("."), twoChangeNotice);
+assert("that says why, rather than implying J4 ran out of room",
+  twoChangeNotice.includes("one of these at a time"), twoChangeNotice);
+assert("and names it as something still to come",
+  twoChangeNotice.includes("pick up"), twoChangeNotice);
+// Never an internal name at an owner.
+assert("without naming the tool", !twoChangeNotice.includes("request_image_change"), twoChangeNotice);
+
+const capNotice = describeDroppedTools([
+  { name: "take_me_there", why: "cap" },
+  { name: "look_up_business_data", why: "cap" },
+]);
+assert("hitting the cap reads differently from refusing a second change",
+  capNotice !== twoChangeNotice, capNotice);
+assert("and counts them", capNotice.includes("2 other things"), capNotice);
+check("nothing dropped says nothing at all", describeDroppedTools([]), "");
+
+// ============================================================================
 console.log("\n=== 7. Both turn implementations use the same decision ===\n");
 // ============================================================================
 // A permission question with two implementations is a permission question that
@@ -224,6 +267,11 @@ for (const [name, source] of [["the streaming route", route], ["the Server Actio
   // left standing would refuse the employee before the tool check ever ran.
   assert(`${name} no longer gates the whole conversation on store:manage`,
     !source.includes("hasPermission(role, PERMISSIONS.STORE_MANAGE)"));
+  // READS EVERY TOOL, not just the first, and decides what runs from policy
+  // rather than from emission order.
+  assert(`${name} reads every tool the model asked for`, source.includes("allToolUses("));
+  assert(`${name} plans what may run`, source.includes("planToolRun("));
+  assert(`${name} tells the owner what it is not doing`, source.includes("describeDroppedTools("));
 }
 
 // The Server Action learns its tool two ways — its own unified call, and the
