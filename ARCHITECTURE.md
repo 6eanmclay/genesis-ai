@@ -142,6 +142,34 @@ Five real phases, in order:
 
 **The invariant this protects, stated plainly:** Genesis must never present an action as executable unless a real registered executable stands behind it, and must never claim a change outside what the proposal actually authorises. A dangling registry reference is how either becomes possible without anybody writing a line of wrong logic.
 
+### The sibling rule: `npx next build` is a gate, and typecheck is not it
+
+**Found 2026-08-23, two commits after it broke.** Four declarations were exported
+from `app/dashboard/ai-actions.ts` so a verification harness could import them.
+That file begins with `"use server"`, and such a module may export ONLY async
+functions — a schema or a string is a build error:
+
+```
+A "use server" file can only export async functions, found object.
+```
+
+For two commits `tsc --noEmit` was clean, all 41 shared suites passed, the
+standalone suites passed, and the application could not be built. Three gates
+agreed and all three were looking somewhere else. It surfaced only because a
+build was explicitly asked for.
+
+**The rule.** A change is not done until `npx next build` has run.
+
+**Not `npm run build`.** That script is `node scripts/migrate-deploy.mjs && next
+build`, and the first half runs `prisma migrate deploy` against whatever `.env`
+points at — production. `npx next build` skips it.
+
+The corollary is the one worth remembering: **a test's need to import something
+is not a reason to export it.** If a test needs a prompt or a schema out of a
+`"use server"` module, the declaration moves to a plain module under `lib/`
+first — `lib/dashboard/storeChatUnified.ts` is the precedent. See
+`PROMPT_MODULE_EXTRACTION.md`.
+
 ### The sibling rule: comments document the reason, source is the evidence
 
 **Found five times in one session, each time the same way.** A source-level
