@@ -142,6 +142,37 @@ Five real phases, in order:
 
 **The invariant this protects, stated plainly:** Genesis must never present an action as executable unless a real registered executable stands behind it, and must never claim a change outside what the proposal actually authorises. A dangling registry reference is how either becomes possible without anybody writing a line of wrong logic.
 
+### The sibling rule: a check is only as wide as what it was asked about
+
+**Found 2026-08-23, in the authorization path, by two correct features meeting.**
+Genesis checked whether the viewer could invoke the tool a turn had decided on.
+Separately, a turn stopped discarding every tool the model asked for after the
+first. Neither change is wrong. Together, the check ran on the head of a list
+and the whole list ran — an employee's allowed read carried an unauthorized
+product deletion behind it.
+
+Nothing about this is visible in either diff. The permission function was
+correct, its caller passed it a real tool name, and the type system was
+satisfied throughout. What changed underneath was the ARITY of the thing being
+authorized: `the tool` became `the tools`, and one call site kept the singular.
+
+**The rule.** When a check takes a single subject and the thing it protects can
+have several, the check must take the collection. Not "check the first and
+assume the rest match" — they do not, and the mixed case (a permitted read
+alongside a forbidden mutation) is the ordinary one rather than the exotic one.
+And when a caller can forget to run the check at all, repeat it at the point the
+work actually happens: `lib/dashboard/runToolTurn.ts` refuses an unauthorized
+turn even though both of its callers already did, because the failure that made
+that module necessary was precisely a second caller that had forgotten a step.
+
+**How to test it.** A source assertion that the check is CALLED is not enough —
+the first version here asserted `firstRefusedTool(role,` appeared, and a
+negative control that narrowed the argument back to `[chosenTool.name]` passed
+it with the hole fully reintroduced. Assert what the check is ASKED ABOUT, and
+where possible assert it behaviourally: `scripts/verify-tool-handlers.ts` runs a
+real turn as an EMPLOYEE and asserts no message was written and no deletion
+proposed. That is the assertion that caught the narrowed check.
+
 ### The sibling rule: a registry lookup is only as closed as its key
 
 Found six times in one day, in six unrelated parts of the codebase, always the same two lines:

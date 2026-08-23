@@ -90,6 +90,44 @@ Six things changed:
    classifies twice, with and without, so the question below can finally be
    answered with evidence.
 
+### What the audit found afterwards (2026-08-23)
+
+Three defects, none of them present before this milestone, all three made by
+two changes that were each correct on their own.
+
+**An authorization hole, and the most serious thing found here.** UI2 moved the
+permission check off the conversation and onto the capability, asked after the
+model picks a tool. UI5 stopped a turn discarding everything the model asked for
+after the first tool. Together, the check ran on the head of the planned list
+and the whole list ran. "What sold worst last month? Get rid of it" plans a read
+and then a mutation; the read is allowed for an employee with `genesis:chat`,
+that was the only thing asked, and `request_product_removal` proposed a deletion
+behind it. `firstRefusedTool` now asks about every planned tool — and returns
+the first REFUSED one, not the first requested one, because naming the read
+would tell an employee their question was declined. The whole turn is refused
+rather than the offending tool skipped: running half of what somebody asked for
+is a decision nobody has made. The check is repeated inside `runPlannedTools`,
+where every tool actually executes, so a third caller written later cannot
+execute anything.
+
+**The Server Action planned every tool and ran one.** Its own comment claimed it
+applied "the same plan the streaming route applies". It read every tool, planned
+every tool, took `plan.run[0]` and discarded the rest — which are absent from
+`plan.dropped` precisely because policy ALLOWED them, so nothing said they had
+gone. The silence UI5 exists to end, surviving on one path while the other
+reported it.
+
+**J4 declined something the merchant had not said yet.** The route says what it
+is not doing before it does the work — correctly — but does not write the
+merchant's own message until it knows the turn resolved locally, so persisting
+the notice when it was spoken filed it first. Scrolling back showed the refusal
+above the message it answers. It travels with the turn now.
+
+The pattern in all three is worth naming: **each was two correct features
+meeting.** None would have been caught by reviewing either change alone, and the
+one that mattered was found by asking what a check assumes rather than whether
+it runs.
+
 ### What is still open
 
 - **The legacy content chain** (`STORE_CHAT_PRIMARY` → `CHAT_SECONDARY` →
