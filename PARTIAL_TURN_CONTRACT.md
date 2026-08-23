@@ -1,6 +1,6 @@
 # D1/D2 — partial-turn semantics, ready to authorize
 
-**Status: PREPARED, NOT IMPLEMENTED.** 2026-08-23.
+**Status: SHIPPED 2026-08-23** (`54a272d`). Implemented as written, D1(b) + D2(a).
 Supersedes Problem 1 of `PARTIAL_TURN_SEMANTICS.md`, which stated the failure
 modes. This states the semantics. **D4 remains separate and is not assumed here.**
 

@@ -1,8 +1,10 @@
 # D4 — an approval whose execution started and never resolved
 
-**Status: AUDIT AND CONTRACT. NOT IMPLEMENTED.** 2026-08-23.
-The smallest viable recovery model, with the decision isolated at the end. No
-policy has been chosen here.
+**Status: DECISION-READY. NOT IMPLEMENTED.** 2026-08-23.
+
+The recovery policy is now **resolved and argued** — option (b), evidence then
+time — on two architectural facts that were not visible from the failure modes
+alone. It awaits Sean's approval of that policy, not further analysis.
 
 ## The race, exactly
 
@@ -71,31 +73,91 @@ is not already built.
 Every other property already holds: the business is resolved from the approval's
 own row, `execute()` still does the verification, and the owner still decides.
 
-## The decision — and it is one decision, not four
+## The decision, resolved: (b), evidence then time
 
-**D4 — how does a claimed approval that never resolved come back?**
+Sean asked for the safest practical policy, argued against the architecture. Two
+facts settle it, and neither was visible from the failure modes alone.
 
-- **(a) Time alone.** A row `EXECUTING` for longer than N minutes returns to
-  `PENDING_APPROVAL`. Simple, needs no new reads — and it can re-run a change
-  that actually succeeded, because time says nothing about what happened.
-- **(b) Evidence, then time.** Before releasing, look for an `ExecutionLog` row
-  for that `executionId`. Present and successful → mark `EXECUTED` (it did
-  happen). Absent → release to `PENDING_APPROVAL`. This is not a guess: the
-  engine writes that row before the growth-point deduction, so its presence is
-  real evidence the work completed. Costs one indexed read per stuck row.
-- **(c) Never automatic.** A stuck row stays `EXECUTING` and is surfaced to the
-  owner as "I started this and lost track of it" with a manual retry. Safest,
-  and puts a system failure in front of the owner as their problem.
+### Fact 1 — the caller can choose the executionId
 
-**My reading, offered as a recommendation and not acted on:** (b). It is the only
-option that distinguishes "never ran" from "ran and we lost the answer", and that
-distinction is the entire risk. (a) can double-execute — the exact defect being
-fixed. (c) is honest but asks the owner to adjudicate an internal failure.
+`execute()` generates an `executionId` internally (`engine.ts:100`) **but accepts
+one**: `opts.executionId`, documented there as "the executionId of a prior
+PENDING row, to record this call as its". `ExecutionLog.executionId` is a real
+indexed column.
 
-**Where the sweep runs, if (b):** at the start of `getPendingApprovals` — the
-read the review page already makes — so recovery happens when somebody looks,
-with no scheduler and no new entry point. That detail is part of the same
-decision and I would not choose it separately.
+This is what makes evidence-based recovery *exact* rather than a guess. The claim
+can mint the id, store it on the approval, and hand it to `execute()`. Recovery
+then asks a precise question — *is there an execution row for THIS attempt* —
+instead of inferring from elapsed time.
+
+Without this the honest answer would have been (c), because "has it been five
+minutes" tells you nothing about what a provider did.
+
+### Fact 2 — the execution row is written before the money moves
+
+`engine.ts` calls `recordExecution(result)` (line 243) and only then
+`deductGrowthPoints` (line 259), inside its own `try`, deliberately
+under-charging on a ledger error. So an execution row's existence proves the work
+completed, and its absence proves the deduction never happened.
+
+That gives recovery a total order to reason against:
+
+| Died after | Execution row | Points taken | Recovery does |
+|---|---|---|---|
+| run() completed, before recordExecution | no | no | **releases → owner retries → the provider work repeats** |
+| recordExecution, before deduction | yes (SUCCESS) | no | marks `EXECUTED`; under-charged |
+| deduction | yes | yes | marks `EXECUTED`; correct |
+| run() failed | yes (FAILED) | no | releases; correct — retry is real |
+
+### The answer to the question as asked
+
+**"J4 starts an external execution, the database still says PENDING, and the
+provider's outcome is unknown."** Under (b) the database never says `PENDING`
+during execution — that is the defect. It says `EXECUTING` with an
+`executionId`, and the provider's outcome stops being unknown the moment
+recovery reads the execution row for that id. Unknown collapses to a real
+question with a real answer, except in one window.
+
+### The residual risk, stated rather than glossed
+
+**One window remains unrecoverable: the process dies after the provider
+succeeded and before `recordExecution` runs.** No evidence exists, recovery
+releases the row, the owner retries, and the provider operation happens twice.
+
+It cannot be closed from this side — closing it means an idempotency key at each
+provider, which is per-connector work and a separate milestone. What can be said
+honestly:
+
+- The window is milliseconds between two adjacent statements, versus today's
+  window which is the entire duration of the external call.
+- Growth points are safe in it: no execution row means no deduction, so a repeat
+  charges once in total.
+- The only executable that registers with a provider is
+  `createProductFromDesignExecutable`, and D3's unique index already refuses a
+  second product for the same design — so the highest-stakes case is covered by
+  work already shipped.
+
+### Why not the others
+
+**(a) time alone** — releases on elapsed time with no evidence, so it re-runs
+changes that actually succeeded. That is the defect this milestone exists to
+remove, reintroduced with a delay on it. Rejected outright.
+
+**(c) never automatic** — safe, and it puts an internal failure in front of the
+owner as a decision they cannot make: they have no way to know whether the
+provider ran. It also strands the approval until somebody notices. Reasonable
+only if Fact 1 were false.
+
+### Where recovery runs
+
+At the start of `getPendingApprovals` — the read the review page already makes.
+No scheduler, no new entry point, and it happens exactly when somebody is looking
+at the list a stuck row would otherwise be missing from. A row still `EXECUTING`
+with no execution row after a short grace period (to avoid racing a live
+execution) is released; one with a row is resolved to match it.
+
+The grace period is the only tunable, and it guards nothing but a live in-flight
+call — it is not a correctness parameter.
 
 ## Verification, once decided
 
