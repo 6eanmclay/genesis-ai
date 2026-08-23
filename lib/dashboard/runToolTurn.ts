@@ -283,6 +283,15 @@ export async function persistToolTurn(input: {
    */
   droppedNotice?: string | null;
   /**
+   * The conversation this turn belongs to, when it belongs to one (UI6 piece 2).
+   *
+   * Threaded rather than looked up: the caller has already checked the
+   * conversation is in this business, and a second lookup here would be a
+   * second answer to that question. Undefined means the ongoing default — which
+   * is every turn today and every turn written before conversations existed.
+   */
+  conversationId?: string | null;
+  /**
    * The tool that did not run, when the turn stopped part-way (D1).
    *
    * Written as its own assistant message AFTER the replies of everything that
@@ -298,6 +307,7 @@ export async function persistToolTurn(input: {
         storeId: input.storeId,
         role: "user",
         content: input.userMessage,
+        conversationId: input.conversationId ?? null,
         ...(input.userMessageChanges ? { changes: input.userMessageChanges as object } : {}),
       },
     });
@@ -305,7 +315,12 @@ export async function persistToolTurn(input: {
 
   if (input.droppedNotice) {
     await prisma.storeMessage.create({
-      data: { storeId: input.storeId, role: "assistant", content: input.droppedNotice },
+      data: {
+        storeId: input.storeId,
+        role: "assistant",
+        content: input.droppedNotice,
+        conversationId: input.conversationId ?? null,
+      },
     });
   }
 
@@ -358,6 +373,9 @@ export async function persistToolTurn(input: {
         ...(result.messageChanges ? { changes: result.messageChanges } : {}),
         // What actually happened, joined to what was said about it.
         executionLogId: logged.id,
+        // THE WHOLE TURN LANDS IN ONE CONVERSATION. A reply belonging somewhere
+        // its own question does not is how a thread stops being a record.
+        conversationId: input.conversationId ?? null,
       },
     });
   }
@@ -381,7 +399,13 @@ export async function persistToolTurn(input: {
       metadata: { kind: "turn_unfinished", failedTool: input.unfinished.failedTool },
     });
     await prisma.storeMessage.create({
-      data: { storeId: input.storeId, role: "assistant", content, executionLogId: logged.id },
+      data: {
+        storeId: input.storeId,
+        role: "assistant",
+        content,
+        executionLogId: logged.id,
+        conversationId: input.conversationId ?? null,
+      },
     });
   }
 }

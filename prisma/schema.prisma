@@ -476,6 +476,7 @@ model Store {
 
   @@index([planId])
   proactiveDeliveries ProactiveDelivery[]
+  conversations Conversation[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -661,6 +662,38 @@ model StoreDraftMessage {
   storeDraft StoreDraft @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
 }
 
+/// A conversation, as UI6 defines one: an explicit, persistent thread.
+///
+/// NOT A TASK, and not a time window. J4 has to hold conversations about
+/// products, customers, documents, decisions, questions and problems —
+/// anchoring identity on tasks would have forced every one of those to become a
+/// task in order to exist. An anchor is optional metadata; identity is this row.
+///
+/// DELIBERATELY SMALL. There is no closedAt, no archivedAt and no generated
+/// title, because none was decided — and a column that could hold one is not a
+/// reason to build the behaviour behind it.
+model Conversation {
+  id      String  @id @default(cuid())
+  storeId String
+  /// Optional, and supplied by the owner. Nothing generates it: a J4-titled
+  /// thread would make this milestone depend on a model credential, and nothing
+  /// else in it does.
+  name    String?
+  /// OPTIONAL CONTEXT, NEVER IDENTITY. Removing the anchor must leave the
+  /// conversation and its messages exactly where they are — SetNull, not
+  /// Cascade, and the suite asserts it.
+  taskId  String?
+
+  createdAt DateTime @default(now())
+
+  store    Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  task     Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  messages StoreMessage[]
+
+  @@index([storeId, createdAt])
+  @@index([taskId])
+}
+
 model StoreMessage {
   id        String   @id @default(cuid())
   storeId   String
@@ -695,13 +728,24 @@ model StoreMessage {
   // delete what J4 said about it.
   executionLogId String?
 
+  /// WHICH CONVERSATION THIS BELONGS TO, when it belongs to one (UI6 piece 2).
+  ///
+  /// Nullable and NEVER BACKFILLED. Every message written before conversations
+  /// existed keeps a null, and null means exactly that — no conversation was
+  /// recorded — rather than a manufactured one. The grouping did not exist when
+  /// those rows were written, and inventing one would be inventing history, the
+  /// same call made for executionLogId above.
+  conversationId String?
+
   store               Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
   task                Task?               @relation(fields: [taskId], references: [id], onDelete: SetNull)
   executionLog        ExecutionLog?       @relation(fields: [executionLogId], references: [id], onDelete: SetNull)
   proactiveDeliveries ProactiveDelivery[]
+  conversation        Conversation?       @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   @@index([taskId])
   @@index([executionLogId])
+  @@index([conversationId])
 }
 
 model StoreGeneration {
@@ -1808,6 +1852,7 @@ model Task {
 
   @@unique([storeId, dedupeKey])
   @@index([storeId, status])
+  conversations Conversation[]
 }
 
 // Family-beta behavioral/friction instrumentation (v20). One generic,
