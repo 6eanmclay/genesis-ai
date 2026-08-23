@@ -475,6 +475,7 @@ model Store {
   supplierEconomics         SupplierEconomics[]
 
   @@index([planId])
+  proactiveDeliveries ProactiveDelivery[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -694,9 +695,10 @@ model StoreMessage {
   // delete what J4 said about it.
   executionLogId String?
 
-  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  task         Task?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  executionLog ExecutionLog? @relation(fields: [executionLogId], references: [id], onDelete: SetNull)
+  store               Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  task                Task?               @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  executionLog        ExecutionLog?       @relation(fields: [executionLogId], references: [id], onDelete: SetNull)
+  proactiveDeliveries ProactiveDelivery[]
 
   @@index([taskId])
   @@index([executionLogId])
@@ -1654,10 +1656,54 @@ model GenesisObservation {
   recordId        String?
   entityType      String?
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store               Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  proactiveDeliveries ProactiveDelivery[]
 
   @@unique([storeId, dedupeKey])
   @@index([storeId, status])
+}
+
+/// WHAT J4 HAS ALREADY SAID OUT LOUD, and nothing else.
+///
+/// Proactive J4, 2026-08-23. Deliberately NOT a second representation of a
+/// finding — GenesisObservation stays the only source of truth for what is true
+/// about a business. This records one fact that row cannot: whether J4 has
+/// spoken about this occurrence of it.
+///
+/// The distinction is the whole reason this table exists. A card may sit on the
+/// dashboard for as long as a finding is true, and `notifyFromInsights`
+/// deliberately keeps re-confirming it — suppressing a still-true finding would
+/// silently retract it. A SENTENCE cannot work that way: saying the same thing
+/// every cycle is how a partner becomes a feed.
+///
+/// RE-ENGAGEMENT, and why it needs `closedAt` rather than a plain unique key.
+/// upsertObservation reuses the same row when a finding resolves and later
+/// recurs, so the observation id is stable across occurrences. Keyed on the id
+/// alone, a finding that came back months later could never be mentioned again.
+/// Instead a delivery is CLOSED when its finding stops being active, and the
+/// partial unique index below allows exactly one OPEN delivery per finding —
+/// so J4 speaks once per occurrence, enforced by the database rather than by
+/// remembering to check.
+///
+/// Closing a delivery never touches the message. What J4 said stays said: a
+/// finding disappearing later does not un-say it.
+model ProactiveDelivery {
+  id            String    @id @default(cuid())
+  storeId       String
+  observationId String
+  /// The message the owner actually saw. Kept even after this delivery closes.
+  storeMessageId String
+  spokenAt      DateTime  @default(now())
+  /// Set when the finding stopped being active. Null means J4 has spoken about
+  /// this occurrence and has not been released to speak about it again.
+  closedAt      DateTime?
+
+  store        Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  observation  GenesisObservation @relation(fields: [observationId], references: [id], onDelete: Cascade)
+  storeMessage StoreMessage       @relation(fields: [storeMessageId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, closedAt])
+  @@index([storeMessageId])
 }
 
 // J4 Noticed dismiss/exit (2026-08-08) — "dismissal must NOT mean

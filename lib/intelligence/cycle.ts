@@ -1,3 +1,4 @@
+import { speakNewFindings } from "./proactive";
 import { prisma, prismaSystem } from "@/lib/prisma";
 import { computeInsights, INSIGHT_ENGINE_CONSUMER } from "./insights";
 import { distillBeliefs } from "./learn";
@@ -30,6 +31,13 @@ export interface IntelligenceCycleSummary {
   ok: boolean;
   /** Insights computed this pass. Zero is a real, valid result. */
   insights: number;
+  /**
+   * Findings J4 spoke about in the conversation this pass.
+   *
+   * Zero is the ordinary outcome and not a failure — it means nothing new
+   * became true, or everything true had already been said.
+   */
+  spoken: number;
 }
 
 /**
@@ -69,7 +77,18 @@ export async function runIntelligenceCycle(storeId: string): Promise<Intelligenc
   // composed from here — that stays owner-attended, exactly as before.
   await runOpportunisticAiReviewIfStale(storeId, store?.userId ?? null, insights);
 
-  return { storeId, ok: true, insights: insights.length };
+  // J4 SAYS WHAT IT NOTICED, last and deterministically (Proactive J4).
+  //
+  // After the findings sweep above, so it speaks about the set that is true
+  // NOW rather than the one from before this pass. No model, no session, no
+  // active-business pointer — the storeId this function was called with is the
+  // business, all the way down.
+  //
+  // Silence is an ordinary outcome: a business where nothing changed hears
+  // nothing, however often this runs.
+  const spoke = await speakNewFindings(storeId);
+
+  return { storeId, ok: true, insights: insights.length, spoken: spoke.spoken };
 }
 
 export interface StoreEventActivity {
@@ -194,7 +213,11 @@ export async function runDueIntelligenceCycles(
       // happened". Insights may already have been recorded and beliefs already
       // distilled, both of which are real and durable. The one thing a failed
       // pass never does is claim insights it did not produce.
-      summaries.push({ storeId, ok: false, insights: 0 });
+      // Same honesty as `insights: 0` above: a failed pass never claims to
+      // have said something. If it spoke before failing, the message and its
+      // delivery row are already real and durable — this number is what THIS
+      // summary can honestly attest to, not a retraction.
+      summaries.push({ storeId, ok: false, insights: 0, spoken: 0 });
     }
   }
   return summaries;
