@@ -234,6 +234,64 @@ async function main() {
   check("and the neighbour reads no messages from it",
     (await conversationMessages(neighbour.id, thread.id)).length, 0);
 
+  // ==========================================================================
+  console.log("\n=== 6. The owner-facing surface ===\n");
+  // ==========================================================================
+  // A conversation is not a feature if the owner cannot start one, see the ones
+  // they have, or return to one. This is the rest of piece 2, not piece 1.
+
+  // WHAT THE PICKER IS GIVEN. listConversations is what the surface reads, so
+  // the counts and last-message times it shows are asserted here rather than
+  // trusted to a component.
+  const listed = await listConversations(shop.id);
+  const pricing = listed.find((c) => c.id === thread.id);
+  check("a conversation reports how much was said in it", pricing?.messageCount, 4);
+  assert("and when it was last spoken in", pricing?.lastMessageAt !== null, "needed to order or label it");
+  const empty = listed.find((c) => c.id === unnamed.id);
+  check("a conversation nobody has used yet reports zero", empty?.messageCount, 0);
+  check("and has no last message", empty?.lastMessageAt, null);
+
+  // NEWEST FIRST, so the picker's order is the surface's and not the client's.
+  const times = listed.map((c) => c.createdAt.getTime());
+  assert("the list is newest first",
+    times.every((t, i) => i === 0 || times[i - 1] >= t), JSON.stringify(times));
+
+  // THE REQUEST PATH'S GUARD. A conversation id arrives in a POST body, so an
+  // unchecked one would write a turn into another business's thread — the
+  // defect class UI6's first half removed, arriving through a new door.
+  const routeSrc = readFileSync(join(process.cwd(), "app", "api", "chat", "route.ts"), "utf8");
+  assert("the route checks the conversation belongs to this business",
+    routeSrc.includes("await conversationInBusiness(store.id, requestedConversationId)"),
+    "an id from a request body is not evidence it belongs here");
+  assert("and reads that conversation's own history",
+    routeSrc.includes("where: { storeId: store.id, conversationId },"),
+    "reading the whole store would put another conversation's exchange in the prompt");
+  assert("still scoped to the business, never only to the conversation",
+    !routeSrc.includes("where: { conversationId },"),
+    "conversationId narrows within a business; it never replaces the business filter");
+
+  // CREATION HAS EXACTLY ONE DOOR, and the turn path is not it.
+  const turnSrc = readFileSync(join(process.cwd(), "lib", "dashboard", "runToolTurn.ts"), "utf8");
+  assert("no turn creates a conversation",
+    !/conversation\.create|createConversation/.test(turnSrc),
+    "explicit means a conversation cannot appear as a side effect of sending a message");
+  const actionSrc = readFileSync(join(process.cwd(), "app", "j4", "conversation-actions.ts"), "utf8");
+  assert("the one that does resolves its business from the surface",
+    actionSrc.includes("requireBusinessOrActive(PERMISSIONS.GENESIS_CHAT, slug)"),
+    "a new write path must not read the account's active pointer");
+
+  // THE PICKER OFFERS NOTHING THE CONTRACT REFUSED. No rename, no close, no
+  // archive, no delete — and the check is on the component, where such a
+  // control would have to live.
+  const pickerSrc = readFileSync(join(process.cwd(), "app", "j4", "ConversationPicker.tsx"), "utf8");
+  for (const absent of ["Rename", "Archive", "Delete", "Close conversation"]) {
+    assert(`the picker offers no "${absent}"`,
+      !pickerSrc.includes(absent), "v1 has no such behaviour");
+  }
+  assert("and nothing in it generates a name",
+    !/callGenesisModel|generateName|autoTitle/i.test(pickerSrc),
+    "a name is the owner's or it is null");
+
   await prisma.$disconnect();
   await db.close();
 

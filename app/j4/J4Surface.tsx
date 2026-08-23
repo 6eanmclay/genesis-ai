@@ -15,6 +15,7 @@ import { J4Proposal } from "./J4Proposal";
 import { getOpenProposals } from "@/lib/storefront/proposals";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { messageStateOf } from "@/lib/j4/messageState";
+import { listConversations } from "@/lib/j4/conversations";
 import { proposalJ4Raised } from "@/lib/intelligence/proactive";
 
 // J4's real conversation, rendered on either of its two surfaces
@@ -340,6 +341,11 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   const otherPendingCount = Math.max(0, openProposals.length - 1);
   const storefrontUrl = proposalOnTable ? `${await getBaseUrl()}/store/${store.slug}` : null;
 
+  // THE OWNER'S CONVERSATIONS (UI6 piece 2). Read here rather than in the
+  // client so the layer stays a client component that is handed its data, the
+  // same arrangement the proposal card already uses.
+  const conversations = await listConversations(store.id);
+
   const messages = recentMessages.reverse();
   const urgentObservations = observations.filter((o) => o.genesisState === "urgent");
   const ideas = observations.filter((o) => o.genesisState === "opportunity");
@@ -357,11 +363,20 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
       surface={surface}
       slug={slug}
       storeName={store.name}
+      conversations={conversations.map((c) => ({
+        id: c.id,
+        name: c.name,
+        messageCount: c.messageCount,
+        lastMessageAt: c.lastMessageAt ? c.lastMessageAt.toISOString() : null,
+      }))}
       messages={messages.map((m) => ({
         id: m.id,
         role: m.role,
         content: m.content,
         changes: m.changes,
+        // Which conversation this belongs to, or null for everything written
+        // before conversations existed. Never manufactured.
+        conversationId: m.conversationId,
         // Derived on the server from the execution row, never from the words.
         // A message with no row is "spoken" — see messageStateOf on why that
         // must not read as success.

@@ -8,6 +8,7 @@ import { upload as blobUpload } from "@vercel/blob/client";
 import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { MESSAGE_STATE_LABEL, needsOwner, type MessageState } from "@/lib/j4/messageState";
+import { ConversationPicker, type ConversationOption } from "./ConversationPicker";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
@@ -52,6 +53,8 @@ type Message = {
   role: string;
   content: string;
   changes: unknown;
+  /** Null for everything written before conversations existed. */
+  conversationId?: string | null;
   /**
    * What the message turned out to be, from its execution row.
    *
@@ -798,6 +801,7 @@ export function J4Workspace({
   understanding,
   surface,
   proposal,
+  conversations = [],
 }: {
   /**
    * The business this workspace is for, when it was named in the URL.
@@ -808,6 +812,8 @@ export function J4Workspace({
    */
   slug?: string;
   storeName: string;
+  /** The owner's conversations, newest first. */
+  conversations?: ConversationOption[];
   messages: Message[];
   sendMessage: (formData: FormData) => void;
   uploadAsset: (formData: FormData) => void;
@@ -910,7 +916,18 @@ export function J4Workspace({
   // grows the streamed reply, resynced from real server data whenever it
   // changes (React's own recommended "adjust state during render" pattern
   // — see the same reasoning this replaced in GenesisAssistant.tsx).
+  // WHICH CONVERSATION THE OWNER IS IN. Null is "everything else" — the
+  // ungrouped history, which is not a conversation and is not treated as one.
+  const [conversationId, setConversationId] = useState<string | null>(null);
+
   const [localMessages, setLocalMessages] = useState<Message[]>(messages);
+  // What the owner is reading: one conversation, or the ungrouped history.
+  // Filtered here rather than re-fetched, because the surface already sent the
+  // window and a second read would be a second answer to "what was said".
+  const visibleMessages = localMessages.filter(
+    (m) => (m.conversationId ?? null) === conversationId
+  );
+
   const [syncedMessages, setSyncedMessages] = useState(messages);
   if (messages !== syncedMessages) {
     setSyncedMessages(messages);
@@ -1252,7 +1269,16 @@ export function J4Workspace({
         // workspacePath is what the owner is looking at while asking. The
         // server matches it against a closed registry and ignores anything
         // it does not recognise, so this is a hint, never a channel.
-        body: JSON.stringify({ message: text, requestId, audioUrl: audioUrl ?? undefined, workspacePath: currentPath, slug }),
+        body: JSON.stringify({
+          message: text,
+          requestId,
+          audioUrl: audioUrl ?? undefined,
+          workspacePath: currentPath,
+          slug,
+          // The conversation this turn belongs to. Null means the ungrouped
+          // history, which is what every turn was before piece 2.
+          conversationId,
+        }),
       });
     } catch (err) {
       reportDiag(requestId, tStart, "client_fetch_threw", { message: err instanceof Error ? err.message : String(err) });
@@ -1792,8 +1818,21 @@ export function J4Workspace({
             not a panel bolted underneath one. Rendered after the whole
             conversation branch rather than inside the has-messages case, so a
             proposal raised without any chat turn still appears. */}
+        {/* THE OWNER'S CONVERSATIONS (UI6 piece 2). Above the exchange rather
+            than hidden behind a menu: a conversation is only a feature if the
+            owner can see the ones they have and return to one. */}
+        {shownCategory === "conversation" && conversations.length > 0 && (
+          <div className="mb-3">
+            <ConversationPicker
+              conversations={conversations}
+              selectedId={conversationId}
+              onSelect={setConversationId}
+              slug={slug}
+            />
+          </div>
+        )}
         {shownCategory === "conversation" ? (
-          localMessages.length === 0 ? (
+          visibleMessages.length === 0 ? (
             <div className="text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
               <p className="font-medium text-[#f4f2fb]">Your business partner, always paying attention.</p>
               <p className="mt-1">
@@ -1803,12 +1842,12 @@ export function J4Workspace({
             </div>
           ) : (
             <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
-              {localMessages.map((m, i) => {
+              {visibleMessages.map((m, i) => {
                 const changeList = extractChangeList(m.changes);
                 const imageUrl = extractImageUrl(m.changes);
                 const imageUrls = extractImageUrls(m.changes);
                 const audioUrl = extractAudioUrl(m.changes);
-                const isLastMessage = i === localMessages.length - 1;
+                const isLastMessage = i === visibleMessages.length - 1;
                 // Only ever shown on the most recent turn — an older
                 // batch's quick-replies would be stale once the
                 // conversation has moved on (see uploadPhotoBatchFromChat's

@@ -19,6 +19,7 @@ import {
   unfinishedTurnMessage,
 } from "@/lib/dashboard/runToolTurn";
 import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
+import { conversationInBusiness } from "@/lib/j4/conversations";
 import { callGenesisModel } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
@@ -128,7 +129,15 @@ function diagLog(requestId: string, turnStartedAt: number, event: string, meta?:
 export async function POST(request: Request) {
   const turnStartedAt = Date.now();
   const body = (await request.json().catch(() => null)) as
-    | { message?: string; requestId?: string; audioUrl?: string; workspacePath?: string; slug?: string }
+    | {
+        message?: string;
+        requestId?: string;
+        audioUrl?: string;
+        workspacePath?: string;
+        slug?: string;
+        /** The conversation this turn joins, checked against the business below. */
+        conversationId?: string;
+      }
     | null;
   const requestId = body?.requestId ?? "unknown";
   diagLog(requestId, turnStartedAt, "request_received");
@@ -192,6 +201,22 @@ export async function POST(request: Request) {
   // existing typed-message write byte-for-byte.
   const userMessageChanges = body?.audioUrl ? { audioUrl: body.audioUrl } : undefined;
 
+  // WHICH CONVERSATION THIS TURN JOINS (UI6 piece 2).
+  //
+  // CHECKED AGAINST THIS BUSINESS, never trusted. The id arrives in a request
+  // body, so an unchecked one would let a turn be written into another
+  // business's thread — the defect class UI6's first half removed, arriving
+  // through a new door. conversationInBusiness returns the id or null, so a
+  // caller cannot forget to use the checked value.
+  //
+  // Null is the ordinary case and always has been: every turn before piece 2,
+  // and every turn an owner sends from the ungrouped history.
+  const requestedConversationId =
+    typeof body?.conversationId === "string" ? body.conversationId : null;
+  const conversationId = requestedConversationId
+    ? await conversationInBusiness(store.id, requestedConversationId)
+    : null;
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       // Real production bug (2026-08-07) — the client never visibly
@@ -242,7 +267,13 @@ export async function POST(request: Request) {
 
       try {
         const recentMessages = await prisma.storeMessage.findMany({
-          where: { storeId: store.id },
+          // ONE CONVERSATION'S OWN HISTORY, when the turn is in one. Reading the
+          // whole store here would put another conversation's exchange in the
+          // prompt and J4 would answer as though it had been part of this one.
+          //
+          // Still store-scoped either way: conversationId narrows within a
+          // business, it never replaces the business filter.
+          where: { storeId: store.id, conversationId },
           orderBy: { createdAt: "desc" },
           take: CHAT_HISTORY_WINDOW,
         });
@@ -617,6 +648,7 @@ export async function POST(request: Request) {
             // Nothing was written for this turn until now, so the route owns
             // the merchant's message.
             writeUserMessage: true,
+            conversationId,
             droppedNotice,
             results: completed,
             unfinished: unfinished

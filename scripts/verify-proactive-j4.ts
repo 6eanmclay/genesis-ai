@@ -401,9 +401,18 @@ async function main() {
     const source = readFileSync(join(process.cwd(), ...relative), "utf8");
     const query = source.slice(source.indexOf("const recentMessages = await prisma.storeMessage.findMany("));
     const head = query.slice(0, query.indexOf("});") + 3);
+    // ALWAYS storeId, and since UI6 piece 2 the streaming route also narrows to
+    // the conversation the turn is in. That narrows WITHIN a business and never
+    // replaces the business filter — this assertion was written before
+    // conversations existed and pinned the exact old shape, so it now checks the
+    // property it was actually protecting rather than the string it happened to
+    // match.
     assert(`${name} reads the conversation scoped to its business`,
-      head.includes("where: { storeId: store.id }"),
+      head.includes("storeId: store.id"),
       "an unscoped history read would put another business's conversation in the prompt");
+    assert(`${name} never scopes by conversation alone`,
+      !head.includes("where: { conversationId }"),
+      "a conversation id without a business filter is another business's history one id away");
     assert(`${name} does not filter the conversation by role`,
       !head.includes("role:"),
       "filtering by role would drop what J4 said, including everything it raised itself");
