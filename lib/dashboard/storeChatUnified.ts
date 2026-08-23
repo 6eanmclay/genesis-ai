@@ -21,15 +21,18 @@ import { z } from "zod";
 // deterministic string, not model-generated — this is precisely the kind
 // of claim ("uploads work, here's how") that must never be paraphrased
 // into something inaccurate the way the fallback path already was.
-export const UploadIntentSchema = z.object({
-  isUploadIntent: z.boolean(),
-});
-
-export const STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT = `You are Genesis, triaging one incoming message from a merchant about their live store, before anything else runs. Decide only one thing: is this message, in its entirety, just the merchant saying they have files — photos, documents, PDFs, spreadsheets, contracts, logos, invoices, SOPs, or similar — that they want to give Genesis, or asking how to upload/share files with Genesis?
-
-Set isUploadIntent: true only when the WHOLE message is that, and nothing else — "I have files I want to upload," "can I send you my logo," "I have a PDF of my supplier contract," "how do I upload photos," "I want to give you some documents about my business," or similar, with no other real request riding along.
-
-Set isUploadIntent: false for everything else — including a message that merely mentions a photo or document in passing without expressing intent to provide one right now (e.g. "the photo on my homepage looks bad" is about existing content, not an upload), and, critically, a compound message where uploading is only ONE part of what's being asked (e.g. "remove the old products and let's upload the first ring" is a real instruction about removal that happens to also mention uploading — false, so the merchant's full message gets real understanding instead of a canned upload-only reply that would silently drop everything else they said).`;
+// THE UPLOAD-INTENT CLASSIFIER PROMPT AND SCHEMA LIVED HERE, and are gone
+// (2026-08-22, Unified Intelligence).
+//
+// It was a full model round trip on every single message, answering one
+// question ahead of everything else, and it stayed there for a permission
+// reason rather than a reasoning one. It is now show_upload_options, an
+// ordinary tool in the unified call — see lib/execution/genesisTools.ts, which
+// carries the rule this prompt existed for: a compound message like "remove the
+// old products and let's upload the first ring" is NOT an upload message, and
+// answering it as one silently drops a real instruction.
+//
+// The reply below survives, because it is what J4 actually says.
 
 export const UPLOAD_INTENT_REPLY =
   "Great — upload them here and I'll analyze them, organize them, and use them to better understand your business. Use the buttons below to get started: Upload Photos or Upload Documents (Upload Videos is coming soon).";

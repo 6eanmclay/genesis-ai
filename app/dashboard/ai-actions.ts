@@ -17,6 +17,7 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
+import { mayInvokeTool, refusalMessage } from "@/lib/execution/toolPolicy";
 import { businessBasePath } from "@/lib/dashboard/navConfig";
 import { adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
@@ -86,8 +87,6 @@ import {
   type ManageBusinessAssetInput,
 } from "@/lib/execution/genesisTools";
 import {
-  UploadIntentSchema,
-  STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
   UPLOAD_INTENT_REPLY,
   StoreChatDataAnswerSchema,
   STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
@@ -2241,99 +2240,26 @@ async function applyGenesisMessageToStore(
     data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges },
   });
 
-  // See UploadIntentSchema's own comment above for why this runs first,
-  // before even the STORE_MANAGE gate below — pointing at the upload
-  // buttons never changes the store, so it's safe for any role with real
-  // chat access, and it's the one message class every branch below would
-  // otherwise mishandle. Skipped when preClassifiedTool is set — route.ts
-  // already ran this exact classifier on this exact message before ever
-  // reaching its own unified call (a message classified as upload intent
-  // never falls back at all, it's handled inline there), so re-running it
-  // here would only risk a second, redundant disagreement.
-  const uploadIntentResult = preClassifiedTool
-    ? null
-    : await (async () => {
-        const uploadIntentOutcome = await callGenesisModel({
-          model: "claude-opus-4-8",
-          max_tokens: 200,
-          thinking: { type: "adaptive" },
-          system: STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userMessage }],
-          output_config: { effort: "low", format: zodOutputFormat(UploadIntentSchema) },
-        }, { storeId: store.id, confirmedOverride, feature: "store_chat_upload_intent_detection" });
-        stageDurationsMs.uploadIntent = uploadIntentOutcome.durationMs;
-        return uploadIntentOutcome.ok ? uploadIntentOutcome.message.parsed_output : null;
-      })();
+  // THE UPLOAD-INTENT PRE-CALL USED TO SIT HERE (removed 2026-08-22).
+  //
+  // Same removal, same reason as the streaming route: it ran ahead of the
+  // blanket store:manage gate because pointing at the upload buttons is safe for
+  // any role, and that gate has since moved onto the individual tool. It is now
+  // show_upload_options, chosen by the unified call below like anything else.
+  //
+  // On this path it was already conditional — skipped whenever the route had
+  // classified the message — so removing it costs one round trip on the turns
+  // that reach here directly, and nothing at all on the rest.
 
-  if (uploadIntentResult?.isUploadIntent) {
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: UPLOAD_INTENT_REPLY },
-    });
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "SUCCESS",
-      verified: false,
-      message: UPLOAD_INTENT_REPLY,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: { kind: "upload_intent" },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "success",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
-  // Every current Genesis capability for a live store (identity, theme,
-  // brand content, homepage, policies, marketing, design) falls under
-  // store:manage, which Employees don't have. Decline immediately and
-  // honestly rather than running a full generation only to discard it, and
-  // rather than letting the model claim a change happened when it can't —
-  // see feedback-genesis-conversational-quality: never report a change
-  // that didn't occur.
-  if (!hasPermission(role, PERMISSIONS.STORE_MANAGE)) {
-    const declineMessage =
-      "That's something only the store owner can change — I don't have permission to update store settings, branding, or policies on your account. Ask them to make this change, or to give you broader access.";
-    await prisma.storeMessage.create({
-      data: {
-        storeId: store.id,
-        role: "assistant",
-        content: declineMessage,
-      },
-    });
-    // A designed conversational outcome, not an error — no model call was
-    // made and nothing changed, so there's nothing to verify.
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "WARNING",
-      verified: false,
-      message: declineMessage,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: {},
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "failure",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-    // See the chat-panel-collapse investigation (v20 follow-up) — a Server
-    // Action redirect() alone doesn't reliably guarantee the just-persisted
-    // StoreMessage is reflected without an explicit revalidation.
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
+  // THE BLANKET store:manage GATE USED TO SIT HERE (moved 2026-08-22, UI2).
+  //
+  // Same change, same reason, same shared decision function as the streaming
+  // route: authorization belongs on the capability the model chose, not on the
+  // whole conversation. A member with genesis:chat and without store:manage was
+  // declined for every message here too, including questions.
+  //
+  // The check itself is below, after tool selection, so it covers both the
+  // unified call's own choice and the preClassifiedTool the route hands over.
 
   // Same real gap FALLBACK_THEME's own comment already documents for the v2
   // draft-confirm path (a store whose theme was never generated crashing
@@ -2536,6 +2462,77 @@ async function applyGenesisMessageToStore(
     redirectKeepingChatOpen(returnTo);
     }
   } // end preClassifiedTool guard around the unified classification call
+
+  // AUTHORIZATION, AT THE DECISION (2026-08-22, UI2).
+  //
+  // Covers BOTH ways this function learns what to do: the unified call's own
+  // tool choice, and the preClassifiedTool the streaming route passes when it
+  // already determined edit_store_content. Missing the second would leave the
+  // single highest-stakes capability — editing the live store — reachable with
+  // no permission check at all on this path.
+  //
+  // Uses the same mayInvokeTool the route uses. A permission question with two
+  // implementations is a permission question that will eventually have two
+  // answers.
+  const decidedTool = chosenTool?.name ?? preClassifiedTool ?? null;
+  if (decidedTool) {
+    const permission = mayInvokeTool(role, decidedTool);
+    if (!permission.allowed) {
+      const declineMessage = refusalMessage(permission);
+      await prisma.storeMessage.create({
+        data: { storeId: store.id, role: "assistant", content: declineMessage },
+      });
+      // A designed conversational outcome, not an error — nothing ran and
+      // nothing changed, so there is nothing to verify.
+      await recordGenesisExecution({
+        action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+        status: "WARNING",
+        verified: false,
+        message: declineMessage,
+        retryable: false,
+        userId,
+        storeId: store.id,
+        metadata: { refusedTool: decidedTool, reason: permission.reason },
+      });
+      await logChatTurnEvent({
+        userId,
+        storeId: store.id,
+        durationMs: Date.now() - turnStartedAt,
+        outcome: "failure",
+        likelyRephraseOf,
+        stageDurationsMs,
+      });
+      revalidatePath(returnTo);
+      redirectKeepingChatOpen(returnTo);
+    }
+  }
+
+  if (chosenTool?.name === "show_upload_options") {
+    const reply = conversationalReply || UPLOAD_INTENT_REPLY;
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: reply },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "SUCCESS",
+      verified: false,
+      message: reply,
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: { kind: "upload_intent" },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
+      likelyRephraseOf,
+      stageDurationsMs,
+    });
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
 
   const dataQuestionResult = chosenTool?.name === "look_up_business_data" ? { isDataQuestion: true } : null;
 

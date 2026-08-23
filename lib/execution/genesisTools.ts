@@ -6,6 +6,24 @@ import { GoalCaptureSchema, ChallengeCaptureSchema, EmployeeCaptureSchema, Locat
 import { STOREFRONT_TARGET_KEYS } from "@/lib/storefront/targets";
 import { REFINABLE_DIMENSION_KEYS, MAX_MUTATIONS_PER_IMPROVEMENT } from "@/lib/storefront/dimensions";
 
+// UPLOAD INTENT IS A TOOL NOW (2026-08-22, Unified Intelligence).
+//
+// It was the last surviving pre-call: a full Opus round trip, on EVERY message,
+// to answer one question — before the unified call ran at all. It stayed there
+// for a permission reason rather than a reasoning one ("it must run before the
+// store:manage gate"), and that gate has since moved onto the individual tool
+// (lib/execution/toolPolicy.ts), so the ordering constraint is gone.
+//
+// NOT REPLACED WITH A PATTERN MATCH, deliberately, and the old prompt says why:
+// it had to distinguish "I have a PDF for you" from "the photo on my homepage
+// looks bad" from "remove the old products and let's upload the first ring" —
+// where uploading is real but is NOT the whole message, and answering it as
+// though it were would silently drop a real removal instruction. That is
+// genuine language understanding, and a regex doing it badly would make J4
+// worse, not cheaper. As a tool it costs nothing extra: the unified call is
+// already reading the whole message and already choosing among seventeen other
+// things it could mean.
+//
 // Response Modes plan (2026-08-07), Phase 1 — replaces four sequential
 // classifier calls (data-question, business-fact, campaign-request,
 // image-request) plus the implicit "none matched" fallthrough to PRIMARY
@@ -315,6 +333,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       name: "look_up_business_data",
       description:
         "Call this when the merchant is asking to be TOLD or EXPLAINED something using real business data or understanding — a factual question (revenue, orders, customers, appointments, or how their connected social accounts are performing — reach, engagement, followers, which posts did well), or a genuine planning/strategy question ('what should I do next', 'build me a 90-day plan', 'how would you spend N Growth Points'). Never call this for a request to actually change something, and never for a request to CREATE something — making a logo, a design, a product or any other real artefact is the relevant creation tool, not this one. You do not need to look up the business first in order to create something: the creation tools read the business understanding themselves.",
+      input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "show_upload_options",
+      description:
+        "Call this when the WHOLE message is the merchant saying they have files they want to give you — photos, documents, PDFs, spreadsheets, contracts, logos, invoices — or asking how to upload or share files with you. 'I have files I want to upload', 'can I send you my logo', 'I have a PDF of my supplier contract', 'how do I upload photos'. Do NOT call this for a message that merely mentions a photo or document in passing without offering one right now ('the photo on my homepage looks bad' is about existing content), and critically do NOT call it for a compound message where uploading is only one part of what is being asked ('remove the old products and let's upload the first ring' is a real instruction about removal that happens to mention uploading — handle the removal). Calling this when something else was also asked silently drops everything else they said.",
       input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
     },
     {

@@ -7,6 +7,7 @@ import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
+import { mayInvokeTool, refusalMessage } from "@/lib/execution/toolPolicy";
 import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -64,14 +65,11 @@ import {
   type ManageBusinessAssetInput,
 } from "@/lib/execution/genesisTools";
 import {
-  UploadIntentSchema,
-  STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
   UPLOAD_INTENT_REPLY,
   STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
   STORE_CHAT_UNIFIED_SYSTEM_PROMPT,
   extractRichContentImagePrompt,
 } from "@/lib/dashboard/storeChatUnified";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 // Response Modes plan (2026-08-07), Phase 2 — real token streaming for the
 // fast paths Phase 1's unified call already collapsed (pure conversation,
@@ -291,65 +289,42 @@ export async function POST(request: Request) {
           existingMessages.filter((m) => m.role === "user")
         );
 
-        // Upload-intent — same permission-safety reason as the Server
-        // Action version: must run before the store:manage gate, since
-        // pointing at the upload buttons is safe for any role with chat
-        // access.
-        const uploadIntentOutcome = await callGenesisModel(
-          {
-            model: "claude-opus-4-8",
-            max_tokens: 200,
-            thinking: { type: "adaptive" },
-            system: STORE_CHAT_UPLOAD_INTENT_SYSTEM_PROMPT,
-            messages: [{ role: "user", content: userMessage }],
-            output_config: { effort: "low", format: zodOutputFormat(UploadIntentSchema) },
-          },
-          { storeId: store.id, feature: "store_chat_upload_intent_detection" }
-        );
-        const uploadIntentResult = uploadIntentOutcome.ok ? uploadIntentOutcome.message.parsed_output : null;
-        diagLog(requestId, turnStartedAt, "upload_intent_classified", { isUploadIntent: !!uploadIntentResult?.isUploadIntent });
+        // THE UPLOAD-INTENT PRE-CALL USED TO SIT HERE (removed 2026-08-22).
+        //
+        // A full model round trip, on EVERY message, to answer one question
+        // before the unified call ran at all. It was here for a permission
+        // reason rather than a reasoning one — it had to answer before the
+        // blanket store:manage gate — and that gate has since moved onto the
+        // individual tool, so the ordering constraint is gone.
+        //
+        // It is now show_upload_options, an ordinary tool handled below. Not a
+        // pattern match: the old prompt had to tell "I have a PDF for you" from
+        // "the photo on my homepage looks bad" from "remove the old products
+        // and let's upload the first ring", where uploading is real but is not
+        // the whole message and answering it as though it were would silently
+        // drop a real removal instruction. That is language understanding, and
+        // a regex doing it badly would make J4 worse rather than cheaper.
 
-        if (uploadIntentResult?.isUploadIntent) {
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: UPLOAD_INTENT_REPLY } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "SUCCESS",
-            verified: false,
-            message: UPLOAD_INTENT_REPLY,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: { kind: "upload_intent" },
-          });
-          emit({ type: "token", delta: UPLOAD_INTENT_REPLY });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "upload_intent" });
-          controller.close();
-          return;
-        }
+        // THE BLANKET store:manage GATE USED TO SIT HERE (moved 2026-08-22,
+        // Unified Intelligence UI2).
+        //
+        // It refused the whole conversation rather than the capability, so a
+        // member with genesis:chat and without store:manage was declined for
+        // EVERYTHING — including "what was my revenue last week", which
+        // look_up_business_data is read-only and would have answered — with copy
+        // telling them their question was a change attempt.
+        //
+        // Authorization now happens where the decision actually is: against the
+        // tool the model chose, via lib/execution/toolPolicy.ts, immediately
+        // after selection and before any handler runs. Nothing is loosened
+        // except two genuinely read-only tools; every mutating tool still
+        // requires exactly store:manage.
+        //
+        // Reaching the model is not itself a grant. The unified context carries
+        // no owner-scoped material — getBusinessUnderstanding withholds that
+        // from anyone who is not the owner, by viewer id — and no tool handler
+        // runs before the check below.
 
-        if (!hasPermission(role, PERMISSIONS.STORE_MANAGE)) {
-          const declineMessage =
-            "That's something only the store owner can change — I don't have permission to update store settings, branding, or policies on your account. Ask them to make this change, or to give you broader access.";
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: declineMessage } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "WARNING",
-            verified: false,
-            message: declineMessage,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: {},
-          });
-          emit({ type: "token", delta: declineMessage });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "declined" });
-          controller.close();
-          return;
-        }
 
         const currentProducts = await prisma.product.findMany({
           where: { storeId: store.id, active: true },
@@ -526,6 +501,40 @@ export async function POST(request: Request) {
         const chosenTool = firstToolUse(unifiedOutcome.message.content);
         const conversationalReply = textOf(unifiedOutcome.message.content);
 
+        // AUTHORIZATION, AT THE DECISION (2026-08-22, UI2). Before any handler
+        // below runs, and shared with the Server Action path so one permission
+        // question has exactly one answer.
+        if (chosenTool) {
+          const permission = mayInvokeTool(role, chosenTool.name);
+          if (!permission.allowed) {
+            const declineMessage = refusalMessage(permission);
+            diagLog(requestId, turnStartedAt, "tool_refused", {
+              tool: chosenTool.name,
+              reason: permission.reason,
+            });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: declineMessage } });
+            await recordGenesisExecution({
+              action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+              status: "WARNING",
+              verified: false,
+              message: declineMessage,
+              retryable: false,
+              userId,
+              storeId: store.id,
+              metadata: { refusedTool: chosenTool.name, reason: permission.reason },
+            });
+            // Whatever the model streamed before choosing the tool is already on
+            // the wire; the refusal follows it rather than replacing it, because
+            // pretending nothing was said would leave a half-sentence hanging.
+            emit({ type: "token", delta: streamedAnyText ? `\n\n${declineMessage}` : declineMessage });
+            emit({ type: "done", changes: null });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "tool_refused" });
+            controller.close();
+            return;
+          }
+        }
+
         // Pure conversation — already fully streamed above. Persist and
         // finish; no further model or tool work needed.
         if (!chosenTool && conversationalReply) {
@@ -548,6 +557,30 @@ export async function POST(request: Request) {
           await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "conversational" });
           controller.close();
           diagLog(requestId, turnStartedAt, "controller_closed", { kind: "conversational" });
+          return;
+        }
+
+        if (chosenTool?.name === "show_upload_options") {
+          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "show_upload_options" });
+          // The model's own words if it wrote any, otherwise the standing reply.
+          // It knows what the merchant actually said; this is only a floor.
+          const reply = conversationalReply || UPLOAD_INTENT_REPLY;
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
+          await recordGenesisExecution({
+            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+            status: "SUCCESS",
+            verified: false,
+            message: reply,
+            retryable: false,
+            userId,
+            storeId: store.id,
+            metadata: { kind: "upload_intent" },
+          });
+          if (!streamedAnyText) emit({ type: "token", delta: reply });
+          emit({ type: "done", changes: null });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "upload_intent" });
+          controller.close();
           return;
         }
 
