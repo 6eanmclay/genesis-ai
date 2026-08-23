@@ -195,6 +195,60 @@ async function main() {
   check("and J4 does not ask again", (await speakNewFindings(shop.id)).spoken, 0);
 
   // ==========================================================================
+  console.log("\n=== 5b. Where the loop actually closes, stated honestly ===\n");
+  // ==========================================================================
+  // AN UPLOAD ARRIVES "unclassified" AND IS CATEGORISED LATER. ingestBusinessAsset
+  // sets category "unclassified" on purpose — the file exists and nobody has said
+  // what it is yet, and guessing from a filename is the fabrication that file's
+  // own comment refuses. Classification fills it in afterwards, and THAT is what
+  // closes this gap.
+  //
+  // So the honest boundary: uploading the handbook does not close the ask the
+  // instant the file lands, and classification needs a model. Without one the ask
+  // stays open — but it is never repeated, because the delivery is already open.
+  // An ask left standing is a much smaller failure than an ask repeated, and
+  // nothing here pretends the file was understood before it was.
+  const pending = await prisma.store.create({
+    data: { userId: owner.id, name: "Just Uploaded", slug: `sp-u-${uniq()}` },
+  });
+  await addEmployee(pending.id, "Ada", "active");
+  await proposeStaffPolicyGap(pending.id);
+  check("the ask is open", (await askOf(pending.id))?.status, "ACTIVE");
+  check("and spoken once", (await speakNewFindings(pending.id)).spoken, 1);
+
+  await addAsset(pending.id, "document", "unclassified");
+  assert("an unclassified upload does not yet satisfy it",
+    (await getStaffPolicyGap(pending.id)) !== null,
+    "a file nobody has read yet is not knowledge of how the business runs");
+  await proposeStaffPolicyGap(pending.id);
+  check("so the ask stays open", (await askOf(pending.id))?.status, "ACTIVE");
+  // AND CRUCIALLY IS NOT REPEATED. This is what makes the boundary tolerable.
+  check("and is never asked a second time", (await speakNewFindings(pending.id)).spoken, 0);
+  check("one message, still",
+    await prisma.storeMessage.count({ where: { storeId: pending.id, role: "assistant" } }), 1);
+
+  // Once classification has run, the same record closes it.
+  await prisma.businessRecord.updateMany({
+    where: { storeId: pending.id, entityType: "asset" },
+    data: {
+      data: {
+        fileType: "document",
+        category: "employee_handbook",
+        storageUrl: "https://example.test/f",
+        originalFilename: "f",
+        summary: "Policies for the team.",
+        extractionConfidence: 0.9,
+        relatedRecordId: null,
+        relatedEntityType: null,
+      },
+    },
+  });
+  check("classification is what closes it", await getStaffPolicyGap(pending.id), null);
+  await proposeStaffPolicyGap(pending.id);
+  check("and the ask is withdrawn", (await askOf(pending.id))?.status, "RESOLVED");
+  await prisma.store.deleteMany({ where: { id: pending.id } });
+
+  // ==========================================================================
   console.log("\n=== 6. The evidence disappearing also closes it ===\n");
   // ==========================================================================
   // Not only the document satisfies the gap — the team leaving removes the
