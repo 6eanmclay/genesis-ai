@@ -8,6 +8,7 @@ import {
   handlerFor,
   makeApprovePendingChanges,
   makeTakeMeThere,
+  makeAnswerSupplierEconomics,
   NAV_DESTINATIONS,
   OFFICE_REPLY,
   resolveScopedProducts,
@@ -364,6 +365,45 @@ async function main() {
   check("removing everything proposes one decision per product",
     await prisma.approvalRequest.count({ where: { storeId: store.id, actionType: "delete_product" } }), 2);
   check("and still deletes nothing", await prisma.product.count({ where: { storeId: store.id } }), 2);
+
+  // ==========================================================================
+  console.log("\n=== 5d. An answer about money uses the outcome's words ===\n");
+  // ==========================================================================
+  // The reply here has to say both what was learned AND what is still unknown,
+  // and the model wrote its text before any of that was known. Using its words
+  // would state a conclusion about somebody's money that nothing had reached.
+  const economics = makeAnswerSupplierEconomics(async () => ({
+    status: "applied",
+    reply: "Noted 100 minimum at 4.10 each. I still don't know the shipping.",
+    question: { productId: "p1" },
+    result: { changes: ["minimumOrderUnits"], stillMissing: ["shipping"] },
+  }));
+  // The real tool schema, in full — a fixture that skipped a field would be
+  // testing a shape the model can never send.
+  const quoted = {
+    productName: "Tensor Ring",
+    outcome: "quoted" as const,
+    minimumOrderUnits: 100,
+    bulkUnitCostInCents: 410,
+    shippingPerUnitInCents: null,
+    leadTimeDays: 14,
+    note: null,
+  };
+  const answered = await economics(contextFor(store.id, owner.id, quoted, "All done!"));
+  assert("the answer is handled", answered.handled);
+  if (!answered.handled) throw new Error("unreachable");
+  assert("the reply is the outcome's, not the model's",
+    answered.reply.includes("still don't know") && answered.reply !== "All done!", answered.reply);
+  assert("and it says what is still unknown",
+    answered.reply.toLowerCase().includes("shipping"), answered.reply);
+  check("the dashboard is marked for re-render", answered.revalidate, "/dashboard");
+
+  // NEVER BUILD AN ANSWER ABOUT MONEY OUT OF A SHAPE THAT DID NOT VALIDATE.
+  const badShape = await makeAnswerSupplierEconomics(async () => {
+    throw new Error("should never be reached");
+  })(contextFor(store.id, owner.id, { ...quoted, minimumOrderUnits: "loads" }));
+  check("a malformed economics answer is refused before anything is applied",
+    badShape.handled ? "handled" : badShape.reason, "invalid_input");
 
   // ==========================================================================
   console.log("\n=== 6. Handlers stay inside the store they were given ===\n");

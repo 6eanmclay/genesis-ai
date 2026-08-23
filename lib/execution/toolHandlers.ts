@@ -4,7 +4,11 @@ import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { UPLOAD_INTENT_REPLY } from "@/lib/dashboard/storeChatUnified";
-import { TakeMeThereInputSchema, type BusinessFactCaptureInput } from "@/lib/execution/genesisTools";
+import {
+  AnswerSupplierEconomicsToolInputSchema,
+  TakeMeThereInputSchema,
+  type BusinessFactCaptureInput,
+} from "@/lib/execution/genesisTools";
 import { GENESIS_ACTIONS } from "@/lib/execution/genesisActions";
 import { deriveTopicKey } from "@/lib/intelligence/topicKeys";
 
@@ -97,6 +101,14 @@ export type ToolTurnResult =
        */
       executionStatus?: "SUCCESS" | "PENDING" | "WARNING";
       retryable?: boolean;
+      /**
+       * A path whose cached render is now wrong.
+       *
+       * Invalidating it is the turn's job, not the handler's: revalidatePath is
+       * a framework concern that only makes sense inside a request, and a
+       * handler that called it could not be tested outside one.
+       */
+      revalidate?: string;
     }
   | {
       /**
@@ -491,6 +503,63 @@ const requestProductRemoval: ToolHandler = async (ctx) => {
 };
 
 /**
+ * Record what a supplier told the owner about a product's economics.
+ *
+ * THE REPLY IS CODE-BUILT AND OVERRIDES THE MODEL'S, deliberately. It has to
+ * say both what was learned and what is still unknown, and the model wrote its
+ * text before any of that was known — so using its words here would state a
+ * conclusion about somebody's money that nothing had reached yet.
+ *
+ * `apply` is injected so a suite can drive the outcomes without standing up a
+ * supplier, a product and an outstanding question first. Defaulted to the real
+ * implementation, imported lazily like the rest.
+ */
+export function makeAnswerSupplierEconomics(
+  apply?: (input: { storeId: string; answer: unknown }) => Promise<{ status: string; reply: string; [k: string]: unknown }>
+): ToolHandler {
+  return async (ctx) => {
+    ctx.status("Noting that down…");
+
+    const parsed = AnswerSupplierEconomicsToolInputSchema.safeParse(ctx.input);
+    if (!parsed.success) {
+      // Defence in depth: never build an answer about somebody's money out of a
+      // shape that did not validate.
+      return { handled: false, reason: "invalid_input" };
+    }
+
+    const run =
+      apply ??
+      (async (input: { storeId: string; answer: unknown }) => {
+        const { applyEconomicsAnswer, chatAnswerFrom } = await import("@/lib/sourcing/economicsChat");
+        return applyEconomicsAnswer({
+          storeId: input.storeId,
+          answer: chatAnswerFrom(input.answer as Parameters<typeof chatAnswerFrom>[0]),
+        });
+      });
+
+    const outcome = await run({ storeId: ctx.storeId, answer: parsed.data });
+
+    return {
+      handled: true,
+      // The outcome's own words, never ctx.conversationalReply.
+      reply: outcome.reply,
+      kind: "answer_supplier_economics",
+      revalidate: "/dashboard",
+      metadata: {
+        kind: "answer_supplier_economics",
+        resolved: outcome.status,
+        ...(outcome.status === "applied" && typeof outcome.result === "object" && outcome.result !== null
+          ? {
+              productId: (outcome.question as { productId?: string } | undefined)?.productId,
+              ...(outcome.result as Record<string, unknown>),
+            }
+          : {}),
+      },
+    };
+  };
+}
+
+/**
  * The tools that have moved out of the inline ladder.
  *
  * A hand-maintained mirror of what route.ts still handles inline — every name
@@ -503,6 +572,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   capture_business_fact: captureBusinessFact,
   approve_pending_changes: makeApprovePendingChanges(),
   request_product_removal: requestProductRemoval,
+  answer_supplier_economics: makeAnswerSupplierEconomics(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the
   // ACCOUNT'S ACTIVE business rather than the one the owner is in, so it is
