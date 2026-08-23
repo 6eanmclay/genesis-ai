@@ -1,6 +1,31 @@
 # Proactive J4 — milestone contract
 
-**Status: AWAITING APPROVAL. Nothing here is implemented.**
+**Status: APPROVED AND BUILT (2026-08-23).** `e5fda18`, `f4a467b`.
+
+**One correction made during the build, surfaced rather than papered over.**
+PD2 recommended grounding on `getNextBestAction`'s single highest-confidence
+item. Reading it settled the question the other way: it takes a `userId`, can
+trigger a cognitive review, and is about pending PROPOSALS rather than findings
+— grounding there would have made proactivity depend on a model, which Sean
+ruled out explicitly. PD2's *intent* (one item, the most important) is honoured
+on `GenesisObservation`, which is what actually holds findings.
+
+**PD3 was inferred rather than chosen.** PD2 gives one item, and a delivery
+closes only when its finding stops being true, so the ceiling is "one new thing,
+once" — no number had to be invented. **PD4 shipped speak-only**, per its
+recommendation.
+
+**What was built:** `ProactiveDelivery` (a delivery record, not a second
+representation of a finding), `lib/intelligence/proactive.ts`, wired last into
+`runIntelligenceCycle`. Idempotency is a partial unique index — one OPEN
+delivery per finding — so two overlapping cycles cannot both speak.
+Re-engagement is "the finding resolved and later recurred", which follows from
+the existing lifecycle rather than adding a policy. `scripts/verify-proactive-j4.ts`,
+49 assertions, 5 negative controls.
+
+---
+
+*Original contract follows.*
 Written 2026-08-23, after UI6 shipped. Eight-section standard, same as the
 Unified Intelligence and Business Understanding contracts.
 
