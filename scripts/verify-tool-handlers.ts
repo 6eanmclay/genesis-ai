@@ -1693,6 +1693,14 @@ async function main() {
   assert("the route does not fall back on a partial turn",
     routeSrc.includes('if (run.kind !== "handled" && !unfinished) {'),
     "a partial turn that falls back is re-run, and the owner is told twice");
+  // AND THE OWNER SEES IT NOW, not after something re-reads the conversation.
+  // persistToolTurn writes the line; without emitting it too, the stream ends
+  // with only the replies that worked and the turn looks like it simply
+  // finished. Same shape as the dropped-tool notice: spoken and written.
+  assert("the route says the turn stopped, rather than only recording it",
+    routeSrc.includes("const line = unfinishedTurnMessage(unfinished.retryable);"),
+    "a line only in the database is a line the owner does not see until a refresh");
+
   const actionSrc2 = readFileSync(join(process.cwd(), "app", "dashboard", "ai-actions.ts"), "utf8");
   assert("and the Server Action records it rather than falling through",
     actionSrc2.includes('const partial = run.kind === "partial" ? run : null;'),

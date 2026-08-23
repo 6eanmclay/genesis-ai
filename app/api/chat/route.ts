@@ -16,6 +16,7 @@ import {
   turnOutcome,
   turnKind,
   lastAssistantContent,
+  unfinishedTurnMessage,
 } from "@/lib/dashboard/runToolTurn";
 import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
 import { callGenesisModel } from "@/lib/genesisModel";
@@ -641,6 +642,18 @@ export async function POST(request: Request) {
             // that touched the stream could never be the first of two.
             if (result.navigate) emit({ type: "navigate", href: result.navigate });
           }
+          // SAID NOW, not after a refresh (D1). persistToolTurn wrote this line
+          // to the conversation; without emitting it the owner sees only the
+          // replies that worked until something re-reads the messages, which is
+          // a window where the turn looks like it simply finished. Same shape as
+          // the dropped-tool notice above: spoken to the stream, written to the
+          // conversation, one sentence either way.
+          if (unfinished) {
+            const line = unfinishedTurnMessage(unfinished.retryable);
+            emit({ type: "token", delta: streamedAnyText ? `\n\n${line}` : line });
+            streamedAnyText = true;
+          }
+
           for (const path of revalidationPaths(completed)) revalidatePath(path);
 
           emit({ type: "done", changes: null });
