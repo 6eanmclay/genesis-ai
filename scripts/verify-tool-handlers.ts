@@ -17,6 +17,9 @@ import {
   makeGenerateBrandLogo,
   makeImproveStorefront,
   makeManageBusinessAsset,
+  makeRequestImageChange,
+  makeRequestProductContentChange,
+  makeRefineStorefront,
   isLogoRoleName,
   isHeroRoleName,
   NAV_DESTINATIONS,
@@ -842,6 +845,178 @@ async function main() {
     heroHidden.reply.includes("Say the word"), heroHidden.reply);
 
   await prisma.store.deleteMany({ where: { id: assetStore.id } });
+
+  // ==========================================================================
+  console.log("\n=== 5i. Partial results are reported as partial ===\n");
+  // ==========================================================================
+  // Two proposal handlers where the normal case is that SOME of it worked.
+  // Saying "done" over the top of that leaves an owner believing every product
+  // was handled — which is the same failure as reporting a change that did not
+  // happen, one step removed.
+
+  const shop = await prisma.store.create({
+    data: { userId: owner.id, name: "Partial Shop", slug: `th-partial-${uniq()}` },
+  });
+  const alpha = await prisma.product.create({
+    data: { storeId: shop.id, name: "Alpha", priceInCents: 1000, active: true, description: "Old alpha copy" },
+  });
+  const beta = await prisma.product.create({
+    data: { storeId: shop.id, name: "Beta", priceInCents: 2000, active: true, description: "Old beta copy" },
+  });
+  const twoProducts = [
+    { id: alpha.id, name: "Alpha", description: "Old alpha copy", imageUrl: null, priceInCents: 1000 },
+    { id: beta.id, name: "Beta", description: "Old beta copy", imageUrl: null, priceInCents: 2000 },
+  ];
+
+  // ---- request_image_change ----------------------------------------------
+  const partialImages = await makeRequestImageChange(async (args) =>
+    args.name === "Alpha" ? { url: "https://example.test/a.png" } : null
+  )(contextFor(shop.id, owner.id, { scope: "all", productNames: null }, "", twoProducts));
+  assert("a partial image result is handled", partialImages.handled);
+  if (!partialImages.handled) throw new Error("unreachable");
+  check("only the one that found a photo is proposed",
+    await prisma.approvalRequest.count({ where: { storeId: shop.id, actionType: "update_product_image" } }), 1);
+  // THE MISS IS NAMED, with the honest suggestion.
+  assert("the miss is named rather than glossed over",
+    partialImages.reply.includes("Beta") && partialImages.reply.includes("upload"), partialImages.reply);
+  check("logged as pending, because something is awaiting a decision",
+    partialImages.executionStatus, "PENDING");
+
+  // Nothing found at all is a WARNING and retryable, not a quiet success.
+  const noImages2 = await makeRequestImageChange(async () => null)(
+    contextFor(shop.id, owner.id, { scope: "all", productNames: null }, "", twoProducts)
+  );
+  assert("finding nothing is handled", noImages2.handled);
+  if (!noImages2.handled) throw new Error("unreachable");
+  check("recorded as a failure", noImages2.outcome, "failure");
+  check("logged as a warning", noImages2.executionStatus, "WARNING");
+  check("and marked retryable", noImages2.retryable, true);
+
+  // A replacement must never be the thing it replaces.
+  const withCurrent = [{ ...twoProducts[0], imageUrl: "https://example.test/current.png" }];
+  let excluded: string[] = [];
+  await makeRequestImageChange(async (args) => {
+    excluded = args.excludeUrls;
+    return { url: "https://example.test/new.png" };
+  })(contextFor(shop.id, owner.id, { scope: "all", productNames: null }, "", withCurrent));
+  check("the current image is excluded from the search", excluded, ["https://example.test/current.png"]);
+
+  // ---- request_product_content_change -------------------------------------
+  // A SUGGESTION THAT CHANGES NOTHING IS NOT A PROPOSAL. A decision card that
+  // turns out to change nothing wastes the owner's attention.
+  const noRealChange = await makeRequestProductContentChange(async () => [
+    { productId: alpha.id, name: "Alpha", description: "Old alpha copy", reasoning: "Already good" },
+  ])(contextFor(shop.id, owner.id, { scope: "specific", productNames: ["Alpha"], changeType: "both" }, "", twoProducts));
+  assert("an identical suggestion is handled", noRealChange.handled);
+  if (!noRealChange.handled) throw new Error("unreachable");
+  check("no decision is written for it",
+    await prisma.approvalRequest.count({ where: { storeId: shop.id, actionType: "update_product" } }), 0);
+  // AND THE PRODUCT IS NAMED as left alone — dropping it silently would leave
+  // the owner wondering which products J4 even looked at.
+  assert("and the product is named as left alone",
+    noRealChange.reply.includes("Alpha") && noRealChange.reply.includes("unchanged"), noRealChange.reply);
+  check("recorded as a failure with nothing to approve", noRealChange.outcome, "failure");
+
+  const realChange = await makeRequestProductContentChange(async () => [
+    { productId: alpha.id, name: "Alpha Ring", description: "Better copy", reasoning: "Clearer" },
+    { productId: beta.id, name: "Beta", description: "Old beta copy", reasoning: "Fine already" },
+  ])(contextFor(shop.id, owner.id, { scope: "all", productNames: null, changeType: "both" }, "", twoProducts));
+  assert("a real change is proposed", realChange.handled);
+  if (!realChange.handled) throw new Error("unreachable");
+  check("exactly one decision is written",
+    await prisma.approvalRequest.count({ where: { storeId: shop.id, actionType: "update_product" } }), 1);
+  const contentRequest = await prisma.approvalRequest.findFirstOrThrow({
+    where: { storeId: shop.id, actionType: "update_product" },
+  });
+  // THE PREVIOUS VALUES ARE THE REAL ONES, so the approval card diffs against
+  // ground truth rather than the model's restatement of it.
+  check("with the product's real previous name",
+    (contentRequest.previousValues as { name: string }).name, "Alpha");
+  check("and the products still say what they said",
+    (await prisma.product.findUniqueOrThrow({ where: { id: alpha.id } })).name, "Alpha");
+  assert("while the one that needed nothing is named as unchanged",
+    realChange.reply.includes("Beta"), realChange.reply);
+
+  // Changing only the name must not smuggle a description change through.
+  await prisma.approvalRequest.deleteMany({ where: { storeId: shop.id } });
+  await makeRequestProductContentChange(async () => [
+    { productId: alpha.id, name: "Alpha Ring", description: "A totally new description", reasoning: "x" },
+  ])(contextFor(shop.id, owner.id, { scope: "specific", productNames: ["Alpha"], changeType: "name" }, "", twoProducts));
+  const nameOnly = await prisma.approvalRequest.findFirstOrThrow({
+    where: { storeId: shop.id, actionType: "update_product" },
+  });
+  check("a name-only request proposes only a name",
+    Object.keys(nameOnly.input as Record<string, unknown>).sort(), ["name", "productId"]);
+
+  // ---- refine_storefront: a rebuttal revises, it does not restart ---------
+  let opened = 0;
+  let revised = 0;
+  const refineWith = (open: { proposalId: string; settled: boolean; current: { target: string | null } } | null) =>
+    makeRefineStorefront({
+      openProposal: async () => open,
+      revise: async () => {
+        revised += 1;
+      },
+      open: async () => {
+        opened += 1;
+      },
+      currentTheme: async () => null,
+    });
+
+  const refineInput = {
+    target: "hero",
+    summary: "Make the hero calmer.",
+    reason: "It is shouting.",
+    // The ACTION's schema, not the tool's: changes are dimension/value pairs
+    // drawn from a closed vocabulary, so an invalid one is rejected before it
+    // could reach an executable.
+    changes: [{ dimension: "heroLayout", value: "split" }],
+  };
+
+  await refineWith(null)(contextFor(shop.id, owner.id, refineInput));
+  check("with nothing on the table, a new proposal is opened", [opened, revised], [1, 0]);
+
+  // SAME TARGET, STILL OPEN: revise. The version this replaced DELETED the
+  // earlier row — answering the rebuttal and destroying the evidence of it in
+  // one operation, so "go back to your first idea" referred to something that
+  // no longer existed.
+  opened = 0;
+  revised = 0;
+  const pushBack = await refineWith({ proposalId: "p-1", settled: false, current: { target: "hero" } })(
+    contextFor(shop.id, owner.id, refineInput)
+  );
+  check("pushing back on the same target revises it", [opened, revised], [0, 1]);
+  assert("and J4 speaks as somebody improving their own idea", pushBack.handled);
+  if (!pushBack.handled) throw new Error("unreachable");
+  assert("saying it has been revised", pushBack.reply.includes("revised it below"), pushBack.reply);
+
+  // A DIFFERENT TARGET IS ITS OWN PROPOSAL, so a pending hero idea and a
+  // pending products idea coexist.
+  opened = 0;
+  revised = 0;
+  await refineWith({ proposalId: "p-1", settled: false, current: { target: "products.layout" } })(
+    contextFor(shop.id, owner.id, refineInput)
+  );
+  check("a different target opens its own", [opened, revised], [1, 0]);
+
+  // A SETTLED PROPOSAL IS NOT REVISED — it is decided, and reopening it would
+  // change something the owner already answered.
+  opened = 0;
+  revised = 0;
+  await refineWith({ proposalId: "p-1", settled: true, current: { target: "hero" } })(
+    contextFor(shop.id, owner.id, refineInput)
+  );
+  check("and a settled one is left alone", [opened, revised], [1, 0]);
+
+  // Malformed input proposes nothing.
+  opened = 0;
+  const badRefine = await refineWith(null)(contextFor(shop.id, owner.id, { target: "hero" }));
+  check("a malformed refinement opens nothing", opened, 0);
+  assert("and asks which part they meant", badRefine.handled);
+  if (!badRefine.handled) throw new Error("unreachable");
+  check("recorded as a failure", badRefine.outcome, "failure");
+
+  await prisma.store.deleteMany({ where: { id: shop.id } });
 
   // ==========================================================================
   console.log("\n=== 6. Handlers stay inside the store they were given ===\n");

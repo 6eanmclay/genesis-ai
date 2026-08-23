@@ -1,8 +1,4 @@
-import { randomUUID } from "crypto";
-import { deriveTopicKey } from "@/lib/intelligence/topicKeys";
 import { withJ4CopyRules } from "@/lib/j4CopyRules";
-import { type Theme } from "@/lib/theme";
-import type { RefineStorefrontInput } from "@/lib/execution/executables/refineStorefront";
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
@@ -13,7 +9,6 @@ import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
-import { GENESIS_ACTIONS } from "@/lib/execution/genesisActions";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
@@ -24,25 +19,13 @@ import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
 import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import {
-  getOpenProposal,
-  reviseProposal,
-  openProposal as openProposalRecord,
-  type ProposalDirection,
-} from "@/lib/storefront/proposals";
-import { RefineStorefrontToolInputSchema } from "@/lib/execution/genesisTools";
-import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
-import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
-import {
   allToolUses,
   buildStoreChatUnifiedTools,
   textOf,
-  type RequestImageChangeInput,
-  type RequestProductContentChangeInput,
 } from "@/lib/execution/genesisTools";
 import {
   STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
   STORE_CHAT_UNIFIED_SYSTEM_PROMPT,
-  extractRichContentImagePrompt,
 } from "@/lib/dashboard/storeChatUnified";
 
 // Response Modes plan (2026-08-07), Phase 2 — real token streaming for the
@@ -579,7 +562,17 @@ export async function POST(request: Request) {
             // The turn already fetched these to tell the model what exists;
             // a handler reading them again would be a second answer to the
             // same question one query later.
-            products: currentProducts.map((p) => ({ id: p.id, name: p.name })),
+            // Wider than {id, name}: sourcing a replacement photo needs what
+            // the product actually IS, and its current image so the replacement
+            // is not the thing being replaced.
+            products: currentProducts.map((p) => ({
+              id: p.id,
+              name: p.name,
+              description: p.description,
+              imageUrl: p.imageUrl,
+              priceInCents: p.priceInCents,
+              richContent: p.richContent,
+            })),
           });
           if (!outcome.handled) {
             // The model's input did not make sense. Nothing was written, so the
@@ -811,113 +804,6 @@ export async function POST(request: Request) {
           return;
         }
 
-        if (chosenTool?.name === "request_image_change") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "request_image_change" });
-          emit({ type: "status", text: "Finding new photos…" });
-          const input = chosenTool.input as RequestImageChangeInput;
-          const targetProducts =
-            input.scope === "all"
-              ? currentProducts
-              : input.scope === "specific"
-                ? currentProducts.filter((p) =>
-                    (input.productNames ?? []).map((n) => n.trim().toLowerCase()).includes(p.name.trim().toLowerCase())
-                  )
-                : [];
-
-          if (targetProducts.length === 0) {
-            const clarification =
-              input.scope === "specific"
-                ? `I want to make sure I update the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
-                : conversationalReply || "Which product would you like a new photo for?";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
-            if (!streamedAnyText) emit({ type: "token", delta: clarification });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "image_request" });
-            controller.close();
-            return;
-          }
-
-          const groupId = randomUUID();
-          const outcomes: { id: string; name: string; candidate: string | null }[] = [];
-          for (const product of targetProducts) {
-            const sourced = await resolveProductImage({
-              prompt: extractRichContentImagePrompt(product.richContent) ?? product.description ?? product.name,
-              name: product.name,
-              description: product.description,
-              excludeUrls: product.imageUrl ? [product.imageUrl] : [],
-              scope: { storeId: store.id },
-              feature: "product_image_generation",
-            });
-            const candidate = sourced?.url ?? null;
-            if (candidate) {
-              await prisma.approvalRequest.deleteMany({
-                where: {
-                  storeId: store.id,
-                  actionType: "update_product_image",
-                  status: "PENDING_APPROVAL",
-                  input: { path: ["productId"], equals: product.id },
-                },
-              });
-              await prisma.approvalRequest.create({
-                data: {
-                  storeId: store.id,
-                  recommendationId: null,
-                  actionType: "update_product_image",
-                  // M2 — the same canonical derivation the backfill uses, so a decision made in
-                  // conversation enters the belief system identically to one made last January.
-                  // Null where no honest name exists.
-                  topicKey: deriveTopicKey("update_product_image", null),
-                  input: {
-                    productId: product.id,
-                    imageUrl: candidate,
-                    ...(sourced?.generationPrompt ? { generationPrompt: sourced.generationPrompt } : {}),
-                  },
-                  previousValues: { productId: product.id, imageUrl: product.imageUrl, rejectedCandidates: [] },
-                  summary: `Replace image for "${product.name}"`,
-                  authorizationTier: GENESIS_ACTIONS.update_product_image.authorizationTier,
-                  groupId,
-                  aiUsageEventId: sourced?.aiUsageEventId ?? null,
-                },
-              });
-            }
-            outcomes.push({ id: product.id, name: product.name, candidate });
-          }
-
-          const foundNames = outcomes.filter((o) => o.candidate).map((o) => o.name);
-          const missedNames = outcomes.filter((o) => !o.candidate).map((o) => o.name);
-          const replyParts = [conversationalReply || "I'm looking for new photos now."];
-          if (foundNames.length > 1) {
-            replyParts.push(`These are grouped as one idea on Products — review each, or use "Use all ${foundNames.length}" to apply them together.`);
-          } else if (foundNames.length === 1) {
-            replyParts.push(`You'll find it waiting for your review on Products.`);
-          }
-          if (missedNames.length > 0) {
-            replyParts.push(`I couldn't find a good option for ${missedNames.join(", ")} — you may want to upload ${missedNames.length > 1 ? "those" : "that one"} directly for now.`);
-          }
-          const finalReply = replyParts.join(" ");
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: foundNames.length > 0 ? "PENDING" : "WARNING",
-            verified: false,
-            message: foundNames.length > 0 ? `Proposed new images for ${foundNames.join(", ")}` : `Couldn't find new images for ${missedNames.join(", ")}`,
-            retryable: foundNames.length === 0,
-            userId,
-            storeId: store.id,
-            metadata: { groupId, productIds: outcomes.filter((o) => o.candidate).map((o) => o.id) },
-          });
-          // The deterministic trailer (grouping/miss notes) wasn't part of
-          // the live-streamed text, so it's appended as one more token
-          // event rather than silently only living in the DB row.
-          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: foundNames.length > 0 ? "success" : "failure", likelyRephraseOf, kind: "image_request" });
-          controller.close();
-          return;
-        }
-
         // 2026-08-08 — the real missing capability: J4 previously had no
         // way to remove a product at all and told the owner to do it
         // manually. This never executes the deletion itself (delete_product
@@ -992,147 +878,6 @@ export async function POST(request: Request) {
         // the router. `intent` rides along as a handoff, which is the same
         // mechanism a Studio recommendation already uses: the screen arrives
         // with the request ready instead of blank.
-        if (chosenTool?.name === "refine_storefront") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "refine_storefront" });
-
-          // Validated against the ACTION's own schema, not the tool's. The
-          // tool schema guides the model; this is the boundary that decides
-          // whether a real ApprovalRequest gets written.
-          const parsed = GENESIS_ACTIONS.refine_storefront.inputSchema.safeParse(chosenTool.input);
-          if (!parsed.success) {
-            const clarification =
-              conversationalReply ||
-              "I couldn't work out which part of your storefront you meant. Tell me which section and what feels off about it.";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
-            if (!streamedAnyText) emit({ type: "token", delta: clarification });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "refine_storefront" });
-            controller.close();
-            return;
-          }
-          const refineInput = parsed.data as RefineStorefrontInput;
-
-          // Directions, if J4 offered a real choice (2026-08-14).
-          //
-          // Read from the RAW tool call, not from parsed.data: the action
-          // registry's inputSchema is the security boundary for what will be
-          // EXECUTED, and it deliberately knows nothing about directions, so
-          // it strips them. That separation is the point — approving a
-          // proposal that offered a choice executes exactly the same shape as
-          // one that did not, and the executable's contract is untouched.
-          //
-          // Validated on its own terms against the tool schema, so a
-          // malformed or single-item directions array becomes no directions
-          // rather than a broken chooser.
-          const rawDirections = (chosenTool.input as { directions?: unknown })?.directions;
-          const parsedDirections = RefineStorefrontToolInputSchema.shape.directions.safeParse(rawDirections);
-          const offeredDirections: ProposalDirection[] =
-            parsedDirections.success && parsedDirections.data
-              ? parsedDirections.data.map((d, i) => ({
-                  // Positional ids. The model is never asked to invent one,
-                  // which is one less thing it can return inconsistently
-                  // between the label it shows and the id a button submits.
-                  id: `d${i + 1}`,
-                  label: d.label,
-                  rationale: d.reason,
-                  changes: d.changes,
-                }))
-              : [];
-
-          // The real stored theme, never the model's restatement of it —
-          // the same rule every other getCurrentValues in the registry
-          // follows, so the approval card diffs against ground truth.
-          const themeRow = await prisma.store.findUnique({
-            where: { id: store.id },
-            select: { theme: true },
-          });
-          const previousValues = GENESIS_ACTIONS.refine_storefront.getCurrentValues({
-            blueprint: null,
-            theme: (themeRow?.theme as Theme | null) ?? null,
-          });
-
-          // A rebuttal revises the proposal already on the table; it does not
-          // start a new one (2026-08-14). Sean's requirement, and the reason
-          // this replaced a deleteMany: "if the owner disagrees with the first
-          // idea, J4 should refine the same proposal rather than treating the
-          // rebuttal as a new unrelated request."
-          //
-          // The old code already recognised "same target, still pending" as
-          // the same subject — it just resolved it by deleting the earlier
-          // row, which answered the rebuttal and destroyed the evidence of it
-          // in one operation. An owner saying "go back to your first idea" was
-          // talking about something that no longer existed.
-          //
-          // Same target plus an open proposal means revision, decided in code
-          // rather than asked of the model. The model has no extra field to
-          // get wrong, and a genuinely different target still opens its own
-          // proposal, so a pending hero idea and a pending products idea
-          // coexist exactly as before.
-          const openProposal = await getOpenProposal(store.id);
-          const isRevision =
-            openProposal !== null &&
-            openProposal.current.target === refineInput.target &&
-            !openProposal.settled;
-
-          if (isRevision) {
-            await reviseProposal(store.id, openProposal.proposalId, {
-              summary: refineInput.summary,
-              rationale: refineInput.reason,
-              target: refineInput.target,
-              input: refineInput as unknown as Record<string, unknown>,
-              directions: offeredDirections,
-            });
-          } else {
-            await openProposalRecord(store.id, {
-              actionType: "refine_storefront",
-              summary: refineInput.summary,
-              rationale: refineInput.reason,
-              target: refineInput.target,
-              input: refineInput as unknown as Record<string, unknown>,
-              previousValues: previousValues as Record<string, unknown>,
-              authorizationTier: GENESIS_ACTIONS.refine_storefront.authorizationTier,
-              groupId: randomUUID(),
-              directions: offeredDirections,
-            });
-          }
-
-          // The proposal is rendered directly beneath this conversation, in
-          // the same layer the owner is already reading — so it must never be
-          // described as waiting somewhere else. The previous copy sent them
-          // to the dashboard to find it, which is the exact trip the
-          // persistent layer exists to remove.
-          const finalReply = [
-            conversationalReply || refineInput.summary,
-            offeredDirections.length > 1
-              ? "Have a look below. Flip between them and tell me which way you want to go."
-              : isRevision
-                ? "I've revised it below. Have a look and tell me if that's closer."
-                : "Have a look below. Tell me what you think, or tell me to change it.",
-          ].join(" ");
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "PENDING",
-            verified: false,
-            message: `Proposed refining ${refineInput.target}`,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: {
-              target: refineInput.target,
-              changes: refineInput.changes,
-              reason: refineInput.reason,
-            },
-          });
-          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "refine_storefront" });
-          controller.close();
-          return;
-        }
-
         // J4 approvable product content changes (2026-08-09) — "if J4 can
         // perform the change, J4 should perform the change after I
         // approve it... product names, descriptions" (Sean, real feedback
@@ -1142,122 +887,6 @@ export async function POST(request: Request) {
         // request_image_change above — update_product (genesisActions.ts)
         // is the real, already-existing executable this proposes into,
         // same Approve action Products already has.
-        if (chosenTool?.name === "request_product_content_change") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "request_product_content_change" });
-          emit({ type: "status", text: "Preparing suggestions…" });
-          const input = chosenTool.input as RequestProductContentChangeInput;
-          const targetProducts =
-            input.scope === "all"
-              ? currentProducts
-              : input.scope === "specific"
-                ? currentProducts.filter((p) =>
-                    (input.productNames ?? []).map((n) => n.trim().toLowerCase()).includes(p.name.trim().toLowerCase())
-                  )
-                : [];
-
-          if (targetProducts.length === 0) {
-            const clarification =
-              input.scope === "specific"
-                ? `I want to make sure I work on the right one — which product did you mean? Your active products are: ${currentProducts.map((p) => p.name).join(", ")}.`
-                : conversationalReply || "Which product would you like me to work on?";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: clarification } });
-            if (!streamedAnyText) emit({ type: "token", delta: clarification });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "product_content_change_request" });
-            controller.close();
-            return;
-          }
-
-          const suggestions = await generateProductContentChanges({
-            storeId: store.id,
-            products: targetProducts.map((p) => ({ id: p.id, name: p.name, description: p.description, priceInCents: p.priceInCents })),
-            changeType: input.changeType,
-            ownerRequest: userMessage,
-          });
-
-          const groupId = randomUUID();
-          const proposed: { id: string; name: string }[] = [];
-          const unchanged: string[] = [];
-          for (const product of targetProducts) {
-            const suggestion = suggestions.find((s) => s.productId === product.id);
-            const changedFields: { name?: string; description?: string | null } = {};
-            if (suggestion?.name && suggestion.name.trim() && suggestion.name.trim() !== product.name) {
-              changedFields.name = suggestion.name.trim();
-            }
-            if (
-              input.changeType !== "name" &&
-              suggestion?.description &&
-              suggestion.description.trim() &&
-              suggestion.description.trim() !== (product.description ?? "")
-            ) {
-              changedFields.description = suggestion.description.trim();
-            }
-
-            if (Object.keys(changedFields).length === 0) {
-              unchanged.push(product.name);
-              continue;
-            }
-
-            await prisma.approvalRequest.deleteMany({
-              where: {
-                storeId: store.id,
-                actionType: "update_product",
-                status: "PENDING_APPROVAL",
-                input: { path: ["productId"], equals: product.id },
-              },
-            });
-            const previousValues: Record<string, unknown> = { productId: product.id };
-            if ("name" in changedFields) previousValues.name = product.name;
-            if ("description" in changedFields) previousValues.description = product.description;
-            await prisma.approvalRequest.create({
-              data: {
-                storeId: store.id,
-                recommendationId: null,
-                actionType: "update_product",
-                // M2 — the same canonical derivation the backfill uses, so a decision made in
-                // conversation enters the belief system identically to one made last January.
-                // Null where no honest name exists.
-                topicKey: deriveTopicKey("update_product", { productId: product.id, ...changedFields }),
-                input: { productId: product.id, ...changedFields },
-                previousValues,
-                summary: suggestion?.reasoning ? `${product.name}: ${suggestion.reasoning}` : `Update "${product.name}"`,
-                authorizationTier: GENESIS_ACTIONS.update_product.authorizationTier,
-                groupId,
-              },
-            });
-            proposed.push({ id: product.id, name: product.name });
-          }
-
-          const replyParts = [conversationalReply || "I've looked at your products."];
-          if (proposed.length > 1) {
-            replyParts.push(`I've proposed changes for ${proposed.length}: ${proposed.map((p) => p.name).join(", ")} — review each on Products, or approve all together.`);
-          } else if (proposed.length === 1) {
-            replyParts.push(`You'll find my proposed change for "${proposed[0].name}" waiting for your review on Products.`);
-          }
-          if (unchanged.length > 0) {
-            replyParts.push(`${unchanged.length > 1 ? "These" : "One"} already read${unchanged.length > 1 ? "" : "s"} well as-is, so I left ${unchanged.length > 1 ? "them" : "it"} unchanged: ${unchanged.join(", ")}.`);
-          }
-          const finalReply = replyParts.join(" ");
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: finalReply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: proposed.length > 0 ? "PENDING" : "WARNING",
-            verified: false,
-            message: proposed.length > 0 ? `Proposed content changes for ${proposed.map((p) => p.name).join(", ")}` : "No real content changes to propose",
-            retryable: proposed.length === 0,
-            userId,
-            storeId: store.id,
-            metadata: { groupId, productIds: proposed.map((p) => p.id) },
-          });
-          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: proposed.length > 0 ? "success" : "failure", likelyRephraseOf, kind: "product_content_change_request" });
-          controller.close();
-          return;
-        }
-
         // J4 conversational approval (2026-08-09) — "I approve all
         // together. Make the change please" was routing back into
         // request_product_content_change (a fresh re-analysis, which

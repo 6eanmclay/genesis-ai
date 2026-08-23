@@ -5,12 +5,13 @@ import { ENTITY_REGISTRY, DesignSchema, AssetSchema } from "@/lib/businessModel/
 import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { getSurface } from "@/lib/design/surfaces";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
-import { UPLOAD_INTENT_REPLY } from "@/lib/dashboard/storeChatUnified";
+import { UPLOAD_INTENT_REPLY, extractRichContentImagePrompt } from "@/lib/dashboard/storeChatUnified";
 import {
   AnswerSupplierEconomicsToolInputSchema,
   ApproveCompositionInputSchema,
   CreateDesignInputSchema,
   GenerateBrandLogoInputSchema,
+  RefineStorefrontToolInputSchema,
   ApproveDesignAsProductInputSchema,
   CreateCompositionInputSchema,
   TakeMeThereInputSchema,
@@ -47,6 +48,23 @@ import { deriveTopicKey } from "@/lib/intelligence/topicKeys";
 // catch a mistake, is how a working product breaks quietly. Each one that moves
 // gains a test on the way.
 
+/**
+ * A product as the handlers need it.
+ *
+ * Wider than {id, name} because sourcing a replacement photo needs what the
+ * product actually IS — its description and rich content are what a new image
+ * gets generated or searched from, and its current image is what must be
+ * excluded so the replacement is not the thing being replaced.
+ */
+export interface TurnProduct {
+  id: string;
+  name: string;
+  description?: string | null;
+  imageUrl?: string | null;
+  priceInCents?: number | null;
+  richContent?: unknown;
+}
+
 export interface ToolTurnContext {
   storeId: string;
   /** The authenticated viewer. Authorization already happened; this is for attribution. */
@@ -71,7 +89,7 @@ export interface ToolTurnContext {
    * model what exists, and a handler reading them again would be a second
    * answer to "what does this store sell" one query later.
    */
-  products: { id: string; name: string }[];
+  products: TurnProduct[];
 }
 
 export type ToolTurnResult =
@@ -1346,6 +1364,478 @@ export function makeManageBusinessAsset(deps?: {
 }
 
 /**
+ * Find replacement photos for products, and propose them.
+ *
+ * PROPOSES, never applies — same as the removal path. Each candidate becomes an
+ * ApprovalRequest the owner decides on, and a fresh one supersedes an earlier
+ * still-pending proposal for the same product so approving cannot apply two.
+ *
+ * PARTIAL SUCCESS IS THE NORMAL CASE and the reply has to carry it: some
+ * products get a candidate and some do not, and saying "done" over the top of
+ * that would leave an owner believing every product was handled. So the misses
+ * are NAMED, with the honest suggestion to upload those directly.
+ */
+export function makeRequestImageChange(
+  source?: (input: {
+    prompt: string;
+    name: string;
+    description: string | null;
+    excludeUrls: string[];
+    storeId: string;
+  }) => Promise<{ url: string; generationPrompt?: string | null; aiUsageEventId?: string | null } | null>
+): ToolHandler {
+  return async (ctx) => {
+    ctx.status("Finding new photos…");
+
+    const input = ctx.input as { scope?: "all" | "specific" | null; productNames?: string[] | null };
+    const targets = resolveScopedProducts(ctx.products, input?.scope, input?.productNames);
+
+    if (targets.length === 0) {
+      return {
+        handled: true,
+        reply:
+          input?.scope === "specific"
+            ? `I want to make sure I update the right one — which product did you mean? Your active products are: ${ctx.products
+                .map((p) => p.name)
+                .join(", ")}.`
+            : ctx.conversationalReply || "Which product would you like a new photo for?",
+        kind: "image_request",
+        outcome: "failure",
+      };
+    }
+
+    const find =
+      source ??
+      (async (args: {
+        prompt: string;
+        name: string;
+        description: string | null;
+        excludeUrls: string[];
+        storeId: string;
+      }) => {
+        const { resolveProductImage } = await import("@/lib/imageProviders/resolveProductImage");
+        return resolveProductImage({
+          prompt: args.prompt,
+          name: args.name,
+          description: args.description,
+          excludeUrls: args.excludeUrls,
+          scope: { storeId: args.storeId },
+          feature: "product_image_generation",
+        });
+      });
+
+    const groupId = randomUUID();
+    const outcomes: { id: string; name: string; candidate: string | null }[] = [];
+
+    for (const product of targets) {
+      const sourced = await find({
+        prompt:
+          extractRichContentImagePrompt(product.richContent) ?? product.description ?? product.name,
+        name: product.name,
+        description: product.description ?? null,
+        // The image being replaced is excluded, so the replacement cannot be
+        // the thing it is replacing.
+        excludeUrls: product.imageUrl ? [product.imageUrl] : [],
+        storeId: ctx.storeId,
+      });
+      const candidate = sourced?.url ?? null;
+
+      if (candidate) {
+        await prisma.approvalRequest.deleteMany({
+          where: {
+            storeId: ctx.storeId,
+            actionType: "update_product_image",
+            status: "PENDING_APPROVAL",
+            input: { path: ["productId"], equals: product.id },
+          },
+        });
+        await prisma.approvalRequest.create({
+          data: {
+            storeId: ctx.storeId,
+            recommendationId: null,
+            actionType: "update_product_image",
+            topicKey: deriveTopicKey("update_product_image", null),
+            input: {
+              productId: product.id,
+              imageUrl: candidate,
+              ...(sourced?.generationPrompt ? { generationPrompt: sourced.generationPrompt } : {}),
+            },
+            previousValues: {
+              productId: product.id,
+              imageUrl: product.imageUrl ?? null,
+              rejectedCandidates: [],
+            },
+            summary: `Replace image for "${product.name}"`,
+            authorizationTier: GENESIS_ACTIONS.update_product_image.authorizationTier,
+            groupId,
+            aiUsageEventId: sourced?.aiUsageEventId ?? null,
+          },
+        });
+      }
+      outcomes.push({ id: product.id, name: product.name, candidate });
+    }
+
+    const found = outcomes.filter((o) => o.candidate).map((o) => o.name);
+    const missed = outcomes.filter((o) => !o.candidate).map((o) => o.name);
+
+    const parts = [ctx.conversationalReply || "I'm looking for new photos now."];
+    if (found.length > 1) {
+      parts.push(
+        `These are grouped as one idea on Products — review each, or use "Use all ${found.length}" to apply them together.`
+      );
+    } else if (found.length === 1) {
+      parts.push("You'll find it waiting for your review on Products.");
+    }
+    // THE MISSES ARE NAMED. Saying "done" over the top of a partial result
+    // leaves an owner believing every product was handled.
+    if (missed.length > 0) {
+      parts.push(
+        `I couldn't find a good option for ${missed.join(", ")} — you may want to upload ${
+          missed.length > 1 ? "those" : "that one"
+        } directly for now.`
+      );
+    }
+
+    return {
+      handled: true,
+      reply: parts.join(" "),
+      kind: "image_request",
+      outcome: found.length > 0 ? "success" : "failure",
+      executionStatus: found.length > 0 ? "PENDING" : "WARNING",
+      retryable: found.length === 0,
+      logMessage:
+        found.length > 0
+          ? `Proposed new images for ${found.join(", ")}`
+          : `Couldn't find new images for ${missed.join(", ")}`,
+      metadata: { groupId, productIds: outcomes.filter((o) => o.candidate).map((o) => o.id) },
+    };
+  };
+}
+
+/**
+ * Propose a storefront refinement — or REVISE the one already on the table.
+ *
+ * TWO SEPARATIONS MATTER HERE AND BOTH ARE EASY TO COLLAPSE BY ACCIDENT.
+ *
+ * The input is validated against the ACTION's own schema, not the tool's. The
+ * tool schema guides the model; the action schema is the boundary that decides
+ * whether a real ApprovalRequest gets written, and it is the one an executable
+ * will later be handed.
+ *
+ * Directions are read from the RAW tool call, because the action registry
+ * deliberately knows nothing about them and strips them. That separation is the
+ * point: approving a proposal that offered a choice executes exactly the same
+ * shape as one that did not, and the executable's contract is untouched.
+ *
+ * A REBUTTAL REVISES, IT DOES NOT RESTART. Sean's requirement: "if the owner
+ * disagrees with the first idea, J4 should refine the same proposal rather than
+ * treating the rebuttal as a new unrelated request." The version this replaced
+ * resolved the same recognition by DELETING the earlier row — answering the
+ * rebuttal and destroying the evidence of it in one operation, so an owner
+ * saying "go back to your first idea" was talking about something that no
+ * longer existed.
+ *
+ * Same target plus an open proposal means revision, decided in code rather than
+ * asked of the model — one less field for it to get wrong.
+ */
+export function makeRefineStorefront(deps?: {
+  openProposal?: (storeId: string) => Promise<{
+    proposalId: string;
+    settled: boolean;
+    current: { target: string | null };
+  } | null>;
+  revise?: (storeId: string, proposalId: string, patch: Record<string, unknown>) => Promise<unknown>;
+  open?: (storeId: string, record: Record<string, unknown>) => Promise<unknown>;
+  currentTheme?: (storeId: string) => Promise<unknown>;
+}): ToolHandler {
+  return async (ctx) => {
+    const parsed = GENESIS_ACTIONS.refine_storefront.inputSchema.safeParse(ctx.input);
+    if (!parsed.success) {
+      return {
+        handled: true,
+        reply:
+          ctx.conversationalReply ||
+          "I couldn't work out which part of your storefront you meant. Tell me which section and what feels off about it.",
+        kind: "refine_storefront",
+        outcome: "failure",
+      };
+    }
+    const refineInput = parsed.data as {
+      target: string;
+      summary: string;
+      reason: string;
+      changes: unknown;
+    };
+
+    // Validated on its own terms, so a malformed or single-item directions
+    // array becomes NO directions rather than a broken chooser.
+    const rawDirections = (ctx.input as { directions?: unknown })?.directions;
+    const parsedDirections = RefineStorefrontToolInputSchema.shape.directions.safeParse(rawDirections);
+    const offeredDirections =
+      parsedDirections.success && parsedDirections.data
+        ? parsedDirections.data.map((d, i) => ({
+            // Positional ids. The model is never asked to invent one, which is
+            // one less thing it can return inconsistently between the label it
+            // shows and the id a button submits.
+            id: `d${i + 1}`,
+            label: d.label,
+            rationale: d.reason,
+            changes: d.changes,
+          }))
+        : [];
+
+    // The real stored theme, never the model's restatement of it, so the
+    // approval card diffs against ground truth.
+    const readTheme =
+      deps?.currentTheme ??
+      (async (storeId: string) => {
+        const row = await prisma.store.findUnique({ where: { id: storeId }, select: { theme: true } });
+        return row?.theme ?? null;
+      });
+    const previousValues = GENESIS_ACTIONS.refine_storefront.getCurrentValues({
+      blueprint: null,
+      theme: (await readTheme(ctx.storeId)) as Parameters<
+        typeof GENESIS_ACTIONS.refine_storefront.getCurrentValues
+      >[0]["theme"],
+    });
+
+    const readOpen =
+      deps?.openProposal ??
+      (async (storeId: string) => {
+        const { getOpenProposal } = await import("@/lib/storefront/proposals");
+        return getOpenProposal(storeId) as unknown as Promise<{
+          proposalId: string;
+          settled: boolean;
+          current: { target: string | null };
+        } | null>;
+      });
+
+    const open = await readOpen(ctx.storeId);
+    const isRevision = open !== null && open.current.target === refineInput.target && !open.settled;
+
+    if (isRevision) {
+      const revise =
+        deps?.revise ??
+        (async (storeId: string, proposalId: string, patch: Record<string, unknown>) => {
+          const { reviseProposal } = await import("@/lib/storefront/proposals");
+          return reviseProposal(storeId, proposalId, patch as unknown as Parameters<typeof reviseProposal>[2]);
+        });
+      await revise(ctx.storeId, open.proposalId, {
+        summary: refineInput.summary,
+        rationale: refineInput.reason,
+        target: refineInput.target,
+        input: refineInput as unknown as Record<string, unknown>,
+        directions: offeredDirections,
+      });
+    } else {
+      const openRecord =
+        deps?.open ??
+        (async (storeId: string, record: Record<string, unknown>) => {
+          const { openProposal: openProposalRecord } = await import("@/lib/storefront/proposals");
+          return openProposalRecord(storeId, record as unknown as Parameters<typeof openProposalRecord>[1]);
+        });
+      await openRecord(ctx.storeId, {
+        actionType: "refine_storefront",
+        summary: refineInput.summary,
+        rationale: refineInput.reason,
+        target: refineInput.target,
+        input: refineInput as unknown as Record<string, unknown>,
+        previousValues: previousValues as Record<string, unknown>,
+        authorizationTier: GENESIS_ACTIONS.refine_storefront.authorizationTier,
+        groupId: randomUUID(),
+        directions: offeredDirections,
+      });
+    }
+
+    const lead = ctx.conversationalReply || refineInput.summary;
+    // RENDERED BENEATH THIS CONVERSATION, so it must never be described as
+    // waiting somewhere else. The copy this replaced sent the owner to the
+    // dashboard to find it — the exact trip the persistent layer removes.
+    const closing =
+      offeredDirections.length > 1
+        ? "Have a look below. Flip between them and tell me which way you want to go."
+        : isRevision
+          ? "I've revised it below. Have a look and tell me if that's closer."
+          : "Have a look below. Tell me what you think, or tell me to change it.";
+
+    return {
+      handled: true,
+      reply: `${lead} ${closing}`,
+      kind: "refine_storefront",
+      executionStatus: "PENDING",
+      logMessage: `Proposed refining ${refineInput.target}`,
+      metadata: {
+        target: refineInput.target,
+        changes: refineInput.changes,
+        reason: refineInput.reason,
+        revised: isRevision,
+        directions: offeredDirections.length,
+      },
+    };
+  };
+}
+
+/**
+ * Propose better names and descriptions for existing products.
+ *
+ * PROPOSES — the owner's approval is the existing Approve control on Products,
+ * and this exists because J4 used to tell people to paste suggested names in by
+ * hand. "If J4 can perform the change, J4 should perform the change after I
+ * approve it" (Sean).
+ *
+ * A SUGGESTION THAT CHANGES NOTHING IS NOT A PROPOSAL. Where the model returns
+ * the text that is already there, no ApprovalRequest is written and the product
+ * is NAMED as left alone — because a decision card that turns out to change
+ * nothing wastes the owner's attention, and quietly dropping it would leave
+ * them wondering which products J4 even looked at.
+ */
+export function makeRequestProductContentChange(
+  generate?: (input: {
+    storeId: string;
+    products: { id: string; name: string; description: string | null; priceInCents: number | null }[];
+    changeType: string;
+    ownerRequest: string;
+  }) => Promise<{ productId: string; name?: string | null; description?: string | null; reasoning?: string | null }[]>
+): ToolHandler {
+  return async (ctx) => {
+    ctx.status("Preparing suggestions…");
+
+    const input = ctx.input as {
+      scope?: "all" | "specific" | null;
+      productNames?: string[] | null;
+      changeType?: string;
+    };
+    const targets = resolveScopedProducts(ctx.products, input?.scope, input?.productNames);
+
+    if (targets.length === 0) {
+      return {
+        handled: true,
+        reply:
+          input?.scope === "specific"
+            ? `I want to make sure I work on the right one — which product did you mean? Your active products are: ${ctx.products
+                .map((p) => p.name)
+                .join(", ")}.`
+            : ctx.conversationalReply || "Which product would you like me to work on?",
+        kind: "product_content_change_request",
+        outcome: "failure",
+      };
+    }
+
+    const run =
+      generate ??
+      (async (args: {
+        storeId: string;
+        products: { id: string; name: string; description: string | null; priceInCents: number | null }[];
+        changeType: string;
+        ownerRequest: string;
+      }) => {
+        const { generateProductContentChanges } = await import("@/lib/execution/productContentGeneration");
+        return generateProductContentChanges(args as Parameters<typeof generateProductContentChanges>[0]);
+      });
+
+    const suggestions = await run({
+      storeId: ctx.storeId,
+      products: targets.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description ?? null,
+        priceInCents: p.priceInCents ?? null,
+      })),
+      changeType: input?.changeType ?? "both",
+      ownerRequest: ctx.userMessage,
+    });
+
+    const groupId = randomUUID();
+    const proposed: { id: string; name: string }[] = [];
+    const unchanged: string[] = [];
+
+    for (const product of targets) {
+      const suggestion = suggestions.find((s) => s.productId === product.id);
+      const changedFields: { name?: string; description?: string | null } = {};
+
+      if (suggestion?.name && suggestion.name.trim() && suggestion.name.trim() !== product.name) {
+        changedFields.name = suggestion.name.trim();
+      }
+      if (
+        input?.changeType !== "name" &&
+        suggestion?.description &&
+        suggestion.description.trim() &&
+        suggestion.description.trim() !== (product.description ?? "")
+      ) {
+        changedFields.description = suggestion.description.trim();
+      }
+
+      if (Object.keys(changedFields).length === 0) {
+        unchanged.push(product.name);
+        continue;
+      }
+
+      await prisma.approvalRequest.deleteMany({
+        where: {
+          storeId: ctx.storeId,
+          actionType: "update_product",
+          status: "PENDING_APPROVAL",
+          input: { path: ["productId"], equals: product.id },
+        },
+      });
+
+      const previousValues: Record<string, unknown> = { productId: product.id };
+      if ("name" in changedFields) previousValues.name = product.name;
+      if ("description" in changedFields) previousValues.description = product.description ?? null;
+
+      await prisma.approvalRequest.create({
+        data: {
+          storeId: ctx.storeId,
+          recommendationId: null,
+          actionType: "update_product",
+          topicKey: deriveTopicKey("update_product", { productId: product.id, ...changedFields }),
+          input: { productId: product.id, ...changedFields },
+          previousValues,
+          summary: suggestion?.reasoning
+            ? `${product.name}: ${suggestion.reasoning}`
+            : `Update "${product.name}"`,
+          authorizationTier: GENESIS_ACTIONS.update_product.authorizationTier,
+          groupId,
+        },
+      });
+      proposed.push({ id: product.id, name: product.name });
+    }
+
+    const parts = [ctx.conversationalReply || "I've looked at your products."];
+    if (proposed.length > 1) {
+      parts.push(
+        `I've proposed changes for ${proposed.length}: ${proposed
+          .map((p) => p.name)
+          .join(", ")} — review each on Products, or approve all together.`
+      );
+    } else if (proposed.length === 1) {
+      parts.push(`You'll find my proposed change for "${proposed[0].name}" waiting for your review on Products.`);
+    }
+    if (unchanged.length > 0) {
+      parts.push(
+        `${unchanged.length > 1 ? "These" : "One"} already read${
+          unchanged.length > 1 ? "" : "s"
+        } well as-is, so I left ${unchanged.length > 1 ? "them" : "it"} unchanged: ${unchanged.join(", ")}.`
+      );
+    }
+
+    return {
+      handled: true,
+      reply: parts.join(" "),
+      kind: "product_content_change_request",
+      outcome: proposed.length > 0 ? "success" : "failure",
+      executionStatus: proposed.length > 0 ? "PENDING" : "WARNING",
+      retryable: proposed.length === 0,
+      logMessage:
+        proposed.length > 0
+          ? `Proposed content changes for ${proposed.map((p) => p.name).join(", ")}`
+          : "No real content changes to propose",
+      metadata: { groupId, productIds: proposed.map((p) => p.id) },
+    };
+  };
+}
+
+/**
  * The tools that have moved out of the inline ladder.
  *
  * A hand-maintained mirror of what route.ts still handles inline — every name
@@ -1367,6 +1857,9 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   create_design: makeCreateDesign(),
   generate_brand_logo: makeGenerateBrandLogo(),
   manage_business_asset: makeManageBusinessAsset(),
+  request_image_change: makeRequestImageChange(),
+  refine_storefront: makeRefineStorefront(),
+  request_product_content_change: makeRequestProductContentChange(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the
   // ACCOUNT'S ACTIVE business rather than the one the owner is in, so it is
