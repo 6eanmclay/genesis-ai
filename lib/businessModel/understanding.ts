@@ -5,6 +5,7 @@ import { getBusinessProfile, type BusinessProfile } from "./profile";
 import { getBeliefs } from "@/lib/intelligence/learn";
 import { getRecentDecisionOutcomes, type RecentDecisionOutcome } from "./reasoning";
 import { currentAssetsByRole, type DesignatedAsset } from "./assets";
+import { relationsByKind } from "./relationships";
 
 // J4 Foundation — the canonical representation of what J4 knows about a
 // business at any point in time (J4_FOUNDATION.md, Gap A). Combines the
@@ -56,8 +57,35 @@ export interface PlatformRelationship {
   businessPartnerTrialEndsAt: string | null;
 }
 
+/**
+ * WHAT IS STANDING IN THE WAY OF WHAT (2026-08-22, U2).
+ *
+ * A goal and the challenges actually blocking it, resolved to real descriptions
+ * rather than left as ids for each consumer to join.
+ *
+ * WHY THIS IS PART OF UNDERSTANDING RATHER THAN A SEPARATE LOOKUP: the reason
+ * stated at the top of this file — there is one answer to "what does J4 know",
+ * and a connection between two facts is part of that answer as much as either
+ * fact is. Typed relationships that reasoning cannot see are an inert
+ * representation; the whole point of naming the `blocks` kind was that J4 could
+ * finally say "this is the thing standing between you and that", and it can only
+ * say it if it is told.
+ *
+ * Empty is the ordinary state and an honest one: nothing in the product
+ * populates a goal's or challenge's reference arrays automatically yet, so today
+ * these come from links the owner drew (lib/businessModel/statements.ts) or from
+ * a connector that supplies them.
+ */
+export interface BlockedGoal {
+  goalId: string;
+  goal: string;
+  blockedBy: { challengeId: string; challenge: string }[];
+}
+
 export interface BusinessUnderstanding {
   profile: BusinessProfile;
+  /** What is standing in the way of what. See BlockedGoal. */
+  blockedGoals: BlockedGoal[];
   beliefs: Awaited<ReturnType<typeof getBeliefs>>;
   recentDecisions: RecentDecisionOutcome[];
   // Everything J4 currently considers still-open — every ACTIVE
@@ -125,6 +153,10 @@ export async function getBusinessUnderstanding(
     store,
     currentAssets,
     commitments,
+    // POSITIONAL, and the order below must match exactly. Appending this binding
+    // while inserting its query mid-array silently paired blockedGoals with the
+    // owner-understanding read — which typechecked far enough to be confusing.
+    blocking,
     ownerUnderstanding,
   ] = await Promise.all([
     getBusinessProfile(storeId),
@@ -148,11 +180,32 @@ export async function getBusinessUnderstanding(
     }),
     currentAssetsByRole(storeId),
     getCommitments(storeId),
+    // ONE INDEXED QUERY, not a traversal. The convention this replaced answered
+    // the same question by loading every record of all fifteen entity types and
+    // scanning their keys in memory.
+    relationsByKind(storeId, "blocks"),
     opts?.viewerUserId ? getOwnerUnderstanding(storeId, opts.viewerUserId) : Promise.resolve([]),
   ]);
 
+  // Resolved against the goals and challenges ALREADY fetched, so naming what
+  // blocks what costs no further reads. A relationship pointing at a record this
+  // profile does not carry is silently skipped rather than rendered as an id: a
+  // description an owner cannot read is worse than a connection left unstated.
+  const challengeById = new Map(profile.challenges.map((c) => [c.id, c.data.description]));
+  const blockedGoals: BlockedGoal[] = profile.goals
+    .map((g) => ({
+      goalId: g.id,
+      goal: g.data.description,
+      blockedBy: blocking
+        .filter((r) => r.toId === g.id)
+        .map((r) => ({ challengeId: r.fromId, challenge: challengeById.get(r.fromId) }))
+        .filter((b): b is { challengeId: string; challenge: string } => b.challenge !== undefined),
+    }))
+    .filter((entry) => entry.blockedBy.length > 0);
+
   return {
     profile,
+    blockedGoals,
     beliefs,
     recentDecisions,
     currentAssets,

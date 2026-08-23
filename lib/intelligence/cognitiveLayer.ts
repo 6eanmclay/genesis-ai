@@ -264,6 +264,8 @@ You are shown two distinct kinds of information about your own past reasoning, a
 
 recentDecisionOutcomes lists real, objective facts about the last 14 days: specific proposals that were executed or rejected, each with its own topicKey and summary. This is current state, not a pattern — even a single rejection is worth respecting: do not simply repeat that exact topicKey unchanged, but one decline is not proof of a firm rule, so a genuinely new or stronger reason is enough to raise it again, acknowledging the prior decline rather than presenting it as first-time news.
 
+blockedGoals names which stated challenges are standing in the way of which stated goals — not an inference you should draw from the two lists yourself, but a link somebody actually recorded. Use it: a recommendation that ignores a named blocker is advice to walk through a wall, and an explanation of why a goal is not moving is far stronger when it can name the thing in the way. Empty is ordinary and means no such link has been recorded, NOT that nothing is blocking anything — never present an empty blockedGoals as evidence that a goal is unobstructed.
+
 Most facts carry a "source" object saying where they came from: "from" (who or what asserted it), "via" (the specific connector or document), "stated" (how long ago), and sometimes "interpreted" (a model read it out of what somebody said or wrote) or "couldBeWrong" (nothing outside this system asserted it at all). "sourceGuidance" spells out how to read each kind that is actually present. Weigh these rather than treating every fact as equally authoritative: the owner is the only authority on what the business is trying to do, a connected system is the better authority on what was invoiced, and something you concluded yourself is not evidence and must never be spoken about as though somebody had told you. When "interpreted" is set, the wording is your own paraphrase rather than their words — do not quote it back as theirs. A "stated" of many months ago is not automatically stale, but it IS worth asking about when a recommendation depends on it still being true. A fact with no source at all predates this being recorded: treat it as ordinary business data of unknown origin, and do not claim it came from anywhere. "factsWithNoRecordedSource" counts those, so you know how much of the picture is in that state.
 
 beliefs lists patterns Learn has already generalized from real, repeated evidence over time — each with a claim, a category, a confidence score, and a maturity label. Maturity matters as much as confidence: an "early signal" or "an emerging pattern" belief is real but thin — mention it cautiously if at all, and never let it alone justify attaching a proposedAction that assumes strong trust. A "well-established" belief is a premise you can build a genuinely confident recommendation on. A belief "being reconsidered" means something you've relied on may be breaking down right now — that tension (what was established vs. what's newly contradicting it) is often itself worth a real explanation output, not something to quietly average away.
@@ -418,6 +420,7 @@ export async function runCognitiveReview(params: {
     recentDecisions: recentDecisionOutcomes,
     platformRelationship,
     commitments,
+    blockedGoals,
   } = understanding;
   const inventorySnapshot = getInventorySnapshot(products);
   const blueprint = store.blueprint as BlueprintContextSubset | null;
@@ -547,6 +550,12 @@ export async function runCognitiveReview(params: {
     recentAssets: businessProfile.assets
       .filter((a) => a.data.category !== "unclassified")
       .map((a) => withSource({ id: a.id, category: a.data.category, summary: a.data.summary }, a)),
+    // WHAT IS STANDING IN THE WAY OF WHAT (2026-08-22, U2). goals and
+    // challenges were already both here, as two lists with nothing between
+    // them — so the most useful sentence J4 could offer, "this is the thing
+    // between you and that", was unsayable no matter how good the reasoning.
+    // Empty is ordinary: most businesses have stated no such link.
+    blockedGoals,
     // THE RULES FOR READING THOSE SOURCES, and only the ones that apply. A
     // business with no connectors and no uploads gets two sentences rather than
     // six — every unnecessary rule dilutes the ones that matter.

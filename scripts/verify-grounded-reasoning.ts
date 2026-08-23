@@ -4,6 +4,8 @@ import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import { prisma, prismaSystem } from "@/lib/prisma";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { getBusinessProfile } from "@/lib/businessModel/profile";
+import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { stateRelationship } from "@/lib/businessModel/statements";
 import {
   sourceOf,
   withSource,
@@ -235,6 +237,62 @@ async function main() {
   check("with the third counted as unsourced", unsourcedCount(profile.goals), 1);
 
   // ==========================================================================
+  console.log("\n=== 4b. Reasoning can finally say what is in the way ===\n");
+  // ==========================================================================
+  // U2's whole point. goals and challenges were BOTH already in the prompt, as
+  // two lists with nothing between them — so "this is the thing standing between
+  // you and that", the most useful sentence J4 could offer an owner, was
+  // unsayable no matter how good the reasoning was.
+  const goalRow = profile.goals.find((g) => g.data.description === "Open a second workshop")!;
+
+  const before = await getBusinessUnderstanding(store.id);
+  // EMPTY IS ORDINARY AND IS NOT A CLAIM. No link recorded does not mean the
+  // goal is unobstructed, and the prompt says so in as many words.
+  check("with nothing recorded, nothing is claimed to be blocking", before.blockedGoals, []);
+
+  await persistSyncedRecords(store.id, "genesis_chat", [
+    {
+      entityType: "challenge", externalId: "c-lease",
+      data: {
+        description: "The lease on the current unit ends in December",
+        category: "operations", severity: "high", status: "active",
+        identifiedAt: "2026-03-02", resolvedAt: null, relatedGoalIds: [goalRow.id],
+      } as never,
+    },
+  ], { provenance: "OWNER", provenanceDetail: "chat", statedById: user.id, modelExtracted: true });
+
+  const after = await getBusinessUnderstanding(store.id);
+  check("one goal is now blocked", after.blockedGoals.length, 1);
+  check("the right one", after.blockedGoals[0]?.goal, "Open a second workshop");
+  // RESOLVED TO A DESCRIPTION, not left as an id. A blocker an owner cannot read
+  // is worse than a connection left unstated.
+  check("by something readable",
+    after.blockedGoals[0]?.blockedBy.map((b) => b.challenge),
+    ["The lease on the current unit ends in December"]);
+
+  // THE ASSERTION THAT WOULD HAVE CAUGHT THE BUG THIS SECTION SHIPPED WITH.
+  // The relationship read was inserted mid-Promise.all while its binding was
+  // appended, so blockedGoals was silently paired with the owner-understanding
+  // read. Everything else in the object has to still be itself.
+  assert("and the rest of understanding is still itself",
+    after.profile.goals.length === 3 && Array.isArray(after.ownerUnderstanding),
+    `${after.profile.goals.length} goals, ownerUnderstanding is ${typeof after.ownerUnderstanding}`);
+
+  // A goal blocked by something the profile does not carry is skipped rather
+  // than rendered as an id.
+  await stateRelationship({
+    storeId: store.id, userId: user.id,
+    fromId: (await prisma.businessRecord.findFirstOrThrow({
+      where: { storeId: store.id, entityType: "challenge" },
+    })).id,
+    fromType: "challenge",
+    toId: goalRow.id, toType: "goal", kind: "blocks",
+  });
+  const stillOne = await getBusinessUnderstanding(store.id);
+  check("re-stating the same link does not duplicate the blocker",
+    stillOne.blockedGoals[0]?.blockedBy.length, 1);
+
+  // ==========================================================================
   console.log("\n=== 5. Both reasoning paths are told the same thing ===\n");
   // ==========================================================================
   // "Both paths draw on identical understanding or neither can be trusted"
@@ -259,6 +317,8 @@ async function main() {
   assert("Reason attaches a source to each goal and challenge",
     reason.includes("withSource({ id: g.id, ...g.data }, g)") &&
       reason.includes("withSource({ id: c.id, ...c.data }, c)"));
+  // A representation reasoning cannot see is an inert one.
+  assert("and sends what is blocking what", reason.includes("blockedGoals,"));
 
   // ==========================================================================
   console.log("\n=== 6. The prompts actually explain what they are sending ===\n");
@@ -282,6 +342,14 @@ async function main() {
     assert(`${name} tells the reader an unsourced fact predates this`,
       prompt.includes("predates this being recorded"));
   }
+
+  // AN EMPTY LIST IS NOT EVIDENCE OF ABSENCE, and the prompt has to say so:
+  // nothing populates a goal's reference arrays automatically yet, so an empty
+  // blockedGoals is the ordinary case rather than a finding.
+  assert("Reason's prompt explains what is blocking what",
+    reasonPrompt.includes("blockedGoals names which stated challenges"));
+  assert("and refuses to read an empty one as 'nothing is blocking anything'",
+    reasonPrompt.includes("never present an empty blockedGoals as evidence"));
 
   await prisma.store.deleteMany({ where: { id: store.id } });
   await prisma.user.deleteMany({ where: { id: user.id } });
