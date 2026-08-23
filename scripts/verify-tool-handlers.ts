@@ -9,6 +9,10 @@ import {
   makeApprovePendingChanges,
   makeTakeMeThere,
   makeAnswerSupplierEconomics,
+  makePlanCampaign,
+  makeCreateComposition,
+  makeApproveComposition,
+  makeApproveDesignAsProduct,
   NAV_DESTINATIONS,
   OFFICE_REPLY,
   resolveScopedProducts,
@@ -404,6 +408,153 @@ async function main() {
   })(contextFor(store.id, owner.id, { ...quoted, minimumOrderUnits: "loads" }));
   check("a malformed economics answer is refused before anything is applied",
     badShape.handled ? "handled" : badShape.reason, "invalid_input");
+
+  // ==========================================================================
+  console.log("\n=== 5e. Campaigns and compositions never invent what they lack ===\n");
+  // ==========================================================================
+  // Both of these produce something the owner will look at, and both can
+  // legitimately produce nothing. The failure worth guarding is the cheerful
+  // reply about work that does not exist.
+  const emptyPlan = await makePlanCampaign(async () => null)(contextFor(store.id, owner.id, {}));
+  assert("a campaign that could not be planned is still handled", emptyPlan.handled);
+  if (!emptyPlan.handled) throw new Error("unreachable");
+  assert("and says so rather than implying a plan exists",
+    emptyPlan.reply.includes("wasn't able"), emptyPlan.reply);
+  check("recorded as a failure", emptyPlan.outcome, "failure");
+  check("with no group to point at", (emptyPlan.metadata as { groupId: unknown }).groupId, null);
+
+  const realPlan = await makePlanCampaign(async () => ({
+    name: "Spring rings",
+    groupId: "grp-1",
+    channels: [{ channel: "email" }, { channel: "instagram" }],
+  }))(contextFor(store.id, owner.id, {}));
+  assert("a real plan is described", realPlan.handled);
+  if (!realPlan.handled) throw new Error("unreachable");
+  assert("by name", realPlan.reply.includes("Spring rings"), realPlan.reply);
+  assert("and by channel, so the owner knows what was actually planned",
+    realPlan.reply.includes("email") && realPlan.reply.includes("instagram"), realPlan.reply);
+  check("carrying the group it belongs to", (realPlan.metadata as { groupId: unknown }).groupId, "grp-1");
+
+  // COMPOSING NEVER INVENTS ARTWORK. A store without enough of the owner's own
+  // images is told exactly that, and what to do about it.
+  const noImages = await makeCreateComposition(async () => null)(
+    contextFor(store.id, owner.id, { surface: "section.collage", columns: 2, subject: null })
+  );
+  assert("a composition with nothing to compose is handled", noImages.handled);
+  if (!noImages.handled) throw new Error("unreachable");
+  assert("and explains the real reason",
+    noImages.reply.toLowerCase().includes("upload") || noImages.reply.toLowerCase().includes("images"),
+    noImages.reply);
+  check("recorded as a failure", noImages.outcome, "failure");
+  check("and nothing is handed to the panel to draw", noImages.messageChanges, undefined);
+
+  const composed = await makeCreateComposition(async () => ({
+    used: [{ label: "Tensor Ring photo" }, { label: "Copper Cuff photo" }],
+    design: { mockupUrl: "https://example.test/m.png", designId: "d1", surface: "storefront.hero" },
+  }))(contextFor(store.id, owner.id, { surface: "section.collage", columns: 2, subject: null }));
+  assert("a real composition is handled", composed.handled);
+  if (!composed.handled) throw new Error("unreachable");
+  // NAMES WHAT IT USED. A composition the owner cannot trace back to their own
+  // files is indistinguishable from one J4 invented.
+  assert("naming the owner's own images",
+    composed.reply.includes("Tensor Ring photo") && composed.reply.includes("Copper Cuff photo"),
+    composed.reply);
+  check("and hands the artefact to the panel that draws it",
+    (composed.messageChanges as { designId: unknown }).designId, "d1");
+  check("marking Studio for re-render", composed.revalidate, "/dashboard/studio");
+
+  // ==========================================================================
+  console.log("\n=== 5f. Approving something says what kind of thing it is ===\n");
+  // ==========================================================================
+  // The distinction Sean called huge: something a customer can BUY versus
+  // something that makes the store LOOK BETTER. An owner who thinks they just
+  // added a product will go looking for it in their catalogue.
+  //
+  // Both of these also share a failure mode worth pinning: the underlying work
+  // can fail without throwing, and reporting success then would tell somebody
+  // their product exists when it does not.
+
+  // Nothing on the table to approve.
+  const nothingToPutUp = await makeApproveComposition(async () => "asset-1")(
+    contextFor(store.id, owner.id, { role: "storefront.hero", summary: "A hero" })
+  );
+  assert("approving with no composition is handled", nothingToPutUp.handled);
+  if (!nothingToPutUp.handled) throw new Error("unreachable");
+  check("and recorded as a failure", nothingToPutUp.outcome, "failure");
+  assert("saying there is nothing to put up",
+    nothingToPutUp.reply.toLowerCase().includes("don't have a composition"), nothingToPutUp.reply);
+
+  // A real section design to approve.
+  await prisma.businessRecord.create({
+    data: {
+      storeId: store.id, entityType: "design", sourceProvider: "genesis_studio",
+      externalId: `d-${uniq()}`,
+      data: {
+        assetIds: [], surface: "section.collage", arrangement: "grid", arrangementScale: null,
+        printFileUrl: "https://example.test/p.png", mockupUrl: "https://example.test/m.png",
+        sourceAssetUrls: [], createdAt: new Date().toISOString(),
+      } as never,
+      provenance: "GENERATED", modelExtracted: true,
+    },
+  });
+
+  const putUp = await makeApproveComposition(async () => "asset-1")(
+    contextFor(store.id, owner.id, { role: "storefront.hero", summary: "A hero" })
+  );
+  assert("a real composition is approved", putUp.handled);
+  if (!putUp.handled) throw new Error("unreachable");
+  // THE SENTENCE THAT PREVENTS THE MISUNDERSTANDING.
+  assert("and is named as a storefront asset, not something for sale",
+    putUp.reply.includes("not something for sale"), putUp.reply);
+  assert("both surfaces that show it are marked for re-render",
+    Array.isArray(putUp.revalidate) && putUp.revalidate.length === 2, JSON.stringify(putUp.revalidate));
+
+  // SAVING FAILED IS NOT SUCCESS.
+  const saveFailed = await makeApproveComposition(async () => null)(
+    contextFor(store.id, owner.id, { role: "storefront.hero", summary: "A hero" })
+  );
+  assert("a failed save is handled", saveFailed.handled);
+  if (!saveFailed.handled) throw new Error("unreachable");
+  check("recorded as a failure", saveFailed.outcome, "failure");
+  assert("and says nothing has changed",
+    saveFailed.reply.includes("Nothing has changed"), saveFailed.reply);
+  check("with nothing marked for re-render", saveFailed.revalidate, undefined);
+
+  // ---- Creating a real product -------------------------------------------
+  const productApproval = { name: "Tensor Ring Tee", priceInCents: 3200, description: null };
+
+  const created = await makeApproveDesignAsProduct(async () => ({ status: "SUCCESS" }))(
+    contextFor(store.id, owner.id, productApproval)
+  );
+  assert("a successful creation is handled", created.handled);
+  if (!created.handled) throw new Error("unreachable");
+  assert("and tells the owner where to find it",
+    created.reply.includes("Commerce"), created.reply);
+  assert("every surface listing products is marked for re-render",
+    Array.isArray(created.revalidate) && created.revalidate.length === 3, JSON.stringify(created.revalidate));
+
+  // THE ASSERTION THAT MATTERS. execute() never throws for a failure inside
+  // run() — it returns a FAILED result. Discarding that would tell somebody
+  // their product exists when it does not.
+  const failedCreate = await makeApproveDesignAsProduct(async () => ({ status: "FAILED" }))(
+    contextFor(store.id, owner.id, productApproval)
+  );
+  assert("a failed creation is still handled", failedCreate.handled);
+  if (!failedCreate.handled) throw new Error("unreachable");
+  check("recorded as a failure", failedCreate.outcome, "failure");
+  assert("and never claims the product exists",
+    !failedCreate.reply.includes("in your store now") && failedCreate.reply.includes("Nothing has changed"),
+    failedCreate.reply);
+  check("with nothing marked for re-render", failedCreate.revalidate, undefined);
+
+  // A malformed approval proposes nothing rather than creating a product with
+  // a guessed price.
+  const badApproval = await makeApproveDesignAsProduct(async () => {
+    throw new Error("should never run");
+  })(contextFor(store.id, owner.id, { name: "x" }));
+  assert("a malformed approval is handled without running anything", badApproval.handled);
+  if (!badApproval.handled) throw new Error("unreachable");
+  check("and recorded as a failure", badApproval.outcome, "failure");
 
   // ==========================================================================
   console.log("\n=== 6. Handlers stay inside the store they were given ===\n");

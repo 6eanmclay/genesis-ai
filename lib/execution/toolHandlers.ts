@@ -1,11 +1,14 @@
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
-import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
+import { ENTITY_REGISTRY, DesignSchema } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { UPLOAD_INTENT_REPLY } from "@/lib/dashboard/storeChatUnified";
 import {
   AnswerSupplierEconomicsToolInputSchema,
+  ApproveCompositionInputSchema,
+  ApproveDesignAsProductInputSchema,
+  CreateCompositionInputSchema,
   TakeMeThereInputSchema,
   type BusinessFactCaptureInput,
 } from "@/lib/execution/genesisTools";
@@ -108,7 +111,15 @@ export type ToolTurnResult =
        * a framework concern that only makes sense inside a request, and a
        * handler that called it could not be tested outside one.
        */
-      revalidate?: string;
+      revalidate?: string | string[];
+      /**
+       * Structured payload attached to the assistant's own chat message.
+       *
+       * How a rendered artefact — a composition, a mockup — reaches the panel
+       * that draws it. Distinct from `metadata`, which is for the execution log
+       * and is never shown to anybody.
+       */
+      messageChanges?: Record<string, unknown>;
     }
   | {
       /**
@@ -560,6 +571,298 @@ export function makeAnswerSupplierEconomics(
 }
 
 /**
+ * Plan a real marketing campaign.
+ *
+ * `plan` is injected because the real one calls a model — a suite can drive
+ * both outcomes without a key, and the outcome that matters is the empty one:
+ * J4 must say it could not put a plan together rather than implying it did.
+ */
+export function makePlanCampaign(
+  plan?: (storeId: string, message: string) => Promise<{
+    name: string;
+    groupId: string;
+    channels: { channel: string }[];
+  } | null>
+): ToolHandler {
+  return async (ctx) => {
+    ctx.status("Planning your campaign…");
+
+    const run =
+      plan ??
+      (async (storeId: string, message: string) => {
+        const { planMarketingCampaign } = await import("@/lib/marketing/campaigns");
+        return planMarketingCampaign(storeId, message);
+      });
+
+    const planned = await run(ctx.storeId, ctx.userMessage);
+
+    // NOTHING PLANNED IS NOT A CAMPAIGN. Saying so plainly beats a cheerful
+    // reply about work that does not exist.
+    if (!planned) {
+      return {
+        handled: true,
+        reply:
+          "I wasn't able to put a real campaign plan together from that — tell me a bit more about what you're promoting and I'll try again.",
+        kind: "campaign_request",
+        outcome: "failure",
+        metadata: { kind: "campaign_request", groupId: null },
+      };
+    }
+
+    const channels = planned.channels.map((c) => c.channel).join(", ");
+    return {
+      handled: true,
+      reply: `I've planned "${planned.name}" — ${planned.channels.length} channel${
+        planned.channels.length === 1 ? "" : "s"
+      }: ${channels}. Take a look and let me know what you'd like to adjust before we schedule it.`,
+      kind: "campaign_request",
+      metadata: { kind: "campaign_request", groupId: planned.groupId },
+    };
+  };
+}
+
+/**
+ * Compose several of the owner's own images into one arrangement.
+ *
+ * NEVER INVENTS ARTWORK. Composing needs real images the owner already has, so
+ * a store without enough of them is told exactly that — and told what to do
+ * about it — rather than being handed something made up.
+ */
+export function makeCreateComposition(
+  compose?: (input: { storeId: string; surface: string; columns: number | null; subject: string | null }) => Promise<{
+    used: { label: string }[];
+    design: { mockupUrl: string; designId: string; surface: string };
+  } | null>
+): ToolHandler {
+  return async (ctx) => {
+    const parsed = CreateCompositionInputSchema.safeParse(ctx.input);
+    const run =
+      compose ??
+      (async (input: { storeId: string; surface: string; columns: number | null; subject: string | null }) => {
+        const { createComposition } = await import("@/lib/design/composeForStorefront");
+        return createComposition(input as Parameters<typeof createComposition>[0]);
+      });
+
+    const composed = parsed.success
+      ? await run({
+          storeId: ctx.storeId,
+          surface: parsed.data.surface,
+          columns: parsed.data.columns,
+          subject: parsed.data.subject,
+        })
+      : null;
+
+    if (!composed) {
+      return {
+        handled: true,
+        reply:
+          ctx.conversationalReply ||
+          "I need a few of your images to put a composition together, and I can't find enough yet. Upload some photos or add product images and I'll build it from those.",
+        kind: "create_composition",
+        outcome: "failure",
+      };
+    }
+
+    const used = composed.used.map((u) => u.label).join(", ");
+    const lead = ctx.conversationalReply || `Here's a composition using ${composed.used.length} of your images.`;
+    return {
+      handled: true,
+      // NAMES WHAT IT USED. A composition the owner cannot trace back to their
+      // own files is indistinguishable from one J4 invented.
+      reply: `${lead} I used ${used}. Tell me what to change, or say the word and I'll put it on your storefront.`,
+      kind: "create_composition",
+      revalidate: "/dashboard/studio",
+      messageChanges: {
+        imageUrl: composed.design.mockupUrl,
+        designId: composed.design.designId,
+        surface: composed.design.surface,
+      },
+    };
+  };
+}
+
+/**
+ * Put an approved composition up as a STOREFRONT ASSET — never a product.
+ *
+ * The distinction is the point: something that makes the store look better is
+ * not something a customer can buy, and the reply says so explicitly, because
+ * an owner who thinks they just added a product will go looking for it in their
+ * catalogue.
+ *
+ * The design being approved is the newest SECTION one — the thing on screen.
+ * Garment designs are deliberately excluded: approving one of those is a
+ * product, which is a different tool.
+ */
+export function makeApproveComposition(
+  approve?: (input: {
+    storeId: string;
+    designId: string;
+    role: string;
+    summary: string;
+    imageUrl: string;
+  }) => Promise<string | null>
+): ToolHandler {
+  return async (ctx) => {
+    const parsed = ApproveCompositionInputSchema.safeParse(ctx.input);
+
+    const recent = await prisma.businessRecord.findMany({
+      where: { storeId: ctx.storeId, entityType: "design" },
+      orderBy: { syncedAt: "desc" },
+      take: 10,
+      select: { id: true, data: true },
+    });
+    const sectionDesign = recent
+      .map((r) => ({ id: r.id, parsed: DesignSchema.safeParse(r.data) }))
+      .find((r) => r.parsed.success && r.parsed.data.surface.startsWith("section."));
+
+    if (!parsed.success || !sectionDesign?.parsed.success || !sectionDesign.parsed.data.mockupUrl) {
+      return {
+        handled: true,
+        reply:
+          ctx.conversationalReply ||
+          "I don't have a composition on the table to put up. Ask me to make one and I'll show it to you first.",
+        kind: "approve_composition",
+        outcome: "failure",
+      };
+    }
+
+    const run =
+      approve ??
+      (async (input: { storeId: string; designId: string; role: string; summary: string; imageUrl: string }) => {
+        const { approveCompositionAsAsset } = await import("@/lib/design/composeForStorefront");
+        return approveCompositionAsAsset(input);
+      });
+
+    const assetId = await run({
+      storeId: ctx.storeId,
+      designId: sectionDesign.id,
+      role: parsed.data.role,
+      summary: parsed.data.summary,
+      imageUrl: sectionDesign.parsed.data.mockupUrl,
+    });
+
+    // NOTHING SAVED IS NOT A SUCCESS. "Nothing has changed" is the honest
+    // sentence, and it is the one that lets an owner retry with confidence.
+    if (!assetId) {
+      return {
+        handled: true,
+        reply:
+          ctx.conversationalReply ||
+          "I couldn't save that just then. Nothing has changed — try me again in a moment.",
+        kind: "approve_composition",
+        outcome: "failure",
+      };
+    }
+
+    const lead = ctx.conversationalReply || "Done.";
+    return {
+      handled: true,
+      reply: `${lead} That's saved as your ${parsed.data.role.split(".")[1]} graphic. It's a storefront asset, not something for sale, so it'll show up in how your store looks rather than in your catalog.`,
+      kind: "approve_composition",
+      revalidate: ["/dashboard/studio", "/dashboard/website"],
+      metadata: { assetId, role: parsed.data.role },
+    };
+  };
+}
+
+/**
+ * Turn the design on screen into a real product.
+ *
+ * THE ONE HANDLER THAT CREATES SOMETHING A CUSTOMER CAN BUY, and it runs
+ * through the execution engine rather than writing rows itself — so it is a
+ * recorded, verified execution like every other real change.
+ *
+ * execute() never throws for a failure inside run(); it returns a FAILED
+ * result. Discarding that would tell the owner their product exists when it
+ * does not, which is why the outcome is read rather than assumed.
+ *
+ * The design is the most recent one, deliberately not asked for by id: the
+ * owner is saying yes to the thing on screen, and making the model carry an id
+ * through a conversation is a way for it to get the wrong one.
+ */
+export function makeApproveDesignAsProduct(
+  run?: (input: {
+    storeId: string;
+    designId: string;
+    name: string;
+    priceInCents: number;
+    description?: string;
+  }) => Promise<{ status: string }>
+): ToolHandler {
+  return async (ctx) => {
+    const parsed = ApproveDesignAsProductInputSchema.safeParse(ctx.input);
+
+    const latestDesign = await prisma.businessRecord.findFirst({
+      where: { storeId: ctx.storeId, entityType: "design" },
+      orderBy: { syncedAt: "desc" },
+      select: { id: true },
+    });
+
+    if (!parsed.success || !latestDesign) {
+      return {
+        handled: true,
+        reply:
+          ctx.conversationalReply ||
+          "I don't have a design on the table to add. Ask me to make something first and I'll put it in front of you.",
+        kind: "approve_design_as_product",
+        outcome: "failure",
+      };
+    }
+
+    const perform =
+      run ??
+      (async (input: { storeId: string; designId: string; name: string; priceInCents: number; description?: string }) => {
+        const { execute } = await import("@/lib/execution/engine");
+        const { createProductFromDesignExecutable } = await import(
+          "@/lib/execution/executables/productFromDesign"
+        );
+        return execute(
+          createProductFromDesignExecutable,
+          {
+            designId: input.designId,
+            name: input.name,
+            priceInCents: input.priceInCents,
+            ...(input.description ? { description: input.description } : {}),
+          },
+          // The business this turn is about, never the account's active one.
+          { storeId: input.storeId }
+        );
+      });
+
+    const result = await perform({
+      storeId: ctx.storeId,
+      designId: latestDesign.id,
+      name: parsed.data.name,
+      priceInCents: parsed.data.priceInCents,
+      ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    });
+
+    const succeeded = result.status === "SUCCESS";
+    if (!succeeded) {
+      return {
+        handled: true,
+        reply:
+          ctx.conversationalReply ||
+          "I couldn't add that to your store just then. Nothing has changed — try me again in a moment.",
+        kind: "approve_design_as_product",
+        outcome: "failure",
+      };
+    }
+
+    const lead = ctx.conversationalReply || `Done — "${parsed.data.name}" is in your store now.`;
+    return {
+      handled: true,
+      reply: `${lead} You'll find it under Commerce, and it's live on your storefront.`,
+      kind: "approve_design_as_product",
+      // The product is real now, so every surface that lists products has to
+      // stop serving a page that predates it.
+      revalidate: ["/dashboard/studio", "/dashboard/products", "/dashboard/orders"],
+      metadata: { designId: latestDesign.id, name: parsed.data.name },
+    };
+  };
+}
+
+/**
  * The tools that have moved out of the inline ladder.
  *
  * A hand-maintained mirror of what route.ts still handles inline — every name
@@ -573,6 +876,10 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   approve_pending_changes: makeApprovePendingChanges(),
   request_product_removal: requestProductRemoval,
   answer_supplier_economics: makeAnswerSupplierEconomics(),
+  plan_campaign: makePlanCampaign(),
+  create_composition: makeCreateComposition(),
+  approve_composition: makeApproveComposition(),
+  approve_design_as_product: makeApproveDesignAsProduct(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the
   // ACCOUNT'S ACTIVE business rather than the one the owner is in, so it is

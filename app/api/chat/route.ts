@@ -32,19 +32,13 @@ import {
 import { RefineStorefrontToolInputSchema } from "@/lib/execution/genesisTools";
 import { GenerateBrandLogoInputSchema } from "@/lib/execution/genesisTools";
 import { CreateDesignInputSchema } from "@/lib/execution/genesisTools";
-import { CreateCompositionInputSchema, ApproveCompositionInputSchema } from "@/lib/execution/genesisTools";
-import { createComposition, approveCompositionAsAsset, setStorefrontHeroImage } from "@/lib/design/composeForStorefront";
+import { createComposition, setStorefrontHeroImage } from "@/lib/design/composeForStorefront";
 import { evaluateStorefront } from "@/lib/storefront/evaluate";
-import { DesignSchema } from "@/lib/businessModel/entities";
-import { ApproveDesignAsProductInputSchema } from "@/lib/execution/genesisTools";
-import { execute } from "@/lib/execution/engine";
-import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
 import { createDesign } from "@/lib/design/createDesign";
 import { getSurface } from "@/lib/design/surfaces";
 import { ASSET_ROLES, designateAsset, resolveCurrentAsset } from "@/lib/businessModel/assets";
 import { AssetSchema } from "@/lib/businessModel/entities";
 import { branchBrandLogo, hasExistingLogo, proposeBrandLogo } from "@/lib/brand/proposeBrandLogo";
-import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import {
@@ -619,7 +613,16 @@ export async function POST(request: Request) {
         if (handlerResults.length > 0 && !unhandledByHandlers) {
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
           for (const result of handlerResults) {
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: result.reply } });
+            await prisma.storeMessage.create({
+              data: {
+                storeId: store.id,
+                role: "assistant",
+                content: result.reply,
+                // How a rendered artefact — a composition, a mockup — reaches
+                // the panel that draws it.
+                ...(result.messageChanges ? { changes: result.messageChanges } : {}),
+              },
+            });
             await recordGenesisExecution({
               action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
               // PENDING is the honest status for a PROPOSAL: real work happened
@@ -647,7 +650,13 @@ export async function POST(request: Request) {
             // A cached render the handler's work just invalidated. Done here
             // because revalidatePath only makes sense inside a request — a
             // handler that called it could not be tested outside one.
-            if (result.revalidate) revalidatePath(result.revalidate);
+            for (const path of result.revalidate
+              ? Array.isArray(result.revalidate)
+                ? result.revalidate
+                : [result.revalidate]
+              : []) {
+              revalidatePath(path);
+            }
           }
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({
@@ -812,32 +821,6 @@ export async function POST(request: Request) {
           return;
         }
 
-if (chosenTool?.name === "plan_campaign") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "plan_campaign" });
-          emit({ type: "status", text: "Planning your campaign…" });
-          const planned = await planMarketingCampaign(store.id, userMessage);
-          const reply = planned
-            ? `I've planned "${planned.name}" — ${planned.channels.length} channel${planned.channels.length === 1 ? "" : "s"}: ${planned.channels.map((c) => c.channel).join(", ")}. Take a look and let me know what you'd like to adjust before we schedule it.`
-            : "I wasn't able to put a real campaign plan together from that — tell me a bit more about what you're promoting and I'll try again.";
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "SUCCESS",
-            verified: false,
-            message: reply,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: { kind: "campaign_request", groupId: planned?.groupId ?? null },
-          });
-          emit({ type: "token", delta: reply });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "campaign_request" });
-          controller.close();
-          return;
-        }
-
         if (chosenTool?.name === "request_image_change") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "request_image_change" });
           emit({ type: "status", text: "Finding new photos…" });
@@ -988,75 +971,6 @@ if (chosenTool?.name === "plan_campaign") {
         // something in words, while looking straight at it, must not be asked
         // to approve it again — a second confirmation here would be the
         // product asking "are you sure" about the sentence they just said.
-        if (chosenTool?.name === "approve_design_as_product") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "approve_design_as_product" });
-          const parsedApproval = ApproveDesignAsProductInputSchema.safeParse(chosenTool.input);
-
-          // The design they are responding to is the most recent one in this
-          // store. Deliberately not asked for by id: the owner is saying "yes"
-          // to the thing on screen, and making the model carry an id through
-          // the conversation is a way for it to get the wrong one.
-          const latestDesign = await prisma.businessRecord.findFirst({
-            where: { storeId: store.id, entityType: "design" },
-            orderBy: { syncedAt: "desc" },
-            select: { id: true },
-          });
-
-          if (!parsedApproval.success || !latestDesign) {
-            const reply =
-              conversationalReply ||
-              "I don't have a design on the table to add. Ask me to make something first and I'll put it in front of you.";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-            if (!streamedAnyText) emit({ type: "token", delta: reply });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "approve_design_as_product" });
-            controller.close();
-            return;
-          }
-
-          // Through the engine, so this is a recorded, verified execution like
-          // every other real change — not a bare prisma write in a chat route.
-          const result = await execute(
-            createProductFromDesignExecutable,
-            {
-              designId: latestDesign.id,
-              name: parsedApproval.data.name,
-              priceInCents: parsedApproval.data.priceInCents,
-              ...(parsedApproval.data.description ? { description: parsedApproval.data.description } : {}),
-            },
-            // The business this turn is about, not the account's active one
-            // (2026-08-21). Every other line in this handler already uses
-            // store.id; this call resolved separately, so a product approved in
-            // conversation about one business could be created in another.
-            { storeId: store.id }
-          );
-
-          // execute() never throws for a failure inside run(); it returns a
-          // FAILED result. Discarding it would tell the owner their product
-          // exists when it does not.
-          const succeeded = result.status === "SUCCESS";
-          if (succeeded) {
-            // The product is real now, so every surface that lists products
-            // has to stop serving a cached page that predates it.
-            revalidatePath("/dashboard/studio");
-            revalidatePath("/dashboard/products");
-            revalidatePath("/dashboard/orders");
-          }
-          const reply = succeeded
-            ? `${conversationalReply || `Done — "${parsedApproval.data.name}" is in your store now.`} You'll find it under Commerce, and it's live on your storefront.`
-            : conversationalReply ||
-              "I couldn't add that to your store just then. Nothing has changed — try me again in a moment.";
-
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-          emit({ type: "token", delta: reply.slice((conversationalReply || "").length) });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: succeeded ? "success" : "failure", likelyRephraseOf, kind: "approve_design_as_product" });
-          controller.close();
-          return;
-        }
-
         // Storefront compositions (2026-08-18) — collage, hero, featured
         // section. The same Design model as apparel, pointed at a storefront
         // surface. Not a product: see approve_composition below.
@@ -1149,113 +1063,9 @@ if (chosenTool?.name === "plan_campaign") {
           return;
         }
 
-        if (chosenTool?.name === "create_composition") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "create_composition" });
-          const parsedComp = CreateCompositionInputSchema.safeParse(chosenTool.input);
-          const composed = parsedComp.success
-            ? await createComposition({
-                storeId: store.id,
-                surface: parsedComp.data.surface,
-                columns: parsedComp.data.columns,
-                subject: parsedComp.data.subject,
-              })
-            : null;
-
-          if (!composed) {
-            // Honest about the real reason: composing needs several of the
-            // owner's images, and a store with none cannot have one made up.
-            const reply =
-              conversationalReply ||
-              "I need a few of your images to put a composition together, and I can't find enough yet. Upload some photos or add product images and I'll build it from those.";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-            if (!streamedAnyText) emit({ type: "token", delta: reply });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "create_composition" });
-            controller.close();
-            return;
-          }
-
-          revalidatePath("/dashboard/studio");
-          const used = composed.used.map((u) => u.label).join(", ");
-          const finalReply = [
-            conversationalReply || `Here's a composition using ${composed.used.length} of your images.`,
-            `I used ${used}. Tell me what to change, or say the word and I'll put it on your storefront.`,
-          ].join(" ");
-
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({
-            data: {
-              storeId: store.id,
-              role: "assistant",
-              content: finalReply,
-              changes: { imageUrl: composed.design.mockupUrl, designId: composed.design.designId, surface: composed.design.surface },
-            },
-          });
-          emit({ type: "token", delta: finalReply.slice((conversationalReply || "").length) });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "create_composition" });
-          controller.close();
-          return;
-        }
-
         // Approving a composition makes it a STOREFRONT ASSET, never a product.
         // Sean: J4 has to understand the difference between something a
         // customer can buy and something that makes the store look better.
-        if (chosenTool?.name === "approve_composition") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "approve_composition" });
-          const parsedApprove = ApproveCompositionInputSchema.safeParse(chosenTool.input);
-
-          // The newest SECTION design — the composition they are looking at.
-          // Garment designs are excluded because approving one of those is a
-          // product, which is a different tool.
-          const recent = await prisma.businessRecord.findMany({
-            where: { storeId: store.id, entityType: "design" },
-            orderBy: { syncedAt: "desc" },
-            take: 10,
-            select: { id: true, data: true },
-          });
-          const sectionDesign = recent
-            .map((r) => ({ id: r.id, parsed: DesignSchema.safeParse(r.data) }))
-            .find((r) => r.parsed.success && r.parsed.data.surface.startsWith("section."));
-
-          if (!parsedApprove.success || !sectionDesign?.parsed.success || !sectionDesign.parsed.data.mockupUrl) {
-            const reply =
-              conversationalReply ||
-              "I don't have a composition on the table to put up. Ask me to make one and I'll show it to you first.";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-            if (!streamedAnyText) emit({ type: "token", delta: reply });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "approve_composition" });
-            controller.close();
-            return;
-          }
-
-          const assetId = await approveCompositionAsAsset({
-            storeId: store.id,
-            designId: sectionDesign.id,
-            role: parsedApprove.data.role,
-            summary: parsedApprove.data.summary,
-            imageUrl: sectionDesign.parsed.data.mockupUrl,
-          });
-
-          revalidatePath("/dashboard/studio");
-          revalidatePath("/dashboard/website");
-
-          const reply = assetId
-            ? `${conversationalReply || "Done."} That's saved as your ${parsedApprove.data.role.split(".")[1]} graphic. It's a storefront asset, not something for sale, so it'll show up in how your store looks rather than in your catalog.`
-            : conversationalReply || "I couldn't save that just then. Nothing has changed — try me again in a moment.";
-
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-          emit({ type: "token", delta: reply.slice((conversationalReply || "").length) });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: assetId ? "success" : "failure", likelyRephraseOf, kind: "approve_composition" });
-          controller.close();
-          return;
-        }
-
         // J4 takes the owner there rather than telling them where it is
         // (2026-08-18).
         //
