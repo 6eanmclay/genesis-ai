@@ -266,18 +266,34 @@ export function planToolRun(
  */
 export function describeDroppedTools(dropped: DroppedTool[]): string {
   if (dropped.length === 0) return "";
-  const count = dropped.length;
-  const thing = count === 1 ? "one other thing" : `${count} other things`;
-  // Checked before the mutation case: being taken to one of two places is a
-  // different thing from J4 pacing its own changes, and the copy for the latter
-  // would read as an excuse rather than an explanation.
-  if (dropped.some((d) => d.why === "second_navigation")) {
+
+  // A DROPPED NAVIGATION IS ITS OWN SENTENCE, and it does not replace the
+  // others. The first version of this returned early on a second navigation and
+  // said nothing about anything else dropped in the same turn — which is the
+  // silence this whole notice exists to end, reintroduced by the fix for it.
+  //
+  // Separate sentence rather than a merged count because the two are not the
+  // same kind of thing: one is "you asked to be in two places", the other is
+  // "that was more than I'll do at once". Rolling them into one number would
+  // make both vaguer.
+  const navigations = dropped.filter((d) => d.why === "second_navigation");
+  const rest = dropped.filter((d) => d.why !== "second_navigation");
+
+  const navSentence =
+    navigations.length > 0 ? "I can only take you to one place at a time — say which." : "";
+
+  if (rest.length === 0) {
+    // Nothing else was dropped, so the invitation is about the place.
     return "I can only take you to one place at a time — say which and I'll head there next.";
   }
-  const anySecondMutation = dropped.some((d) => d.why === "second_mutation");
-  return anySecondMutation
+
+  const count = rest.length;
+  const thing = count === 1 ? "one other thing" : `${count} other things`;
+  const restSentence = rest.some((d) => d.why === "second_mutation")
     ? `I'm doing one of these at a time so you can see each change before the next — tell me when you want me to pick up ${thing} you asked for.`
     : `That was more than I'll take on in one go — say the word and I'll pick up ${thing} you asked for next.`;
+
+  return navSentence ? `${navSentence} ${restSentence}` : restSentence;
 }
 
 /**

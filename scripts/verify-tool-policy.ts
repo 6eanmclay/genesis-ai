@@ -408,6 +408,30 @@ assert("not that J4 is pacing its changes",
 assert("nor that they asked for too much",
   !/more than I'll take on/i.test(navCopy), navCopy);
 
+// A DROPPED NAVIGATION DOES NOT SWALLOW THE OTHERS. The first version of this
+// returned early on a second navigation and said nothing about anything else
+// dropped in the same turn — the silence the notice exists to end, put back by
+// the fix for it.
+const navAndCap = describeDroppedTools([
+  { name: "take_me_there", why: "second_navigation" },
+  { name: "plan_campaign", why: "cap" },
+]);
+assert("a dropped navigation is still named", /one place at a time/i.test(navAndCap), navAndCap);
+assert("and so is everything else dropped with it",
+  /one other thing/i.test(navAndCap), navAndCap);
+
+const navAndMutation = describeDroppedTools([
+  { name: "take_me_there", why: "second_navigation" },
+  { name: "plan_campaign", why: "second_mutation" },
+  { name: "create_design", why: "second_mutation" },
+]);
+assert("two other things are counted as two", /2 other things/i.test(navAndMutation), navAndMutation);
+assert("with the pacing reason, not the cap's", /one of these at a time/i.test(navAndMutation), navAndMutation);
+// The count is of the OTHERS. Including the navigation would tell the owner
+// there were three other things when they can see they asked to go one place.
+assert("the navigation is not counted among them",
+  !/3 other things/i.test(navAndMutation), navAndMutation);
+
 // A navigation alongside other work is still fine — this is one rule about one
 // tool, not a general "nothing may accompany a navigation".
 const navPlusRead = planToolRun(["take_me_there", "look_up_business_data"]);
