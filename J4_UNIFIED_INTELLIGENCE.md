@@ -216,6 +216,39 @@ quietly stopped holding when that something acquired a plural.
 
 ---
 
+## UI6 — what shipped (2026-08-23)
+
+The conversation view existed before this milestone: `/j4` is a real route,
+`J4Surface` resolves its business from the slug, and the floating panel was
+already deprecated. So UI6 was not the rebuild §7 anticipated — most of that had
+happened. What was left was the part §7 could not have named, because it only
+became true once the tool architecture landed:
+
+- **The conversation is the business boundary.** The proposal card renders
+  inside a conversation that knows its business; the decisions inside it went on
+  resolving one for themselves. All three now take it from the conversation, and
+  no action in that file reads the account's active pointer.
+- **The conversation shows what happened, not what J4 said happened.**
+  `StoreMessage.executionLogId` joins a message to the execution row written in
+  the same breath, and `lib/j4/messageState.ts` derives six states from that row
+  alone — never from the prose. A reply reading "Done. I applied all 3 changes
+  and verified them." over a row saying WARNING renders as didn't-go-through.
+  The rule needing most care: a tool that PROPOSES and reports SUCCESS proposed
+  successfully; the change has not happened, and reading that as "done" is the
+  precise claim the whole preceding milestone existed to make impossible.
+
+**Still open from §7, and each needs a decision rather than an implementation:**
+
+- **Business context alongside the conversation** — §7 itself calls this
+  undesigned ("a real decision for whenever this phase actually starts").
+- **Conversation history as navigable** — there is no threading model;
+  `StoreMessage` has no conversation id. A design question, not a build.
+- **Concise-summary replies** — contracted concretely, and blocked as a unit.
+  The render half (making the checklist primary) is buildable; the prompt half
+  (shortening `content` to one lead sentence) needs a model to verify. Doing the
+  render half alone produces a worse interface than today: a primary checklist
+  under paragraphs of prose. They are one design and should ship together.
+
 ## The interface work — SPLIT OUT into its own milestone (2026-08-22)
 
 Sean's decision, taken with the Unified Intelligence contract: **this does not ride along with
