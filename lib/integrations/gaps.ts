@@ -3,6 +3,7 @@ import { getBusinessProfile } from "@/lib/businessModel/profile";
 import { formatMoneyApprox } from "@/lib/money";
 import { getUpcomingAppointments } from "@/lib/businessModel/reasoning";
 import { communicateFinding } from "@/lib/execution/genesisAutonomy";
+import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
 import { CONNECTOR_CATALOG, type ConnectionCategory } from "./catalog";
 
 // Integrations (Chapter 4) — real, business-state-grounded connection
@@ -84,23 +85,73 @@ export async function getConnectionGaps(storeId: string): Promise<ConnectionGap[
 // call per real gap. topicKey is scoped to "connection_gap:" specifically
 // so this only ever supersedes its own prior rows, never another real
 // opportunity-kind CognitiveOutput unrelated to connections.
+/** The prefix these findings own, so a sweep only ever resolves its own rows. */
+const CONNECTION_GAP_PREFIX = "connection_gap:";
+
 export async function proposeConnectionGaps(storeId: string): Promise<void> {
   const gaps = await getConnectionGaps(storeId);
 
   await prisma.cognitiveOutput.updateMany({
-    where: { storeId, status: "ACTIVE", topicKey: { startsWith: "connection_gap:" } },
+    where: { storeId, status: "ACTIVE", topicKey: { startsWith: CONNECTION_GAP_PREFIX } },
     data: { status: "SUPERSEDED" },
   });
 
   for (const gap of gaps) {
+    const topicKey = `${CONNECTION_GAP_PREFIX}${gap.provider}`;
+
     await communicateFinding(storeId, {
       kind: "opportunity",
-      summary: `Genesis noticed ${gap.reason}`,
+      // J4'S OWN VOICE, not a report about J4 (fixed 2026-08-23). This read
+      // `Genesis noticed ${gap.reason}` — and every reason above is already a
+      // complete first-person sentence ending "…would let me help you…", so
+      // the result switched person mid-sentence: Genesis noticed, and then I
+      // would help you. The reason is the finding; nothing needs to introduce
+      // it.
+      summary: gap.reason,
       priority: "medium",
       confidence: 0.8,
       actionLabel: `Connect ${gap.name}`,
       actionHref: "/dashboard/connections",
-      topicKey: `connection_gap:${gap.provider}`,
+      topicKey,
+    });
+
+    // AND AS A FINDING J4 CAN SAY OUT LOUD (2026-08-23).
+    //
+    // J4_IDENTITY.md freezes "how J4 asks for what it's missing" and names this
+    // function as the one shipped instance of it. It was shipped where it could
+    // not be heard: a CognitiveOutput surfaces on the Connections page, so the
+    // ask only reached an owner who had already gone looking for it. The whole
+    // point of the principle is asking at the moment the gap matters.
+    //
+    // Now it is also an observation, which is what Proactive J4 speaks — so the
+    // frozen example sentence ("Would you like to connect QuickBooks so I can
+    // understand profitability?") finally reaches the conversation.
+    //
+    // Written alongside rather than instead: the Connections page still reads
+    // the CognitiveOutput, and this is the same finding in the representation
+    // the conversation reads. Same summary, same topicKey, so the page and the
+    // conversation cannot describe one gap two ways.
+    //
+    // "opportunity" is deliberate. A missing connection is never urgent — it
+    // sits behind anything actually wrong, and Proactive J4's own ordering
+    // already guarantees that.
+    await upsertObservation(storeId, {
+      dedupeKey: topicKey,
+      genesisState: "opportunity",
+      summary: gap.reason,
+      actionHref: "/dashboard/connections",
     });
   }
+
+  // A GAP THAT CLOSED STOPS BEING SAID. Connecting QuickBooks removes it from
+  // getConnectionGaps, which resolves the observation — and resolving is what
+  // releases Proactive J4 to mention it again if it ever comes back (a
+  // disconnected integration is a real recurrence). Scoped to this prefix so it
+  // never resolves another sweep's opportunity rows.
+  await resolveMissingObservations(
+    storeId,
+    gaps.map((g) => `${CONNECTION_GAP_PREFIX}${g.provider}`),
+    "opportunity",
+    CONNECTION_GAP_PREFIX
+  );
 }

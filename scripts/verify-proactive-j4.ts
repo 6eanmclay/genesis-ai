@@ -358,6 +358,68 @@ async function main() {
     "the cycle has no session; a pointer read here would be guessing at a business");
 
   // ==========================================================================
+  console.log("\n=== J4 asks for what it is missing, out loud ===\n");
+  // ==========================================================================
+  // J4_IDENTITY.md freezes "how J4 asks for what it's missing" and names
+  // proposeConnectionGaps as the one shipped instance of it. It shipped where
+  // it could not be heard: a CognitiveOutput surfaces on the Connections page,
+  // so the ask only reached an owner who had already gone looking for it — and
+  // the whole point of the principle is asking at the moment the gap matters.
+  //
+  // Now the same finding is also an observation, which is what Proactive J4
+  // speaks. Asserted here rather than in a connections suite because what is
+  // being verified is that the ask REACHES THE CONVERSATION.
+  const gapsSource = readFileSync(
+    join(process.cwd(), "lib", "integrations", "gaps.ts"), "utf8"
+  );
+  assert("a connection gap is written as a finding J4 can speak",
+    gapsSource.includes("await upsertObservation(storeId, {"),
+    "a CognitiveOutput alone only reaches an owner already on the Connections page");
+  assert("as an opportunity, never urgent",
+    gapsSource.includes('genesisState: "opportunity"'),
+    "a missing connection sits behind anything actually wrong");
+  // ONE FINDING, ONE DESCRIPTION. The page and the conversation read different
+  // rows; if they carried different summaries they would describe one gap two
+  // ways, which is how a card and a sentence start disagreeing.
+  check("the page's row and the conversation's row carry the same summary",
+    gapsSource.split("summary: gap.reason,").length - 1, 2);
+  // J4'S OWN VOICE. Every reason is already a complete first-person sentence
+  // ending "…would let me help you…", so the old `Genesis noticed ${reason}`
+  // switched person mid-sentence: Genesis noticed, and then I would help you.
+  assert("and J4 does not introduce itself in the third person",
+    !gapsSource.includes("summary: `Genesis noticed ${gap.reason}`"),
+    "a finding that reports on J4 is not J4 speaking");
+
+  // A CLOSED GAP STOPS BEING SAID, and only its own rows are resolved.
+  assert("a gap that closed resolves its finding",
+    gapsSource.includes("await resolveMissingObservations("),
+    "connecting the integration must stop J4 asking for it");
+  assert("scoped to its own prefix",
+    gapsSource.includes("CONNECTION_GAP_PREFIX\n  );") ||
+      gapsSource.includes("    CONNECTION_GAP_PREFIX"),
+    "an unscoped resolve would clear another sweep's opportunity findings");
+
+  // And end to end: a gap-shaped finding is spoken exactly once, like any
+  // other, through the machinery already asserted above.
+  await upsertObservation(shop.id, {
+    dedupeKey: "connection_gap:QUICKBOOKS",
+    genesisState: "opportunity",
+    summary:
+      "£2,400 in real revenue on record with no accounting system connected yet — connecting QuickBooks would let me help you understand your real numbers.",
+    actionHref: "/dashboard/connections",
+  });
+  check("the ask is spoken", (await speakNewFindings(shop.id)).spoken, 1);
+  const asked = await assistantMessages(shop.id);
+  const askMessage = asked[asked.length - 1];
+  assert("in J4's own voice, with the evidence in it",
+    askMessage.content.includes("£2,400 in real revenue") &&
+      askMessage.content.includes("would let me help you"),
+    askMessage.content);
+  assert("and never in the third person",
+    !askMessage.content.includes("Genesis noticed"), askMessage.content);
+  check("and not again next cycle", (await speakNewFindings(shop.id)).spoken, 0);
+
+  // ==========================================================================
   console.log("\n=== The sentence itself ===\n");
   // ==========================================================================
   assert("an urgent finding opens as one",
