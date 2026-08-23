@@ -625,35 +625,28 @@ async function main() {
   check("and not again next cycle", (await speakNewFindings(shop.id)).spoken, 0);
 
   // ==========================================================================
-  console.log("\n=== The sentence itself ===\n");
+  console.log("\n=== Spoken, not logged — what J4 does with a summary ===\n");
   // ==========================================================================
-  // An ask already introduces itself. Prefixing a generic opener in front of a
-  // question adds a beat that says nothing before a sentence carrying its own
-  // reason — and filler is how copy stops sounding like a person.
-  const askShaped = "You've got 2 people on your team and I don't have anything about how you run things — would you like to upload your employee handbook?";
-  check("a finding that is already a question is left to speak for itself",
-    proactiveMessageFor({ genesisState: "opportunity", summary: askShaped }), askShaped);
-  assert("with no opener in front of it",
-    !proactiveMessageFor({ genesisState: "opportunity", summary: askShaped }).startsWith("I noticed"),
-    "a question does not need to be announced");
-  // An urgent ask is still not announced either — the question is the point.
-  assert("and the same for an urgent one",
-    proactiveMessageFor({ genesisState: "urgent", summary: askShaped }) === askShaped,
-    "urgency is in the words, not in a prefix");
-
-  assert("an urgent finding opens as one",
-    proactiveMessageFor({ genesisState: "urgent", summary: "X." }).startsWith("Something needs your attention."),
-    proactiveMessageFor({ genesisState: "urgent", summary: "X." }));
-  assert("an opportunity does not",
-    proactiveMessageFor({ genesisState: "opportunity", summary: "X." }).startsWith("I noticed"),
-    proactiveMessageFor({ genesisState: "opportunity", summary: "X." }));
-  // Nothing about mechanisms. The owner has no idea a cycle, an observation or
-  // a detector exists and must not learn it from J4 speaking.
-  for (const state of ["urgent", "opportunity"]) {
-    const line = proactiveMessageFor({ genesisState: state, summary: "Revenue is down." });
-    assert(`the ${state} sentence names no internals`,
-      !/observation|finding|cycle|detector|insight|dedupe/i.test(line), line);
-  }
+  // The other half of this lives in verify-insights-live.ts, where the
+  // DETECTORS are asserted to produce real sentences. It went there rather than
+  // here for a real reason: computeInsights fans out concurrent queries, and on
+  // this harness — PGlite over one connection — that left the pool degraded and
+  // an unrelated suite three positions later died with "Connection terminated
+  // unexpectedly". A test that breaks a different suite is not a passing test.
+  //
+  // What belongs here is what J4 DOES with a summary, which needs no detectors.
+  const alreadyASentence = "Revenue decreased 40% this week — £1,240, against £2,070 last week.";
+  check("a finding is spoken exactly as written",
+    proactiveMessageFor({ genesisState: "urgent", summary: alreadyASentence }),
+    alreadyASentence);
+  check("and an opportunity is too, identically",
+    proactiveMessageFor({ genesisState: "opportunity", summary: alreadyASentence }),
+    alreadyASentence);
+  // THE OPENER IS GONE. It prefixed a finding that already said what it meant,
+  // which is friction — the same rule that already applied to questions.
+  assert("nothing is prepended to it",
+    !proactiveMessageFor({ genesisState: "urgent", summary: alreadyASentence }).startsWith("Something"),
+    "a finding that says what it means does not need announcing");
 
   await prisma.store.deleteMany({ where: { id: { in: [shop.id, neighbour.id] } } });
   await prisma.user.deleteMany({ where: { id: owner.id } });

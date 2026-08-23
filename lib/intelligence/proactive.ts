@@ -65,26 +65,28 @@ const FINDINGS_PER_CYCLE = 1;
  * different ways.
  */
 export function proactiveMessageFor(finding: { genesisState: string; summary: string }): string {
-  // A FINDING THAT IS ALREADY A QUESTION INTRODUCES ITSELF (2026-08-23). Some
-  // findings are asks — "…would you like to upload your employee handbook so I
-  // can understand your policies?" — and prefixing "I noticed something worth a
-  // look" in front of one adds a beat that says nothing before a sentence that
-  // already carries its own reason. Filler is how copy stops sounding like a
-  // person.
+  // THE OPENER IS GONE (2026-08-23), and this function is what is left of it.
   //
-  // Detected from the sentence rather than from a flag on the finding: a flag
-  // would be a second thing to keep true, and whether a summary is a question is
-  // already visible in the summary.
-  if (finding.summary.trim().endsWith("?")) return finding.summary;
-
-  const opening =
-    finding.genesisState === "urgent"
-      ? "Something needs your attention."
-      : "I noticed something worth a look.";
-  // No trailing invitation to "let me know" — the composer is directly beneath
-  // this and the owner can simply reply. A prompt to reply, on a message that
-  // is already in their conversation, reads as software.
-  return `${opening} ${finding.summary}`;
+  // It prefixed "Something needs your attention." or "I noticed something worth
+  // a look." A question already skipped it — a question introduces itself — and
+  // Sean's rule extends that to any finding which already says what it means:
+  // if the sentence communicates the issue, the opener is friction.
+  //
+  // Once every summary is a real sentence in J4's own voice — which
+  // GENESIS_EXPERIENCE_PRINCIPLES.md §1 requires and the suite now enforces —
+  // that is EVERY finding. So the opener applies to nothing, and it is not kept
+  // as a branch nobody reaches.
+  //
+  // Kept as a function rather than inlined, because "what J4 says about a
+  // finding" is a real step and the next thing that changes it needs somewhere
+  // to go.
+  //
+  // WORTH KNOWING: urgent and opportunity findings now read alike in the
+  // conversation. The urgency lives in the words — "3 invoices are now overdue"
+  // is not mistakable for good news — rather than in a prefix announcing it.
+  // That is the principle's own bet, and a real change in how the two states
+  // are told apart in prose.
+  return finding.summary;
 }
 
 /**

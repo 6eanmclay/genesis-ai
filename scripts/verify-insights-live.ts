@@ -283,6 +283,44 @@ async function main() {
   assert("read at the same moment, they stay apart",
     loudAgain.includes("invoices.overdue") && !quietAgain.includes("invoices.overdue"));
 
+  // ==========================================================================
+  console.log("\n=== Spoken, not logged — every summary is a real sentence ===\n");
+  // ==========================================================================
+  // GENESIS_EXPERIENCE_PRINCIPLES.md §1, frozen: "every piece of Genesis-sourced
+  // content is a real sentence in Genesis's own voice — never raw system/log
+  // language, never bare unexplained data."
+  //
+  // Two detectors breached it from the day they were written — no terminal
+  // punctuation, and a trailing bare parenthetical readout. Nobody saw it
+  // because the summaries only ever appeared under a card heading, where a label
+  // reads as a label. Proactive J4 made them speak, and speaking exposed it.
+  //
+  // THIS IS THE PART THAT MATTERS. Rewriting two strings fixes today. This makes
+  // it mechanically hard for a detector written next year to reintroduce label
+  // language, by turning the principle into something a suite can check — and it
+  // lives here, where every detector is already driven through real data.
+  const everySummary = [
+    ...(await computeInsights(dropped.id)),
+    ...(await computeInsights(rose.id)),
+    ...(await computeInsights(threeLate.id)),
+    ...(await computeInsights(doubled.id)),
+  ];
+  assert("there are summaries to check", everySummary.length > 0);
+
+  for (const insight of everySummary) {
+    const line = insight.summary;
+    // A REAL SENTENCE ENDS. Not decoration — an unterminated fragment is the
+    // shape of a label, and it is how both breaches read.
+    assert(`${insight.type} ends as a sentence`, /[.!?]$/.test(line), line);
+    assert(`${insight.type} starts as one`, /^[A-Z0-9£$]/.test(line), line);
+    // NEVER BARE UNEXPLAINED DATA — the principle's own words, and the other
+    // half of what was wrong.
+    assert(`${insight.type} carries no bare readout`,
+      !/\([^)]*\bvs\b[^)]*\)/i.test(line), line);
+    assert(`${insight.type} speaks no system language`,
+      !/\b(null|undefined|storeId|dedupeKey|topicKey|executionId)\b/i.test(line), line);
+  }
+
   await prisma.$disconnect();
   await db.close();
 

@@ -72,7 +72,12 @@ async function detectRevenueTrend(storeId: string): Promise<Insight | null> {
   return {
     type: change > 0 ? "revenue.increased" : "revenue.decreased",
     severity: change > 0 ? "opportunity" : "urgent",
-    summary: `Revenue ${direction} ${pct(change)} this week (${formatMoney(thisWeek, storeCurrency)} vs ${formatMoney(lastWeek, storeCurrency)} last week)`,
+    // SPOKEN, NOT LOGGED (GENESIS_EXPERIENCE_PRINCIPLES.md §1, enforced
+    // 2026-08-23). Every one of these summaries ended without punctuation and
+    // trailed a bare parenthetical readout — fine under a card heading, and
+    // "never bare unexplained data" is exactly what the principle forbids.
+    // Proactive J4 made them speak, and speaking is what exposed it.
+    summary: `Revenue ${direction} ${pct(change)} this week — ${formatMoney(thisWeek, storeCurrency)}, against ${formatMoney(lastWeek, storeCurrency)} last week.`,
     metrics: { thisWeekInCents: thisWeek, lastWeekInCents: lastWeek, change },
   };
 }
@@ -95,7 +100,7 @@ async function detectEngagementTrend(storeId: string): Promise<Insight | null> {
   return {
     type: change > 0 ? "engagement.improved" : "engagement.declined",
     severity: change > 0 ? "opportunity" : "urgent",
-    summary: `Email open rate ${direction} ${pct(change)} this week (${pct(recent)} vs a ${pct(baseline)} recent average)`,
+    summary: `Email open rate ${direction} ${pct(change)} this week — ${pct(recent)}, against a ${pct(baseline)} average.`,
     metrics: { recentOpenRate: recent, baselineOpenRate: baseline, change },
   };
 }
@@ -116,7 +121,7 @@ async function detectOverdueInvoiceCluster(storeId: string): Promise<Insight | n
   return {
     type: "invoices.overdue",
     severity: "urgent",
-    summary: `${overdue.length} invoices are now overdue, totaling ${quickbooksAmount(totalOwed)}`,
+    summary: `${overdue.length} invoices are now overdue, totaling ${quickbooksAmount(totalOwed)}.`,
     metrics: { count: overdue.length, totalOwedInCents: totalOwed },
   };
 }
@@ -131,8 +136,8 @@ async function detectLowStockCluster(storeId: string): Promise<Insight | null> {
     severity: "urgent",
     summary:
       depleted.length === 1
-        ? `${depleted[0].data.name} is out of stock`
-        : `${depleted.length} items are out of stock`,
+        ? `${depleted[0].data.name} is out of stock.`
+        : `${depleted.length} items are out of stock.`,
     metrics: { count: depleted.length, items: depleted.map((i) => i.data.name) },
   };
 }
@@ -160,7 +165,7 @@ async function detectCancellationTrend(storeId: string): Promise<Insight | null>
   return {
     type: "appointments.cancellations_up",
     severity: "urgent",
-    summary: `Appointment cancellations ${recentCount >= priorCount * 2 ? "doubled" : "rose sharply"} this week (${recentCount} vs ${priorCount} the week before)`,
+    summary: `Appointment cancellations ${recentCount >= priorCount * 2 ? "doubled" : "rose sharply"} this week — ${recentCount}, against ${priorCount} the week before.`,
     metrics: { recentCount, priorCount },
   };
 }
