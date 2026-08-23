@@ -4,7 +4,7 @@ import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { UPLOAD_INTENT_REPLY } from "@/lib/dashboard/storeChatUnified";
-import type { BusinessFactCaptureInput } from "@/lib/execution/genesisTools";
+import { TakeMeThereInputSchema, type BusinessFactCaptureInput } from "@/lib/execution/genesisTools";
 
 // WHAT A TOOL ACTUALLY DOES, SEPARATED FROM HOW THE TURN ENDS
 // (2026-08-22, Unified Intelligence UI3).
@@ -61,6 +61,23 @@ export type ToolTurnResult =
       /** For the execution log, so a turn is identifiable afterwards. */
       kind: string;
       metadata?: Record<string, unknown>;
+      /**
+       * Where to send the owner, when the handler's whole job is moving them.
+       *
+       * Added because take_me_there needed it, not in anticipation: the turn
+       * emits the navigation event, so a handler still never touches the stream.
+       */
+      navigate?: string;
+      /**
+       * How the turn is logged. Defaults to success.
+       *
+       * A handler that did its job but could not give the owner what they asked
+       * for — no destination resolved — is not a success, and recording it as
+       * one hides the cases worth looking at.
+       */
+      outcome?: "success" | "failure";
+      /** What the execution log records, when it differs from what was said. */
+      logMessage?: string;
     }
   | {
       /**
@@ -256,6 +273,99 @@ export function makeApprovePendingChanges(
 }
 
 /**
+ * Where J4 can actually take somebody.
+ *
+ * A hand-maintained mirror of TakeMeThereInputSchema's own enum, and the
+ * mismatch degrades SILENTLY: a destination the schema accepts and this map
+ * lacks resolves to null, and the owner is told "I'm not sure where you want to
+ * go" about a place J4 was explicitly asked for. scripts/verify-tool-handlers.ts
+ * cross-checks the two.
+ *
+ * THE OFFICE IS DELIBERATELY ABSENT, and that is a correction rather than an
+ * omission. It used to map to Studio, so J4 said "Taking you to the Office" and
+ * took the owner to Studio instead — one thing said, another done, which is the
+ * navigation form of the rule that Genesis must never claim a change it did not
+ * make. There is no correct href to substitute: the Office is an overlay over
+ * whichever room the owner is already in and has no route of its own. So it is
+ * answered rather than navigated, which is also the more useful reply — the
+ * owner learns where the door is instead of arriving in the wrong room.
+ */
+export const NAV_DESTINATIONS: Record<string, { href: string; label: string }> = {
+  studio: { href: "/dashboard/studio", label: "Studio" },
+  "studio.upload": { href: "/dashboard/studio#bring-your-own", label: "Studio" },
+  storefront: { href: "/dashboard/website", label: "your storefront" },
+  commerce: { href: "/dashboard/orders", label: "Commerce" },
+  account: { href: "/dashboard/settings", label: "your account" },
+};
+
+export const OFFICE_REPLY =
+  "The Office is always one tap away — it's the control just beneath me, wherever you are. No need to go anywhere.";
+
+/**
+ * Take the owner somewhere.
+ *
+ * `resolveHref` is injected because turning a legacy `/dashboard/...` path into
+ * one addressed at THIS business needs the store's slug and the route's own
+ * helpers — and because a suite has to be able to check that the business
+ * scoping happens at all. Navigating an owner who is in one business into
+ * another is the same defect as review links carrying the wrong business, on
+ * the one path where J4 moves somebody itself.
+ */
+export function makeTakeMeThere(resolveHref: (href: string) => string): ToolHandler {
+  return async (ctx) => {
+    const parsed = TakeMeThereInputSchema.safeParse(ctx.input);
+
+    if (parsed.success && parsed.data.destination === "office") {
+      return {
+        handled: true,
+        reply: ctx.conversationalReply || OFFICE_REPLY,
+        kind: "take_me_there",
+      };
+    }
+
+    // Object.hasOwn even though the schema's enum already closes this: the map
+    // is a mirror, and a mirror is exactly where a key that is valid in the type
+    // and absent from the runtime table shows up.
+    const destination =
+      parsed.success && Object.hasOwn(NAV_DESTINATIONS, parsed.data.destination)
+        ? NAV_DESTINATIONS[parsed.data.destination]
+        : null;
+
+    if (!destination) {
+      // Asked to go somewhere and unable to work out where. Honest, and logged
+      // as a failure so it is visible rather than counted as a good turn.
+      return {
+        handled: true,
+        reply:
+          ctx.conversationalReply ||
+          "I'm not sure where you want to go. Tell me what you're trying to do and I'll take you there.",
+        kind: "take_me_there",
+        outcome: "failure",
+      };
+    }
+
+    const href = resolveHref(destination.href);
+    const reply =
+      ctx.conversationalReply ||
+      (parsed.success && parsed.data.intent
+        ? `Taking you to ${destination.label} for that.`
+        : `Taking you to ${destination.label}.`);
+
+    return {
+      handled: true,
+      reply,
+      kind: "take_me_there",
+      navigate: href,
+      logMessage: `Navigated to ${href}`,
+      metadata: {
+        destination: parsed.success ? parsed.data.destination : null,
+        intent: parsed.success ? parsed.data.intent : null,
+      },
+    };
+  };
+}
+
+/**
  * The tools that have moved out of the inline ladder.
  *
  * A hand-maintained mirror of what route.ts still handles inline — every name
@@ -267,11 +377,38 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   show_upload_options: showUploadOptions,
   capture_business_fact: captureBusinessFact,
   approve_pending_changes: makeApprovePendingChanges(),
+  // Bound to the real href resolver by the route, which is the only place that
+  // knows this business's slug. The registry entry here would navigate to the
+  // ACCOUNT'S ACTIVE business rather than the one the owner is in, so it is
+  // deliberately not registered — see routeToolHandlers below.
 };
+
+/**
+ * The registry, with the handlers that need something only the request knows.
+ *
+ * take_me_there is the first: turning a legacy `/dashboard/...` path into one
+ * addressed at THIS business needs the store's slug. Registering the unbound
+ * version would silently navigate an owner who is in one business into
+ * whichever one their account last made active.
+ */
+export function routeToolHandlers(bind: {
+  resolveHref: (href: string) => string;
+}): Record<string, ToolHandler> {
+  return {
+    ...TOOL_HANDLERS,
+    take_me_there: makeTakeMeThere(bind.resolveHref),
+  };
+}
 
 /** Closed lookup: the key comes from a model, so `in` would admit a prototype key. */
 export function handlerFor(toolName: string): ToolHandler | null {
   return Object.hasOwn(TOOL_HANDLERS, toolName) ? TOOL_HANDLERS[toolName] : null;
 }
 
-export const MIGRATED_TOOLS = Object.keys(TOOL_HANDLERS);
+/**
+ * Every tool that no longer has an inline branch.
+ *
+ * Includes the bound ones, because "has it moved out of the ladder" is the
+ * question this answers — not "is it in the static map".
+ */
+export const MIGRATED_TOOLS = [...Object.keys(TOOL_HANDLERS), "take_me_there"];

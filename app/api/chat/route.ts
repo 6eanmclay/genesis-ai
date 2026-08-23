@@ -8,7 +8,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
 import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools } from "@/lib/execution/toolPolicy";
-import { handlerFor } from "@/lib/execution/toolHandlers";
+import { routeToolHandlers, type ToolTurnResult } from "@/lib/execution/toolHandlers";
 import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -37,7 +37,6 @@ import { createComposition, approveCompositionAsAsset, setStorefrontHeroImage } 
 import { evaluateStorefront } from "@/lib/storefront/evaluate";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { ApproveDesignAsProductInputSchema } from "@/lib/execution/genesisTools";
-import { TakeMeThereInputSchema } from "@/lib/execution/genesisTools";
 import { execute } from "@/lib/execution/engine";
 import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
 import { createDesign } from "@/lib/design/createDesign";
@@ -568,12 +567,20 @@ export async function POST(request: Request) {
         // rest still run inline below, exactly as before: moving nineteen
         // bespoke branches in one pass, with no coverage to catch a mistake, is
         // how a working product breaks quietly.
-        const handlerResults: { reply: string; kind: string; metadata?: Record<string, unknown> }[] = [];
+        // Typed from the handler contract itself rather than restated here — a
+        // hand-written copy is how a new field silently stops reaching the turn.
+        const handlerResults: Extract<ToolTurnResult, { handled: true }>[] = [];
         let unhandledByHandlers: typeof plannedTools[number] | null = null;
         let invalidToolInput = false;
 
+        // Bound to this business, so navigation addresses the store the owner is
+        // actually in rather than whichever one their account last made active.
+        const boundHandlers = routeToolHandlers({
+          resolveHref: (href) => sectionHref(href, businessBasePath(store.slug)),
+        });
+
         for (const tool of plannedTools) {
-          const handler = handlerFor(tool.name);
+          const handler = Object.hasOwn(boundHandlers, tool.name) ? boundHandlers[tool.name] : null;
           if (!handler) {
             // Falls through to the inline ladder. Only ONE can, because those
             // branches still end the turn themselves.
@@ -615,10 +622,10 @@ export async function POST(request: Request) {
               action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
               status: "SUCCESS",
               verified: false,
-              message: result.reply,
               retryable: false,
               userId,
               storeId: store.id,
+              message: result.logMessage ?? result.reply,
               metadata: { kind: result.kind, ...(result.metadata ?? {}) },
             });
             // The model may already have streamed its own words; a handler's
@@ -629,13 +636,19 @@ export async function POST(request: Request) {
             } else if (result.reply !== conversationalReply) {
               emit({ type: "token", delta: `\n\n${result.reply}` });
             }
+            // Moving the owner is the turn's job, not the handler's — a handler
+            // that touched the stream could never be the first of two.
+            if (result.navigate) emit({ type: "navigate", href: result.navigate });
           }
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({
             userId,
             storeId: store.id,
             durationMs: Date.now() - turnStartedAt,
-            outcome: "success",
+            // A handler that could not give the owner what they asked for is
+            // not a success, and recording it as one hides the turns worth
+            // looking at.
+            outcome: handlerResults.some((r) => r.outcome === "failure") ? "failure" : "success",
             likelyRephraseOf,
             kind: handlerResults.map((r) => r.kind).join("+"),
           });
@@ -1392,96 +1405,6 @@ if (chosenTool?.name === "plan_campaign") {
         // the router. `intent` rides along as a handoff, which is the same
         // mechanism a Studio recommendation already uses: the screen arrives
         // with the request ready instead of blank.
-        if (chosenTool?.name === "take_me_there") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "take_me_there" });
-          const parsedNav = TakeMeThereInputSchema.safeParse(chosenTool.input);
-          // THE OFFICE IS NOT A PLACE THIS CAN GO (corrected 2026-08-22).
-          //
-          // It used to be `office: { href: "/dashboard/studio", label: "the
-          // Office" }` — so J4 said "Taking you to the Office" and took the
-          // owner to Studio instead. One thing said, another done, which is the
-          // navigation form of the rule that Genesis must never claim a change
-          // it did not make.
-          //
-          // There is no correct href to substitute. The Office is an overlay
-          // opened by the control beneath J4, over whichever room the owner is
-          // already in — "Tap Office → the Office, full screen, nothing behind
-          // it" — and it deliberately has no route of its own. So this answers
-          // instead of navigating, which is also the more useful reply: the
-          // owner learns where the door is rather than arriving in the wrong
-          // room.
-          if (parsedNav.success && parsedNav.data.destination === "office") {
-            const reply =
-              conversationalReply ||
-              "The Office is always one tap away — it's the control just beneath me, wherever you are. No need to go anywhere.";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-            if (!streamedAnyText) emit({ type: "token", delta: reply });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "take_me_there" });
-            controller.close();
-            return;
-          }
-
-          const DESTINATIONS: Record<string, { href: string; label: string }> = {
-            studio: { href: "/dashboard/studio", label: "Studio" },
-            "studio.upload": { href: "/dashboard/studio#bring-your-own", label: "Studio" },
-            storefront: { href: "/dashboard/website", label: "your storefront" },
-            commerce: { href: "/dashboard/orders", label: "Commerce" },
-            account: { href: "/dashboard/settings", label: "your account" },
-          };
-          const chosenDestination = parsedNav.success
-            ? DESTINATIONS[parsedNav.data.destination] ?? null
-            : null;
-          // Addressed within the business the owner is actually in. These hrefs
-          // are authored as the legacy spelling, and /dashboard/... resolves the
-          // ACCOUNT'S ACTIVE business — so J4 navigating an owner who is in one
-          // business could land them in another. Same defect as ffa0962's
-          // review links, on the one path where J4 moves the owner itself.
-          const target = chosenDestination
-            ? { ...chosenDestination, href: sectionHref(chosenDestination.href, businessBasePath(store.slug)) }
-            : null;
-
-          if (!target) {
-            const reply = conversationalReply || "I'm not sure where you want to go. Tell me what you're trying to do and I'll take you there.";
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-            await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-            if (!streamedAnyText) emit({ type: "token", delta: reply });
-            emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "failure", likelyRephraseOf, kind: "take_me_there" });
-            controller.close();
-            return;
-          }
-
-          const reply =
-            conversationalReply ||
-            (parsedNav.success && parsedNav.data.intent
-              ? `Taking you to ${target.label} for that.`
-              : `Taking you to ${target.label}.`);
-
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: reply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "SUCCESS",
-            verified: false,
-            message: `Navigated to ${target.href}`,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: {
-              destination: parsedNav.success ? parsedNav.data.destination : null,
-              intent: parsedNav.success ? parsedNav.data.intent : null,
-            },
-          });
-          emit({ type: "token", delta: reply.slice((conversationalReply || "").length) });
-          emit({ type: "navigate", href: target.href });
-          emit({ type: "done", changes: null });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "take_me_there" });
-          controller.close();
-          return;
-        }
-
         if (chosenTool?.name === "create_design") {
           diagLog(requestId, turnStartedAt, "tool_selected", { tool: "create_design" });
           const parsedDesign = CreateDesignInputSchema.safeParse(chosenTool.input);

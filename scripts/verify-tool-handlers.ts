@@ -7,8 +7,13 @@ import {
   MIGRATED_TOOLS,
   handlerFor,
   makeApprovePendingChanges,
+  makeTakeMeThere,
+  NAV_DESTINATIONS,
+  OFFICE_REPLY,
+  routeToolHandlers,
   type ToolTurnContext,
 } from "@/lib/execution/toolHandlers";
+import { TakeMeThereInputSchema } from "@/lib/execution/genesisTools";
 import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
 import { queryRecords } from "@/lib/businessModel/reasoning";
 
@@ -228,6 +233,63 @@ async function main() {
     !/applied \d|all set|done/i.test(brokeResult.reply), brokeResult.reply);
 
   // ==========================================================================
+  console.log("\n=== 5b. Taking somebody somewhere goes where it says ===\n");
+  // ==========================================================================
+  // The rule this branch exists to keep: J4 must never say one place and go to
+  // another. It broke exactly that way once — "office" mapped to Studio, so J4
+  // said "Taking you to the Office" and took the owner to Studio instead.
+  const takeMeThere = makeTakeMeThere((href) => `/b/copper-and-coil${href.replace("/dashboard", "")}`);
+
+  const toCommerce = await takeMeThere(contextFor(store.id, owner.id, { destination: "commerce", intent: null }));
+  assert("a real destination is handled", toCommerce.handled);
+  if (!toCommerce.handled) throw new Error("unreachable");
+  assert("it says where it is going", toCommerce.reply.includes("Commerce"), toCommerce.reply);
+  // AND GOES THERE. Said and done must match.
+  assert("and goes to the place it named",
+    (toCommerce.navigate ?? "").includes("/orders"), String(toCommerce.navigate));
+  // ADDRESSED AT THIS BUSINESS. The raw hrefs are the legacy /dashboard/...
+  // spelling, which resolves the ACCOUNT'S ACTIVE business — so an owner in one
+  // business could be navigated into another.
+  assert("addressed at the business the owner is in",
+    (toCommerce.navigate ?? "").startsWith("/b/copper-and-coil"), String(toCommerce.navigate));
+  assert("never the ambient legacy path",
+    !(toCommerce.navigate ?? "").startsWith("/dashboard"), String(toCommerce.navigate));
+
+  // THE OFFICE IS ANSWERED, NOT NAVIGATED, because it has no route of its own.
+  const office = await takeMeThere(contextFor(store.id, owner.id, { destination: "office", intent: null }));
+  assert("the Office is handled", office.handled);
+  if (!office.handled) throw new Error("unreachable");
+  check("without moving anybody", office.navigate, undefined);
+  assert("and says where the door actually is", office.reply === OFFICE_REPLY, office.reply);
+
+  // Asked to go somewhere and unable to work out where: honest, and logged as a
+  // failure so it stays visible rather than counting as a good turn.
+  const nowhere = await takeMeThere(contextFor(store.id, owner.id, { destination: "atlantis", intent: null }));
+  assert("an unknown destination is handled rather than crashing", nowhere.handled);
+  if (!nowhere.handled) throw new Error("unreachable");
+  check("it moves nobody", nowhere.navigate, undefined);
+  check("and is recorded as a failure", nowhere.outcome, "failure");
+  assert("while still saying something useful",
+    nowhere.reply.toLowerCase().includes("not sure"), nowhere.reply);
+
+  // THE MIRROR. NAV_DESTINATIONS restates the schema's own enum, and the
+  // mismatch degrades silently: a destination the schema accepts and the map
+  // lacks tells the owner "I'm not sure where you want to go" about a place J4
+  // was explicitly asked for.
+  const schemaDestinations = TakeMeThereInputSchema.shape.destination.options as readonly string[];
+  check("every destination the schema accepts can be reached (or is the Office)",
+    schemaDestinations.filter((d) => d !== "office" && !Object.hasOwn(NAV_DESTINATIONS, d)), []);
+  check("and nothing is mapped that the schema would never send",
+    Object.keys(NAV_DESTINATIONS).filter((d) => !schemaDestinations.includes(d)), []);
+  assert("the Office is deliberately absent from the map",
+    !Object.hasOwn(NAV_DESTINATIONS, "office"),
+    "mapping it to any href is how J4 said one place and went to another");
+
+  // Bound by the route, because only the request knows the slug.
+  const bound = routeToolHandlers({ resolveHref: (h) => `/b/x${h}` });
+  assert("the route binds a navigation handler", typeof bound.take_me_there === "function");
+
+  // ==========================================================================
   console.log("\n=== 6. Handlers stay inside the store they were given ===\n");
   // ==========================================================================
   check("the neighbour has no goals", (await queryRecords(other.id, "goal")).length, 0);
@@ -256,12 +318,21 @@ async function main() {
       .filter((n) => n !== "edit_store_content"),
     []);
   assert("the route dispatches through the handler registry",
-    route.includes("handlerFor(tool.name)"), "otherwise the handlers are dead code");
+    route.includes("routeToolHandlers({") && route.includes("boundHandlers[tool.name]"),
+    "otherwise the handlers are dead code");
+  // Bound with the real resolver, not a placeholder — an unbound navigation
+  // handler sends the owner to whichever business their account last made
+  // active rather than the one they are in.
+  assert("and binds navigation to this business",
+    route.includes("sectionHref(href, businessBasePath(store.slug))"),
+    "otherwise J4 can navigate an owner out of the business they are in");
 
   check("a prototype key resolves to no handler", handlerFor("constructor"), null);
   check("nor does an invented tool", handlerFor("delete_everything"), null);
   check("every registered handler is callable",
     Object.values(TOOL_HANDLERS).filter((h) => typeof h !== "function"), []);
+  check("and every bound one is too",
+    Object.values(routeToolHandlers({ resolveHref: (h) => h })).filter((h) => typeof h !== "function"), []);
 
   await prisma.store.deleteMany({ where: { id: { in: [store.id, other.id] } } });
   await prisma.user.deleteMany({ where: { id: owner.id } });
