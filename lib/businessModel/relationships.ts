@@ -146,6 +146,21 @@ export function isRelationshipKind(value: string): value is RelationshipKind {
  * seen from two ends; storing both would double every blocked goal and make
  * "how many things are blocking me" a question with two answers. Canonical
  * direction wins, and the reverse index makes reading it from either end free.
+ *
+ * WHICH LEAVES ONE HONEST WRINKLE, written down rather than engineered around.
+ * When two records can project the SAME edge — a goal's relatedChallengeIds and
+ * a challenge's relatedGoalIds are the only such pair — `projectedFrom` can
+ * only name one of them, so the last writer owns it. If that owner later drops
+ * its reference while the other side still names it, reconciliation removes the
+ * edge until the other record is next written.
+ *
+ * This is not reachable today and the check is stated so that stays visible:
+ * BOTH fields are hard-coded to `[]` at every write site in the product
+ * (lib/businessModel/factCapture.ts), no connector produces goals or
+ * challenges, and nothing else populates either. Building counterpart-lookup
+ * machinery for a case nothing can produce would be inventing a problem; what
+ * IS warranted is that the behaviour is pinned by an assertion, so whoever
+ * makes those fields real has something that fails rather than a surprise.
  */
 interface Projection {
   field: string;
@@ -197,6 +212,13 @@ export interface RelationshipInput {
   provenanceDetail?: string | null;
   statedAt?: Date | null;
   statedById?: string | null;
+  /**
+   * The record whose data maintains this edge, when one does.
+   *
+   * Omitted for an edge somebody stated deliberately, which is what keeps a
+   * connector re-sync from deleting a connection the owner drew by hand.
+   */
+  projectedFrom?: string | null;
 }
 
 export interface RecordRelation {
@@ -210,6 +232,8 @@ export interface RecordRelation {
   provenanceDetail: string | null;
   statedAt: Date | null;
   statedById: string | null;
+  /** The record whose data maintains this, or null if somebody stated it. */
+  projectedFrom: string | null;
   /** Which end of the edge the record asked about sits on. */
   direction: "outgoing" | "incoming";
 }
@@ -239,6 +263,7 @@ export async function relate(input: RelationshipInput): Promise<void> {
     provenanceDetail: input.provenanceDetail ?? null,
     statedAt: input.statedAt ?? null,
     statedById: input.statedById ?? null,
+    projectedFrom: input.projectedFrom ?? null,
   };
 
   await prisma.recordRelationship.upsert({
@@ -280,7 +305,7 @@ function toRelation(
   row: {
     id: string; fromId: string; fromType: string; toId: string; toType: string;
     kind: string; provenance: RecordProvenance | null; provenanceDetail: string | null;
-    statedAt: Date | null; statedById: string | null;
+    statedAt: Date | null; statedById: string | null; projectedFrom: string | null;
   },
   direction: "outgoing" | "incoming"
 ): RecordRelation {
@@ -295,6 +320,7 @@ function toRelation(
     provenanceDetail: row.provenanceDetail,
     statedAt: row.statedAt,
     statedById: row.statedById,
+    projectedFrom: row.projectedFrom,
     direction,
   };
 }
@@ -365,12 +391,16 @@ export async function projectRecordRelationships(params: {
   statedById?: string | null;
 }): Promise<{ kind: RelationshipKind; toId: string }[]> {
   const projections = PROJECTIONS[params.entityType];
+  // NOTE the early return still reconciles nothing, deliberately: an entity type
+  // with no projections never wrote an edge, so it has none to take back.
   if (!projections) return [];
 
   const data = params.data as Record<string, unknown> | null;
   if (!data || typeof data !== "object") return [];
 
   const written: { kind: RelationshipKind; toId: string }[] = [];
+  /** The unique keys this pass claims, so anything else it used to own can go. */
+  const claimed = new Set<string>();
 
   for (const projection of projections) {
     const raw = data[projection.field];
@@ -406,10 +436,41 @@ export async function projectRecordRelationships(params: {
         provenanceDetail: params.provenanceDetail ?? null,
         statedAt: params.statedAt ?? null,
         statedById: params.statedById ?? null,
+        projectedFrom: params.recordId,
         ...edge,
       });
       written.push({ kind: projection.kind, toId: edge.toId });
+      claimed.add(`${edge.fromId} ${projection.kind} ${edge.toId}`);
     }
+  }
+
+  // RECONCILIATION -- the half that was missing when this function first
+  // shipped, and the half that decides whether the graph can be trusted.
+  //
+  // Projection alone only ever ADDS. An invoice whose contactId moved from A to
+  // B produced an edge to B and left the edge to A standing, so "who is this
+  // invoice for?" answered "two people" and both looked equally stated. A graph
+  // that cannot forget is worse than no graph: it is confidently wrong rather
+  // than absent, and nothing downstream can tell which half is current.
+  //
+  // Scoped to `projectedFrom: recordId`, which is the entire reason that column
+  // exists. Edges somebody STATED have a null projectedFrom and are never
+  // considered here -- a connector re-syncing an invoice must not quietly
+  // delete a connection the owner drew by hand.
+  const owned = await prisma.recordRelationship.findMany({
+    where: { storeId: params.storeId, projectedFrom: params.recordId },
+    select: { id: true, fromId: true, kind: true, toId: true },
+  });
+  const stale = owned.filter(
+    (row) => !claimed.has(`${row.fromId} ${row.kind} ${row.toId}`)
+  );
+  if (stale.length > 0) {
+    await prisma.recordRelationship.deleteMany({
+      // storeId in the WHERE clause as well as the id list: an id is unique, and
+      // scoping a delete on uniqueness alone is how a bug in the query above
+      // becomes a cross-tenant delete instead of an empty result.
+      where: { storeId: params.storeId, id: { in: stale.map((row) => row.id) } },
+    });
   }
 
   return written;

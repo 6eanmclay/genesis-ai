@@ -100,7 +100,23 @@ export async function startTestDatabase(): Promise<TestDatabase> {
   // have been changing how PRODUCTION talks to Neon in order to make a test
   // pass. Neither `?connection_limit=1` nor `?max=1` reaches a pg Pool built
   // from a connection string — both were tried and both still failed.
-  const server = new PGLiteSocketServer({ db, port, host: "127.0.0.1", maxConnections: 20 });
+  //
+  // AND THE NUMBER SCALES WITH THE SUITE COUNT, not with concurrency (2026-08-22).
+  //
+  // This server outlives every child process in the run, and the handler a
+  // child's pool opens is not given back when that child exits. So the cap is
+  // consumed cumulatively, roughly one per suite — which made 20 exactly enough
+  // for 30 suites and one short for 31. Adding a single new suite failed a
+  // completely unrelated one 16 places later, at a query that passes perfectly
+  // well standalone, with "Connection terminated unexpectedly" naming neither
+  // the cause nor the suite responsible.
+  //
+  // Found by removing the new suite (the run went straight back to 30/30),
+  // ruling out its fixture data (deleting everything it created changed
+  // nothing), and then raising this number. Set with real headroom for that
+  // reason: the failure it produces is a false report against innocent code,
+  // and it arrives whenever somebody writes the next suite.
+  const server = new PGLiteSocketServer({ db, port, host: "127.0.0.1", maxConnections: 60 });
   await server.start();
 
   // PGlite's wire server accepts any credentials; the database name is fixed.

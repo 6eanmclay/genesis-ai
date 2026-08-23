@@ -1941,15 +1941,32 @@ model RecordRelationship {
   statedAt         DateTime?
   statedById       String?
 
+  /// WHICH RECORD'S DATA MAINTAINS THIS EDGE, so a projection can take it back.
+  ///
+  /// Provenance says who STATED a link; this says what MAINTAINS it, and they
+  /// are different questions. An edge projected from a challenge's
+  /// relatedGoalIds and one an owner drew by hand are both OWNER, both `blocks`,
+  /// and only one of them should vanish when the challenge stops naming that
+  /// goal.
+  ///
+  /// Names the record rather than being a boolean, because the `reversed`
+  /// projections store the edge pointing the other way: a goal listing its
+  /// challenges produces a challenge -> goal edge, so neither endpoint
+  /// identifies who is responsible for it.
+  ///
+  /// NULL means somebody stated it deliberately. A sync never touches those.
+  projectedFrom String?
+
   createdAt DateTime @default(now())
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   /// One link of one kind between two records. Re-projecting is an upsert, so
-  /// a re-sync never duplicates and a removed reference can be reconciled away.
+  /// a re-sync never duplicates and a removed reference is reconciled away.
   @@unique([storeId, fromId, kind, toId])
   @@index([storeId, fromId])
   @@index([storeId, toId])
+  @@index([storeId, projectedFrom])
 }
 
 // Phase 3 Milestone 3 (Business Intelligence Engine) — the standardized,
