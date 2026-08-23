@@ -18,10 +18,11 @@ import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon"
 import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
 import {
   firstRefusedTool,
-  type DroppedTool,
   refusalMessage,
   planToolRun,
-  describeDroppedTools,
+  droppedNoticeFor,
+  policyRefusedEverything,
+  type ToolPlan,
   UNAVAILABLE_ON_THIS_PATH,
 } from "@/lib/execution/toolPolicy";
 import {
@@ -2338,7 +2339,9 @@ async function applyGenesisMessageToStore(
   // shape of the turn.
   let plannedTools: ReturnType<typeof allToolUses> = [];
   let chosenTool: ReturnType<typeof allToolUses>[number] | null = null;
-  let droppedTools: DroppedTool[] = [];
+  // The plan, not just its leftovers — whether anything is RUNNING is the part
+  // this path got wrong, and that question lives on the plan.
+  let toolPlan: ToolPlan = { run: [], dropped: [] };
   let conversationalReply = "";
   if (!preClassifiedTool) {
     const unifiedOutcome = await callGenesisModel({
@@ -2359,7 +2362,7 @@ async function applyGenesisMessageToStore(
     // kind of drift.
     const requestedTools = allToolUses(unifiedContent);
     const plan = planToolRun(requestedTools.map((t) => t.name), userMessage);
-    droppedTools = plan.dropped;
+    toolPlan = plan;
     // ALL of them, in the order policy put them. This path used to take
     // plan.run[0] and discard the rest — which are not in plan.dropped, because
     // policy ALLOWED them, so nothing said they had gone. A merchant who asked
@@ -2476,8 +2479,46 @@ async function applyGenesisMessageToStore(
   // WHAT WAS ASKED FOR AND IS NOT HAPPENING, said out loud — written with the
   // rest of the turn so it lands after the merchant's own message rather than
   // before it. Same contract the streaming route holds.
-  const droppedNotice =
-    droppedTools.length > 0 && chosenTool ? describeDroppedTools(droppedTools) : null;
+  const droppedNotice = droppedNoticeFor(toolPlan);
+
+  // POLICY REFUSED EVERYTHING, WHICH IS NOT THE SAME AS CHOOSING NOTHING.
+  //
+  // Below this line, a turn with no tool falls through to regenerating the
+  // store's content — correct when the model simply had no tool to pick, and
+  // wrong here. The owner asked to remove products; policy declined to answer
+  // that with an upload prompt; and the fall-through would have rewritten their
+  // homepage instead. That is the shape of 7b51106, arriving through a door
+  // nobody had checked.
+  //
+  // So the refusal is the turn. It ends here, having said the one thing that is
+  // true, and nothing is written.
+  if (policyRefusedEverything(toolPlan) && droppedNotice) {
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: droppedNotice },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "WARNING",
+      verified: false,
+      message: droppedNotice,
+      // Not a failure to retry — a question waiting on an answer. Re-sending the
+      // same words would earn the same reply.
+      retryable: false,
+      userId,
+      storeId: store.id,
+      metadata: { policyRefused: toolPlan.dropped.map((d) => d.why) },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "success",
+      likelyRephraseOf,
+      stageDurationsMs,
+    });
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
 
   if (chosenTool) {
     const run = await runPlannedTools({

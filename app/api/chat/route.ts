@@ -7,7 +7,7 @@ import {
   firstRefusedTool,
   refusalMessage,
   planToolRun,
-  describeDroppedTools,
+  droppedNoticeFor,
 } from "@/lib/execution/toolPolicy";
 import {
   runPlannedTools,
@@ -535,22 +535,24 @@ export async function POST(request: Request) {
         // filed it before the merchant's own message, which this path does not
         // write until it knows the turn resolved locally — so the stored
         // conversation had J4 declining something not yet asked.
-        const droppedNotice =
-          plan.dropped.length > 0 && chosenTool ? describeDroppedTools(plan.dropped) : null;
+        const droppedNotice = droppedNoticeFor(plan);
         if (droppedNotice) {
           emit({ type: "token", delta: streamedAnyText ? `\n\n${droppedNotice}` : droppedNotice });
           streamedAnyText = true;
         }
 
-        if (!chosenTool && conversationalReply) {
+        if (!chosenTool && (conversationalReply || droppedNotice)) {
           diagLog(requestId, turnStartedAt, "db_write_start", { kind: "conversational" });
           await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: conversationalReply } });
+          // The notice is part of the message the owner read, so it is part of
+          // the message the conversation keeps.
+          const spoken = [conversationalReply, droppedNotice].filter(Boolean).join("\n\n");
+          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: spoken } });
           await recordGenesisExecution({
             action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
             status: "SUCCESS",
             verified: false,
-            message: conversationalReply,
+            message: spoken,
             retryable: false,
             userId,
             storeId: store.id,

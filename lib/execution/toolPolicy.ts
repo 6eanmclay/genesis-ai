@@ -252,13 +252,54 @@ export function uploadWouldSwallowRemoval(toolName: string, userMessage: string)
   return toolName === "show_upload_options" && EXPLICIT_REMOVAL.test(userMessage);
 }
 
+export interface ToolPlan {
+  run: string[];
+  dropped: DroppedTool[];
+}
+
+/**
+ * What the owner is told about this plan, or null when there is nothing to say.
+ *
+ * THIS EXISTS BECAUSE THE GATE WAS WRONG IN BOTH CALLERS, IDENTICALLY. Each one
+ * wrote `dropped.length > 0 && chosenTool ? describeDroppedTools(...) : null` —
+ * suppressing the notice whenever policy left NOTHING to run. Every reason but
+ * one drops a surplus tool and leaves a first one standing, so the bug was
+ * invisible: `cap`, `second_mutation` and `second_navigation` all keep a
+ * chosenTool. `removal_not_upload` does not. It empties the run by design.
+ *
+ * So the single sentence written for that rule — "You asked me to remove some
+ * products, and I want to get that right before anything about uploading. Which
+ * ones did you mean?" — could not reach an owner from either path, while
+ * verify-tool-policy.ts stayed green calling describeDroppedTools directly. A
+ * unit test on a function the product cannot reach in that state is not
+ * evidence that the owner hears it.
+ *
+ * A plan knows whether anything is running. The caller does not have to.
+ */
+export function droppedNoticeFor(plan: ToolPlan): string | null {
+  return plan.dropped.length > 0 ? describeDroppedTools(plan.dropped) : null;
+}
+
+/**
+ * Whether policy refused everything the model asked for.
+ *
+ * Distinct from "the model chose no tool", which is an ordinary conversational
+ * turn. Callers that fall back to another capability when no tool runs must not
+ * take that fallback here: the owner asked for something specific and policy
+ * declined it, and regenerating store content instead would answer a question
+ * nobody asked.
+ */
+export function policyRefusedEverything(plan: ToolPlan): boolean {
+  return plan.run.length === 0 && plan.dropped.length > 0;
+}
+
 export function planToolRun(
   toolNames: string[],
   // The merchant's own words, when the caller has them. Optional so every
   // existing caller and every test that only cares about ordering is unchanged
   // — and because the rules above it are all about tools rather than language.
   userMessage = ""
-): { run: string[]; dropped: DroppedTool[] } {
+): ToolPlan {
   const run: string[] = [];
   const dropped: DroppedTool[] = [];
   let mutated = false;

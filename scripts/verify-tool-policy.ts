@@ -11,6 +11,8 @@ import {
   refusalMessage,
   planToolRun,
   describeDroppedTools,
+  droppedNoticeFor,
+  policyRefusedEverything,
   UNAVAILABLE_ON_THIS_PATH,
   MAX_TOOLS_PER_TURN,
 } from "@/lib/execution/toolPolicy";
@@ -288,7 +290,16 @@ for (const [name, source] of [["the streaming route", route], ["the Server Actio
   // rather than from emission order.
   assert(`${name} reads every tool the model asked for`, source.includes("allToolUses("));
   assert(`${name} plans what may run`, source.includes("planToolRun("));
-  assert(`${name} tells the owner what it is not doing`, source.includes("describeDroppedTools("));
+  // THROUGH THE SHARED GATE, not a hand-written condition.
+  //
+  // What stood here read `source.includes("describeDroppedTools(")` and was
+  // green for as long as the name appeared — including throughout the period
+  // when both callers wrapped it in `&& chosenTool` and suppressed it in the
+  // one case where nothing ran at all. Presence of a call is not delivery of a
+  // message; the behavioural assertions below are the real ones.
+  assert(`${name} tells the owner what it is not doing`, source.includes("droppedNoticeFor("));
+  assert(`${name} does not re-derive the gate`, !source.includes("&& chosenTool ?"),
+    "the condition belongs to the plan, not to each caller");
   // AND RUNS ALL OF THEM. The Server Action read every tool, planned every
   // tool, and then ran plan.run[0] — discarding the rest, which are NOT in
   // plan.dropped precisely because policy allowed them. Nothing said they had
@@ -544,6 +555,62 @@ check("a turn of reads only is not refused",
 assert("an unknown tool is refused, not passed over",
   firstRefusedTool("OWNER", ["look_up_business_data", "constructor"])?.name === "constructor");
 check("and nothing to check is nothing to refuse", firstRefusedTool("EMPLOYEE", []), null);
+
+// ===========================================================================
+// EVERY REFUSAL REACHES THE OWNER
+//
+// The defect this closes was not in describeDroppedTools, which was always
+// right, and not in planToolRun, which was always right. It was in the gap: a
+// plan that refused the ONLY requested tool produced a correct sentence that
+// neither caller would show, because both asked "is something running?" before
+// asking "is something being refused?".
+//
+// Three of the four reasons drop a surplus tool and leave a first one standing,
+// so they could never expose it. removal_not_upload empties the run by design.
+// That asymmetry is the whole bug, and it is what these assert.
+// ===========================================================================
+console.log("\n=== every refusal reaches the owner ===\n");
+
+const REFUSAL = "Please remove the old products and let's upload the first ring.";
+const emptied = planToolRun(["show_upload_options"], REFUSAL);
+
+check("policy refuses the only tool asked for", emptied.run, []);
+assert("and that is a refusal, not an ordinary quiet turn",
+  policyRefusedEverything(emptied),
+  "nothing running plus something dropped is a refusal");
+assert("the owner is told, with nothing left running",
+  droppedNoticeFor(emptied) !== null,
+  "the sentence written for this rule was unreachable from both callers");
+assert("and it asks the question the rule exists to ask",
+  (droppedNoticeFor(emptied) ?? "").includes("Which ones did you mean?"));
+
+// The other direction, so the predicate is not merely always true.
+const quiet = planToolRun([]);
+assert("a turn that asked for nothing refuses nothing", !policyRefusedEverything(quiet));
+assert("and says nothing", droppedNoticeFor(quiet) === null);
+
+const capped = planToolRun([
+  "look_up_business_data", "take_me_there", "edit_store_content", "plan_campaign",
+]);
+assert("a turn that ran something is not a refusal",
+  capped.run.length > 0 && !policyRefusedEverything(capped),
+  "the cap drops a surplus; it does not refuse the request");
+assert("and is still spoken about", droppedNoticeFor(capped) !== null);
+
+// EVERY REASON, so a reason added later cannot quietly become unreachable.
+// Each entry is a plan that genuinely produces that reason.
+const BY_REASON: [string, ReturnType<typeof planToolRun>][] = [
+  ["cap", capped],
+  ["second_mutation", planToolRun(["edit_store_content", "request_product_removal"])],
+  ["second_navigation", planToolRun(["take_me_there", "take_me_there"])],
+  ["removal_not_upload", emptied],
+];
+for (const [reason, plan] of BY_REASON) {
+  assert(`${reason} is actually produced by that plan`,
+    plan.dropped.some((d) => d.why === reason),
+    "a fixture that does not reach its reason proves nothing");
+  assert(`${reason} is spoken to the owner`, droppedNoticeFor(plan) !== null);
+}
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
