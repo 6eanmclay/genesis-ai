@@ -146,7 +146,13 @@ async function main() {
     // ========================================================================
     // "Absent for stock-sourced/uploaded images, which leave richContent
     // untouched" — not overwritten with an empty object.
-    const stockSourced = await product(store.id, { name: "Stock", richContent: provenance });
+    // A DISTINCT design id (D3, 2026-08-23). This reused `provenance` verbatim,
+    // which since D3 means two products from one design — refused by
+    // Product_one_per_design. What this section tests is that richContent
+    // survives untouched, not which design it names, so the fixture gets its own
+    // design and the assertion below compares against that.
+    const stockProvenance = { ...provenance, designId: "design_2" };
+    const stockSourced = await product(store.id, { name: "Stock", richContent: stockProvenance });
     await run(stockSourced.id, store.id);
     const untouched = await prisma.product.findUniqueOrThrow({ where: { id: stockSourced.id } });
     // Compared field by field rather than by JSON.stringify: richContent makes a
@@ -156,7 +162,7 @@ async function main() {
     const sameShape = (a: unknown, b: unknown) =>
       JSON.stringify(Object.entries(a as object).sort()) === JSON.stringify(Object.entries(b as object).sort());
     check("richContent is exactly what it was",
-      sameShape(untouched.richContent, provenance),
+      sameShape(untouched.richContent, stockProvenance),
       JSON.stringify(untouched.richContent));
     check("with no empty imagePrompt invented",
       !("imagePrompt" in (untouched.richContent as Record<string, unknown>)),
