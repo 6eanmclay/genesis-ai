@@ -3,11 +3,17 @@
 **Status: CONTRACT / DESIGN PASS. Nothing implemented.** 2026-08-23.
 Sean: contract first, review before implementation.
 
+**Decisions taken 2026-08-23** — piece 2's definition and piece 1's trigger.
+Both are recorded in place below. Two of piece 1's three decisions remain open
+and are called out rather than assumed.
+
 UI6's shipped half made the conversation the business boundary and made messages
-show their real execution state. These are the three §7 pieces left. They are not
-equally ready, and saying so is most of the value here: **one is contractible
-today, one needs a single product decision, and one is undesigned by §7's own
-admission and cannot be honestly specified without inventing behaviour.**
+show their real execution state. These are the three §7 pieces left.
+
+**All three are now contracted.** Pieces 2 and 3 are complete. Piece 1's trigger
+is decided and the rest of it is specified around that, with two remaining
+decisions named in place — they are prior to implementation, not discovered
+during it.
 
 ---
 
@@ -55,9 +61,13 @@ shapes.
 most messages have none. A message with `changes` and empty `content` renders the
 checklist alone, which is complete rather than broken.
 
-**J4 may:** shorten its own prose. **J4 must never:** write the checklist. It is
-server-built precisely because the model's account of what it did can be wrong,
-and that is the property this piece must not weaken.
+**J4 may:** generate and shorten the conversational prose. **J4 must never
+generate or alter the "See what changed" checklist.** It is deterministic,
+server-built and authoritative, precisely because the model's account of what it
+did can be wrong — its own comment records it saying "Done" when `execute()` had
+failed. Where prose and checklist disagree, the checklist is right. This is the
+property the piece exists to strengthen, and weakening it would undo the reason
+the field was built.
 
 **Persistence.** None. Both fields exist.
 
@@ -87,101 +97,181 @@ paragraphs of prose is worse than today.
 
 # Piece 2 — Navigable conversation history
 
-*Contractible after one product decision, which I will not make.*
+**DECIDED: a conversation is an explicit, persistent thread.** It may optionally
+be anchored to work or another business entity — including the existing `taskId`
+— but **a task is not the definition of a conversation**. J4 has to support
+conversations about products, customers, documents, decisions, questions and
+problems, and anchoring on tasks would have turned every one of those into a task
+to exist.
 
-**User problem.** There is one flat stream per business, read as the newest 50
-messages. An owner cannot return to what was discussed last week, and J4's own
-north star — "the conversation becomes the working memory of the business" —
-has nothing to return *to*.
+**User problem.** One flat stream per business, read as the newest 50 messages.
+An owner cannot return to what was discussed last week, and J4's north star —
+"the conversation becomes the working memory of the business" — has nothing to
+return *to*.
 
-**The decision required.** **What is a conversation?** `StoreMessage` has
-`storeId`, `role`, `content`, `changes`, `taskId`, `executionLogId` — and no
-grouping. Candidates, each giving a different product:
+## The rule that governs resumption
 
-- **(a) A time window.** A day, or a gap of N hours. Needs no owner action and no
-  new writes; boundaries are arbitrary and can split one exchange.
-- **(b) A topic.** J4 groups by subject. Needs a model, and a wrong grouping is a
-  wrong history.
-- **(c) An explicit thread.** The owner starts one. Honest and never wrong; asks
-  the owner to do filing.
-- **(d) Anchored on work.** A conversation is the messages around a proposal or
-  task — `taskId` already exists on `StoreMessage` and already does this for
-  task-opened turns.
+> **Conversation history is a record of what was said, not a frozen snapshot of
+> what was known.**
 
-**(d) is the only one with existing structure behind it**, and `taskId` is
-evidence the idea already half-exists. I am not choosing it: the four produce
-genuinely different products and that is Sean's call.
+When a conversation resumes, `buildTurnContext` rebuilds current business
+understanding for that turn. Historical messages stay historical; current
+business state stays current. J4 answering inside an old conversation answers
+with what it knows **now**, and never re-derives what it believed then.
 
-Everything below is conditional on that answer.
+This is not new machinery — `buildTurnContext` already assembles understanding
+per turn — but it is now a stated invariant rather than an accident, and it is
+verifiable.
 
-**Exact behaviour, once decided.** Past conversations are listable, openable, and
-resumable — a reply continues that conversation rather than starting a new one.
+**Exact behaviour.**
+- A conversation is a durable row with an identity, belonging to exactly one
+  business.
+- Messages belong to at most one conversation.
+- Past conversations are listable, openable and resumable; replying appends to
+  that conversation.
+- An anchor is optional metadata (`taskId` today, other entity kinds later). It
+  is context, never identity: removing an anchor must not remove the conversation.
 
-**State transitions.** A conversation is open or past; resuming makes it current.
-Whether it can be closed explicitly depends on the decision above.
+**State transitions.** `current → past → current` on resumption. Nothing is
+destroyed by any transition, and a conversation with no messages is not a state
+the product creates.
 
-**Permissions.** Unchanged — history is read through the conversation's existing
-gate, and the business boundary is `J4Surface`'s already-shipped slug resolution.
-**Must not** introduce a second read path that skips it.
+**Inputs / outputs.** In: a conversation id, plus the existing turn inputs. Out:
+that conversation's messages, and a turn appended to it. `buildTurnContext` is
+unchanged and receives no historical understanding.
 
-**Failure and recovery.** A conversation whose grouping key no longer resolves
-(a deleted task under (d)) must render as an ordinary past conversation, never
-vanish. **Never silently retract history** — the rule proactive delivery already
-follows.
+**Permissions / ownership.** A conversation belongs to a business and is read
+through the conversation's existing `GENESIS_CHAT` gate and `J4Surface`'s slug
+resolution. **Must not** introduce a second read path that skips either. A
+member's access is the business's access; conversations are not per-person.
 
-**Persistence.** A grouping key on `StoreMessage`, nullable, backfilled or not
-depending on the decision. Under (d) it may need nothing new at all.
+**Failure and recovery.**
+- An anchor that no longer resolves (a deleted task) renders as an ordinary
+  unanchored conversation. **Never vanishes** — the rule proactive delivery
+  already follows.
+- A message whose conversation id is null is history from before this existed and
+  renders as the ongoing default. It is **not backfilled into invented threads**:
+  the grouping did not exist when those rows were written, and manufacturing one
+  is manufacturing history — the same call made for `executionLogId`.
 
-**Verification.** Messages group as the rule says; resuming appends to the right
-group; a business sees only its own; a broken grouping key degrades rather than
-disappears.
+**J4 may:** answer inside a resumed conversation using current understanding;
+read the anchor as context. **J4 must never:** create, merge, rename or delete a
+conversation on its own; answer with a reconstructed past understanding; or move
+a message between conversations.
 
-**Existing architecture.** `StoreMessage.taskId`, `J4Surface`'s
-`CHAT_HISTORY_WINDOW = 50`, `lastAssistantContent`, `buildTurnContext`.
+**Persistence.** A `Conversation` row (business-scoped, optional anchor) and a
+nullable `conversationId` on `StoreMessage`. Nullable and un-backfilled, for the
+reason above.
 
-**Acceptance criteria.** Deferred until the decision — writing them now would be
-inventing the answer.
+**Verification.**
+- Messages group as the rule says; a reply appends to the conversation it was
+  sent to.
+- One business's conversations are never another's — asserted against a second
+  business, structurally where possible.
+- A resumed conversation answers with **current** understanding: assert that a
+  fact learned *after* the conversation's last message is available to a turn
+  resumed in it. This is the stated rule made mechanical.
+- An unresolvable anchor degrades to unanchored rather than disappearing.
+- Null-conversation history still renders.
+- Negative controls: backfilling invented threads; an anchor removal deleting a
+  conversation; a resumed turn receiving a snapshot.
+
+**Acceptance criteria.**
+1. A conversation exists as a durable, business-scoped row with an optional anchor.
+2. Replying to a past conversation appends to it, and that turn's context is
+   built fresh.
+3. A fact learned after a conversation's last message reaches a turn resumed in it.
+4. No message moves between conversations, ever.
+5. Pre-existing messages render unchanged and are not assigned a manufactured
+   conversation.
+6. Cross-business isolation asserted.
+
+**Still open — surfaced, not assumed.** The definition settles what a
+conversation *is*; three questions about its lifecycle remain and each changes
+the product:
+- **How does a new conversation start?** A deliberate owner action, or does a
+  message sent with none selected begin one? The second is invisible and
+  convenient; the first is explicit and matches the decision's own word.
+- **Is a conversation named, and by whom?** Owner-named is free and never wrong.
+  J4-titled needs a model, so it is credential-blocked and would make this
+  milestone depend on one.
+- **Can a conversation be closed, archived or deleted?** "Persistent" argues
+  against deletion; nothing here requires an answer to ship a first version.
 
 **Out of scope.** §7's north star of linking a conversation to the real changes
-it produced. `executionLogId` (UI6) makes that newly possible, and it is a
-separate milestone.
-
----
+it produced — `executionLogId` (UI6) makes that newly possible and it is a
+separate milestone. Cross-conversation search. Per-person conversations.
 
 # Piece 1 — Business context beside the conversation
 
-**This cannot be contracted, and §7 says so itself:** *"Undesigned here: whether
-this is context J4 proactively surfaces per the topic … or something the owner
-opens deliberately — a real decision for whenever this phase actually starts."*
+**DECIDED: owner-initiated. The pane is opened deliberately and never opens
+itself.** This keeps the first version a workspace/context capability rather than
+silently becoming a new proactive J4 behaviour. Proactive surfacing can be its
+own capability later, driven by the BI engine — *"show me my context"* and *"J4
+decided to interrupt me"* are different products and must not be conflated in one
+milestone.
 
-Writing behaviour, transitions and acceptance criteria for it would be inventing
-the product, which is what I was told not to do. What can be established:
+That answers §7's open question, which was exactly this one.
 
-**User problem (real, and from §7).** What is on screen — a homepage draft, a
-chart, a product — should be able to sit next to the conversation rather than
-requiring the owner to leave it.
+**User problem (from §7).** What is on screen — a homepage draft, a chart, a
+product — should be able to sit next to the conversation rather than requiring
+the owner to leave it.
 
-**The decisions required, and they are prior to any contract:**
-1. **Who opens it** — J4 surfaces it by topic, or the owner opens it deliberately.
-   §7 names this as the open question.
-2. **What can appear there** — a closed set of surfaces, or anything the owner is
-   looking at. A closed set is a registry with a mirrored-registry invariant; an
-   open one is a rendering contract for arbitrary content.
-3. **Whether it can be acted on** — a live pane, or a view. If a homepage draft
-   beside the conversation is editable, this is a second surface with write
-   access and inherits every approval and authorization question UI6 just settled
-   for the proposal card.
+**Exact behaviour.** A control in the conversation opens a pane beside it. The
+owner closes it and returns. Its content is the business context for what they
+are looking at.
 
-**What is already true and would constrain it:** the proposal card
-(`J4Proposal`) already renders business content inside the conversation and is
-business-scoped since UI6 — so the "show a thing beside the conversation"
-mechanic exists in one specific form and would be the honest starting point
-rather than a new one.
+**State transitions.** `closed → open → closed`, driven only by the owner.
+**There is no transition J4 can cause.** Whether "open" survives navigation is a
+UX detail, not a product decision.
 
-**Recommendation:** answer decision 1 first. It determines whether this is a
-J4 capability or a workspace layout, and those are different milestones.
+**Permissions / ownership.** Reads the same business the conversation belongs to,
+through the same gate. **Must not** introduce a read path that skips
+`J4Surface`'s slug resolution — the defect class UI6's shipped half removed.
 
----
+**Failure and recovery.** Nothing to show renders as an honest empty state, never
+a spinner or filler. The pane failing must never take the conversation with it.
+
+**J4 may:** have its answers reflect what the owner has open, if the turn context
+already carries it — `buildTurnContext` has a workspace line today. **J4 must
+never:** open the pane, close it, or change what it shows. That is the decision
+above, stated as an invariant so it is testable.
+
+**Persistence.** None required. Whether the open/closed state is remembered per
+owner is a later question, and browser-local storage would answer it without a
+schema change.
+
+**Verification.** The pane opens and closes only from an owner action — asserted
+by there being no server or J4 path that sets it. A business's pane shows that
+business's context. An empty context renders an empty state. Negative control:
+any code path through which J4 could open it.
+
+**Acceptance criteria.**
+1. The pane opens only from a deliberate owner action.
+2. No J4 or server path can open, close or change it — asserted, not assumed.
+3. Its content is scoped to the conversation's business.
+4. Nothing to show is an honest empty state.
+5. A failure in the pane leaves the conversation working.
+
+**STILL OPEN — two of the three decisions, and they are prior to implementation:**
+- **What may appear there?** A closed set of surfaces, or anything the owner is
+  looking at. A closed set is a registry and inherits the mirrored-registry
+  invariant; an open one is a rendering contract for arbitrary content.
+  *Recommendation: a closed set, small, for the first version.*
+- **Can it be acted on?** A view, or a live pane. If a homepage draft beside the
+  conversation is editable, this becomes a second surface with write access and
+  inherits every approval and authorization question UI6 just settled for the
+  proposal card. *Recommendation: a view for the first version — actionability is
+  a second milestone, and the proposal card already covers the case where
+  acting is the point.*
+
+**What already constrains it.** `J4Proposal` already renders business content
+inside the conversation and has been business-scoped since UI6. The "show a thing
+beside the conversation" mechanic exists in one specific form; this should extend
+that rather than introduce a second.
+
+**Out of scope.** Proactive surfacing of any kind. Editing. Anything the BI
+engine would push.
 
 ## Dependencies
 
@@ -209,6 +299,10 @@ server-built `changes`; piece 2 must not introduce a read path that skips
 
 | Piece | State | Blocked by |
 |---|---|---|
-| 3 — concise summary | **Contractible now** | Credit, for the prompt half only |
-| 2 — navigable history | Contract pending **one decision**: what a conversation is | Sean |
-| 1 — context beside the conversation | **Not contractible.** Undesigned by §7 | Three decisions, one prior to the rest |
+| 3 — concise summary | **Contracted** | Credit, for the prompt half only |
+| 2 — navigable history | **Contracted.** Three lifecycle questions surfaced | Nothing to start; the questions can be answered as it is built |
+| 1 — context beside the conversation | **Contracted for the trigger.** Two decisions remain | Both are prior to implementation |
+
+**Implementation order, if approved:** 3 (smallest, and its render half is
+independent), then 2, then 1 — which is also dependency order, since a context
+pane scoped to a conversation would need conversations to exist.
