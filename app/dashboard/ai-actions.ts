@@ -78,7 +78,6 @@ import { transcribeVoiceMemo } from "@/lib/voice/j4VoiceMemo";
 import {
   buildStoreChatUnifiedTools,
   allToolUses,
-  firstToolUse,
   textOf,
 } from "@/lib/execution/genesisTools";
 import {
@@ -2324,7 +2323,13 @@ async function applyGenesisMessageToStore(
   // PRIMARY," so an explicit edit_store_content classification correctly
   // reaches the same store-identity/content handling every other content
   // edit does, with zero changes to that branching logic itself.
-  let chosenTool: ReturnType<typeof firstToolUse> = null;
+  // EVERY tool policy allowed, not just the first. `chosenTool` is still the
+  // first of them, because the rest of this turn — the permission check, the
+  // pure-conversation branch, the content pipeline's own fall-through — is
+  // written around one decided tool and that is genuinely what decides the
+  // shape of the turn.
+  let plannedTools: ReturnType<typeof allToolUses> = [];
+  let chosenTool: ReturnType<typeof allToolUses>[number] | null = null;
   let droppedTools: { name: string; why: "cap" | "second_mutation" }[] = [];
   let conversationalReply = "";
   if (!preClassifiedTool) {
@@ -2347,7 +2352,16 @@ async function applyGenesisMessageToStore(
     const requestedTools = allToolUses(unifiedContent);
     const plan = planToolRun(requestedTools.map((t) => t.name));
     droppedTools = plan.dropped;
-    chosenTool = plan.run[0] ? requestedTools.find((t) => t.name === plan.run[0]) ?? null : null;
+    // ALL of them, in the order policy put them. This path used to take
+    // plan.run[0] and discard the rest — which are not in plan.dropped, because
+    // policy ALLOWED them, so nothing said they had gone. A merchant who asked
+    // for two things J4 was permitted to do had one done and heard nothing
+    // about the other: the exact silence this plan exists to end, surviving on
+    // one path while the other reported it.
+    plannedTools = plan.run
+      .map((name) => requestedTools.find((t) => t.name === name))
+      .filter((t): t is NonNullable<typeof t> => t !== undefined);
+    chosenTool = plannedTools[0] ?? null;
     conversationalReply = textOf(unifiedContent);
 
     // Pure conversation — the actual fix for "I like Cubit & Coil": no tool
@@ -2452,7 +2466,7 @@ async function applyGenesisMessageToStore(
       userId,
       userMessage,
       conversationalReply,
-      plannedTools: [chosenTool],
+      plannedTools,
       resolveHref: (href) => sectionHref(href, businessBasePath(store.slug)),
       // No stream to write progress to on this path; the redirect is the only
       // thing the owner sees.

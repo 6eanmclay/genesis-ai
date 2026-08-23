@@ -274,6 +274,17 @@ for (const [name, source] of [["the streaming route", route], ["the Server Actio
   assert(`${name} reads every tool the model asked for`, source.includes("allToolUses("));
   assert(`${name} plans what may run`, source.includes("planToolRun("));
   assert(`${name} tells the owner what it is not doing`, source.includes("describeDroppedTools("));
+  // AND RUNS ALL OF THEM. The Server Action read every tool, planned every
+  // tool, and then ran plan.run[0] — discarding the rest, which are NOT in
+  // plan.dropped precisely because policy allowed them. Nothing said they had
+  // gone. Its own comment claimed it applied "the same plan the streaming route
+  // applies"; it planned the same and acted differently.
+  assert(`${name} runs every tool the plan allowed, not just the first`,
+    source.includes("plannedTools = plan.run") || source.includes("const plannedTools = plan.run"),
+    "a path that silently drops an allowed second request is the drift this plan exists to end");
+  assert(`${name} does not fall back to the first emitted tool`,
+    !source.includes("firstToolUse("),
+    "planning what runs and then running what was emitted first is two different answers");
 }
 
 // ============================================================================
