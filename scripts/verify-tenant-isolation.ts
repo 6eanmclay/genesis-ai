@@ -1,4 +1,9 @@
-import { hasValidScope, TENANT_SCOPED_MODEL_KEYS } from "@/lib/tenantIsolation";
+import {
+  hasValidScope,
+  TENANT_SCOPED_MODEL_KEYS,
+  GUARDED_READ_OPERATIONS,
+  GUARDED_MUTATION_OPERATIONS,
+} from "@/lib/tenantIsolation";
 
 // Structural tenant isolation. No database, no network:
 //
@@ -117,6 +122,39 @@ console.log("\n6. The models under guard");
   }
   assert("every guarded model names at least one scope key",
     models.every((m) => (TENANT_SCOPED_MODEL_KEYS as Record<string, readonly string[]>)[m].length > 0));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n7. The operations under guard");
+{
+  // THE LIST OF OPERATIONS WAS ITSELF UNGUARDED. Every assertion above tests
+  // hasValidScope and the model list; nothing tested WHICH operations consult
+  // them, so dropping findMany from the read set would have left every
+  // collection read unscoped with this suite still green.
+  //
+  // A collection read has no "authorize after" story the way a single-record
+  // lookup does: an omitted filter returns another store's rows wholesale.
+  for (const op of ["findMany", "count", "aggregate", "groupBy"]) {
+    assert(`${op} is guarded as a collection read`, GUARDED_READ_OPERATIONS.has(op));
+  }
+  // groupBy was deferred from the original pass and added 2026-08-23. The real
+  // call sites group ORDERS by buyer email and GROWTH POINT TRANSACTIONS by
+  // action type, so an unscoped one is other people's customers and other
+  // people's money, already summed — the worst-shaped leak of the four.
+  assert("groupBy is no longer the unguarded fourth", GUARDED_READ_OPERATIONS.has("groupBy"));
+
+  for (const op of ["update", "delete", "updateMany", "deleteMany"]) {
+    assert(`${op} is guarded as a mutation`, GUARDED_MUTATION_OPERATIONS.has(op));
+  }
+
+  // DELIBERATELY NOT GUARDED, and asserted so that adding one becomes a
+  // decision somebody makes rather than something that drifts in. findFirst and
+  // findUnique are the confirmed-safe fetch-then-authorize pattern; create and
+  // upsert were out of the approved scope.
+  for (const op of ["findFirst", "findUnique", "create", "createMany", "upsert"]) {
+    assert(`${op} is deliberately not guarded`,
+      !GUARDED_READ_OPERATIONS.has(op) && !GUARDED_MUTATION_OPERATIONS.has(op));
+  }
 }
 
 // ---------------------------------------------------------------------------

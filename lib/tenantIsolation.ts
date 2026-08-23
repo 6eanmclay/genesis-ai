@@ -29,11 +29,24 @@ import type { PrismaClient } from "@prisma/client";
 //
 // Single-record lookups (findFirst/findUnique) are deliberately NOT
 // guarded — that's the confirmed-safe fetch-then-authorize pattern above.
-// create/createMany/upsert/groupBy are also not guarded — out of the
-// scope Sean approved for this pass.
+// create/createMany/upsert are also not guarded — out of the scope Sean
+// approved for the original pass.
+//
+// groupBy WAS in that deferred list and is now guarded (2026-08-23). It is a
+// collection read like the three below it, and reason 2 above applies to it
+// word for word: there is no "authorize after" story for an aggregate, and an
+// omitted filter returns every store's rows rolled up rather than one row from
+// the wrong store. The shape of that leak is the worst of the four — the real
+// call sites group ORDERS by buyer email and GROWTH POINT TRANSACTIONS by
+// action, so an unscoped one is other people's customers and other people's
+// money, already summed.
+//
+// Safe to add because every existing call site already complies: all five
+// groupBy calls on this client pass `where: { storeId }` today, checked before
+// changing this. Nothing was relying on the gap.
 
-const GUARDED_MUTATION_OPERATIONS = new Set(["update", "delete", "updateMany", "deleteMany"]);
-const GUARDED_READ_OPERATIONS = new Set(["findMany", "count", "aggregate"]);
+export const GUARDED_MUTATION_OPERATIONS = new Set(["update", "delete", "updateMany", "deleteMany"]);
+export const GUARDED_READ_OPERATIONS = new Set(["findMany", "count", "aggregate", "groupBy"]);
 
 // Each tenant-scoped model's real, valid top-level scope keys — verified
 // against prisma/schema.prisma field-by-field, not assumed uniform. Most
