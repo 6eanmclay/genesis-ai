@@ -1,3 +1,4 @@
+import { recoverStuckApprovals } from "./approvalRecovery";
 import { prisma } from "@/lib/prisma";
 
 export interface PendingApproval {
@@ -30,6 +31,17 @@ export interface PendingApproval {
 // same reasoning as genesisProducer. Oldest first, so the longest-waiting
 // decision surfaces first.
 export async function getPendingApprovals(storeId: string): Promise<PendingApproval[]> {
+  // RECOVERY RUNS HERE (D4, 2026-08-23), before the read rather than on a
+  // schedule. An approval whose execution was claimed and never resolved is
+  // invisible to the query below — it is EXECUTING, not PENDING_APPROVAL — so
+  // the moment somebody looks at the list a stuck row would be missing from is
+  // exactly the moment worth reconciling it.
+  //
+  // No scheduler and no new entry point. It reads evidence, never elapsed time,
+  // and settles an attempt that provably finished rather than retrying it —
+  // see lib/dashboard/approvalRecovery.ts.
+  await recoverStuckApprovals(storeId);
+
   const rows = await prisma.approvalRequest.findMany({
     where: { storeId, status: "PENDING_APPROVAL" },
     orderBy: { createdAt: "asc" },

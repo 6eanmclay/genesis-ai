@@ -4823,14 +4823,60 @@ export async function performApproveGenesisAction(approvalRequestId: string): Pr
     throw new Error(`Unknown Genesis action type: ${approval.actionType}`);
   }
 
-  const result = await execute(
-    definition.executable,
-    // Dynamic dispatch by actionType — the concrete input shape is only
-    // known at the specific registry entry, not at this generic call site.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    approval.input as any,
-    { storeId, actorType: "GENESIS", actionType: approval.actionType as GenesisActionType }
-  );
+  // CLAIM THE ROW BEFORE DOING ANYTHING REAL (D4, 2026-08-23).
+  //
+  // This read PENDING_APPROVAL, executed, and only then marked EXECUTED — so
+  // the row said "available" for the whole duration of an external call and two
+  // callers both passed the read. A double-click, an impatient retry, the chat
+  // path and the button at once: two changes to the live store and two
+  // growth-point deductions.
+  //
+  // One conditional update decides it. `count === 0` means somebody else has
+  // it, which is already this function's answer for "there is nothing here for
+  // you" — the same answer as a decided or unreachable row, deliberately.
+  //
+  // No transaction is held across the execution: execute() calls providers, and
+  // a row lock for the length of a network call would be a worse problem than
+  // the one being fixed.
+  const attemptExecutionId = randomUUID();
+  const claim = await prisma.approvalRequest.updateMany({
+    where: { id: approval.id, storeId, status: "PENDING_APPROVAL" },
+    data: { status: "EXECUTING", claimedAt: new Date(), attemptExecutionId },
+  });
+  if (claim.count === 0) {
+    return { outcome: "not_found" };
+  }
+
+  let result;
+  try {
+    result = await execute(
+      definition.executable,
+      // Dynamic dispatch by actionType — the concrete input shape is only
+      // known at the specific registry entry, not at this generic call site.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      approval.input as any,
+      {
+        storeId,
+        actorType: "GENESIS",
+        actionType: approval.actionType as GenesisActionType,
+        // THE ATTEMPT'S DURABLE IDENTITY. The ExecutionLog row this execution
+        // writes carries it, which is what lets recovery ask whether THIS
+        // attempt finished rather than guessing from elapsed time.
+        executionId: attemptExecutionId,
+      }
+    );
+  } catch (err) {
+    // A THROW IS NOT A CLAIM THAT SURVIVES. execute() catches its own failures
+    // and returns FAILED, so reaching here means something outside it broke —
+    // and leaving the row EXECUTING would strand a decision the owner could
+    // still make. Released immediately rather than waiting for the sweep,
+    // because this process is alive and knows the answer.
+    await prisma.approvalRequest.updateMany({
+      where: { id: approval.id, storeId, status: "EXECUTING" },
+      data: { status: "PENDING_APPROVAL", claimedAt: null, attemptExecutionId: null },
+    });
+    throw err;
+  }
 
   // A failed execution must never read back as EXECUTED — that would show
   // the owner a change that never actually happened. None of today's
@@ -4844,9 +4890,16 @@ export async function performApproveGenesisAction(approvalRequestId: string): Pr
   // (see lib/dashboard/pendingApprovals.ts) — decidedBy/decidedAt stay
   // unset since nothing was actually decided yet.
   if (result.status === "FAILED") {
-    await prisma.approvalRequest.update({
-      where: { id: approval.id, storeId },
-      data: { executionId: result.executionId },
+    // Back to the owner's hands, with the failure recorded so the review page
+    // can tell "never acted on" from "tried and failed".
+    await prisma.approvalRequest.updateMany({
+      where: { id: approval.id, storeId, status: "EXECUTING" },
+      data: {
+        status: "PENDING_APPROVAL",
+        executionId: result.executionId,
+        claimedAt: null,
+        attemptExecutionId: null,
+      },
     });
     await logApprovalDecisionEvent({
       userId,
@@ -4858,13 +4911,18 @@ export async function performApproveGenesisAction(approvalRequestId: string): Pr
     return { outcome: "execution_failed", message: result.message };
   }
 
-  await prisma.approvalRequest.update({
-    where: { id: approval.id, storeId },
+  await prisma.approvalRequest.updateMany({
+    // Matched on EXECUTING, so this settles the claim this attempt holds and
+    // nothing else. If the sweep already settled it, count is 0 and the row is
+    // already EXECUTED with the same executionId — the same answer twice.
+    where: { id: approval.id, storeId, status: "EXECUTING" },
     data: {
       status: "EXECUTED",
       executionId: result.executionId,
       decidedByUserId: userId,
       decidedAt: new Date(),
+      claimedAt: null,
+      attemptExecutionId: null,
     },
   });
 

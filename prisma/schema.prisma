@@ -1510,7 +1510,22 @@ model ApprovalRequest {
   // revisions stay immutable and "I like B, but warmer" is an ordinary
   // refinement of B. Null is the normal case: one revision, one direction.
   directions           Json?
-  status               String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | EXECUTED | REJECTED | SUPERSEDED
+  /// PENDING_APPROVAL | EXECUTING | EXECUTED | REJECTED | SUPERSEDED
+  ///
+  /// EXECUTING added 2026-08-23 (D4). The row read PENDING_APPROVAL for the
+  /// whole duration of an external call, so two callers both passed the read
+  /// and both executed — a double change and a double growth-point charge.
+  /// Claiming the row makes the second lose atomically.
+  status               String    @default("PENDING_APPROVAL")
+  /// When this attempt claimed the row. Not a deadline: recovery reads evidence
+  /// first and uses this only to avoid racing a live execution.
+  claimedAt            DateTime?
+  /// THE ATTEMPT'S DURABLE IDENTITY (D4). Minted before execute() runs and
+  /// handed to it, so the ExecutionLog row it writes carries this exact id.
+  /// That is what lets recovery ask "did THIS attempt finish" instead of
+  /// guessing from elapsed time. Distinct from `executionId` below, which
+  /// records the execution of a SETTLED decision.
+  attemptExecutionId   String?
   authorizationTier    String    @default("always_ask") // always_ask | auto_below_limit | auto — frozen snapshot of the tier that governed this request at creation time, see lib/execution/genesisActions.ts
   groupId              String? // shared across every ApprovalRequest created from one Genesis "thought" (one chat turn, or one recommendation-review run) — Phase 4 — presentational grouping only; never merges the underlying decision or execution
   // Phase 5 — stable identity of the underlying BUSINESS ISSUE/OPPORTUNITY
@@ -1558,6 +1573,7 @@ model ApprovalRequest {
   postExecutionMeasurement PostExecutionMeasurement?
 
   @@index([storeId, status])
+  @@index([attemptExecutionId])
   @@index([aiUsageEventId])
   // Every revision of one proposal, newest last. The only access pattern this
   // chain has: "show me this proposal, including how we got here."
