@@ -21,10 +21,11 @@
 > sentence and ends in bare unexplained data. **It already violates that
 > principle**, and has since it was written.
 >
-> This changes the options below. See `SUMMARY_LANGUAGE_DECISION.md`. Zero cost, no key, no database — the
-proactive sentences are pure functions, so they can simply be rendered and read.
-`LIVE_VALIDATION_PLAN.md` predicted this was where the most would be wrong. It
-was.
+> This changes the options below. See `SUMMARY_LANGUAGE_DECISION.md`.
+
+Zero cost, no key, no database — the proactive sentences are pure functions, so
+they can simply be rendered and read. `LIVE_VALIDATION_PLAN.md` predicted this
+was where the most would be wrong. It was.
 
 ## The output, verbatim
 
@@ -97,35 +98,29 @@ words. Urgent has the same problem with *"Something needs your attention."*
 Also minor: *"on record"* is system vocabulary. An owner has customers, not
 customers on record.
 
-## Why I have not fixed it
+## Why I did not fix it
 
 **The summary is deliberately shared** between the card and the sentence, so one
 finding cannot be described two ways. Rewriting it for J4's voice **changes the
 cards too** — every "Genesis noticed" panel, every attention card, the nav
-badges' source text.
+badges' source text. That is not a copy tidy-up, and doing it unilaterally would
+be wrong.
 
-That is a product decision about what the card language becomes, not a copy
-tidy-up, and it touches a surface `GENESIS_LANGUAGE.md` and the Experience
-Principles both govern. Making it unilaterally is exactly what I would be wrong
-to do.
+## The decision — superseded by the corrections above
 
-## The decision, small and specific
+This section originally offered three options: sentence-shaped everywhere, a
+second spoken field, or leave it. **Two of them turned out not to be available.**
+`GENESIS_EXPERIENCE_PRINCIPLES.md`'s first principle requires that *every* piece
+of Genesis-sourced content is a real sentence — so a card-only label field is
+sanctioned non-compliance, and leaving it is the defect.
 
-**Do the detector summaries become sentence-shaped everywhere — cards included —
-or do the two surfaces get separate text?**
+The full argument, the exact strings, the blast radius and the verification are
+in `SUMMARY_LANGUAGE_DECISION.md`. Sean chose sentence-shaped everywhere before
+any of that was known, which is the same answer the principle gives.
 
-- **(a) Sentence-shaped everywhere.** One summary, now a real sentence. Cards
-  read slightly longer; nothing can drift. My preference.
-- **(b) Two fields — a label and a spoken form.** Cards keep their density, J4
-  gets prose. Costs a second field on every detector and a mirrored-registry
-  invariant to keep them saying the same thing.
-- **(c) Leave it.** The three sentences that already read well carry it, and the
-  two that do not are trend lines the owner sees often.
-
-Separately and independently: **drop the generic opener** for statement-shaped
-findings as it was already dropped for questions. That one needs no decision
-about card text and is a two-line change — I have left it alone only because it
-is copy, and copy is yours.
+**Still separable and already approved:** dropping the generic opener for
+statement-shaped findings, as it is already dropped for questions. Two lines in
+`proactiveMessageFor`, no bearing on card text.
 
 ## What this cost
 
