@@ -1,6 +1,27 @@
 # What J4 actually says — read end to end
 
-**2026-08-23. A review, not a change.** Zero cost, no key, no database — the
+**2026-08-23. A review, not a change.**
+
+> ### Two corrections, added after Sean's response
+>
+> **1. I cited a document that does not exist.** This review said the shared
+> summary sits on "a surface `GENESIS_LANGUAGE.md` and the Experience Principles
+> both govern." There is no `GENESIS_LANGUAGE.md` in this repository — the only
+> file mentioning it was this one. The Genesis Language is a five-state model in
+> `lib/dashboard/genesisState.ts`, and it governs STATES (Peace, Curiosity,
+> Responsibility, Optimism, Concern), not summary text.
+>
+> **2. The document that DOES govern this makes it a defect, not a decision.**
+> `GENESIS_EXPERIENCE_PRINCIPLES.md`, frozen, Constitution-level, principle 1 —
+> *"Spoken, not logged: every piece of Genesis-sourced content is a real
+> sentence in Genesis's own voice — never raw system/log language, never bare
+> unexplained data."*
+>
+> `Revenue down 40% this week (£1,240 vs £2,070 last week)` is not a real
+> sentence and ends in bare unexplained data. **It already violates that
+> principle**, and has since it was written.
+>
+> This changes the options below. See `SUMMARY_LANGUAGE_DECISION.md`. Zero cost, no key, no database — the
 proactive sentences are pure functions, so they can simply be rendered and read.
 `LIVE_VALIDATION_PLAN.md` predicted this was where the most would be wrong. It
 was.
