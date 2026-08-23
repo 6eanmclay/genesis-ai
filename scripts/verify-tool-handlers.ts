@@ -25,9 +25,19 @@ import {
   NAV_DESTINATIONS,
   OFFICE_REPLY,
   resolveScopedProducts,
+  SCOPE_QUESTION,
   routeToolHandlers,
   type ToolTurnContext,
 } from "@/lib/execution/toolHandlers";
+import type Anthropic from "@anthropic-ai/sdk";
+import {
+  runPlannedTools,
+  persistToolTurn,
+  revalidationPaths,
+  turnOutcome,
+  turnKind,
+  lastAssistantContent,
+} from "@/lib/dashboard/runToolTurn";
 import { TakeMeThereInputSchema } from "@/lib/execution/genesisTools";
 import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
 import { queryRecords } from "@/lib/businessModel/reasoning";
@@ -70,7 +80,8 @@ function contextFor(
   userId: string,
   input: unknown,
   conversationalReply = "",
-  products: { id: string; name: string }[] = []
+  products: { id: string; name: string }[] = [],
+  previousAssistantMessage?: string
 ): ToolTurnContext & { statuses: string[] } {
   const statuses: string[] = [];
   return {
@@ -81,6 +92,7 @@ function contextFor(
     input,
     status: (text: string) => statuses.push(text),
     products,
+    previousAssistantMessage,
     statuses,
   };
 }
@@ -948,6 +960,79 @@ async function main() {
   check("a name-only request proposes only a name",
     Object.keys(nameOnly.input as Record<string, unknown>).sort(), ["name", "productId"]);
 
+  // ---- the scope question, and the loop it used to cause ------------------
+  // A merchant asks for something J4 cannot pin to a product. The reply must
+  // never be the MODEL's own words: those restate the merchant's sentence back
+  // as a question and advance nothing. And asking the SAME question twice is
+  // the loop this exists to break — the second ask has to become answerable.
+  const modelEcho = "You'd like to change a product photo?";
+
+  const askedOnce = await makeRequestImageChange(async () => null)(
+    contextFor(shop.id, owner.id, { scope: "specific", productNames: ["Nothing Real"] }, modelEcho, twoProducts)
+  );
+  assert("an unresolvable scope is still handled", askedOnce.handled);
+  if (!askedOnce.handled) throw new Error("unreachable");
+  assert("the clarification is never the model's own words",
+    !askedOnce.reply.includes(modelEcho), askedOnce.reply);
+  assert("it asks the one detectable question",
+    askedOnce.reply.includes(SCOPE_QUESTION), askedOnce.reply);
+  assert("grounded in the products that actually exist",
+    askedOnce.reply.includes("Alpha") && askedOnce.reply.includes("Beta"), askedOnce.reply);
+  check("and nothing is proposed off an unmatched name",
+    await prisma.approvalRequest.count({ where: { storeId: shop.id, actionType: "update_product_image" } }), 0);
+
+  // ASKING AGAIN ESCALATES. Same question, same failure — so the second turn
+  // stops repeating and offers something answerable with one character.
+  const askedTwice = await makeRequestImageChange(async () => null)(
+    contextFor(shop.id, owner.id, { scope: "specific", productNames: ["Nothing Real"] }, modelEcho, twoProducts,
+      askedOnce.reply)
+  );
+  assert("asking again is handled", askedTwice.handled);
+  if (!askedTwice.handled) throw new Error("unreachable");
+  assert("the second ask does not repeat the first",
+    askedTwice.reply !== askedOnce.reply, "J4 asked the identical question twice");
+  assert("it escalates to a numbered list",
+    askedTwice.reply.includes("1. Alpha") && askedTwice.reply.includes("2. Beta"), askedTwice.reply);
+
+  // The escalation is driven by the QUESTION, not by any assistant turn: an
+  // unrelated previous reply must not suppress the first ask.
+  const unrelated = await makeRequestImageChange(async () => null)(
+    contextFor(shop.id, owner.id, { scope: "specific", productNames: ["Nothing Real"] }, modelEcho, twoProducts,
+      "Your storefront is live.")
+  );
+  assert("an unrelated previous turn still gets the plain ask", unrelated.handled);
+  if (!unrelated.handled) throw new Error("unreachable");
+  check("which is the same first ask", unrelated.reply, askedOnce.reply);
+
+  // All three scope sites share the phrase — if one drifts, repeat-detection
+  // silently stops working there and the loop comes back for that tool only.
+  const removalAsk = await TOOL_HANDLERS.request_product_removal(
+    contextFor(shop.id, owner.id, { scope: "specific", productNames: ["Nothing Real"] }, modelEcho, twoProducts)
+  );
+  assert("removal asks the detectable question", removalAsk.handled);
+  if (!removalAsk.handled) throw new Error("unreachable");
+  assert("removal uses the shared phrase", removalAsk.reply.includes(SCOPE_QUESTION), removalAsk.reply);
+  assert("and not the model's words", !removalAsk.reply.includes(modelEcho), removalAsk.reply);
+
+  const contentAsk = await makeRequestProductContentChange(async () => [])(
+    contextFor(shop.id, owner.id,
+      { scope: "specific", productNames: ["Nothing Real"], changeType: "both" }, modelEcho, twoProducts)
+  );
+  assert("a content change asks it too", contentAsk.handled);
+  if (!contentAsk.handled) throw new Error("unreachable");
+  assert("with the shared phrase", contentAsk.reply.includes(SCOPE_QUESTION), contentAsk.reply);
+  assert("and not the model's words", !contentAsk.reply.includes(modelEcho), contentAsk.reply);
+
+  // A store with nothing to act on gets told that, not asked to choose from
+  // an empty list.
+  const emptyStore = await makeRequestImageChange(async () => null)(
+    contextFor(shop.id, owner.id, { scope: "all", productNames: null }, modelEcho, [])
+  );
+  assert("an empty catalogue is handled", emptyStore.handled);
+  if (!emptyStore.handled) throw new Error("unreachable");
+  assert("and is told there is nothing to change yet",
+    !emptyStore.reply.includes(SCOPE_QUESTION) && emptyStore.reply.includes("add one first"), emptyStore.reply);
+
   // ---- refine_storefront: a rebuttal revises, it does not restart ---------
   let opened = 0;
   let revised = 0;
@@ -1031,34 +1116,198 @@ async function main() {
     await prisma.product.count({ where: { storeId: other.id } }), 0);
 
   // ==========================================================================
-  console.log("\n=== 7. A migrated tool has exactly one home ===\n");
+  console.log("\n=== 7. A tool does one thing, whichever path served it ===\n");
   // ==========================================================================
-  // A tool with BOTH a handler and an inline branch would run twice — the
-  // dispatcher would handle it and then the ladder would handle it again. A
-  // tool with NEITHER falls through to the legacy content pipeline, which is
-  // the defect found on the Server Action path earlier today.
+  // THE MIGRATION IS FINISHED, and this is what "finished" has to mean. Two
+  // separate implementations of the same turn is what let these paths drift:
+  // asking for a logo on the Server Action ran a store-content regeneration,
+  // because that path had no branch for it and fell through. So:
+  //
+  //   - every tool in the catalogue has a handler (nothing falls through),
+  //   - neither path still carries an inline branch (nothing runs twice),
+  //   - and both dispatch through the same runner (nothing can drift again).
+  //
+  // Asserted against the real files rather than trusted, because the failure
+  // mode is silent: a tool with no home does not error, it does the wrong thing.
   const route = readFileSync(join(process.cwd(), "app", "api", "chat", "route.ts"), "utf8");
+  const serverAction = readFileSync(join(process.cwd(), "app", "dashboard", "ai-actions.ts"), "utf8");
   const catalog = buildStoreChatUnifiedTools().map((t) => t.name);
 
   check("every migrated tool is a real tool",
     MIGRATED_TOOLS.filter((n) => !catalog.includes(n)), []);
-  check("and none of them still has an inline branch",
-    MIGRATED_TOOLS.filter((n) => route.includes(`if (chosenTool?.name === "${n}")`)), []);
-  check("while every tool that is NOT migrated still has one",
-    catalog
-      .filter((n) => !MIGRATED_TOOLS.includes(n) && n !== "look_up_business_data")
-      .filter((n) => !route.includes(`if (chosenTool?.name === "${n}")`))
-      .filter((n) => n !== "edit_store_content"),
-    []);
-  assert("the route dispatches through the handler registry",
-    route.includes("routeToolHandlers({") && route.includes("boundHandlers[tool.name]"),
-    "otherwise the handlers are dead code");
+  // edit_store_content is the one exception, and deliberately so: it is the
+  // legacy content pipeline, still owned by the Server Action, and it is named
+  // here rather than skipped silently.
+  check("and every real tool but edit_store_content has a handler",
+    catalog.filter((n) => !MIGRATED_TOOLS.includes(n) && n !== "edit_store_content"), []);
+
+  for (const [label, source] of [["route", route], ["Server Action", serverAction]] as const) {
+    // The dispatch shape specifically. edit_store_content is still NAMED on
+    // the route — it is what the fallback event reports — but naming a tool is
+    // not branching on it, and only a branch can run the work twice.
+    check(`no tool still has an inline branch on the ${label}`,
+      catalog.filter((n) => source.includes(`if (chosenTool?.name === "${n}")`)), []);
+    assert(`the ${label} dispatches through the shared runner`,
+      source.includes("await runPlannedTools({"),
+      "otherwise the two paths can answer the same question differently again");
+    assert(`and the ${label} persists the turn through it`,
+      source.includes("persistToolTurn({"),
+      "otherwise what is stored and what is shown can disagree");
+  }
+
   // Bound with the real resolver, not a placeholder — an unbound navigation
   // handler sends the owner to whichever business their account last made
   // active rather than the one they are in.
-  assert("and binds navigation to this business",
-    route.includes("sectionHref(href, businessBasePath(store.slug))"),
-    "otherwise J4 can navigate an owner out of the business they are in");
+  for (const [label, source] of [["route", route], ["Server Action", serverAction]] as const) {
+    assert(`the ${label} binds navigation to this business`,
+      source.includes("sectionHref(href, businessBasePath(store.slug))"),
+      "otherwise J4 can navigate an owner out of the business they are in");
+  }
+
+  // The scope question was written once and is read by the repeat-detector.
+  // A second copy anywhere is how "ask again" silently stops escalating.
+  check("the scope question is not re-typed on either path",
+    [["route", route], ["Server Action", serverAction]]
+      .filter(([, source]) => (source as string).includes(SCOPE_QUESTION))
+      .map(([label]) => label),
+    []);
+
+  // ==========================================================================
+  console.log("\n=== 8. The shared runner, which is the thing both paths call ===\n");
+  // ==========================================================================
+  // Every assertion above tests a handler in isolation. This tests the code
+  // BETWEEN the two chat paths and those handlers — the part that decides what
+  // gets written down, how many times, and what happens when a tool resolves to
+  // nothing. It had no coverage at all until now, which matters because the
+  // duplication it replaced is exactly where the two paths drifted apart.
+  const runShop = await prisma.store.create({
+    data: { userId: owner.id, name: "Runner Test", slug: `th-run-${uniq()}` },
+  });
+  const toolUse = (name: string, input: unknown) =>
+    ({ type: "tool_use", id: `tu-${uniq()}`, name, input }) as Anthropic.ToolUseBlock;
+  const runInput = (plannedTools: Anthropic.ToolUseBlock[]) => ({
+    storeId: runShop.id,
+    userId: owner.id,
+    userMessage: "whatever the merchant said",
+    conversationalReply: "",
+    products: [],
+    plannedTools,
+    resolveHref: (href: string) => href,
+    status: () => {},
+  });
+
+  // A PROTOTYPE KEY IS NOT A HANDLER. The name came from a model.
+  const proto = await runPlannedTools(runInput([toolUse("constructor", {})]));
+  check("a prototype key resolves to no handler, not Object's", proto.kind, "no_handler");
+  const invented = await runPlannedTools(runInput([toolUse("delete_everything", {})]));
+  check("nor does an invented tool", invented.kind, "no_handler");
+
+  // A DESTINATION THAT DOES NOT EXIST IS STILL A HANDLED TURN. J4 says it does
+  // not know where they meant — a designed conversational outcome, not a
+  // failure to resolve the tool, and the distinction matters because only the
+  // second one is allowed to fall back to something else.
+  const unknownDest = await runPlannedTools(runInput([toolUse("take_me_there", { destination: "nowhere", intent: null })]));
+  assert("an unknown destination is answered, not dropped",
+    unknownDest.kind === "handled" && unknownDest.results[0]?.outcome === "failure",
+    JSON.stringify(unknownDest));
+
+  // A HANDLER THAT CANNOT USE ITS INPUT AT ALL REPORTS THAT, rather than a
+  // result. Confirming a capture that never happened is worse than falling back.
+  const bad = await runPlannedTools(runInput([
+    toolUse("capture_business_fact", { entityType: "constructor", data: {} }),
+  ]));
+  check("unusable input is reported as such", bad.kind, "invalid_input");
+  check("and nothing is written for it",
+    await prisma.storeMessage.count({ where: { storeId: runShop.id } }), 0);
+
+  // STOPS AT THE FIRST FAILURE. A turn that half-ran and then reported an
+  // unrelated fallback leaves the owner unable to tell what happened.
+  const halfRun = await runPlannedTools(runInput([
+    toolUse("take_me_there", { destination: "commerce", intent: null }),
+    toolUse("capture_business_fact", { entityType: "constructor", data: {} }),
+  ]));
+  check("a turn that cannot finish reports the failure, not the half", halfRun.kind, "invalid_input");
+
+  // TWO TOOLS, ONE TURN — and the merchant's message written exactly once.
+  // It used to be written inside each branch, which is fine while only one can
+  // run and silently wrong the moment two do.
+  const both = await runPlannedTools(runInput([
+    toolUse("take_me_there", { destination: "commerce", intent: null }),
+    toolUse("take_me_there", { destination: "studio", intent: null }),
+  ]));
+  assert("two tools both run", both.kind === "handled" && both.results.length === 2,
+    JSON.stringify(both));
+  if (both.kind === "handled") {
+    check("each to the destination it was given",
+      both.results.map((r) => r.navigate), ["/dashboard/orders", "/dashboard/studio"]);
+  }
+  if (both.kind !== "handled") throw new Error("unreachable");
+  await persistToolTurn({
+    storeId: runShop.id,
+    userId: owner.id,
+    userMessage: "take me to commerce and the studio",
+    userMessageChanges: null,
+    writeUserMessage: true,
+    results: both.results,
+  });
+  check("the merchant's own words are written once",
+    await prisma.storeMessage.count({ where: { storeId: runShop.id, role: "user" } }), 1);
+  check("and each tool's reply is its own message",
+    await prisma.storeMessage.count({ where: { storeId: runShop.id, role: "assistant" } }), 2);
+
+  // The Server Action already wrote the merchant's message before the model was
+  // called. Writing it again would duplicate their own words back at them.
+  await persistToolTurn({
+    storeId: runShop.id,
+    userId: owner.id,
+    userMessage: "take me to commerce and the studio",
+    userMessageChanges: null,
+    writeUserMessage: false,
+    results: both.results,
+  });
+  check("a caller that already wrote it does not write it twice",
+    await prisma.storeMessage.count({ where: { storeId: runShop.id, role: "user" } }), 1);
+
+  // WHAT THE TURN IS LOGGED AS. A proposal is PENDING, not SUCCESS — recording
+  // a proposed deletion as a completed one is the kind of lie this whole
+  // milestone exists to stop.
+  const logged = await prisma.executionLog.findMany({
+    where: { storeId: runShop.id }, orderBy: { createdAt: "asc" },
+  });
+  check("every handler that ran is logged", logged.length, 4);
+  check("navigation is a success", logged[0].status, "SUCCESS");
+
+  const asFailure = [
+    { handled: true as const, reply: "a", kind: "one", outcome: "failure" as const },
+    { handled: true as const, reply: "b", kind: "two" },
+  ];
+  check("one failing tool makes the whole turn a failure", turnOutcome(asFailure), "failure");
+  check("and the log row still says what ran", turnKind(asFailure), "one+two");
+  check("with nothing failing, the turn is a success",
+    turnOutcome([{ handled: true, reply: "b", kind: "two" }]), "success");
+
+  // Several tools can ask for the same page; re-rendering it twice is waste.
+  check("revalidation paths are flattened and de-duplicated",
+    revalidationPaths([
+      { handled: true, reply: "a", kind: "one", revalidate: ["/x", "/y"] },
+      { handled: true, reply: "b", kind: "two", revalidate: "/x" },
+      { handled: true, reply: "c", kind: "three" },
+    ]),
+    ["/x", "/y"]);
+
+  // The previous turn reaches the handler that needs it, through the runner —
+  // not just when a test calls the handler directly.
+  check("a fresh conversation has no previous assistant turn",
+    lastAssistantContent([{ role: "user", content: "hello" }]), undefined);
+  check("and otherwise it is the LAST one, not the first",
+    lastAssistantContent([
+      { role: "assistant", content: "earlier" },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "later" },
+    ]),
+    "later");
+
+  await prisma.store.deleteMany({ where: { id: runShop.id } });
 
   check("a prototype key resolves to no handler", handlerFor("constructor"), null);
   check("nor does an invented tool", handlerFor("delete_everything"), null);

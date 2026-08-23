@@ -4,19 +4,20 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
 import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools } from "@/lib/execution/toolPolicy";
-import { routeToolHandlers, type ToolTurnResult } from "@/lib/execution/toolHandlers";
+import {
+  runPlannedTools,
+  persistToolTurn,
+  revalidationPaths,
+  turnOutcome,
+  turnKind,
+  lastAssistantContent,
+} from "@/lib/dashboard/runToolTurn";
 import { businessFromSlug, resolveBusiness } from "@/lib/businessContext";
-import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
+import { callGenesisModel } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
-import { buildChatDataContext } from "@/lib/businessModel/reasoning";
-import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
 import { buildTurnContext } from "@/lib/dashboard/chatTurnContext";
-import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
-import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
-import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
-import { PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
 import { businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import {
   allToolUses,
@@ -24,7 +25,6 @@ import {
   textOf,
 } from "@/lib/execution/genesisTools";
 import {
-  STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
   STORE_CHAT_UNIFIED_SYSTEM_PROMPT,
 } from "@/lib/dashboard/storeChatUnified";
 
@@ -520,108 +520,74 @@ export async function POST(request: Request) {
           return;
         }
 
-        // MIGRATED TOOLS RUN HERE, AND MORE THAN ONE OF THEM CAN
-        // (2026-08-22, Unified Intelligence UI3).
-        //
-        // A handler returns what it did instead of writing messages, emitting
-        // and closing the stream itself — so the turn owns all of that once,
-        // however many handlers ran, and two tools in a turn is finally
-        // expressible rather than structurally impossible.
-        //
-        // Only the tools that have moved to lib/execution/toolHandlers.ts. The
-        // rest still run inline below, exactly as before: moving nineteen
-        // bespoke branches in one pass, with no coverage to catch a mistake, is
-        // how a working product breaks quietly.
-        // Typed from the handler contract itself rather than restated here — a
-        // hand-written copy is how a new field silently stops reaching the turn.
-        const handlerResults: Extract<ToolTurnResult, { handled: true }>[] = [];
-        let unhandledByHandlers: typeof plannedTools[number] | null = null;
-        let invalidToolInput = false;
-
-        // Bound to this business, so navigation addresses the store the owner is
-        // actually in rather than whichever one their account last made active.
-        const boundHandlers = routeToolHandlers({
+        // THE TOOLS THIS TURN DECIDED ON, run through the shared runner
+        // (2026-08-23). The same code the Server Action runs, so a tool does
+        // one thing regardless of which path served the message.
+        const run = await runPlannedTools({
+          storeId: store.id,
+          userId,
+          userMessage,
+          conversationalReply,
+          plannedTools,
+          understanding,
+          // Addressed at the business the owner is actually in, never whichever
+          // one the account last made active.
           resolveHref: (href) => sectionHref(href, businessBasePath(store.slug)),
+          status: (text) => emit({ type: "status", text }),
+          // What J4 said last turn, so a clarifying question that already
+          // failed once escalates instead of repeating.
+          previousAssistantMessage: lastAssistantContent(existingMessages),
+          // This route can show words as they are produced, so the one handler
+          // that speaks in the model's own words streams here — and simply does
+          // not on the Server Action path, which has nowhere to put them. One
+          // implementation, two callers.
+          onDelta: (delta) => {
+            if (firstTokenAtMs === null) firstTokenAtMs = Date.now() - turnStartedAt;
+            streamedAnyText = true;
+            emit({ type: "token", delta });
+          },
+          products: currentProducts.map((p) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            imageUrl: p.imageUrl,
+            priceInCents: p.priceInCents,
+            richContent: p.richContent,
+          })),
         });
 
-        for (const tool of plannedTools) {
-          const handler = Object.hasOwn(boundHandlers, tool.name) ? boundHandlers[tool.name] : null;
-          if (!handler) {
-            // Falls through to the inline ladder. Only ONE can, because those
-            // branches still end the turn themselves.
-            unhandledByHandlers = tool;
-            break;
-          }
-          const outcome = await handler({
-            storeId: store.id,
-            userId,
-            userMessage,
-            conversationalReply,
-            input: tool.input,
-            status: (text) => emit({ type: "status", text }),
-            // The turn already fetched these to tell the model what exists;
-            // a handler reading them again would be a second answer to the
-            // same question one query later.
-            // Wider than {id, name}: sourcing a replacement photo needs what
-            // the product actually IS, and its current image so the replacement
-            // is not the thing being replaced.
-            products: currentProducts.map((p) => ({
-              id: p.id,
-              name: p.name,
-              description: p.description,
-              imageUrl: p.imageUrl,
-              priceInCents: p.priceInCents,
-              richContent: p.richContent,
-            })),
-          });
-          if (!outcome.handled) {
-            // The model's input did not make sense. Nothing was written, so the
-            // honest move is the ordinary fallback rather than confirming
-            // something that never happened.
-            invalidToolInput = true;
-            break;
-          }
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: tool.name });
-          handlerResults.push(outcome);
-        }
-
-        if (invalidToolInput) {
+        if (run.kind === "invalid_input" || run.kind === "no_handler") {
+          // Nothing was written, so the honest move is the ordinary fallback
+          // rather than confirming something that never happened. no_handler
+          // should be unreachable — the suite asserts every registered tool has
+          // one — and is surfaced rather than swallowed, because "falls through
+          // to whatever comes next" is the failure the shared runner exists for.
+          diagLog(requestId, turnStartedAt, "tools_unresolved", { kind: run.kind });
           emit({ type: "fallback" });
           controller.close();
           return;
         }
 
-        // Every planned tool was handled here: end the turn once, with one
-        // user message and one assistant message per thing that was done.
-        if (handlerResults.length > 0 && !unhandledByHandlers) {
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          for (const result of handlerResults) {
-            await prisma.storeMessage.create({
-              data: {
-                storeId: store.id,
-                role: "assistant",
-                content: result.reply,
-                // How a rendered artefact — a composition, a mockup — reaches
-                // the panel that draws it.
-                ...(result.messageChanges ? { changes: result.messageChanges } : {}),
-              },
-            });
-            await recordGenesisExecution({
-              action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-              // PENDING is the honest status for a PROPOSAL: real work happened
-              // and nothing changed yet. Defaulting to SUCCESS would record a
-              // proposed deletion as a completed one.
-              status: result.executionStatus ?? "SUCCESS",
-              verified: false,
-              retryable: result.retryable ?? false,
-              userId,
-              storeId: store.id,
-              message: result.logMessage ?? result.reply,
-              metadata: { kind: result.kind, ...(result.metadata ?? {}) },
-            });
-            // The model may already have streamed its own words; a handler's
-            // reply follows rather than replacing them.
-            if (!streamedAnyText) {
+        if (run.results.length > 0) {
+          for (const tool of plannedTools) {
+            diagLog(requestId, turnStartedAt, "tool_selected", { tool: tool.name });
+          }
+          await persistToolTurn({
+            storeId: store.id,
+            userId,
+            userMessage,
+            userMessageChanges,
+            // Nothing was written for this turn until now, so the route owns
+            // the merchant's message.
+            writeUserMessage: true,
+            results: run.results,
+          });
+
+          for (const result of run.results) {
+            if (result.alreadyStreamed) {
+              // The words reached the reader as they were produced; emitting
+              // them again would show the same answer twice.
+            } else if (!streamedAnyText) {
               emit({ type: "token", delta: result.reply });
               streamedAnyText = true;
             } else if (result.reply !== conversationalReply) {
@@ -630,287 +596,22 @@ export async function POST(request: Request) {
             // Moving the owner is the turn's job, not the handler's — a handler
             // that touched the stream could never be the first of two.
             if (result.navigate) emit({ type: "navigate", href: result.navigate });
-            // A cached render the handler's work just invalidated. Done here
-            // because revalidatePath only makes sense inside a request — a
-            // handler that called it could not be tested outside one.
-            for (const path of result.revalidate
-              ? Array.isArray(result.revalidate)
-                ? result.revalidate
-                : [result.revalidate]
-              : []) {
-              revalidatePath(path);
-            }
           }
+          for (const path of revalidationPaths(run.results)) revalidatePath(path);
+
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({
             userId,
             storeId: store.id,
             durationMs: Date.now() - turnStartedAt,
-            // A handler that could not give the owner what they asked for is
-            // not a success, and recording it as one hides the turns worth
-            // looking at.
-            outcome: handlerResults.some((r) => r.outcome === "failure") ? "failure" : "success",
+            outcome: turnOutcome(run.results),
             likelyRephraseOf,
-            kind: handlerResults.map((r) => r.kind).join("+"),
+            kind: turnKind(run.results),
           });
           controller.close();
           return;
         }
 
-        // One tool with no handler yet: the inline ladder below handles it,
-        // unchanged. chosenTool already points at the first planned tool.
-
-        if (chosenTool?.name === "look_up_business_data") {
-          diagLog(requestId, turnStartedAt, "tool_selected", { tool: "look_up_business_data" });
-          emit({ type: "status", text: "Reviewing your storefront…" });
-          diagLog(requestId, turnStartedAt, "status_reviewing_emitted");
-          // GAP D RESOLVED (2026-08-18). The owner's own question drives an
-          // unbounded search of decisions they actually made, so "did we ever
-          // decide about renaming the shop" reaches a decision from any age
-          // rather than only the 14-day window `recentDecisions` carries.
-          //
-          // Both are supplied because they answer different questions:
-          // recentDecisions is "what has been settled lately", pastDecisions is
-          // "what bears on what you just asked". An empty pastDecisions is a
-          // real answer — nothing on record matches — and is better than
-          // handing the model the newest decision and letting it improvise a
-          // connection.
-          // `understanding` is already in hand from before the decision — the
-          // same object, not a second read. Re-fetching here would have made the
-          // digest a genuine extra query rather than a relocated one.
-          const [dataContext, pastDecisions, pastStatements] = await Promise.all([
-            buildChatDataContext(store.id),
-            findRelevantDecisions(store.id, userMessage),
-            // M9 — the owner's own past words, any age. Gap D's twin: the same
-            // relevance-over-recency rule, applied to the conversation those
-            // decisions came out of.
-            findRelevantMessages(store.id, userMessage),
-          ]);
-          diagLog(requestId, turnStartedAt, "data_context_fetched");
-          // Real bug found live (2026-08-07) — this call previously used
-          // structured output (zodOutputFormat), which meant its own reply
-          // text was never actually streamed: the whole point of this route
-          // is real token streaming, but a structured-output call's raw
-          // stream is JSON matching the schema grammar (`{"reply": "...`),
-          // not clean prose — piping that straight to onTextDelta would
-          // leak JSON syntax into the visible text. Switched to plain text
-          // (no output_config), matching the unified call's own
-          // conversational branch, so this is now a genuine live stream —
-          // the previous code awaited the full response and emitted it as
-          // one block, which is what actually produced "buffered paragraph
-          // appears all at once," not a platform-level streaming problem.
-          let dataAnswerReply = "";
-          let dataAnswerDeltaIndex = 0;
-          diagLog(requestId, turnStartedAt, "data_answer_call_started");
-          const answerOutcome = await callGenesisModel(
-            {
-              model: "claude-opus-4-8",
-              max_tokens: 1500,
-              thinking: { type: "adaptive" },
-              system: withJ4CopyRules(STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT),
-              messages: [
-                {
-                  role: "user",
-                  content: `Business data (JSON):\n${JSON.stringify(
-                    {
-                      ...dataContext,
-                      businessProfile: understanding.profile,
-                      // HOW TO READ THE `source` ALREADY ON THOSE FACTS
-                      // (2026-08-22, U6). The profile's records carry their own
-                      // provenance, and carrying it without explaining it is
-                      // just more JSON — these are the rules for the kinds
-                      // actually present, and the honest count of what has none.
-                      sourceGuidance: groundingRules([
-                        ...understanding.profile.goals,
-                        ...understanding.profile.challenges,
-                        ...understanding.profile.assets,
-                      ]),
-                      factsWithNoRecordedSource: unsourcedCount([
-                        ...understanding.profile.goals,
-                        ...understanding.profile.challenges,
-                        ...understanding.profile.assets,
-                      ]),
-                      beliefs: understanding.beliefs,
-                      recentDecisions: understanding.recentDecisions,
-                      // Searchable, any age, ranked by relevance to the
-                      // question. ageDays is included so J4 can say "you ruled
-                      // that out about seven months ago" rather than reciting a
-                      // date the owner has to do arithmetic on.
-                      pastDecisionsRelevantToThisQuestion: pastDecisions,
-                      pastStatementsByTheOwnerRelevantToThisQuestion: pastStatements,
-                      // Dated commitments read out of the owner's own uploaded
-                      // documents. Same object as the non-streaming path, for
-                      // Gap B's reason: both paths draw on identical
-                      // understanding or neither can be trusted.
-                      commitments: understanding.commitments,
-                      // Patterns about the owner, not the business. Populated only for the
-                      // owner themselves; empty for anyone else with access to this store.
-                      ownerUnderstanding: understanding.ownerUnderstanding,
-                      activeThoughts: understanding.activeThoughts,
-                      growthPointBalance: understanding.platformRelationship.growthPointBalance,
-                      growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),
-                    },
-                    null,
-                    2
-                  )}\n\nMerchant's question: ${userMessage}`,
-                },
-              ],
-            },
-            {
-              storeId: store.id,
-              feature: "store_chat_data_answer",
-              onTextDelta: (delta) => {
-                if (firstTokenAtMs === null) {
-                  firstTokenAtMs = Date.now() - turnStartedAt;
-                }
-                dataAnswerDeltaIndex += 1;
-                diagLog(requestId, turnStartedAt, "data_answer_delta", { i: dataAnswerDeltaIndex, len: delta.length });
-                streamedAnyText = true;
-                dataAnswerReply += delta;
-                emit({ type: "token", delta });
-              },
-            }
-          );
-          diagLog(requestId, turnStartedAt, "data_answer_delta_summary", { totalDeltas: dataAnswerDeltaIndex, firstTokenAtMs });
-          diagLog(requestId, turnStartedAt, "data_answer_call_finished", { ok: answerOutcome.ok, replyLength: dataAnswerReply.length });
-          if (!answerOutcome.ok || !dataAnswerReply) {
-            diagLog(requestId, turnStartedAt, "data_answer_failed");
-            emit({ type: "error", message: genesisModelFailureMessage(answerOutcome.ok ? "unknown" : answerOutcome.kind) });
-            controller.close();
-            return;
-          }
-          diagLog(requestId, turnStartedAt, "db_write_start", { kind: "data_question" });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "user", content: userMessage, changes: userMessageChanges } });
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: dataAnswerReply } });
-          await recordGenesisExecution({
-            action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-            status: "SUCCESS",
-            verified: false,
-            message: dataAnswerReply,
-            retryable: false,
-            userId,
-            storeId: store.id,
-            metadata: { kind: "data_question" },
-          });
-          diagLog(requestId, turnStartedAt, "db_write_done", { kind: "data_question" });
-          // No trailing token emit here — the reply was already streamed
-          // live above via onTextDelta; emitting it again would duplicate
-          // the text in the UI.
-          emit({ type: "done", changes: null });
-          diagLog(requestId, turnStartedAt, "stream_done_emitted", { kind: "data_question" });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "data_question" });
-          controller.close();
-          diagLog(requestId, turnStartedAt, "controller_closed", { kind: "data_question" });
-          return;
-        }
-
-        // 2026-08-08 — the real missing capability: J4 previously had no
-        // way to remove a product at all and told the owner to do it
-        // manually. This never executes the deletion itself (delete_product
-        // is a hard-locked "destructive" category action — see
-        // genesisActions.ts's CATEGORY_MAX_TIER) — it proposes one
-        // ApprovalRequest per resolved product, same shape as
-        // request_image_change above, and the owner's real confirmation is
-        // the existing Approve action on Products, not a second bespoke
-        // confirmation UI.
-        // Storefront Canvas, step 3 reachability (2026-08-12) — the merchant
-        // asking for one small structural or presentational improvement.
-        //
-        // Its own fast path, exactly like request_image_change and
-        // request_product_removal above and for the same stated reason: this
-        // is a discrete, enum-bounded change, so it never needs the PRIMARY
-        // content pipeline that edit_store_content falls back to.
-        //
-        // This bridge only PROPOSES. Execution, verification, Growth Point
-        // charging and the Business Partner waiver all happen later, on the
-        // owner's own approval, through the unchanged engine path.
-        // "Make me a logo" (2026-08-16). The conversational entry point to
-        // the brand-logo slice — see WORK_STUDIO.md for the chain this sits at
-        // the head of: Asset -> Design -> Product -> Provider.
-        //
-        // Deliberately does NOT delete a prior pending proposal, unlike
-        // request_image_change above. Creative work depends on siblings
-        // coexisting: an owner who liked the first logo must still have it
-        // when alternatives appear, and "keep the symbol from the original"
-        // needs the original to still exist.
-        // "Put my logo on a T-shirt" (2026-08-16). The conversational entry
-        // to the Design layer — asset(s) + surface + arrangement -> print file
-        // + mockup (lib/design/). J4 resolves the approved asset itself rather
-        // than asking the owner to find and upload it again, which is the
-        // whole difference between a partner and a design tool.
-        // The end of the Studio chain (2026-08-17): approval with a real
-        // consequence. The owner says yes to a mockup they are looking at and
-        // a product appears in their storefront.
-        //
-        // Executed directly rather than raised as another ApprovalRequest.
-        // The confirmation ladder is explicit that an owner who just approved
-        // something in words, while looking straight at it, must not be asked
-        // to approve it again — a second confirmation here would be the
-        // product asking "are you sure" about the sentence they just said.
-        // Storefront compositions (2026-08-18) — collage, hero, featured
-        // section. The same Design model as apparel, pointed at a storefront
-        // surface. Not a product: see approve_composition below.
-        // J4 forms an opinion about the storefront and shows the fix
-        // (2026-08-18). P2/P3.
-        //
-        // The loop Sean asked for: evaluate -> explain -> generate the proposed
-        // composition -> preview -> approve. Approval is the existing
-        // approve_composition path, so the storefront asset it produces is the
-        // same object collages already produce. No parallel system.
-        //
-        // The evaluation is FACTS; the judgement is J4's, in the reply. That
-        // split is deliberate — "J4 doesn't surface everything he can detect,
-        // he decides what is worth bringing to the owner."
-        // Approving a composition makes it a STOREFRONT ASSET, never a product.
-        // Sean: J4 has to understand the difference between something a
-        // customer can buy and something that makes the store look better.
-        // J4 takes the owner there rather than telling them where it is
-        // (2026-08-18).
-        //
-        // Deliberately LAST among the doing-tools in this file's ordering
-        // sense: every capability that can perform the work has its own
-        // handler, and this one only runs when the right answer is a place.
-        // The tool description carries the rule that keeps it from swallowing
-        // ordinary questions — a question gets an answer, a decision gets a
-        // destination.
-        //
-        // The destination map is closed, so a hallucinated route cannot reach
-        // the router. `intent` rides along as a handoff, which is the same
-        // mechanism a Studio recommendation already uses: the screen arrives
-        // with the request ready instead of blank.
-        // J4 approvable product content changes (2026-08-09) — "if J4 can
-        // perform the change, J4 should perform the change after I
-        // approve it... product names, descriptions" (Sean, real feedback
-        // after J4 told him to paste suggested names in by hand). Same
-        // real "resolve scope, then a focused generation call, then one
-        // ApprovalRequest per resolved product sharing a groupId" shape as
-        // request_image_change above — update_product (genesisActions.ts)
-        // is the real, already-existing executable this proposes into,
-        // same Approve action Products already has.
-        // J4 conversational approval (2026-08-09) — "I approve all
-        // together. Make the change please" was routing back into
-        // request_product_content_change (a fresh re-analysis, which
-        // honestly found nothing new to change) instead of executing what
-        // was already proposed. This tool means "execute exactly what you
-        // already presented" — never a new analysis. Reuses the same
-        // execute/verify/record machinery the manual "Approve All" button
-        // already runs (performApprovePendingChanges ->
-        // performApproveGenesisActionGroup/performApproveGenesisAction);
-        // the reply is deterministic, matching manage_business_asset's own
-        // "the real outcome is reported by code, not the model" discipline
-        // — an "I applied and verified this" claim must be airtight.
-// Hard J4 capability requirement (2026-08-08) — "save this",
-        // "save this as my logo": the file is ALREADY permanently saved
-        // (ingestBusinessAsset wrote a real BusinessRecord the instant the
-        // upload completed, unconditionally — confirmed by direct audit
-        // that businessProfile's own asset query has no limit or expiry).
-        // The reply here is deterministic, not model-generated, precisely
-        // because "I've saved it" must be an airtight, always-true claim,
-        // never a phrasing the model could get subtly wrong. role stays
-        // honest: designation (actually assigning this as THE logo, THE
-        // brand guide, etc.) isn't built yet, so this says so plainly
-        // rather than pretending — never the old false "I can't save
-        // this" either, since the file itself is real and already kept.
         // edit_store_content, or the model didn't call a tool and didn't
         // produce usable text — both fall back to the existing, unchanged,
         // already-working Server Action. Nothing was persisted for this

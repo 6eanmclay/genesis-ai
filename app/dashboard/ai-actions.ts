@@ -14,11 +14,23 @@ import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/slugify";
 import { sourceHeroImageCandidate } from "@/lib/productImagery";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
-import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
-import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools, serverActionCanHandle, UNAVAILABLE_ON_THIS_PATH } from "@/lib/execution/toolPolicy";
-import { businessBasePath } from "@/lib/dashboard/navConfig";
+import {
+  mayInvokeTool,
+  refusalMessage,
+  planToolRun,
+  describeDroppedTools,
+  UNAVAILABLE_ON_THIS_PATH,
+} from "@/lib/execution/toolPolicy";
+import {
+  runPlannedTools,
+  persistToolTurn,
+  revalidationPaths,
+  turnOutcome,
+  lastAssistantContent,
+} from "@/lib/dashboard/runToolTurn";
+import { businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import { adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { J4Surface } from "@/app/j4/J4Workspace";
@@ -29,10 +41,8 @@ import {
   getRecommendationExplanation,
   type RecommendationExplanation,
 } from "@/lib/dashboard/explainRecommendation";
-import { runCognitiveReview, PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
-import { growthPointCostsFor } from "@/lib/growthPoints/catalog";
+import { runCognitiveReview } from "@/lib/intelligence/cognitiveLayer";
 import { checkGrowthPointBalanceForActions } from "@/lib/growthPoints/ledger";
-import { planMarketingCampaign } from "@/lib/marketing/campaigns";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { GENESIS_ACTIONS, type GenesisActionContext, type GenesisActionType } from "@/lib/execution/genesisActions";
@@ -40,7 +50,6 @@ import {
   supersedePendingApproval,
   resolveMostRecentPendingApprovalBatch,
   describeGroupApprovalResult,
-  describeApprovalExecutionForChat,
   type GroupApprovalResult,
 } from "@/lib/dashboard/pendingApprovals";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
@@ -58,12 +67,7 @@ import {
   type GenesisModelErrorKind,
 } from "@/lib/genesisModel";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
-import { buildChatDataContext } from "@/lib/businessModel/reasoning";
-import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
 import { buildTurnContext } from "@/lib/dashboard/chatTurnContext";
-import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
-import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
-import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
 import { ASSET_ROLES, recordGeneratedAsset } from "@/lib/businessModel/assets";
 import { buildTaskSeedMessage, buildTaskUserMessage, buildTaskRecapMessage } from "@/lib/dashboard/taskConversation";
@@ -71,30 +75,16 @@ import { completeTasksForAction } from "@/lib/dashboard/tasks";
 import { classifyAndExtractAsset } from "@/lib/businessAssets/classify";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { transcribeVoiceMemo } from "@/lib/voice/j4VoiceMemo";
-import { withJ4CopyRules } from "@/lib/j4CopyRules";
-import { ENTITY_REGISTRY } from "@/lib/businessModel/entities";
-import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import {
-  AnswerSupplierEconomicsToolInputSchema,
   buildStoreChatUnifiedTools,
   allToolUses,
   firstToolUse,
   textOf,
-  type BusinessFactCaptureInput,
-  type RequestImageChangeInput,
-  type RequestProductRemovalInput,
-  type RequestProductContentChangeInput,
-  type ManageBusinessAssetInput,
 } from "@/lib/execution/genesisTools";
 import {
-  UPLOAD_INTENT_REPLY,
-  StoreChatDataAnswerSchema,
-  STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT,
   STORE_CHAT_UNIFIED_SYSTEM_PROMPT,
   extractRichContentImagePrompt,
 } from "@/lib/dashboard/storeChatUnified";
-import { upsertObservation, resolveMissingObservations } from "@/lib/dashboard/genesisObservations";
-import { communicateFinding } from "@/lib/execution/genesisAutonomy";
 import { recordExecution } from "@/lib/execution/log";
 import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { decryptCredentials } from "@/lib/integrations/credentials";
@@ -281,62 +271,6 @@ const SecondaryBlueprintSchema = z.object({
 // history, not a JSON blob — so unlike the draft, chat for a live store
 // never touches products. Only store-level identity/content is editable
 // here; product edits stay on the existing per-product forms.
-// The one phrase that both asks the scope question and detects that it was
-// already asked. Shared rather than written per-site on purpose: if the two
-// ever drift apart, repeat-detection silently stops working and the
-// conversational loop comes straight back.
-const SCOPE_QUESTION = "which product did you mean?";
-
-// The previous assistant turn's text, or undefined on a fresh conversation —
-// the only state buildScopeClarification needs to tell "ask" from "ask again."
-function lastAssistantContent(
-  messages: { role: string; content: string }[]
-): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant") return messages[i].content;
-  }
-  return undefined;
-}
-
-// Conversational-loop fix (2026-08-12), shared by all three scope-resolution
-// sites (image change, removal, name/description change). Two real defects
-// were duplicated across them.
-//
-// First, an unresolved scope emitted the MODEL's own free-form reply. That is
-// exactly the shape that restates the merchant's sentence back at them as a
-// question — "You'd like to change a product photo?" — which answers nothing
-// and advances nothing.
-//
-// Second, and worse, no site knew it had already asked. Every turn recomputed
-// the same clarification from scratch with no memory of the previous one, so a
-// merchant who answered ambiguously could receive the identical question
-// forever. That is the loop: J4 has to advance conversational state, not
-// re-emit it.
-//
-// So: never echo the model, always ground the question in the real active
-// product list, and if the previous assistant turn already asked this exact
-// question, escalate to something answerable in one tap rather than repeating
-// a question that has already failed once.
-function buildScopeClarification({
-  verb,
-  activeNames,
-  lastAssistantContent: previousTurn,
-}: {
-  verb: string;
-  activeNames: string[];
-  lastAssistantContent: string | undefined;
-}): string {
-  if (activeNames.length === 0) {
-    return `I don't have any active products to ${verb} yet — add one first and I'll take it from there.`;
-  }
-  if (previousTurn?.includes(SCOPE_QUESTION)) {
-    return `Let me make this easier — reply with just the number:\n${activeNames
-      .map((name, i) => `${i + 1}. ${name}`)
-      .join("\n")}`;
-  }
-  return `I want to make sure I ${verb} the right one — ${SCOPE_QUESTION} Your active products are: ${activeNames.join(", ")}.`;
-}
-
 const StoreCoreFieldsSchema = z.object({
   storeName: z.string(),
   tagline: z.string(),
@@ -2493,466 +2427,106 @@ async function applyGenesisMessageToStore(
     }
   }
 
-  if (chosenTool?.name === "show_upload_options") {
-    const reply = conversationalReply || UPLOAD_INTENT_REPLY;
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: reply },
-    });
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "SUCCESS",
-      verified: false,
-      message: reply,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: { kind: "upload_intent" },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "success",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
-  // A TOOL THIS PATH CANNOT CARRY OUT (2026-08-22).
+  // EVERY TOOL, THROUGH THE SAME HANDLERS THE STREAMING ROUTE USES
+  // (2026-08-23, Unified Intelligence UI4).
   //
-  // Eight of the nineteen registered tools have no branch in this file — they
-  // live only on the streaming route. Until now a message answered with one of
-  // them matched nothing here and fell through to the legacy content pipeline,
-  // so asking for a logo ran a full store-content regeneration and reported
-  // that instead. Genesis doing something other than what it was asked.
+  // Ten branches lived here, duplicating ten of the route's — and the other
+  // EIGHT tools had no branch at all, so a message answered with
+  // generate_brand_logo matched nothing, fell through to the legacy content
+  // pipeline below, ran a full store-content regeneration and reported that as
+  // the answer. Genesis doing something other than what it was asked.
   //
-  // Saying nothing happened is the honest outcome, and the only one that does
-  // not violate the standing rule against reporting a change that did not occur.
-  if (decidedTool && !serverActionCanHandle(decidedTool)) {
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: UNAVAILABLE_ON_THIS_PATH },
-    });
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "WARNING",
-      verified: false,
-      message: UNAVAILABLE_ON_THIS_PATH,
-      retryable: true,
-      userId,
-      storeId: store.id,
-      metadata: { unhandledTool: decidedTool },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "failure",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
+  // That gap was declared first and is now gone: one implementation of what a
+  // tool does, reached from both paths. What stays different is how this path
+  // RESPONDS — it revalidates and redirects where the route streams and closes,
+  // which is a real difference rather than an accident.
   // WHAT WAS ASKED FOR AND IS NOT HAPPENING, said out loud. Persisted as its
   // own assistant message before the work, so the stored conversation matches
-  // what the owner is shown.
+  // what the owner is shown — the same contract the streaming route holds.
   if (droppedTools.length > 0 && chosenTool) {
     await prisma.storeMessage.create({
       data: { storeId: store.id, role: "assistant", content: describeDroppedTools(droppedTools) },
     });
   }
 
-  const dataQuestionResult = chosenTool?.name === "look_up_business_data" ? { isDataQuestion: true } : null;
+  if (chosenTool) {
+    const run = await runPlannedTools({
+      storeId: store.id,
+      userId,
+      userMessage,
+      conversationalReply,
+      plannedTools: [chosenTool],
+      resolveHref: (href) => sectionHref(href, businessBasePath(store.slug)),
+      // No stream to write progress to on this path; the redirect is the only
+      // thing the owner sees.
+      status: () => {},
+      // What J4 said last turn, so a clarifying question that already failed
+      // once escalates instead of repeating.
+      previousAssistantMessage: lastAssistantContent(existingMessages),
+      // No stream on this path, so `onDelta` is deliberately absent: the one
+      // handler that streams simply does not, and returns its full answer.
+      understanding,
+      products: currentProducts.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        imageUrl: p.imageUrl,
+        priceInCents: p.priceInCents,
+        richContent: p.richContent,
+      })),
+    });
 
-  if (dataQuestionResult?.isDataQuestion) {
-    // J4 Foundation (2026-08-04) — buildChatDataContext stays separate
-    // (real, unique value: upcoming appointments, recent raw records across
-    // every entity type — not carried by understanding.profile), but
-    // businessProfile is no longer fetched on its own. getBusinessUnderstanding
-    // closes Gap B from J4_FOUNDATION.md: chat now sees the same beliefs,
-    // recent decisions, and active thoughts the recommendation engine
-    // already reasoned from — one J4, not a shallower one for conversation.
-    const dataContextStartedAt = Date.now();
-    // GAP D RESOLVED (2026-08-18) — same as the streaming route. The owner's
-    // question drives an unbounded search of decisions they actually made, so a
-    // decision from any age is retrievable, ranked by relevance. Both paths get
-    // it, because "a chat answer and a recommendation draw on identical
-    // understanding" is the rule Gap B established and one path having deeper
-    // recall than the other would quietly break it again.
-    // Already in hand from before the decision — the same object, not a second
-    // read.
-    const [dataContext, pastDecisions, pastStatements] = await Promise.all([
-      buildChatDataContext(store.id),
-      // Understanding is fetched once before the decision (see the digest
-      // above) and reused here. It used to be fetched again in this array —
-      // which, once its binding moved out of the destructure, left every
-      // remaining name paired with the wrong promise.
-      findRelevantDecisions(store.id, userMessage),
-      // M9 — same recall on this path too, for the same reason the line above
-      // exists: one path having deeper memory than the other would break Gap
-      // B's rule that chat and recommendations draw on identical understanding.
-      findRelevantMessages(store.id, userMessage),
-    ]);
-    stageDurationsMs.dataContextFetch = Date.now() - dataContextStartedAt;
-    const answerOutcome = await callGenesisModel({
-      model: "claude-opus-4-8",
-      max_tokens: 1500,
-      thinking: { type: "adaptive" },
-      system: withJ4CopyRules(STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT),
-      messages: [
-        {
-          role: "user",
-          content: `Business data (JSON):\n${JSON.stringify(
-            {
-              ...dataContext,
-              businessProfile: understanding.profile,
-              // Same source guidance as the streaming path, for the reason the
-              // comments below already give: both paths draw on identical
-              // understanding or neither can be trusted. A fallback that
-              // explained provenance less well would answer the same question
-              // with different confidence depending on which path served it.
-              sourceGuidance: groundingRules([
-                ...understanding.profile.goals,
-                ...understanding.profile.challenges,
-                ...understanding.profile.assets,
-              ]),
-              factsWithNoRecordedSource: unsourcedCount([
-                ...understanding.profile.goals,
-                ...understanding.profile.challenges,
-                ...understanding.profile.assets,
-              ]),
-              beliefs: understanding.beliefs,
-              recentDecisions: understanding.recentDecisions,
-              pastDecisionsRelevantToThisQuestion: pastDecisions,
-              pastStatementsByTheOwnerRelevantToThisQuestion: pastStatements,
-              // DATED COMMITMENTS the owner never typed — read out of their own
-              // uploaded documents. Supplied on every reasoning path, not just
-              // this one, per J4_FOUNDATION.md's Gap B rule: one J4, not a
-              // shallower one for conversation. Empty is ordinary and honest.
-              commitments: understanding.commitments,
-              // Patterns about the owner, not the business. Populated only for the
-              // owner themselves; empty for anyone else with access to this store.
-              ownerUnderstanding: understanding.ownerUnderstanding,
-              activeThoughts: understanding.activeThoughts,
-              // Growth Points Economy — same real signal, same "context
-              // only, never a gate" semantics as cognitiveLayer.ts's own
-              // Reason pass (lib/intelligence/cognitiveLayer.ts). Read from
-              // the canonical BusinessUnderstanding object (J4_FOUNDATION.md's
-              // Gap C, closed 2026-08-05) rather than a separate ad hoc fetch.
-              growthPointBalance: understanding.platformRelationship.growthPointBalance,
-              growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),
-            },
-            null,
-            2
-          )}\n\nMerchant's question: ${userMessage}`,
-        },
-      ],
-      output_config: {
-        effort: "medium",
-        format: zodOutputFormat(StoreChatDataAnswerSchema),
-      },
-    }, { storeId: store.id, confirmedOverride, feature: "store_chat_data_answer" });
-    stageDurationsMs.dataAnswer = answerOutcome.durationMs;
-
-    if (!answerOutcome.ok) {
-      return bailOnProviderFailure({
-        kind: answerOutcome.kind,
-        action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+    if (run.kind === "handled" && run.results.length > 0) {
+      await persistToolTurn({
+        storeId: store.id,
+        userId,
+        userMessage,
+        userMessageChanges: null,
+        // Already written at the top of this function, before the model was
+        // even called. Writing it again would duplicate the merchant's own
+        // words in their conversation.
+        writeUserMessage: false,
+        results: run.results,
+      });
+      for (const path of revalidationPaths(run.results)) revalidatePath(path);
+      await logChatTurnEvent({
         userId,
         storeId: store.id,
-        returnTo,
-        turnStartedAt,
+        durationMs: Date.now() - turnStartedAt,
+        outcome: turnOutcome(run.results),
         likelyRephraseOf,
         stageDurationsMs,
       });
+      revalidatePath(returnTo);
+      redirectKeepingChatOpen(returnTo);
     }
-    const dataAnswer = answerOutcome.message.parsed_output;
-    if (!dataAnswer) {
-      return bailOnProviderFailure({
-        kind: "unknown",
-        action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-        userId,
-        storeId: store.id,
-        returnTo,
-        turnStartedAt,
-        likelyRephraseOf,
-        stageDurationsMs,
-      });
-    }
-
-    // A designed conversational outcome, not a store change — no
-    // ApprovalRequest, no diff, matching "informational, not a change".
-    await prisma.storeMessage.create({
-      data: {
-        storeId: store.id,
-        role: "assistant",
-        content: dataAnswer.reply,
-      },
-    });
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "SUCCESS",
-      verified: false,
-      message: dataAnswer.reply,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: { kind: "data_question" },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "success",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
-  // Captures a stated goal/challenge/employee/location directly into
-  // BusinessRecord via persistSyncedRecords (sourceProvider: "genesis_chat")
-  // — the exact same validate-and-upsert path a real connector's sync()
-  // already uses, reused as-is. Written directly, not through
-  // ApprovalRequest: this is Genesis's own internal understanding, never
-  // customer-facing storefront content, so it doesn't carry
-  // update_hero/update_theme's risk profile — it's still fully traceable
-  // (sourceProvider on the row, normal chat history, the confirmation reply
-  // itself) and correctable in the next turn, the same trust model the
-  // read-only Q&A path above already uses. Trigger and extraction both now
-  // come from the unified call's capture_business_fact tool call instead of
-  // a separate classifier; not calling the tool at all is the "none" case.
-  const businessFactResult = chosenTool?.name === "capture_business_fact"
-    ? { ...(chosenTool.input as BusinessFactCaptureInput), confirmationReply: conversationalReply || null }
-    : null;
-
-  if (businessFactResult) {
-    const entityType = businessFactResult.entityType;
-    const todayIso = new Date().toISOString().slice(0, 10);
-    // The model only ever fills in what one isolated message can support
-    // (BusinessFactSchema's per-entityType Capture shape above) — status,
-    // identifiedAt, and the relatedGoalIds/relatedChallengeIds reference
-    // arrays are derived here, never asked of the model, since it has no
-    // way to know a real prior goal/challenge id from one message alone.
-    const fullData =
-      entityType === "goal"
-        ? toGoalRecordData(businessFactResult.data, todayIso)
-        : entityType === "challenge"
-          ? toChallengeRecordData(businessFactResult.data, todayIso)
-          : entityType === "employee"
-            ? { ...businessFactResult.data, status: "active", locationId: null }
-            : businessFactResult.data; // location — Capture shape already matches LocationSchema exactly
-
-    // Same guard as app/api/chat/route.ts (2026-08-22): entityType comes from a
-    // cast, not a parse, so an out-of-enum value would throw TypeError here
-    // rather than being dropped like every other malformed extraction.
-    const captureEntry = Object.prototype.hasOwnProperty.call(ENTITY_REGISTRY, entityType)
-      ? ENTITY_REGISTRY[entityType]
-      : null;
-    const parsed = captureEntry ? captureEntry.schema.safeParse(fullData) : null;
-    // A malformed/underspecified extraction is silently dropped, exactly
-    // like persistSyncedRecords already drops a bad connector record —
-    // never a crash, never bad data reaching BusinessRecord. Falls through
-    // to the normal chat flow below rather than confirming a capture that
-    // didn't actually happen.
-    if (parsed?.success) {
-      const { changes } = await persistSyncedRecords(
-        store.id,
-        "genesis_chat",
-        [{ entityType, externalId: randomUUID(), data: parsed.data }],
-        {
-          // OWNER, and modelExtracted TRUE. Both halves matter and neither is
-          // enough alone: the owner is the author of this goal -- nobody else can
-          // say what they are trying to do -- but the sentence J4 stored is a
-          // model's reading of what they typed, not the words themselves. A reader
-          // that saw only OWNER would quote a paraphrase back as though the owner
-          // had said it.
-          provenance: "OWNER",
-          provenanceDetail: "chat",
-          statedById: userId,
-          modelExtracted: true,
-        }
-      );
-
-      // Enrich the already-existing Business Intelligence Engine (Phase 3
-      // Milestone 3), per Sean's explicit direction — not a second
-      // notification system. A high-severity, active challenge becomes a
-      // real, namespaced GenesisObservation, exactly like notify.ts already
-      // does for insights, reusing upsertObservation/
-      // resolveMissingObservations as-is with its own "challenge:" prefix
-      // (the same multi-writer namespacing discipline "deterministic:"/
-      // "ai_review:"/"insight:" already coexist under).
-      //
-      // J4 Foundation final verification pass — a real, deterministic
-      // judgment ("this specific stated fact is currently urgent") must
-      // exist as a real CognitiveOutput, produced through
-      // communicateFinding()/Execute, before GenesisObservation ever
-      // projects it — the same requirement already applied to the
-      // deterministic sweep and already satisfied by notify.ts. Only
-      // recorded once per still-active occurrence, same reasoning as the
-      // sweep: restating an already-flagged challenge shouldn't create a
-      // duplicate CognitiveOutput row.
-      if (entityType === "challenge" && changes[0]) {
-        const challengeData = parsed.data as { severity: string | null; status: string };
-        const recordId = changes[0].recordId;
-        const topicKey = `challenge:${recordId}`;
-        if (challengeData.severity === "high" && challengeData.status === "active") {
-          const alreadyActive = await prisma.cognitiveOutput.findFirst({
-            where: { storeId: store.id, topicKey, status: "ACTIVE" },
-            select: { id: true },
-          });
-          if (!alreadyActive) {
-            await communicateFinding(store.id, {
-              kind: "insight",
-              summary: (parsed.data as { description: string }).description,
-              priority: "high",
-              topicKey,
-              recordId,
-              entityType: "challenge",
-            });
-          }
-          await upsertObservation(store.id, {
-            dedupeKey: topicKey,
-            genesisState: "urgent",
-            summary: (parsed.data as { description: string }).description,
-            actionHref: null,
-            recordId,
-            entityType: "challenge",
-          });
-        } else {
-          // Not (or no longer) high-severity/active — clear just this one
-          // observation if it exists. Passing the full dedupeKey as the
-          // "prefix" with an empty still-active list resolves exactly this
-          // one row (no other real dedupeKey can start with one specific
-          // record's own cuid) without touching any other challenge's
-          // observation, which a genesisState-wide resolve pass would risk.
-          await resolveMissingObservations(store.id, [], "urgent", topicKey);
-          // The CognitiveOutput side resolves alongside the badge, same
-          // pairing the deterministic sweep already established.
-          await prisma.cognitiveOutput.updateMany({
-            where: { storeId: store.id, topicKey, status: "ACTIVE" },
-            data: { status: "RESOLVED", resolvedAt: new Date() },
-          });
-        }
-      }
-
-      const reply =
-        businessFactResult.confirmationReply ??
-        "Got it — I'll remember that about your business.";
+    // NOTHING RAN, AND THE PIPELINE BELOW IS NOT "NOTHING".
+    //
+    // Falling through from here is what produced the original defect: a tool
+    // that resolved to no work reached the store-content regeneration below
+    // and the owner was shown ITS result as though it were the answer. The
+    // gap that made that possible is closed — every tool has a handler now —
+    // but the fall-through itself would still fire whenever a handler cannot
+    // use what the model gave it, and would still run the wrong capability.
+    //
+    // edit_store_content is the single exception, because the pipeline below
+    // IS that tool's implementation. Everything else says plainly that it did
+    // not happen.
+    if (decidedTool !== "edit_store_content") {
       await prisma.storeMessage.create({
-        data: { storeId: store.id, role: "assistant", content: reply },
+        data: { storeId: store.id, role: "assistant", content: UNAVAILABLE_ON_THIS_PATH },
       });
       await recordGenesisExecution({
         action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-        status: "SUCCESS",
+        status: "WARNING",
         verified: false,
-        message: reply,
-        retryable: false,
+        message: UNAVAILABLE_ON_THIS_PATH,
+        // Nothing was written, so trying again is a real option rather than a
+        // suggestion to repeat something that already half-happened.
+        retryable: true,
         userId,
         storeId: store.id,
-        metadata: { kind: "business_fact", entityType },
-      });
-      await logChatTurnEvent({
-        userId,
-        storeId: store.id,
-        durationMs: Date.now() - turnStartedAt,
-        outcome: "success",
-        likelyRephraseOf,
-        stageDurationsMs,
-      });
-      revalidatePath(returnTo);
-      redirectKeepingChatOpen(returnTo);
-    }
-  }
-
-  // Marketing Engine (Chapter 3) — a real "plan a campaign" request.
-  // Planning and content generation are pure Understand/Reason work (see
-  // lib/marketing/campaigns.ts's own comment) — never touches execute() or
-  // Growth Points, matching the frozen "connecting/planning is free,
-  // executing a real cadence commitment is invested" principle. Trigger now
-  // comes from the unified call's plan_campaign tool call.
-  const campaignRequestResult = chosenTool?.name === "plan_campaign" ? { isCampaignRequest: true } : null;
-
-  if (campaignRequestResult?.isCampaignRequest) {
-    const campaignPlanStartedAt = Date.now();
-    const planned = await planMarketingCampaign(store.id, userMessage);
-    stageDurationsMs.campaignPlan = Date.now() - campaignPlanStartedAt;
-    const reply = planned
-      ? `I've planned "${planned.name}" — ${planned.channels.length} channel${planned.channels.length === 1 ? "" : "s"}: ${planned.channels.map((c) => c.channel).join(", ")}. Take a look and let me know what you'd like to adjust before we schedule it.`
-      : "I wasn't able to put a real campaign plan together from that — tell me a bit more about what you're promoting and I'll try again.";
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: reply },
-    });
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "SUCCESS",
-      verified: false,
-      message: reply,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: { kind: "campaign_request", groupId: planned?.groupId ?? null },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "success",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
-  // "Replace this product's image" requests — trigger and scope resolution
-  // now come from the unified call's request_image_change tool call; the
-  // reply text is the model's own accompanying text from that same call.
-  const imageRequestResult = chosenTool?.name === "request_image_change"
-    ? {
-        isImageRequest: true as const,
-        ...(chosenTool.input as RequestImageChangeInput),
-        reply: conversationalReply || "Let me find a new photo for that.",
-      }
-    : null;
-
-  if (imageRequestResult?.isImageRequest) {
-    // Resolution happens here, never by trusting the model's claim
-    // directly — exact, case-insensitive matching against the real product
-    // list. "all" resolves to every currently active product; "specific"
-    // resolves only the names that actually match one of them (an unmatched
-    // name is silently dropped rather than treated as ambiguous — the
-    // model's own reply already named what it understood). A genuinely
-    // unresolved scope, or a resolved set that ends up empty, falls back to
-    // a clarifying question. Deliberately stays simple for beta — no fuzzy
-    // matching, no embeddings.
-    const targetProducts =
-      imageRequestResult.scope === "all"
-        ? currentProducts
-        : imageRequestResult.scope === "specific"
-          ? currentProducts.filter((p) =>
-              (imageRequestResult.productNames ?? [])
-                .map((n) => n.trim().toLowerCase())
-                .includes(p.name.trim().toLowerCase())
-            )
-          : [];
-
-    if (targetProducts.length === 0) {
-      // Unresolved, or a named product didn't match anything real: create
-      // no approval, and do not fall through to the general chat call
-      // either — fall back to a safe, generic clarifying question rather
-      // than trusting an unmatched name.
-      const clarification = buildScopeClarification({
-        verb: "change the photo on",
-        activeNames: currentProducts.map((p) => p.name),
-        lastAssistantContent: lastAssistantContent(existingMessages),
-      });
-      await prisma.storeMessage.create({
-        data: { storeId: store.id, role: "assistant", content: clarification },
+        metadata: { unresolvedTool: decidedTool, reason: run.kind },
       });
       await logChatTurnEvent({
         userId,
@@ -2965,523 +2539,8 @@ async function applyGenesisMessageToStore(
       revalidatePath(returnTo);
       redirectKeepingChatOpen(returnTo);
     }
-
-    // Genesis orchestrates the whole authorized set as one delegated
-    // objective, never surfacing that the underlying operation is still
-    // one product at a time: every proposal from this turn shares one
-    // groupId (the same grouping already used for multi-proposal chat turns
-    // elsewhere in this file), so the owner sees "Genesis proposed new
-    // photos for N products" as a single cluster, never N separate asks or
-    // N separate clarifying questions.
-    const groupId = randomUUID();
-    const outcomes: { id: string; name: string; candidate: string | null }[] = [];
-    const imageResolutionStartedAt = Date.now();
-    for (const product of targetProducts) {
-      const sourced = await resolveProductImage({
-        prompt: extractRichContentImagePrompt(product.richContent) ?? product.description ?? product.name,
-        name: product.name,
-        description: product.description,
-        excludeUrls: product.imageUrl ? [product.imageUrl] : [],
-        scope: { storeId: store.id },
-        feature: "product_image_generation",
-      });
-      const candidate = sourced?.url ?? null;
-      if (candidate) {
-        // A fresh proposal for this product supersedes any earlier
-        // still-pending one — scoped to this product's id specifically, so
-        // a pending proposal for a different product is never touched.
-        await prisma.approvalRequest.deleteMany({
-          where: {
-            storeId: store.id,
-            actionType: "update_product_image",
-            status: "PENDING_APPROVAL",
-            input: { path: ["productId"], equals: product.id },
-          },
-        });
-        await prisma.approvalRequest.create({
-          data: {
-            storeId: store.id,
-            recommendationId: null,
-            actionType: "update_product_image",
-            // M2 — the same canonical derivation the backfill uses, so a decision made in
-            // conversation enters the belief system identically to one made last January.
-            // Null where no honest name exists.
-            topicKey: deriveTopicKey("update_product_image", null),
-            input: {
-              productId: product.id,
-              imageUrl: candidate,
-              ...(sourced?.generationPrompt ? { generationPrompt: sourced.generationPrompt } : {}),
-            },
-            previousValues: {
-              productId: product.id,
-              imageUrl: product.imageUrl,
-              rejectedCandidates: [],
-            },
-            summary: `Replace image for "${product.name}"`,
-            authorizationTier: GENESIS_ACTIONS.update_product_image.authorizationTier,
-            groupId,
-            aiUsageEventId: sourced?.aiUsageEventId ?? null,
-          },
-        });
-      }
-      outcomes.push({ id: product.id, name: product.name, candidate });
-    }
-    stageDurationsMs.imageResolution = Date.now() - imageResolutionStartedAt;
-
-    const foundNames = outcomes.filter((o) => o.candidate).map((o) => o.name);
-    const missedNames = outcomes.filter((o) => !o.candidate).map((o) => o.name);
-    const replyParts = [imageRequestResult.reply];
-    // Deterministic, not model-generated — same reasoning as finalReply's
-    // own grouping clause below: the model has no idea these become N
-    // separate ApprovalRequest rows, so it can't honestly describe the
-    // review mechanics itself. Naming the count and pointing at the "Use
-    // all" action directly closes the gap Priority 1's audit traced: a
-    // merchant reading "I found new photos" had no way to know reviewing
-    // meant N individual decisions, not one.
-    if (foundNames.length > 1) {
-      replyParts.push(
-        `These are grouped as one idea on Products — review each, or use "Use all ${foundNames.length}" to apply them together.`
-      );
-    } else if (foundNames.length === 1) {
-      replyParts.push(`You'll find it waiting for your review on Products.`);
-    }
-    if (missedNames.length > 0) {
-      replyParts.push(
-        `I couldn't find a good option for ${missedNames.join(", ")} — you may want to upload ${missedNames.length > 1 ? "those" : "that one"} directly for now.`
-      );
-    }
-
-    await prisma.storeMessage.create({
-      data: {
-        storeId: store.id,
-        role: "assistant",
-        content: replyParts.join(" "),
-      },
-    });
-
-    // A designed conversational outcome, not a generation failure — the
-    // model call for this turn already succeeded either way. One row for
-    // the whole delegated objective, not one per product.
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: foundNames.length > 0 ? "PENDING" : "WARNING",
-      verified: false,
-      message:
-        foundNames.length > 0
-          ? `Proposed new images for ${foundNames.join(", ")}`
-          : `Couldn't find new images for ${missedNames.join(", ")}`,
-      retryable: foundNames.length === 0,
-      userId,
-      storeId: store.id,
-      metadata: { groupId, productIds: outcomes.filter((o) => o.candidate).map((o) => o.id) },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: foundNames.length > 0 ? "success" : "failure",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
   }
 
-  // 2026-08-08 — the missing product-delete capability, non-streaming
-  // fallback copy of the same handling in app/api/chat/route.ts's own
-  // request_product_removal branch (see that file's comment for the full
-  // reasoning: destructive/always_ask, hard-locked in genesisActions.ts,
-  // never auto-executed — this only ever proposes).
-  const productRemovalResult = chosenTool?.name === "request_product_removal"
-    ? {
-        isProductRemovalRequest: true as const,
-        ...(chosenTool.input as RequestProductRemovalInput),
-        reply: conversationalReply || "Let me take care of that.",
-      }
-    : null;
-
-  if (productRemovalResult?.isProductRemovalRequest) {
-    const targetProducts =
-      productRemovalResult.scope === "all"
-        ? currentProducts
-        : productRemovalResult.scope === "specific"
-          ? currentProducts.filter((p) =>
-              (productRemovalResult.productNames ?? [])
-                .map((n) => n.trim().toLowerCase())
-                .includes(p.name.trim().toLowerCase())
-            )
-          : [];
-
-    if (targetProducts.length === 0) {
-      const clarification = buildScopeClarification({
-        verb: "remove",
-        activeNames: currentProducts.map((p) => p.name),
-        lastAssistantContent: lastAssistantContent(existingMessages),
-      });
-      await prisma.storeMessage.create({
-        data: { storeId: store.id, role: "assistant", content: clarification },
-      });
-      await logChatTurnEvent({
-        userId,
-        storeId: store.id,
-        durationMs: Date.now() - turnStartedAt,
-        outcome: "failure",
-        likelyRephraseOf,
-        stageDurationsMs,
-      });
-      revalidatePath(returnTo);
-      redirectKeepingChatOpen(returnTo);
-    }
-
-    const groupId = randomUUID();
-    for (const product of targetProducts) {
-      await prisma.approvalRequest.deleteMany({
-        where: {
-          storeId: store.id,
-          actionType: "delete_product",
-          status: "PENDING_APPROVAL",
-          input: { path: ["productId"], equals: product.id },
-        },
-      });
-      await prisma.approvalRequest.create({
-        data: {
-          storeId: store.id,
-          recommendationId: null,
-          actionType: "delete_product",
-          // M2 — the same canonical derivation the backfill uses, so a decision made in
-          // conversation enters the belief system identically to one made last January.
-          // Null where no honest name exists.
-          topicKey: deriveTopicKey("delete_product", null),
-          input: { productId: product.id, name: product.name },
-          previousValues: { productId: product.id, name: product.name },
-          summary: `Remove "${product.name}" — this permanently deletes it`,
-          authorizationTier: GENESIS_ACTIONS.delete_product.authorizationTier,
-          groupId,
-        },
-      });
-    }
-
-    const names = targetProducts.map((p) => p.name);
-    const replyParts = [productRemovalResult.reply];
-    replyParts.push(
-      names.length > 1
-        ? `These are grouped as one idea on Products — review and approve each to permanently delete them.`
-        : `You'll find it waiting for your review on Products — approve it to permanently delete it.`
-    );
-
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: replyParts.join(" ") },
-    });
-
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "PENDING",
-      verified: false,
-      message: `Proposed removing ${names.join(", ")}`,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: { groupId, productIds: targetProducts.map((p) => p.id) },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "success",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
-  // J4 approvable product content changes (2026-08-09) — non-streaming
-  // fallback copy of route.ts's own request_product_content_change
-  // handling (see that file's comment for the full reasoning). userMessage
-  // was already written once at the top of this function — only the
-  // assistant reply is new here.
-  const productContentChangeResult = chosenTool?.name === "request_product_content_change"
-    ? {
-        isProductContentChangeRequest: true as const,
-        ...(chosenTool.input as RequestProductContentChangeInput),
-        reply: conversationalReply || "I've looked at your products.",
-      }
-    : null;
-
-  if (productContentChangeResult?.isProductContentChangeRequest) {
-    const targetProducts =
-      productContentChangeResult.scope === "all"
-        ? currentProducts
-        : productContentChangeResult.scope === "specific"
-          ? currentProducts.filter((p) =>
-              (productContentChangeResult.productNames ?? [])
-                .map((n) => n.trim().toLowerCase())
-                .includes(p.name.trim().toLowerCase())
-            )
-          : [];
-
-    if (targetProducts.length === 0) {
-      const clarification = buildScopeClarification({
-        verb: "work on",
-        activeNames: currentProducts.map((p) => p.name),
-        lastAssistantContent: lastAssistantContent(existingMessages),
-      });
-      await prisma.storeMessage.create({
-        data: { storeId: store.id, role: "assistant", content: clarification },
-      });
-      await logChatTurnEvent({
-        userId,
-        storeId: store.id,
-        durationMs: Date.now() - turnStartedAt,
-        outcome: "failure",
-        likelyRephraseOf,
-        stageDurationsMs,
-      });
-      revalidatePath(returnTo);
-      redirectKeepingChatOpen(returnTo);
-    }
-
-    const suggestions = await generateProductContentChanges({
-      storeId: store.id,
-      products: targetProducts.map((p) => ({ id: p.id, name: p.name, description: p.description, priceInCents: p.priceInCents })),
-      changeType: productContentChangeResult.changeType,
-      ownerRequest: userMessage,
-    });
-
-    const groupId = randomUUID();
-    const proposed: { id: string; name: string }[] = [];
-    const unchanged: string[] = [];
-    for (const product of targetProducts) {
-      const suggestion = suggestions.find((s) => s.productId === product.id);
-      const changedFields: { name?: string; description?: string | null } = {};
-      if (suggestion?.name && suggestion.name.trim() && suggestion.name.trim() !== product.name) {
-        changedFields.name = suggestion.name.trim();
-      }
-      if (
-        productContentChangeResult.changeType !== "name" &&
-        suggestion?.description &&
-        suggestion.description.trim() &&
-        suggestion.description.trim() !== (product.description ?? "")
-      ) {
-        changedFields.description = suggestion.description.trim();
-      }
-
-      if (Object.keys(changedFields).length === 0) {
-        unchanged.push(product.name);
-        continue;
-      }
-
-      await prisma.approvalRequest.deleteMany({
-        where: {
-          storeId: store.id,
-          actionType: "update_product",
-          status: "PENDING_APPROVAL",
-          input: { path: ["productId"], equals: product.id },
-        },
-      });
-      const previousValues: Record<string, unknown> = { productId: product.id };
-      if ("name" in changedFields) previousValues.name = product.name;
-      if ("description" in changedFields) previousValues.description = product.description;
-      await prisma.approvalRequest.create({
-        data: {
-          storeId: store.id,
-          recommendationId: null,
-          actionType: "update_product",
-          // M2 — the same canonical derivation the backfill uses, so a decision made in
-          // conversation enters the belief system identically to one made last January.
-          // Null where no honest name exists.
-          topicKey: deriveTopicKey("update_product", { productId: product.id, ...changedFields }),
-          input: { productId: product.id, ...changedFields },
-          previousValues,
-          summary: suggestion?.reasoning ? `${product.name}: ${suggestion.reasoning}` : `Update "${product.name}"`,
-          authorizationTier: GENESIS_ACTIONS.update_product.authorizationTier,
-          groupId,
-        },
-      });
-      proposed.push({ id: product.id, name: product.name });
-    }
-
-    const replyParts = [productContentChangeResult.reply];
-    if (proposed.length > 1) {
-      replyParts.push(`I've proposed changes for ${proposed.length}: ${proposed.map((p) => p.name).join(", ")} — review each on Products, or approve all together.`);
-    } else if (proposed.length === 1) {
-      replyParts.push(`You'll find my proposed change for "${proposed[0].name}" waiting for your review on Products.`);
-    }
-    if (unchanged.length > 0) {
-      replyParts.push(`${unchanged.length > 1 ? "These" : "One"} already read${unchanged.length > 1 ? "" : "s"} well as-is, so I left ${unchanged.length > 1 ? "them" : "it"} unchanged: ${unchanged.join(", ")}.`);
-    }
-
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: replyParts.join(" ") },
-    });
-
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: proposed.length > 0 ? "PENDING" : "WARNING",
-      verified: false,
-      message: proposed.length > 0 ? `Proposed content changes for ${proposed.map((p) => p.name).join(", ")}` : "No real content changes to propose",
-      retryable: proposed.length === 0,
-      userId,
-      storeId: store.id,
-      metadata: { groupId, productIds: proposed.map((p) => p.id) },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: proposed.length > 0 ? "success" : "failure",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
-  // J4 conversational approval (2026-08-09) — non-streaming fallback copy
-  // of route.ts's own approve_pending_changes handling (see that file's
-  // comment for the full reasoning). userMessage was already written once
-  // at the top of this function — only the assistant reply is new here.
-  if (chosenTool?.name === "approve_pending_changes") {
-    let finalReply: string;
-    try {
-      const result = await performApprovePendingChanges(store.id);
-      finalReply = describeApprovalExecutionForChat(result);
-    } catch (err) {
-      finalReply =
-        err instanceof Error && err.message.includes("permission")
-          ? "Approving changes is something only the store owner can do — ask them to approve this, or to give you broader access."
-          : "Something went wrong applying those changes — they're still pending, so you can retry from the review page.";
-    }
-
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: finalReply },
-    });
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "SUCCESS",
-      verified: false,
-      message: finalReply,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: {},
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "success",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
-  // Hard J4 capability requirement (2026-08-08) — non-streaming fallback
-  // copy of route.ts's own manage_business_asset handling (see that
-  // file's comment for the full reasoning: the file is already
-  // permanently saved the instant upload completes, so this reply is
-  // deterministic, never model-generated, and never the old false "I
-  // can't save this"). userMessage was already written once at the top
-  // of this function — only the assistant reply is new here.
-  const manageAssetResult = chosenTool?.name === "manage_business_asset" ? (chosenTool.input as ManageBusinessAssetInput) : null;
-
-  if (manageAssetResult) {
-    const mostRecentAsset = await prisma.businessRecord.findFirst({
-      where: { storeId: store.id, entityType: "asset" },
-      orderBy: { syncedAt: "desc" },
-    });
-
-    const reply = !mostRecentAsset
-      ? "I don't see anything uploaded yet to save — share a photo or document and I'll take it from there."
-      : manageAssetResult.role
-        ? `That's already saved as part of your business files. Assigning it specifically as "${manageAssetResult.role}" isn't something I can do yet — that's a capability coming soon. For now it's safely on file and I can pull it back up whenever you need it.`
-        : `That's already saved as part of your business files. Want me to give it a specific role — like your primary logo — or is keeping it on file for now good?`;
-
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: reply },
-    });
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "SUCCESS",
-      verified: false,
-      message: reply,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: { kind: "manage_business_asset", hadAsset: !!mostRecentAsset, role: manageAssetResult.role },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "success",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
-
-  if (chosenTool?.name === "answer_supplier_economics") {
-    const parsed = AnswerSupplierEconomicsToolInputSchema.safeParse(chosenTool.input);
-    const { applyEconomicsAnswer, chatAnswerFrom } = await import("@/lib/sourcing/economicsChat");
-
-    // Defence in depth: an input that did not validate never becomes an answer
-    // about somebody's money. Nothing is written and the merchant is told.
-    const outcome = parsed.success
-      ? await applyEconomicsAnswer({ storeId: store.id, answer: chatAnswerFrom(parsed.data) })
-      : {
-          status: "unresolved" as const,
-          reply: "I didn't quite catch the figures — tell me the minimum order and the price per unit and I'll get them down.",
-        };
-
-    // CODE-BUILT, not the model's. The reply has to say both what was learned
-    // and what is still unknown, and the model wrote its text before either was
-    // known — the same reason the auto-execute path overrides its own "Done".
-    const reply = outcome.reply;
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: reply },
-    });
-    await recordGenesisExecution({
-      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
-      status: "SUCCESS",
-      verified: false,
-      message: reply,
-      retryable: false,
-      userId,
-      storeId: store.id,
-      metadata: {
-        kind: "answer_supplier_economics",
-        resolved: outcome.status,
-        ...(outcome.status === "applied"
-          ? {
-              productId: outcome.question.productId,
-              changes: outcome.result.changes,
-              reevaluated: outcome.result.reevaluated,
-              stillMissing: outcome.result.stillMissing,
-            }
-          : {}),
-      },
-    });
-    await logChatTurnEvent({
-      userId,
-      storeId: store.id,
-      durationMs: Date.now() - turnStartedAt,
-      outcome: "success",
-      likelyRephraseOf,
-      stageDurationsMs,
-    });
-
-    revalidatePath(returnTo);
-    redirectKeepingChatOpen(returnTo);
-  }
 
   const primaryOutcome = await callGenesisModel({
     model: "claude-opus-4-8",

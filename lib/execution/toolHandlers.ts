@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import type { BusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY, DesignSchema, AssetSchema } from "@/lib/businessModel/entities";
 import { ASSET_ROLES } from "@/lib/businessModel/assets";
@@ -83,6 +84,31 @@ export interface ToolTurnContext {
   /** A progress line for the owner while real work happens. */
   status: (text: string) => void;
   /**
+   * Where to send words as they arrive, when the caller can show them.
+   *
+   * OPTIONAL, and that is the whole reason this is one handler rather than two.
+   * The streaming route can show tokens as they are produced; the Server Action
+   * has nowhere to put them and simply omits this. A handler that assumed
+   * streaming would have needed a second, non-streaming copy — which is exactly
+   * the duplication that let these two paths drift apart in the first place.
+   */
+  onDelta?: (delta: string) => void;
+  /**
+   * What J4 said last turn, when there was one.
+   *
+   * The only state needed to tell "ask" from "ask again" — see
+   * buildScopeClarification.
+   */
+  previousAssistantMessage?: string;
+  /**
+   * The canonical understanding, already fetched for this turn.
+   *
+   * Handed in rather than re-read: the turn needed it to decide, and a second
+   * read here would be a different answer to "what does J4 know" one query
+   * later.
+   */
+  understanding?: BusinessUnderstanding;
+  /**
    * The store's active products, as the turn already fetched them.
    *
    * Passed in rather than re-queried: the turn needs them anyway to tell the
@@ -117,6 +143,13 @@ export type ToolTurnResult =
       outcome?: "success" | "failure";
       /** What the execution log records, when it differs from what was said. */
       logMessage?: string;
+      /**
+       * The reply already reached the reader as it was produced.
+       *
+       * Only true where the caller supplied `onDelta` AND the handler used it.
+       * Emitting the text again would show the owner the same answer twice.
+       */
+      alreadyStreamed?: boolean;
       /**
        * How the execution log records this.
        *
@@ -440,6 +473,42 @@ export function makeTakeMeThere(resolveHref: (href: string) => string): ToolHand
  * Matching is trimmed and case-folded because the model is repeating a name the
  * merchant typed, not quoting the database.
  */
+export const SCOPE_QUESTION = "which product did you mean?";
+
+/**
+ * The one question J4 asks when it cannot tell which product is meant.
+ *
+ * Three handlers need it — change the photo on, remove, work on — and two real
+ * defects were once duplicated across all three.
+ *
+ * First, an unresolved scope emitted the MODEL's own free-form reply, which is
+ * exactly the shape that restates the merchant's sentence back at them as a
+ * question. So this never echoes the model: the question is always grounded in
+ * the real active product list.
+ *
+ * Second, and worse, NO SITE KNEW IT HAD ALREADY ASKED. Every turn recomputed
+ * the same clarification from scratch, so a merchant who answered ambiguously
+ * could receive the identical question forever. That is the loop: J4 has to
+ * advance conversational state, not re-emit it. Asking twice escalates to
+ * something answerable with a single character.
+ */
+export function buildScopeClarification(input: {
+  /** What J4 would be doing: "remove", "work on", "change the photo on". */
+  verb: string;
+  activeNames: string[];
+  previousAssistantMessage?: string;
+}): string {
+  if (input.activeNames.length === 0) {
+    return `I don't have any active products to ${input.verb} yet — add one first and I'll take it from there.`;
+  }
+  if (input.previousAssistantMessage?.includes(SCOPE_QUESTION)) {
+    return `Let me make this easier — reply with just the number:\n${input.activeNames
+      .map((name, i) => `${i + 1}. ${name}`)
+      .join("\n")}`;
+  }
+  return `I want to make sure I ${input.verb} the right one — ${SCOPE_QUESTION} Your active products are: ${input.activeNames.join(", ")}.`;
+}
+
 export function resolveScopedProducts<T extends { name: string }>(
   products: T[],
   scope: "all" | "specific" | null | undefined,
@@ -471,12 +540,12 @@ const requestProductRemoval: ToolHandler = async (ctx) => {
     // never a guess at the closest match.
     return {
       handled: true,
-      reply:
-        input?.scope === "specific"
-          ? `I want to make sure I remove the right one — which product did you mean? Your active products are: ${ctx.products
-              .map((p) => p.name)
-              .join(", ")}.`
-          : ctx.conversationalReply || "Which product would you like me to remove?",
+      // Never `ctx.conversationalReply` here — see buildScopeClarification.
+      reply: buildScopeClarification({
+        verb: "remove",
+        activeNames: ctx.products.map((p) => p.name),
+        previousAssistantMessage: ctx.previousAssistantMessage,
+      }),
       kind: "product_removal_request",
       outcome: "failure",
     };
@@ -1393,12 +1462,11 @@ export function makeRequestImageChange(
     if (targets.length === 0) {
       return {
         handled: true,
-        reply:
-          input?.scope === "specific"
-            ? `I want to make sure I update the right one — which product did you mean? Your active products are: ${ctx.products
-                .map((p) => p.name)
-                .join(", ")}.`
-            : ctx.conversationalReply || "Which product would you like a new photo for?",
+        reply: buildScopeClarification({
+          verb: "change the photo on",
+          activeNames: ctx.products.map((p) => p.name),
+          previousAssistantMessage: ctx.previousAssistantMessage,
+        }),
         kind: "image_request",
         outcome: "failure",
       };
@@ -1710,12 +1778,11 @@ export function makeRequestProductContentChange(
     if (targets.length === 0) {
       return {
         handled: true,
-        reply:
-          input?.scope === "specific"
-            ? `I want to make sure I work on the right one — which product did you mean? Your active products are: ${ctx.products
-                .map((p) => p.name)
-                .join(", ")}.`
-            : ctx.conversationalReply || "Which product would you like me to work on?",
+        reply: buildScopeClarification({
+          verb: "work on",
+          activeNames: ctx.products.map((p) => p.name),
+          previousAssistantMessage: ctx.previousAssistantMessage,
+        }),
         kind: "product_content_change_request",
         outcome: "failure",
       };
@@ -1836,6 +1903,149 @@ export function makeRequestProductContentChange(
 }
 
 /**
+ * Answer a real question from the business's own data.
+ *
+ * THE ONE HANDLER THAT SPEAKS IN THE MODEL'S OWN WORDS, because the answer IS
+ * the work — everything else here does something and then reports it.
+ *
+ * Streams when the caller can show it. `ctx.onDelta` is optional precisely so
+ * this is one implementation rather than two: the route pipes tokens to the
+ * owner as they arrive, the Server Action has nowhere to put them, and neither
+ * needs its own copy of what to send the model. A second copy is how these two
+ * paths drifted before.
+ *
+ * A FAILED CALL IS NOT AN EMPTY ANSWER. If the model fails or says nothing, the
+ * handler refuses rather than persisting a blank reply — an empty assistant
+ * message in somebody's conversation is worse than an honest failure.
+ */
+export function makeLookUpBusinessData(deps?: {
+  answer?: (input: {
+    storeId: string;
+    payload: unknown;
+    question: string;
+    onDelta?: (delta: string) => void;
+  }) => Promise<{ ok: boolean; text: string }>;
+}): ToolHandler {
+  return async (ctx) => {
+    if (!ctx.understanding) {
+      // Unreachable through either real path — both fetch it before deciding —
+      // and refused rather than re-read, because a handler quietly issuing its
+      // own understanding query is how a second source of truth begins.
+      return { handled: false, reason: "invalid_input" };
+    }
+    const understanding = ctx.understanding;
+
+    const { buildChatDataContext } = await import("@/lib/businessModel/reasoning");
+    const { findRelevantDecisions } = await import("@/lib/businessModel/reasoning");
+    const { findRelevantMessages } = await import("@/lib/businessModel/conversationRecall");
+    const { groundingRules, unsourcedCount } = await import("@/lib/businessModel/grounding");
+
+    const [dataContext, pastDecisions, pastStatements] = await Promise.all([
+      buildChatDataContext(ctx.storeId),
+      findRelevantDecisions(ctx.storeId, ctx.userMessage),
+      // The owner's own past words, any age — the same relevance-over-recency
+      // rule the decisions above follow.
+      findRelevantMessages(ctx.storeId, ctx.userMessage),
+    ]);
+
+    const sourced = [
+      ...understanding.profile.goals,
+      ...understanding.profile.challenges,
+      ...understanding.profile.assets,
+    ];
+
+    const payload = {
+      ...dataContext,
+      businessProfile: understanding.profile,
+      // The provenance is already on those records; carrying it without
+      // explaining how to read it is just more JSON.
+      sourceGuidance: groundingRules(sourced),
+      factsWithNoRecordedSource: unsourcedCount(sourced),
+      beliefs: understanding.beliefs,
+      recentDecisions: understanding.recentDecisions,
+      pastDecisionsRelevantToThisQuestion: pastDecisions,
+      pastStatementsByTheOwnerRelevantToThisQuestion: pastStatements,
+      commitments: understanding.commitments,
+      // Patterns about the owner, not the business — populated only for the
+      // owner themselves.
+      ownerUnderstanding: understanding.ownerUnderstanding,
+      activeThoughts: understanding.activeThoughts,
+      growthPointBalance: understanding.platformRelationship.growthPointBalance,
+    };
+
+    const ask =
+      deps?.answer ??
+      (async (input: {
+        storeId: string;
+        payload: unknown;
+        question: string;
+        onDelta?: (delta: string) => void;
+      }) => {
+        const { callGenesisModel } = await import("@/lib/genesisModel");
+        const { withJ4CopyRules } = await import("@/lib/j4CopyRules");
+        const { STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT } = await import("@/lib/dashboard/storeChatUnified");
+        const { growthPointCostsFor } = await import("@/lib/growthPoints/catalog");
+        const { PROPOSABLE_ACTION_TYPES } = await import("@/lib/intelligence/cognitiveLayer");
+
+        let text = "";
+        const outcome = await callGenesisModel(
+          {
+            model: "claude-opus-4-8",
+            max_tokens: 1500,
+            thinking: { type: "adaptive" },
+            system: withJ4CopyRules(STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT),
+            messages: [
+              {
+                role: "user",
+                content: `Business data (JSON):\n${JSON.stringify(
+                  {
+                    ...(input.payload as object),
+                    growthPointCosts: growthPointCostsFor(PROPOSABLE_ACTION_TYPES),
+                  },
+                  null,
+                  2
+                )}\n\nMerchant's question: ${input.question}`,
+              },
+            ],
+          },
+          {
+            storeId: input.storeId,
+            feature: "store_chat_data_answer",
+            // PLAIN TEXT, no structured output: a structured call's raw stream
+            // is JSON matching the schema grammar, and piping that to a reader
+            // leaks syntax into the visible answer.
+            onTextDelta: (delta) => {
+              text += delta;
+              input.onDelta?.(delta);
+            },
+          }
+        );
+        return { ok: outcome.ok, text };
+      });
+
+    const answered = await ask({
+      storeId: ctx.storeId,
+      payload,
+      question: ctx.userMessage,
+      onDelta: ctx.onDelta,
+    });
+
+    if (!answered.ok || !answered.text) {
+      return { handled: false, reason: "invalid_input" };
+    }
+
+    return {
+      handled: true,
+      reply: answered.text,
+      kind: "data_question",
+      // The words were already sent to the reader as they arrived, where the
+      // caller could show them — emitting them again would duplicate the answer.
+      alreadyStreamed: Boolean(ctx.onDelta),
+    };
+  };
+}
+
+/**
  * The tools that have moved out of the inline ladder.
  *
  * A hand-maintained mirror of what route.ts still handles inline — every name
@@ -1860,6 +2070,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   request_image_change: makeRequestImageChange(),
   refine_storefront: makeRefineStorefront(),
   request_product_content_change: makeRequestProductContentChange(),
+  look_up_business_data: makeLookUpBusinessData(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the
   // ACCOUNT'S ACTIVE business rather than the one the owner is in, so it is

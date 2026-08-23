@@ -10,8 +10,6 @@ import {
   refusalMessage,
   planToolRun,
   describeDroppedTools,
-  SERVER_ACTION_TOOLS,
-  serverActionCanHandle,
   UNAVAILABLE_ON_THIS_PATH,
   MAX_TOOLS_PER_TURN,
 } from "@/lib/execution/toolPolicy";
@@ -289,49 +287,43 @@ console.log("\n=== 8. Every tool the model can emit is actually handled ===\n");
 // generate_brand_logo fell through to the legacy content pipeline and ran a
 // full store-content regeneration instead, reporting that as the answer.
 //
-// Read from each file's real source, because "does this branch exist" is not a
+// That is now structurally impossible rather than merely listed: both paths
+// dispatch through lib/execution/toolHandlers.ts, so a tool is handled or it is
+// handled nowhere. What this section still has to hold is that the SHAPE stays
+// that way — one registry, both callers, and no quiet route back to the
+// content pipeline for a turn that resolved to nothing.
+//
+// Read from each file's real source, because "does this dispatch" is not a
 // question a type can answer.
-const handledIn = (source: string) => catalog.filter((n) => source.includes(`"${n}"`));
 
-// THE STREAMING ROUTE HANDLES EVERY TOOL — in one of two places now. Three have
-// moved into lib/execution/toolHandlers.ts (which is what finally gave them
-// tests); the rest still run inline. A tool in NEITHER place falls through to
-// whatever comes next, silently, which is the failure this whole section exists
-// for.
-const routeHandles = handledIn(route);
-const reachable = (n: string) => routeHandles.includes(n) || MIGRATED_TOOLS.includes(n);
-check("every registered tool is handled somewhere on the streaming path",
-  catalog.filter((n) => !reachable(n)), []);
-// AND IN EXACTLY ONE PLACE. Both would run it twice: the dispatcher first, then
-// the ladder again.
-check("and none is handled in both places at once",
-  MIGRATED_TOOLS.filter((n) => route.includes(`if (chosenTool?.name === "${n}")`)), []);
+// edit_store_content is the single tool with no handler, because the legacy
+// content pipeline IS its implementation. Named here rather than skipped.
+const CONTENT_PIPELINE_TOOL = "edit_store_content";
+check("every tool but the content pipeline's own has a handler",
+  catalog.filter((n) => !MIGRATED_TOOLS.includes(n) && n !== CONTENT_PIPELINE_TOOL), []);
+check("and every handler is for a real tool",
+  MIGRATED_TOOLS.filter((n) => !catalog.includes(n)), []);
 
-// The Server Action genuinely handles fewer, and that is allowed — what is NOT
-// allowed is the gap being undeclared, because an undeclared gap is a silent
-// fall-through.
-const actionHandles = handledIn(action);
-check("the declared Server Action set matches what that file really handles",
-  actionHandles.filter((n) => !SERVER_ACTION_TOOLS.includes(n)).sort(),
-  []);
-check("and nothing is declared that it cannot actually do",
-  SERVER_ACTION_TOOLS.filter((n) => !actionHandles.includes(n)).sort(), []);
-check("every declared name is a real tool",
-  SERVER_ACTION_TOOLS.filter((n) => !catalog.includes(n)), []);
+for (const [name, source] of [["the streaming route", route], ["the Server Action", action]] as const) {
+  assert(`${name} dispatches through the shared runner`,
+    source.includes("await runPlannedTools({"),
+    "a second implementation of a turn is how these two paths drifted apart before");
+  // AND IN EXACTLY ONE PLACE. Both would run the tool twice: the runner first,
+  // then the ladder again.
+  check(`${name} has no inline branch left`,
+    catalog.filter((n) => source.includes(`if (chosenTool?.name === "${n}")`)), []);
+}
 
-// THE GAP IS REAL, and pinning it means implementing one of the eight has to
-// come here and say so rather than being forgotten.
-const unhandled = catalog.filter((n) => !serverActionCanHandle(n));
-assert("the Server Action's gap is a known, non-empty set",
-  unhandled.length > 0, unhandled.join(", "));
-// THE EXACT STATEMENT, not the name appearing somewhere in the file. A negative
-// control disabled the guard with `if (false && ...)` and the looser check still
-// passed, because the text it looked for sat inside the disabled condition. A
-// source assertion can always be defeated by somebody determined; what it must
-// not do is miss the ordinary way a guard gets switched off.
-assert("and the file refuses those rather than falling through",
-  action.includes("if (decidedTool && !serverActionCanHandle(decidedTool)) {"),
-  "without this, an unhandled tool runs the legacy content pipeline instead");
+// THE LAST FALL-THROUGH. When a handler resolves to no work, the Server Action
+// used to continue into the content pipeline below it — which is the original
+// defect with a different trigger: the owner is shown another capability's
+// result as though it were the answer. The exact statement, not the name
+// appearing somewhere in the file: a negative control once disabled a guard
+// with `if (false && ...)` and a looser check still passed because the text it
+// looked for sat inside the disabled condition.
+assert("an unresolved turn does not run the content pipeline instead",
+  action.includes('if (decidedTool !== "edit_store_content") {'),
+  "without this, a tool that resolved to nothing regenerates the whole storefront");
 
 // The refusal says nothing happened, and nothing about internals.
 assert("the refusal says nothing was done",

@@ -303,14 +303,34 @@ async function main() {
   const streaming = read(join("app", "api", "chat", "route.ts"));
   const fallback = read(join("app", "dashboard", "ai-actions.ts"));
   const reason = read(join("lib", "intelligence", "cognitiveLayer.ts"));
+  // WHERE THIS NOW LIVES (2026-08-23, Unified Intelligence UI4). Both chat
+  // paths used to build this payload themselves, and this section asserted
+  // each copy separately — which is the weaker property, because two copies
+  // asserted identically today are still two copies tomorrow. They now answer
+  // a data question through one handler, so the invariant is stronger and the
+  // assertion follows it: built once, and neither path builds its own.
+  const handler = read(join("lib", "execution", "toolHandlers.ts"));
 
   for (const [name, source] of [
-    ["the streaming chat path", streaming],
-    ["the non-streaming fallback", fallback],
+    ["the shared data-question handler", handler],
     ["Reason's own pass", reason],
   ] as const) {
     assert(`${name} sends the grounding rules`, source.includes("sourceGuidance: groundingRules("));
     assert(`${name} sends the unsourced count`, source.includes("factsWithNoRecordedSource: unsourcedCount("));
+  }
+
+  for (const [name, source] of [
+    ["the streaming chat path", streaming],
+    ["the non-streaming fallback", fallback],
+  ] as const) {
+    // A second construction is how the two paths would start explaining
+    // provenance differently again — which is the whole thing Gap B names.
+    assert(`${name} does not build a second grounding payload`,
+      !source.includes("sourceGuidance: groundingRules("),
+      "two copies of this will eventually disagree");
+    assert(`${name} answers data questions through the shared handler`,
+      source.includes("await runPlannedTools({"),
+      "otherwise there is a path that never sees the grounding rules at all");
   }
   // Reason serialises per-fact sources too; the chat paths pass the profile
   // records whole, so the provenance is already on them.
