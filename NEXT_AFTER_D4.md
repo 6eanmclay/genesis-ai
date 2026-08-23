@@ -1,69 +1,72 @@
-# What is actually next — an honest position, not a manufactured milestone
+# Checkpoint — where Genesis actually stands
 
-**2026-08-23, after D1/D2, D3, D4 and PD4 all shipped.**
+**2026-08-23.** Replaces the earlier version, which was written when live
+validation was believed blocked. It was not.
 
-The approved backlog is empty. Rather than invent a milestone to fill the gap,
-this records the real candidates with their true value, so the next decision is
-made on evidence.
+## The roadmap, corrected against the repository
 
-## The defect audit is clean
+Sean's sequence, with what the repo actually says:
 
-Every surface Sean named has been swept this session, and the sweeps that found
-things have been turned into standing assertions rather than left as one-off
-scripts:
+| # | Milestone | State |
+|---|---|---|
+| 1 | Live-model validation + fixes | **Partly done.** Routing validated; classification blocked |
+| 2 | J4's Understanding of Your Business | **SHIPPED** — U1–U6, `d19254f..f80f4dd` |
+| 3 | Business Intelligence Engine | **CLOSED** — M1–M9, `BI_ENGINE.md` §15 |
+| 4 | UI6 | **Partly shipped.** Three parked pieces need a contract |
+| 5 | Teaching / Challenge | Needs a design pass |
+| 6 | Belief Constitution + channel | Constitution decision, not engineering |
+| 7 | Integrations / operating layer / Growth Points | Not started |
+| 8 | Final hardening and launch readiness | Not started |
 
-| Surface | Result |
+**2 and 3 are done.** They are recorded here so they stop being rediscovered as
+future work.
+
+## Live validation — what happened
+
+**The key was never missing.** It has been in `.env` throughout;
+`verify-j4-routing.ts` never imported `dotenv/config`, printed "is not set", and
+I relayed that as an external blocker for days. One import fixed it. Accepting a
+script's own skip message as fact about the environment is the same class of
+error as a green test that never entered its window.
+
+**Routing: 48/50, and the central bet is confirmed.** Ten cases where the
+business digest changed the decision, correct every time. The decisive one:
+*"Make me a logo"* goes to `generate_brand_logo` blind and, with the digest, J4
+answers instead — because the business already has one. That is precisely the
+job the removed prompt workaround used to do. `LIVE_ROUTING_RESULTS.md`.
+
+**One defect, fixed with a rule after prose failed.** *"Remove the old products
+and let's upload the first ring"* was answered rather than proposing the removal.
+A description change was tried, measured, did not work, and was reverted. The
+invariant now lives in `planToolRun`.
+
+**Not covered, and not pretended otherwise:** the variant where the model calls
+nothing at all. Forcing a tool there means inventing the arguments it needs.
+
+## Blocked, and by what exactly
+
+| Blocker | Blocks |
 |---|---|
-| Tenant isolation | `groupBy` guarded (was the one unguarded collection read); the guarded-operation list is now itself asserted |
-| Business scoping | 4 defects fixed; every remaining read is store-scoped or structurally unable not to be |
-| Authorization | `firstRefusedTool` over the whole planned turn, repeated inside the runner |
-| Execution / idempotency | D3 (one product per design), D4 (claim + evidence recovery), proactive delivery transaction |
-| Growth Points | No charge on a refused execution, none from recovery — both asserted |
-| Approval state | D4; blast radius of the new `EXECUTING` status checked — every approval filter is explicit equality, none uses `not:` |
-| Proactive delivery | 2 defects fixed (triple delivery, repeat after dismissal) |
-| Provenance | Unchanged this session; its own suite passes |
-| Conversation state | UI6 message state, D1/D2 partial turns, the emit fix |
+| **Anthropic credit balance** (new) | Any further live run. Exhausted across three runs — one baseline, two testing a hypothesis that failed |
+| **`CLASSIFY_FIXTURE_URL`** | Live classification and the employee-handbook loop. `classify.ts` sends the document as a URL for the model to fetch, so a local file cannot substitute |
+| `RESEND_API_KEY` | Owner notifications |
+| M2 | Sean's, untouched |
 
-**40/40 database suites.** No known defect remains.
+`verify-classification-live.ts` is written, its deterministic half passes, and
+its live half **has never run** — stated at the top of the file.
 
-## The candidates, ranked honestly
+## Deterministic state
 
-**1. Provider idempotency keys — LOW value, despite closing D4's residual window.**
-The window is a process dying between provider success and `recordExecution`:
-two adjacent statements. The only executable that registers with a provider is
-`createProductFromDesignExecutable`, and D3's unique index already refuses the
-duplicate it would produce. So this closes a millisecond gap on a path already
-protected. Real, and not worth doing next.
-*Also externally blocked for honest verification: Printful.*
+**41/41 database suites.** No known defect. Everything shipped this session is
+model-free by construction, so none of it is waiting on credit.
 
-**2. Live verification of everything shipped — HIGH value, blocked.**
-Twelve days of work is verified deterministically and almost none of it against
-a real model or a real provider. The routing suite's live half, the tool-result
-loop, classification closing the handbook ask, and whether J4's proactive
-sentences read well are all unanswerable without `ANTHROPIC_API_KEY`. This is
-the largest genuine gap in confidence and no amount of further building reduces
-it.
+## Next
 
-**3. UI6's three parked pieces — need design, not authorization.**
-Business context beside the conversation (undesigned by §7's own admission),
-navigable history (no threading model — what a "conversation" is has never been
-decided), concise-summary replies (blocked as a unit on a model).
+1. Credit, then re-run routing to exercise the policy-refusal display.
+2. `CLASSIFY_FIXTURE_URL`, then classification and the handbook loop.
+3. **UI6 contract** for the three parked pieces — business context beside the
+   conversation, navigable history, concise-summary replies. Contract first, no
+   implementation until approved.
 
-**4. Teaching / challenge / communication style — need design.**
-Four items in `J4_IDENTITY.md`'s "deliberately unbuilt" list, each naming a
-behaviour without specifying when it fires. All four would change how J4 talks
-based on inferred judgements about the owner — the highest-risk category in this
-product and the least verifiable without a model.
-
-**5. The Genesis Language belief channel — a Constitution decision.**
-Not engineering. The vocabulary is frozen.
-
-## What I would say if asked
-
-The buildable surface that does not need a product decision or a credential is
-genuinely exhausted. The next most valuable thing is not more code — it is
-`ANTHROPIC_API_KEY`, which converts several suites from "skipped, loudly" into
-real evidence about behaviour nobody has yet observed.
-
-Failing that, (3) and (4) are real product work, and both start with a design
-pass rather than a contract.
+Nothing else starts. The empty backlog is the signal to establish the next real
+milestone, not to invent one.
