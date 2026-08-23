@@ -3,6 +3,8 @@ import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { getReviewableBeliefs } from "@/lib/intelligence/beliefReview";
+import { describeProvenance } from "@/lib/businessModel/provenance";
+import { relationsByKind, RELATIONSHIP_KINDS } from "@/lib/businessModel/relationships";
 import { BeliefReview } from "./BeliefReview";
 
 const CARD =
@@ -23,6 +25,27 @@ function formatDate(value: string | Date): string {
 
 function trendArrow(direction: "up" | "down" | "flat" | undefined): string {
   return direction === "up" ? "↑" : direction === "down" ? "↓" : "—";
+}
+
+// WHERE A FACT CAME FROM, on the screen (2026-08-22).
+//
+// This page has said "source-attributed" in its own opening line since it was
+// built, and until today that was aspirational: a fact in BusinessRecord.data
+// had no origin to attribute. Now it does, and the sentence is true.
+//
+// RENDERS NOTHING when nothing was recorded, which is most facts for a while:
+// every record written before today has a null provenance. A line reading
+// "Source: unknown" under every one of them would turn a quiet gap into visual
+// noise on data that is probably fine — and it would say something stronger than
+// the truth, which is that nobody wrote it down, not that it came from nowhere.
+function Origin({
+  record,
+}: {
+  record: Parameters<typeof describeProvenance>[0];
+}) {
+  const described = describeProvenance(record);
+  if (!described) return null;
+  return <span className="text-xs text-zinc-500">{described}</span>;
 }
 
 function ConfidencePill({ confidence }: { confidence: number }) {
@@ -83,6 +106,16 @@ export async function UnderstandingScreen({ slug, basePath }: { slug?: string; b
   // Only the owner may correct. STORE_MANAGE gets you onto this page; it does
   // not make you the person J4's beliefs are about.
   const canCorrect = store.userId === userId;
+
+  // WHAT IS STANDING IN THE WAY OF WHAT (2026-08-22, U2).
+  //
+  // One indexed query, not a traversal. The old convention could say a goal and
+  // a challenge referenced each other and could not say which one was the
+  // problem — so the most useful sentence J4 could offer an owner was the one
+  // thing the model could not represent, and this screen showed the two lists
+  // side by side with nothing between them.
+  const blocking = await relationsByKind(store.id, "blocks");
+  const challengeById = new Map(profile.challenges.map((c) => [c.id, c]));
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
@@ -263,19 +296,48 @@ export async function UnderstandingScreen({ slug, basePath }: { slug?: string; b
               <p className="text-sm text-zinc-500">Nothing stated yet — tell me a goal or a challenge and I&apos;ll remember it here.</p>
             ) : (
               <>
-                {profile.goals.map((g) => (
-                  <p key={g.id} className="text-sm text-black dark:text-zinc-50">
-                    <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">Goal — {g.data.status}</span>
-                    <br />
-                    {g.data.description}
-                  </p>
-                ))}
+                {profile.goals.map((g) => {
+                  // The challenges standing in the way of THIS goal, named.
+                  const blockers = blocking
+                    .filter((r) => r.toId === g.id)
+                    .map((r) => challengeById.get(r.fromId))
+                    .filter((c) => c !== undefined);
+                  return (
+                    <div key={g.id}>
+                      <p className="text-sm text-black dark:text-zinc-50">
+                        <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">Goal — {g.data.status}</span>
+                        <br />
+                        {g.data.description}
+                      </p>
+                      {blockers.length > 0 && (
+                        <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
+                          {RELATIONSHIP_KINDS.blocks.reverse}{" "}
+                          {blockers.map((c) => c!.data.description).join("; ")}
+                        </p>
+                      )}
+                      <Origin record={g} />
+                    </div>
+                  );
+                })}
                 {profile.challenges.map((c) => (
-                  <p key={c.id} className="text-sm text-black dark:text-zinc-50">
-                    <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">Challenge — {c.data.status}</span>
-                    <br />
-                    {c.data.description}
-                  </p>
+                  <div key={c.id}>
+                    <p className="text-sm text-black dark:text-zinc-50">
+                      <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                        Challenge — {c.data.status}
+                      </span>
+                      {/* Read from the OTHER end, so the same relationship makes
+                          a sentence either way round: a goal is held up by a
+                          challenge, and a challenge is in the way of a goal. */}
+                      {blocking.some((r) => r.fromId === c.id) && (
+                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                          Blocking
+                        </span>
+                      )}
+                      <br />
+                      {c.data.description}
+                    </p>
+                    <Origin record={c} />
+                  </div>
                 ))}
               </>
             )}

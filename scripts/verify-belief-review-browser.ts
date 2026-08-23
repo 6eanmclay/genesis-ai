@@ -1,8 +1,9 @@
 import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { requireTestDatabase, TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
 
-// ARGUING WITH J4, IN A REAL BROWSER:
+// WHAT J4 UNDERSTANDS, AND ARGUING WITH IT, IN A REAL BROWSER:
 //
 //   powershell -File scripts/run-unelevated.ps1 \
 //     -Command "npx tsx scripts/verify-belief-review-browser.ts" -OutFile out.txt
@@ -20,6 +21,22 @@ import { startTestServer } from "@/scripts/lib/testServer";
 // page, opens the evidence, clicks "This isn't right", types a reason, submits,
 // and then checks the belief has left the active list AND stopped reaching the
 // reasoning path.
+//
+// WHY THE PRODUCT CODE IS IMPORTED LATE, and it is not a style choice.
+// startTestServer points the CHILD server at the harness database; this process
+// keeps whatever DATABASE_URL it inherited from .env. lib/prisma builds its
+// adapter from that variable at module-evaluation time, so a static
+// `import { persistSyncedRecords }` at the top of this file instantiates a
+// client against the developer's own database and then writes fixtures into it —
+// silently, and with the suite's assertions reading a different database than
+// the one it just wrote to.
+//
+// It surfaced here as an ECONNREFUSED, which is luck rather than protection. So:
+// point this process at the harness first, import the product code after, and
+// then make requireTestDatabase confirm it actually landed there rather than
+// trusting that it did. That guard exists precisely because "the only thing
+// standing between a real customer's catalogue and a test run was whoever typed
+// the command remembering which DATABASE_URL was in their shell".
 
 let failures = 0;
 
@@ -75,20 +92,35 @@ async function dismissArrival(page: Page): Promise<void> {
     });
 }
 
-/** The belief section, read structurally rather than by class name. */
-async function beliefSection(page: Page): Promise<string> {
-  return page.evaluate(() => {
+/** One section of the room, read structurally rather than by class name. */
+async function sectionUnder(page: Page, title: string): Promise<string> {
+  return page.evaluate((wanted) => {
     const heading = Array.from(document.querySelectorAll("h2")).find(
-      (h) => h.textContent?.trim() === "What J4 has learned"
+      (h) => h.textContent?.trim() === wanted
     );
     return heading?.parentElement?.textContent ?? "";
-  });
+  }, title);
+}
+
+async function beliefSection(page: Page): Promise<string> {
+  return sectionUnder(page, "What J4 has learned");
 }
 
 async function main() {
   const server = await startTestServer({ timeoutMs: 180_000 });
   const prisma = server.db.prisma;
   let browser: Browser | null = null;
+
+  // Before any product module is loaded. See the note at the top of this file.
+  process.env.DATABASE_URL = server.db.url;
+  // The cheap half of the guard. The half that actually matters is the marker
+  // table below, which cannot be satisfied by setting a variable.
+  process.env[TEST_DATABASE_ENV] = "1";
+  const { persistSyncedRecords } = await import("@/lib/businessModel/sync");
+  const { prismaSystem } = await import("@/lib/prisma");
+  // Not trusted — proved. The marker table only the harness creates is what
+  // makes this impossible to satisfy by exporting a variable.
+  await requireTestDatabase(prismaSystem);
 
   try {
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
@@ -129,16 +161,97 @@ async function main() {
       },
     });
 
+    // THREE FACTS WITH THREE DIFFERENT ORIGINS, plus one that predates any of
+    // this being recorded — the four states the screen has to tell apart.
+    const goalData = {
+      description: "Open a second workshop", category: "expansion", priority: "high",
+      targetDate: null, targetValueInCents: null, status: "active",
+      identifiedAt: "2026-03-02", relatedChallengeIds: [] as string[],
+    };
+    const stated = await persistSyncedRecords(store.id, "genesis_chat", [
+      { entityType: "goal", externalId: "g-stated", data: goalData as never },
+    ], {
+      provenance: "OWNER", provenanceDetail: "chat", statedById: owner.id,
+      statedAt: daysAgo(150), modelExtracted: true,
+    });
+    const statedGoalId = stated.changes[0].recordId;
+
+    await persistSyncedRecords(store.id, "quickbooks", [
+      {
+        entityType: "goal", externalId: "g-connector",
+        data: { ...goalData, description: "Collect on outstanding invoices" } as never,
+      },
+    ], { provenance: "CONNECTOR", provenanceDetail: "quickbooks", modelExtracted: false });
+
+    // The legacy row: written straight to the table, exactly as every record
+    // before today was.
+    await prisma.businessRecord.create({
+      data: {
+        storeId: store.id, entityType: "goal", sourceProvider: "quickbooks",
+        externalId: "g-legacy",
+        data: { ...goalData, description: "A goal from before any of this" } as never,
+      },
+    });
+
+    // A CHALLENGE THAT BLOCKS THE GOAL. Written through the ordinary sync path
+    // so the relationship is PROJECTED by the product, not inserted by hand —
+    // the point is that the screen reads what the pipeline produced.
+    await persistSyncedRecords(store.id, "genesis_chat", [
+      {
+        entityType: "challenge", externalId: "c-blocking",
+        data: {
+          description: "The lease on the current unit ends in December",
+          category: "operations", severity: "high", status: "active",
+          identifiedAt: "2026-03-02", resolvedAt: null, relatedGoalIds: [statedGoalId],
+        } as never,
+      },
+    ], { provenance: "OWNER", provenanceDetail: "chat", statedById: owner.id, modelExtracted: true });
+
     browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await signIn(page, server.baseUrl, owner.email!);
 
-    // ======================================================================
-    console.log("\n1. The belief is on the screen, with what it is made of");
-    // ======================================================================
     await page.goto(`${server.baseUrl}/b/belief-shop/understanding`, { waitUntil: "domcontentloaded" });
     await dismissArrival(page);
     await page.waitForSelector("h2", { state: "attached", timeout: 60_000 });
+
+    // ======================================================================
+    console.log("\n0. Every fact says where it came from — or honestly does not");
+    // ======================================================================
+    // This page has claimed to be "source-attributed" in its own opening line
+    // since it was built, and until today that was aspirational: a fact in
+    // BusinessRecord.data had no origin to attribute.
+    const facts = await sectionUnder(page, "Goals & challenges");
+    assert("a goal the owner stated says so", facts.includes("You told me"), facts.slice(0, 400));
+    assert("with how long ago", facts.includes("5 months ago"), facts.slice(0, 400));
+    // The half that changes how J4 may speak, not just how much to trust.
+    assert("and that the wording is J4's reading of it", facts.includes("(interpreted by J4)"));
+    assert("a goal from a connected system says that instead",
+      facts.includes("From a connected system"), facts.slice(0, 500));
+    assert("naming the system", facts.includes("(quickbooks)"));
+
+    // THE HONEST SILENCE. A record nobody sourced renders NOTHING rather than
+    // "Source: unknown" — which would say something stronger than the truth, and
+    // would put a line under most facts on a real store for months.
+    assert("the pre-existing goal is shown", facts.includes("A goal from before any of this"));
+    const unknownClaims = (facts.match(/unknown/gi) ?? []).length;
+    check("and claims no origin at all", unknownClaims, 0);
+
+    // ======================================================================
+    console.log("\n0b. And what is standing in the way of what");
+    // ======================================================================
+    // The old convention could say a goal and a challenge referenced each other
+    // and could not say which one was the problem, so this screen showed two
+    // lists side by side with nothing between them.
+    assert("the goal says what is holding it up",
+      facts.includes("is held up by") && facts.includes("The lease on the current unit ends in December"),
+      facts.slice(0, 700));
+    // The SAME row, read from the other end.
+    assert("and the challenge is marked as blocking something", facts.includes("Blocking"));
+
+    // ======================================================================
+    console.log("\n1. The belief is on the screen, with what it is made of");
+    // ======================================================================
 
     const initial = await beliefSection(page);
     assert("the claim is rendered", initial.includes("Refunds keep clustering on Mondays"), initial.slice(0, 160));
