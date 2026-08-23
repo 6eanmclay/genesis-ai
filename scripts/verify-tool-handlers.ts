@@ -1294,13 +1294,21 @@ async function main() {
   check("and nothing is written for it",
     await prisma.storeMessage.count({ where: { storeId: runShop.id } }), 0);
 
-  // STOPS AT THE FIRST FAILURE. A turn that half-ran and then reported an
-  // unrelated fallback leaves the owner unable to tell what happened.
+  // STOPS AT THE FIRST FAILURE, and since D1 KEEPS WHAT ALREADY HAPPENED.
+  //
+  // This asserted `invalid_input` — that a half-run turn was reported as
+  // nothing at all — which is precisely the behaviour D1 changes. The
+  // navigation really happened; discarding it left the owner answered by
+  // another code path while their business had changed. The turn still stops
+  // here; what is different is that it says so instead of pretending.
   const halfRun = await runPlannedTools(runInput([
     toolUse("take_me_there", { destination: "commerce", intent: null }),
     toolUse("capture_business_fact", { entityType: "constructor", data: {} }),
   ]));
-  check("a turn that cannot finish reports the failure, not the half", halfRun.kind, "invalid_input");
+  check("a turn that cannot finish keeps what did happen", halfRun.kind, "partial");
+  assert("and names the tool that did not run",
+    halfRun.kind === "partial" && halfRun.failedTool === "capture_business_fact",
+    JSON.stringify(halfRun));
 
   // TWO TOOLS, ONE TURN — and the merchant's message written exactly once.
   // It used to be written inside each branch, which is fine while only one can
@@ -1567,6 +1575,130 @@ async function main() {
     "later");
 
   await prisma.store.deleteMany({ where: { id: runShop.id } });
+
+  // ==========================================================================
+  console.log("\n=== 7b. A turn that stopped part-way (D1/D2) ===\n");
+  // ==========================================================================
+  // THE ACTUAL FAILURE WINDOW: handler #1 changes something, handler #2 throws.
+  // Nothing was written until every tool returned, so the mutation was real and
+  // the conversation contained no record of it — and the streaming route fell
+  // back, which re-ran the whole turn somewhere else.
+  //
+  // Reached through the real runner with a real registered tool first and a
+  // handler that throws second, rather than by testing the pieces separately.
+  const partialShop = await prisma.store.create({
+    data: { userId: owner.id, name: "Half Done", slug: `th-p-${uniq()}` },
+  });
+
+  const throwingPlan = [
+    toolUse("take_me_there", { destination: "commerce", intent: null }),
+    // capture_business_fact with an entity type no registry entry exists for:
+    // the handler declines rather than throwing, which is the same shape for
+    // D1 — earlier work is real either way.
+    toolUse("capture_business_fact", { entityType: "constructor", data: {} }),
+  ];
+  const partialRun = await runPlannedTools({
+    storeId: partialShop.id,
+    userId: owner.id,
+    role: "OWNER",
+    userMessage: "take me to orders and remember my goal",
+    conversationalReply: "",
+    products: [],
+    plannedTools: throwingPlan,
+    resolveHref: (href: string) => href,
+    status: () => {},
+  });
+
+  // NOT invalid_input. That is what it returned before, and it is what made the
+  // caller throw the successful tool away.
+  check("the turn reports itself as partial", partialRun.kind, "partial");
+  if (partialRun.kind !== "partial") throw new Error("unreachable");
+  check("carrying the tool that did not run", partialRun.failedTool, "capture_business_fact");
+  check("and the one that did", partialRun.results.length, 1);
+  check("which is still marked retryable", partialRun.retryable, true);
+
+  // A FIRST-TOOL FAILURE IS STILL AN ORDINARY FALLBACK. Nothing happened, so
+  // there is nothing to preserve and the caller may go elsewhere.
+  const nothingHappened = await runPlannedTools({
+    storeId: partialShop.id,
+    userId: owner.id,
+    role: "OWNER",
+    userMessage: "remember my goal",
+    conversationalReply: "",
+    products: [],
+    plannedTools: [toolUse("capture_business_fact", { entityType: "constructor", data: {} })],
+    resolveHref: (href: string) => href,
+    status: () => {},
+  });
+  check("a turn that never got started is not partial", nothingHappened.kind, "invalid_input");
+
+  // WHAT IS PERSISTED, which is the half that was missing entirely.
+  await persistToolTurn({
+    storeId: partialShop.id,
+    userId: owner.id,
+    userMessage: "take me to orders and remember my goal",
+    userMessageChanges: null,
+    writeUserMessage: true,
+    results: partialRun.results,
+    unfinished: {
+      failedTool: partialRun.failedTool,
+      cause: partialRun.cause,
+      retryable: partialRun.retryable,
+    },
+  });
+
+  const conversation = await prisma.storeMessage.findMany({
+    where: { storeId: partialShop.id },
+    orderBy: { createdAt: "asc" },
+    include: { executionLog: { select: { status: true, retryable: true, message: true, metadata: true } } },
+  });
+  check("the merchant's message is first", conversation[0]?.role, "user");
+  assert("then what actually happened",
+    conversation[1]?.content.includes("Taking you to"), conversation[1]?.content ?? "");
+  assert("then that the rest did not",
+    conversation[2]?.content.includes("couldn't get to the rest"), conversation[2]?.content ?? "");
+  check("and nothing else", conversation.length, 3);
+
+  // NEVER CLAIMS THE EARLIER WORK IS UNDONE. The reply above it said the
+  // navigation happened, and it did.
+  assert("the closing line does not retract what worked",
+    !/undone|reverted|cancelled|nothing happened/i.test(conversation[2]?.content ?? ""),
+    conversation[2]?.content ?? "");
+  assert("and names no tool, error or mechanism",
+    !/capture_business_fact|handler|tool|registry|error/i.test(conversation[2]?.content ?? ""),
+    conversation[2]?.content ?? "");
+  assert("while offering to pick it up",
+    (conversation[2]?.content ?? "").includes("Ask me again"), conversation[2]?.content ?? "");
+
+  // THE EXECUTION STATE. The turn must not read as a success.
+  check("the successful tool is logged as one", conversation[1]?.executionLog?.status, "SUCCESS");
+  check("and the unfinished turn as a warning", conversation[2]?.executionLog?.status, "WARNING");
+  check("marked retryable", conversation[2]?.executionLog?.retryable, true);
+  assert("with the real cause in the log, not in the conversation",
+    (conversation[2]?.executionLog?.message ?? "").includes("capture_business_fact"),
+    conversation[2]?.executionLog?.message ?? "");
+
+  // AND THE TURN AS A WHOLE IS A FAILURE, however well the first tool went.
+  check("a partial turn is not a successful turn",
+    turnOutcome(partialRun.results, true), "failure");
+  check("while the same results without the flag are a success",
+    turnOutcome(partialRun.results, false), "success");
+
+  // D2(a), asserted at the source: the route must not fall back on a partial
+  // turn. Falling back re-runs the whole turn on the Server Action — safe now
+  // that every handler is idempotent, but it would tell the owner the
+  // navigation happened a second time and charge points again where a handler
+  // generates.
+  const routeSrc = readFileSync(join(process.cwd(), "app", "api", "chat", "route.ts"), "utf8");
+  assert("the route does not fall back on a partial turn",
+    routeSrc.includes('if (run.kind !== "handled" && !unfinished) {'),
+    "a partial turn that falls back is re-run, and the owner is told twice");
+  const actionSrc2 = readFileSync(join(process.cwd(), "app", "dashboard", "ai-actions.ts"), "utf8");
+  assert("and the Server Action records it rather than falling through",
+    actionSrc2.includes('const partial = run.kind === "partial" ? run : null;'),
+    "falling through answers the owner from the content pipeline while their business changed");
+
+  await prisma.store.deleteMany({ where: { id: partialShop.id } });
 
   // ==========================================================================
   console.log("\n=== 8b. Approving changes happens in the business J4 is in ===\n");

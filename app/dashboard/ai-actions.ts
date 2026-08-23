@@ -2500,25 +2500,35 @@ async function applyGenesisMessageToStore(
       })),
     });
 
-    if (run.kind === "handled" && run.results.length > 0) {
+    // D2(a): a turn that stopped part-way is recorded, not thrown away. The
+    // earlier tools really changed something, and falling through to the
+    // content pipeline would answer the owner from somewhere else while their
+    // business had quietly changed.
+    const partial = run.kind === "partial" ? run : null;
+    const completed = run.kind === "handled" || run.kind === "partial" ? run.results : [];
+
+    if (completed.length > 0) {
       await persistToolTurn({
         storeId: store.id,
         userId,
         userMessage,
         userMessageChanges: null,
+        unfinished: partial
+          ? { failedTool: partial.failedTool, cause: partial.cause, retryable: partial.retryable }
+          : null,
         // Already written at the top of this function, before the model was
         // even called. Writing it again would duplicate the merchant's own
         // words in their conversation.
         writeUserMessage: false,
         droppedNotice,
-        results: run.results,
+        results: completed,
       });
-      for (const path of revalidationPaths(run.results)) revalidatePath(path);
+      for (const path of revalidationPaths(completed)) revalidatePath(path);
       await logChatTurnEvent({
         userId,
         storeId: store.id,
         durationMs: Date.now() - turnStartedAt,
-        outcome: turnOutcome(run.results),
+        outcome: turnOutcome(completed, Boolean(partial)),
         likelyRephraseOf,
         stageDurationsMs,
       });

@@ -570,7 +570,22 @@ export async function POST(request: Request) {
           })),
         });
 
-        if (run.kind !== "handled") {
+        // D2(a): A TURN THAT STOPPED PART-WAY DOES NOT FALL BACK. Falling back
+        // re-runs the whole turn on the Server Action — which is now SAFE, since
+        // every mutating handler is idempotent, but it is not HONEST: the owner
+        // has already been told the logo was set, and a re-run would tell them
+        // again. It would also charge growth points a second time wherever the
+        // handler generates. So the turn ends where it broke, with what really
+        // happened written down.
+        const unfinished = run.kind === "partial" ? run : null;
+        if (unfinished) {
+          diagLog(requestId, turnStartedAt, "turn_partial", {
+            failedTool: unfinished.failedTool,
+            completed: unfinished.results.length,
+          });
+        }
+
+        if (run.kind !== "handled" && !unfinished) {
           // Nothing was written, so the honest move is the ordinary fallback
           // rather than confirming something that never happened. no_handler
           // and refused should both be unreachable — every registered tool has
@@ -584,7 +599,12 @@ export async function POST(request: Request) {
           return;
         }
 
-        if (run.results.length > 0) {
+        // Bound once: `run` is a union and the two kinds that carry results are
+        // handled identically from here — what happened is written down either
+        // way, and only `unfinished` changes what is said afterwards.
+        const completed = run.kind === "handled" || run.kind === "partial" ? run.results : [];
+
+        if (completed.length > 0) {
           for (const tool of plannedTools) {
             diagLog(requestId, turnStartedAt, "tool_selected", { tool: tool.name });
           }
@@ -597,10 +617,17 @@ export async function POST(request: Request) {
             // the merchant's message.
             writeUserMessage: true,
             droppedNotice,
-            results: run.results,
+            results: completed,
+            unfinished: unfinished
+              ? {
+                  failedTool: unfinished.failedTool,
+                  cause: unfinished.cause,
+                  retryable: unfinished.retryable,
+                }
+              : null,
           });
 
-          for (const result of run.results) {
+          for (const result of completed) {
             if (result.alreadyStreamed) {
               // The words reached the reader as they were produced; emitting
               // them again would show the same answer twice.
@@ -614,16 +641,17 @@ export async function POST(request: Request) {
             // that touched the stream could never be the first of two.
             if (result.navigate) emit({ type: "navigate", href: result.navigate });
           }
-          for (const path of revalidationPaths(run.results)) revalidatePath(path);
+          for (const path of revalidationPaths(completed)) revalidatePath(path);
 
           emit({ type: "done", changes: null });
           await logStreamedChatTurn({
             userId,
             storeId: store.id,
             durationMs: Date.now() - turnStartedAt,
-            outcome: turnOutcome(run.results),
+            // A partial turn is a failure however well the tools that ran went.
+            outcome: turnOutcome(completed, Boolean(unfinished)),
             likelyRephraseOf,
-            kind: turnKind(run.results),
+            kind: turnKind(completed),
           });
           controller.close();
           return;

@@ -90,6 +90,33 @@ export type RunToolsOutcome =
    */
   | { kind: "no_handler"; toolName: string }
   /**
+   * A tool threw AFTER an earlier one had already changed something (D1/D2).
+   *
+   * The distinction from `invalid_input` is the whole point: there, nothing
+   * happened and falling back to another path costs the owner nothing. Here
+   * something real happened — a logo was set, a proposal was written — and
+   * throwing that away means the owner is answered by a different code path
+   * while their business quietly changed underneath them.
+   *
+   * Carries what genuinely succeeded so the caller can record it, and the tool
+   * that did not so the caller can say so.
+   */
+  | {
+      kind: "partial";
+      results: Extract<ToolTurnResult, { handled: true }>[];
+      failedTool: string;
+      /** The real cause, for the log. Never shown to the owner. */
+      cause: string;
+      /**
+       * Whether asking again is a real option.
+       *
+       * False only for a refusal — repeating it sends the owner into the same
+       * wall. `approve_pending_changes` already draws this line and this uses
+       * the same test.
+       */
+      retryable: boolean;
+    }
+  /**
    * The viewer may not invoke one of these tools.
    *
    * Should be unreachable — both callers refuse before they get here, with copy
@@ -177,9 +204,40 @@ export async function runPlannedTools(input: RunToolsInput): Promise<RunToolsOut
     const handler = Object.hasOwn(handlers, tool.name) ? handlers[tool.name] : null;
     if (!handler) return { kind: "no_handler", toolName: tool.name };
 
-    const outcome = await handler(toolContextFor(input, tool, index));
+    let outcome: ToolTurnResult;
+    try {
+      outcome = await handler(toolContextFor(input, tool, index));
+    } catch (err) {
+      // NOTHING EARLIER IS THROWN AWAY (D1). If this is the first tool, nothing
+      // has happened yet and the ordinary fallback is still the honest answer —
+      // the caller can go somewhere else and the owner loses nothing. Once an
+      // earlier tool has changed something, that is no longer true.
+      if (results.length === 0) return { kind: "invalid_input" };
 
-    if (!outcome.handled) return { kind: "invalid_input" };
+      const cause = err instanceof Error ? err.message : String(err);
+      return {
+        kind: "partial",
+        results,
+        failedTool: tool.name,
+        cause,
+        // Same test approve_pending_changes already uses: a permission refusal
+        // is not worth repeating, anything else is.
+        retryable: !/permission/i.test(cause),
+      };
+    }
+
+    if (!outcome.handled) {
+      // The same rule for a handler that could not use its input. Earlier work
+      // is real whether the later tool threw or simply declined.
+      if (results.length === 0) return { kind: "invalid_input" };
+      return {
+        kind: "partial",
+        results,
+        failedTool: tool.name,
+        cause: "handler could not use the model's input",
+        retryable: true,
+      };
+    }
     results.push(outcome);
   }
 
@@ -224,6 +282,15 @@ export async function persistToolTurn(input: {
    * when that turn is the one being recorded, and not otherwise.
    */
   droppedNotice?: string | null;
+  /**
+   * The tool that did not run, when the turn stopped part-way (D1).
+   *
+   * Written as its own assistant message AFTER the replies of everything that
+   * did work, because that is the order it happened in. Says nothing about
+   * which tool or why — the owner has no idea tools exist — and the real cause
+   * goes to the execution row instead.
+   */
+  unfinished?: { failedTool: string; cause: string; retryable: boolean } | null;
 }): Promise<void> {
   if (input.writeUserMessage) {
     await prisma.storeMessage.create({
@@ -294,6 +361,45 @@ export async function persistToolTurn(input: {
       },
     });
   }
+
+  // AND THEN, IF THE TURN STOPPED PART-WAY, that it stopped (D1). Last, because
+  // it happened last: everything above really did happen, and this says only
+  // that the remainder did not.
+  if (input.unfinished) {
+    const content = unfinishedTurnMessage(input.unfinished.retryable);
+    const logged = await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      // WARNING, never SUCCESS. A turn that did not finish is exactly the turn
+      // somebody scanning the log needs to find.
+      status: "WARNING",
+      verified: false,
+      // The real cause here, the owner's sentence in the message.
+      message: `Turn stopped at ${input.unfinished.failedTool}: ${input.unfinished.cause}`,
+      retryable: input.unfinished.retryable,
+      userId: input.userId,
+      storeId: input.storeId,
+      metadata: { kind: "turn_unfinished", failedTool: input.unfinished.failedTool },
+    });
+    await prisma.storeMessage.create({
+      data: { storeId: input.storeId, role: "assistant", content, executionLogId: logged.id },
+    });
+  }
+}
+
+/**
+ * What the owner is told when a turn stopped part-way.
+ *
+ * NOTHING ABOUT MECHANISM. Not the tool, not the error, not that there were
+ * several things — "the rest of that" is what a person would say. The real
+ * cause is in the execution row where somebody debugging can find it.
+ *
+ * And it never claims the earlier work is undone: the replies above it already
+ * said what happened, and those things really did happen.
+ */
+export function unfinishedTurnMessage(retryable: boolean): string {
+  return retryable
+    ? "I couldn't get to the rest of that — nothing else changed. Ask me again and I'll pick it up."
+    : "I couldn't get to the rest of that — nothing else changed, and it isn't something I can do for you.";
 }
 
 /** Every path a turn's results ask to be re-rendered, flattened and de-duplicated. */
@@ -313,8 +419,12 @@ export function revalidationPaths(
  * a success, and recording it as one hides the turns worth looking at.
  */
 export function turnOutcome(
-  results: Extract<ToolTurnResult, { handled: true }>[]
+  results: Extract<ToolTurnResult, { handled: true }>[],
+  // D1: a turn that stopped part-way is not a success, however well the tools
+  // that did run went. Defaulted so every existing caller is unchanged.
+  unfinished = false
 ): "success" | "failure" {
+  if (unfinished) return "failure";
   return results.some((r) => r.outcome === "failure") ? "failure" : "success";
 }
 
