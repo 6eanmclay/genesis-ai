@@ -2,7 +2,12 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
-import { routeToolHandlers, type ToolTurnResult, type TurnProduct } from "@/lib/execution/toolHandlers";
+import {
+  routeToolHandlers,
+  type ToolTurnContext,
+  type ToolTurnResult,
+  type TurnProduct,
+} from "@/lib/execution/toolHandlers";
 import { firstRefusedTool } from "@/lib/execution/toolPolicy";
 import type { StoreRole } from "@prisma/client";
 import type { BusinessUnderstanding } from "@/lib/businessModel/understanding";
@@ -117,6 +122,46 @@ export function lastAssistantContent(
  * and then reported an unrelated fallback would leave the owner unable to tell
  * what happened.
  */
+/**
+ * The context one planned tool is run with.
+ *
+ * SEPARATE AND EXPORTED because of `onDelta`, which is the one field whose
+ * value depends on WHERE the tool sits in the turn rather than on the turn
+ * itself — see below. That is a rule worth being able to assert directly
+ * instead of inferring from a stream.
+ */
+export function toolContextFor(
+  input: RunToolsInput,
+  tool: Anthropic.ToolUseBlock,
+  index: number
+): ToolTurnContext {
+  return {
+    storeId: input.storeId,
+    userId: input.userId,
+    userMessage: input.userMessage,
+    conversationalReply: input.conversationalReply,
+    input: tool.input,
+    status: input.status,
+    products: input.products,
+    // ONLY THE FIRST TOOL MAY STREAM, and the reason is ordering.
+    //
+    // Every handler runs before any reply is emitted, so a handler that streams
+    // puts its words on the wire DURING execution while the replies of the
+    // tools before it are still waiting for the loop that emits them. Ask for
+    // "take me to orders, and what sold worst last month" and the answer
+    // arrived first, with "Taking you to Commerce" appended underneath it —
+    // while the stored conversation had them the other way round, because that
+    // is written in plan order.
+    //
+    // A handler that is not first returns its whole text instead and is emitted
+    // in its turn. Slower for that one arrangement, and always in the order the
+    // owner asked.
+    onDelta: index === 0 ? input.onDelta : undefined,
+    understanding: input.understanding,
+    previousAssistantMessage: input.previousAssistantMessage,
+  };
+}
+
 export async function runPlannedTools(input: RunToolsInput): Promise<RunToolsOutcome> {
   // BEFORE ANY OF THEM RUN, and about all of them. Checking the first and
   // running the rest is the failure this replaces, not a hypothetical one.
@@ -126,24 +171,13 @@ export async function runPlannedTools(input: RunToolsInput): Promise<RunToolsOut
   const handlers = routeToolHandlers({ resolveHref: input.resolveHref });
   const results: Extract<ToolTurnResult, { handled: true }>[] = [];
 
-  for (const tool of input.plannedTools) {
+  for (const [index, tool] of input.plannedTools.entries()) {
     // Object.hasOwn, not `handlers[name]`: the key came from a model, and a
     // prototype key is not a handler.
     const handler = Object.hasOwn(handlers, tool.name) ? handlers[tool.name] : null;
     if (!handler) return { kind: "no_handler", toolName: tool.name };
 
-    const outcome = await handler({
-      storeId: input.storeId,
-      userId: input.userId,
-      userMessage: input.userMessage,
-      conversationalReply: input.conversationalReply,
-      input: tool.input,
-      status: input.status,
-      products: input.products,
-      onDelta: input.onDelta,
-      understanding: input.understanding,
-      previousAssistantMessage: input.previousAssistantMessage,
-    });
+    const outcome = await handler(toolContextFor(input, tool, index));
 
     if (!outcome.handled) return { kind: "invalid_input" };
     results.push(outcome);

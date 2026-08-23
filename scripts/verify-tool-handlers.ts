@@ -20,6 +20,7 @@ import {
   makeRequestImageChange,
   makeRequestProductContentChange,
   makeRefineStorefront,
+  makeLookUpBusinessData,
   isLogoRoleName,
   isHeroRoleName,
   NAV_DESTINATIONS,
@@ -38,10 +39,12 @@ import {
   turnOutcome,
   turnKind,
   lastAssistantContent,
+  toolContextFor,
 } from "@/lib/dashboard/runToolTurn";
 import { TakeMeThereInputSchema } from "@/lib/execution/genesisTools";
 import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
 import { queryRecords } from "@/lib/businessModel/reasoning";
+import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 
 // WHAT A TOOL ACTUALLY DOES, TESTED FOR THE FIRST TIME:
 //
@@ -1296,6 +1299,71 @@ async function main() {
   });
   check("every handler that ran is logged", logged.length, 4);
   check("navigation is a success", logged[0].status, "SUCCESS");
+
+  // ONLY THE FIRST TOOL MAY STREAM, and this is an ordering rule rather than a
+  // performance one. Every handler runs before any reply is emitted, so a
+  // handler that streams puts its words on the wire DURING execution, while the
+  // replies of the tools before it are still waiting for the loop that emits
+  // them. "Take me to orders, and what sold worst last month" put the answer
+  // first with "Taking you to Commerce" appended underneath — and the stored
+  // conversation had them the other way round, because that is written in plan
+  // order. Both plausible; they cannot both be right.
+  const streamed: string[] = [];
+  const twoTools = [
+    toolUse("take_me_there", { destination: "commerce", intent: null }),
+    toolUse("look_up_business_data", {}),
+  ];
+  const streamingInput = { ...runInput(twoTools), onDelta: (d: string) => streamed.push(d) };
+
+  check("the first tool is given the stream",
+    toolContextFor(streamingInput, twoTools[0], 0).onDelta !== undefined, true);
+  check("and a tool that is not first is not",
+    toolContextFor(streamingInput, twoTools[1], 1).onDelta, undefined);
+  // The turn's own values still reach every tool — it is the delta sink alone
+  // that depends on position.
+  check("while everything else reaches it unchanged",
+    toolContextFor(streamingInput, twoTools[1], 1).storeId, runShop.id);
+
+  // A single-tool turn — the ordinary case — still streams.
+  const alone = [toolUse("look_up_business_data", {})];
+  check("a turn of one still streams",
+    toolContextFor({ ...runInput(alone), onDelta: (d: string) => streamed.push(d) }, alone[0], 0)
+      .onDelta !== undefined,
+    true);
+  // And a caller with nowhere to put tokens gets none regardless of position.
+  check("a caller that cannot show tokens is given no sink",
+    toolContextFor(runInput(alone), alone[0], 0).onDelta, undefined);
+
+  // AND THE RUNNER HAS TO PASS THE REAL POSITION. The assertions above hand
+  // toolContextFor an index directly, which says nothing about what the loop
+  // hands it — a negative control that pinned index to 0 inside the loop passed
+  // every one of them with the defect fully restored. Nothing observable
+  // distinguishes the two, because the only handler that streams reaches a
+  // model to do it, so this is asserted from the source: the exact statement,
+  // since a looser check would match the broken form too.
+  const runner = readFileSync(join(process.cwd(), "lib", "dashboard", "runToolTurn.ts"), "utf8");
+  assert("the runner walks the planned tools with their real positions",
+    runner.includes("for (const [index, tool] of input.plannedTools.entries()) {"),
+    "a fixed index would let every tool stream while the assertions above stayed green");
+  assert("and builds each context from that position",
+    runner.includes("toolContextFor(input, tool, index)"),
+    "the position has to reach the thing that decides on it");
+
+  // THE HALF THAT MATTERS TO THE READER: a handler told it cannot stream
+  // returns its whole answer and does not claim otherwise, so the route emits
+  // it in its turn rather than skipping it as already seen.
+  const notStreamed = await makeLookUpBusinessData({
+    answer: async (a) => {
+      a.onDelta?.("leaked");
+      return { ok: true, text: "Rings outsold everything else." };
+    },
+  })({ ...toolContextFor(streamingInput, twoTools[1], 1), understanding: await getBusinessUnderstanding(runShop.id) });
+  assert("a non-first data answer is handled", notStreamed.handled);
+  if (!notStreamed.handled) throw new Error("unreachable");
+  check("nothing reached the reader early", streamed, []);
+  check("and it does not claim to have been streamed", notStreamed.alreadyStreamed, false);
+  assert("so the whole answer is still there",
+    notStreamed.reply === "Rings outsold everything else.", notStreamed.reply);
 
   // NOTHING RUNS THAT THE VIEWER MAY NOT DO — checked here, at the one place
   // every tool actually executes, and not only where each caller remembers to.
