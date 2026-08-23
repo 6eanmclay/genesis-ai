@@ -248,6 +248,70 @@ async function main() {
     refused, "idempotency that depends on remembering to check is not idempotency");
 
   // ==========================================================================
+  console.log("\n=== P4. Replying to it reaches the finding and the business ===\n");
+  // ==========================================================================
+  // A proactive message the owner cannot usefully answer is a notification with
+  // better copy. Verified rather than assumed, and the answer is that this
+  // already works through the representation that already exists: the message
+  // IS an ordinary conversation row, and both reply paths read the whole
+  // conversation for the business they are in.
+  //
+  // So there is nothing to build and something to protect. A filter added to
+  // either history read — by role, by whether a message carries an execution
+  // link — would silently make J4 unable to discuss what it had just said,
+  // and nothing else in the codebase would notice.
+
+  // The same query shape both reply paths use: store-scoped, newest first,
+  // no filter on role or anything else.
+  const historyAReplyWouldRead = await prisma.storeMessage.findMany({
+    where: { storeId: shop.id },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  assert("a proactive message is in the history a reply reads",
+    historyAReplyWouldRead.some((m) => m.content.includes("Revenue is down again, 25%")),
+    "a reply that cannot see what J4 just said would answer into a vacuum");
+  // Verbatim, because the message IS the finding's own summary. The model
+  // reading the conversation sees the finding itself, not a paraphrase of it —
+  // which is why no second context representation is needed for this.
+  assert("carrying the finding's own words, not a paraphrase",
+    historyAReplyWouldRead.some((m) => m.content.includes("Revenue is down again, 25% on last month.")),
+    "the finding's summary is what reaches the model, through the conversation");
+
+  // AND ONLY IN ITS OWN BUSINESS. The neighbour's reply reads the neighbour's
+  // conversation, which never contained this.
+  const neighbourHistory = await prisma.storeMessage.findMany({
+    where: { storeId: neighbour.id },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  check("the neighbour's history is empty", neighbourHistory.length, 0);
+  assert("so a reply there cannot see this business's finding",
+    !neighbourHistory.some((m) => m.content.includes("Revenue is down")),
+    "conversation history is the business boundary for a reply, as it is for everything else");
+
+  // THE REGRESSION GUARD. Both reply paths must keep reading the conversation
+  // whole. Asserted from source, because the failure is an added filter rather
+  // than a wrong value, and no runtime assertion here would see it.
+  for (const [name, relative] of [
+    ["the streaming route", ["app", "api", "chat", "route.ts"]],
+    ["the Server Action", ["app", "dashboard", "ai-actions.ts"]],
+  ] as const) {
+    const source = readFileSync(join(process.cwd(), ...relative), "utf8");
+    const query = source.slice(source.indexOf("const recentMessages = await prisma.storeMessage.findMany("));
+    const head = query.slice(0, query.indexOf("});") + 3);
+    assert(`${name} reads the conversation scoped to its business`,
+      head.includes("where: { storeId: store.id }"),
+      "an unscoped history read would put another business's conversation in the prompt");
+    assert(`${name} does not filter the conversation by role`,
+      !head.includes("role:"),
+      "filtering by role would drop what J4 said, including everything it raised itself");
+    assert(`${name} does not filter out messages carrying an execution`,
+      !head.includes("executionLogId"),
+      "a proactive message carries one; filtering on it would hide exactly these");
+  }
+
+  // ==========================================================================
   console.log("\n=== The cycle actually calls it ===\n");
   // ==========================================================================
   // EVERYTHING ABOVE TESTS speakNewFindings DIRECTLY, which says nothing about
