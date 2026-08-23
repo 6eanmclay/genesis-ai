@@ -1277,6 +1277,50 @@ async function main() {
   check("every handler that ran is logged", logged.length, 4);
   check("navigation is a success", logged[0].status, "SUCCESS");
 
+  // THE ORDER SOMEBODY READS IT BACK IN. The streaming route says what it is
+  // NOT doing before it does the work — correctly, the reader should not wait
+  // — but it does not write the merchant's own message until it knows the turn
+  // resolved locally. Persisting the notice at the moment it was spoken filed
+  // it BEFORE the message it answers, so scrolling back showed J4 declining
+  // something the merchant had not said yet.
+  await prisma.storeMessage.deleteMany({ where: { storeId: runShop.id } });
+  const withNotice = await runPlannedTools(runInput([
+    toolUse("take_me_there", { destination: "commerce", intent: null }),
+  ]));
+  if (withNotice.kind !== "handled") throw new Error("unreachable");
+  await persistToolTurn({
+    storeId: runShop.id,
+    userId: owner.id,
+    userMessage: "take me to commerce and rewrite everything",
+    userMessageChanges: null,
+    writeUserMessage: true,
+    droppedNotice: "I'll pick up the other thing you asked for next.",
+    results: withNotice.results,
+  });
+  const inOrder = await prisma.storeMessage.findMany({
+    where: { storeId: runShop.id }, orderBy: { createdAt: "asc" }, select: { role: true, content: true },
+  });
+  check("the merchant's message comes first", inOrder[0]?.role, "user");
+  assert("then what J4 is not doing",
+    inOrder[1]?.content.includes("pick up the other thing"), JSON.stringify(inOrder[1]));
+  assert("then what it did", inOrder[2]?.content.includes("Taking you to"), JSON.stringify(inOrder[2]));
+  check("and nothing else", inOrder.length, 3);
+
+  // A turn with nothing dropped writes no notice at all.
+  await prisma.storeMessage.deleteMany({ where: { storeId: runShop.id } });
+  await persistToolTurn({
+    storeId: runShop.id,
+    userId: owner.id,
+    userMessage: "take me to commerce",
+    userMessageChanges: null,
+    writeUserMessage: true,
+    results: withNotice.results,
+  });
+  check("nothing dropped means no notice",
+    await prisma.storeMessage.count({ where: { storeId: runShop.id } }), 2);
+  await prisma.storeMessage.deleteMany({ where: { storeId: runShop.id } });
+  await prisma.executionLog.deleteMany({ where: { storeId: runShop.id } });
+
   const asFailure = [
     { handled: true as const, reply: "a", kind: "one", outcome: "failure" as const },
     { handled: true as const, reply: "b", kind: "two" },

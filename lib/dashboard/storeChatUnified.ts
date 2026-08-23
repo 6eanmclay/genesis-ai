@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 // Response Modes plan (2026-08-07), Phase 2 — moved out of app/dashboard/
 // ai-actions.ts ("use server", which only allows exporting async functions)
 // so the new streaming Route Handler (app/api/chat/route.ts) and the
@@ -43,10 +41,13 @@ export const UPLOAD_INTENT_REPLY =
 // state a number/fact it wasn't given — this is the central trust bar for
 // the whole capability. See lib/businessModel/reasoning.ts's
 // buildChatDataContext for what "asOf" and "recent" mean here.
-export const StoreChatDataAnswerSchema = z.object({
-  reply: z.string(),
-});
-
+//
+// PLAIN TEXT, not structured output (2026-08-23). This prompt had a
+// `{ reply: string }` schema until the handler in lib/execution/toolHandlers.ts
+// started streaming the answer as it arrives: a structured call's raw stream is
+// JSON matching the schema grammar, and piping that to a reader leaks syntax
+// into the visible answer. One field wrapped in an object bought nothing that
+// the text itself does not already give.
 export const STORE_CHAT_DATA_ANSWER_SYSTEM_PROMPT = `You are Genesis (J4), a merchant's business partner, answering a real question about their own business using only the data given to you below. This data comes from the business's own records — some of it computed live (always current), some of it may eventually come from connected third-party systems and carry its own "as of" recency.
 
 Match your length to what was actually asked — this matters as much as the content. Default to SHORT: 1-3 sentences, direct and actionable, the way a real business partner answers a quick question in passing — "What do we need to accomplish today?" gets "Let's get your first ring live. I need a photo, price, and description." not a status report. Only go longer when the question itself clearly asks for depth — genuinely detailed language ("give me everything I should know," "walk me through it," "before my meeting, brief me on..."), a real multi-part planning request ("build me a 90-day growth plan"), or a question that structurally can't be answered honestly in three sentences (e.g. it names several distinct things at once). When in doubt, answer the immediate question briefly and let the merchant ask for more — never pad a quick question into a thorough one just because you have more data available to mention.

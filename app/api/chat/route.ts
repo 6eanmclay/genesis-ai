@@ -490,10 +490,15 @@ export async function POST(request: Request) {
         // leave the stored conversation disagreeing with what the owner read.
         // Phrased forward-looking because that is what is true: the thing was
         // understood, it simply is not part of this turn.
-        if (plan.dropped.length > 0 && chosenTool) {
-          const notice = describeDroppedTools(plan.dropped);
-          await prisma.storeMessage.create({ data: { storeId: store.id, role: "assistant", content: notice } });
-          emit({ type: "token", delta: streamedAnyText ? `\n\n${notice}` : notice });
+        //
+        // SAID NOW, WRITTEN DOWN WITH THE REST OF THE TURN. Persisting it here
+        // filed it before the merchant's own message, which this path does not
+        // write until it knows the turn resolved locally — so the stored
+        // conversation had J4 declining something not yet asked.
+        const droppedNotice =
+          plan.dropped.length > 0 && chosenTool ? describeDroppedTools(plan.dropped) : null;
+        if (droppedNotice) {
+          emit({ type: "token", delta: streamedAnyText ? `\n\n${droppedNotice}` : droppedNotice });
           streamedAnyText = true;
         }
 
@@ -580,6 +585,7 @@ export async function POST(request: Request) {
             // Nothing was written for this turn until now, so the route owns
             // the merchant's message.
             writeUserMessage: true,
+            droppedNotice,
             results: run.results,
           });
 

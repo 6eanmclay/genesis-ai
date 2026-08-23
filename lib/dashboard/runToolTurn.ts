@@ -142,6 +142,22 @@ export async function persistToolTurn(input: {
    * would work until somebody sent an empty message.
    */
   writeUserMessage: boolean;
+  /**
+   * What the owner asked for that is not part of this turn, if anything.
+   *
+   * WRITTEN HERE RATHER THAN WHERE IT IS SAID, and the ordering is the reason.
+   * The streaming route says it before doing the work — correctly, the reader
+   * should not wait — but it does not write the merchant's own message until it
+   * knows the turn resolved locally, so persisting the notice at the moment it
+   * is spoken filed it BEFORE the message it answers. Somebody scrolling back
+   * read J4 declining something the merchant had not said yet.
+   *
+   * The other half of the same problem: a turn that then falls back is re-run
+   * by the Server Action, which would write its own notice. Keeping this on the
+   * path that also writes the merchant's message means it is persisted exactly
+   * when that turn is the one being recorded, and not otherwise.
+   */
+  droppedNotice?: string | null;
 }): Promise<void> {
   if (input.writeUserMessage) {
     await prisma.storeMessage.create({
@@ -151,6 +167,12 @@ export async function persistToolTurn(input: {
         content: input.userMessage,
         ...(input.userMessageChanges ? { changes: input.userMessageChanges as object } : {}),
       },
+    });
+  }
+
+  if (input.droppedNotice) {
+    await prisma.storeMessage.create({
+      data: { storeId: input.storeId, role: "assistant", content: input.droppedNotice },
     });
   }
 

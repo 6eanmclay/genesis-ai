@@ -2440,14 +2440,11 @@ async function applyGenesisMessageToStore(
   // tool does, reached from both paths. What stays different is how this path
   // RESPONDS — it revalidates and redirects where the route streams and closes,
   // which is a real difference rather than an accident.
-  // WHAT WAS ASKED FOR AND IS NOT HAPPENING, said out loud. Persisted as its
-  // own assistant message before the work, so the stored conversation matches
-  // what the owner is shown — the same contract the streaming route holds.
-  if (droppedTools.length > 0 && chosenTool) {
-    await prisma.storeMessage.create({
-      data: { storeId: store.id, role: "assistant", content: describeDroppedTools(droppedTools) },
-    });
-  }
+  // WHAT WAS ASKED FOR AND IS NOT HAPPENING, said out loud — written with the
+  // rest of the turn so it lands after the merchant's own message rather than
+  // before it. Same contract the streaming route holds.
+  const droppedNotice =
+    droppedTools.length > 0 && chosenTool ? describeDroppedTools(droppedTools) : null;
 
   if (chosenTool) {
     const run = await runPlannedTools({
@@ -2486,6 +2483,7 @@ async function applyGenesisMessageToStore(
         // even called. Writing it again would duplicate the merchant's own
         // words in their conversation.
         writeUserMessage: false,
+        droppedNotice,
         results: run.results,
       });
       for (const path of revalidationPaths(run.results)) revalidatePath(path);
@@ -2513,6 +2511,13 @@ async function applyGenesisMessageToStore(
     // IS that tool's implementation. Everything else says plainly that it did
     // not happen.
     if (decidedTool !== "edit_store_content") {
+      // Still true, and still worth saying: the turn did nothing, and the owner
+      // asked for more than one thing.
+      if (droppedNotice) {
+        await prisma.storeMessage.create({
+          data: { storeId: store.id, role: "assistant", content: droppedNotice },
+        });
+      }
       await prisma.storeMessage.create({
         data: { storeId: store.id, role: "assistant", content: UNAVAILABLE_ON_THIS_PATH },
       });
