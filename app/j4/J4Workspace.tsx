@@ -1948,17 +1948,39 @@ export function J4Workspace({
                         ))}
                       </div>
                     )}
+                    {/* WHAT ACTUALLY CHANGED, AS THE PRIMARY STRUCTURE (UI6
+                        piece 3, 2026-08-23).
+
+                        This was a collapsed <details> labelled "See what
+                        changed", sitting under several paragraphs of model
+                        prose — so the trustworthy half of the reply was
+                        subordinate to the half that can be wrong.
+
+                        It is the trustworthy half BY CONSTRUCTION. This list is
+                        built server-side in ai-actions.ts specifically to
+                        CORRECT the model's reply, whose own comment records it
+                        saying "Done" when execute() had actually failed. J4
+                        writes the sentence above; it never writes this. Where
+                        they disagree, this is right.
+
+                        So it is open, it is not labelled as an aside, and it
+                        reads as a list of real changes rather than something to
+                        expand if curious. */}
                     {changeList && changeList.length > 0 && (
-                      <details className="mt-2">
-                        <summary className="cursor-pointer text-xs hover:text-[#f4f2fb]" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-                          See what changed
-                        </summary>
-                        <ul className="mt-1 list-disc pl-4 text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-                          {changeList.map((c, i) => (
-                            <li key={i}>{c}</li>
-                          ))}
-                        </ul>
-                      </details>
+                      <ul
+                        data-role="change-list"
+                        className="mt-2 space-y-1 text-sm"
+                        style={{ color: "#f4f2fb" }}
+                      >
+                        {changeList.map((c, i) => (
+                          <li key={i} className="flex gap-2">
+                            <span aria-hidden style={{ color: GENESIS_ATMOSPHERE.violet }}>
+                              •
+                            </span>
+                            <span>{c}</span>
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </div>
                 );

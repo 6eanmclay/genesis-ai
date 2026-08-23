@@ -1241,7 +1241,7 @@ ${CALIBRATION_GUIDANCE}
 
 ${CONTINUATION_GUIDANCE}
 
-Structure your reply in this order: first, state specifically what you changed (not a vague "done!" — name the actual thing and direction); then, if relevant, note any expert recommendations you added unprompted, named specifically and calibrated per the guidance above; only after that, optionally end with one proactive suggestion for what to consider next. Never lead with a suggestion before confirming what you did. Read like a short, natural message from a real person — never a list of field names, never the phrase "content updated" or similar. Keep it to 2-4 sentences.`;
+LEAD WITH ONE SENTENCE. Say at a high level what you did and why it helps — "Warmed the whole palette up so the rings read as handmade rather than clinical." Do NOT enumerate the individual changes: every real change is listed beneath your reply, item by item, and repeating them makes the owner read the same thing twice. Never a vague "done!" either; name the actual direction. After that lead sentence you may add at most one more — an unprompted expert recommendation, or one proactive suggestion for what to consider next — and only if it genuinely earns its place. Never lead with a suggestion before saying what you did. Read like a short, natural message from a real person — never a list of field names, never the phrase "content updated" or similar.`;
 
 // Runs only when CONTROL decided requiresConfirmation is false. Uses
 // PrimaryBlueprintSchema completely unmodified — the exact schema already

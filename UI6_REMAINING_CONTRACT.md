@@ -3,9 +3,15 @@
 **Status: CONTRACT / DESIGN PASS. Nothing implemented.** 2026-08-23.
 Sean: contract first, review before implementation.
 
-**Decisions taken 2026-08-23** — piece 2's definition and piece 1's trigger.
-Both are recorded in place below. Two of piece 1's three decisions remain open
-and are called out rather than assumed.
+**ALL DECISIONS TAKEN 2026-08-23.** Piece 2's definition and lifecycle; piece 1's
+trigger, registry and read-only boundary. Nothing in this contract is now waiting
+on a product answer.
+
+*(The pane's registry and read-only decisions arrived labelled "Piece 2" and are
+filed here under Piece 1, which is the pane. Recorded so the trail is followable.)*
+
+**Implementation authorised for Piece 3 only.** Pieces 2 and 1 stay contracted
+and unbuilt.
 
 UI6's shipped half made the conversation the business boundary and made messages
 show their real execution state. These are the three §7 pieces left.
@@ -185,20 +191,29 @@ reason above.
 5. Pre-existing messages render unchanged and are not assigned a manufactured
    conversation.
 6. Cross-business isolation asserted.
+7. **A conversation is created only by an explicit owner action** — no code path
+   creates one as a side effect of sending a message.
+8. **A name is optional and owner-supplied**; no path generates one, and nothing
+   in this milestone reads a model.
+9. Closing, archiving and deletion are absent rather than stubbed.
 
-**Still open — surfaced, not assumed.** The definition settles what a
-conversation *is*; three questions about its lifecycle remain and each changes
-the product:
-- **How does a new conversation start?** A deliberate owner action, or does a
-  message sent with none selected begin one? The second is invisible and
-  convenient; the first is explicit and matches the decision's own word.
-- **Is a conversation named, and by whom?** Owner-named is free and never wrong.
-  J4-titled needs a model, so it is credential-blocked and would make this
-  milestone depend on one.
-- **Can a conversation be closed, archived or deleted?** "Persistent" argues
-  against deletion; nothing here requires an answer to ship a first version.
+**DECIDED — lifecycle, kept deliberately small for v1.**
 
-**Out of scope.** §7's north star of linking a conversation to the real changes
+- **Explicitly created by the owner.** A conversation begins because somebody
+  started one, matching the definition's own word. A message sent with none
+  selected does not silently create one.
+- **Optionally named by the owner.** A name is a plain string the owner may set
+  or leave empty.
+- **No J4-generated naming.** Stated as a decision rather than an omission: a
+  J4-titled thread would make this milestone depend on a model credential, and
+  nothing else in it does.
+- **Closing and archiving are out of scope for v1.** "Persistent" argues against
+  deletion, and nothing here needs an answer to ship.
+
+**Nothing beyond this is invented because the schema could support it.** A row
+that can hold a `closedAt` is not a reason to build closing.
+
+**Out of scope.** §7's north star**Out of scope.** §7's north star of linking a conversation to the real changes
 it produced — `executionLogId` (UI6) makes that newly possible and it is a
 separate milestone. Cross-conversation search. Per-person conversations.
 
@@ -252,26 +267,48 @@ any code path through which J4 could open it.
 3. Its content is scoped to the conversation's business.
 4. Nothing to show is an honest empty state.
 5. A failure in the pane leaves the conversation working.
+6. **Only registered context types can appear.** An unregistered type renders
+   nothing rather than falling back to something generic.
+7. **The registry is cross-checked at runtime** — every entry resolves to
+   something real, in the pattern ARCHITECTURE.md requires of every mirror.
+8. **The pane contains no write path.** Asserted at the source: no server
+   action, no mutation, no approval creation reachable from it.
+9. A change offered while the pane is open still goes through the proposal card
+   and the existing approval path.
 
-**STILL OPEN — two of the three decisions, and they are prior to implementation:**
-- **What may appear there?** A closed set of surfaces, or anything the owner is
-  looking at. A closed set is a registry and inherits the mirrored-registry
-  invariant; an open one is a rendering contract for arbitrary content.
-  *Recommendation: a closed set, small, for the first version.*
-- **Can it be acted on?** A view, or a live pane. If a homepage draft beside the
-  conversation is editable, this becomes a second surface with write access and
-  inherits every approval and authorization question UI6 just settled for the
-  proposal card. *Recommendation: a view for the first version — actionability is
-  a second milestone, and the proposal card already covers the case where
-  acting is the point.*
+**DECIDED: a closed registry, and read-only.**
+
+**What may appear there — a closed registry.** The pane exposes only explicitly
+registered business-context types. *"Whatever the owner happens to be looking
+at"* is not the contract: that would make UI6 an uncontrolled context surface
+whose boundaries nobody could reason about.
+
+It carries the **mirrored-registry invariant** this codebase already applies
+sixteen times: if something is eligible for the pane, it is explicitly
+represented in the registry, and a runtime cross-check asserts every registered
+entry resolves to something real. `lib/j4/workspaceContext.ts` is the closest
+existing precedent and is already guarded that way.
+
+**Whether it can be acted on — read-only for v1.**
+
+> **Context pane = understand. Action surface = change.**
+
+The pane helps the owner see what J4 knows and what is relevant. It does not
+become a second write surface. Anything that changes business state continues
+through proposal → authorization → execution → verification, unchanged.
+
+This is what keeps UI6 from quietly bypassing the guarantees the last several
+milestones established. A second surface with write access would inherit every
+one of those questions and would answer them again, separately — which is how
+two paths to the same change start disagreeing.
 
 **What already constrains it.** `J4Proposal` already renders business content
 inside the conversation and has been business-scoped since UI6. The "show a thing
 beside the conversation" mechanic exists in one specific form; this should extend
 that rather than introduce a second.
 
-**Out of scope.** Proactive surfacing of any kind. Editing. Anything the BI
-engine would push.
+**Out of scope.** Proactive surfacing of any kind. Editing, and any write path.
+Anything the BI engine would push. An open-ended "show me this page" contract.
 
 ## Dependencies
 
