@@ -54,7 +54,17 @@ assert("and not in the muted aside colour",
 console.log("\n=== 3. J4 writes the sentence and never the list ===\n");
 const actions = readFileSync(join(process.cwd(), "app", "dashboard", "ai-actions.ts"), "utf8");
 assert("the prompt asks for one lead sentence",
-  actions.includes("LEAD WITH ONE SENTENCE."),
+  // ONCE PER OWNER-VISIBLE REPLY PROMPT, not once in the file.
+  //
+  // This read `actions.includes(...)` and was green for as long as the rule
+  // existed ANYWHERE — which is how it stayed green while CHAT_CONTROL had the
+  // rule and STORE_CHAT_PRIMARY, the prompt the live store speaks through, went
+  // on asking for a 2-4 sentence walk through everything changed. A count is the
+  // assertion; presence is not.
+  //
+  // Raise this number when a third reply prompt is added. If that feels like a
+  // chore, it is the chore of noticing.
+  (actions.match(/LEAD WITH ONE SENTENCE\./g) ?? []).length === 2,
   "the prose is the half that shortens");
 assert("and explicitly forbids enumerating the changes",
   actions.includes("Do NOT enumerate the individual changes"),
@@ -71,13 +81,14 @@ assert("and it is still built server-side",
 
 console.log("\n=== 4. What is deliberately NOT claimed ===\n");
 // Acceptance criterion 4 of the contract: the prompt change is measured live
-// before this piece is called done. It has not been.
-console.log(
-  "  The prompt half is UNVERIFIED. Whether the model actually returns one lead\n" +
-  "  sentence needs a live run, and the Anthropic credit balance is exhausted.\n" +
-  "  The render half above is real and asserted; the prose half is implemented\n" +
-  "  and unmeasured, and piece 3 is not accepted until it has been.\n"
-);
+// before this piece is called done. It now has been — elsewhere, on purpose.
+console.log(`
+  The prose half is measured LIVE, not here — scripts/verify-prose-shape-live.ts
+  runs both owner-visible reply prompts against the real model and asserts the
+  lead-sentence shape. This suite asserts only that the rule is present in both
+  prompts and that the render half behaves. A source assertion cannot tell you
+  what a model does with a prompt; only a call can.
+`);
 
 console.log(`\n${failures === 0 ? "All reply-shape assertions passed." : `${failures} assertion(s) FAILED.`}`);
 process.exit(failures === 0 ? 0 : 1);
