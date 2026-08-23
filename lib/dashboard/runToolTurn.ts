@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { routeToolHandlers, type ToolTurnResult, type TurnProduct } from "@/lib/execution/toolHandlers";
+import { firstRefusedTool } from "@/lib/execution/toolPolicy";
+import type { StoreRole } from "@prisma/client";
 import type { BusinessUnderstanding } from "@/lib/businessModel/understanding";
 
 // RUNNING THE TOOLS A TURN DECIDED ON — once, for both paths
@@ -28,8 +30,24 @@ import type { BusinessUnderstanding } from "@/lib/businessModel/understanding";
 
 export interface RunToolsInput {
   storeId: string;
-  /** The authenticated viewer. Authorization already happened. */
+  /** The authenticated viewer. */
   userId: string;
+  /**
+   * What the viewer is to this business.
+   *
+   * BOTH CALLERS ALREADY REFUSED AN UNAUTHORIZED TURN, and this checks again
+   * anyway. Not belt and braces for its own sake: the reason this module exists
+   * is that a capability reachable from two callers was reached by the one that
+   * had forgotten a step, for weeks, silently. Authorization is the step where
+   * that is least acceptable — and it has already happened once here, when a
+   * per-tool check met a multi-tool turn and only the first tool was asked
+   * about.
+   *
+   * The callers keep their own check because they can say something useful
+   * about it; this one exists so that a third caller, written later by somebody
+   * who has not read them, cannot execute anything.
+   */
+  role: StoreRole;
   userMessage: string;
   /** The model's own accompanying text, if it wrote any. */
   conversationalReply: string;
@@ -65,7 +83,16 @@ export type RunToolsOutcome =
    * because "falls through to whatever comes next" is the failure that made
    * this module necessary.
    */
-  | { kind: "no_handler"; toolName: string };
+  | { kind: "no_handler"; toolName: string }
+  /**
+   * The viewer may not invoke one of these tools.
+   *
+   * Should be unreachable — both callers refuse before they get here, with copy
+   * that says something useful about which capability and why. Reaching it
+   * means a caller skipped that, so nothing runs and the caller is told which
+   * tool stopped the turn.
+   */
+  | { kind: "refused"; toolName: string };
 
 /**
  * The previous assistant turn's text, or undefined on a fresh conversation.
@@ -91,6 +118,11 @@ export function lastAssistantContent(
  * what happened.
  */
 export async function runPlannedTools(input: RunToolsInput): Promise<RunToolsOutcome> {
+  // BEFORE ANY OF THEM RUN, and about all of them. Checking the first and
+  // running the rest is the failure this replaces, not a hypothetical one.
+  const refused = firstRefusedTool(input.role, input.plannedTools.map((t) => t.name));
+  if (refused) return { kind: "refused", toolName: refused.name };
+
   const handlers = routeToolHandlers({ resolveHref: input.resolveHref });
   const results: Extract<ToolTurnResult, { handled: true }>[] = [];
 

@@ -539,6 +539,7 @@ export async function POST(request: Request) {
         const run = await runPlannedTools({
           storeId: store.id,
           userId,
+          role,
           userMessage,
           conversationalReply,
           plannedTools,
@@ -569,12 +570,14 @@ export async function POST(request: Request) {
           })),
         });
 
-        if (run.kind === "invalid_input" || run.kind === "no_handler") {
+        if (run.kind !== "handled") {
           // Nothing was written, so the honest move is the ordinary fallback
           // rather than confirming something that never happened. no_handler
-          // should be unreachable — the suite asserts every registered tool has
-          // one — and is surfaced rather than swallowed, because "falls through
-          // to whatever comes next" is the failure the shared runner exists for.
+          // and refused should both be unreachable — every registered tool has
+          // a handler, and the check above already refused an unauthorized turn
+          // with copy that says which capability and why. They are surfaced
+          // rather than swallowed, because "falls through to whatever comes
+          // next" is the failure the shared runner exists for.
           diagLog(requestId, turnStartedAt, "tools_unresolved", { kind: run.kind });
           emit({ type: "fallback" });
           controller.close();

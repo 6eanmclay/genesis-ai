@@ -2475,6 +2475,7 @@ async function applyGenesisMessageToStore(
     const run = await runPlannedTools({
       storeId: store.id,
       userId,
+      role,
       userMessage,
       conversationalReply,
       plannedTools,

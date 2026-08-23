@@ -30,6 +30,7 @@ import {
   type ToolTurnContext,
 } from "@/lib/execution/toolHandlers";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { StoreRole } from "@prisma/client";
 import {
   runPlannedTools,
   persistToolTurn,
@@ -1185,9 +1186,10 @@ async function main() {
   });
   const toolUse = (name: string, input: unknown) =>
     ({ type: "tool_use", id: `tu-${uniq()}`, name, input }) as Anthropic.ToolUseBlock;
-  const runInput = (plannedTools: Anthropic.ToolUseBlock[]) => ({
+  const runInput = (plannedTools: Anthropic.ToolUseBlock[], role: StoreRole = "OWNER") => ({
     storeId: runShop.id,
     userId: owner.id,
+    role,
     userMessage: "whatever the merchant said",
     conversationalReply: "",
     products: [],
@@ -1196,11 +1198,29 @@ async function main() {
     status: () => {},
   });
 
-  // A PROTOTYPE KEY IS NOT A HANDLER. The name came from a model.
+  // A NAME THE MODEL MADE UP NEVER REACHES A LOOKUP AT ALL. Authorization runs
+  // first and there is no policy for a tool that does not exist, so the turn is
+  // refused before anything is resolved — the right order, and the reason the
+  // outcome here is "refused" rather than "no handler for it".
   const proto = await runPlannedTools(runInput([toolUse("constructor", {})]));
-  check("a prototype key resolves to no handler, not Object's", proto.kind, "no_handler");
+  check("a prototype key is refused before it is looked up", proto.kind, "refused");
   const invented = await runPlannedTools(runInput([toolUse("delete_everything", {})]));
-  check("nor does an invented tool", invented.kind, "no_handler");
+  check("so is an invented tool", invented.kind, "refused");
+  // And it is not a handler either, whichever order they are asked in — the
+  // registry lookup is closed on its own, not only because a check precedes it.
+  check("and neither resolves to a handler", handlerFor("constructor"), null);
+
+  // A REAL TOOL WITH NO HANDLER is the separate failure, and it is surfaced
+  // rather than swallowed. Unreachable in the product — the suite above asserts
+  // every registered tool has one — so it is provoked here with a name that
+  // policy knows and the registry does not.
+  const orphan = await runPlannedTools({
+    ...runInput([toolUse("edit_store_content", {})]),
+  });
+  check("a policy-known tool with no handler says so", orphan.kind, "no_handler");
+  assert("and names which one",
+    orphan.kind === "no_handler" && orphan.toolName === "edit_store_content",
+    JSON.stringify(orphan));
 
   // A DESTINATION THAT DOES NOT EXIST IS STILL A HANDLED TURN. J4 says it does
   // not know where they meant — a designed conversational outcome, not a
@@ -1276,6 +1296,49 @@ async function main() {
   });
   check("every handler that ran is logged", logged.length, 4);
   check("navigation is a success", logged[0].status, "SUCCESS");
+
+  // NOTHING RUNS THAT THE VIEWER MAY NOT DO — checked here, at the one place
+  // every tool actually executes, and not only where each caller remembers to.
+  //
+  // This is not defence in depth for its own sake. A per-tool permission check
+  // met a multi-tool turn and asked only about the first tool: "what sold worst
+  // last month? get rid of it" plans a read then a mutation, the read passes
+  // for an employee, and the removal proposal ran behind it. Both callers now
+  // refuse that before they get here — they can say which capability and why —
+  // and this refuses it again, because the reason this module exists at all is
+  // that a capability reachable from two callers was reached by the one that
+  // had forgotten a step.
+  await prisma.storeMessage.deleteMany({ where: { storeId: runShop.id } });
+  await prisma.approvalRequest.deleteMany({ where: { storeId: runShop.id } });
+  const employeeTurn = await runPlannedTools(runInput([
+    toolUse("take_me_there", { destination: "commerce", intent: null }),
+    toolUse("request_product_removal", { scope: "all", productNames: null }),
+  ], "EMPLOYEE"));
+  check("an employee's turn is refused", employeeTurn.kind, "refused");
+  assert("named for the capability that was refused, not the one they asked first",
+    employeeTurn.kind === "refused" && employeeTurn.toolName === "request_product_removal",
+    JSON.stringify(employeeTurn));
+  // AND THE ALLOWED TOOL DID NOT RUN EITHER. Running half of what somebody
+  // asked for and declining the rest is a decision nobody has made.
+  check("and nothing at all ran",
+    await prisma.storeMessage.count({ where: { storeId: runShop.id } }), 0);
+  check("no deletion was proposed",
+    await prisma.approvalRequest.count({ where: { storeId: runShop.id } }), 0);
+
+  // The same turn for the owner runs.
+  const ownerTurn = await runPlannedTools(runInput([
+    toolUse("take_me_there", { destination: "commerce", intent: null }),
+  ], "OWNER"));
+  check("the owner's does not", ownerTurn.kind, "handled");
+
+  // A read-only turn is fine for an employee — the whole point of moving the
+  // gate off the conversation and onto the capability.
+  const employeeRead = await runPlannedTools(runInput([
+    toolUse("take_me_there", { destination: "commerce", intent: null }),
+  ], "EMPLOYEE"));
+  check("and an employee may still be taken somewhere", employeeRead.kind, "handled");
+  await prisma.storeMessage.deleteMany({ where: { storeId: runShop.id } });
+  await prisma.executionLog.deleteMany({ where: { storeId: runShop.id } });
 
   // THE ORDER SOMEBODY READS IT BACK IN. The streaming route says what it is
   // NOT doing before it does the work — correctly, the reader should not wait
