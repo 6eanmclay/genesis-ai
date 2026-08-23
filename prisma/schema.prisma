@@ -677,10 +677,29 @@ model StoreMessage {
   // render — no separate context-injection mechanism needed.
   taskId String?
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  task  Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  // WHAT ACTUALLY HAPPENED WHEN J4 SAID THIS (UI6, 2026-08-23).
+  //
+  // An assistant message is prose. The execution row written in the same breath
+  // is the truth: SUCCESS, PENDING because something is only proposed, WARNING
+  // because it did not go through. Until now nothing joined them, so the
+  // conversation could only render the words — and the words are written before
+  // anybody knows whether a later reader is looking at a change that landed, a
+  // change still waiting, or a change that failed and was retried since.
+  //
+  // Nullable, and most rows have none: an ordinary reply, the merchant's own
+  // message, and every message written before this existed. A missing link
+  // means "no execution to speak of", never "it succeeded".
+  //
+  // SetNull rather than Cascade — losing the record of what happened must not
+  // delete what J4 said about it.
+  executionLogId String?
+
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  task         Task?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  executionLog ExecutionLog? @relation(fields: [executionLogId], references: [id], onDelete: SetNull)
 
   @@index([taskId])
+  @@index([executionLogId])
 }
 
 model StoreGeneration {
@@ -1287,6 +1306,7 @@ model ExecutionLog {
   storeDraft              StoreDraft?              @relation(fields: [storeDraftId], references: [id], onDelete: Cascade)
   actor                   User?                    @relation(fields: [actorId], references: [id], onDelete: SetNull)
   growthPointTransactions GrowthPointTransaction[]
+  storeMessages           StoreMessage[]
 
   @@index([storeId, createdAt])
   @@index([storeId, action])

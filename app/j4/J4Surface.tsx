@@ -14,6 +14,7 @@ import { J4Workspace, type J4Surface as J4SurfaceKind, type UnderstandingGroup }
 import { J4Proposal } from "./J4Proposal";
 import { getOpenProposals } from "@/lib/storefront/proposals";
 import { getBaseUrl } from "@/lib/integrations/util";
+import { messageStateOf } from "@/lib/j4/messageState";
 
 // J4's real conversation, rendered on either of its two surfaces
 // (2026-08-14). Extracted from app/j4/page.tsx unchanged so that both the
@@ -248,6 +249,13 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
       take: CHAT_HISTORY_WINDOW,
+      // WHAT ACTUALLY HAPPENED, alongside what was said about it (UI6). Joined
+      // rather than fetched separately: the conversation renders both together,
+      // and a second query would be a second answer to "did that work" one
+      // round trip later.
+      include: {
+        executionLog: { select: { status: true, retryable: true, metadata: true } },
+      },
     }),
     // Real Genesis Language rows — see genesisState.ts. Only ever "urgent"
     // or "opportunity" (compareObservationPriority's own comment); the room
@@ -333,7 +341,29 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
       surface={surface}
       slug={slug}
       storeName={store.name}
-      messages={messages.map((m) => ({ id: m.id, role: m.role, content: m.content, changes: m.changes }))}
+      messages={messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        changes: m.changes,
+        // Derived on the server from the execution row, never from the words.
+        // A message with no row is "spoken" — see messageStateOf on why that
+        // must not read as success.
+        state: messageStateOf(
+          m.executionLog
+            ? {
+                status: m.executionLog.status,
+                retryable: m.executionLog.retryable,
+                kind:
+                  typeof m.executionLog.metadata === "object" &&
+                  m.executionLog.metadata !== null &&
+                  "kind" in m.executionLog.metadata
+                    ? String((m.executionLog.metadata as { kind: unknown }).kind)
+                    : null,
+              }
+            : null
+        ),
+      }))}
       sendMessage={sendStoreMessage}
       uploadAsset={uploadBusinessAssetFromChat}
       uploadPhotoBatch={uploadPhotoBatchFromChat}

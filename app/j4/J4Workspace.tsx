@@ -7,6 +7,7 @@ import { useFormStatus, flushSync } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
+import { MESSAGE_STATE_LABEL, needsOwner, type MessageState } from "@/lib/j4/messageState";
 import { setGenesisComposing, setGenesisWorking } from "@/lib/dashboard/genesisActivity";
 import { USAGE_CEILING_MESSAGE } from "@/lib/dashboard/genesisModelMessages";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
@@ -51,6 +52,15 @@ type Message = {
   role: string;
   content: string;
   changes: unknown;
+  /**
+   * What the message turned out to be, from its execution row.
+   *
+   * Computed on the server (lib/j4/messageState.ts) so the client never has to
+   * decide what a status means, and never sees the row itself. Optimistic
+   * messages have none until the turn is real, which is correct: nothing has
+   * happened yet to have a state.
+   */
+  state?: MessageState;
 };
 
 interface J4Signals {
@@ -1806,6 +1816,10 @@ export function J4Workspace({
                 // context, not a separate "active batch" flag).
                 const quickReplies = m.role === "assistant" && isLastMessage ? extractQuickReplies(m.changes) : null;
                 const isStreamingPlaceholder = isLastMessage && m.role === "assistant" && m.content === "";
+                // Null for an ordinary reply and for anything with no execution
+                // row — which is most of the history, and must not read as a
+                // completed change. See messageStateOf.
+                const stateLabel = m.state ? MESSAGE_STATE_LABEL[m.state] : null;
                 return (
                   <div
                     key={m.id}
@@ -1887,6 +1901,37 @@ export function J4Workspace({
                         the owner's own messages. */}
                     {m.role === "assistant" && !isStreamingPlaceholder && m.content && (
                       <J4SpeakButton text={m.content} />
+                    )}
+                    {/* WHAT ACTUALLY HAPPENED, next to what was said about it
+                        (UI6). Read from the execution row on the server, never
+                        from these words: a reply saying "done" over a row
+                        saying WARNING is exactly the disagreement this exists
+                        to surface, and the row wins.
+
+                        An ordinary reply carries no badge — labelling every
+                        sentence would make the ones that matter invisible. */}
+                    {m.role === "assistant" && stateLabel && (
+                      <span
+                        data-role="message-state"
+                        data-state={m.state}
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium"
+                        style={
+                          needsOwner(m.state as MessageState)
+                            ? { borderColor: GENESIS_ATMOSPHERE.violet, color: "#f4f2fb" }
+                            : { borderColor: GENESIS_ATMOSPHERE.border, color: GENESIS_ATMOSPHERE.textSecondary }
+                        }
+                      >
+                        <span
+                          aria-hidden
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{
+                            backgroundColor: needsOwner(m.state as MessageState)
+                              ? GENESIS_ATMOSPHERE.violet
+                              : GENESIS_ATMOSPHERE.textSecondary,
+                          }}
+                        />
+                        {stateLabel}
+                      </span>
                     )}
                     {quickReplies && quickReplies.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">

@@ -24,7 +24,8 @@ export async function recordGenesisExecution<TMetadata>(params: {
   storeId?: string;
   storeDraftId?: string;
   metadata: TMetadata;
-}): Promise<void> {
+  // The row's own id, so a caller that also writes a message can join the two.
+}): Promise<{ id: string }> {
   const result: ExecutionResult<TMetadata> = {
     executionId: randomUUID(),
     action: params.action,
@@ -40,5 +41,5 @@ export async function recordGenesisExecution<TMetadata>(params: {
     timestamp: new Date(),
     metadata: params.metadata,
   };
-  await recordExecution(result);
+  return recordExecution(result);
 }

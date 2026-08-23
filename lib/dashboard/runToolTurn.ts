@@ -243,17 +243,19 @@ export async function persistToolTurn(input: {
   }
 
   for (const result of input.results) {
-    await prisma.storeMessage.create({
-      data: {
-        storeId: input.storeId,
-        role: "assistant",
-        content: result.reply,
-        // How a rendered artefact — a composition, a mockup — reaches the panel
-        // that draws it.
-        ...(result.messageChanges ? { changes: result.messageChanges } : {}),
-      },
-    });
-    await recordGenesisExecution({
+    // THE EXECUTION ROW FIRST, so the message can carry its id (UI6).
+    //
+    // These two were always written together and never joined, so a reader of
+    // the conversation had only the prose. The prose is written once, at the
+    // moment J4 speaks; the execution row is what it MEANT — proposed and
+    // waiting, done, or not done at all — and a conversation that cannot see it
+    // can only repeat what was said and hope it is still true.
+    //
+    // Order matters and this is the safe one: a message with no execution row
+    // reads as "no execution to speak of", which is exactly right for an
+    // ordinary reply. An execution row with no message is an orphan nobody
+    // renders. If the message write fails, the log still holds what happened.
+    const logged = await recordGenesisExecution({
       action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
       // PENDING is the honest status for a PROPOSAL: real work happened and
       // nothing changed yet. Defaulting everything to SUCCESS would record a
@@ -277,6 +279,19 @@ export async function persistToolTurn(input: {
       userId: input.userId,
       storeId: input.storeId,
       metadata: { kind: result.kind, ...(result.metadata ?? {}) },
+    });
+
+    await prisma.storeMessage.create({
+      data: {
+        storeId: input.storeId,
+        role: "assistant",
+        content: result.reply,
+        // How a rendered artefact — a composition, a mockup — reaches the panel
+        // that draws it.
+        ...(result.messageChanges ? { changes: result.messageChanges } : {}),
+        // What actually happened, joined to what was said about it.
+        executionLogId: logged.id,
+      },
     });
   }
 }
