@@ -15,6 +15,7 @@ import { GENESIS_ACTIONS } from "@/lib/execution/genesisActions";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
 import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
@@ -603,6 +604,21 @@ export async function POST(request: Request) {
                     {
                       ...dataContext,
                       businessProfile: understanding.profile,
+                      // HOW TO READ THE `source` ALREADY ON THOSE FACTS
+                      // (2026-08-22, U6). The profile's records carry their own
+                      // provenance, and carrying it without explaining it is
+                      // just more JSON — these are the rules for the kinds
+                      // actually present, and the honest count of what has none.
+                      sourceGuidance: groundingRules([
+                        ...understanding.profile.goals,
+                        ...understanding.profile.challenges,
+                        ...understanding.profile.assets,
+                      ]),
+                      factsWithNoRecordedSource: unsourcedCount([
+                        ...understanding.profile.goals,
+                        ...understanding.profile.challenges,
+                        ...understanding.profile.assets,
+                      ]),
                       beliefs: understanding.beliefs,
                       recentDecisions: understanding.recentDecisions,
                       // Searchable, any age, ranked by relevance to the

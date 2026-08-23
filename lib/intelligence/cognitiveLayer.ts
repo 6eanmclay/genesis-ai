@@ -28,6 +28,7 @@ import {
 } from "@/lib/dashboard/genesisBriefingComposer";
 import { callGenesisModel, genesisModelFailureMessage } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { withSource, groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
 import {
   predictGoalTrajectory,
   getActionTypeTrackRecord,
@@ -262,6 +263,8 @@ Write like a business partner sharing an observation, not an admin system issuin
 You are shown two distinct kinds of information about your own past reasoning, and they carry different weight — do not treat them the same way.
 
 recentDecisionOutcomes lists real, objective facts about the last 14 days: specific proposals that were executed or rejected, each with its own topicKey and summary. This is current state, not a pattern — even a single rejection is worth respecting: do not simply repeat that exact topicKey unchanged, but one decline is not proof of a firm rule, so a genuinely new or stronger reason is enough to raise it again, acknowledging the prior decline rather than presenting it as first-time news.
+
+Most facts carry a "source" object saying where they came from: "from" (who or what asserted it), "via" (the specific connector or document), "stated" (how long ago), and sometimes "interpreted" (a model read it out of what somebody said or wrote) or "couldBeWrong" (nothing outside this system asserted it at all). "sourceGuidance" spells out how to read each kind that is actually present. Weigh these rather than treating every fact as equally authoritative: the owner is the only authority on what the business is trying to do, a connected system is the better authority on what was invoiced, and something you concluded yourself is not evidence and must never be spoken about as though somebody had told you. When "interpreted" is set, the wording is your own paraphrase rather than their words — do not quote it back as theirs. A "stated" of many months ago is not automatically stale, but it IS worth asking about when a recommendation depends on it still being true. A fact with no source at all predates this being recorded: treat it as ordinary business data of unknown origin, and do not claim it came from anywhere. "factsWithNoRecordedSource" counts those, so you know how much of the picture is in that state.
 
 beliefs lists patterns Learn has already generalized from real, repeated evidence over time — each with a claim, a category, a confidence score, and a maturity label. Maturity matters as much as confidence: an "early signal" or "an emerging pattern" belief is real but thin — mention it cautiously if at all, and never let it alone justify attaching a proposedAction that assumes strong trust. A "well-established" belief is a premise you can build a genuinely confident recommendation on. A belief "being reconsidered" means something you've relied on may be breaking down right now — that tension (what was established vs. what's newly contradicting it) is often itself worth a real explanation output, not something to quietly average away.
 
@@ -529,15 +532,37 @@ export async function runCognitiveReview(params: {
       severity: i.severity,
       summary: i.summary,
     })),
-    goals: businessProfile.goals.map((g) => ({ id: g.id, ...g.data })),
-    challenges: businessProfile.challenges.map((c) => ({ id: c.id, ...c.data })),
+    // WHERE EACH FACT CAME FROM, carried through rather than dropped
+    // (2026-08-22, U6). `{ id, ...g.data }` is the fact with its origin stripped
+    // off, which is what made a goal the owner stated yesterday and a goal a
+    // model inferred from a photograph in March the same two lines of JSON here.
+    // withSource adds nothing at all when nothing was recorded, so a historical
+    // record's shape is unchanged rather than decorated with empty structure.
+    goals: businessProfile.goals.map((g) => withSource({ id: g.id, ...g.data }, g)),
+    challenges: businessProfile.challenges.map((c) => withSource({ id: c.id, ...c.data }, c)),
     // Business Assets M5 — only confidently-classified uploads (see
     // SYSTEM_PROMPT's own comment on recentAssets); an "unclassified"
     // asset is honestly nothing to reason from yet, same discipline
     // itemTrends already applies by omitting records with no real trend.
     recentAssets: businessProfile.assets
       .filter((a) => a.data.category !== "unclassified")
-      .map((a) => ({ id: a.id, category: a.data.category, summary: a.data.summary })),
+      .map((a) => withSource({ id: a.id, category: a.data.category, summary: a.data.summary }, a)),
+    // THE RULES FOR READING THOSE SOURCES, and only the ones that apply. A
+    // business with no connectors and no uploads gets two sentences rather than
+    // six — every unnecessary rule dilutes the ones that matter.
+    sourceGuidance: groundingRules([
+      ...businessProfile.goals,
+      ...businessProfile.challenges,
+      ...businessProfile.assets,
+    ]),
+    // HOW MUCH HAS NO RECORDED ORIGIN. Every record written before 2026-08-22 is
+    // in this number, and it is reported rather than hidden: a reader shown only
+    // sourced facts would conclude J4 knows less than it does.
+    factsWithNoRecordedSource: unsourcedCount([
+      ...businessProfile.goals,
+      ...businessProfile.challenges,
+      ...businessProfile.assets,
+    ]),
     revenueStreams: businessProfile.classification.revenueStreams,
     connectedSystems: businessProfile.connectedSystems,
     goalTrajectories,

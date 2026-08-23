@@ -60,6 +60,7 @@ import {
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
@@ -2579,6 +2580,21 @@ async function applyGenesisMessageToStore(
             {
               ...dataContext,
               businessProfile: understanding.profile,
+              // Same source guidance as the streaming path, for the reason the
+              // comments below already give: both paths draw on identical
+              // understanding or neither can be trusted. A fallback that
+              // explained provenance less well would answer the same question
+              // with different confidence depending on which path served it.
+              sourceGuidance: groundingRules([
+                ...understanding.profile.goals,
+                ...understanding.profile.challenges,
+                ...understanding.profile.assets,
+              ]),
+              factsWithNoRecordedSource: unsourcedCount([
+                ...understanding.profile.goals,
+                ...understanding.profile.challenges,
+                ...understanding.profile.assets,
+              ]),
               beliefs: understanding.beliefs,
               recentDecisions: understanding.recentDecisions,
               pastDecisionsRelevantToThisQuestion: pastDecisions,
