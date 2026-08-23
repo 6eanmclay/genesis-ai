@@ -258,7 +258,19 @@ export async function persistToolTurn(input: {
       // PENDING is the honest status for a PROPOSAL: real work happened and
       // nothing changed yet. Defaulting everything to SUCCESS would record a
       // proposed deletion as a completed one.
-      status: result.executionStatus ?? "SUCCESS",
+      //
+      // AND A TURN THAT FAILED IS NOT A SUCCESS HERE EITHER (2026-08-23).
+      // `outcome` and `executionStatus` are separate fields and the default tied
+      // them to nothing, so fourteen handlers said `outcome: "failure"` and were
+      // written to the execution log as SUCCESS — two records of the same turn,
+      // disagreeing, and the one anybody scans for trouble was the one that said
+      // everything was fine.
+      //
+      // WARNING rather than an error status, following the precedent already set
+      // for a refused tool: a designed conversational decline is not a crash. A
+      // handler that means something more specific still says so, and this only
+      // fills in where nothing was stated.
+      status: result.executionStatus ?? (result.outcome === "failure" ? "WARNING" : "SUCCESS"),
       verified: false,
       message: result.logMessage ?? result.reply,
       retryable: result.retryable ?? false,

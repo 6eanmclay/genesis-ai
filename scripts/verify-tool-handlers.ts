@@ -1458,6 +1458,39 @@ async function main() {
   await prisma.storeMessage.deleteMany({ where: { storeId: runShop.id } });
   await prisma.executionLog.deleteMany({ where: { storeId: runShop.id } });
 
+  // TWO RECORDS OF ONE TURN, AND THEY HAVE TO AGREE. `outcome` and
+  // `executionStatus` are separate fields, and the default tied them to
+  // nothing: fourteen handlers said outcome "failure" and were written to the
+  // execution log as SUCCESS. The chat-turn log called it a failure, the
+  // execution log called it fine, and the one anybody scans for trouble was the
+  // second.
+  await prisma.storeMessage.deleteMany({ where: { storeId: runShop.id } });
+  await prisma.executionLog.deleteMany({ where: { storeId: runShop.id } });
+  await persistToolTurn({
+    storeId: runShop.id,
+    userId: owner.id,
+    userMessage: "do the thing",
+    userMessageChanges: null,
+    writeUserMessage: false,
+    results: [
+      { handled: true, reply: "couldn't work out where you meant", kind: "a", outcome: "failure" },
+      { handled: true, reply: "done", kind: "b" },
+      // A handler that means something more specific still says so — this fills
+      // in where nothing was stated, it does not overrule.
+      { handled: true, reply: "proposed", kind: "c", outcome: "failure", executionStatus: "PENDING" },
+    ],
+  });
+  const statuses = await prisma.executionLog.findMany({
+    where: { storeId: runShop.id }, orderBy: { createdAt: "asc" }, select: { status: true },
+  });
+  check("a failed turn is not logged as a success", statuses[0]?.status, "WARNING");
+  check("a turn that worked still is", statuses[1]?.status, "SUCCESS");
+  // PENDING is the honest status for a PROPOSAL: real work happened and nothing
+  // has changed yet. Recording a proposed deletion as a completed one is the
+  // failure this default must never introduce.
+  check("and an explicit status is left alone", statuses[2]?.status, "PENDING");
+  await prisma.executionLog.deleteMany({ where: { storeId: runShop.id } });
+
   // THE ORDER SOMEBODY READS IT BACK IN. The streaming route says what it is
   // NOT doing before it does the work — correctly, the reader should not wait
   // — but it does not write the merchant's own message until it knows the turn
