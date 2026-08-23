@@ -17,6 +17,7 @@ import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
+import { digestOf, renderDigest, digestIsSubstantive } from "@/lib/businessModel/digest";
 import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
@@ -333,7 +334,32 @@ export async function POST(request: Request) {
         });
         const pending = store.pendingChange as { summary: string } | null;
         const activeProductNames = currentProducts.map((p) => p.name).join(", ") || "none";
+        // WHAT J4 KNOWS, BEFORE IT DECIDES (2026-08-22, Unified Intelligence UI1).
+        //
+        // This used to be fetched INSIDE the look_up_business_data branch —
+        // after the tool had already been chosen — so the deciding call saw the
+        // message, the product NAMES, and nothing else about the business. J4
+        // picked blind and discovered the business afterwards.
+        //
+        // Fetched ONCE here and reused by whichever branch runs, so this is not
+        // an added read on the data path: it is the same read, moved earlier.
+        // On the other branches it is a real addition, and a deliberate one —
+        // per Sean's direction, correctness before call count.
+        //
+        // Viewer-scoped, which is now load-bearing rather than incidental: with
+        // the store:manage gate moved onto individual tools, a member without it
+        // reaches this line, and getBusinessUnderstanding is what withholds
+        // owner-scoped beliefs from anyone who is not the owner.
+        const understanding = await getBusinessUnderstanding(store.id, { viewerUserId: userId });
+
         const unifiedContextParts = [userMessage, `(Active products: ${activeProductNames})`];
+        const digest = digestOf(understanding);
+        // Omitted entirely for a business J4 knows nothing real about yet. A
+        // brand-new store produces one line of identity, and sending it every
+        // turn teaches the model nothing while costing context on every message.
+        if (digestIsSubstantive(digest)) {
+          unifiedContextParts.push(renderDigest(digest));
+        }
         // What the owner is looking at while asking (2026-08-14). J4 opens
         // over the workspace now rather than replacing it, so "make this
         // bolder" is a complete sentence — but only if J4 is told what
@@ -599,9 +625,11 @@ export async function POST(request: Request) {
           // real answer — nothing on record matches — and is better than
           // handing the model the newest decision and letting it improvise a
           // connection.
-          const [dataContext, understanding, pastDecisions, pastStatements] = await Promise.all([
+          // `understanding` is already in hand from before the decision — the
+          // same object, not a second read. Re-fetching here would have made the
+          // digest a genuine extra query rather than a relocated one.
+          const [dataContext, pastDecisions, pastStatements] = await Promise.all([
             buildChatDataContext(store.id),
-            getBusinessUnderstanding(store.id, { viewerUserId: userId }),
             findRelevantDecisions(store.id, userMessage),
             // M9 — the owner's own past words, any age. Gap D's twin: the same
             // relevance-over-recency rule, applied to the conversation those

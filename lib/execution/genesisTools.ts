@@ -332,7 +332,7 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
     {
       name: "look_up_business_data",
       description:
-        "Call this when the merchant is asking to be TOLD or EXPLAINED something using real business data or understanding — a factual question (revenue, orders, customers, appointments, or how their connected social accounts are performing — reach, engagement, followers, which posts did well), or a genuine planning/strategy question ('what should I do next', 'build me a 90-day plan', 'how would you spend N Growth Points'). Never call this for a request to actually change something, and never for a request to CREATE something — making a logo, a design, a product or any other real artefact is the relevant creation tool, not this one. You do not need to look up the business first in order to create something: the creation tools read the business understanding themselves.",
+        "Call this when the merchant is asking to be TOLD or EXPLAINED something using real business data or understanding — a factual question (revenue, orders, customers, appointments, or how their connected social accounts are performing — reach, engagement, followers, which posts did well), or a genuine planning/strategy question ('what should I do next', 'build me a 90-day plan', 'how would you spend N Growth Points'). Never call this for a request to actually change something, and never for a request to CREATE something — making a logo, a design, a product or any other real artefact is the relevant creation tool, not this one. You already have a summary of the business above, so do not reach for this as a preliminary step before acting; call it when being TOLD something IS what was asked for.",
       input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
     },
     {
@@ -392,7 +392,19 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
     {
       name: "generate_brand_logo",
       description:
-        "THE tool for making a logo. Call this whenever the merchant asks you to make, design, create or generate a LOGO or brand mark for their business — 'make me a logo', 'can you design a logo', 'I need a mark for the brand'. You will build the direction from what you genuinely know about their business — this tool reads their real business understanding itself, so do NOT call look_up_business_data first and do not ask them to describe everything before starting; one specific question is fine only if you truly have nothing to work from. Set ownerDirection to the merchant's OWN words about what they want whenever they gave any ('something with a wave', 'no blue', 'keep it simple') — those words outrank anything you inferred — and null when they just asked for a logo. Set wantsAlternatives ONLY when they actually asked for options or said they are unsure ('show me a few', 'I don't know what I want'); never set it true just because options are possible. IMPORTANT: if the merchant already has a logo they are happy with, do NOT call this and do NOT suggest replacing it — being able to make another is not a reason to raise it. Only call this when they have no logo, or when they have explicitly asked for a new one. This PROPOSES a logo for their approval; it never changes their brand immediately.",
+        // TWO WORKAROUNDS REMOVED FROM THIS DESCRIPTION (2026-08-22).
+        //
+        // It used to say "this tool reads their real business understanding
+        // itself, so do NOT call look_up_business_data first" — a rule that
+        // existed only because the deciding call had no business context and
+        // might otherwise have gone looking for some. It has the context now.
+        //
+        // And it used to say "if the merchant already has a logo, do NOT call
+        // this" — an instruction the model had NO DATA TO OBEY, since
+        // designated assets were not in its context at all. The digest now
+        // states which asset roles are held, so this is a fact it can check
+        // rather than a rule it had to take on trust.
+        "THE tool for making a logo. Call this whenever the merchant asks you to make, design, create or generate a LOGO or brand mark for their business — 'make me a logo', 'can you design a logo', 'I need a mark for the brand'. Build the direction from what you already know about their business rather than asking them to describe everything first; one specific question is fine only if you truly have nothing to work from. Set ownerDirection to the merchant's OWN words about what they want whenever they gave any ('something with a wave', 'no blue', 'keep it simple') — those words outrank anything you inferred — and null when they just asked for a logo. Set wantsAlternatives ONLY when they actually asked for options or said they are unsure ('show me a few', 'I don't know what I want'); never set it true just because options are possible. If the context above shows a brand logo is already held, do not offer to make another unless they explicitly ask for one — being able to make another is not a reason to raise it. This PROPOSES a logo for their approval; it never changes their brand immediately.",
       input_schema: z.toJSONSchema(GenerateBrandLogoInputSchema) as Anthropic.Tool.InputSchema,
     },
     {

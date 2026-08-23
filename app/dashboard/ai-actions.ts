@@ -62,6 +62,7 @@ import { RecoverableError, toActionState, type ActionState } from "@/lib/actionS
 import { buildChatDataContext } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
+import { digestOf, renderDigest, digestIsSubstantive } from "@/lib/businessModel/digest";
 import { findRelevantDecisions } from "@/lib/businessModel/reasoning";
 import { findRelevantMessages } from "@/lib/businessModel/conversationRecall";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
@@ -2331,7 +2332,18 @@ async function applyGenesisMessageToStore(
   // (real permission reason, not a performance one) — everything below
   // requires store:manage and only runs after that gate.
   const activeProductNames = currentProducts.map((p) => p.name).join(", ") || "none";
+  // WHAT J4 KNOWS, BEFORE IT DECIDES — same change, same reason, same single
+  // read as the streaming route. Both paths draw on identical understanding or
+  // neither can be trusted, and a fallback that decided with less context than
+  // the primary would answer the same question differently depending on which
+  // one happened to serve it.
+  const understanding = await getBusinessUnderstanding(store.id, { viewerUserId: userId });
+
   const unifiedContextParts = [userMessage, `(Active products: ${activeProductNames})`];
+  const digest = digestOf(understanding);
+  if (digestIsSubstantive(digest)) {
+    unifiedContextParts.push(renderDigest(digest));
+  }
   // What the owner is looking at (2026-08-14) — mirrors route.ts's own
   // identical addition, for the same reason the pending-approval signal is
   // duplicated below: this path runs both as the streaming route's fallback
@@ -2551,13 +2563,14 @@ async function applyGenesisMessageToStore(
     // it, because "a chat answer and a recommendation draw on identical
     // understanding" is the rule Gap B established and one path having deeper
     // recall than the other would quietly break it again.
-    const [dataContext, understanding, pastDecisions, pastStatements] = await Promise.all([
+    // Already in hand from before the decision — the same object, not a second
+    // read.
+    const [dataContext, pastDecisions, pastStatements] = await Promise.all([
       buildChatDataContext(store.id),
-      // NAMING THE VIEWER (2026-08-21). Owner-scoped beliefs are excluded by
-      // default, so this argument is what keeps J4 able to advise this owner as
-      // this owner — and what stops an employee of the same store hearing a
-      // profile of the owner's decision-making read back to them.
-      getBusinessUnderstanding(store.id, { viewerUserId: userId }),
+      // Understanding is fetched once before the decision (see the digest
+      // above) and reused here. It used to be fetched again in this array —
+      // which, once its binding moved out of the destructure, left every
+      // remaining name paired with the wrong promise.
       findRelevantDecisions(store.id, userMessage),
       // M9 — same recall on this path too, for the same reason the line above
       // exists: one path having deeper memory than the other would break Gap
