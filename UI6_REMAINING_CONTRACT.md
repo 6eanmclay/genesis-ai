@@ -1,18 +1,57 @@
 # UI6 — the three parked pieces
 
-**Status: BUILT. Pieces 1 and 2 complete; piece 3 implemented and pending live
-acceptance.** 2026-08-23.
+**Status: ACCEPTED.** All three pieces, measured. 2026-08-23.
 
 | Piece | State |
 |---|---|
 | 1 — Context pane | **Complete** (`244921b`) |
 | 2 — Conversations | **Complete** (`9c648cb`, `19c47b2`) |
-| 3 — Concise-summary replies | **Implemented, NOT accepted** (`f79f11d`) — acceptance criterion 4, the live prose measurement, is unmet |
-| **UI6 overall** | **Pending only external live validation** |
+| 3 — Concise-summary replies | **Accepted** (`f79f11d`, `acfdc1a`) — measured live on both reply paths, 8/8 |
+| **UI6 overall** | **Accepted** |
 
-**The remaining acceptance work is narrow and fixed:** run the live prose
-measurement; accept if it passes; if it fails, fix only the demonstrated prose
-defect and rerun. Nothing else joins that run.
+## What criterion 4 actually found
+
+The measurement did not exist when this document said it was pending. Writing it
+(`scripts/verify-prose-shape-live.ts`) and running it exposed a real defect, not
+a formality.
+
+**There are two owner-visible reply prompts, and piece 3 went into one of them.**
+`CHAT_CONTROL_SYSTEM_PROMPT` writes the reply while a store is a draft;
+`STORE_CHAT_PRIMARY_SYSTEM_PROMPT` writes it once the store is live. Only CONTROL
+got the lead-sentence rule. PRIMARY went on instructing "confirm, then recommend,
+then suggest — keep it to 2-4 sentences", which is the behaviour piece 3 removed,
+left standing on the path where the server appends its own authoritative
+checklist beneath the reply.
+
+Measured on the live path, before and after:
+
+| | sentences | characters | areas named |
+|---|---|---|---|
+| a sweeping change, before | 4 | 718 | 9 |
+| a sweeping change, after | 2 | 358 | 1 |
+| a small change, before | 3 | 310 | 1 |
+| a small change, after | 2 | 270 | 1 |
+
+## One thing accepted with a named exception
+
+The **draft** path still enumerates on a sweeping change — two sentences, but
+carrying comma-lists inside them ("softly rounded cards, a warm subtle depth, and
+an artisan framed treatment"). It fails the length assertion at 460 characters
+while passing sentence count, which is the length check doing exactly the job it
+was put there for.
+
+**This is not a prose defect and it was not fixed as one.** `controlResult.reply`
+is handed to the content generator as `"Plan already communicated to the user"` —
+on the draft path the reply IS the specification, and CONTROL's own prompt
+therefore demands "be concrete and specific about what you intend to do, not
+vague". The live path has no such conflict because it hands over structured
+`brandIdentity` and `theme` instead. Identical rule, different result, and the
+difference is architectural.
+
+Resolving it means splitting CONTROL's output into a `plan` for the generator and
+a `reply` for the owner — a schema, prompt, and two call-site change that alters
+what every draft turn feeds its content step. **That is Sean's call, not a fix to
+make while accepting a copy criterion.**
 
 ---
 
