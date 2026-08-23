@@ -1,6 +1,16 @@
 # Asking for a missing document — decisions only
 
-**Status: DECISION REQUESTED. Nothing implemented.** 2026-08-23.
+**Status: DECIDED AND BUILT (2026-08-23).** `858ab7a`, `d72350c`.
+
+- **AD1 — employee handbook.** Built. Evidence is active employees on record; the ask carries its own justification, speaks once, and withdraws when satisfied or when the team goes.
+- **AD2 — deferred.** No further document asks until an uploaded document becomes structured, actionable memory. Nothing generalises: there is no document registry and no per-document configuration, so a second document is a decision rather than a config entry.
+- **AD3 — moot for now.** With one ask there is nothing to queue behind anything.
+
+**The honest boundary, found by tracing rather than assuming:** an upload lands `category: "unclassified"` and is categorised later, so classification — which needs a model — is what closes the gap. Without one the ask stays open, and is never repeated. An ask left standing is a much smaller failure than an ask repeated.
+
+---
+
+*Original decision request follows.*
 
 Deliberately short. J4_IDENTITY.md already freezes the principle, the governing
 test, and the example sentences; the machinery to ask and to be heard now exists
