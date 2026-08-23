@@ -46,6 +46,7 @@ import { TakeMeThereInputSchema } from "@/lib/execution/genesisTools";
 import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
 import { queryRecords } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { resolveBusiness } from "@/lib/businessContext";
 
 // WHAT A TOOL ACTUALLY DOES, TESTED FOR THE FIRST TIME:
 //
@@ -1566,6 +1567,72 @@ async function main() {
     "later");
 
   await prisma.store.deleteMany({ where: { id: runShop.id } });
+
+  // ==========================================================================
+  console.log("\n=== 8b. Approving changes happens in the business J4 is in ===\n");
+  // ==========================================================================
+  // performApprovePendingChanges asked which business the ACCOUNT was in and
+  // compared it to the one it had been handed. The same question, while an
+  // account had one business. With more than one they are two questions, and in
+  // the ordinary case they disagree — active pointer on A, J4 asked to approve
+  // in B — and the mismatch returned totalMembers 0, which reads back to the
+  // owner as "There's nothing pending for me to approve right now."
+  //
+  // A confident, false statement about a business that HAS pending changes, and
+  // with the honest-logging fix above it records as a SUCCESS, because nothing
+  // pending genuinely is one.
+  //
+  // The wrapper needs a real session, which a script cannot fake — the
+  // structural limit scripts/verify-approve-pending-changes.ts already names.
+  // What IS testable without one is the resolution underneath it, which is
+  // where the two answers come from.
+  const twoBiz = await prisma.user.create({ data: { email: `mb-${uniq()}@test.local` } });
+  const bizA = await prisma.store.create({
+    data: { userId: twoBiz.id, name: "Alpha Works", slug: `mb-a-${uniq()}` },
+  });
+  const bizB = await prisma.store.create({
+    data: { userId: twoBiz.id, name: "Beta Works", slug: `mb-b-${uniq()}` },
+  });
+  await prisma.user.update({ where: { id: twoBiz.id }, data: { activeStoreId: bizA.id } });
+
+  // THE DISAGREEMENT, demonstrated. Asking without naming a business gives the
+  // account's active one; naming B gives B. The old code asked the first
+  // question and compared the answer to B.
+  const unnamed = await resolveBusiness(twoBiz.id);
+  check("asking without naming gives the active business",
+    unnamed.kind === "resolved" && unnamed.storeId, bizA.id);
+  const named = await resolveBusiness(twoBiz.id, bizB.id);
+  check("naming the business gives that business",
+    named.kind === "resolved" && named.storeId, bizB.id);
+  assert("which is the mismatch that reported nothing pending",
+    unnamed.kind === "resolved" && named.kind === "resolved" && unnamed.storeId !== named.storeId,
+    "without a disagreement here there was no defect to fix");
+
+  // AND NAMING IS SAFER, not merely more accurate: a business the viewer cannot
+  // reach resolves to nothing rather than falling through to one they can.
+  const stranger = await prisma.user.create({ data: { email: `mb-x-${uniq()}@test.local` } });
+  const strangerStore = await prisma.store.create({
+    data: { userId: stranger.id, name: "Not Yours", slug: `mb-x-${uniq()}` },
+  });
+  const reachedForeign = await resolveBusiness(twoBiz.id, strangerStore.id);
+  check("a business the viewer cannot reach resolves to nothing",
+    reachedForeign.kind, "none");
+  assert("and never falls through to one they can",
+    reachedForeign.kind !== "resolved",
+    "falling back to the active business is how a caller gets a different business than it named");
+
+  // The call sites, exactly. Both are one argument away from the old behaviour
+  // and neither has an observable difference a script without a session can see.
+  const actionSource = readFileSync(join(process.cwd(), "app", "dashboard", "ai-actions.ts"), "utf8");
+  assert("the approval run names its business when authorizing",
+    actionSource.includes("requireStorePermission(PERMISSIONS.ANALYTICS_VIEW, storeId)"),
+    "without the storeId this authorizes whichever business the account last made active");
+  assert("and names it again when approving a group",
+    actionSource.includes("performApproveGenesisActionGroup(batch.groupId, business?.slug)"),
+    "the group approver falls back to the active business without a slug — the defect its own comment records");
+
+  await prisma.store.deleteMany({ where: { id: { in: [bizA.id, bizB.id, strangerStore.id] } } });
+  await prisma.user.deleteMany({ where: { id: { in: [twoBiz.id, stranger.id] } } });
 
   // ==========================================================================
   console.log("\n=== 9. A handler that failed does not get logged as fine ===\n");

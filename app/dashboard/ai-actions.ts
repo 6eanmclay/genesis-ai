@@ -4680,17 +4680,36 @@ export async function approveGenesisActionGroup(groupId: string, slug?: string) 
 // report through the one shared describeApprovalExecutionForChat.
 export async function performApprovePendingChanges(storeId: string): Promise<GroupApprovalResult> {
   // The caller-supplied storeId is CONFIRMED against the session before it is
-  // used (2026-08-20). Both real callers already pass the signed-in owner's own
-  // store, so this costs them nothing.
-  //
-  // It could not be used to approve anything cross-store — every path below
-  // delegates to performApproveGenesisAction/Group, which re-derive the storeId
-  // from the session and scope their queries to it. But it DID perform an
+  // used (2026-08-20). It could not be used to approve anything cross-store —
+  // every path below delegates to performApproveGenesisAction/Group, which
+  // re-derive the storeId and scope their queries to it. But it DID perform an
   // unscoped read of another store's pending approvals before those guards
   // caught it, and "the next function down happens to be safe" is not a reason
   // to read another tenant's rows at all.
-  const { storeId: callerStoreId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
-  if (callerStoreId !== storeId) {
+  //
+  // THE BUSINESS THIS IS ABOUT IS NAMED, not inferred (2026-08-23). This asked
+  // requireStorePermission which business the ACCOUNT was in and then compared
+  // that to the one it had been handed — which was the same question only while
+  // an account had one business. With more than one it is two questions, and
+  // they disagree in the ordinary case:
+  //
+  //   - active pointer on business A, J4 asked to approve in business B: the
+  //     comparison failed and this returned totalMembers 0, which reads back to
+  //     the owner as "There's nothing pending for me to approve right now."
+  //     A confident, false statement about a business that HAS pending changes.
+  //   - more than one business and no active pointer at all: resolveBusiness
+  //     returns `ambiguous` and requireStorePermission throws, so the same
+  //     request became "Something went wrong applying those changes."
+  //
+  // Naming the store makes it one question again, and a safer one: with a
+  // requestedStoreId, resolveBusiness returns THAT business or `none` — it never
+  // falls through to the active one — so a store the viewer cannot reach throws
+  // rather than resolving to something they can.
+  const { storeId: authorizedStoreId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW, storeId);
+  // Unreachable: resolveBusiness returns the requested business or nothing.
+  // Kept because this function's whole job is moving real state, and the cost
+  // of the check is one comparison.
+  if (authorizedStoreId !== storeId) {
     return { totalMembers: 0, succeeded: [], failed: [] };
   }
 
@@ -4699,7 +4718,22 @@ export async function performApprovePendingChanges(storeId: string): Promise<Gro
     return { totalMembers: 0, succeeded: [], failed: [] };
   }
   if (batch.groupId) {
-    return performApproveGenesisActionGroup(batch.groupId);
+    // NAMED, for the same reason as above and one layer down. Without a slug
+    // performApproveGenesisActionGroup resolves the ACCOUNT's active business
+    // and looks for the group inside it — which is the defect its own comment
+    // records being fixed for the "Approve all" button on 2026-08-22: from
+    // business A with B active, the query matched nothing, and the owner got no
+    // changes and no error. J4's path went on calling it the old way, so the
+    // same request through chat had the same silent nothing.
+    //
+    // The single-proposal branch below needs no equivalent: it resolves the
+    // business from the approval's own row, which is more authoritative than
+    // anything the caller could pass.
+    const business = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { slug: true },
+    });
+    return performApproveGenesisActionGroup(batch.groupId, business?.slug);
   }
   const single = await performApproveGenesisAction(batch.approvalIds[0]);
   if (single.outcome === "not_found") {
