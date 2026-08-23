@@ -221,3 +221,55 @@ export function describeDroppedTools(
     ? `I'm doing one of these at a time so you can see each change before the next — tell me when you want me to pick up ${thing} you asked for.`
     : `That was more than I'll take on in one go — say the word and I'll pick up ${thing} you asked for next.`;
 }
+
+/**
+ * The tools the non-streaming Server Action can actually carry out.
+ *
+ * FOUND BY AUDIT, NOT ASSUMED (2026-08-22). app/dashboard/ai-actions.ts has a
+ * branch for eleven of the nineteen registered tools. The other eight —
+ * generate_brand_logo, create_design, approve_design_as_product,
+ * create_composition, approve_composition, improve_storefront, take_me_there
+ * and refine_storefront — live only on the streaming route.
+ *
+ * That was silent and expensive. A message the unified call answered with
+ * generate_brand_logo, arriving on this path, matched no branch and fell
+ * through to the legacy content pipeline — so asking for a logo ran a full
+ * store-content regeneration instead. Genesis doing something other than what
+ * it was asked, and reporting the something else as though it were the answer.
+ *
+ * This list exists so the gap is DECLARED rather than accidental, and so the
+ * Server Action can say plainly that it could not do the thing instead of doing
+ * a different thing. scripts/verify-tool-policy.ts cross-checks it against that
+ * file's real branches, in both directions, so implementing one of the eight
+ * fails here until it is listed and removing a branch fails here too.
+ */
+export const SERVER_ACTION_TOOLS: readonly string[] = [
+  "look_up_business_data",
+  "show_upload_options",
+  "capture_business_fact",
+  "plan_campaign",
+  "request_image_change",
+  "request_product_removal",
+  "request_product_content_change",
+  "approve_pending_changes",
+  "edit_store_content",
+  "manage_business_asset",
+  "answer_supplier_economics",
+];
+
+export function serverActionCanHandle(toolName: string): boolean {
+  return SERVER_ACTION_TOOLS.includes(toolName);
+}
+
+/**
+ * What to say when the turn reached the path that cannot do this.
+ *
+ * HONEST ABOUT WHAT HAPPENED, which is: nothing. The alternative this replaces
+ * was falling through to a different capability entirely and presenting its
+ * result — the exact thing the standing rule against reporting a change that
+ * did not happen exists to prevent. Says nothing about streams, fallbacks or
+ * routes: the owner has no idea there are two paths and should not learn it
+ * from an error.
+ */
+export const UNAVAILABLE_ON_THIS_PATH =
+  "Something got in the way of that one and I haven't done it — ask me again and I'll pick it straight up.";

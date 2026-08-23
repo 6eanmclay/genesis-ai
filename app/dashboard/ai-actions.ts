@@ -17,7 +17,7 @@ import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import { generateProductContentChanges } from "@/lib/execution/productContentGeneration";
 import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon";
 import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
-import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools } from "@/lib/execution/toolPolicy";
+import { mayInvokeTool, refusalMessage, planToolRun, describeDroppedTools, serverActionCanHandle, UNAVAILABLE_ON_THIS_PATH } from "@/lib/execution/toolPolicy";
 import { businessBasePath } from "@/lib/dashboard/navConfig";
 import { adoptNewBusiness, businessFromSlug } from "@/lib/businessContext";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -2513,6 +2513,42 @@ async function applyGenesisMessageToStore(
       storeId: store.id,
       durationMs: Date.now() - turnStartedAt,
       outcome: "success",
+      likelyRephraseOf,
+      stageDurationsMs,
+    });
+    revalidatePath(returnTo);
+    redirectKeepingChatOpen(returnTo);
+  }
+
+  // A TOOL THIS PATH CANNOT CARRY OUT (2026-08-22).
+  //
+  // Eight of the nineteen registered tools have no branch in this file — they
+  // live only on the streaming route. Until now a message answered with one of
+  // them matched nothing here and fell through to the legacy content pipeline,
+  // so asking for a logo ran a full store-content regeneration and reported
+  // that instead. Genesis doing something other than what it was asked.
+  //
+  // Saying nothing happened is the honest outcome, and the only one that does
+  // not violate the standing rule against reporting a change that did not occur.
+  if (decidedTool && !serverActionCanHandle(decidedTool)) {
+    await prisma.storeMessage.create({
+      data: { storeId: store.id, role: "assistant", content: UNAVAILABLE_ON_THIS_PATH },
+    });
+    await recordGenesisExecution({
+      action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+      status: "WARNING",
+      verified: false,
+      message: UNAVAILABLE_ON_THIS_PATH,
+      retryable: true,
+      userId,
+      storeId: store.id,
+      metadata: { unhandledTool: decidedTool },
+    });
+    await logChatTurnEvent({
+      userId,
+      storeId: store.id,
+      durationMs: Date.now() - turnStartedAt,
+      outcome: "failure",
       likelyRephraseOf,
       stageDurationsMs,
     });

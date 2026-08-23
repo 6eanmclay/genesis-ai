@@ -9,6 +9,9 @@ import {
   refusalMessage,
   planToolRun,
   describeDroppedTools,
+  SERVER_ACTION_TOOLS,
+  serverActionCanHandle,
+  UNAVAILABLE_ON_THIS_PATH,
   MAX_TOOLS_PER_TURN,
 } from "@/lib/execution/toolPolicy";
 import { PERMISSIONS, ROLE_PERMISSIONS, hasPermission } from "@/lib/permissions";
@@ -81,21 +84,21 @@ console.log("\n=== 2. Nothing was loosened except what genuinely reads ===\n");
 // argue with a failing test rather than slip through a diff.
 const READ_ONLY = ["look_up_business_data", "take_me_there", "show_upload_options"];
 check("exactly the read-only tools are readable by anyone who can chat",
-  catalog.filter((n) => TOOL_POLICY[n].permission === PERMISSIONS.GENESIS_CHAT).sort(),
+  catalog.filter((n) => policyFor(n)?.permission === PERMISSIONS.GENESIS_CHAT).sort(),
   [...READ_ONLY].sort());
 check("and neither of them changes anything",
-  READ_ONLY.filter((n) => TOOL_POLICY[n].mutates), []);
+  READ_ONLY.filter((n) => policyFor(n)?.mutates), []);
 check("every other tool still requires store:manage",
-  catalog.filter((n) => !READ_ONLY.includes(n) && TOOL_POLICY[n].permission !== PERMISSIONS.STORE_MANAGE),
+  catalog.filter((n) => !READ_ONLY.includes(n) && policyFor(n)?.permission !== PERMISSIONS.STORE_MANAGE),
   []);
 check("and every one of those is marked as mutating",
-  catalog.filter((n) => !READ_ONLY.includes(n) && !TOOL_POLICY[n].mutates), []);
+  catalog.filter((n) => !READ_ONLY.includes(n) && !policyFor(n)?.mutates), []);
 
 // A read tool that was quietly marked mutating would be excluded from a
 // multi-tool turn for no reason; a mutating tool marked read would be the
 // opposite and much worse.
 check("no tool is both chat-permissioned and mutating",
-  catalog.filter((n) => TOOL_POLICY[n].permission === PERMISSIONS.GENESIS_CHAT && TOOL_POLICY[n].mutates),
+  catalog.filter((n) => policyFor(n)?.permission === PERMISSIONS.GENESIS_CHAT && policyFor(n)?.mutates),
   []);
 
 // ============================================================================
@@ -121,7 +124,7 @@ check("and is told why in terms of the change, not the question",
 
 // EVERY mutating tool, not a sample. A single one left open is the whole hole.
 const openToEmployee = catalog.filter(
-  (n) => TOOL_POLICY[n].mutates && mayInvokeTool("EMPLOYEE", n).allowed
+  (n) => policyFor(n)?.mutates && mayInvokeTool("EMPLOYEE", n).allowed
 );
 check("no mutating tool is open to an employee", openToEmployee, []);
 
@@ -273,6 +276,58 @@ for (const [name, source] of [["the streaming route", route], ["the Server Actio
   assert(`${name} plans what may run`, source.includes("planToolRun("));
   assert(`${name} tells the owner what it is not doing`, source.includes("describeDroppedTools("));
 }
+
+// ============================================================================
+console.log("\n=== 8. Every tool the model can emit is actually handled ===\n");
+// ============================================================================
+// A tool present in the catalog with no branch in a dispatch ladder is
+// ARCHITECTURE.md's standing invariant in its most dangerous form: it does not
+// error, it falls through to whatever comes next. That is not hypothetical here
+// — it was the live state until this suite was written. Eight of the nineteen
+// tools had no branch in the Server Action, so a message answered with
+// generate_brand_logo fell through to the legacy content pipeline and ran a
+// full store-content regeneration instead, reporting that as the answer.
+//
+// Read from each file's real source, because "does this branch exist" is not a
+// question a type can answer.
+const handledIn = (source: string) => catalog.filter((n) => source.includes(`"${n}"`));
+
+const routeHandles = handledIn(route);
+check("the streaming route handles every registered tool",
+  catalog.filter((n) => !routeHandles.includes(n)), []);
+
+// The Server Action genuinely handles fewer, and that is allowed — what is NOT
+// allowed is the gap being undeclared, because an undeclared gap is a silent
+// fall-through.
+const actionHandles = handledIn(action);
+check("the declared Server Action set matches what that file really handles",
+  actionHandles.filter((n) => !SERVER_ACTION_TOOLS.includes(n)).sort(),
+  []);
+check("and nothing is declared that it cannot actually do",
+  SERVER_ACTION_TOOLS.filter((n) => !actionHandles.includes(n)).sort(), []);
+check("every declared name is a real tool",
+  SERVER_ACTION_TOOLS.filter((n) => !catalog.includes(n)), []);
+
+// THE GAP IS REAL, and pinning it means implementing one of the eight has to
+// come here and say so rather than being forgotten.
+const unhandled = catalog.filter((n) => !serverActionCanHandle(n));
+assert("the Server Action's gap is a known, non-empty set",
+  unhandled.length > 0, unhandled.join(", "));
+// THE EXACT STATEMENT, not the name appearing somewhere in the file. A negative
+// control disabled the guard with `if (false && ...)` and the looser check still
+// passed, because the text it looked for sat inside the disabled condition. A
+// source assertion can always be defeated by somebody determined; what it must
+// not do is miss the ordinary way a guard gets switched off.
+assert("and the file refuses those rather than falling through",
+  action.includes("if (decidedTool && !serverActionCanHandle(decidedTool)) {"),
+  "without this, an unhandled tool runs the legacy content pipeline instead");
+
+// The refusal says nothing happened, and nothing about internals.
+assert("the refusal says nothing was done",
+  /haven't done it|not done/i.test(UNAVAILABLE_ON_THIS_PATH), UNAVAILABLE_ON_THIS_PATH);
+assert("and does not mention streams, routes or fallbacks",
+  !/stream|route|fallback|server action/i.test(UNAVAILABLE_ON_THIS_PATH),
+  "the owner has no idea there are two paths and should not learn it from an error");
 
 // The Server Action learns its tool two ways — its own unified call, and the
 // preClassifiedTool the route hands over. Missing the second would leave
