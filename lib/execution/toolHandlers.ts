@@ -2,11 +2,14 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY, DesignSchema } from "@/lib/businessModel/entities";
+import { getSurface } from "@/lib/design/surfaces";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { UPLOAD_INTENT_REPLY } from "@/lib/dashboard/storeChatUnified";
 import {
   AnswerSupplierEconomicsToolInputSchema,
   ApproveCompositionInputSchema,
+  CreateDesignInputSchema,
+  GenerateBrandLogoInputSchema,
   ApproveDesignAsProductInputSchema,
   CreateCompositionInputSchema,
   TakeMeThereInputSchema,
@@ -862,6 +865,347 @@ export function makeApproveDesignAsProduct(
   };
 }
 
+interface StorefrontFinding {
+  key: string;
+  observed: string;
+  wouldDo: string;
+  composition?: { surface: string; columns: number; subject: string | null } | null;
+}
+
+/**
+ * Form an opinion about the storefront and show the fix.
+ *
+ * THE EVALUATION IS FACTS; THE JUDGEMENT IS J4'S. That split is deliberate —
+ * "J4 doesn't surface everything he can detect, he decides what is worth
+ * bringing to the owner." So the model's own words LEAD, and the findings are
+ * appended only when it did not already say something substantive. Talking over
+ * a good answer with a generated list is a worse outcome than saying less.
+ *
+ * A finding with no composition behind it — missing photos, no logo — is still
+ * said, and still has nothing to preview. Composing around a gap would HIDE it,
+ * which is the opposite of the point.
+ */
+export function makeImproveStorefront(
+  deps?: {
+    evaluate?: (storeId: string) => Promise<{ findings: StorefrontFinding[]; productsWithImages: number }>;
+    compose?: (input: { storeId: string; surface: string; columns: number; subject: string | null }) => Promise<{
+      used: { label: string }[];
+      design: { mockupUrl: string };
+    } | null>;
+  }
+): ToolHandler {
+  return async (ctx) => {
+    const evaluate =
+      deps?.evaluate ??
+      (async (storeId: string) => {
+        const { evaluateStorefront } = await import("@/lib/storefront/evaluate");
+        return evaluateStorefront(storeId) as unknown as Promise<{
+          findings: StorefrontFinding[];
+          productsWithImages: number;
+        }>;
+      });
+    const compose =
+      deps?.compose ??
+      (async (input: { storeId: string; surface: string; columns: number; subject: string | null }) => {
+        const { createComposition } = await import("@/lib/design/composeForStorefront");
+        return createComposition(input as Parameters<typeof createComposition>[0]);
+      });
+
+    const evaluation = await evaluate(ctx.storeId);
+    const actionable = evaluation.findings.find((f) => f.composition);
+
+    let composedUrl: string | null = null;
+    let composedFrom: string[] = [];
+    if (actionable?.composition) {
+      const composed = await compose({
+        storeId: ctx.storeId,
+        surface: actionable.composition.surface,
+        columns: actionable.composition.columns,
+        subject: actionable.composition.subject,
+      });
+      if (composed) {
+        composedUrl = composed.design.mockupUrl;
+        composedFrom = composed.used.map((u) => u.label);
+      }
+    }
+
+    const spoken = ctx.conversationalReply?.trim() ?? "";
+    const observations = evaluation.findings
+      .slice(0, 3)
+      .map((f) => `${f.observed} ${f.wouldDo}`)
+      .join(" ");
+
+    const parts: string[] = [];
+    if (spoken) parts.push(spoken);
+    else if (observations) parts.push(observations);
+    else
+      // NOTHING WRONG IS A REAL ANSWER. Manufacturing a concern to look useful
+      // is how an owner learns to stop trusting the ones that matter.
+      parts.push(
+        "Your storefront is in reasonable shape — nothing structural is standing out to me as worth changing right now."
+      );
+    if (composedUrl) {
+      parts.push(
+        `I've put together a version below using ${composedFrom.slice(0, 3).join(", ")}. Have a look, and tell me to use it or change it.`
+      );
+    }
+
+    return {
+      handled: true,
+      reply: parts.join(" "),
+      kind: "improve_storefront",
+      // PENDING: J4 formed an opinion and proposed something. Nothing changed.
+      executionStatus: "PENDING",
+      logMessage: "Evaluated the storefront",
+      ...(composedUrl ? { revalidate: "/dashboard/studio", messageChanges: { imageUrl: composedUrl } } : {}),
+      metadata: {
+        findings: evaluation.findings.map((f) => f.key),
+        productsWithImages: evaluation.productsWithImages,
+        proposedComposition: actionable?.composition?.surface ?? null,
+      },
+    };
+  };
+}
+
+interface ComposedDesign {
+  designId: string;
+  mockupUrl: string;
+  color: string | null;
+  colorVerified: boolean | null;
+  contrast: { sufficient: boolean; markIs: string } | null;
+}
+
+/**
+ * Put the owner's real mark onto a garment.
+ *
+ * NEVER INVENTS ARTWORK. The asset has to already exist and be designated — if
+ * there is no logo, J4 says so plainly and OFFERS to make one rather than
+ * making one uninvited. The offer is a sentence the owner can ignore, which is
+ * the whole of the no-pressure rule.
+ *
+ * TWO HONESTY RULES LIVE IN THE CLOSING SENTENCE, and both came from real
+ * failures rather than caution.
+ *
+ * The colour is MEASURED, not assumed. Sean asked for a black hoodie, got a
+ * grey one, and was told it was black — so when the render check fails, J4 says
+ * the artifact does not look like what was asked for instead of naming a colour
+ * it plainly is not.
+ *
+ * Low contrast is a JUDGEMENT, not a render error. A dark mark on a black
+ * garment composes perfectly and is still something nobody would sell. So J4
+ * raises it and OFFERS alternatives — it never alters the mark, because
+ * changing somebody's logo so it shows up on black is a decision about their
+ * brand, and it is theirs.
+ */
+export function makeCreateDesign(deps?: {
+  resolveLogo?: (storeId: string) => Promise<{ id: string } | null>;
+  compose?: (input: {
+    storeId: string;
+    assetIds: string[];
+    surface: string;
+    color: string | null;
+  }) => Promise<ComposedDesign | null>;
+}): ToolHandler {
+  return async (ctx) => {
+    const parsed = CreateDesignInputSchema.safeParse(ctx.input);
+    const surfaceKey = parsed.success ? parsed.data.surface : null;
+    const surface = surfaceKey ? getSurface(surfaceKey) : null;
+
+    const resolveLogo =
+      deps?.resolveLogo ??
+      (async (storeId: string) => {
+        const { resolveCurrentAsset, ASSET_ROLES } = await import("@/lib/businessModel/assets");
+        return resolveCurrentAsset(storeId, ASSET_ROLES.brandLogo);
+      });
+
+    const logo = surface ? await resolveLogo(ctx.storeId) : null;
+    if (!surface || !logo) {
+      return {
+        handled: true,
+        reply: !surface
+          ? ctx.conversationalReply || "I can put your logo on a t-shirt or a hoodie. Which one did you have in mind?"
+          : ctx.conversationalReply ||
+            "You don't have a logo saved yet, so there's nothing for me to put on it. I can make one based on what I know about your business if you want.",
+        kind: "create_design",
+        outcome: "failure",
+      };
+    }
+
+    const compose =
+      deps?.compose ??
+      (async (input: { storeId: string; assetIds: string[]; surface: string; color: string | null }) => {
+        const { createDesign } = await import("@/lib/design/createDesign");
+        return createDesign(input as Parameters<typeof createDesign>[0]) as unknown as Promise<ComposedDesign | null>;
+      });
+
+    const design = await compose({
+      storeId: ctx.storeId,
+      assetIds: [logo.id],
+      surface: surface.key,
+      color: parsed.success ? parsed.data.color : null,
+    });
+
+    if (!design) {
+      return {
+        handled: true,
+        reply: ctx.conversationalReply || "I couldn't put that together just now. Try me again in a moment.",
+        kind: "create_design",
+        outcome: "failure",
+      };
+    }
+
+    const askedColor = parsed.success ? parsed.data.color : null;
+    const colorFailed = Boolean(askedColor) && design.colorVerified === false;
+    const contrast = design.contrast;
+    const lowContrast = Boolean(contrast && !contrast.sufficient);
+    const colorWord = design.color ? design.color : "that colour";
+    const lighter = contrast?.markIs === "dark";
+
+    const closing = colorFailed
+      ? `I asked for ${askedColor} and what came back doesn't actually look ${askedColor} to me, so don't take my word for it — have a look. Tell me to try the colour again and I will.`
+      : lowContrast
+        ? `Have a look before you decide though. Your mark is ${contrast!.markIs} and so is the ${colorWord}, so it barely reads against it. I can make a ${
+            lighter ? "light" : "dark"
+          } version of the mark for this, or put it on a ${
+            lighter ? "lighter" : "darker"
+          } colour instead. I won't change your logo unless you tell me to.`
+        : "That's your real mark composited onto it, not an impression of it, and the print file is ready at full size. Tell me if you want it bigger, smaller, or somewhere else on the garment.";
+
+    const lead = ctx.conversationalReply || `Here's your logo on a ${surface.label.toLowerCase()}.`;
+    return {
+      handled: true,
+      reply: `${lead} ${closing}`,
+      kind: "create_design",
+      // PENDING: something was made and nothing was applied to the store.
+      executionStatus: "PENDING",
+      logMessage: `Composed a design on ${surface.label}`,
+      // Studio has to SHOW the work — without this the bench still reads
+      // "nothing on the bench yet" after J4 has just made something.
+      revalidate: "/dashboard/studio",
+      messageChanges: { imageUrl: design.mockupUrl, designId: design.designId, surface: surface.key },
+      metadata: { designId: design.designId, surface: surface.key, assetIds: [logo.id] },
+    };
+  };
+}
+
+/**
+ * Propose a brand logo, grounded in what J4 actually knows about the business.
+ *
+ * THE NO-PRESSURE RULE IS ENFORCED HERE, in code, rather than trusted to the
+ * prompt. An owner who already has a logo is FINISHED — J4 being able to make
+ * another is not a reason to raise it. The only thing that overrides that is
+ * the owner explicitly asking, which is what ownerDirection carries.
+ *
+ * That rule used to live only in the tool's description, where the model had no
+ * data to obey it: designated assets were not in its context. The digest fixed
+ * the context side; this is the side that does not depend on a model reading
+ * carefully.
+ *
+ * ALTERNATIVES ONLY WHEN ASKED. An offer that always fires is not an offer, and
+ * they are siblings rather than replacements, so the original survives.
+ */
+export function makeGenerateBrandLogo(deps?: {
+  hasLogo?: (storeId: string) => Promise<boolean>;
+  propose?: (input: { storeId: string; ownerDirection: string | null }) => Promise<{
+    proposal: { proposalId: string };
+    rationale: string;
+    groundedIn: unknown;
+  } | null>;
+  branch?: (input: {
+    storeId: string;
+    proposalId: string;
+    ownerDirection: string | null;
+    alternatives: { label: string; intent: string }[];
+  }) => Promise<{ branches: unknown[] } | null>;
+}): ToolHandler {
+  return async (ctx) => {
+    const parsed = GenerateBrandLogoInputSchema.safeParse(ctx.input);
+    const ownerDirection = parsed.success ? parsed.data.ownerDirection : null;
+    const wantsAlternatives = parsed.success ? parsed.data.wantsAlternatives : false;
+
+    const hasLogo =
+      deps?.hasLogo ??
+      (async (storeId: string) => {
+        const { hasExistingLogo } = await import("@/lib/brand/proposeBrandLogo");
+        return hasExistingLogo(storeId);
+      });
+
+    if ((await hasLogo(ctx.storeId)) && !ownerDirection) {
+      return {
+        handled: true,
+        reply:
+          ctx.conversationalReply ||
+          "You've already got a logo, and it's yours — I'll work with that one. If you ever want a different direction, say so and I'll put something together.",
+        kind: "generate_brand_logo",
+      };
+    }
+
+    const propose =
+      deps?.propose ??
+      (async (input: { storeId: string; ownerDirection: string | null }) => {
+        const { proposeBrandLogo } = await import("@/lib/brand/proposeBrandLogo");
+        return proposeBrandLogo(input) as unknown as Promise<{
+          proposal: { proposalId: string };
+          rationale: string;
+          groundedIn: unknown;
+        } | null>;
+      });
+
+    const proposed = await propose({ storeId: ctx.storeId, ownerDirection });
+    if (!proposed) {
+      // Honest failure, the convention every image path here follows: no logo
+      // was made, and no placeholder is invented to cover it.
+      return {
+        handled: true,
+        reply: ctx.conversationalReply || "I couldn't get a logo generated just then. Try me again in a moment.",
+        kind: "generate_brand_logo",
+        outcome: "failure",
+      };
+    }
+
+    let alternativeCount = 0;
+    if (wantsAlternatives) {
+      const branch =
+        deps?.branch ??
+        (async (input: {
+          storeId: string;
+          proposalId: string;
+          ownerDirection: string | null;
+          alternatives: { label: string; intent: string }[];
+        }) => {
+          const { branchBrandLogo } = await import("@/lib/brand/proposeBrandLogo");
+          return branchBrandLogo(input) as unknown as Promise<{ branches: unknown[] } | null>;
+        });
+      const lineage = await branch({
+        storeId: ctx.storeId,
+        proposalId: proposed.proposal.proposalId,
+        ownerDirection,
+        alternatives: [
+          { label: "Warmer and simpler", intent: "Softer, friendlier, fewer elements. Warmth over polish." },
+          { label: "Bolder and more graphic", intent: "Higher contrast, a stronger single shape, more confident." },
+        ],
+      });
+      alternativeCount = lineage?.branches.length ?? 0;
+    }
+
+    const lead = ctx.conversationalReply || proposed.rationale;
+    const closing =
+      alternativeCount > 0
+        ? "I've put a couple of other directions beside it. The first one's still there — tell me which way you want to go, or take pieces from more than one."
+        : "Have a look below. Tell me what you'd change, or if you're not sure yet I can show you a couple of other directions.";
+
+    return {
+      handled: true,
+      reply: `${lead} ${closing}`,
+      kind: "generate_brand_logo",
+      // PENDING: proposed, never applied to the brand.
+      executionStatus: "PENDING",
+      logMessage: "Proposed a brand logo",
+      metadata: { groundedIn: proposed.groundedIn, ownerDirection, alternatives: alternativeCount },
+    };
+  };
+}
+
 /**
  * The tools that have moved out of the inline ladder.
  *
@@ -880,6 +1224,9 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   create_composition: makeCreateComposition(),
   approve_composition: makeApproveComposition(),
   approve_design_as_product: makeApproveDesignAsProduct(),
+  improve_storefront: makeImproveStorefront(),
+  create_design: makeCreateDesign(),
+  generate_brand_logo: makeGenerateBrandLogo(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the
   // ACCOUNT'S ACTIVE business rather than the one the owner is in, so it is

@@ -13,6 +13,9 @@ import {
   makeCreateComposition,
   makeApproveComposition,
   makeApproveDesignAsProduct,
+  makeCreateDesign,
+  makeGenerateBrandLogo,
+  makeImproveStorefront,
   NAV_DESTINATIONS,
   OFFICE_REPLY,
   resolveScopedProducts,
@@ -555,6 +558,168 @@ async function main() {
   assert("a malformed approval is handled without running anything", badApproval.handled);
   if (!badApproval.handled) throw new Error("unreachable");
   check("and recorded as a failure", badApproval.outcome, "failure");
+
+  // ==========================================================================
+  console.log("\n=== 5g. Making things: honest colour, honest contrast, no pressure ===\n");
+  // ==========================================================================
+  // Three handlers that produce artefacts, and three honesty rules that each
+  // came from a real failure rather than caution.
+
+  // ---- create_design: never invents artwork ------------------------------
+  const noLogo = await makeCreateDesign({ resolveLogo: async () => null })(
+    contextFor(store.id, owner.id, { surface: "garment.tshirt", assetRole: null, color: null })
+  );
+  assert("designing with no logo is handled", noLogo.handled);
+  if (!noLogo.handled) throw new Error("unreachable");
+  check("recorded as a failure", noLogo.outcome, "failure");
+  // AND OFFERS, rather than making one uninvited. The offer is a sentence the
+  // owner can ignore, which is the whole of the no-pressure rule.
+  assert("it offers to make one rather than making one",
+    noLogo.reply.includes("I can make one"), noLogo.reply);
+
+  const design = (colorVerified: boolean | null, contrast: { sufficient: boolean; markIs: string } | null) =>
+    makeCreateDesign({
+      resolveLogo: async () => ({ id: "logo-1" }),
+      compose: async () => ({
+        designId: "d-1", mockupUrl: "https://example.test/m.png",
+        color: "black", colorVerified, contrast,
+      }),
+    });
+
+  // THE COLOUR IS MEASURED, NOT ASSUMED. Sean asked for a black hoodie, got a
+  // grey one, and was told it was black.
+  const wrongColour = await design(false, null)(
+    contextFor(store.id, owner.id, { surface: "garment.tshirt", assetRole: null, color: "black" })
+  );
+  assert("a failed colour check is handled", wrongColour.handled);
+  if (!wrongColour.handled) throw new Error("unreachable");
+  assert("and J4 says so rather than naming a colour it plainly is not",
+    wrongColour.reply.includes("doesn't actually look"), wrongColour.reply);
+
+  // LOW CONTRAST IS A JUDGEMENT, NOT A RENDER ERROR. A dark mark on a black
+  // garment composes perfectly and is still something nobody would sell.
+  const unreadable = await design(true, { sufficient: false, markIs: "dark" })(
+    contextFor(store.id, owner.id, { surface: "garment.tshirt", assetRole: null, color: "black" })
+  );
+  assert("low contrast is handled", unreadable.handled);
+  if (!unreadable.handled) throw new Error("unreachable");
+  assert("J4 raises it", unreadable.reply.includes("barely reads"), unreadable.reply);
+  // AND OFFERS RATHER THAN ALTERING. Changing somebody's mark so it shows up
+  // on black is a decision about their brand, and it is theirs.
+  assert("and promises not to change their logo without being told",
+    unreadable.reply.includes("won't change your logo"), unreadable.reply);
+
+  const clean = await design(true, { sufficient: true, markIs: "light" })(
+    contextFor(store.id, owner.id, { surface: "garment.tshirt", assetRole: null, color: "black" })
+  );
+  assert("a clean design is handled", clean.handled);
+  if (!clean.handled) throw new Error("unreachable");
+  assert("and raises neither concern",
+    !clean.reply.includes("barely reads") && !clean.reply.includes("doesn't actually look"), clean.reply);
+  check("Studio is marked so the bench actually shows the work", clean.revalidate, "/dashboard/studio");
+  check("and the mockup rides to the panel that draws it",
+    (clean.messageChanges as { designId: unknown }).designId, "d-1");
+  check("logged as pending, because nothing was applied", clean.executionStatus, "PENDING");
+
+  // ---- generate_brand_logo: the no-pressure rule, in code ----------------
+  // An owner who already has a logo is FINISHED. J4 being able to make another
+  // is not a reason to raise it — and this used to live only in the tool's
+  // description, where the model had no data to obey it.
+  const alreadyHas = await makeGenerateBrandLogo({
+    hasLogo: async () => true,
+    propose: async () => {
+      throw new Error("should never be reached");
+    },
+  })(contextFor(store.id, owner.id, { ownerDirection: null, wantsAlternatives: false }));
+  assert("an owner with a logo is handled without generating one", alreadyHas.handled);
+  if (!alreadyHas.handled) throw new Error("unreachable");
+  assert("and told J4 will work with the one they have",
+    alreadyHas.reply.includes("already got a logo"), alreadyHas.reply);
+
+  // UNLESS THEY ASK. ownerDirection is the override.
+  const askedAnyway = await makeGenerateBrandLogo({
+    hasLogo: async () => true,
+    propose: async () => ({ proposal: { proposalId: "p-1" }, rationale: "Here is one.", groundedIn: {} }),
+  })(contextFor(store.id, owner.id, { ownerDirection: "something with a wave", wantsAlternatives: false }));
+  assert("an explicit request overrides it", askedAnyway.handled);
+  if (!askedAnyway.handled) throw new Error("unreachable");
+  assert("and a logo is actually proposed",
+    askedAnyway.reply.includes("Here is one."), askedAnyway.reply);
+
+  // ALTERNATIVES ONLY WHEN ASKED — an offer that always fires is not an offer.
+  let branched = 0;
+  const withAlternatives = await makeGenerateBrandLogo({
+    hasLogo: async () => false,
+    propose: async () => ({ proposal: { proposalId: "p-1" }, rationale: "Here is one.", groundedIn: {} }),
+    branch: async () => {
+      branched += 1;
+      return { branches: [{}, {}] };
+    },
+  })(contextFor(store.id, owner.id, { ownerDirection: null, wantsAlternatives: true }));
+  assert("alternatives are produced when asked for", withAlternatives.handled && branched === 1);
+  if (!withAlternatives.handled) throw new Error("unreachable");
+  assert("and the original is said to survive",
+    withAlternatives.reply.includes("still there"), withAlternatives.reply);
+
+  branched = 0;
+  await makeGenerateBrandLogo({
+    hasLogo: async () => false,
+    propose: async () => ({ proposal: { proposalId: "p-1" }, rationale: "Here is one.", groundedIn: {} }),
+    branch: async () => {
+      branched += 1;
+      return { branches: [{}] };
+    },
+  })(contextFor(store.id, owner.id, { ownerDirection: null, wantsAlternatives: false }));
+  check("and never produced when not", branched, 0);
+
+  const logoFailed = await makeGenerateBrandLogo({
+    hasLogo: async () => false,
+    propose: async () => null,
+  })(contextFor(store.id, owner.id, { ownerDirection: null, wantsAlternatives: false }));
+  assert("a failed generation is handled", logoFailed.handled);
+  if (!logoFailed.handled) throw new Error("unreachable");
+  check("recorded as a failure", logoFailed.outcome, "failure");
+  // No placeholder is invented to cover it.
+  assert("and no artefact is claimed",
+    !logoFailed.reply.includes("Have a look below"), logoFailed.reply);
+
+  // ---- improve_storefront: a real opinion, or none --------------------------
+  const nothingWrong = await makeImproveStorefront({
+    evaluate: async () => ({ findings: [], productsWithImages: 4 }),
+  })(contextFor(store.id, owner.id, {}));
+  assert("a healthy storefront is handled", nothingWrong.handled);
+  if (!nothingWrong.handled) throw new Error("unreachable");
+  // MANUFACTURING A CONCERN TO LOOK USEFUL is how an owner learns to stop
+  // trusting the ones that matter.
+  assert("and J4 says nothing is standing out rather than inventing a concern",
+    nothingWrong.reply.includes("reasonable shape"), nothingWrong.reply);
+  check("with nothing to preview", nothingWrong.messageChanges, undefined);
+
+  // A finding with no composition behind it is still SAID — composing around a
+  // gap would hide it.
+  const gapOnly = await makeImproveStorefront({
+    evaluate: async () => ({
+      findings: [{ key: "no_photos", observed: "Two products have no photo.", wouldDo: "Add one each." }],
+      productsWithImages: 1,
+    }),
+  })(contextFor(store.id, owner.id, {}));
+  assert("a gap with nothing to compose is still raised", gapOnly.handled);
+  if (!gapOnly.handled) throw new Error("unreachable");
+  assert("in J4's own words", gapOnly.reply.includes("no photo"), gapOnly.reply);
+  check("and nothing is composed around it", gapOnly.messageChanges, undefined);
+
+  // THE MODEL'S OWN WORDS LEAD. Talking over a good answer with a generated
+  // list is worse than saying less.
+  const spoke = await makeImproveStorefront({
+    evaluate: async () => ({
+      findings: [{ key: "no_photos", observed: "Two products have no photo.", wouldDo: "Add one each." }],
+      productsWithImages: 1,
+    }),
+  })(contextFor(store.id, owner.id, {}, "Your hero is doing the heavy lifting here."));
+  assert("J4's own opening is kept", spoke.handled);
+  if (!spoke.handled) throw new Error("unreachable");
+  assert("and the generated list does not talk over it",
+    spoke.reply.startsWith("Your hero is doing"), spoke.reply);
 
   // ==========================================================================
   console.log("\n=== 6. Handlers stay inside the store they were given ===\n");
