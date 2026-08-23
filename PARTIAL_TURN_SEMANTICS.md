@@ -138,6 +138,19 @@ once — both pass step 1 and both execute.
 Growth points are deducted per successful execution, so a double execution is
 also a double charge.
 
+### Why the fix used elsewhere today does not transfer (2026-08-23)
+
+A structurally identical race was found and fixed in proactive delivery on the
+same day: three writes in sequence, a unique index protecting only the last, and
+two overlapping cycles both completing the first two. That fix was a transaction.
+
+**It does not work here.** Proactive delivery's three writes are all database
+writes and complete in milliseconds. `execute()` does real external work — image
+generation, provider APIs — and holding a database transaction across it is not
+an option. That is exactly why this one needs a claimed state and the other did
+not, and it is the difference between a bug I could fix on my own judgement and a
+decision that is yours.
+
 ### Why I did not just fix it
 
 The obvious fix is to claim the row before executing:
