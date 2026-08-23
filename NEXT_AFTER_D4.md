@@ -12,7 +12,7 @@ Sean's sequence, with what the repo actually says:
 | 1 | Live-model validation + fixes | **Partly done.** Routing validated; classification blocked |
 | 2 | J4's Understanding of Your Business | **SHIPPED** — U1–U6, `d19254f..f80f4dd` |
 | 3 | Business Intelligence Engine | **CLOSED** — M1–M9, `BI_ENGINE.md` §15 |
-| 4 | UI6 | **Partly shipped.** Three parked pieces need a contract |
+| 4 | UI6 | **Pieces 1 & 2 complete; piece 3 pending live prose acceptance.** Overall: pending only external live validation |
 | 5 | Teaching / Challenge | Needs a design pass |
 | 6 | Belief Constitution + channel | Constitution decision, not engineering |
 | 7 | Integrations / operating layer / Growth Points | Not started |
@@ -62,11 +62,16 @@ model-free by construction, so none of it is waiting on credit.
 
 ## Next
 
-1. Credit, then re-run routing to exercise the policy-refusal display.
-2. `CLASSIFY_FIXTURE_URL`, then classification and the handbook loop.
-3. **UI6 contract** for the three parked pieces — business context beside the
-   conversation, navigable history, concise-summary replies. Contract first, no
-   implementation until approved.
+Everything remaining is external. Nothing is waiting on a decision.
+
+1. **Credit**, then: the live Piece 3 prose measurement (which accepts UI6, or
+   names one prose defect to fix and rerun), and the routing policy-refusal
+   display. Nothing else joins those runs.
+2. **`CLASSIFY_FIXTURE_URL`** — a publicly reachable handbook PDF — then live
+   classification and the employee-handbook loop.
+3. Once UI6 is accepted: the next evidence-based milestone, audited against the
+   repository rather than assumed from the roadmap. Not a feature started to keep
+   commits moving.
 
 Nothing else starts. The empty backlog is the signal to establish the next real
 milestone, not to invent one.

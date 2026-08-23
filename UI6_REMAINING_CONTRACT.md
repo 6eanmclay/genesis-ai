@@ -1,6 +1,22 @@
 # UI6 — the three parked pieces
 
-**Status: CONTRACT / DESIGN PASS. Nothing implemented.** 2026-08-23.
+**Status: BUILT. Pieces 1 and 2 complete; piece 3 implemented and pending live
+acceptance.** 2026-08-23.
+
+| Piece | State |
+|---|---|
+| 1 — Context pane | **Complete** (`244921b`) |
+| 2 — Conversations | **Complete** (`9c648cb`, `19c47b2`) |
+| 3 — Concise-summary replies | **Implemented, NOT accepted** (`f79f11d`) — acceptance criterion 4, the live prose measurement, is unmet |
+| **UI6 overall** | **Pending only external live validation** |
+
+**The remaining acceptance work is narrow and fixed:** run the live prose
+measurement; accept if it passes; if it fails, fix only the demonstrated prose
+defect and rerun. Nothing else joins that run.
+
+---
+
+*Contract follows.*
 Sean: contract first, review before implementation.
 
 **ALL DECISIONS TAKEN 2026-08-23.** Piece 2's definition and lifecycle; piece 1's

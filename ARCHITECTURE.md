@@ -142,6 +142,44 @@ Five real phases, in order:
 
 **The invariant this protects, stated plainly:** Genesis must never present an action as executable unless a real registered executable stands behind it, and must never claim a change outside what the proposal actually authorises. A dangling registry reference is how either becomes possible without anybody writing a line of wrong logic.
 
+### The sibling rule: comments document the reason, source is the evidence
+
+**Found five times in one session, each time the same way.** A source-level
+assertion — "the pane creates no approval", "nothing reconstructs a historical
+understanding", "no opener survives anywhere", "the model has no closing field",
+"nothing closes or archives" — matched the COMMENT explaining that the code does
+none of those things. Every time the code was right and the assertion was
+reading the wrong thing; twice it went the other way and a green assertion was
+satisfied by prose while the code was free to drift.
+
+Fixing it case by case did not work, because the trap is structural: a
+well-commented file explains its own invariants in the same words an assertion
+about those invariants uses. The better the comment, the more likely it satisfies
+the check.
+
+**The rule.** A source-level assertion runs against CODE, with comments stripped
+first. `codeOnly()` in `scripts/verify-context-pane.ts` is the reference
+implementation — block comments (including JSX `{/* … */}`) and line comments
+removed, sparing the `//` in a URL. The comments stay; they are the record of why
+anything is shaped as it is. They simply stop being evidence.
+
+It lives in one suite today. **Move it to `scripts/lib/` the moment a second
+suite needs it** — a copy-pasted `codeOnly` is the same class of duplication this
+codebase deletes everywhere else.
+
+**And prefer a behavioural assertion where one exists.** Source assertions are
+for properties a runtime test cannot reach: an added filter, a missing guard, a
+call site that stopped calling. Where the property can be observed by running the
+code, run the code.
+
+### The sibling rule: a pure reader module does not import a database client
+
+**Drawn at the import, not at the usage.** A negative control that added a bare
+`import { prisma }` to `lib/j4/contextTypes.ts` slipped past an assertion
+checking for `prisma.` usage — harmless in itself, and exactly one line from not
+being. For a module whose whole contract is "pure function of an already-fetched
+value", holding a client is already the violation.
+
 ### The sibling rule: a check is only as wide as what it was asked about
 
 **Found 2026-08-23, in the authorization path, by two correct features meeting.**
