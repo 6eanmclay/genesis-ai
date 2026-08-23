@@ -18,6 +18,7 @@ import { generateBusinessIcon } from "@/lib/imageProviders/generateBusinessIcon"
 import { PERMISSIONS, approvalAccessibleTo, hasPermission, requireBusinessOrActive, requireStorePermission, resolveUserStore } from "@/lib/permissions";
 import {
   firstRefusedTool,
+  type DroppedTool,
   refusalMessage,
   planToolRun,
   describeDroppedTools,
@@ -2330,7 +2331,7 @@ async function applyGenesisMessageToStore(
   // shape of the turn.
   let plannedTools: ReturnType<typeof allToolUses> = [];
   let chosenTool: ReturnType<typeof allToolUses>[number] | null = null;
-  let droppedTools: { name: string; why: "cap" | "second_mutation" }[] = [];
+  let droppedTools: DroppedTool[] = [];
   let conversationalReply = "";
   if (!preClassifiedTool) {
     const unifiedOutcome = await callGenesisModel({

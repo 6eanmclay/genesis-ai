@@ -200,12 +200,31 @@ export function refusalMessage(refusal: ToolRefusal): string {
  */
 export const MAX_TOOLS_PER_TURN = 3;
 
+/**
+ * The tool that ends the turn somewhere.
+ *
+ * A TURN CAN ONLY END IN ONE PLACE, and two of these in one plan is not a
+ * bigger request, it is a contradiction. Both are reads, so neither the cap nor
+ * the one-mutation rule stopped them: the route emitted two navigations, the
+ * client pushed both, the last won — and the first reply had already said, in
+ * the owner's own conversation, that J4 was taking them somewhere they never
+ * arrived. "J4 must never say one place and navigate to another" was asserted
+ * for a single tool and quietly untrue for two.
+ */
+const NAVIGATION_TOOL = "take_me_there";
+
+export type DroppedTool = {
+  name: string;
+  why: "cap" | "second_mutation" | "second_navigation";
+};
+
 export function planToolRun(
   toolNames: string[]
-): { run: string[]; dropped: { name: string; why: "cap" | "second_mutation" }[] } {
+): { run: string[]; dropped: DroppedTool[] } {
   const run: string[] = [];
-  const dropped: { name: string; why: "cap" | "second_mutation" }[] = [];
+  const dropped: DroppedTool[] = [];
   let mutated = false;
+  let navigated = false;
 
   for (const name of toolNames) {
     if (run.length >= MAX_TOOLS_PER_TURN) {
@@ -220,7 +239,12 @@ export function planToolRun(
       dropped.push({ name, why: "second_mutation" });
       continue;
     }
+    if (name === NAVIGATION_TOOL && navigated) {
+      dropped.push({ name, why: "second_navigation" });
+      continue;
+    }
     if (policy?.mutates) mutated = true;
+    if (name === NAVIGATION_TOOL) navigated = true;
     run.push(name);
   }
 
@@ -240,12 +264,16 @@ export function planToolRun(
  * change two things in one unreviewed pass, and saying so plainly is better than
  * implying J4 merely ran out of room.
  */
-export function describeDroppedTools(
-  dropped: { name: string; why: "cap" | "second_mutation" }[]
-): string {
+export function describeDroppedTools(dropped: DroppedTool[]): string {
   if (dropped.length === 0) return "";
   const count = dropped.length;
   const thing = count === 1 ? "one other thing" : `${count} other things`;
+  // Checked before the mutation case: being taken to one of two places is a
+  // different thing from J4 pacing its own changes, and the copy for the latter
+  // would read as an excuse rather than an explanation.
+  if (dropped.some((d) => d.why === "second_navigation")) {
+    return "I can only take you to one place at a time — say which and I'll head there next.";
+  }
   const anySecondMutation = dropped.some((d) => d.why === "second_mutation");
   return anySecondMutation
     ? `I'm doing one of these at a time so you can see each change before the next — tell me when you want me to pick up ${thing} you asked for.`

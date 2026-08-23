@@ -384,6 +384,52 @@ assert("the Server Action checks the pre-classified tool too",
   "otherwise edit_store_content bypasses the check entirely");
 
 // ============================================================================
+console.log("\n=== 10. A turn ends in one place ===\n");
+// ============================================================================
+// Two navigations in one plan is not a bigger request, it is a contradiction.
+// Both are reads, so neither the cap nor the one-mutation rule stopped them:
+// the route emitted two navigate events, the client pushed both, the last won
+// — and the FIRST reply had already told the owner, in their own conversation,
+// that J4 was taking them somewhere they never arrived at. "J4 must never say
+// one place and navigate to another" was asserted for a single tool and quietly
+// untrue for two.
+const twoPlaces = planToolRun(["take_me_there", "take_me_there"]);
+check("only one navigation survives planning", twoPlaces.run, ["take_me_there"]);
+check("and the second is dropped for the right reason",
+  twoPlaces.dropped, [{ name: "take_me_there", why: "second_navigation" }]);
+
+// NOT the cap, and not the mutation rule. Both would produce copy that says
+// something untrue about why.
+const navCopy = describeDroppedTools(twoPlaces.dropped);
+assert("the owner is told it is one place at a time",
+  /one place at a time/i.test(navCopy), navCopy);
+assert("not that J4 is pacing its changes",
+  !/one of these at a time/i.test(navCopy), navCopy);
+assert("nor that they asked for too much",
+  !/more than I'll take on/i.test(navCopy), navCopy);
+
+// A navigation alongside other work is still fine — this is one rule about one
+// tool, not a general "nothing may accompany a navigation".
+const navPlusRead = planToolRun(["take_me_there", "look_up_business_data"]);
+check("a navigation may still travel with a read",
+  navPlusRead.run, ["take_me_there", "look_up_business_data"]);
+check("with nothing dropped", navPlusRead.dropped, []);
+const navPlusWrite = planToolRun(["take_me_there", "plan_campaign"]);
+check("and with a change", navPlusWrite.run, ["take_me_there", "plan_campaign"]);
+
+// Order does not matter: whichever navigation is second is the one dropped.
+const readThenTwoNavs = planToolRun(["look_up_business_data", "take_me_there", "take_me_there"]);
+check("the surviving navigation is the first one asked for",
+  readThenTwoNavs.run, ["look_up_business_data", "take_me_there"]);
+
+// The cap still applies on top, and reports itself as the cap.
+const four = planToolRun([
+  "look_up_business_data", "show_upload_options", "look_up_business_data", "show_upload_options",
+]);
+check("the cap is unchanged", four.run.length, MAX_TOOLS_PER_TURN);
+check("and still says so", four.dropped.map((d) => d.why), ["cap"]);
+
+// ============================================================================
 console.log("\n=== 9. A turn is several tools, and the check is not one ===\n");
 // ============================================================================
 // The ordinary shape of the hole: "what sold worst last month? get rid of it"
