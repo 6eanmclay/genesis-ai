@@ -221,20 +221,31 @@ async function main() {
     join(process.cwd(), "app", "j4", "proposal-actions.ts"), "utf8"
   );
 
-  // The defective pattern, by its exact shape. Every one of the three began
-  // with this line. It survives in exactly one place — the named fallback for a
-  // proposal that resolved to nothing, where there is genuinely no business to
-  // take — and an action reaching for it again would push this above one.
-  const ACTIVE_BUSINESS_READ = "const { storeId } = await requireStorePermission(";
-  check("the active business is read in exactly one place",
-    j4Actions.split(ACTIVE_BUSINESS_READ).length - 1, 1);
-  // And that place is the fallback helper. Sliced from its declaration rather
-  // than matched across a newline, because this file is CRLF and an assertion
-  // spanning a line break silently never matches.
-  const fallbackBody = j4Actions.slice(j4Actions.indexOf("async function activeBusinessForOrphanReply"));
-  assert("and that place is the orphan-reply fallback, not an action",
-    fallbackBody.indexOf(ACTIVE_BUSINESS_READ) >= 0 && fallbackBody.indexOf(ACTIVE_BUSINESS_READ) < 200,
-    "the one remaining read must be inside the fallback helper");
+  // NO ACTION RESOLVES A BUSINESS FOR ITSELF ANY MORE (UI6). Every one of the
+  // three began by reading the account's active business. Two are gone
+  // entirely — the proposal's own row decides — and the third, the reply to a
+  // proposal that resolved to nothing, is now told which conversation is asking
+  // rather than guessing.
+  check("no action reads the account's active business directly",
+    j4Actions.split("const { storeId } = await requireStorePermission(").length - 1, 0);
+
+  // The conversation names its business, and the fallback resolves THAT.
+  assert("the orphan reply resolves the conversation's business",
+    j4Actions.includes("requireBusinessOrActive(PERMISSIONS.ANALYTICS_VIEW, slug)"),
+    "without the slug this writes into whichever business the account last made active");
+  for (const action of [
+    "approveProposalInConversation(approvalRequestId: string, slug?: string)",
+    "rejectProposalInConversation(approvalRequestId: string, slug?: string)",
+  ]) {
+    assert(`${action.split("(")[0]} accepts the conversation's business`,
+      j4Actions.includes(action), action);
+  }
+  // chooseDirection takes a direction too, so its signature wraps.
+  assert("chooseDirectionInConversation accepts it as well",
+    j4Actions.includes("directionId: string,") && j4Actions.includes("  slug?: string"),
+    "the third action must be told which conversation is deciding");
+  check("and pass it to the fallback rather than resolving one",
+    j4Actions.split("await conversationBusiness(slug)").length - 1, 3);
 
   // All three resolve it from the proposal instead.
   check("all three actions resolve the proposal's own business",
@@ -245,9 +256,9 @@ async function main() {
 
   // The fallback is only for a proposal that resolved to nothing, where there
   // is genuinely no business to take. It must not be the primary path.
-  assert("the active business is only a fallback for an unresolvable proposal",
-    j4Actions.includes("proposalBusiness ?? (await activeBusinessForOrphanReply())"),
-    "the active business must not be where a resolvable proposal's outcome goes");
+  assert("the conversation's business is only a fallback for an unresolvable proposal",
+    j4Actions.includes("proposalBusiness ?? (await conversationBusiness(slug))"),
+    "a resolvable proposal's outcome belongs to the proposal's own business");
 
   // And the direction query is scoped by the resolved business, not the active
   // one — this is the query that returned nothing and produced the false

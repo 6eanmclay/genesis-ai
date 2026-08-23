@@ -367,6 +367,10 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
             proposal={proposalOnTable}
             storefrontUrl={storefrontUrl}
             storeName={store.name}
+            // The business this conversation is, handed to the decisions inside
+            // it — see J4Proposal's own note on why the action is told rather
+            // than asking.
+            slug={slug}
             otherPendingCount={otherPendingCount}
           />
         ) : null

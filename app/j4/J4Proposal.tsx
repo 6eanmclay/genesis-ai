@@ -40,11 +40,22 @@ export function J4Proposal({
   proposal,
   storefrontUrl,
   storeName,
+  slug,
   otherPendingCount = 0,
 }: {
   proposal: Proposal;
   storefrontUrl: string;
   storeName: string;
+  /**
+   * The business this conversation belongs to.
+   *
+   * Bound into every decision below so the action acts on the business the
+   * owner is looking at, rather than resolving one for itself. A card rendered
+   * in Copper & Coil's conversation decides Copper & Coil's proposal even when
+   * the account's active pointer is on something else — which is the whole
+   * reason this prop exists rather than the action asking.
+   */
+  slug?: string;
   /** Other proposals still waiting. Named, never rendered as rival threads. */
   otherPendingCount?: number;
 }) {
@@ -145,7 +156,7 @@ export function J4Proposal({
             <button
               key={d.id}
               type="submit"
-              formAction={chooseDirectionInConversation.bind(null, current.id, d.id)}
+              formAction={chooseDirectionInConversation.bind(null, current.id, d.id, slug)}
               formNoValidate
               className="rounded-full border px-3 py-1.5 text-xs font-medium text-[#f4f2fb] transition-opacity hover:opacity-90"
               style={{ borderColor: GENESIS_ATMOSPHERE.violet }}
@@ -173,7 +184,7 @@ export function J4Proposal({
             composer is empty would fail validation and, again, do nothing. */}
         <button
           type="submit"
-          formAction={approveProposalInConversation.bind(null, current.id)}
+          formAction={approveProposalInConversation.bind(null, current.id, slug)}
           formNoValidate
           className="rounded-full bg-[#2563eb] px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
         >
@@ -181,7 +192,7 @@ export function J4Proposal({
         </button>
         <button
           type="submit"
-          formAction={rejectProposalInConversation.bind(null, current.id)}
+          formAction={rejectProposalInConversation.bind(null, current.id, slug)}
           formNoValidate
           className="rounded-full px-4 py-2 text-xs font-medium transition-colors hover:bg-white/[.06]"
           style={{ color: GENESIS_ATMOSPHERE.textSecondary }}

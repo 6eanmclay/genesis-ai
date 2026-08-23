@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireStorePermission, approvalAccessibleTo } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessOrActive, approvalAccessibleTo } from "@/lib/permissions";
 import { performApproveGenesisAction, performRejectGenesisAction } from "@/app/dashboard/ai-actions";
 import { PROPOSAL_STATUS, parseDirections, reviseProposal } from "@/lib/storefront/proposals";
 
@@ -87,15 +87,22 @@ async function businessOfProposal(
 /**
  * Where to say something when the proposal itself could not be found.
  *
- * There is no proposal to take a business from, so this falls back to the
- * account's active one — unchanged from what every branch here used to do, and
- * the honest limit of what can be known: an id that resolves to nothing cannot
- * say which conversation was asking. The conversation view knows, and will pass
- * it when that work is done; until then this is the existing behaviour rather
- * than a new guess.
+ * THE CONVERSATION SAYS WHICH BUSINESS IT IS (UI6, 2026-08-23). There is no
+ * proposal to take a business from here — it was decided elsewhere, or is gone
+ * — and until the conversation could name itself, this fell back to the
+ * account's active business and could write "that proposal is no longer open"
+ * into a conversation nobody was reading.
+ *
+ * The card is rendered inside a conversation that already knows its own
+ * business, so it passes the slug and this resolves THAT. The permission check
+ * is the same one every other branch makes, against the business named rather
+ * than whichever the account last made active.
+ *
+ * No slug means the legacy route, which has none to give — that path keeps the
+ * old behaviour rather than gaining a new guess.
  */
-async function activeBusinessForOrphanReply(): Promise<string> {
-  const { storeId } = await requireStorePermission(PERMISSIONS.ANALYTICS_VIEW);
+async function conversationBusiness(slug?: string): Promise<string> {
+  const { storeId } = await requireBusinessOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
   return storeId;
 }
 
@@ -106,13 +113,13 @@ async function activeBusinessForOrphanReply(): Promise<string> {
  * fails says so in the conversation rather than leaving the owner believing a
  * change landed. Verification is the executable's own, unchanged.
  */
-export async function approveProposalInConversation(approvalRequestId: string) {
+export async function approveProposalInConversation(approvalRequestId: string, slug?: string) {
   // Read BEFORE the approval runs: executing it moves the row out of
   // PENDING_APPROVAL, and asking afterwards which business it belonged to would
   // depend on what the status filter happened to be.
   const proposalBusiness = await businessOfProposal(approvalRequestId);
   const result = await performApproveGenesisAction(approvalRequestId);
-  const storeId = proposalBusiness ?? (await activeBusinessForOrphanReply());
+  const storeId = proposalBusiness ?? (await conversationBusiness(slug));
 
   if (result.outcome === "executed") {
     await recordOutcome(storeId, result.message ? `Done. ${result.message}` : "Done, and verified.");
@@ -155,7 +162,11 @@ export async function approveProposalInConversation(approvalRequestId: string) {
  * The choice is spoken into the conversation too, because a decision the owner
  * made is part of the exchange and Office must be able to show it later.
  */
-export async function chooseDirectionInConversation(approvalRequestId: string, directionId: string) {
+export async function chooseDirectionInConversation(
+  approvalRequestId: string,
+  directionId: string,
+  slug?: string
+) {
   // The proposal's own business, not the account's active one — the whole
   // defect was that these disagree and this branch reported the disagreement
   // to the owner as "no longer open".
@@ -163,7 +174,7 @@ export async function chooseDirectionInConversation(approvalRequestId: string, d
     status: PROPOSAL_STATUS.pending,
   });
   if (!proposalBusiness) {
-    await recordOutcome(await activeBusinessForOrphanReply(), "That proposal is no longer open.");
+    await recordOutcome(await conversationBusiness(slug), "That proposal is no longer open.");
     revalidatePath("/dashboard", "layout");
     return;
   }
@@ -214,10 +225,10 @@ export async function chooseDirectionInConversation(approvalRequestId: string, d
 }
 
 /** Turns a proposal down from inside the conversation. */
-export async function rejectProposalInConversation(approvalRequestId: string) {
+export async function rejectProposalInConversation(approvalRequestId: string, slug?: string) {
   const proposalBusiness = await businessOfProposal(approvalRequestId);
   const result = await performRejectGenesisAction(approvalRequestId);
-  const storeId = proposalBusiness ?? (await activeBusinessForOrphanReply());
+  const storeId = proposalBusiness ?? (await conversationBusiness(slug));
 
   await recordOutcome(
     storeId,
