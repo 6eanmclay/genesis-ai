@@ -147,6 +147,59 @@ async function main() {
     "an owner who waved a finding away must not be told about it again");
 
   // ==========================================================================
+  console.log("\n=== 4b. Waving it away means J4 stops saying it ===\n");
+  // ==========================================================================
+  // A DISMISSED FINDING IS NOT A RESOLVED ONE, and treating them alike was a
+  // real defect. Closing a delivery on anything that was not ACTIVE also caught
+  // dismissal — and because upsertObservation unconditionally sets a still-true
+  // finding back to ACTIVE and clears dismissedAt, the next sweep made it
+  // eligible again and J4 said the same thing a second time. Reproduced before
+  // fixing: dismiss, one sweep, told twice.
+  //
+  // For a card, silently reappearing is mild. For a partner, re-saying something
+  // you have just waved away is not hearing you.
+  const waved = await prisma.store.create({
+    data: { userId: owner.id, name: "Waved Away", slug: `pj-w-${uniq()}` },
+  });
+  const raiseWaved = () =>
+    upsertObservation(waved.id, {
+      dedupeKey: "insight:revenue.decreased",
+      genesisState: "urgent",
+      summary: "Revenue is down.",
+      actionHref: null,
+    });
+
+  await raiseWaved();
+  check("J4 raises it once", (await speakNewFindings(waved.id)).spoken, 1);
+
+  await prisma.genesisObservation.updateMany({
+    where: { storeId: waved.id, dedupeKey: "insight:revenue.decreased" },
+    data: { status: "DISMISSED", dismissedAt: new Date() },
+  });
+  check("dismissing does not release it", (await speakNewFindings(waved.id)).spoken, 0);
+
+  // The finding is still true, so the detector re-confirms it — and that is what
+  // used to hand it back to J4 as something new to say.
+  await raiseWaved();
+  const reconfirmed = await prisma.genesisObservation.findFirstOrThrow({
+    where: { storeId: waved.id, dedupeKey: "insight:revenue.decreased" },
+  });
+  check("the sweep really does re-activate it", reconfirmed.status, "ACTIVE");
+  check("and J4 still says nothing", (await speakNewFindings(waved.id)).spoken, 0);
+  check("so the owner was told exactly once",
+    (await prisma.storeMessage.findMany({ where: { storeId: waved.id, role: "assistant" } })).length, 1);
+
+  // RESOLVED IS STILL DIFFERENT. A finding that genuinely stops being true
+  // releases the delivery even after a dismissal, so a real recurrence later is
+  // news rather than nagging.
+  await resolveMissingObservations(waved.id, [], "urgent", "insight:");
+  check("resolving releases it even after a dismissal",
+    (await speakNewFindings(waved.id)).closed, 1);
+  await raiseWaved();
+  check("and a genuine recurrence may speak", (await speakNewFindings(waved.id)).spoken, 1);
+  await prisma.store.deleteMany({ where: { id: waved.id } });
+
+  // ==========================================================================
   console.log("\n=== 8. Re-engagement, and only under the stated rule ===\n");
   // ==========================================================================
   // THE RULE: a delivery is closed when its finding stops being ACTIVE, and a

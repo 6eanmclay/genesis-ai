@@ -104,15 +104,39 @@ export interface ProactiveDeliverySummary {
  * defect class found four times in the days before this was written.
  */
 export async function speakNewFindings(storeId: string): Promise<ProactiveDeliverySummary> {
-  // FIRST, RELEASE ANYTHING THAT STOPPED BEING TRUE. A delivery is closed when
-  // its finding is no longer ACTIVE, which is what allows J4 to mention it
-  // again if it ever comes back. Closing never touches the message: what J4
-  // said stays said, and a finding disappearing does not un-say it.
+  // FIRST, RELEASE ANYTHING THAT STOPPED BEING TRUE — and only that.
+  //
+  // RESOLVED, NOT MERELY "NOT ACTIVE" (fixed 2026-08-23). This read
+  // `status: { not: "ACTIVE" }`, which also caught DISMISSED, and dismissal is
+  // the one case where releasing is exactly wrong:
+  //
+  //   1. the owner waves J4's message away — the finding goes DISMISSED
+  //   2. this closed its delivery
+  //   3. the finding is still true, so the next sweep re-confirms it — and
+  //      upsertObservation unconditionally sets status ACTIVE and clears
+  //      dismissedAt
+  //   4. no open delivery, so J4 said the same thing again
+  //
+  // Reproduced before fixing: dismiss, one sweep, and the owner is told twice.
+  // For a CARD, silently reappearing is mild. For a partner, re-saying something
+  // you have just waved away is not hearing you.
+  //
+  // So the two outcomes mean different things now, and they should:
+  //   RESOLVED  — it stopped being true. A genuine recurrence later is news, and
+  //               J4 may raise it again.
+  //   DISMISSED — the owner has heard it and does not want it. The delivery
+  //               stays open, so J4 does not raise it in conversation again. The
+  //               card still behaves exactly as it always has.
+  //
+  // A finding that is dismissed and LATER genuinely resolves still closes here
+  // when that happens, so dismissal suppresses the sentence only while the
+  // finding remains continuously true. That is the narrowest reading that
+  // respects the owner.
   const closable = await prisma.proactiveDelivery.findMany({
     where: {
       storeId,
       closedAt: null,
-      observation: { status: { not: "ACTIVE" } },
+      observation: { status: "RESOLVED" },
     },
     select: { id: true },
   });
