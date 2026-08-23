@@ -329,6 +329,43 @@ const captureBusinessFact: ToolHandler = async (ctx) => {
  * in a "use server" module, and pulling that into every consumer of this file at
  * load time would drag the whole action surface with it.
  */
+/**
+ * How a finished approval run is recorded, as opposed to what it says.
+ *
+ * THE REPLY WAS ALWAYS HONEST AND THE LOG WAS NOT (found 2026-08-23). Every
+ * return from this handler omitted `outcome`, `executionStatus` and
+ * `retryable`, so a run where nothing applied — including the catch branch
+ * whose own comment says "NOTHING WAS APPLIED IN EITHER BRANCH" — was written
+ * down as a SUCCESS that could not be retried, while telling the owner it had
+ * failed and they could retry it.
+ *
+ * That is worse than an ordinary mis-log. This is the handler that executes
+ * approved changes against a live store, and the logs are where somebody looks
+ * to find out whether it has been going wrong.
+ */
+export function recordApprovalRun(result: {
+  totalMembers: number;
+  succeeded: unknown[];
+  failed: unknown[];
+}): {
+  outcome: "success" | "failure";
+  executionStatus: "SUCCESS" | "WARNING";
+  retryable: boolean;
+} {
+  // Nothing pending is not a failure — the owner asked, and the honest answer
+  // is that there was nothing to do.
+  if (result.totalMembers === 0) {
+    return { outcome: "success", executionStatus: "SUCCESS", retryable: false };
+  }
+  if (result.failed.length === 0) {
+    return { outcome: "success", executionStatus: "SUCCESS", retryable: false };
+  }
+  // A PARTIAL RUN IS NOT A SUCCESS. Some of what the owner approved did not
+  // happen, and the changes that did not are still pending — which is exactly
+  // the turn somebody scanning the log needs to find.
+  return { outcome: "failure", executionStatus: "WARNING", retryable: true };
+}
+
 export function makeApprovePendingChanges(
   execute?: (storeId: string) => Promise<{ ok: boolean; summary: string }>
 ): ToolHandler {
@@ -337,7 +374,14 @@ export function makeApprovePendingChanges(
     try {
       if (execute) {
         const result = await execute(ctx.storeId);
-        return { handled: true, reply: result.summary, kind: "approve_pending_changes" };
+        return {
+          handled: true,
+          reply: result.summary,
+          kind: "approve_pending_changes",
+          outcome: result.ok ? "success" : "failure",
+          executionStatus: result.ok ? "SUCCESS" : "WARNING",
+          retryable: !result.ok,
+        };
       }
       const { performApprovePendingChanges } = await import("@/app/dashboard/ai-actions");
       const { describeApprovalExecutionForChat } = await import("@/lib/dashboard/pendingApprovals");
@@ -346,6 +390,12 @@ export function makeApprovePendingChanges(
         handled: true,
         reply: describeApprovalExecutionForChat(result),
         kind: "approve_pending_changes",
+        ...recordApprovalRun(result),
+        metadata: {
+          approvalsAttempted: result.totalMembers,
+          approvalsApplied: result.succeeded.length,
+          approvalsFailed: result.failed.length,
+        },
       };
     } catch (err) {
       // requireStorePermission inside the perform* functions throws a plain
@@ -357,13 +407,23 @@ export function makeApprovePendingChanges(
       // NOTHING WAS APPLIED IN EITHER BRANCH, and both replies say so. A turn
       // that reported success on a throw would be the exact failure the standing
       // rule against claiming a change that did not happen exists to prevent.
+      const refused = err instanceof Error && err.message.includes("permission");
       return {
         handled: true,
-        reply:
-          err instanceof Error && err.message.includes("permission")
-            ? "Approving changes is something only the store owner can do — ask them to approve this, or to give you broader access."
-            : "Something went wrong applying those changes — they're still pending, so you can retry from the review page.",
+        reply: refused
+          ? "Approving changes is something only the store owner can do — ask them to approve this, or to give you broader access."
+          : "Something went wrong applying those changes — they're still pending, so you can retry from the review page.",
         kind: "approve_pending_changes",
+        // NOTHING WAS APPLIED, and the log has to say so. It said SUCCESS until
+        // 2026-08-23, in the one handler where that matters most.
+        outcome: "failure",
+        executionStatus: "WARNING",
+        // A refusal is not retryable by this person — telling them to try again
+        // would be sending them back into the same wall. A real error is.
+        retryable: !refused,
+        logMessage: refused
+          ? "Approval refused: insufficient permission"
+          : `Approval run failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
   };

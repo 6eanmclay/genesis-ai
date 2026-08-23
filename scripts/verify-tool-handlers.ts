@@ -7,6 +7,7 @@ import {
   MIGRATED_TOOLS,
   handlerFor,
   makeApprovePendingChanges,
+  recordApprovalRun,
   makeTakeMeThere,
   makeAnswerSupplierEconomics,
   makePlanCampaign,
@@ -264,6 +265,55 @@ async function main() {
     brokeResult.reply.includes("still pending"), brokeResult.reply);
   assert("never claiming the work was done",
     !/applied \d|all set|done/i.test(brokeResult.reply), brokeResult.reply);
+
+  // WHAT THE LOG SAYS, WHICH IS NOT THE SAME QUESTION AS WHAT J4 SAYS. Every
+  // assertion above reads the reply. The reply was always honest; the log was
+  // not. Each return omitted outcome, executionStatus and retryable, so a run
+  // where nothing applied — including the branch whose own comment says NOTHING
+  // WAS APPLIED — was written down as a SUCCESS that could not be retried,
+  // while telling the owner it had failed and they could retry it. In the one
+  // handler that executes approved changes against a live store, and the logs
+  // are where somebody looks to find out whether it has been going wrong.
+  check("a permission failure is recorded as a failure", refusedResult.outcome, "failure");
+  check("and logged as a warning", refusedResult.executionStatus, "WARNING");
+  // NOT retryable by this person. Telling them to try again sends them back
+  // into the same wall.
+  check("and not offered as retryable", refusedResult.retryable, false);
+  assert("with a log line that names the refusal",
+    (refusedResult.logMessage ?? "").includes("insufficient permission"),
+    refusedResult.logMessage ?? "");
+
+  check("an unexpected failure is recorded as a failure", brokeResult.outcome, "failure");
+  check("and logged as a warning", brokeResult.executionStatus, "WARNING");
+  // This one IS retryable — nothing was applied and the cause was transient.
+  check("and is offered as retryable", brokeResult.retryable, true);
+  assert("with the real cause in the log, not the owner-facing sentence",
+    (brokeResult.logMessage ?? "").includes("connection reset"), brokeResult.logMessage ?? "");
+
+  check("a successful run is recorded as one", applied.handled && applied.outcome, "success");
+  check("and is not offered as retryable", applied.handled && applied.retryable, false);
+  const partial = makeApprovePendingChanges(async () => ({ ok: false, summary: "1 of 2 completed." }));
+  const partialResult = await partial(contextFor(store.id, owner.id, {}));
+  check("a run the caller reports as not ok is a failure",
+    partialResult.handled && partialResult.outcome, "failure");
+
+  // The rule itself, since the real path runs the whole approval engine and
+  // the interesting cases are the ones that engine produces.
+  check("nothing pending is not a failure",
+    recordApprovalRun({ totalMembers: 0, succeeded: [], failed: [] }),
+    { outcome: "success", executionStatus: "SUCCESS", retryable: false });
+  check("everything applied is a success",
+    recordApprovalRun({ totalMembers: 2, succeeded: [1, 2], failed: [] }),
+    { outcome: "success", executionStatus: "SUCCESS", retryable: false });
+  // A PARTIAL RUN IS NOT A SUCCESS. Some of what the owner approved did not
+  // happen and is still pending — exactly the turn somebody scanning the log
+  // needs to find, and the one a success would hide.
+  check("a partial run is a failure worth finding",
+    recordApprovalRun({ totalMembers: 2, succeeded: [1], failed: [2] }),
+    { outcome: "failure", executionStatus: "WARNING", retryable: true });
+  check("and so is a run where nothing went through",
+    recordApprovalRun({ totalMembers: 2, succeeded: [], failed: [1, 2] }),
+    { outcome: "failure", executionStatus: "WARNING", retryable: true });
 
   // ==========================================================================
   console.log("\n=== 5b. Taking somebody somewhere goes where it says ===\n");
