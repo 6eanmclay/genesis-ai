@@ -422,6 +422,20 @@ async function main() {
   // ==========================================================================
   console.log("\n=== The sentence itself ===\n");
   // ==========================================================================
+  // An ask already introduces itself. Prefixing a generic opener in front of a
+  // question adds a beat that says nothing before a sentence carrying its own
+  // reason — and filler is how copy stops sounding like a person.
+  const askShaped = "You've got 2 people on your team and I don't have anything about how you run things — would you like to upload your employee handbook?";
+  check("a finding that is already a question is left to speak for itself",
+    proactiveMessageFor({ genesisState: "opportunity", summary: askShaped }), askShaped);
+  assert("with no opener in front of it",
+    !proactiveMessageFor({ genesisState: "opportunity", summary: askShaped }).startsWith("I noticed"),
+    "a question does not need to be announced");
+  // An urgent ask is still not announced either — the question is the point.
+  assert("and the same for an urgent one",
+    proactiveMessageFor({ genesisState: "urgent", summary: askShaped }) === askShaped,
+    "urgency is in the words, not in a prefix");
+
   assert("an urgent finding opens as one",
     proactiveMessageFor({ genesisState: "urgent", summary: "X." }).startsWith("Something needs your attention."),
     proactiveMessageFor({ genesisState: "urgent", summary: "X." }));

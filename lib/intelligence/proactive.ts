@@ -65,6 +65,18 @@ const FINDINGS_PER_CYCLE = 1;
  * different ways.
  */
 export function proactiveMessageFor(finding: { genesisState: string; summary: string }): string {
+  // A FINDING THAT IS ALREADY A QUESTION INTRODUCES ITSELF (2026-08-23). Some
+  // findings are asks — "…would you like to upload your employee handbook so I
+  // can understand your policies?" — and prefixing "I noticed something worth a
+  // look" in front of one adds a beat that says nothing before a sentence that
+  // already carries its own reason. Filler is how copy stops sounding like a
+  // person.
+  //
+  // Detected from the sentence rather than from a flag on the finding: a flag
+  // would be a second thing to keep true, and whether a summary is a question is
+  // already visible in the summary.
+  if (finding.summary.trim().endsWith("?")) return finding.summary;
+
   const opening =
     finding.genesisState === "urgent"
       ? "Something needs your attention."
