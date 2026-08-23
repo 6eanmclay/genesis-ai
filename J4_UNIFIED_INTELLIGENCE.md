@@ -123,10 +123,35 @@ merchant's own message until it knows the turn resolved locally, so persisting
 the notice when it was spoken filed it first. Scrolling back showed the refusal
 above the message it answers. It travels with the turn now.
 
-The pattern in all three is worth naming: **each was two correct features
+**Three more, found by continuing to look after the first three were fixed.**
+
+*The answer arrived before the thing asked for first.* Every handler runs before
+any reply is emitted, so a handler that streams puts its words on the wire during
+execution while earlier tools' replies still wait for the loop that emits them.
+"Take me to orders, and what sold worst last month" is a plan policy allows, and
+it put the answer first — while the stored conversation had them the other way
+round. Only the first tool is given the delta sink now.
+
+*J4 said it was taking you somewhere you never arrived.* Two `take_me_there`
+calls are two reads, so neither the cap nor the one-mutation rule stopped them:
+the route emitted two navigations, the client pushed both, the last won, and the
+first reply had already named the other place. A turn ends in one place now, and
+the second is dropped with its own reason — the pacing copy would have read as
+an excuse for something that was never about pacing.
+
+*The reply was honest and the log said SUCCESS.* `approve_pending_changes`
+executes approved changes against a live store, and every return omitted
+`outcome`, so a run where nothing applied was recorded as a success that could
+not be retried while telling the owner it had failed. Then the same sweep found
+fourteen more turns declaring failure and logging SUCCESS, because `outcome` and
+`executionStatus` were defaulted independently. Both fixed; the sweep is now
+section 9 of the suite rather than a script that ran once.
+
+The pattern in all six is worth naming: **each was two correct features
 meeting.** None would have been caught by reviewing either change alone, and the
-one that mattered was found by asking what a check assumes rather than whether
-it runs.
+ones that mattered were found by asking what a rule ASSUMES rather than whether
+it runs — every one of them was a rule that held for one of something and
+quietly stopped holding when that something acquired a plural.
 
 ### What is still open
 
