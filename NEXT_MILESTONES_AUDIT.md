@@ -1,6 +1,17 @@
 # What to build next — five candidates, audited
 
-**Status: AUDIT ONLY. Nothing here is implemented.** 2026-08-23.
+**Status: PARTLY EXECUTED 2026-08-23.**
+
+- **D3 — BUILT** (`2a1ab9a`). One product per design, enforced by a partial unique index; a refused attempt costs no growth points.
+- **PD4 — BUILT** (`6a76386`). A proactive message carries the proposal its own finding produced, never whichever is newest. J4 never decides it.
+- **D1/D2 — contracted**, `PARTIAL_TURN_CONTRACT.md`. Ready to authorize.
+- **D4 — contracted**, `D4_APPROVAL_RECOVERY.md`. One decision left.
+- **Belief channel — CORRECTED.** This is a Genesis Language / Constitution decision, **not an engineering gap**. Listing it as a milestone candidate was my error: the belief architecture is complete and owner-facing, and the only open question is whether the FROZEN five-state vocabulary gains a sixth member. That is Sean's alone and the vocabulary stays untouched until he says otherwise.
+- **Teaching / challenge / communication style — unchanged.** Product design, not authorization.
+
+---
+
+*Original audit follows.*
 
 Audited against the repository as it stands, not against the roadmap documents.
 Two of the five turned out to be much smaller than their documents imply, and
@@ -182,7 +193,10 @@ says "J4 has come to believe something about your business."
   member. That is a change to a **frozen** Constitution-level model, so it is
   emphatically yours.
 - **Size:** small once decided.
-- **Safe to authorise immediately?** No — it modifies a frozen model.
+- **Safe to authorise immediately?** **No, and it should not have been listed
+  here at all.** This is a Constitution decision, not an engineering gap — the
+  architecture is finished and the only open question is a change to a frozen
+  vocabulary. Recorded as a correction rather than quietly dropped.
 
 ---
 
