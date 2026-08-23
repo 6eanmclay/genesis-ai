@@ -1567,6 +1567,73 @@ async function main() {
 
   await prisma.store.deleteMany({ where: { id: runShop.id } });
 
+  // ==========================================================================
+  console.log("\n=== 9. A handler that failed does not get logged as fine ===\n");
+  // ==========================================================================
+  // FOUND BY SWEEPING THIS FILE, so the sweep stays. approve_pending_changes —
+  // the handler that executes approved changes against a live store — returned
+  // "Something went wrong applying those changes" with no `outcome`, and was
+  // written to the execution log as a SUCCESS that could not be retried. Every
+  // assertion on that handler read the REPLY, and the reply was never wrong.
+  //
+  // A one-off script found it and would have found nothing next time somebody
+  // adds a handler. This is that script, kept: a new failure path that forgets
+  // to say it failed fails here instead of in production.
+  //
+  // The detector was validated against the defect it was written for before
+  // being trusted — its first version reported zero on the broken commit too,
+  // which is worth remembering about any check that reports nothing.
+  const handlerSource = readFileSync(
+    join(process.cwd(), "lib", "execution", "toolHandlers.ts"), "utf8"
+  );
+  const RESULT_KEYS = [
+    "kind:", "outcome:", "metadata:", "navigate:", "logMessage:", "executionStatus:",
+    "retryable:", "revalidate:", "messageChanges:", "alreadyStreamed:",
+  ];
+  // What the owner is told, from `reply:` up to the next key of the same object.
+  // Walked rather than matched on indentation, which varies with nesting.
+  const replyTextOf = (block: string): string => {
+    const out: string[] = [];
+    let collecting = false;
+    for (const raw of block.split("\n")) {
+      const line = raw.trim();
+      if (line.startsWith("reply:")) { collecting = true; out.push(line); continue; }
+      if (!collecting) continue;
+      if (RESULT_KEYS.some((k) => line.startsWith(k)) || line === "};" || line === "}") break;
+      out.push(line);
+    }
+    return out.join(" ");
+  };
+
+  const sourceLines = handlerSource.split("\n");
+  const returnedResults: { line: number; block: string }[] = [];
+  for (let i = 0; i < sourceLines.length; i++) {
+    if (!sourceLines[i].trim().startsWith("return {")) continue;
+    let depth = 0;
+    const buf: string[] = [];
+    for (let j = i; j < sourceLines.length; j++) {
+      buf.push(sourceLines[j]);
+      depth += (sourceLines[j].match(/{/g) ?? []).length - (sourceLines[j].match(/}/g) ?? []).length;
+      if (depth <= 0 && j > i) break;
+    }
+    const block = buf.join("\n");
+    if (block.includes("handled: true")) returnedResults.push({ line: i + 1, block });
+  }
+
+  assert("the sweep actually found the handler's returns",
+    returnedResults.length > 25, `only found ${returnedResults.length}`);
+
+  // Language that means J4 did not do the thing. Deliberately broad: a false
+  // positive costs one explicit `outcome`, a false negative costs a silent lie
+  // in the log of the system that changes somebody's store.
+  const SOUNDS_LIKE_FAILURE =
+    /went wrong|couldn't|could not|can't|cannot|didn't|did not|not sure|nothing|don't have|do not have|still pending|unable|no longer|failed|wasn't|was not|only the store owner/i;
+
+  const dishonest = returnedResults
+    .filter((r) => !r.block.includes("outcome:") && SOUNDS_LIKE_FAILURE.test(replyTextOf(r.block)))
+    .map((r) => `toolHandlers.ts:${r.line}`);
+  check("no handler tells the owner it failed while recording a success", dishonest, []);
+
   check("a prototype key resolves to no handler", handlerFor("constructor"), null);
   check("nor does an invented tool", handlerFor("delete_everything"), null);
   check("every registered handler is callable",
