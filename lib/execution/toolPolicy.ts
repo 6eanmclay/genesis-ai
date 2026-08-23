@@ -215,11 +215,49 @@ const NAVIGATION_TOOL = "take_me_there";
 
 export type DroppedTool = {
   name: string;
-  why: "cap" | "second_mutation" | "second_navigation";
+  why: "cap" | "second_mutation" | "second_navigation" | "removal_not_upload";
 };
 
+/**
+ * An explicit instruction to remove products.
+ *
+ * DELIBERATELY NOT A PARSER. It is a short list of verbs that only mean one
+ * thing when aimed at products, and it exists to protect exactly one invariant
+ * that a real model was measured failing: a removal instruction must not be
+ * answered as an upload.
+ *
+ * Live evidence (LIVE_ROUTING_RESULTS.md, 2026-08-23): "Remove the old products
+ * and let's upload the first ring" resolved to `show_upload_options` on one
+ * screen and to a plain conversational answer on another. Both silently drop a
+ * destructive instruction the owner gave.
+ *
+ * Description text was tried first and did not hold. `show_upload_options`'s
+ * own description already forbids this exact phrase, and adding the mirror
+ * warning to `request_product_removal` left the result unchanged at 48/50 and
+ * moved one variant INTO the forbidden tool. Two descriptions discussing one
+ * phrase did not settle it; a rule does.
+ */
+const EXPLICIT_REMOVAL = /\b(remove|delete|discontinue|get rid of)\b/i;
+
+/**
+ * Whether the upload prompt is an acceptable answer to this message.
+ *
+ * The one thing this rule says, and nothing more: it does not decide that a
+ * removal SHOULD have been called, because that would mean inventing the scope
+ * and product names the tool needs. It only refuses to let the upload prompt be
+ * the answer, so the turn cannot end by silently offering a file picker to
+ * somebody who asked for products to be deleted.
+ */
+export function uploadWouldSwallowRemoval(toolName: string, userMessage: string): boolean {
+  return toolName === "show_upload_options" && EXPLICIT_REMOVAL.test(userMessage);
+}
+
 export function planToolRun(
-  toolNames: string[]
+  toolNames: string[],
+  // The merchant's own words, when the caller has them. Optional so every
+  // existing caller and every test that only cares about ordering is unchanged
+  // — and because the rules above it are all about tools rather than language.
+  userMessage = ""
 ): { run: string[]; dropped: DroppedTool[] } {
   const run: string[] = [];
   const dropped: DroppedTool[] = [];
@@ -231,6 +269,14 @@ export function planToolRun(
       dropped.push({ name, why: "cap" });
       continue;
     }
+    // AN EXPLICIT REMOVAL IS NOT AN UPLOAD (2026-08-23). Checked before the
+    // other rules because it is about what this tool would MEAN here, not about
+    // how many tools a turn may hold.
+    if (uploadWouldSwallowRemoval(name, userMessage)) {
+      dropped.push({ name, why: "removal_not_upload" });
+      continue;
+    }
+
     const policy = policyFor(name);
     // An unregistered name is not silently dropped here — mayInvokeTool refuses
     // it explicitly, with a message. Planning treats it as runnable so that
@@ -276,6 +322,18 @@ export function describeDroppedTools(dropped: DroppedTool[]): string {
   // same kind of thing: one is "you asked to be in two places", the other is
   // "that was more than I'll do at once". Rolling them into one number would
   // make both vaguer.
+  // A REFUSED UPLOAD PROMPT NEEDS ITS OWN SENTENCE. The others are about pacing
+  // or arithmetic; this one is about J4 having nearly answered the wrong
+  // question, and the owner needs to be asked the right one rather than told
+  // something was postponed.
+  if (dropped.some((d) => d.why === "removal_not_upload")) {
+    // Leads with the removal, deliberately. An earlier draft opened with "Before
+    // I show you anything about uploading" and the suite's own ordering check
+    // caught it: the destructive request is the subject here, and putting the
+    // upload first makes the sentence about the thing J4 is NOT doing.
+    return "You asked me to remove some products, and I want to get that right before anything about uploading. Which ones did you mean?";
+  }
+
   const navigations = dropped.filter((d) => d.why === "second_navigation");
   const rest = dropped.filter((d) => d.why !== "second_navigation");
 

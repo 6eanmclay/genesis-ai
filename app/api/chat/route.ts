@@ -443,7 +443,7 @@ export async function POST(request: Request) {
         // the second action is still not executed — deliberately — but it is no
         // longer invisible.
         const requestedTools = allToolUses(unifiedOutcome.message.content);
-        const plan = planToolRun(requestedTools.map((t) => t.name));
+        const plan = planToolRun(requestedTools.map((t) => t.name), userMessage);
         const plannedTools = plan.run
           .map((name) => requestedTools.find((t) => t.name === name))
           .filter((t): t is NonNullable<typeof t> => t !== undefined);

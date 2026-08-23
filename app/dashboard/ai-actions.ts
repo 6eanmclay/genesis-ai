@@ -2351,7 +2351,7 @@ async function applyGenesisMessageToStore(
     // dropped a second request while the other reported it would be its own
     // kind of drift.
     const requestedTools = allToolUses(unifiedContent);
-    const plan = planToolRun(requestedTools.map((t) => t.name));
+    const plan = planToolRun(requestedTools.map((t) => t.name), userMessage);
     droppedTools = plan.dropped;
     // ALL of them, in the order policy put them. This path used to take
     // plan.run[0] and discard the rest — which are not in plan.dropped, because

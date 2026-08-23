@@ -2,6 +2,7 @@ import "dotenv/config";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
 import { STORE_CHAT_UNIFIED_SYSTEM_PROMPT } from "@/lib/dashboard/storeChatUnified";
+import { planToolRun } from "@/lib/execution/toolPolicy";
 import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import { renderDigest, type UnderstandingDigest } from "@/lib/businessModel/digest";
 import { TOOL_POLICY } from "@/lib/execution/toolPolicy";
@@ -266,6 +267,7 @@ async function main() {
   const failures: string[] = [];
   /** Cases where the digest changed the answer, in either direction. */
   const contextEffects: string[] = [];
+  const policyRefusals: string[] = [];
 
   for (const testCase of CASES) {
     const screens = testCase.expect === null ? SCREENS : SCREENS.slice(0, 2);
@@ -277,7 +279,31 @@ async function main() {
       const ok = got === testCase.expect || (alreadyThere && got === null);
       if (ok) pass++;
       else failures.push(`"${testCase.phrase}" from ${screen}: got ${got ?? "(answer)"}, expected ${testCase.expect ?? "(answer)"} — ${testCase.why}`);
-      console.log(`${ok ? "PASS" : "FAIL"} [${screen}] "${testCase.phrase}" -> ${got ?? "(answer)"}`);
+
+      // WHAT THE PRODUCT DOES WITH THAT CHOICE, which is not the same question.
+      //
+      // NOT YET EXERCISED LIVE (2026-08-23). Added after the credit balance was
+      // spent, so this block has typechecked and never run. planToolRun itself
+      // is asserted deterministically in verify-tool-policy.ts; what is
+      // unverified is this display, and it should be read that way.
+      //
+      // This suite measures the MODEL's routing and never ran planToolRun, so a
+      // policy rule that refuses a tool after the model picks it is invisible
+      // here — the number cannot move however well the rule works. That is
+      // worth showing rather than explaining away: the model's answer and the
+      // turn's answer are different things, and only the second is what an
+      // owner experiences.
+      const planned = got ? planToolRun([got], testCase.phrase) : { run: [], dropped: [] };
+      const refused = planned.dropped.length > 0;
+      if (refused) {
+        policyRefusals.push(
+          `"${testCase.phrase}" [${screen}]: model chose ${got}, policy refused it (${planned.dropped[0].why})`
+        );
+      }
+      console.log(
+        `${ok ? "PASS" : "FAIL"} [${screen}] "${testCase.phrase}" -> ${got ?? "(answer)"}` +
+          (refused ? `  [policy refused: ${planned.dropped[0].why}]` : "")
+      );
 
       // THE COMPARISON. Same phrase, same screen, no business summary — which is
       // exactly what the deciding call received before this milestone. Run only
@@ -296,7 +322,15 @@ async function main() {
 
   console.log(`\n${pass}/${total} routed correctly`);
   if (contextEffects.length > 0) {
-    console.log("\nWHERE THE BUSINESS SUMMARY CHANGED THE DECISION:");
+    if (policyRefusals.length > 0) {
+    // The rule that reads the merchant's words, doing its job after the model
+    // has already answered — see LIVE_ROUTING_RESULTS.md for why prose could
+    // not be relied on here.
+    console.log("\nWHERE POLICY REFUSED THE MODEL'S CHOICE:");
+    for (const line of policyRefusals) console.log(`  ${line}`);
+  }
+
+  console.log("\nWHERE THE BUSINESS SUMMARY CHANGED THE DECISION:");
     for (const e of contextEffects) console.log(`  ${e}`);
   } else {
     console.log("\nThe business summary changed no decision in this run — worth knowing, and not automatically good news.");

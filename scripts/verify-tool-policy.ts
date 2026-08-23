@@ -384,6 +384,67 @@ assert("the Server Action checks the pre-classified tool too",
   "otherwise edit_store_content bypasses the check entirely");
 
 // ============================================================================
+console.log("\n=== 9b. An explicit removal is not an upload ===\n");
+// ============================================================================
+// THE ONLY RULE HERE THAT READS THE MERCHANT'S WORDS, and it exists because a
+// real model was measured failing without it. "Remove the old products and
+// let's upload the first ring" resolved to show_upload_options on one screen
+// and to a plain conversational answer on another — both silently dropping a
+// destructive instruction the owner gave (LIVE_ROUTING_RESULTS.md).
+//
+// Description text was tried first and did not hold. show_upload_options's own
+// description already forbids that exact phrase, and adding the mirror warning
+// to request_product_removal left the live result unchanged at 48/50 and moved
+// one variant INTO the forbidden tool. That attempt was reverted rather than
+// kept for sounding right.
+const COMPOUND = "Remove the old products and let's upload the first ring.";
+
+const swallowed = planToolRun(["show_upload_options"], COMPOUND);
+check("the upload prompt is refused for a removal instruction", swallowed.run, []);
+check("and says why", swallowed.dropped, [{ name: "show_upload_options", why: "removal_not_upload" }]);
+
+// THE OWNER IS ASKED THE RIGHT QUESTION, not told something was postponed. The
+// other dropped reasons are about pacing; this one is J4 having nearly answered
+// the wrong question.
+const askedProperly = describeDroppedTools(swallowed.dropped);
+assert("the owner is asked which products they meant",
+  /which ones did you mean/i.test(askedProperly), askedProperly);
+assert("and it leads with the removal, not the upload",
+  askedProperly.indexOf("remove") < askedProperly.indexOf("upload"), askedProperly);
+assert("never reading as a postponement",
+  !/pick up|next|one at a time|more than I'll take on/i.test(askedProperly), askedProperly);
+
+// NARROW, AND THESE ASSERTIONS ARE WHAT KEEP IT NARROW. It is one tool and one
+// condition — not a general parser, and not a claim about what SHOULD have been
+// called instead, which would mean inventing the scope and product names the
+// removal tool needs.
+check("an ordinary upload message is untouched",
+  planToolRun(["show_upload_options"], "I have some photos I want to give you.").run,
+  ["show_upload_options"]);
+check("and so is one that merely mentions a photo",
+  planToolRun(["show_upload_options"], "The photo on my homepage looks bad.").run,
+  ["show_upload_options"]);
+// The rule is about the upload prompt only. A removal instruction paired with
+// any other tool is left entirely alone.
+check("the rule touches no other tool",
+  planToolRun(["request_product_removal"], COMPOUND).run, ["request_product_removal"]);
+check("nor a data question that happens to say 'delete'",
+  planToolRun(["look_up_business_data"], "How many products did I delete last month?").run,
+  ["look_up_business_data"]);
+// And with no message at all — every existing caller and test — nothing changes.
+check("no message means the rule cannot fire",
+  planToolRun(["show_upload_options"]).run, ["show_upload_options"]);
+
+// Each removal verb the live case established, and only those.
+for (const verb of ["remove", "delete", "discontinue", "get rid of"]) {
+  check(`"${verb}" is an explicit removal`,
+    planToolRun(["show_upload_options"], `Please ${verb} the old products for me.`).run, []);
+}
+assert("but a vague tidy-up is not",
+  planToolRun(["show_upload_options"], "Can you tidy up my catalogue?").run.length === 1,
+  "widening this into a synonym hunt is how it becomes the parser it must not be");
+
+// ============================================================================
 console.log("\n=== 10. A turn ends in one place ===\n");
 // ============================================================================
 // Two navigations in one plan is not a bigger request, it is a contradiction.
