@@ -1,3 +1,4 @@
+import { readOwnerFacts } from "./ownerFacts";
 import { prisma } from "@/lib/prisma";
 import { getProfitability, type Profitability } from "./profitability";
 import { getObligations, type Obligations } from "./obligations";
@@ -47,6 +48,7 @@ export interface BusinessProfile {
   identity: {
     name: string;
     tagline: string | null;
+    // GENERATED COPY, all of it — what the storefront says about itself.
     description: string | null;
     brandStory: string | null;
     missionStatement: string | null;
@@ -55,11 +57,24 @@ export interface BusinessProfile {
     coreValues: string[];
     targetAudience: string | null;
     uniqueSellingProposition: string | null;
+    // SOURCE INFORMATION — what the owner told us, never generated and never
+    // rendered to a customer. Null means they have not said, which is a real
+    // answer and is never filled in from the copy above.
+    offering: string | null;
+    intent: string | null;
   };
   classification: {
     businessCategories: { slug: string; label: string }[];
     revenueStreams: { slug: string; label: string }[];
   };
+  /**
+   * THE CATALOGUE — what this business actually lists and how it sells.
+   *
+   * Not to be confused with `identity.offering`, which is the owner's own
+   * sentence about what they do. A business can have said what it offers and
+   * have nothing listed yet, or list ten things and never have described
+   * itself; these answer different questions and neither substitutes.
+   */
   offerings: {
     items: CanonicalRecord<"item">[];
     activeCount: number;
@@ -196,6 +211,7 @@ export async function getBusinessProfile(
     locations,
     assets,
     socialAccounts,
+    ownerFacts,
     revenue30d,
     revenueAllTime,
     topContacts,
@@ -224,6 +240,7 @@ export async function getBusinessProfile(
     queryRecords(storeId, "location"),
     queryRecords(storeId, "asset"),
     queryRecords(storeId, "socialAccount"),
+    readOwnerFacts(storeId),
     getRevenue(storeId, { since: thirtyDaysAgo }),
     getRevenue(storeId),
     getTopContacts(storeId),
@@ -244,6 +261,19 @@ export async function getBusinessProfile(
       name: store.name,
       tagline: store.tagline,
       description: store.description,
+      // WHAT THE OWNER SAID, BESIDE WHAT GENESIS WROTE — never merged into it.
+      //
+      // `description` and the brandIdentity fields below are storefront copy: a
+      // model's words, for customers to read. These two are the owner's own
+      // answers to what do you sell and what do you want this to be. They are
+      // different kinds of thing with different provenance, and the whole
+      // reason they are separate fields is that a reader must be able to tell
+      // which one it is holding.
+      //
+      // Null means the owner never told us. It is never filled from
+      // `description` or from `visionStatement`, whatever those happen to say.
+      offering: ownerFacts.offering,
+      intent: ownerFacts.intent,
       brandStory: brandIdentity?.brandStory ?? null,
       missionStatement: brandIdentity?.missionStatement ?? null,
       visionStatement: brandIdentity?.visionStatement ?? null,

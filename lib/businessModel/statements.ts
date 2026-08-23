@@ -118,6 +118,21 @@ export async function stateFact(params: {
   modelExtracted: boolean;
   /** Where they said it: "chat", "meeting", a form name. Never parsed. */
   context?: string;
+  /**
+   * A stable identity for a fact the business has exactly ONE of.
+   *
+   * Omitted, every call writes a new record — right for goals and challenges,
+   * which accumulate. Supplied, the existing unique constraint on
+   * (storeId, entityType, sourceProvider, externalId) makes the write an
+   * update, so restating what the business sells corrects the answer instead of
+   * leaving two of them for a reader to choose between.
+   */
+  externalId?: string;
+  /**
+   * When the owner said it, if that is not now — a form filled in before the
+   * store existed being the case this was added for. Never a guess.
+   */
+  statedAt?: Date;
 }): Promise<StatementOutcome<{ recordId: string }>> {
   const registryEntry = ENTITY_REGISTRY[params.entityType as EntityType];
   if (!registryEntry) {
@@ -132,13 +147,14 @@ export async function stateFact(params: {
   const result = await persistSyncedRecords(
     params.storeId,
     "genesis_stated",
-    [{ entityType: params.entityType as EntityType, externalId: randomUUID(), data: parsed.data }],
+    [{ entityType: params.entityType as EntityType, externalId: params.externalId ?? randomUUID(), data: parsed.data }],
     {
       // NOT from the caller. This is the invariant the whole file exists for.
       provenance: "OWNER",
       provenanceDetail: params.context ?? "stated",
       statedById: params.userId,
       modelExtracted: params.modelExtracted,
+      ...(params.statedAt ? { statedAt: params.statedAt } : {}),
     }
   );
 

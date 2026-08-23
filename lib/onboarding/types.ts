@@ -138,6 +138,23 @@ export interface ExperienceTranscriptEntry {
 export interface ExperienceConcept {
   businessModelSlug: string;
   brandPositioning: string;
+  /**
+   * WHAT THE VISITOR THEMSELVES SAID, sitting alongside the generated concept
+   * and never mixed into it.
+   *
+   * Everything else on this interface is copy a model wrote FOR the business.
+   * These two are the model's reading of what the person actually told us about
+   * their own business — the only part of an experience-first session that is
+   * admissible as owner testimony, per DRAFT_FIELD_SPLIT_CONTRACT.md section 4b.
+   *
+   * NULL WHENEVER THE TRANSCRIPT DID NOT ESTABLISH IT, which is a real and
+   * common outcome for a short conversation that jumped straight to generating.
+   * They are never filled from productDescription or creativeDirection.description
+   * — doing that would launder generated copy into something the owner appears
+   * to have said.
+   */
+  ownerOffering: string | null;
+  ownerIntent: string | null;
   creativeDirection: CreativeDirectionOption;
   productName: string;
   productDescription: string;
@@ -173,6 +190,11 @@ export type ExperienceDecision =
         typography: { headingFont: string; bodyFont: string };
         logoImagePrompt: string;
         productImagePrompt: string;
+        // Mirrors ExperienceDecisionSchema in app/onboarding/actions.ts, which
+        // is where these are actually asked for. Same nullable contract: what
+        // the visitor said, or null because they did not say it.
+        ownerOffering: string | null;
+        ownerIntent: string | null;
         productName: string;
         productDescription: string;
         estimatedCostInCents: number;

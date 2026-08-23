@@ -53,6 +53,16 @@ export interface UnderstandingDigest {
   tagline: string | null;
   /** What the business is, in its own classification's words. */
   categories: string[];
+  /**
+   * What the business sells, in the owner's words. Null when they never said.
+   *
+   * ADDED 2026-08-23. The digest is the context this milestone measured
+   * actually changing J4's decisions — and it carried name, tagline and
+   * category labels, so the most basic fact about a business was absent from
+   * the thing J4 reasons with. Whether having it improves routing is a separate
+   * empirical question, and its presence here does NOT claim that it does.
+   */
+  offering: string | null;
   activeProductCount: number;
   productNames: string[];
   /**
@@ -109,6 +119,7 @@ export function digestOf(
 
   return {
     name: profile.identity.name,
+    offering: profile.identity.offering ? truncate(profile.identity.offering, 120) : null,
     tagline: profile.identity.tagline ? truncate(profile.identity.tagline, 80) : null,
     categories: profile.classification.businessCategories.slice(0, MAX_ITEMS).map((c) => c.label),
     activeProductCount: profile.offerings.activeCount,
@@ -161,6 +172,17 @@ export function renderDigest(digest: UnderstandingDigest): string {
 
   const identity = [digest.name, digest.tagline].filter(Boolean).join(" — ");
   lines.push(`Business: ${identity}${digest.categories.length ? ` (${digest.categories.join(", ")})` : ""}`);
+
+  // WHAT THEY SELL, IN THEIR OWN WORDS — distinct from the Sells: line below,
+  // which counts catalogue rows. A business can have said what it does and have
+  // nothing listed yet, and the two answers are not substitutes.
+  //
+  // Omitted entirely when unknown rather than rendered as an empty label: a
+  // digest line saying the owner has not told us would spend J4's context on an
+  // absence it can already see.
+  if (digest.offering) {
+    lines.push(`Offers: ${digest.offering}`);
+  }
 
   if (digest.activeProductCount > 0) {
     lines.push(

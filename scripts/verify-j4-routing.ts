@@ -57,6 +57,12 @@ function digest(over: Partial<UnderstandingDigest> = {}): UnderstandingDigest {
     name: "Copper & Coil",
     tagline: "Hand-wound rings",
     categories: ["Handmade goods"],
+    // NULL BY DEFAULT, deliberately. Every routing case in this file was
+    // measured against a digest that had no offering line, so defaulting it to
+    // a value would silently change what the recorded 48/50 was measured
+    // against. Contract item 14 turns it on explicitly, for the cases it is
+    // asking about, and compares.
+    offering: null,
     activeProductCount: 3,
     productNames: ["Tensor Ring", "Copper Cuff", "Coil Pendant"],
     assetRolesHeld: [],

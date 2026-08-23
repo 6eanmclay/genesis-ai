@@ -1,5 +1,21 @@
 "use server";
 
+// EXPORT ONLY ASYNC FUNCTIONS FROM THIS FILE.
+//
+// Next builds a "use server" module into a set of server actions, and a
+// non-function export is a build error — "A 'use server' file can only export
+// async functions, found object". Not a type error, so `tsc --noEmit` is green
+// and the suites are green and the build is the only thing that catches it.
+//
+// Found the hard way on 2026-08-23: two prompts and two schemas were exported
+// here so a live verification harness could import them, which broke
+// `next build` for two commits while typecheck and 41 suites stayed green.
+//
+// A test that needs one of these needs the declaration moved to a plain module
+// under lib/ first — lib/dashboard/storeChatUnified.ts is the precedent. See
+// PROMPT_MODULE_EXTRACTION.md for why that move was scoped out rather than
+// done in a hurry.
+
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { deriveTopicKey } from "@/lib/intelligence/topicKeys";
 import { randomUUID } from "crypto";
@@ -11,6 +27,7 @@ import { revalidatePath } from "next/cache";
 import { after as scheduleAfterResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { ownerFactsFromDraft, recordOwnerFacts } from "@/lib/businessModel/ownerFacts";
 import { slugify } from "@/lib/slugify";
 import { sourceHeroImageCandidate } from "@/lib/productImagery";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
@@ -279,7 +296,7 @@ const StoreCoreFieldsSchema = z.object({
   theme: ThemeSchema,
 });
 
-export const StoreChatPrimarySchema = StoreCoreFieldsSchema.extend({
+const StoreChatPrimarySchema = StoreCoreFieldsSchema.extend({
   brandIdentity: BrandIdentitySchema,
   homepageContent: HomepageContentSchema,
   reply: z.string(),
@@ -1196,7 +1213,7 @@ function diffDraftChanges(before: DraftState, after: DraftState): string[] {
 // and writes the reply from a small, standalone schema; CONTENT (below)
 // generates the actual field values using PrimaryBlueprintSchema unmodified,
 // informed by CONTROL's stated plan so the two stay coherent.
-export const ChatControlSchema = z.object({
+const ChatControlSchema = z.object({
   reply: z.string(),
   requiresConfirmation: z.boolean(),
   touchesIdentity: z.boolean(),
@@ -1206,7 +1223,7 @@ export const ChatControlSchema = z.object({
   touchesSecondaryContent: z.boolean(),
 });
 
-export const CHAT_CONTROL_SYSTEM_PROMPT = `You are Genesis — an expert e-commerce consultant and creative partner working directly with this merchant to build their business. You are not a chatbot, an API, or a support agent; you're a skilled collaborator with real expertise in branding, retail, and online commerce, closer to an experienced co-founder than a tool. Speak like one: confident, natural, specific. Never mention databases, drafts, versions, schemas, JSON, internal steps, or any other implementation detail — the merchant should never sense there's "a system" behind you, only you, doing the work.
+const CHAT_CONTROL_SYSTEM_PROMPT = `You are Genesis — an expert e-commerce consultant and creative partner working directly with this merchant to build their business. You are not a chatbot, an API, or a support agent; you're a skilled collaborator with real expertise in branding, retail, and online commerce, closer to an experienced co-founder than a tool. Speak like one: confident, natural, specific. Never mention databases, drafts, versions, schemas, JSON, internal steps, or any other implementation detail — the merchant should never sense there's "a system" behind you, only you, doing the work.
 
 You will be given the current store draft (as JSON — including policies, marketing assets, and design direction, which you cannot edit yourself but may reference) and the user's latest message. You are responsible for: store name, tagline, description, visual theme, products, brand identity (story, mission, vision, values, personality, voice, target audience, USP), and homepage content (hero copy, about us, why choose us, FAQ, newsletter, footer). A separate step you don't see will generate the actual updated content immediately after you respond, following the plan stated in your reply — so be concrete and specific about what you intend to do, not vague, even though you aren't producing the content yourself here.
 
@@ -1293,7 +1310,7 @@ ${CALIBRATION_GUIDANCE} This applies to claims about the outside world (regulati
 // 2-4 sentence walk through everything changed. The live path is the one where
 // the server appends its own authoritative outcome list beneath the reply, so it
 // was the worse of the two places to leave the duplication.
-export const STORE_CHAT_PRIMARY_SYSTEM_PROMPT = `You are Genesis — an expert e-commerce consultant and creative partner working directly with this merchant on their live, already-launched store. You are not a chatbot, an API, or a support agent; you're a skilled collaborator with real expertise in branding, retail, and online commerce, closer to an experienced co-founder than a tool. Speak like one: confident, natural, specific. Never mention databases, versions, schemas, JSON, internal steps, or any other implementation detail — the merchant should never sense there's "a system" behind you, only you, doing the work.
+const STORE_CHAT_PRIMARY_SYSTEM_PROMPT = `You are Genesis — an expert e-commerce consultant and creative partner working directly with this merchant on their live, already-launched store. You are not a chatbot, an API, or a support agent; you're a skilled collaborator with real expertise in branding, retail, and online commerce, closer to an experienced co-founder than a tool. Speak like one: confident, natural, specific. Never mention databases, versions, schemas, JSON, internal steps, or any other implementation detail — the merchant should never sense there's "a system" behind you, only you, doing the work.
 
 You will be given the store's current content (as JSON — including its live product catalog, which you cannot edit yourself but may reference in conversation) and the user's latest message. You are responsible for: store name, tagline, description, visual theme, brand identity (story, mission, vision, values, personality, voice, target audience, USP), and homepage content (hero copy, about us, why choose us, FAQ, newsletter, footer). You do not handle individual product edits — if the user asks to change a specific product, tell them (briefly, naturally) to use the product edit form below, since that's tied to their live inventory and order history.
 
@@ -4229,7 +4246,14 @@ export async function confirmStoreDraftCore(
       ? await sourceHeroImageCandidate(
           {
             productType: draft.inputProductType,
-            vision: draft.inputVision ?? draft.description ?? draft.name,
+            // THE OWNER'S WORDS OR NOTHING (2026-08-23). This read
+            // `inputVision ?? draft.description ?? draft.name`, so a hero image
+            // for a business whose owner never described their vision was
+            // sourced from copy a model had written about them — and no reader
+            // downstream could tell which had happened. The chain is gone
+            // rather than reordered: an absent vision is a real state, and the
+            // image sourcer already handles a null.
+            vision: draft.inputVision,
           },
           { userId }
         )
@@ -4347,6 +4371,26 @@ export async function confirmStoreDraftCore(
         : undefined,
     },
   });
+
+  // WHAT THE OWNER TOLD US, kept (2026-08-23).
+  //
+  // Written HERE and not at claim time because a BusinessRecord needs a
+  // storeId, and until this function ran there was no store — only a draft. So
+  // both onboarding paths converge on this one line, which is also why
+  // ownerFactsFromDraft decides admissibility rather than the two flows each
+  // deciding for themselves.
+  //
+  // Non-fatal for the same reason the fulfillment registration below is: the
+  // storefront is already live at this point, and losing a record of what the
+  // owner said must not undo a launch. It is logged rather than swallowed.
+  const ownerFacts = ownerFactsFromDraft(draft);
+  if (ownerFacts) {
+    try {
+      await recordOwnerFacts({ storeId: store.id, userId, facts: ownerFacts });
+    } catch (error) {
+      console.error("confirmStoreDraftCore: owner facts not recorded", error);
+    }
+  }
 
   // Onboarding v2 — register the confirmed product with the fulfillment
   // connector for real, now that a real storeId exists to attach it to

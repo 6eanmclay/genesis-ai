@@ -459,6 +459,40 @@ export const CommitmentSchema = z.object({
 });
 export type Commitment = z.infer<typeof CommitmentSchema>;
 
+// WHAT THE OWNER TOLD US, kept structurally apart from what Genesis wrote
+// about it.
+//
+// The business already had somewhere to put its DERIVED self-description:
+// Store.description, and blueprint.brandIdentity's brandStory, missionStatement
+// and visionStatement. All of it model-written, all of it for the storefront to
+// say. What it had nowhere to put was the owner's own answer to the two
+// questions onboarding actually asks them — what do you sell, and what do you
+// want this to be. Those answers were used for one generation prompt and one
+// hero image and then dropped on the floor at confirmation.
+//
+// SOURCE INFORMATION, NOT COPY. Neither of these is ever rendered to a
+// customer, ever generated, and ever substituted for the other. A record here
+// exists only because a person asserted the thing; see lib/businessModel/
+// ownerFacts.ts, which is the only writer, and DRAFT_FIELD_SPLIT_CONTRACT.md
+// section 4c for the rule both onboarding paths obey.
+//
+// ONE SENTENCE EACH, deliberately. The fact IS the statement. Everything else
+// worth knowing about it — who said it, when, and whether a model stood between
+// them and these words — is already carried by BusinessRecord's provenance
+// columns rather than duplicated into the payload.
+
+export const OfferingSchema = z.object({
+  /** The owner's own words for what this business sells or provides. */
+  statement: z.string(),
+});
+export type Offering = z.infer<typeof OfferingSchema>;
+
+export const IntentSchema = z.object({
+  /** The owner's own words for what they want the business or brand to be. */
+  statement: z.string(),
+});
+export type Intent = z.infer<typeof IntentSchema>;
+
 export const ENTITY_REGISTRY = {
   contact: { schema: ContactSchema, label: "Contact" },
   transaction: { schema: TransactionSchema, label: "Transaction" },
@@ -475,6 +509,8 @@ export const ENTITY_REGISTRY = {
   socialAccount: { schema: SocialAccountSchema, label: "Social Account" },
   shipment: { schema: ShipmentSchema, label: "Shipment" },
   commitment: { schema: CommitmentSchema, label: "Commitment" },
+  offering: { schema: OfferingSchema, label: "Offering" },
+  intent: { schema: IntentSchema, label: "Intent" },
 } as const;
 
 export type EntityType = keyof typeof ENTITY_REGISTRY;

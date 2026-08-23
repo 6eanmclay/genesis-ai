@@ -35,7 +35,12 @@ Order from most to least likely to return a striking, on-brand photo.`;
 export async function sourceHeroImageCandidate(
   brief: {
     productType: string | null;
-    vision: string;
+    // NULLABLE SINCE 2026-08-23. The caller used to guarantee a string by
+    // falling back through the store's generated description and then its name,
+    // which meant this prompt was sometimes briefed on copy a model had written
+    // rather than on anything the owner wanted. A business whose owner never
+    // stated a vision now says so, and the brief below simply omits it.
+    vision: string | null;
   },
   scope: GenesisModelScope
 ): Promise<string | null> {
@@ -50,7 +55,7 @@ export async function sourceHeroImageCandidate(
     messages: [
       {
         role: "user",
-        content: `What they sell: ${brief.productType ?? "(unspecified)"}\nVision: ${brief.vision}`,
+        content: `What they sell: ${brief.productType ?? "(unspecified)"}\nVision: ${brief.vision ?? "(the owner has not said)"}`,
       },
     ],
     output_config: {

@@ -1,6 +1,6 @@
 # The draft-path field split — contract
 
-**Status: CONTRACT CLOSED pending ONE confirmation (§6). Nothing implemented.**
+**Status: CONTRACT CLOSED. All decisions taken. Implementation authorized.**
 2026-08-23. Sean's decisions of 2026-08-23 recorded in §0.
 
 ---
@@ -272,14 +272,28 @@ deserves its own decision.
 
 ---
 
-## 8. The single open item
+## 8. The final decision — CLOSED
 
-Everything above is decided except one thing, and it exists only because
-decision 6 arrived after decision 3:
+**`offering` and `intent` are registered `ENTITY_REGISTRY` entity types.** No new
+`Store` columns. Confirmed 2026-08-23.
 
-> **Confirm: `offering` and `intent` as `ENTITY_REGISTRY` entity records
-> (recommended — no migration, provenance already native), or as the two
-> nullable `Store` columns as literally approved (which would need roughly six
-> more columns to express the provenance decision 6 requires)?**
+Sean: *"two nullable homes, no backfill, null means not known" was about the
+semantic contract, not a requirement that those homes literally be Prisma
+columns. BusinessRecord already provides the correct home and, critically,
+provides the provenance model that Store currently lacks.*
 
-On confirmation this contract is closed and implementable.
+Binding, in full:
+
+- `offering` and `intent` are registered BusinessRecord entity types.
+- **No new Store columns. No backfill. Absence of a record means "not known."**
+- Preserve `OWNER` provenance.
+- Preserve `modelExtracted`, so owner-authored words stay distinguishable from
+  owner intent distilled from their own transcript.
+- Preserve `statedAt`, `statedById`, `provenanceDetail` as applicable.
+- **Follow the entity-registry extension contract rather than modifying
+  BusinessRecord's schema.**
+- The experience-first admissibility rule of §4b is approved exactly as written.
+- `brandIdentity.visionStatement` stays completely separate (§6 item 13).
+- All 14 verification items approved. **#14 is not a presumed success.**
+
+There are no open decisions.

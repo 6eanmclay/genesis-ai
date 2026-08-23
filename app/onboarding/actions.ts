@@ -182,6 +182,26 @@ const ExperienceDecisionSchema = z.object({
       productImagePrompt: z.string(),
       productName: z.string(),
       productDescription: z.string(),
+      // THE VISITOR'S OWN ACCOUNT, asked for in the same pass rather than in a
+      // second call. Distinct in kind from every other field here: the rest is
+      // what Genesis proposes, these two are what the person said.
+      //
+      // NULLABLE AND MEANT IT. A conversation that never got as far as what
+      // they sell must return null, not a guess assembled from the concept
+      // above — a fabricated statement here would be recorded as OWNER
+      // provenance and become indistinguishable from something they told us.
+      ownerOffering: z
+        .string()
+        .nullable()
+        .describe(
+          "What the visitor said they sell or provide, in their own terms. Null if they never said."
+        ),
+      ownerIntent: z
+        .string()
+        .nullable()
+        .describe(
+          "What the visitor said they want the business or brand to be. Null if they never said."
+        ),
       estimatedCostInCents: z.number(),
       estimatedShippingInCents: z.number(),
     })
@@ -316,6 +336,9 @@ export async function submitExperienceMessage(
   const concept: ExperienceConcept = {
     businessModelSlug: raw.businessModelSlug,
     brandPositioning: raw.brandPositioning,
+    // Carried verbatim, including the nulls. Nothing here substitutes.
+    ownerOffering: raw.ownerOffering,
+    ownerIntent: raw.ownerIntent,
     creativeDirection: {
       name: raw.name,
       description: raw.description,
