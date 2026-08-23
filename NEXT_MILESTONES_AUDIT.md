@@ -11,6 +11,21 @@
 
 ---
 
+### Observed, not a defect, deliberately not turned into scope
+
+`proposalJ4Raised` adds two indexed lookups to `J4Surface`, which the dashboard
+layout renders on every navigation — and that file's own comment warns that
+anything fetched there is fetched on every navigation the owner makes. The second
+lookup (is the proposal still pending) is also strictly redundant with the
+`.find()` over `openProposals` that follows it, since that list contains only
+pending proposals.
+
+Both are true and neither is a correctness problem. Folding them would make the
+function cheaper and its contract weaker — it would only be correct in the one
+caller that filters afterwards. Recorded here rather than changed.
+
+---
+
 *Original audit follows.*
 
 Audited against the repository as it stands, not against the roadmap documents.
