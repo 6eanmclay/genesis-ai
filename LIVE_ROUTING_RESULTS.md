@@ -88,6 +88,43 @@ Options, none taken, each a real decision:
 The first is closest to how everything else in this codebase resolved: when prose
 could not be relied on, a rule was.
 
+## The turn level, measured 2026-08-23
+
+The runs above measure MODEL CHOICE. What an owner experiences is the turn, and
+those are different measurements. Two calls, `verify-refusal-turn-live.ts`, real
+model choice fed straight into the real `planToolRun` call.
+
+| phrase | model chose | policy ran | owner hears |
+|---|---|---|---|
+| "Remove the old products and let's upload the first ring." | `request_product_removal` | `request_product_removal` | — nothing dropped |
+| "I want to upload photos of the first ring — and get rid of the old products." | `request_product_removal` | `request_product_removal` | — nothing dropped |
+
+**The `removal_not_upload` rule is unexercised.** It is correct, it is
+deterministically tested, and no real model choice measured here reaches it —
+the model picks the removal tool on its own, both orderings, so policy has
+nothing to refuse. It is a guard against a mistake J4 is not currently making.
+That is a fine thing for a guard to be, but it should not be described as
+working behaviour: nothing here is evidence an owner has ever seen its sentence.
+
+**A caveat on the first row, which is the fixture case recorded above as the one
+remaining routing defect.** It routed correctly here. Do not read that as fixed.
+This harness sends a one-line business description where `verify-j4-routing.ts`
+sends a full `UnderstandingDigest`, so the two are not comparable inputs and the
+difference may be the input rather than the model. Re-running the routing suite
+is what would settle it, and that costs ~55 calls.
+
+### What the turn level did expose
+
+The measurement was worth its two calls for a reason unrelated to routing: it
+sent me to read the display path, and the display path was broken. A refusal
+that dropped the ONLY requested tool was suppressed in both callers, and on the
+Server Action path it fell through to regenerating store content. Fixed in
+`1e52963`; the reasoning is in that commit.
+
+Worth stating plainly, because it is the pattern of the whole day: the rule was
+right, the copy was right, the unit test was green, and the owner would have
+heard nothing.
+
 ## What has not been validated
 
 Classification and the employee-handbook loop. `verify-classification-live.ts`
