@@ -50,53 +50,86 @@ live on both reply paths, 8/8:
 
 That evidence stands. What is blocked is **re-running** it.
 
-## The extraction, when it is done deliberately
+## The boundary, measured 2026-08-23
 
-Move these thirteen declarations from `app/dashboard/ai-actions.ts` into a plain
-module — `lib/dashboard/storeChatPrompts.ts`. The precedent already exists:
-`lib/dashboard/storeChatUnified.ts` holds `STORE_CHAT_UNIFIED_SYSTEM_PROMPT` and
-is imported by both the route and the routing suite.
+**A correction first.** An earlier version of this document listed thirteen
+declarations with line ranges. **Those ranges were wrong** — they came from a
+scan that matched the first line ending in `;` or `}`, which lands inside a
+nested object rather than at the end of a declaration. Anyone slicing by them
+would have cut production prompts in half. They are replaced below with ranges
+from a bracket- and template-literal-aware scan, and the lesson is the obvious
+one: a number in a document is a claim, and this one was never checked.
 
-All thirteen are pure data — Zod schemas and template literals, no functions, no
-imports from `ai-actions` itself. Line numbers as of `c221352`:
+### The real closure
 
-| Declaration | Lines |
+Starting from the four declarations the harness needs and following every
+reference transitively:
+
+**15 declarations, 190 lines, zero function or runtime references.** All of it is
+Zod schemas and template literals. Line numbers as of `14711ff`:
+
+| Declaration | Lines | |
+|---|---|---|
+| `ThemeSchema` | 122–147 | 26 |
+| `BrandIdentitySchema` | 171–184 | 14 |
+| `FaqItemSchema` | 186–189 | 4 |
+| `HomepageContentSchema` | 196–209 | 14 |
+| `StoreCoreFieldsSchema` | 292–297 | 6 |
+| `StoreChatPrimarySchema` | 299–308 | 10 |
+| `CALIBRATION_GUIDANCE` | 326–330 | 5 |
+| `PRESENTATION_GUIDANCE` | 335–340 | 6 |
+| `COMPOSITION_GUIDANCE` | 349–357 | 9 |
+| `HOMEPAGE_STRUCTURE_GUIDANCE` | 362–373 | 12 |
+| `BRAND_PROMISE_GUIDANCE` | 375 | 1 |
+| `CONTINUATION_GUIDANCE` | 384–386 | 3 |
+| `ChatControlSchema` | 1216–1224 | 9 |
+| `CHAT_CONTROL_SYSTEM_PROMPT` | 1226–1262 | 37 |
+| `STORE_CHAT_PRIMARY_SYSTEM_PROMPT` | 1313–1346 | 34 |
+
+**Move them byte-exact.** These template literals contain quotes, backticks and
+em-dashes; retyping one changes a production prompt. Slice by range, never
+re-author.
+
+### Why the closure cannot be smaller
+
+The obvious economy is to move the two prompts and their six guidance constants
+(107 lines) and leave the four schemas behind, letting the harness declare a
+minimal `{ reply }` output shape.
+
+**That would break the measurement.** The defect piece 3 fixed was J4 narrating
+every change it had made — a reply produced while generating a full content
+object. A model asked only for a `reply`, with no content to generate, has
+nothing to narrate, so the regression would not reproduce and the harness would
+pass on a prompt that had regressed. The schemas are part of the condition being
+measured, not scaffolding around it.
+
+### Against Sean's six criteria
+
+| Criterion | |
 |---|---|
-| `BrandIdentitySchema` | 155–168 |
-| `HomepageContentSchema` | 180–193 |
-| `StoreCoreFieldsSchema` | 276–281 |
-| `StoreChatPrimarySchema` | 283–292 |
-| `CALIBRATION_GUIDANCE` | 310–314 |
-| `PRESENTATION_GUIDANCE` | 319–324 |
-| `COMPOSITION_GUIDANCE` | 333–341 |
-| `HOMEPAGE_STRUCTURE_GUIDANCE` | 346–357 |
-| `BRAND_PROMISE_GUIDANCE` | 359 |
-| `CONTINUATION_GUIDANCE` | 368–370 |
-| `ChatControlSchema` | 1200–1208 |
-| `CHAT_CONTROL_SYSTEM_PROMPT` | 1210–1246 |
-| `STORE_CHAT_PRIMARY_SYSTEM_PROMPT` | 1297–1330 |
+| Preserves the `"use server"` contract | **Yes** — it is the fix for the violation, not a way around it |
+| Production action API unchanged | **Yes** — none of the fifteen is a server action, and none is referenced outside `ai-actions.ts` except by two suites that read source text |
+| Prompts/schemas testable | **Yes** — a plain module can export them |
+| No duplicated production definitions | **Yes** — declarations move; nothing is copied |
+| No new abstraction for one test | **Judgement.** `lib/dashboard/storeChatUnified.ts` already holds a prompt imported by both `lib/execution/toolHandlers.ts` and `scripts/verify-brevity-and-streaming.ts`. This applies that existing pattern rather than inventing one |
+| Clean build path | **Yes** — `npx next build` is the acceptance test |
 
-**Move them byte-exact.** These are template literals containing quotes,
-backticks and em-dashes; retyping any of them changes a production prompt. Slice
-by line range, do not re-author.
+### The proposed boundary
 
-Each is used 2–7 times elsewhere in `ai-actions.ts`, so the move is followed by
-one import and no other edit.
+`lib/dashboard/storeChatPrompts.ts` — a sibling to `storeChatUnified.ts`, not an
+addition to it. That file holds the *unified router* prompt; these are the draft
+and live *content* prompts, a different concern that happens to share a
+neighbourhood.
 
-### Why it was not done in the same pass
+`ai-actions.ts` gains one import and loses 190 lines.
 
-It is a thirteen-block refactor of the application's largest and most critical
-server-action file, arriving at the end of a long session, in service of a test
-convenience rather than a product behaviour. The build defect needed a fix that
-was certain; this is a change that needs care.
+### One thing this would also relieve, and is NOT scope
 
-### Verifying it
-
-- `npx next build` — the gate that would have caught the original defect.
-- `npx tsx scripts/verify-reply-shape.ts` — asserts `LEAD WITH ONE SENTENCE.`
-  appears in **both** reply prompts by count, wherever they live.
-- Restore `scripts/verify-prose-shape-live.ts` from `acfdc1a`, repoint its
-  imports, and re-run the 4-call measurement.
+`lib/execution/genesisActions.ts:260` carries a hand-synced copy of
+`ThemeSchema`/`CompositionSchema`, with a comment saying so, because those
+schemas are currently unreachable from `lib/`. Moving them makes that mirror
+resolvable — **but consolidating it is a separate decision** about the two sides
+of the approval gate, and is deliberately not bundled here.
 
 ## The standing lesson
 
