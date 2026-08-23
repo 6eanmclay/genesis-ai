@@ -96,9 +96,28 @@ Six things changed:
   `CHAT_COMPOSITION`) still runs for `edit_store_content`. It retires only when
   the tool path is shown to cover the same ground as well or better, which needs
   a real model and real conversations. Not deleted prematurely.
-- **The dispatch is a long `if` ladder** in a 2,100-line route file. The chain
-  moved from model calls into code branches — cheaper, and the same shape. A
-  handler registry mirroring `GENESIS_ACTIONS` is the next real step.
+- **The dispatch is being extracted, six of nineteen done.** It was a long `if`
+  ladder in a 2,215-line route file — the chain moved from model calls into code
+  branches, cheaper and the same shape. `show_upload_options`,
+  `capture_business_fact`, `approve_pending_changes`, `take_me_there`,
+  `request_product_removal` and `answer_supplier_economics` are now handlers in
+  `lib/execution/toolHandlers.ts` that RETURN what they did instead of writing
+  messages, emitting and closing the stream themselves. The route is down to
+  ~1,900 lines and twelve inline branches, and the rest fall through untouched.
+
+  The reason to migrate them one at a time is not caution for its own sake:
+  **the only way to reach a branch was through a model, so nineteen capabilities
+  had no test of any kind** — including `approve_pending_changes`, which
+  executes approved changes to a live store, and `request_product_removal`,
+  which proposes irreversible deletions. Each branch that moves gains real
+  coverage on the way, and that is what the migration is actually buying.
+
+  What the tests immediately pinned: an approval that throws must say the
+  changes are still pending rather than claiming success; a proposed deletion is
+  logged PENDING, deletes nothing, and supersedes its own stale proposal; an
+  unresolved product name proposes nothing and asks, naming what exists rather
+  than guessing; J4 must never say one place and navigate to another; and an
+  answer about supplier economics uses the outcome's words, never the model's.
 - **Tool results do not return to the model.** A `tool_use` is a routing signal
   today, not a call whose result feeds the next turn of reasoning. That is the
   architecture that would let a read genuinely inform an action in one pass; the
