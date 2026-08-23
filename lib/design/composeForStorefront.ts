@@ -118,7 +118,16 @@ export async function resolveCompositionAssets(params: {
           createdAt: new Date().toISOString(),
         },
       },
-    ]);
+    ], {
+      // DERIVED: this asset record is a restatement of a Product row this
+      // platform already owns. Nothing was inferred and nobody was asked — the
+      // image was already there, and this only gives a Design something to
+      // point at.
+      provenance: "DERIVED",
+      provenanceDetail: "product",
+      statedById: null,
+      modelExtracted: false,
+    });
     const rec = await prisma.businessRecord.findUnique({
       where: {
         storeId_entityType_sourceProvider_externalId: {
@@ -213,7 +222,16 @@ export async function approveCompositionAsAsset(params: {
         createdAt: new Date().toISOString(),
       },
     },
-  ]);
+  ], {
+    // J4 composed the image. The owner APPROVING it is a real and separate
+    // event with its own record (ApprovalRequest); folding that approval in
+    // here would restamp J4's own work as something the owner provided, which
+    // is exactly the confusion this column exists to prevent.
+    provenance: "GENERATED",
+    provenanceDetail: "composition",
+    statedById: null,
+    modelExtracted: true,
+  });
   if (result.errors.length > 0) return null;
 
   const record = await prisma.businessRecord.findUnique({

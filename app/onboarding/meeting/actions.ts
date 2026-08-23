@@ -42,7 +42,7 @@ export async function submitMeetingTurn(
   const { store, userId } = await requireOwnStore();
   const trimmed = answer.trim();
   if (trimmed) {
-    await extractAndPersistVisionFacts(store.id, trimmed);
+    await extractAndPersistVisionFacts(store.id, trimmed, userId);
   }
 
   const updatedTranscript = [...transcript, { question, answer: trimmed }];

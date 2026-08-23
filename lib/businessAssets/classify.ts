@@ -293,9 +293,20 @@ export async function classifyAndExtractAsset(
                 ? proposal.data
                 : { ...proposal.data, sentAt: null, audienceSize: null, metrics: null }; // campaign
 
-        const { changes } = await persistSyncedRecords(storeId, "genesis_upload", [
-          { entityType: proposal.entityType, externalId: randomUUID(), data: recordData },
-        ]);
+        const { changes } = await persistSyncedRecords(
+          storeId,
+          "genesis_upload",
+          [{ entityType: proposal.entityType, externalId: randomUUID(), data: recordData }],
+          {
+            // The owner's own document is the evidence; a model decided what it
+            // said. Both halves are true, and recording only the first would let
+            // an extraction read back later as something the owner stated.
+            provenance: "DOCUMENT",
+            provenanceDetail: record.id,
+            statedById: null,
+            modelExtracted: true,
+          }
+        );
         if (changes[0]) {
           createdEntity = {
             entityType: proposal.entityType,

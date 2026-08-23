@@ -123,7 +123,12 @@ async function resolveSurfaceBase(storeId: string, surface: Surface): Promise<Bu
         createdAt: new Date().toISOString(),
       },
     },
-  ]);
+  ], {
+    provenance: "GENERATED",
+    provenanceDetail: "surface base",
+    statedById: null,
+    modelExtracted: true,
+  });
 
   return fetchImage(sourced.url);
 }
@@ -529,9 +534,21 @@ export async function createDesign(params: {
   };
   DesignSchema.parse(data);
 
-  const result = await persistSyncedRecords(params.storeId, SOURCE_PROVIDER, [
-    { entityType: "design", externalId: printFileUrl, data },
-  ]);
+  const result = await persistSyncedRecords(
+    params.storeId,
+    SOURCE_PROVIDER,
+    [{ entityType: "design", externalId: printFileUrl, data }],
+    {
+      // The design is J4's own composition. Its assetIds project into
+      // derived_from relationships from the same envelope, so the graph records
+      // that this was made from the owner's assets without claiming the owner
+      // made it.
+      provenance: "GENERATED",
+      provenanceDetail: "design composition",
+      statedById: null,
+      modelExtracted: true,
+    }
+  );
   if (result.errors.length > 0) return null;
 
   const record = await prisma.businessRecord.findUnique({

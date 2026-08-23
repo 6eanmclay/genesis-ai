@@ -32,7 +32,15 @@ export interface VisionExtractionResult {
 
 export async function extractAndPersistVisionFacts(
   storeId: string,
-  visionText: string
+  visionText: string,
+  /**
+   * WHO SAID IT (2026-08-22). The meeting is the single richest source of
+   * owner-stated facts in the product, and until now it wrote them with no
+   * author at all -- so a goal from the meeting and a goal from a connector
+   * were equally anonymous downstream. The caller has always had this; it
+   * simply had nowhere to put it.
+   */
+  statedByUserId: string | null
 ): Promise<VisionExtractionResult> {
   const outcome = await callGenesisModel(
     {
@@ -59,9 +67,19 @@ export async function extractAndPersistVisionFacts(
   for (const fact of parsed.facts) {
     const fullData =
       fact.entityType === "goal" ? toGoalRecordData(fact.data, todayIso) : toChallengeRecordData(fact.data, todayIso);
-    await persistSyncedRecords(storeId, "j4_meeting", [
-      { entityType: fact.entityType, externalId: randomUUID(), data: fullData },
-    ]);
+    await persistSyncedRecords(
+      storeId,
+      "j4_meeting",
+      [{ entityType: fact.entityType, externalId: randomUUID(), data: fullData }],
+      {
+        // The owner said this out loud in a meeting and a model wrote down what
+        // it heard. Same pair as live chat, same reason for recording both.
+        provenance: "OWNER",
+        provenanceDetail: "meeting",
+        statedById: statedByUserId,
+        modelExtracted: true,
+      }
+    );
     written++;
   }
 

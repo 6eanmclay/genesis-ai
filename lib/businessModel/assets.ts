@@ -242,9 +242,20 @@ export async function recordGeneratedAsset(params: {
     createdAt: new Date().toISOString(),
   };
 
-  const result = await persistSyncedRecords(params.storeId, GENERATED_SOURCE_PROVIDER, [
-    { entityType: "asset", externalId: params.url, data },
-  ]);
+  const result = await persistSyncedRecords(
+    params.storeId,
+    GENERATED_SOURCE_PROVIDER,
+    [{ entityType: "asset", externalId: params.url, data }],
+    {
+      // GENERATED, not INFERENCE: a file that exists, not a claim about the
+      // business that might be wrong. J4 should say "here is the logo I made"
+      // without hedging it and without implying anybody asked for it.
+      provenance: "GENERATED",
+      provenanceDetail: params.generationPrompt ? "image generation" : null,
+      statedById: null,
+      modelExtracted: true,
+    }
+  );
   if (result.errors.length > 0) return null;
 
   const record = await prisma.businessRecord.findUnique({

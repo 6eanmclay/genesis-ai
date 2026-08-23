@@ -117,7 +117,16 @@ export async function planMarketingCampaign(
         audienceSize: null,
         metrics: null,
       },
-    }))
+    })),
+    {
+      // The owner asked for a campaign; J4 wrote it. GENERATED describes the
+      // draft that now exists, which is what this record IS — the owner's
+      // request is a conversation turn, not a campaign.
+      provenance: "GENERATED",
+      provenanceDetail: "campaign draft",
+      statedById: null,
+      modelExtracted: true,
+    }
   );
 
   return { groupId, name: plan.name, channels: plan.channels };

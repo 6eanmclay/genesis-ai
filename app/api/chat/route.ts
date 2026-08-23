@@ -709,9 +709,23 @@ export async function POST(request: Request) {
             controller.close();
             return;
           }
-          const { changes } = await persistSyncedRecords(store.id, "genesis_chat", [
-            { entityType, externalId: randomUUID(), data: parsed.data },
-          ]);
+          const { changes } = await persistSyncedRecords(
+            store.id,
+            "genesis_chat",
+            [{ entityType, externalId: randomUUID(), data: parsed.data }],
+            {
+              // OWNER, and modelExtracted TRUE. Both halves matter and neither is
+              // enough alone: the owner is the author of this goal -- nobody else can
+              // say what they are trying to do -- but the sentence J4 stored is a
+              // model's reading of what they typed, not the words themselves. A reader
+              // that saw only OWNER would quote a paraphrase back as though the owner
+              // had said it.
+              provenance: "OWNER",
+              provenanceDetail: "chat",
+              statedById: userId,
+              modelExtracted: true,
+            }
+          );
           if (entityType === "challenge" && changes[0]) {
             const challengeData = parsed.data as { severity: string | null; status: string; description: string };
             const recordId = changes[0].recordId;

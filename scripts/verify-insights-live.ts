@@ -85,7 +85,7 @@ async function main() {
           dueAt: daysAgo(dueDay).toISOString(),
         } as never,
       },
-    ]);
+    ], { provenance: "CONNECTOR", provenanceDetail: "quickbooks", statedById: null, modelExtracted: false });
 
   const cancellation = (storeId: string, day: number) =>
     prisma.businessEvent.create({

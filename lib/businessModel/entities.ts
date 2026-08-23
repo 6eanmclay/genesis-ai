@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RecordProvenance } from "@prisma/client";
 
 // Phase 3 Milestone 1 (J4 Foundation) — the canonical entity registry.
 // Adding a new entity type later (Location and Employee, added in Milestone
@@ -14,10 +15,14 @@ import { z } from "zod";
 // a code change to the schema itself, defeating the point. Common values are
 // documented in each field's comment, not enforced by the type system.
 //
-// Any field named `xxxId` (single) or `xxxIds` (array) is understood by
-// convention to hold another BusinessRecord's id — this is the entire
-// relationship mechanism (see reasoning.ts's findRelated), not a separate
-// join table.
+// Any field named `xxxId` (single) or `xxxIds` (array) holds another
+// BusinessRecord's id by convention. It is no longer the ENTIRE relationship
+// mechanism: as of 2026-08-22 these fields are projected into typed, indexed
+// RecordRelationship rows (lib/businessModel/relationships.ts), which is what
+// lets J4 say WHAT a connection is rather than only that one exists. The fields
+// here remain the source of truth; PROJECTIONS in that file lists exactly which
+// of them become relationships, and deliberately excludes the several that end
+// in `Id` while pointing at something that is not a canonical record at all.
 
 export const ContactSchema = z.object({
   name: z.string().nullable(),
@@ -490,4 +495,22 @@ export interface CanonicalRecord<T extends EntityType = EntityType> {
   sourceProvider: string;
   data: EntityDataFor<T>;
   syncedAt: Date;
+  /**
+   * WHERE THIS RECORD'S FACTS CAME FROM (2026-08-22).
+   *
+   * On the canonical shape rather than only on the Prisma row, because the two
+   * kinds of record this interface unifies have genuinely different answers and
+   * a reader must not have to know which it is holding: a persisted row carries
+   * whatever its writer declared, while a live-computed one is DERIVED by
+   * definition, being arithmetic over the store's own orders.
+   *
+   * Nullable in every field, together, for rows written before the column
+   * existed. Null provenance means nobody recorded it — an honest unknown, not
+   * a claim that it came from nowhere.
+   */
+  provenance: RecordProvenance | null;
+  provenanceDetail: string | null;
+  statedAt: Date | null;
+  statedById: string | null;
+  modelExtracted: boolean | null;
 }

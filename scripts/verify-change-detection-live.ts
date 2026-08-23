@@ -135,9 +135,12 @@ async function main() {
   const store = await makeStore(owner.id, "Sweep Store");
   let ext = 0;
   const doc = (data: object) =>
-    persistSyncedRecords(store.id, "quickbooks", [
-      { entityType: "document" as const, externalId: `d-${++ext}`, data: data as never },
-    ]);
+    persistSyncedRecords(
+      store.id,
+      "quickbooks",
+      [{ entityType: "document" as const, externalId: `d-${++ext}`, data: data as never }],
+      { provenance: "CONNECTOR", provenanceDetail: "quickbooks", statedById: null, modelExtracted: false }
+    );
 
   await doc(invoice); // pending, due yesterday
   await doc({ ...invoice, status: "paid" }); // paid, also past due
@@ -185,11 +188,16 @@ async function main() {
   const item = (name: string, quantityAvailable: number | null) => ({
     name, sku: null, priceInCents: 500, category: null, active: true, quantityAvailable,
   });
-  const stocked = await persistSyncedRecords(store.id, "shopify", [
-    { entityType: "item" as const, externalId: "i-1", data: item("Wick", 0) as never },
-    { entityType: "item" as const, externalId: "i-2", data: item("Jar", 3) as never },
-    { entityType: "item" as const, externalId: "i-3", data: item("Lid", 40) as never },
-  ]);
+  const stocked = await persistSyncedRecords(
+    store.id,
+    "shopify",
+    [
+      { entityType: "item" as const, externalId: "i-1", data: item("Wick", 0) as never },
+      { entityType: "item" as const, externalId: "i-2", data: item("Jar", 3) as never },
+      { entityType: "item" as const, externalId: "i-3", data: item("Lid", 40) as never },
+    ],
+    { provenance: "CONNECTOR", provenanceDetail: "shopify", statedById: null, modelExtracted: false }
+  );
   check("the stocked items were persisted", stocked.errors, []);
   const inventory = await detectLowInventory(store.id);
   check("zero is depleted and three is low, forty is neither",

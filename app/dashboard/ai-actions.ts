@@ -2715,9 +2715,23 @@ async function applyGenesisMessageToStore(
     // to the normal chat flow below rather than confirming a capture that
     // didn't actually happen.
     if (parsed?.success) {
-      const { changes } = await persistSyncedRecords(store.id, "genesis_chat", [
-        { entityType, externalId: randomUUID(), data: parsed.data },
-      ]);
+      const { changes } = await persistSyncedRecords(
+        store.id,
+        "genesis_chat",
+        [{ entityType, externalId: randomUUID(), data: parsed.data }],
+        {
+          // OWNER, and modelExtracted TRUE. Both halves matter and neither is
+          // enough alone: the owner is the author of this goal -- nobody else can
+          // say what they are trying to do -- but the sentence J4 stored is a
+          // model's reading of what they typed, not the words themselves. A reader
+          // that saw only OWNER would quote a paraphrase back as though the owner
+          // had said it.
+          provenance: "OWNER",
+          provenanceDetail: "chat",
+          statedById: userId,
+          modelExtracted: true,
+        }
+      );
 
       // Enrich the already-existing Business Intelligence Engine (Phase 3
       // Milestone 3), per Sean's explicit direction — not a second

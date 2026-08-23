@@ -130,7 +130,17 @@ export async function recordCommitments(
   const { changes } = await persistSyncedRecords(
     storeId,
     SOURCE_PROVIDER,
-    planned.map((c) => ({ entityType: "commitment" as const, externalId: c.externalId, data: c.data }))
+    planned.map((c) => ({ entityType: "commitment" as const, externalId: c.externalId, data: c.data })),
+    {
+      // Every one of these was read out of a file. CommitmentSchema already
+      // carries the sentence it came from and the asset it was read from, which
+      // is per-fact provenance in all but name; this states the KIND, so a
+      // reader that never opens the record still knows not to treat the date as
+      // something a person typed.
+      provenance: "DOCUMENT",
+      statedById: null,
+      modelExtracted: true,
+    }
   );
 
   // Read back from the change itself, NOT by index into `planned`. A record

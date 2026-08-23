@@ -11,6 +11,15 @@ import type { CanonicalRecord } from "./entities";
 // will produce objects in this exact same shape, just persisted instead of
 // computed live — these functions are what prove that shape is right before
 // any external connector exists.
+//
+// EVERYTHING HERE IS DERIVED PROVENANCE (2026-08-22), and that is a stronger
+// claim than it sounds. DERIVED is not a hedge and not a synonym for "guessed":
+// these records are arithmetic over Order and Product rows this platform owns
+// outright, so they are exactly as trustworthy as those rows and need no
+// qualifying language when J4 speaks about them. The one thing that would make
+// them dishonest is a fabricated statedAt, so each carries the date its own
+// underlying record actually carries — an order's createdAt, a product's
+// updatedAt — never the moment the mapping happened to run.
 
 export function internalContactId(email: string): string {
   return `internal:contact:${email}`;
@@ -41,6 +50,12 @@ export function mapOrdersToTransactions(
       status: order.status,
     },
     syncedAt: new Date(),
+    provenance: "DERIVED",
+    provenanceDetail: "order",
+    // When the sale happened, not when this mapping ran.
+    statedAt: order.createdAt,
+    statedById: null,
+    modelExtracted: false,
   }));
 }
 
@@ -62,6 +77,13 @@ export function mapProductsToItems(
       quantityAvailable: null,
     },
     syncedAt: new Date(),
+    provenance: "DERIVED",
+    provenanceDetail: "product",
+    // When the owner last changed the product, which is when its price and
+    // name were last actually asserted.
+    statedAt: product.updatedAt,
+    statedById: null,
+    modelExtracted: false,
   }));
 }
 
@@ -92,6 +114,13 @@ export function deriveContactsFromOrders(
         lastSeenAt: new Date(Math.max(...dates)).toISOString(),
       },
       syncedAt: new Date(),
+      provenance: "DERIVED",
+      provenanceDetail: "order",
+      // A customer is asserted by their most recent order, not their first —
+      // the latest one is the evidence that this is still a real customer.
+      statedAt: new Date(Math.max(...dates)),
+      statedById: null,
+      modelExtracted: false,
     };
   });
 }

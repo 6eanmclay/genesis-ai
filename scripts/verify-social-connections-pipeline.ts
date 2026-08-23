@@ -77,9 +77,12 @@ async function main() {
   const testExternalId = `verify-tmp-ig-${Date.now()}`;
   try {
     // Case 3: persistSyncedRecords really writes a real BusinessRecord.
-    const firstSync = await persistSyncedRecords(store.id, "instagram", [
-      { entityType: "socialAccount", externalId: testExternalId, data: instagramRecord },
-    ]);
+    const firstSync = await persistSyncedRecords(
+      store.id,
+      "instagram",
+      [{ entityType: "socialAccount", externalId: testExternalId, data: instagramRecord }],
+      { provenance: "CONNECTOR", provenanceDetail: "instagram", statedById: null, modelExtracted: false }
+    );
     if (firstSync.written !== 1 || firstSync.errors.length !== 0) {
       throw new Error(`Case 3 FAILED: expected 1 written, 0 errors, got ${JSON.stringify(firstSync)}`);
     }
@@ -92,9 +95,12 @@ async function main() {
     // Case 4: a re-sync with an updated follower count updates in place,
     // never duplicates — the real "don't re-create on every sync" guarantee.
     const updatedRecord = { ...instagramRecord, followerCount: 3450 };
-    const secondSync = await persistSyncedRecords(store.id, "instagram", [
-      { entityType: "socialAccount", externalId: testExternalId, data: updatedRecord },
-    ]);
+    const secondSync = await persistSyncedRecords(
+      store.id,
+      "instagram",
+      [{ entityType: "socialAccount", externalId: testExternalId, data: updatedRecord }],
+      { provenance: "CONNECTOR", provenanceDetail: "instagram", statedById: null, modelExtracted: false }
+    );
     if (secondSync.written !== 1) throw new Error("Case 4 FAILED: re-sync did not report a write");
     const allMatching = await prismaSystem.businessRecord.findMany({
       where: { storeId: store.id, entityType: "socialAccount", sourceProvider: "instagram", externalId: testExternalId },

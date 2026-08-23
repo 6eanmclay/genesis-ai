@@ -40,9 +40,22 @@ export async function ingestBusinessAsset(
     createdAt: new Date().toISOString(),
   };
 
-  const result = await persistSyncedRecords(storeId, SOURCE_PROVIDER, [
-    { entityType: "asset", externalId: uploadedFile.url, data },
-  ]);
+  const result = await persistSyncedRecords(
+    storeId,
+    SOURCE_PROVIDER,
+    [{ entityType: "asset", externalId: uploadedFile.url, data }],
+    {
+      // OWNER rather than DOCUMENT, and the difference is real: this record is
+      // the fact that a file exists and the owner gave it to us, which they
+      // asserted by uploading it. What the file SAYS is a separate record with
+      // separate provenance (classify.ts), extracted by a model that can be
+      // wrong about it. Collapsing the two would make a misread invoice look
+      // like something the owner had told us.
+      provenance: "OWNER",
+      provenanceDetail: "upload",
+      modelExtracted: false,
+    }
+  );
 
   if (result.errors.length > 0) {
     throw new Error(result.errors[0].error);

@@ -462,6 +462,7 @@ model Store {
   delegatedAuthorities      DelegatedAuthority[]
   productEvents             ProductEvent[]
   businessRecords           BusinessRecord[]
+  recordRelationships       RecordRelationship[]
   businessEvents            BusinessEvent[]
   businessEventCursors      BusinessEventCursor[]
   cognitiveOutputs          CognitiveOutput[]
@@ -1781,11 +1782,13 @@ model ProductEvent {
 // sourceProvider are plain Strings, not enums, so a new entity type or a new
 // connector never needs a migration. `data`'s shape is validated against
 // entities.ts's Zod schema for entityType at write time, not enforced here.
-// Cross-entity relationships are NOT a separate join table — any field in
-// `data` named `xxxId`/`xxxIds` is a reference to another BusinessRecord.id
-// by convention; see lib/businessModel/reasoning.ts's findRelated for why
-// this is enough to make relationship traversal generic across every
-// entity type, including ones added later.
+// Cross-entity relationships were once ONLY a naming convention: a field in
+// `data` named `xxxId`/`xxxIds` held another BusinessRecord.id, and
+// findRelated scanned every record of every type looking for one. That still
+// works and still runs, but it could not say WHAT a relationship was, and it
+// could not be asked a question without loading the world. RecordRelationship
+// (below) is the canonical, typed, indexed representation; the convention is
+// its input, not its replacement. See lib/businessModel/relationships.ts.
 //
 // sourceProvider "internal" (the live store's own Order/Product data) is
 // reserved but never actually written here — lib/businessModel/
@@ -1802,10 +1805,151 @@ model BusinessRecord {
   data           Json
   syncedAt       DateTime @default(now())
 
+  /// WHERE THIS FACT CAME FROM (2026-08-22).
+  ///
+  /// sourceProvider already named the pipe it arrived through -- "quickbooks",
+  /// "genesis_chat", "genesis_upload". What it could not say is what KIND of
+  /// source that is, and those are not the same question: a figure QuickBooks
+  /// published, a figure the owner stated, and a figure a model concluded from
+  /// a photograph are three different grades of evidence arriving through three
+  /// pipes whose names happen to differ. Reasoning that treats them alike is
+  /// reasoning that presents a guess with the authority of a bank statement.
+  ///
+  /// NULL means nobody recorded it, which is every row written before this
+  /// column existed. That is an honest unknown and is deliberately NOT
+  /// backfilled to a plausible value -- see the migration for why guessing
+  /// here would defeat the entire point of the column.
+  provenance       RecordProvenance?
+
+  /// The concrete source within that kind: the connector's own name, or the
+  /// Asset BusinessRecord.id a document fact was read out of. Free text
+  /// because the shape genuinely varies; never parsed for meaning.
+  provenanceDetail String?
+
+  /// When the SOURCE asserted it -- distinct from syncedAt, which is when this
+  /// row was last written. "The owner told us in March" and "we wrote this row
+  /// this morning" are different facts, and only the first one answers whether
+  /// a claim about the business is still current.
+  statedAt         DateTime?
+
+  /// The User who stated it, when a person did. Null for connector and derived
+  /// facts, which have no author.
+  statedById       String?
+
+  /// Whether a model stood between the source and this record.
+  ///
+  /// A goal the owner typed and a goal a model distilled from a rambling voice
+  /// memo are both OWNER-provenance -- the owner is the author either way --
+  /// but only one of them is the owner's own words. NULLABLE, not defaulted to
+  /// false: a historical row does not get to claim nothing interpreted it.
+  modelExtracted   Boolean?
+
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   @@unique([storeId, entityType, sourceProvider, externalId])
   @@index([storeId, entityType])
+}
+
+/// WHAT KIND OF SOURCE STATED A FACT (2026-08-22).
+///
+/// Every value exists because a real write site in this codebase produces it AND
+/// because reasoning should treat it differently. None was added for symmetry.
+enum RecordProvenance {
+  /// A connected system's own API said so -- QuickBooks, Mailchimp, Google
+  /// Calendar, Instagram. First-party to that system, and as current as its
+  /// last sync (StoreIntegration.lastSyncedAt, already tracked).
+  CONNECTOR
+
+  /// The owner stated it -- in chat, in a meeting, in a form. First-party and
+  /// authoritative about intent in a way nothing else is: only the owner knows
+  /// what the owner is trying to do. Goes stale by being superseded, never by
+  /// a sync cadence.
+  OWNER
+
+  /// Read out of a record the owner provided -- an uploaded invoice, a lease,
+  /// a supplier's PDF. The DOCUMENT is first-party evidence; the reading of it
+  /// is a model's, which is why modelExtracted is almost always true here and
+  /// why extractors in this codebase carry the source sentence alongside the
+  /// value (see CommitmentSchema.sourceQuote).
+  DOCUMENT
+
+  /// Computed deterministically from data this platform already owns -- orders,
+  /// products, payments. Not an inference and not a guess: arithmetic over
+  /// first-party rows, exactly as trustworthy as the rows underneath it.
+  /// lib/businessModel/internalMapper.ts is the whole of it today.
+  DERIVED
+
+  /// J4 concluded it. A real and useful kind of knowledge with no external
+  /// referent: nothing outside this system asserted it, so it could be wrong in
+  /// a way a bank statement cannot. Never to be presented, weighed, or spoken
+  /// about as though somebody had said it.
+  INFERENCE
+
+  /// J4 MADE IT -- an image, a design, a drafted campaign.
+  ///
+  /// Shares INFERENCE's lack of an external referent and is otherwise its
+  /// opposite, which is why collapsing the two was wrong. An inference is a
+  /// CLAIM ABOUT THE BUSINESS and might not be true. A generated logo is a FILE
+  /// THAT EXISTS; hedging it would be as dishonest as asserting the inference.
+  /// The distinction was found while wiring the write sites: three of them
+  /// produce artifacts, and the owner-facing label for INFERENCE ("Something I
+  /// concluded") would have been a plain lie printed next to somebody's logo.
+  GENERATED
+}
+
+/// A TYPED RELATIONSHIP BETWEEN TWO CANONICAL RECORDS (2026-08-22).
+///
+/// The convention this replaces could express THAT two records were connected
+/// and never WHAT the connection was. A challenge listing a goal's id in
+/// `relatedGoalIds` might block it, fund it, or merely mention it, and the only
+/// way to find out was to already know. So the most useful thing J4 could say
+/// about a business -- "this is what is standing between you and that" -- was
+/// the one thing the model could not represent.
+///
+/// Indexed from BOTH ends, which is the other half of the point: findRelated
+/// answered "what references this?" by loading every record of every entity
+/// type into memory and scanning its keys. Correct, and O(everything).
+///
+/// NOT a replacement for the id fields inside `data`. Those remain the source
+/// of truth for the records that carry them and are projected into this table;
+/// a relationship here that contradicts the record it came from is a bug in the
+/// projection, not a second opinion.
+model RecordRelationship {
+  id      String @id @default(cuid())
+  storeId String
+
+  /// Both ends are BusinessRecord ids, including the synthetic ids the internal
+  /// mapper computes for orders and products (internal:order:<id> and friends).
+  /// Not a Prisma relation for exactly that reason: half the records this can
+  /// legitimately point at are computed live and have no row to constrain to.
+  fromId   String
+  fromType String
+  toId     String
+  toType   String
+
+  /// A key from RELATIONSHIP_KINDS in lib/businessModel/relationships.ts. A
+  /// String rather than an enum for the same reason entityType is: a new kind
+  /// of connection should not need a migration. The closed vocabulary is
+  /// enforced at write time and cross-checked by a suite.
+  kind String
+
+  /// Same envelope as BusinessRecord's, and for the same reason: a link the
+  /// owner drew by hand and a link a model proposed are not equally certain,
+  /// and a reader that cannot tell them apart will present both as fact.
+  provenance       RecordProvenance?
+  provenanceDetail String?
+  statedAt         DateTime?
+  statedById       String?
+
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// One link of one kind between two records. Re-projecting is an upsert, so
+  /// a re-sync never duplicates and a removed reference can be reconciled away.
+  @@unique([storeId, fromId, kind, toId])
+  @@index([storeId, fromId])
+  @@index([storeId, toId])
 }
 
 // Phase 3 Milestone 3 (Business Intelligence Engine) — the standardized,

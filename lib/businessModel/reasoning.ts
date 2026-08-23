@@ -69,6 +69,15 @@ async function loadPersistedRecords(
     sourceProvider: row.sourceProvider,
     data: row.data as CanonicalRecord["data"],
     syncedAt: row.syncedAt,
+    // Carried through rather than dropped (2026-08-22). These columns existed
+    // on the row and stopped at this function: every consumer above it saw a
+    // fact with no origin, which is precisely the gap that made a model's
+    // conclusion and a bank's statement indistinguishable downstream.
+    provenance: row.provenance,
+    provenanceDetail: row.provenanceDetail,
+    statedAt: row.statedAt,
+    statedById: row.statedById,
+    modelExtracted: row.modelExtracted,
   }));
 }
 

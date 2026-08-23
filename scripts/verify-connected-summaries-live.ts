@@ -76,9 +76,12 @@ async function main() {
 
   let ext = 0;
   const record = (storeId: string, entityType: "document" | "campaign" | "appointment", data: unknown) =>
-    persistSyncedRecords(storeId, "quickbooks", [
-      { entityType: entityType as never, externalId: `ext-${++ext}`, data: data as never },
-    ]);
+    persistSyncedRecords(
+      storeId,
+      "quickbooks",
+      [{ entityType: entityType as never, externalId: `ext-${++ext}`, data: data as never }],
+      { provenance: "CONNECTOR", provenanceDetail: "quickbooks", statedById: null, modelExtracted: false }
+    );
 
   // ==========================================================================
   console.log("\n=== 1. Nothing connected is null, never zero ===\n");

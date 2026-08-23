@@ -176,7 +176,15 @@ export function syncExecutable(
       const result = await persistSyncedRecords(
         ctx.storeId,
         connector.provider.toLowerCase(),
-        records
+        records,
+        {
+          // The one unambiguous case in the codebase: a connected system
+          // published these and nothing interpreted them on the way in.
+          provenance: "CONNECTOR",
+          provenanceDetail: connector.provider.toLowerCase(),
+          statedById: null,
+          modelExtracted: false,
+        }
       );
       // Social Connections & Business Intelligence (2026-08-09) — real
       // interpretation, not just storage, but never at the cost of the
