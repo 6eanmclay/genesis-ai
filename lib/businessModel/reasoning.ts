@@ -1058,10 +1058,14 @@ export async function getUpcomingAppointments(
 // standing summaries for connector-sourced data, the same shape as every
 // other Understand-layer function: deterministic, honest-null when there's
 // nothing real to summarize (never a fabricated zero), reused by both
-// Reason's own contextForPrompt (lib/intelligence/cognitiveLayer.ts) and
-// chat's buildChatDataContext below, so a real number is computed once and
-// explained consistently everywhere, rather than each surface re-deriving
-// it from raw records independently.
+// getBusinessUnderstanding, so a real number is computed once and explained
+// consistently everywhere, rather than each surface re-deriving it from raw
+// records independently.
+//
+// That was the intent from the start and only became true on 2026-08-24. This
+// comment used to name chat's buildChatDataContext as the second reuser; that
+// function WAS a second assembler and is gone, and both the conversation path
+// and Reason now read these summaries from the one canonical understanding.
 
 export interface InvoiceSummary {
   outstandingCount: number;

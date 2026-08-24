@@ -1,8 +1,73 @@
 # One Canonical Understanding — contract
 
-**Status: CLOSED. All five decisions taken. Nothing implemented.** 2026-08-24.
-No API credit, no live model, **no schema change and no production behaviour
-change in this phase.**
+**Status: IMPLEMENTED AND CLOSED** (`7c4ae04`, verified 2026-08-24). All five
+decisions taken and built. No API credit, no live model, **no schema change**.
+
+## Final verification
+
+Every claim confirmed by evidence rather than assertion:
+
+| | Confirmed |
+|---|---|
+| Exactly one canonical assembler | A sweep of `lib/` and `app/` finds **one** file composing three or more canonical providers undeclared: `understanding.ts` |
+| `buildChatDataContext` is not an assembler | **Zero code references** anywhere. The only mention is the gate asserting its absence |
+| Reasoning consumers consume the canonical model | `toolHandlers`, `cognitiveLayer`, `chatTurnContext` — **0 canonical provider calls each** |
+| `cognitiveLayer` no longer recomputes | Confirmed above; its seven reads are gone |
+| `recentRecords` is opt-in | `wantsRecentRecords` gates it; the data answer is the only caller naming it |
+| `insights.ts` is still a provider | Does not assemble an understanding; still computes its own week-over-week windows. **Behaviour unchanged** — the only diff is the declaration wrapper |
+| `genesisBriefingComposer` is a declared windowed read | Declared `"windowed"`, reading revenue since the previous briefing |
+| Provenance intact | 19 write sites; `stateFact` still fixes `OWNER` by construction; grounding readers unchanged |
+| Business Fact Lifecycle untouched | `git diff` over `factLifecycle`, `ownerFacts`, `statements`, `factCapture` — **empty** |
+| No schema or unrelated change | `git diff` over `prisma/` — **empty**. 92 migrations, unchanged |
+
+### Gates, against the pre-implementation baseline
+
+| | Baseline | After |
+|---|---|---|
+| Typecheck | 0 | **0** |
+| `npx next build` | exit 0 | **exit 0** |
+| Shared runner | 41/41 | **41/41** |
+| Lint | 70 problems (2 errors, 68 warnings) | **identical** |
+
+Own-infrastructure lane, all pass: `canonical-understanding`, `fact-lifecycle`,
+`owner-facts`, `verification-readback`, `conversations`, `insights-live`,
+`business-memory-live`. Standalone: `verification-hardening`, `tool-policy`,
+`reply-shape`, `conversation-recall`, `context-pane`.
+
+### One thing verification found and corrected
+
+A comment in `reasoning.ts` still named `buildChatDataContext` as a current
+consumer of the connected-system summaries — a function this milestone deleted.
+Corrected, because a comment pointing at code that no longer exists misleads the
+next reader, and this repository treats comments as the record of why. **Comment
+only; no behaviour.**
+
+### The one declared deviation
+
+**`genesisBriefingComposer` was planned to read revenue from the canonical
+understanding. It does not, and should not.** It reads revenue *since the
+previous briefing* — an arbitrary window. The canonical model carries
+last-30-days and all-time. Routing it through would have **silently changed what
+the briefing reports**, which the guardrail forbids. It is a **declared windowed
+read** instead: same intent (no duplicated assembly), behaviour preserved.
+
+`insights.ts` is the same shape and was resolved the same way, by the
+instruction's own test.
+
+### Remaining, unchanged
+
+**Provider-blocked, not defects:** EasyPost label read-back, Stripe/PayPal remote
+grant state, `CLASSIFY_FIXTURE_URL`, `RESEND_API_KEY`.
+
+**Unmeasured, needing live credit:** the policy-refusal branch, `offering` →
+routing (item 14), the 48/50 model-choice discrepancy, and whether J4 supplies
+`supersedesRecordId` when correcting a plural fact.
+
+**Tracked separately:** the standalone suite runner. 188 suites now; 41 in the
+shared runner, 147 run only when chosen.
+
+**Not built, by decision:** reconciliation — U4 and U5 decided how a disagreement
+would be represented and surfaced; detecting one is its own contract.
 
 ## The decisions, as taken
 
