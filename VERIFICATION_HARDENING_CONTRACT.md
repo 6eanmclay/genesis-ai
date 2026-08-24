@@ -109,25 +109,57 @@ them:**
 
 ### What each state must mean after this milestone
 
-| State | Means | What the owner should understand |
-|---|---|---|
-| `verified: true` | a read-back ran and the state matched | *"I changed it, and I looked again to be sure."* |
-| `verified: false` + `WARNING` | a read-back ran and the state **did not** match | *"Something did not take. Here is which part."* |
-| **third state** (§3.1) | read-back is not possible for this operation, **by declaration** | *"Done. This one I can't re-check from here."* |
-| `verified: false` + `SUCCESS` | **must become unreachable** | — |
+**Three verification states. Decided 2026-08-24.**
+
+| Verification state | Means | Execution status | What the owner reads |
+|---|---|---|---|
+| **Verified** | execution succeeded and verification confirmed the expected state | `SUCCESS` | *"I changed it, and I looked again to be sure."* |
+| **Verification failed** | execution succeeded far enough to attempt verification, but verification did not confirm the expected state | `WARNING` | *"Something did not take. Here is which part."* |
+| **Verification unavailable** | execution succeeded, but meaningful verification could not be performed because the required verification mechanism or provider is unavailable | `SUCCESS` | *"Done. I could not re-check this one from here."* |
+
+And the state this milestone removes:
+
+| | |
+|---|---|
+| `verified: false` on a `SUCCESS` row, meaning nobody implemented a check | **must become unreachable** |
 
 The last row is the point of the milestone. A `SUCCESS` row that wrote readable
 state and was never re-read may not present as plain success.
 
-### 3.1 The third state
+### 3.1 "Verification unavailable" — and the line it must not cross
 
-An executable that genuinely cannot verify a leg **declares it, with a reason**,
-rather than omitting the method. Silence must stop being the way both "not
-possible" and "not implemented" are expressed, because that is exactly why 21
-gaps were invisible.
+**The owner-facing name is "Verification unavailable."**
+
+**It describes the mechanism, never the developer.** "Unavailable" means the
+thing verification would have to consult cannot be consulted: a provider with no
+read-back API, a credential absent at runtime, a remote system that does not
+expose the state it was asked to change.
+
+**An executable with no `verify()` is NOT "verification unavailable." It is a
+defect.** This distinction is the whole value of the new state and the easiest
+thing to lose: if "unavailable" can absorb "nobody wrote one", it becomes the new
+`verified: false` — a single label covering both "we checked and can't" and "we
+never looked" — and this milestone will have moved the ambiguity rather than
+removed it. §7.2 makes the omission a build-time programming error precisely so
+it can never present as this state.
+
+**Declared, with a reason, and the reason is recorded.** The owner-facing label is
+the same whether the mechanism is permanently unverifiable (a provider that
+exposes no read-back) or transiently so (a credential missing today). Those are
+different facts for us and the same fact for the owner, so the distinction lives
+in the recorded reason, not in a second label.
+
+**A leg at a time.** An operation with a verifiable local half and an
+unverifiable remote half is not wholly unavailable. It reports the local half as
+Verified and the remote half as Verification unavailable (§6), because collapsing
+the two would throw away a real guarantee.
 
 **`WARNING` keeps its current meaning** — the operation ran and something is off —
 and gains a real population, since today almost nothing can produce it.
+
+**No fourth execution status.** Verification state stays separate from
+`ExecutionStatus`; see §7.3. Both Verified and Verification unavailable sit on a
+`SUCCESS` row, because in both cases the execution genuinely succeeded.
 
 ### 3.2 Verification must not run against an outcome that has not landed
 
@@ -326,7 +358,12 @@ Every claim in the final report is one of:
 |---|---|
 | **IMPLEMENTED** | the code exists |
 | **VERIFIED** | a test ran and entered the behaviour |
-| **LIVE/PROVIDER-BLOCKED** | cannot be established without a credential |
+| **LIVE/PROVIDER-BLOCKED** | cannot be established without a credential or a provider mechanism |
+
+**LIVE/PROVIDER-BLOCKED is never reported as a failure.** A provider that cannot
+be consulted has not told us anything went wrong — it has told us nothing at all.
+Collapsing it into failure would make the report claim a defect the evidence does
+not support, which is the same error as claiming a success it does not support.
 
 "Implemented" is never reported as "verified". A `verify()` with no negative
 control is IMPLEMENTED, not VERIFIED.
@@ -334,6 +371,11 @@ control is IMPLEMENTED, not VERIFIED.
 ### 9.2 Per-executable
 
 1. All 24 either implement `verify()` or **declare** why they cannot, with a reason.
+1b. **"Verification unavailable" is unreachable by omission.** An executable that
+    writes readable state and has neither a `verify()` nor a declared reason must
+    fail a check, not fall into the unavailable state. This is the one acceptance
+    item the whole third-state decision rests on: if omission can present as
+    unavailable, the ambiguity has moved rather than gone.
 2. Each `verify()` re-reads persisted state — never a value returned by `run()`.
 3. Each reports **which** fields did not match, not a bare boolean.
 4. Class B compares only the keys the input named.
@@ -355,6 +397,9 @@ control is IMPLEMENTED, not VERIFIED.
     cannot fail proves nothing, and this repository has shipped exactly that.
 12. A control proving `SUCCESS`-without-verification is unreachable must first
     make it reachable.
+12b. **A control that removes a `verify()` and confirms the result is a failed
+    check — not a "Verification unavailable" row.** Deleting a method must never
+    be a way to make an executable look benignly unverifiable.
 13. Class B gets a control confirming an **untouched** key does not fail
     verification — the false-positive direction, which is how a strict comparison
     would quietly break every merge write.
@@ -387,13 +432,10 @@ control is IMPLEMENTED, not VERIFIED.
 
 ---
 
-## 11. Open question, before implementation
+## 11. Open questions — none
 
-**The third state needs a name the owner will read.** "Unverified" and "not
-verifiable" are both accurate and both sound like something went wrong — which,
-for a shipping label that was bought successfully, is untrue.
+The one open question is closed. **Sean, 2026-08-24: the owner-facing third state
+is "Verification unavailable"**, with the semantics recorded in §3 and the
+boundary against developer omission in §3.1. No fourth execution status.
 
-This is copy on an execution surface, which has been a real defect source here,
-and it is the one thing in this contract that is a product decision rather than
-an engineering one. **Recommend deciding it before implementation begins**, since
-it shapes the `Executable` interface as well as the UI.
+**This contract is closed and implementable.** Implementation has not begun.
