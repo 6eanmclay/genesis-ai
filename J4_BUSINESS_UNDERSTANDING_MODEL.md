@@ -142,9 +142,9 @@ present an inference as a fact. That rule exists in prose today
 
 **Reuse `ENTITY_REGISTRY`.** The blueprint's five sections and the `Store`
 identity columns become declared, schema-validated shapes rather than 13 local
-casts — with the open question of whether they become entity types (gaining
-provenance and lifecycle for free) or a validated `Blueprint` schema beside them.
-**That is decision D1 below.**
+casts. **D1 resolves this by role rather than by container**: the four fields J4
+reasons from become entity types with provenance; the copy fields become a
+validated `Blueprint` schema and stay configuration.
 
 ### 3.3 One declared expression
 
@@ -189,45 +189,163 @@ rather than part of it.
 
 ---
 
-## 5. Unresolved decisions — require approval
+## 5. The five decisions — complete
 
-### D1 — Does business identity become entity types, or a validated blueprint?
+Each carries the repository evidence, both options with real consequences, and a
+recommendation. **D1 was left open in the first draft; it is answered here.**
 
-**Evidence:** identity lives in 12 `Store` columns and 5 blueprint JSON sections,
-neither with provenance; `BusinessRecord` has the whole lifecycle already.
+---
 
-| Option | Consequence |
+### D1 — Does owner-editable identity become governed business fact?
+
+**The question as posed:** should brand identity/story be a mutable business fact
+with provenance, correction, supersession and history, the way `offering` now is?
+
+#### The evidence changes the question
+
+`brandIdentity` is one JSON blob holding **two different kinds of thing**, and
+the split is visible in who reads them:
+
+| Field | Read by | What it is |
+|---|---|---|
+| `brandStory` | `app/store/[slug]/page.tsx` — rendered as the storefront's "Our Story" section | **copy** |
+| `missionStatement`, `visionStatement`, `brandPromise`, `coreValues` | the profile, shown back to the owner | copy, mostly |
+| **`targetAudience`** | `cognitiveLayer.ts:476` | **a claim about the business** |
+| **`brandPersonality`, `brandVoiceAndTone`** | `cognitiveLayer.ts:474-475`, `marketing/assets.ts:55` | **claims J4 reasons and generates from** |
+| `uniqueSellingProposition` | `cognitiveLayer.ts:477` | **a claim about the business** |
+
+Section-level counts make the same point: `homepageContent` has **30**
+render-side references and is unambiguously presentation. `brandIdentity` has
+**2**, and is mostly read to reason with.
+
+**And the concept that matters most for reasoning has the least governance.**
+"Who this business is for" exists only as `blueprint.brandIdentity.targetAudience`
+— model-generated, reasoned over by the proactive layer, and uncorrectable.
+Beside it sits `Store.priorityAudience`, a column **referenced by zero code**;
+`getAudience()` is a different concept entirely (newsletter signup statistics).
+
+#### Option A — identity becomes governed business data
+
+**Consequences for understanding:** J4 could say *"you told me in March you sell
+to gift buyers; your orders say otherwise"* — because the claim would have an
+author and a date. Corrections would supersede rather than overwrite, so "who
+they used to think their customer was" survives. `targetAudience` would join the
+six owner-authoritative types and become correctable in conversation.
+
+**Consequences for reasoning:** the proactive layer already reads
+`targetAudience` to reason. Under A it would read it **with provenance** — able
+to weigh "the owner stated this" differently from "a model generated it during
+onboarding", which today it cannot distinguish at all.
+
+**Consequences for memory:** identity gains history. Today a rebrand destroys the
+previous positioning permanently.
+
+**Costs, stated plainly:** a real migration. The storefront renders
+`brandIdentity` on every page load, so a hot path would move from one JSON column
+read to record reads. And **applied to the whole blob it is wrong** — `brandStory`
+is page copy; giving it provenance and supersession is governance nobody needs.
+
+#### Option B — identity stays blueprint configuration
+
+**Consequences for understanding:** unchanged. J4 keeps reasoning from
+`targetAudience` while being unable to say who claimed it, when, or whether the
+owner ever agreed.
+
+**Consequences for reasoning:** the reasoning boundary stays unenforceable for
+these fields. A model-generated `targetAudience` and an owner-stated one are the
+same string in the same blob — which is precisely the confusion the provenance
+work was built to end, surviving in the one place it never reached.
+
+**Consequences for memory:** none gained. A rebrand still destroys the previous
+answer.
+
+**Benefits:** cheap, no migration, no hot-path change, and it preserves a real
+distinction — copy genuinely is configuration.
+
+#### RECOMMENDATION — neither, and the evidence is why
+
+**Split by role, not by container.** The container mixes facts and copy; deciding
+per-container forces the wrong answer on half its contents either way.
+
+| | Treatment |
 |---|---|
-| **Promote to entity types** | `description`, `brandIdentity` etc. gain provenance, correction, supersession and history for free. Cost: a real migration, and the storefront reads them on every render — a hot path now going through records |
-| **Validate the blueprint in place** | One declared Zod shape replaces 13 casts. Cheap, no migration. Cost: identity still has no provenance and still cannot be corrected |
-| Both, staged | Validate now, promote later. Cost: two changes to the same thing |
+| `targetAudience`, `brandPersonality`, `brandVoiceAndTone`, `uniqueSellingProposition` | **Option A.** Claims about the business that J4 already reasons from. They become owner-authoritative entity types with provenance, correction and history |
+| `brandStory`, `missionStatement`, `visionStatement`, `brandPromise`, `coreValues` | **Option B.** Storefront and owner-facing copy. Editable, not governed. No provenance, no supersession |
+| `homepageContent`, `storeContent`, `marketingAssets`, `designDirection` | **Option B**, unambiguously. 30 render references; this is presentation |
 
-**No recommendation yet — this is the decision the milestone turns on**, and it
-is genuinely a product question: *should an owner be able to correct the brand
-story the way they can now correct what they sell?*
+**Why this is not splitting the difference.** The test is the one the last two
+milestones already established and that `insights.ts` was resolved by: *is the
+owner the authoritative source, and does J4 reason from it?* `targetAudience`
+passes both. `brandStory` passes neither — J4 does not reason from the story, it
+renders it.
+
+**What it costs:** four fields migrate, not a blob. The storefront's hot path is
+untouched, because the storefront renders `brandStory` and the copy fields, which
+stay exactly where they are.
+
+**What it buys:** the answer to *"who is this business for"* gains an author, a
+date, and a correction path — and the proactive layer that already reasons from
+it can finally tell an owner's answer from a model's guess.
+
+**A consequence worth stating rather than discovering:** this makes
+`Store.priorityAudience` — a column no code references — either the home for the
+migrated field or a dead column to be removed. **Removing it is a schema change
+and is out of scope; it is named here and left alone.**
+
+---
 
 ### D2 — Is the reasoning boundary enforced, or documented?
 
-A type that makes "present an inference as a fact" impossible, versus a rule a
-test asserts. **Evidence:** the codebase has done both before — `verify` required
-by the compiler (enforced) versus the provenance-write discipline (asserted).
+**Evidence.** This codebase has done both, deliberately. `verify` is a *required*
+interface member so omission cannot compile (enforced). Provenance discipline at
+write sites is asserted by suites, not by types (documented).
+
+| Option | Consequence |
+|---|---|
+| **Enforced by type** | An inference cannot be rendered where a fact is expected. Strongest, and it reaches every future consumer for free. Cost: touches every payload shape |
+| Documented + asserted | Cheap, and a new consumer can violate it until somebody notices |
+
+**RECOMMEND: enforced**, and specifically at the `BusinessContext` boundary
+(§3.3) rather than throughout — one shape, one place, every consumer inherits it.
+
+---
 
 ### D3 — Does `BusinessContext` replace the four payloads, or wrap them?
 
-Replacing is honest and touches four call sites including the legacy content
-pipeline. Wrapping is safer and leaves the field selections where they are.
+| Option | Consequence |
+|---|---|
+| **Replace** | One declared expression; the four become selections. Touches four call sites, one of them the legacy content pipeline (`ARCHITECTURE.md:128`) |
+| Wrap | Safer, and leaves four hand-assembled field lists in place — the problem renamed |
 
-### D4 — Do the unread relationships and unreached entity types come in scope?
+**RECOMMEND: replace, with one carve-out.** The content pipeline's
+`currentStateForPrompt` describes a **draft** as well as a live store, and drafts
+are not businesses yet. Replace the three reasoning payloads; leave the draft
+path and say so.
 
-7 relationship kinds and 3 entity types are written and never read.
-**Recommendation: no** — they are capability ahead of use, and the BI engine is
-the likely consumer. Naming them here without a consumer would be designing for
-an imagined need.
+---
+
+### D4 — Do unread relationships and unreached entity types come in scope?
+
+**Evidence.** 8 relationship kinds written on every sync, 1 read
+(`relationsByKind(storeId, "blocks")`). 3 entity types — `transaction`, `design`,
+`shipment` — read by nothing.
+
+**RECOMMEND: no.** Capability ahead of use is not a defect, and the BI engine is
+the likely consumer. Naming a shape for an imagined need is how the seven unread
+kinds happened in the first place. **Left recorded, not scheduled.**
+
+---
 
 ### D5 — What does "supporting the BI engine" mean concretely?
 
-Recommendation: exactly two things — **a declared model to reason over**, and **a
-temporal anchor to reason from** (§3.4). Everything else is the engine.
+**RECOMMEND: exactly two things, and no more.**
+
+1. **A declared model to reason over** — §3.1–3.3.
+2. **A temporal anchor to reason from** — `asOf` plus the `BusinessEvent`
+   sequence high-water mark the understanding reflects (§3.4).
+
+Everything else is the engine. **If a proposed addition cannot be justified
+without naming a specific intelligence feature, it belongs to that feature.**
 
 ---
 
