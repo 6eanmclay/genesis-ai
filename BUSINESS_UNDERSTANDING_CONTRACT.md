@@ -1,7 +1,38 @@
 # One Canonical Understanding — contract
 
-**Status: PROPOSED. Nothing implemented.** 2026-08-24. No API credit, no live
-model, no production code, schema or behaviour changed.
+**Status: CLOSED. All five decisions taken. Nothing implemented.** 2026-08-24.
+No API credit, no live model, **no schema change and no production behaviour
+change in this phase.**
+
+## The decisions, as taken
+
+Sean, 2026-08-24. Binding.
+
+| | Decision |
+|---|---|
+| **U1** | One canonical understanding contains **everything J4 needs to reason** about the business |
+| **U2** | Consumer-specific extensions are permitted **only for presentation** — never as an independent source of business understanding or reasoning |
+| **U3** | The assembly ceiling is established from **measured repository evidence**, not an invented number. The measured 27-query fan-out is preserved as the constraint to solve |
+| **U4** | Disagreements are **computed live and surfaced as a `CognitiveOutput`**. They are not persisted as Facts and are not added to the Business Fact Lifecycle |
+| **U5** | J4 raises a disagreement **once, proactively, when both sides are sufficiently grounded**, and **never resolves it on the owner's behalf**. The owner remains authoritative for resolving competing business claims |
+
+## What this contract states explicitly
+
+1. **There is exactly one canonical Business Understanding assembly path.**
+2. **`buildChatDataContext`, `cognitiveLayer`, `genesisBriefingComposer` and every
+   future consumer must consume that canonical understanding** rather than
+   independently rebuilding business knowledge. (`insights` — see the discrepancy
+   in §11.)
+3. **Providers may compute facts. That is not competing understanding.** The
+   problem is duplicated **composition/assembly**, not duplicated computation of
+   a raw figure by the function whose job it is.
+4. **Consumer-specific presentation may transform or format canonical
+   information, but cannot introduce new reasoning facts.**
+5. **Reconciliation / disagreement detection is a separate future contract**, not
+   part of this implementation.
+6. **The Business Fact Lifecycle remains closed and is not reopened.**
+7. **No schema changes and no production behaviour changes occur in this
+   contract-closing phase.**
 
 Evidence: `UNDERSTANDING_REASSESSMENT.md` plus a full consumer census taken for
 this contract. **The goal is not cleaner code.** It is one source of truth for
@@ -61,7 +92,7 @@ consumers only.
 
 ---
 
-## 2. U1 — What exactly is the canonical model?
+## 2. U1 — What exactly is the canonical model?  **[DECIDED]**
 
 **Evidence.** `getBusinessUnderstanding` already assembles ~27 parallel queries
 (19 in the profile, 8 more in the understanding) and returns identity,
@@ -92,7 +123,7 @@ itself. See U2.
 
 ---
 
-## 3. U2 — When is a per-consumer extension legitimate?
+## 3. U2 — When is a per-consumer extension legitimate?  **[DECIDED]**
 
 **Evidence.** Of the 8 consumers reading providers directly, some are dashboard
 pages rendering one section — `customers/page.tsx` needs customer segments and
@@ -121,7 +152,7 @@ read).
 
 ---
 
-## 4. U3 — The cost and complexity ceiling
+## 4. U3 — The cost and complexity ceiling  **[DECIDED]**
 
 **Evidence, measured.** The canonical assembly is ~27 parallel queries today.
 That fan-out has already caused a real, recorded failure: two verification suites
@@ -152,7 +183,7 @@ assumed.** Concretely:
 
 ---
 
-## 5. U4 — Is a disagreement stored, or computed live?
+## 5. U4 — Is a disagreement stored, or computed live?  **[DECIDED — computed live]**
 
 **This is the decision that interacts with the fact lifecycle just shipped, and
 it should not be answered casually.**
@@ -191,7 +222,7 @@ explicit that it is a choice.
 
 ---
 
-## 6. U5 — What does J4 do when it finds a disagreement?
+## 6. U5 — What does J4 do when it finds a disagreement?  **[DECIDED]**
 
 **Evidence.** The precedent from the last milestone (D5) was *record, preserve,
 resolve explicitly* — but that governed a disagreement between two **statements
@@ -264,6 +295,8 @@ difference.
 - **Verification Hardening and the Business Fact Lifecycle.** Closed.
 - **Any schema change.** The recommendation in U4 needs none.
 - **The standalone suite runner.** Still tracked separately.
+- **`insights.ts`**, pending §11. Under the recommendation it is a provider and
+  needs no change at all.
 
 ---
 
@@ -287,17 +320,51 @@ two milestones.
 
 ---
 
-## 10. Open — all of U1–U5
+## 10. Status — CLOSED
 
-**Five decisions, presented with evidence, options and a recommendation. None is
-taken.** This contract is not implementable until Sean approves or amends them.
+**All five decisions are taken and recorded at the top. The contract is
+implementable**, with the single discrepancy in §11 to confirm first.
 
-Two are worth flagging because they are the ones a reasonable reading might get
+Two are worth restating because they are the ones a reasonable reading might get
 wrong:
 
 - **U2** draws the line at *reasoning vs presentation*, not at "internal vs UI".
-  My own reassessment used the wrong framing, and the census corrected it:
-  `insights.ts` reads revenue directly and is right to, because it is a provider.
-- **U4** recommends **not** storing disagreements, which means declining to give
-  them the lifecycle just built for facts. That is deliberate: a disagreement has
-  no author, and it must disappear when it stops being true.
+  My own reassessment used the wrong framing, and the census corrected it.
+- **U4** declines to store disagreements, which means declining to give them the
+  lifecycle just built for facts. Deliberate: a disagreement has no author, and it
+  must disappear when it stops being true.
+
+**Implementation has not begun.**
+
+---
+
+## 11. One discrepancy in the closing instruction, surfaced rather than resolved
+
+The closing instruction lists **`insights`** among the consumers that "must
+consume that canonical understanding rather than independently rebuilding
+business knowledge" — and separately states that "**providers may compute facts;
+that is not considered competing understanding.**"
+
+**Those two statements point opposite ways for this one module**, so it is
+flagged rather than silently filed under either.
+
+**The evidence says `insights.ts` is a provider:**
+
+| | |
+|---|---|
+| What it reads | `getRevenue(storeId, { since: oneWeekAgo, until: now })` and `getRevenue(storeId, { since: twoWeeksAgo, until: oneWeekAgo })` — **week-over-week comparison windows** |
+| What the canonical model carries | `revenue.last30DaysInCents` and `revenue.allTimeInCents` — **two fixed windows** |
+| Therefore | the canonical model **cannot serve it**. A trend detector needs arbitrary windows; giving it two fixed ones would silently change what it detects |
+| What it produces | insights, consumed by **nine** modules including `cognitiveLayer`, `learn`, `genesisAutonomy` and `cycle` |
+| Does the canonical assembly depend on it? | **No** — so no cycle exists today, and making `insights` consume the canon would create the conditions for one |
+| Does it assemble an understanding? | **No.** It computes derived facts from raw reads |
+
+**RECOMMENDATION: `insights.ts` is governed by statement 3 (a provider), not
+statement 2.** It should keep reading windowed revenue directly, and its *output*
+is what belongs in the canonical model — which is a question for the
+reconciliation/BI contract, not this one.
+
+**If Sean intends `insights` to be a consumer instead**, the implementation must
+first give the canonical model arbitrary-window revenue, which changes U3's cost
+picture materially and should be decided knowingly rather than inherited from a
+list. **Confirm at implementation review.**
