@@ -1,4 +1,5 @@
 import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
+import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getCustomerSummaries, getOrdersByEmail } from "@/lib/dashboard/customers";
 import {
@@ -69,8 +70,12 @@ export async function CustomersScreen({ slug, basePath }: { slug?: string; baseP
 
   const [customers, segments, segmentTrend, ordersByEmail] = await Promise.all([
     getCustomerSummaries(store.id, { includeRevenue: canViewRevenue, limit: 100 }),
-    getCustomerSegments(store.id),
-    getCustomerSegmentTrend(store.id),
+    declaredRead("presentation", "this page renders customer segments and nothing else", () =>
+      getCustomerSegments(store.id)
+    ),
+    declaredRead("presentation", "and their trend, for the same chart", () =>
+      getCustomerSegmentTrend(store.id)
+    ),
     getOrdersByEmail(store.id, { includeRevenue: canViewRevenue }),
   ]);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;

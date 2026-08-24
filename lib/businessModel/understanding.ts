@@ -1,4 +1,15 @@
 import { prisma } from "@/lib/prisma";
+import {
+  getActionTypeTrackRecord,
+  getInvoiceSummary,
+  getCampaignPerformanceSummary,
+  getAppointmentSummary,
+  getUpcomingAppointments,
+  recentRecords,
+} from "./reasoning";
+import { getOrderSummary, getRecentActivity } from "@/lib/dashboard/whatHappened";
+import { getCustomerSummaries } from "@/lib/dashboard/customers";
+import { ENTITY_TYPES } from "./entities";
 import { getCommitments, type CommitmentHorizon } from "@/lib/businessAssets/commitments";
 import { getOwnerUnderstanding } from "@/lib/intelligence/learn";
 import { getBusinessProfile, type BusinessProfile } from "./profile";
@@ -55,6 +66,14 @@ export interface PlatformRelationship {
   growthPointBalance: number;
   subscriptionStatus: string | null;
   businessPartnerTrialEndsAt: string | null;
+  /**
+   * How this store's own proposals of each action type have actually fared.
+   *
+   * Here rather than among the business facts because it is J4's history WITH
+   * this business, not a fact ABOUT it — which is what platformRelationship
+   * already holds. cognitiveLayer fetched it for itself until 2026-08-24.
+   */
+  actionTypeTrackRecord: Awaited<ReturnType<typeof getActionTypeTrackRecord>>;
 }
 
 /**
@@ -82,8 +101,57 @@ export interface BlockedGoal {
   blockedBy: { challengeId: string; challenge: string }[];
 }
 
+/**
+ * A section of the understanding that costs real money to assemble.
+ *
+ * OPT-IN, AND STILL THE SAME ASSEMBLER. Naming a section asks
+ * getBusinessUnderstanding for MORE of the same understanding — it does not
+ * compose a second one. Invariant 1 holds: exactly one thing turns providers
+ * into an understanding.
+ *
+ * Why sections exist at all: `recentRecords` is one query per entity type, and
+ * there are seventeen. Folding it into the core would make all eleven consumers
+ * pay seventeen extra reads for a map only the data answer reads — and that
+ * fan-out is not hypothetical, it has already exhausted PGlite's single
+ * connection and killed an unrelated verification suite three positions later.
+ */
+export type UnderstandingSection = "recentRecords";
+
+/** Summaries of what the connected systems say, when any are connected. */
+export interface ConnectedSummaries {
+  invoice: Awaited<ReturnType<typeof getInvoiceSummary>>;
+  campaign: Awaited<ReturnType<typeof getCampaignPerformanceSummary>>;
+  appointment: Awaited<ReturnType<typeof getAppointmentSummary>>;
+}
+
 export interface BusinessUnderstanding {
   profile: BusinessProfile;
+  /**
+   * WHAT THE CONNECTED SYSTEMS SAY (2026-08-24, One Canonical Understanding).
+   *
+   * Folded in because two reasoning consumers had independently decided they
+   * needed it — buildChatDataContext for the data answer, cognitiveLayer for
+   * proactive reasoning — each fetching the same three summaries by its own
+   * route. Two consumers reaching the same conclusion separately is the
+   * strongest available evidence that it belongs in the shared understanding
+   * rather than in either of them.
+   */
+  connectedSummaries: ConnectedSummaries;
+  /** Appointments still ahead, from a connected calendar. */
+  upcomingAppointments: Awaited<ReturnType<typeof getUpcomingAppointments>>;
+  /** What has happened lately: orders, customers, and the activity feed. */
+  recentBusiness: {
+    orders: Awaited<ReturnType<typeof getOrderSummary>>;
+    customers: Awaited<ReturnType<typeof getCustomerSummaries>>;
+    activity: Awaited<ReturnType<typeof getRecentActivity>>;
+  };
+  /**
+   * The N most recent records of every entity type.
+   *
+   * OPT-IN — null unless the caller asked for "recentRecords". Seventeen
+   * queries; see UnderstandingSection.
+   */
+  recentRecords: Record<string, unknown[]> | null;
   /** What is standing in the way of what. See BlockedGoal. */
   blockedGoals: BlockedGoal[];
   beliefs: Awaited<ReturnType<typeof getBeliefs>>;
@@ -143,8 +211,17 @@ export async function getBusinessUnderstanding(
      * the two categories.
      */
     viewerUserId?: string | null;
+    /**
+     * Expensive sections this caller actually needs.
+     *
+     * Omitted means the core, which is what every consumer gets and what every
+     * consumer can reason from. A section is not a second source of truth — it
+     * is the same assembler, asked for more.
+     */
+    include?: readonly UnderstandingSection[];
   }
 ): Promise<BusinessUnderstanding> {
+  const wantsRecentRecords = opts?.include?.includes("recentRecords") ?? false;
   const [
     profile,
     beliefs,
@@ -158,6 +235,19 @@ export async function getBusinessUnderstanding(
     // owner-understanding read — which typechecked far enough to be confusing.
     blocking,
     ownerUnderstanding,
+    // FOLDED IN 2026-08-24. Each of these was previously fetched by a consumer
+    // for itself — three of them by two consumers independently.
+    invoiceSummary,
+    campaignSummary,
+    appointmentSummary,
+    upcomingAppointments,
+    orderSummary,
+    customerSummaries,
+    recentActivity,
+    actionTypeTrackRecord,
+    // OPT-IN. Seventeen queries when asked for, one cheap no-op when not.
+    // Named apart from the imported recentRecords helper it calls.
+    recentRecordsSection,
   ] = await Promise.all([
     getBusinessProfile(storeId),
     getBeliefs(storeId, { viewerUserId: opts?.viewerUserId }),
@@ -185,6 +275,25 @@ export async function getBusinessUnderstanding(
     // scanning their keys in memory.
     relationsByKind(storeId, "blocks"),
     opts?.viewerUserId ? getOwnerUnderstanding(storeId, opts.viewerUserId) : Promise.resolve([]),
+    // POSITIONAL — the destructuring above must match, and the file's own
+    // comment explains what happens when it does not.
+    getInvoiceSummary(storeId),
+    getCampaignPerformanceSummary(storeId),
+    getAppointmentSummary(storeId),
+    getUpcomingAppointments(storeId),
+    getOrderSummary(storeId, { includeRevenue: true }),
+    getCustomerSummaries(storeId, { includeRevenue: true, limit: 10 }),
+    getRecentActivity(storeId, 10),
+    getActionTypeTrackRecord(storeId),
+    // SEVENTEEN QUERIES, OR NONE. Not "cheap when unused" by accident — the
+    // whole reason this is a section is that its cost is real.
+    wantsRecentRecords
+      ? (Promise.all(ENTITY_TYPES.map((t) => recentRecords(storeId, t))).then((lists) =>
+          Object.fromEntries(
+            ENTITY_TYPES.map((t, i) => [t, lists[i].map((r: { data: unknown }) => r.data)])
+          )
+        ) as Promise<Record<string, unknown[]> | null>)
+      : Promise.resolve(null),
   ]);
 
   // Resolved against the goals and challenges ALREADY fetched, so naming what
@@ -206,6 +315,18 @@ export async function getBusinessUnderstanding(
   return {
     profile,
     blockedGoals,
+    connectedSummaries: {
+      invoice: invoiceSummary,
+      campaign: campaignSummary,
+      appointment: appointmentSummary,
+    },
+    upcomingAppointments,
+    recentBusiness: {
+      orders: orderSummary,
+      customers: customerSummaries,
+      activity: recentActivity,
+    },
+    recentRecords: recentRecordsSection,
     beliefs,
     recentDecisions,
     currentAssets,
@@ -225,6 +346,7 @@ export async function getBusinessUnderstanding(
       growthPointBalance: store?.growthPointBalance ?? 0,
       subscriptionStatus: store?.subscriptionStatus ?? null,
       businessPartnerTrialEndsAt: store?.businessPartnerTrialEndsAt?.toISOString() ?? null,
+      actionTypeTrackRecord,
     },
     asOf: new Date().toISOString(),
   };

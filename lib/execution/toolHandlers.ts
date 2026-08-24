@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { stateFact } from "@/lib/businessModel/statements";
 import { prisma } from "@/lib/prisma";
 import type { BusinessUnderstanding } from "@/lib/businessModel/understanding";
@@ -2017,13 +2018,26 @@ export function makeLookUpBusinessData(deps?: {
     }
     const understanding = ctx.understanding;
 
-    const { buildChatDataContext } = await import("@/lib/businessModel/reasoning");
     const { findRelevantDecisions } = await import("@/lib/businessModel/reasoning");
     const { findRelevantMessages } = await import("@/lib/businessModel/conversationRecall");
     const { groundingRules, unsourcedCount } = await import("@/lib/businessModel/grounding");
 
-    const [dataContext, pastDecisions, pastStatements] = await Promise.all([
-      buildChatDataContext(ctx.storeId),
+    // THE CANONICAL UNDERSTANDING, ASKED FOR MORE (2026-08-24).
+    //
+    // buildChatDataContext used to assemble a SECOND understanding here — 24
+    // parallel queries, of which revenue and top contacts were already sitting
+    // in ctx.understanding and were computed again anyway, both copies landing
+    // in the payload below. The comment four lines above this one already said
+    // that an own understanding query is how a second source of truth begins.
+    //
+    // Now there is one assembler. The data answer is the only consumer that
+    // reads recent records of every entity type, so it names that section
+    // rather than every other consumer paying seventeen queries for it.
+    const [withRecent, pastDecisions, pastStatements] = await Promise.all([
+      getBusinessUnderstanding(ctx.storeId, {
+        viewerUserId: ctx.userId,
+        include: ["recentRecords"],
+      }),
       findRelevantDecisions(ctx.storeId, ctx.userMessage),
       // The owner's own past words, any age — the same relevance-over-recency
       // rule the decisions above follow.
@@ -2037,7 +2051,23 @@ export function makeLookUpBusinessData(deps?: {
     ];
 
     const payload = {
-      ...dataContext,
+      asOf: new Date().toISOString(),
+      // FROM THE UNDERSTANDING, NOT RECOMPUTED. These are the same figures the
+      // canonical assembly already carries.
+      revenue: {
+        last30Days: withRecent.profile.revenue.last30DaysInCents,
+        allTimeInCents: withRecent.profile.revenue.allTimeInCents,
+      },
+      topContacts: withRecent.profile.customers.topContacts.map((t) => ({
+        email: t.contact.data.email,
+        name: t.contact.data.name,
+        totalSpentInCents: t.totalSpentInCents,
+      })),
+      upcomingAppointments: withRecent.upcomingAppointments.map((a) => a.data),
+      recent: withRecent.recentRecords ?? {},
+      invoiceSummary: withRecent.connectedSummaries.invoice,
+      campaignPerformanceSummary: withRecent.connectedSummaries.campaign,
+      appointmentSummary: withRecent.connectedSummaries.appointment,
       businessProfile: understanding.profile,
       // The provenance is already on those records; carrying it without
       // explaining how to read it is just more JSON.

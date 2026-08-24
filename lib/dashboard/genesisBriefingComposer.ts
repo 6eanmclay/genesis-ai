@@ -1,4 +1,5 @@
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -57,7 +58,11 @@ export async function getChangeSetSince(
 
   const [orderCount, revenueDeltaInCents, newCustomerCount, businessEvents] = await Promise.all([
     prisma.order.count({ where: { storeId, createdAt: { gte: since } } }),
-    getRevenue(storeId, { since }),
+    declaredRead(
+      "windowed",
+      "revenue since the previous briefing — the canonical model carries last-30-days and all-time, and 'since you were last here' is neither",
+      () => getRevenue(storeId, { since })
+    ),
     getNewCustomerCountSince(storeId, since),
     prisma.businessEvent.findMany({
       where: { storeId, occurredAt: { gte: since } },

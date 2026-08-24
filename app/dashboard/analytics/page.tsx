@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { formatMoney } from "@/lib/money";
 import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
@@ -60,9 +61,13 @@ export async function AnalyticsScreen({ slug, basePath }: { slug?: string; baseP
 
   const [orderSummary, customerSummaries, activityItems, attention, lastDiscoveryRunAt, profitSummary, fulfillmentBreakdown] =
     await Promise.all([
-      getOrderSummary(store.id, { includeRevenue: canViewRevenue }),
-      getCustomerSummaries(store.id, { includeRevenue: canViewRevenue }),
-      getRecentActivity(store.id),
+      declaredRead("presentation", "the analytics page renders these; it does not reason", () =>
+        getOrderSummary(store.id, { includeRevenue: canViewRevenue })
+      ),
+      declaredRead("presentation", "same page, customer half", () =>
+        getCustomerSummaries(store.id, { includeRevenue: canViewRevenue })
+      ),
+      declaredRead("presentation", "same page, activity feed", () => getRecentActivity(store.id)),
       getAttentionItems(store.id, {
         store: { published: store.published },
         products: products.map((p) => ({ active: p.active })),

@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { prisma } from "@/lib/prisma";
 import { formatMoney } from "@/lib/money";
 import { queryRecords, getRevenue, getAverageOpenRate } from "@/lib/businessModel/reasoning";
@@ -54,8 +55,15 @@ async function detectRevenueTrend(storeId: string): Promise<Insight | null> {
   const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
   const [thisWeek, lastWeek] = await Promise.all([
-    getRevenue(storeId, { since: oneWeekAgo, until: now }),
-    getRevenue(storeId, { since: twoWeeksAgo, until: oneWeekAgo }),
+    // A PROVIDER, and these are its own comparison windows. Declared anyway,
+    // because the reason is worth reading next to the code: week-over-week is
+    // not the canonical figure computed twice, it is a different question.
+    declaredRead("windowed", "this week against last week — a trend needs both windows", () =>
+      getRevenue(storeId, { since: oneWeekAgo, until: now })
+    ),
+    declaredRead("windowed", "the prior week, to compare against", () =>
+      getRevenue(storeId, { since: twoWeeksAgo, until: oneWeekAgo })
+    ),
   ]);
 
   // The business's own currency. Read here rather than threaded through every

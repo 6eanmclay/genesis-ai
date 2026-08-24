@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import {
@@ -154,7 +155,9 @@ export async function ConnectionsScreen({
 
   const [resolved, gaps] = await Promise.all([
     Promise.all(CONNECTOR_CATALOG.map((entry) => resolveEntry(store.id, entry))),
-    getConnectionGaps(store.id),
+    declaredRead("presentation", "the connections page shows which are missing", () =>
+      getConnectionGaps(store.id)
+    ),
   ]);
   const resolvedById = new Map(resolved.map((r) => [r.entry.id, r]));
 

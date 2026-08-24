@@ -1,4 +1,5 @@
 import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
+import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { prisma } from "@/lib/prisma";
 import { currentAssetsByRole } from "@/lib/businessModel/assets";
@@ -48,7 +49,9 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
   const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
 
   const [assetsByRole, designRows, assetRows] = await Promise.all([
-    currentAssetsByRole(store.id),
+    declaredRead("presentation", "the studio lists assets by role; it does not reason", () =>
+      currentAssetsByRole(store.id)
+    ),
     prisma.businessRecord.findMany({
       where: { storeId: store.id, entityType: "design" },
       orderBy: { syncedAt: "desc" },

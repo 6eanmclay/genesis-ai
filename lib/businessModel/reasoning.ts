@@ -1154,7 +1154,10 @@ export async function getAppointmentSummary(storeId: string): Promise<Appointmen
 // selection; real small-business record volumes make this cheap regardless.
 const RECENT_RECORDS_CAP = 25;
 
-async function recentRecords<T extends EntityType>(
+// Exported 2026-08-24 so the canonical assembler can own the opt-in
+// recentRecords section. It was private while buildChatDataContext — the second
+// assembler — was its only caller.
+export async function recentRecords<T extends EntityType>(
   storeId: string,
   entityType: T
 ): Promise<CanonicalRecord<T>[]> {
@@ -1190,51 +1193,17 @@ export interface ChatDataContext {
   appointmentSummary: AppointmentSummary | null;
 }
 
-export async function buildChatDataContext(
-  storeId: string
-): Promise<ChatDataContext> {
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+// buildChatDataContext WAS HERE, and is deliberately gone (2026-08-24).
+//
+// It was the second Business Understanding assembler: 24 parallel queries — 7
+// named plus one recentRecords call per entity type, and there are 17 — of which
+// revenue and top contacts duplicated figures the canonical understanding had
+// already computed for the same turn. Both copies were sent to the model.
+//
+// Its contents now live in getBusinessUnderstanding: the connected-system
+// summaries and upcoming appointments in the core, recent records as a named
+// opt-in section. Anything that needs them asks the one assembler.
+//
+// BUSINESS_UNDERSTANDING_CONTRACT.md, invariant 1: a second assembler is a
+// defect. Reintroducing one here fails verify-canonical-understanding.ts.
 
-  const [
-    revenue30d,
-    revenueAllTime,
-    topContacts,
-    upcoming,
-    invoiceSummary,
-    campaignPerformanceSummary,
-    appointmentSummary,
-    ...recentByType
-  ] = await Promise.all([
-    getRevenue(storeId, { since: thirtyDaysAgo }),
-    getRevenue(storeId),
-    getTopContacts(storeId),
-    getUpcomingAppointments(storeId),
-    getInvoiceSummary(storeId),
-    getCampaignPerformanceSummary(storeId),
-    getAppointmentSummary(storeId),
-    ...ENTITY_TYPES.map((entityType) => recentRecords(storeId, entityType)),
-  ]);
-
-  const recent = ENTITY_TYPES.reduce(
-    (acc, entityType, index) => {
-      acc[entityType] = recentByType[index].map((record) => record.data);
-      return acc;
-    },
-    {} as Record<EntityType, CanonicalRecord["data"][]>
-  );
-
-  return {
-    asOf: new Date().toISOString(),
-    revenue: { last30Days: revenue30d, allTimeInCents: revenueAllTime },
-    topContacts: topContacts.map((t) => ({
-      email: t.contact.data.email,
-      name: t.contact.data.name,
-      totalSpentInCents: t.totalSpentInCents,
-    })),
-    upcomingAppointments: upcoming.map((a) => a.data),
-    recent,
-    invoiceSummary,
-    campaignPerformanceSummary,
-    appointmentSummary,
-  };
-}

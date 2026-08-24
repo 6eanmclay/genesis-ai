@@ -3,8 +3,6 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { formatMoneyApprox } from "@/lib/money";
-import { getOrderSummary, getRecentActivity } from "@/lib/dashboard/whatHappened";
-import { getCustomerSummaries } from "@/lib/dashboard/customers";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
 import { computeInsights, type Insight } from "./insights";
 import { distillBeliefs } from "./learn";
@@ -31,10 +29,6 @@ import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { withSource, groundingRules, unsourcedCount } from "@/lib/businessModel/grounding";
 import {
   predictGoalTrajectory,
-  getActionTypeTrackRecord,
-  getInvoiceSummary,
-  getCampaignPerformanceSummary,
-  getAppointmentSummary,
   type GoalTrajectory,
 } from "@/lib/businessModel/reasoning";
 import { SECTION_KEYS } from "@/lib/storefrontSections";
@@ -371,23 +365,25 @@ export async function runCognitiveReview(params: {
     select: { name: true, description: true, priceInCents: true, active: true },
   });
 
-  const [
-    orderSummary,
-    customerSummaries,
-    recentActivity,
-    actionTypeTrackRecord,
-    invoiceSummary,
-    campaignPerformanceSummary,
-    appointmentSummary,
-  ] = await Promise.all([
-    getOrderSummary(storeId, { includeRevenue: true }),
-    getCustomerSummaries(storeId, { includeRevenue: true, limit: 10 }),
-    getRecentActivity(storeId, 10),
-    getActionTypeTrackRecord(storeId),
-    getInvoiceSummary(storeId),
-    getCampaignPerformanceSummary(storeId),
-    getAppointmentSummary(storeId),
-  ]);
+  // FROM THE CANONICAL UNDERSTANDING (2026-08-24, One Canonical Understanding).
+  //
+  // Seven reads used to sit here, three of them duplicating what
+  // buildChatDataContext fetched for the data answer by its own route. Two
+  // reasoning consumers reaching independently for the same three summaries is
+  // what said they belonged in the shared understanding rather than in either
+  // consumer — so they moved, and this reads them.
+  //
+  // actionTypeTrackRecord moved too, into platformRelationship, because it is
+  // J4's own history with this store rather than a fact about the business, and
+  // that is already where the canonical model keeps such things.
+  const understanding = await getBusinessUnderstanding(storeId, { viewerUserId: store.userId });
+  const orderSummary = understanding.recentBusiness.orders;
+  const customerSummaries = understanding.recentBusiness.customers;
+  const recentActivity = understanding.recentBusiness.activity;
+  const actionTypeTrackRecord = understanding.platformRelationship.actionTypeTrackRecord;
+  const invoiceSummary = understanding.connectedSummaries.invoice;
+  const campaignPerformanceSummary = understanding.connectedSummaries.campaign;
+  const appointmentSummary = understanding.connectedSummaries.appointment;
   const recentInsights = params.recentInsights ?? (await computeInsights(storeId));
   // J4 Foundation Phase 2 (Learn) — a separate call, deliberately not folded
   // into the reasoning below: distillBeliefs reads its own persisted
@@ -413,7 +409,6 @@ export async function runCognitiveReview(params: {
   // person — so the viewer is the store's owner, and J4 reasons with what it has
   // learned about how they decide. Passing nothing here would have quietly
   // removed owner-preference beliefs from Reason, which have fed it since M2.
-  const understanding = await getBusinessUnderstanding(storeId, { viewerUserId: store.userId });
   const {
     profile: businessProfile,
     beliefs,
