@@ -1,7 +1,44 @@
 # The Business Fact Lifecycle — contract
 
-**Status: PROPOSED. Nothing implemented.** 2026-08-24. No API credit, no live
-model.
+**Status: CLOSED. All six decisions taken. Nothing implemented.** 2026-08-24.
+No API credit, no live model.
+
+## The decisions, as taken
+
+Sean, 2026-08-24. Binding.
+
+| | Decision |
+|---|---|
+| **D1** | **Supersession, additive to `status`.** Existing statuses such as `achieved` keep their meaning. A correction creates a new fact rather than rewriting history |
+| **D2** | **Preserve correction history.** The current fact must be readable **without every consumer traversing the chain**, and the chain must stay available |
+| **D3** | **Six owner-authoritative types**: `goal`, `challenge`, `employee`, `location`, `offering`, `intent`. All other types keep their existing source authority |
+| **D4** | **The correction surface is new functionality, outside this milestone.** No expansion of the read-only context pane, no new UI. This contract defines the **backend semantics** a future surface will use |
+| **D5** | **No silent overwrite.** The new owner statement becomes the authoritative current fact, the prior fact and its history are preserved, and **the contradiction is resolved explicitly rather than inferred** |
+| **D6** | **Facts and Beliefs stay separate.** Shared vocabulary and provenance concepts are fine. No merged model, and **Facts get no confidence model** |
+
+### Two things these decisions changed, said plainly
+
+**D5 overrides my recommendation, and I am not going to let that pass quietly.**
+I recommended *asking to confirm* before replacing owner testimony. The decision
+is to record the new statement as current immediately, preserve the prior one,
+and make the supersession explicit. That is a coherent and defensible choice —
+it costs no turn, and nothing is destroyed — and it carries one consequence worth
+stating rather than discovering:
+
+> A correction distilled by a model (`modelExtracted: true`) can supersede
+> something the owner typed themselves, without being asked.
+
+Two mitigations are already in the design and neither needs a decision: history
+is preserved, so a wrong supersession is **recoverable rather than destructive**;
+and provenance records that a model stood between the owner and the value, so a
+reader can tell a typed correction from a distilled one. **Recorded as an
+accepted consequence, not re-litigated.**
+
+**D2 asks for something the existing pattern does not do.** `resolveCurrentAsset`
+loads every asset row for the store and loops until it finds one that is not
+superseded — that IS traversal, just hidden inside a reader. D2 says the current
+fact must be readable *without* forcing consumers to traverse. See §2b, which
+names the constraint and its options without choosing an implementation.
 
 Evidence: `NEXT_MILESTONE_REASSESSMENT.md` §2.3 and `J4_FACT_MODEL_FINDINGS.md`.
 
@@ -31,13 +68,15 @@ Three specific shapes of it:
 
 ---
 
-## 2. The six decisions — evidence, options, consequences
+## 2. The evidence behind each decision
 
-**Nothing here is chosen on Sean's behalf.** Each carries the evidence found in
-the current implementation, every option with its real consequence, and a
-recommendation. Sean's steer of 2026-08-24 is recorded against each; where the
-repository agrees, it is cited; where it adds a constraint he did not have, that
-is said plainly.
+**All six are now decided — see the table above.** This section is kept as the
+record of *why*: the evidence found in the current implementation, every option
+with its real consequence, and the recommendation that was made before the
+decision. It is not a live question list.
+
+Where a decision differs from the recommendation, the decision governs and the
+difference is stated rather than quietly edited out.
 
 ---
 
@@ -197,7 +236,13 @@ are the same goal, and nothing detects that a new one contradicts an old one.
 | **Ask to confirm** | One question before replacing owner testimony. Costs a turn. The precedent exists — `buildScopeClarification` already asks "which product did you mean?" and, critically, **escalates rather than repeating** when the answer is still ambiguous |
 | Record both, flag the conflict | Nothing is lost and nothing is decided. J4 then holds two contradictory facts and must reason with both — which is the state this milestone exists to end |
 
-**RECOMMEND: ask to confirm, for owner testimony only.** A model's reading of a
+> **DECIDED (D5): no confirmation turn.** The new owner statement becomes the
+> authoritative current fact immediately, the prior fact and its history are
+> preserved, and the supersession is written explicitly rather than inferred from
+> ordering. **This differs from the recommendation below**, which is kept as the
+> record of what was argued. The accepted consequence is stated in the header.
+
+**The recommendation that was made, for the record — ask to confirm, for owner testimony only.** A model's reading of a
 rambling sentence is exactly the thing that should not silently overwrite what
 somebody said last month. `buildScopeClarification` is the shape to follow,
 including its anti-loop rule.
@@ -235,22 +280,62 @@ touching the Belief model at all.
 
 ---
 
-## 3. Scope, once decided
+## 2b. The constraint D2 adds, and what it does not decide
+
+**D2: "readable without forcing every consumer to traverse the entire history."**
+
+The asset pattern does not meet this. `resolveCurrentAsset` (`assets.ts:83`)
+issues `findMany` for **every** asset row on the store and loops until it finds
+one that is not superseded. That is traversal — correct, and hidden inside a
+named reader, but traversal. At ten call sites and a handful of assets it is
+invisible; as a general fact mechanism it would not stay invisible.
+
+**What this forbids:** a design where "current" is only discoverable by walking
+the chain, or by loading every record of a type and filtering in application
+code.
+
+**What satisfies it — options, none chosen here, because this is implementation:**
+
+| | Consequence |
+|---|---|
+| A queryable "superseded" marker on the record | Current is a direct `where` clause. `BusinessRecord.data` is JSON, so this either lives in a JSON path filter or wants a real column — the latter is a migration, which the entity-registry contract has so far avoided |
+| A pointer from a stable identity to the current record | One lookup, always. Adds a second row kind to keep consistent with the first |
+| Current-wins by fixed `externalId`, history in linked records | Reuses what `offering`/`intent` already do for identity while adding the chain they lack. No migration |
+
+**The third is the closest fit to what exists and is where implementation should
+start looking** — but the choice is an implementation decision to be made against
+the code, not a further product decision for Sean.
+
+The invariant that must hold whichever is chosen: **a reader asking for the
+current fact cannot receive a superseded one**, and §5 item 2 makes that a
+negative control rather than a claim.
+
+---
+
+## 3. Scope
 
 ### In
 
-1. **One correction mechanism**, per D1/D2, applied to the types D3 selects.
+1. **Supersession as the one correction mechanism**, additive to `status` (D1),
+   for the six owner-authoritative types (D3).
 2. **`offering`/`intent` become correctable** through it — the case that exposed
-   the gap.
-3. **`factCapture` opens to the types D3 selects**, by the property D3 defines,
-   not by a longer list.
-4. **A "current fact" read** that cannot accidentally return a superseded one.
-5. **Contradiction handling** per D5.
-6. **Whatever surface D4 decides**, or none.
+   the gap — and stop silently overwriting on restate.
+3. **`factCapture` opens to the six**, by the D3 property rather than a longer
+   list, and stops minting a fresh `randomUUID()` identity for a restatement of
+   something already known.
+4. **A current-fact read that meets D2's constraint** — see §2b.
+5. **Explicit contradiction resolution** per D5: the new statement becomes
+   current, the prior is preserved and linked, and the supersession is written
+   rather than inferred from ordering.
+6. **`captureBusinessFact` routed through `stateFact`**, closing the second door
+   on the provenance invariant (§4 item 2).
+7. **Backend semantics documented well enough for a future correction surface**
+   (D4) — the readers and the vocabulary, not the surface.
 
 ### Out, explicitly
 
-- **The Belief model.** Untouched.
+- **The Belief model.** Untouched (D6). No merged model, no confidence on Facts.
+- **Any correction UI, and any change to the context pane** (D4).
 - **Verification Hardening.** Closed and accepted. Fact writes go through
   `stateFact`, not through `Executable`, so nothing here reopens it — but any new
   `Executable` this milestone adds inherits the required `verify()`.
@@ -347,18 +432,15 @@ it soon, not for doing it here.
 
 ---
 
-## 7. Status — presented, awaiting approval
+## 7. Status — CLOSED
 
-**All six decisions are presented with evidence, options, consequences and a
-recommendation. None is taken.** This contract closes when Sean approves or
-amends them, and is not implementable before that.
+**All six decisions are taken and recorded at the top of this document. There are
+no open questions.** The contract is implementable.
 
-Two of the recommendations differ from what a reasonable reading of the steer
-might assume, so they are flagged rather than buried:
+One decision (D5) differs from the recommendation that preceded it; the
+difference and its accepted consequence are stated in the header rather than
+edited away. One decision (D2) adds a constraint the existing asset pattern does
+not satisfy; §2b names it and leaves the implementation choice to be made against
+the code.
 
-- **D1** recommends supersession be **additive to `status`, not a replacement**,
-  because `status` already means something else on eight types and a goal that
-  was *achieved* is not a goal that was *wrong*.
-- **D4** agrees the correction surface is new functionality and recommends it be
-  **out of this milestone entirely**, because the defect that motivated the
-  milestone is conversational.
+**Implementation has not begun.**
