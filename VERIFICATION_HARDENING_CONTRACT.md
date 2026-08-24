@@ -1,106 +1,83 @@
 # Verification Hardening — contract
 
-**Status: CONTRACT. Nothing implemented beyond the inventory named in §0.**
-2026-08-24. No API credit spent, no live model called.
+**Status: CONTRACT. Nothing implemented except the inventory (§8), which was
+authorised separately as the evidence base.** 2026-08-24. No API credit spent,
+no live model called.
 
-Everything below is **investigated, not assumed**. Where the investigation
-contradicted an expectation — including mine — the finding is stated.
+Evidence base: `NEXT_MILESTONE_REASSESSMENT.md` and
+`scripts/verification-inventory.ts`. **Not the old roadmap.**
+
+Everything below is investigated. Where the investigation contradicted an
+expectation — including mine — the finding is stated rather than smoothed over.
 
 ---
 
-## 0. Done first, because the contract depends on it
+## 1. What verification means
 
-**`scripts/verification-inventory.ts`** — the authoritative answer to "what do we
-actually run?"
+The lifecycle is **proposal → authorization → execution → verification**. Each
+stage answers a different question, and the last one is the only stage that asks
+about the *world* rather than about the *call*:
 
-```
-npx tsx scripts/verification-inventory.ts          the report
-npx tsx scripts/verification-inventory.ts --json   machine-readable
-npx tsx scripts/verification-inventory.ts --plan   the standalone lane
-```
-
-| | count |
+| Stage | Question |
 |---|---|
-| total verification suites | **184** |
-| in the shared runner | **41** |
-| bring their own Postgres or Next server | **59** |
-| standalone, no database | **76** |
-| database-backed but named as exclusions | **8** |
-| need a live model or provider | **17** |
-| exercise production behaviour | **178** |
-| carry source-text assertions | 9 — **1** strips comments |
+| proposal | what is being asked for? |
+| authorization | is this actor allowed to ask? |
+| execution | did the operation run? |
+| **verification** | **is the state now what was asked for?** |
 
-41 + 59 + 76 + 8 = 184. **The 41 matches `run-db-suites.ts` exactly**, and that
-is structural rather than lucky:
+**Successful execution and persisted truth are different claims.**
 
-**The inventory calls the runner's own decision function.** `needsDatabase` moved
-byte-exact to `scripts/lib/suiteLanes.ts` and both files import it. The first two
-attempts at this report *re-derived* the runner's rules and produced 46 and then
-48 — confidently wrong, twice, about which suites were covered. An inventory that
-disagrees with the runner is worse than no inventory, so it does not get its own
-opinion.
+- *Successful execution* — `run()` returned. No exception was thrown.
+- *Persisted truth* — the store, product, order or record now holds the value
+  the input asked for, confirmed by reading it back.
 
-**Four intentional lanes, not one process.** Forcing 184 suites together would be
-worse than the problem: PGlite serves one connection, and a suite that fans out
-parallel reads has previously killed an unrelated suite three positions later.
-The lanes are the shared runner, the standalone list, the by-hand
-own-infrastructure suites, and the 17 gated on credentials.
+Execution success is evidence *about the call*. Persisted truth is evidence
+*about the business*. Only the second supports telling an owner their storefront
+changed.
 
----
+**The failure this closes.** A write can return without throwing and still not be
+the thing that was asked for: a field name that did not map, a JSON merge that
+dropped a key, a value coerced on the way in, a row updated where another was
+meant, a write into a stale transaction. None of these throw. Every one of them
+produces a green `SUCCESS` today.
 
-## 1. Executable coverage — the map
-
-All 24, measured from source with comments stripped.
-
-| Executable | `verify()` | writes readable state | external leg |
-|---|---|---|---|
-| `answerSupplierEconomics` | **YES** | via `economics` module | — |
-| `refineStorefront` | **YES** | `store` | — |
-| `updateHero` | **YES** | via hero module | — |
-| `communicateFinding` | — | `cognitiveOutput` | — |
-| `orders` | — | `order` | — |
-| `productFromDesign` | — | `product`, `productImage` | — |
-| `productImages` | — | `product`, `productImage` | — |
-| `products` | — | `product`, `productImage` | — |
-| `resolveChallenge` | — | `businessRecord` | — |
-| `shipping` | — | `order` | **EasyPost** |
-| `storeEdit` | — | `store` | — |
-| `storePublish` | — | `store` | **Stripe, PayPal** |
-| `updateBrandIdentity` | — | `store` | — |
-| `updateBrandLogo` | — | `store` | — |
-| `updateDesignDirection` | — | `store` | — |
-| `updateGoalStatus` | — | `businessRecord` | — |
-| `updateHomepageContent` | — | `store` | — |
-| `updateMarketingAssets` | — | `store` | — |
-| `updateProductImage` | — | `product`, `productImage` | — |
-| `updateSectionOrder` | — | `store` | — |
-| `updateSeo` | — | `store` | — |
-| `updateStoreContent` | — | `store` | — |
-| `updateStoreIdentity` | — | `store` | — |
-| `updateTheme` | — | `store` | — |
-
-### The finding that decides the scope
-
-Sean's instruction was not to impose read-back where an action has no meaningful
-state to reread. **The investigation found zero such cases.**
-
-**All 21 executables without `verify()` write readable persisted state.** Every
-one of them changes a `store`, `product`, `productImage`, `order`,
-`businessRecord` or `cognitiveOutput` row that can be read back and compared.
-
-Two also have an external leg — `shipping` reaches EasyPost, `storePublish`
-reaches Stripe and PayPal — but both **also** write local rows, so the local
-half is verifiable even where the remote half is not. That distinction becomes a
-declared state rather than a silence (§3).
+**What verification is not.** It is not a correctness judgement about content.
+Read-back can confirm the tagline the owner approved is the tagline now stored; it
+cannot confirm the tagline is any good. Confusing the two would make `verified`
+a claim the system cannot support.
 
 ---
 
-## 2. Verified-state integrity — every write traced
+## 2. Which classes require read-back, and which do not
 
-**`verified: true` is written once in the entire codebase**, at
-`app/api/onboarding/fulfillment/callback/route.ts:121`. Against 36 `verified: false`.
+The rule: **read-back is required wherever the executable writes persisted state
+this platform can read.** Where there is no such state, read-back is not imposed.
 
-Inside the engine (`lib/execution/engine.ts:216-227`):
+The investigation looked for the second category and **found no executable that
+writes nothing readable.** All 24 either write rows directly or write through a
+module that does. The two with an external leg still write local rows.
+
+So the classes below are not "which ones can be verified" — they are **what the
+read-back has to compare**, which differs, and that difference is the design work.
+
+| Class | Read-back required | What it compares |
+|---|---|---|
+| **A — input-valued writes** | yes | stored value **equals** the input value |
+| **B — merge-into-JSON writes** | yes | the **subset of keys the input named** equals the input |
+| **C — row-creating writes** | yes | the row **exists**, is linked to the right parent, and carries the input's values |
+| **D — derived-state writes** | yes | the stored state equals the **rule's** output for that input |
+| **E — provider-backed** | yes, **local half only** | the local row; the remote leg is declared unverifiable (§6) |
+
+**Nothing legitimately escapes read-back.** What varies is what "matches" means,
+and Class E is the only one where a genuine half is out of reach.
+
+---
+
+## 3. Verified-state semantics
+
+### What exists today
+
+`lib/execution/engine.ts:214-227`:
 
 ```ts
 const outcome = await executable.run(input, ctx);
@@ -115,132 +92,308 @@ if (executable.verify) {
 }
 ```
 
-**`verified: false` currently means two different things** and nothing can tell
-them apart:
+`verified: true` is written **once in the entire codebase**
+(`app/api/onboarding/fulfillment/callback/route.ts:121`), against 36
+`verified: false`.
 
-1. verification ran and failed — but this cannot occur, because a failure sets
-   `status = "WARNING"`, so a `SUCCESS` row with `verified: false` never means this;
-2. **no `verify()` exists** — which is the real meaning for 21 of 24 executables.
+**`verified: false` currently carries two meanings, and nothing distinguishes
+them:**
 
-`verified` is owner-visible at `app/dashboard/ExecutionStatusCard.tsx:50`, which
-prints `(verified)`. So for 21 actions the owner sees its absence and is given no
-way to distinguish "not checked" from "checked and fine".
+1. *verification ran and failed* — which **cannot appear on a `SUCCESS` row**,
+   because a failing `verify()` sets `WARNING`;
+2. *no `verify()` exists* — the real meaning, for 21 of 24 executables.
 
-**What must be allowed to produce each state, after this milestone:**
+`verified` is owner-visible: `app/dashboard/ExecutionStatusCard.tsx:50` prints
+`(verified)`. So for 21 actions the owner sees its absence and cannot tell
+"nobody checked" from "checked and fine".
 
-| State | Produced only by |
-|---|---|
-| `verified: true` | a `verify()` that re-read persisted state and found it matched |
-| `verified: false` + `WARNING` | a `verify()` that ran and found a mismatch |
-| the third state (§3) | an executable that declared itself unverifiable, with a reason |
+### What each state must mean after this milestone
 
-No other path may set `verified: true`. The onboarding callback write is in scope
-to be re-examined.
+| State | Means | What the owner should understand |
+|---|---|---|
+| `verified: true` | a read-back ran and the state matched | *"I changed it, and I looked again to be sure."* |
+| `verified: false` + `WARNING` | a read-back ran and the state **did not** match | *"Something did not take. Here is which part."* |
+| **third state** (§3.1) | read-back is not possible for this operation, **by declaration** | *"Done. This one I can't re-check from here."* |
+| `verified: false` + `SUCCESS` | **must become unreachable** | — |
+
+The last row is the point of the milestone. A `SUCCESS` row that wrote readable
+state and was never re-read may not present as plain success.
+
+### 3.1 The third state
+
+An executable that genuinely cannot verify a leg **declares it, with a reason**,
+rather than omitting the method. Silence must stop being the way both "not
+possible" and "not implemented" are expressed, because that is exactly why 21
+gaps were invisible.
+
+**`WARNING` keeps its current meaning** — the operation ran and something is off —
+and gains a real population, since today almost nothing can produce it.
+
+### 3.2 Verification must not run against an outcome that has not landed
+
+The engine currently calls `verify()` regardless of outcome kind, so a `PENDING`
+outcome would be verified immediately and a failure would flip it to `WARNING`.
+**No executable returns `pending`, `redirectUrl` or `partial` today**, so this is
+latent rather than live — but it is a trap laid for the first one that does, and
+the contract closes it: verification runs only for outcomes claiming to have
+landed.
 
 ---
 
-## 3. ExecutionResult vs persisted truth
+## 4. The 21, grouped by execution and state type
 
-**Today `SUCCESS` means "`run()` returned without throwing."** Nothing else. For
-21 of 24 executables, no code ever confirms the write landed, and
-`ExecutionStatus` is `"SUCCESS" | "WARNING" | "FAILED" | "PENDING" | "PARTIAL"`
-with `SUCCESS` rendering green at `lib/execution/statusDisplay.ts:10`.
+Not 21 identical defects. Five groups, each with one verification shape.
 
-This is precisely the risk named in the brief, and it is live.
+### Class A — input-valued writes (5)
+
+The input *is* the value: `updateTheme` writes `data: { theme: input }`,
+`storeEdit` writes `data: { name: input.name, tagline: …, description: … }`.
+
+`updateTheme`, `storeEdit`, `updateStoreIdentity`, `updateBrandIdentity`,
+`updateDesignDirection`
+
+**Read-back:** re-read the field, compare to the input. Exact. The cheapest and
+least ambiguous group; a good place to start and prove the pattern.
+
+### Class B — merge-into-JSON writes (6)
+
+The write merges input into an existing blueprint: `updateSeo` and
+`updateStoreContent` both write `data: { blueprint: updatedBlueprint }`.
+
+`updateSeo`, `updateStoreContent`, `updateHomepageContent`, `updateSectionOrder`,
+`updateMarketingAssets`, `updateBrandLogo`
+
+**Read-back:** re-read the blueprint and compare **only the keys the input
+named**. Comparing the whole object would fail on untouched keys and is the
+mistake to avoid — the same "touch flags" reasoning the chat pipeline already
+uses to avoid false diffs.
+
+### Class C — row-creating writes (5)
+
+`productFromDesign`, `products`, `productImages`, `updateProductImage`,
+`communicateFinding`
+
+**Read-back:** the row exists, is attached to the right parent, and carries the
+input's values. `products` and `productImages` also **delete**, so verification
+covers absence as well as presence — a delete that silently matched nothing is
+the same defect from the other side.
+
+### Class D — derived-state writes (3)
+
+The value is computed by a rule from the input: `orders` writes
+`fulfillmentStatus: nowFulfilled ? "fulfilled" : "unfulfilled"`.
+
+`orders`, `updateGoalStatus`, `resolveChallenge`
+
+**Read-back:** compare against the **rule's** expected output for that input, not
+against the input. These are also the group where re-running the rule inside
+`verify()` would be circular — the check must read the persisted row.
+
+### Class E — provider-backed (2)
+
+`shipping` (EasyPost), `storePublish` (Stripe, PayPal)
+
+Both **also write local rows** — `order` and `store` respectively — so the local
+half is verifiable. See §6.
+
+---
+
+## 5. The reference pattern — the 3 that already do this
+
+`refineStorefront.verify` is the model to copy:
+
+```ts
+async verify(input, ctx) {
+  const store = await prisma.store.findUniqueOrThrow({ where: { id: ctx.storeId }, select: { theme: true } });
+  const stored = (store.theme as Theme | null) ?? DEFAULT_THEME;
+  const missing: string[] = [];
+  for (const change of input.changes) { … }
+```
+
+Three properties worth naming, because they are what makes it real:
+
+1. **It re-reads from the database.** It does not trust a value returned by `run()`.
+2. **It reports which fields did not land**, not a bare boolean — so `WARNING`
+   can tell the owner something specific.
+3. **It compares against what the input asked for**, not against what the write
+   thought it did.
+
+`updateHero.verify` adds a fourth: it is honest about what it cannot cover. Its
+own comment says verification "only confirms the value round-tripped" — which is
+why a separate ownership check on the image URL exists *before* the write. **Some
+guarantees belong before execution, not in verification.**
+
+`answerSupplierEconomics.verify` adds a fifth: it verifies **per fact**, because
+the write is per fact, and demands nothing the owner did not state.
+
+---
+
+## 6. Provider-backed operations
+
+The remote leg of `shipping` and `storePublish` cannot be confirmed by reading
+this platform's own database. That is a real limit, not an excuse — and both also
+write local rows.
 
 **The contract:**
 
-1. `SUCCESS` requires supporting persisted state. An executable that writes
-   readable state and has not confirmed it may not report plain `SUCCESS`.
-2. **A third verification state exists**, so "not verifiable" and "nobody
-   implemented it" stop looking identical. An executable that genuinely cannot
-   verify — the external leg of `shipping`, of `storePublish` — **declares that
-   explicitly with a reason**, rather than omitting the method.
-3. The owner-facing surface distinguishes **verified**, **unverified**, and
-   **not verifiable**. Three states, not a present/absent flag.
-4. A partially-verifiable action (local row yes, remote call no) reports the
-   local half honestly rather than claiming or disclaiming the whole.
+1. **Verify the local half.** `shipping` writes an `order`; `storePublish` writes
+   a `store`. Both are readable and must be read back.
+2. **Declare the remote half unverifiable, with a reason** (§3.1). Not silence.
+3. **Never let the local half's success imply the remote half.** A verified
+   `order` row does not mean EasyPost accepted the label; saying so would be the
+   same lie in a new place.
+4. **Do not build provider round-trip verification in this milestone.** It needs
+   live credentials, which are out of scope, and would make an architecture
+   milestone depend on external state. Where a provider already returns a
+   confirmable identifier the write persists, reading that identifier back is
+   part of the local half — no new provider call.
 
 ---
 
-## 4. Failure semantics — the principle this inherits
+## 7. Engine SUCCESS semantics
 
-> **Never tell the owner something happened when the execution state says
-> otherwise.**
+**Is `run()` returning without throwing sufficient to establish `SUCCESS`?**
 
-UI6 applied this to how messages are rendered — `lib/j4/messageState.ts` derives
-state from the execution row and never from prose. This milestone applies it one
-layer down, where the execution row is *produced*.
+**No.** Today it is the entire test, and for 21 of 24 executables nothing else
+ever happens. `SUCCESS` renders green (`lib/execution/statusDisplay.ts:10`) and
+is the state on which the owner is told their business changed.
 
-- A verification mismatch is **not** a failure of the turn: the write may have
-  partly landed. It is `WARNING`, and the owner is told which fields did not take.
-- A verification that cannot run is never reported as a verification that passed.
-- No message may claim an outcome the execution row does not support. This is
-  already true of the rendering layer; the milestone makes it true of the source.
+**The contract:**
 
----
-
-## 5. Suite truthfulness
-
-**No green aggregate may imply coverage the runner did not execute.** The 41/41
-lesson, made structural:
-
-1. `run-db-suites.ts` keeps saying **`41/41 database-backed suites`** — it is
-   accurate about what it ran and must not be inflated.
-2. The inventory is the only surface allowed to report a total across lanes, and
-   it reports per-lane counts, never one number.
-3. Any new aggregate states which lane it covers.
-4. `needsDatabase` stays in `scripts/lib/suiteLanes.ts` with exactly one copy.
-   A second copy is how the report was wrong twice before it was right.
+1. `SUCCESS` requires **either** a passed read-back **or** a declared reason why
+   read-back is not possible. Returning without throwing is necessary, not
+   sufficient.
+2. An executable that writes readable state and neither verifies nor declares is
+   **a programming error**, caught by a test rather than by an owner.
+3. `ExecutionStatus` values stay as they are —
+   `SUCCESS | WARNING | FAILED | PENDING | PARTIAL`. **No new status.** The third
+   verification state is a property of verification, not a sixth execution
+   status; conflating them would put "we couldn't check" into the same field as
+   "it didn't work".
+4. Verification runs only for outcomes claiming to have landed (§3.2).
 
 ---
 
-## 6. Negative controls
+## 8. The suite problem
 
-Non-negotiable, and the reason is a defect this repository actually shipped: a
-suite once asserted a property while the fixture could not reach it, and stayed
-green.
+**184 verification suites exist and no single command executes every applicable
+one.** `scripts/verification-inventory.ts` now reports this authoritatively:
 
-1. **Every `verify()` gets a control that breaks the write and confirms
-   verification fails.** Not a mock — the real write, corrupted.
-2. **Every new boundary assertion enters the behaviour it protects.** An
-   assertion that a state is unreachable must first make it reachable.
-3. **Source assertions use `codeOnly()`.** 9 suites carry source assertions and 1
-   strips comments; any suite this milestone touches adopts it.
-4. `codeOnly` moves to `scripts/lib/` on its next use — it is already duplicated
-   in two files, which `ARCHITECTURE.md`'s own rule says not to do.
+| Lane | count | how it runs |
+|---|---|---|
+| 1 — shared runner | **41** | `npx tsx scripts/run-db-suites.ts` |
+| 2 — standalone, no database | **76** | `verification-inventory.ts --plan` |
+| 3 — own Postgres or Next server | **59** | by hand, deliberately |
+| 4 — named exclusions, database-backed | **8** | by hand, each with a reason |
+| | **184** | |
+
+Cross-cutting: **17** need a live model or provider and must never run unasked.
+
+**Why not one command.** PGlite serves a single connection, and a suite that fans
+out parallel reads has previously killed an unrelated suite three positions
+later. Lane 3 exists because those suites *must* own their infrastructure. Four
+intentional lanes beat one process that appears to run everything and does not.
+
+**The inventory does not have its own opinion.** `needsDatabase` moved byte-exact
+to `scripts/lib/suiteLanes.ts`; both the runner and the inventory import it. Two
+earlier drafts re-derived those rules and reported **46**, then **48** —
+confidently wrong, twice, about what was covered.
+
+### Acceptance for the inventory and runner
+
+1. The inventory's lane counts **sum to the number of suites on disk**. A suite
+   that matches no lane is a failure of the inventory, not an unclassified suite.
+2. Its shared-runner count **equals what `run-db-suites.ts` actually runs**,
+   because both call one function. A second copy of that decision is a defect.
+3. Lane 2 becomes runnable as a lane — a real command, reporting its own count,
+   **naming its lane in the output**.
+4. **No aggregate may imply coverage it did not execute.** `run-db-suites.ts`
+   keeps saying "41/41 database-backed suites"; it may not be inflated toward
+   184.
+5. A new suite lands in a lane automatically, by the property of its source — not
+   by being added to a list. The list is how a suite once ran in the wrong lane
+   for a day.
 
 ---
 
-## 7. Scope
+## 9. Acceptance criteria
 
-**In:** the 21 `verify()` implementations; the third verification state; the
-owner-facing three-state surface; the `SUCCESS` precondition; negative controls;
-the inventory (done).
+### 9.1 Three states, never conflated
 
-**Out, explicitly:**
+Every claim in the final report is one of:
 
+| | Meaning |
+|---|---|
+| **IMPLEMENTED** | the code exists |
+| **VERIFIED** | a test ran and entered the behaviour |
+| **LIVE/PROVIDER-BLOCKED** | cannot be established without a credential |
+
+"Implemented" is never reported as "verified". A `verify()` with no negative
+control is IMPLEMENTED, not VERIFIED.
+
+### 9.2 Per-executable
+
+1. All 24 either implement `verify()` or **declare** why they cannot, with a reason.
+2. Each `verify()` re-reads persisted state — never a value returned by `run()`.
+3. Each reports **which** fields did not match, not a bare boolean.
+4. Class B compares only the keys the input named.
+5. Class C verifies deletions as well as creations.
+6. Class E verifies the local half and declares the remote half.
+
+### 9.3 Engine
+
+7. `verified: true` is reachable **only** through a passed read-back. The
+   onboarding-callback write is re-examined against this.
+8. A `SUCCESS` row that wrote readable state and was not verified is unreachable.
+9. Verification does not run for outcomes that have not landed.
+10. No new `ExecutionStatus` value.
+
+### 9.4 Negative controls — every one enters the behaviour
+
+11. **Each `verify()` gets a control that breaks the real write and confirms
+    verification fails.** Not a mock: the actual write, corrupted. A control that
+    cannot fail proves nothing, and this repository has shipped exactly that.
+12. A control proving `SUCCESS`-without-verification is unreachable must first
+    make it reachable.
+13. Class B gets a control confirming an **untouched** key does not fail
+    verification — the false-positive direction, which is how a strict comparison
+    would quietly break every merge write.
+14. Source assertions use `codeOnly()`. 9 suites carry them and **1** strips
+    comments; any suite this milestone touches adopts it, and `codeOnly` moves to
+    `scripts/lib/` on its next use — it is already duplicated in two files.
+
+### 9.5 Gates
+
+15. Typecheck, **`npx next build` reported separately from any suite count**,
+    lane 1, and every suite this milestone touches.
+16. The inventory still reconciles to the number of suites on disk.
+17. No suite is reported as run unless it ran.
+
+---
+
+## 10. Out of scope
+
+- **The fact model.** `offering`/`intent` correctability, the three-mechanisms
+  finding, and the Belief/Fact asymmetry are recorded in
+  `J4_FACT_MODEL_FINDINGS.md` as a **separate architectural follow-up**. The
+  investigation for this contract did **not** find them required by verification:
+  the executables that write `businessRecord` rows (`updateGoalStatus`,
+  `resolveChallenge`, Class D) can be verified by reading the stored record back,
+  with no change to how facts are corrected. **They stay separate.**
 - `edit_store_content`'s legacy path (`ARCHITECTURE.md:128`) — a separate decision.
 - `lib/execution/genesisActions.ts` — untouched, as instructed.
-- `factCapture` and the fact-model — its own document.
 - All four live-validation items. **No API credit.**
-- Any new executable, any engine redesign.
+- Provider round-trip verification (§6.4). Any new executable. Any engine redesign.
 
-## 8. Acceptance
+---
 
-1. All 24 executables either verify or declare why they cannot, with a reason.
-2. `verified: true` is reachable only through a real read-back.
-3. A `SUCCESS` row that writes readable state and was not verified is not
-   presented to the owner as plain success.
-4. Each `verify()` has a negative control that fails when the write is broken.
-5. `npx tsx scripts/verification-inventory.ts` still reconciles to 184, and its
-   shared-runner count still equals what `run-db-suites.ts` reports.
-6. Typecheck, `npx next build`, the shared runner, and every suite this milestone
-   touches — all green, **build reported separately**.
-
-## 9. Open question for Sean
+## 11. Open question, before implementation
 
 **The third state needs a name the owner will read.** "Unverified" and "not
-verifiable" are accurate and both sound like something went wrong, which for a
-successful shipping label is untrue. This is copy, and copy on an execution
-surface has been a real defect source. Recommend deciding it before implementation.
+verifiable" are both accurate and both sound like something went wrong — which,
+for a shipping label that was bought successfully, is untrue.
+
+This is copy on an execution surface, which has been a real defect source here,
+and it is the one thing in this contract that is a product decision rather than
+an engineering one. **Recommend deciding it before implementation begins**, since
+it shapes the `Executable` interface as well as the UI.
