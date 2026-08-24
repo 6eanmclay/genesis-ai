@@ -52,6 +52,13 @@ assert("and not in the muted aside colour",
   "the trustworthy half should not read as a footnote");
 
 console.log("\n=== 3. J4 writes the sentence and never the list ===\n");
+// THE PROMPTS MOVED, so this reads where they live rather than where they used
+// to. lib/dashboard/storeChatPrompts.ts, 2026-08-23 — out of the "use server"
+// module so a harness can import them without breaking the build.
+//
+// Both files are read because the assertions below span both concerns: the
+// prompts are in one, and the server-built change list is still in the other.
+const prompts = readFileSync(join(process.cwd(), "lib", "dashboard", "storeChatPrompts.ts"), "utf8");
 const actions = readFileSync(join(process.cwd(), "app", "dashboard", "ai-actions.ts"), "utf8");
 assert("the prompt asks for one lead sentence",
   // ONCE PER OWNER-VISIBLE REPLY PROMPT, not once in the file.
@@ -64,10 +71,14 @@ assert("the prompt asks for one lead sentence",
   //
   // Raise this number when a third reply prompt is added. If that feels like a
   // chore, it is the chore of noticing.
-  (actions.match(/LEAD WITH ONE SENTENCE\./g) ?? []).length === 2,
+  (prompts.match(/LEAD WITH ONE SENTENCE\./g) ?? []).length === 2,
   "the prose is the half that shortens");
 assert("and explicitly forbids enumerating the changes",
-  actions.includes("Do NOT enumerate the individual changes"),
+  // COUNTED, not merely present — its sibling assertion above was strengthened
+  // for this reason and this one was left behind. A negative control that edited
+  // the rule out of ONE prompt kept it green, because includes() finds the copy
+  // in the other. Same class of weakness, same fix.
+  (prompts.match(/Do NOT enumerate the individual changes/g) ?? []).length === 2,
   "repeating the list in prose makes the owner read the same thing twice");
 // THE PROPERTY THIS PIECE MUST NOT WEAKEN. If a prompt ever asked the model to
 // produce the list, the field would stop being the correction it was built as.

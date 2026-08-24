@@ -1,7 +1,33 @@
 # Moving the chat prompts out of the "use server" module
 
-**Status: NAMED, NOT DONE.** 2026-08-23. Written because it was scoped out
-deliberately, not forgotten.
+**Status: DONE.** 2026-08-23. The move landed in
+`lib/dashboard/storeChatPrompts.ts` and the harness is restored.
+
+| | |
+|---|---|
+| Moved | 15 declarations, byte-exact, each hash-compared against its pre-move text |
+| Production behaviour | unchanged — none of the fifteen was a server action, and none is referenced outside `ai-actions.ts` |
+| `ai-actions.ts` | 235 lines lighter, one import heavier (12 names; three of the fifteen are used only inside the new module) |
+| Application build | **exit 0** |
+| Harness | `scripts/verify-prose-shape-live.ts` restored from `acfdc1a`, now importing from `lib/` |
+| `lib/execution/genesisActions.ts` | **untouched**, as instructed |
+
+The controls that matter:
+
+- **A non-async export from the `"use server"` module: typecheck CLEAN, build
+  EXIT 1**, with `can only export async functions, found object`. The original
+  defect reproduced on demand, and the proof that the build is a gate nothing
+  else substitutes for.
+- The lead-sentence rule removed from ONE of the two prompts fails
+  `verify-reply-shape`.
+- A prompt edited during the move fails it too — but only **after** a weakness
+  the control exposed was fixed. That assertion was still an `includes()`, so it
+  stayed green with the rule present in just one prompt; its sibling had been
+  strengthened to a count and this one had been left behind.
+
+---
+
+*The original write-up follows, as the record of why this was scoped out first.*
 
 ## What happened
 
