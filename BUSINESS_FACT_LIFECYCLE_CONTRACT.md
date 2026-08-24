@@ -1,7 +1,30 @@
 # The Business Fact Lifecycle — contract
 
-**Status: CLOSED. All six decisions taken. Nothing implemented.** 2026-08-24.
-No API credit, no live model.
+**Status: IMPLEMENTED AND ACCEPTED** (`2b4f631`, accepted 2026-08-24). All six
+decisions taken and built as written. No API credit, no live model.
+
+## One follow-up, recorded — not a defect
+
+**J4 supplying `supersedesRecordId` when correcting a plural or ambiguous fact is
+UNMEASURED.**
+
+The mechanism is built and deterministically verified: a named target supersedes,
+an unnamed one on a plural type creates a new fact, an unconfirmable one is
+refused. What is not measured is whether a real model **chooses** to name a
+target when the owner is plainly correcting an existing goal rather than adding a
+new one.
+
+**This is a future behavioural validation, not a current defect.** Nothing is
+wrong with the implementation if the model omits the id — the system does the
+safe thing and records a new fact. The open question is whether that safe thing
+is the *right* thing often enough, and answering it needs a live model.
+
+Filed beside the other unmeasured live items — the policy-refusal branch,
+`offering` → routing (item 14), and the 48/50 model-choice discrepancy. **No
+credit to be spent on it now.**
+
+Provider-blocked items and the remaining pre-existing lint warnings are unchanged
+and preserved as reported.
 
 ## The decisions, as taken
 
