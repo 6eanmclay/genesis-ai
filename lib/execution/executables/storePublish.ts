@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import { isPaymentConnected } from "@/lib/dashboard/needsAttention";
 import type { Executable } from "../executable";
@@ -54,5 +55,28 @@ export const publishStoreExecutable: Executable<void, PublishMetadata> = {
       message: updated.published ? "Store published" : "Store unpublished",
       metadata: { published: updated.published },
     };
+  },
+
+  // CLASS E, and a toggle. The expectation comes from run()'s own metadata,
+  // because publishing flips whatever it finds.
+  //
+  // The local half — whether the store is now published — is fully verifiable
+  // and is verified. The payment-provider readiness this action checks BEFORE
+  // publishing is a pre-execution guarantee rather than something to re-read
+  // afterwards, and it stays where it is: verification confirms the state that
+  // was written, not the conditions that permitted writing it.
+  async verify(_input, ctx, metadata): Promise<VerificationOutcome> {
+    const expected = metadata?.published;
+    if (expected === undefined) {
+      return { state: "failed", mismatches: ["the run recorded no published state"] };
+    }
+    const store = await prisma.store.findUnique({
+      where: { id: ctx.storeId },
+      select: { published: true },
+    });
+    if (!store) return { state: "failed", mismatches: ["the store no longer exists"] };
+    return store.published === expected
+      ? { state: "verified" }
+      : { state: "failed", mismatches: [`store.published: expected ${expected}, stored ${store.published}`] };
   },
 };

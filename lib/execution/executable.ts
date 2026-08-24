@@ -1,5 +1,6 @@
 import type { Permission } from "@/lib/permissions";
 import type { ActorType } from "./types";
+import type { VerificationOutcome } from "./verification";
 
 export interface ExecutionContext {
   storeId: string;
@@ -53,11 +54,48 @@ export interface Executable<TInput, TMetadata = unknown> {
     partial?: boolean;
   }>;
 
-  // Optional independent re-check that the effect actually stuck (Stripe's
-  // charges_enabled check). Omit for executables where the write itself is
-  // the only truth available (e.g. a straight Prisma toggle).
-  verify?(
+  /**
+   * INDEPENDENT RE-CHECK THAT THE EFFECT ACTUALLY STUCK. Required.
+   *
+   * REQUIRED IS THE POINT (2026-08-24). This member used to be optional, and
+   * its own comment said to "omit for executables where the write itself is the
+   * only truth available (e.g. a straight Prisma toggle)". That turned out to be
+   * the assumption worth overturning: a Prisma write can return without throwing
+   * and still not be the thing that was asked for — a field name that did not
+   * map, a JSON merge that dropped a key, a value coerced on the way in. None of
+   * those throw, and every one of them produced a green SUCCESS.
+   *
+   * Twenty-seven of thirty executables had omitted it, and nothing could tell
+   * "checked and fine" from "nobody looked". Making it required means omission
+   * does not compile, which is the strongest available form of the invariant
+   * this milestone exists for:
+   *
+   *     SUCCESS without verification must be unreachable.
+   *
+   * An action that genuinely cannot be re-read returns
+   * `unavailable(reason)` — a DECLARATION, with a reason describing the
+   * mechanism. It never means "not implemented yet"; see
+   * lib/execution/verification.ts.
+   *
+   * Read persisted state here. Never trust a value `run()` returned as the
+   * ANSWER — but `metadata` is available, and for one class of action it is
+   * necessary.
+   *
+   * WHY metadata IS PASSED. A toggle cannot be verified from its input alone.
+   * `toggleOrderFulfilled` takes an order id and flips whatever it finds, so
+   * "what should be stored now" depends on what was stored BEFORE — a fact only
+   * `run()` ever saw. Verification would otherwise have to re-read the row and
+   * accept either value, which is not verification at all, or the action would
+   * have to be declared unavailable, which would be false: the mechanism is
+   * available, only the expectation was missing.
+   *
+   * So `metadata` carries the expectation `run()` already computed and already
+   * records. It is NOT the evidence — the evidence is still the persisted row,
+   * re-read here. It is the statement of what to look for.
+   */
+  verify(
     input: TInput,
-    ctx: ExecutionContext
-  ): Promise<{ ok: boolean; error?: string }>;
+    ctx: ExecutionContext,
+    metadata: TMetadata | undefined
+  ): Promise<VerificationOutcome>;
 }

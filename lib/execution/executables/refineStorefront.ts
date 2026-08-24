@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { verified, type VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -147,11 +148,10 @@ export const refineStorefrontExecutable: Executable<
     }
 
     if (missing.length > 0) {
-      return {
-        ok: false,
-        error: `The storefront was not fully updated. Still wrong: ${missing.join("; ")}.`,
-      };
+      // WHICH dimensions, not a boolean. This is the pattern the rest of the
+      // executables now follow: a WARNING that can name what did not land.
+      return { state: "failed", mismatches: missing };
     }
-    return { ok: true };
+    return verified();
   },
 };

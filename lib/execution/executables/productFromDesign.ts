@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { verifiedUnless, namedKeyMismatches } from "../verification";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
@@ -177,5 +179,25 @@ export const createProductFromDesignExecutable: Executable<
         registeredWithProvider: externalProductId !== null,
       },
     };
+  },
+
+  // CLASS C — the product must exist with what was asked for. The provider
+  // registration is a separate concern and is verified where it is performed;
+  // this checks what this executable itself persisted.
+  async verify(input, ctx, metadata): Promise<VerificationOutcome> {
+    const id = metadata?.productId;
+    if (!id) return { state: "failed", mismatches: ["the run recorded no product id"] };
+    const product = await prisma.product.findFirst({
+      where: { id, storeId: ctx.storeId },
+      select: { name: true, priceInCents: true },
+    });
+    if (!product) return { state: "failed", mismatches: ["product: no such row after the create"] };
+    return verifiedUnless(
+      namedKeyMismatches(
+        { name: input.name, priceInCents: input.priceInCents },
+        product as unknown as Record<string, unknown>,
+        "product."
+      )
+    );
   },
 };

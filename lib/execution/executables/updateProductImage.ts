@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -66,5 +67,17 @@ export const updateProductImageExecutable: Executable<UpdateProductImageInput, P
       message: `Updated image for "${product.name}"`,
       metadata: { productId: product.id, name: product.name },
     };
+  },
+
+  // CLASS C — the image must now be attached to the product. Read back through
+  // the product so a row attached to somebody else's product cannot pass.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const image = await prisma.productImage.findFirst({
+      where: { url: input.imageUrl, product: { id: input.productId, storeId: ctx.storeId } },
+      select: { id: true },
+    });
+    return image
+      ? { state: "verified" }
+      : { state: "failed", mismatches: [`productImage: ${input.imageUrl} is not attached to the product`] };
   },
 };

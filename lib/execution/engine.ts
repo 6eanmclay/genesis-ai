@@ -220,10 +220,33 @@ export async function execute<TInput, TMetadata>(
         ? "PENDING"
         : "SUCCESS";
 
-    if (executable.verify) {
-      const v = await executable.verify(input, ctx);
-      verified = v.ok;
-      if (!v.ok) status = "WARNING";
+    // VERIFICATION — three states, no fourth execution status.
+    //
+    // Runs only for an outcome claiming to have LANDED. A PENDING or PARTIAL
+    // outcome has not finished, so re-reading it would check a value nobody
+    // wrote yet and flip a perfectly good handoff to WARNING. Nothing returns
+    // pending today, which made this a trap laid for the first thing that does
+    // rather than a live defect.
+    let verificationReason: string | null = null;
+    if (status === "SUCCESS") {
+      const v = await executable.verify(input, ctx, outcome.metadata);
+      if (v.state === "verified") {
+        verified = true;
+      } else if (v.state === "failed") {
+        // The write ran and something did not land. Not a failed turn — a
+        // WARNING that can say WHICH part, because verify returns mismatches
+        // rather than a boolean.
+        verified = false;
+        status = "WARNING";
+        verificationReason = v.mismatches.join("; ");
+      } else {
+        // Verification unavailable. Execution genuinely succeeded, so the status
+        // stays SUCCESS; `verified` stays false; the reason is recorded. The
+        // pair (SUCCESS, verified false) is unambiguous precisely because
+        // `verify` is required and omission cannot compile.
+        verified = false;
+        verificationReason = v.reason;
+      }
     }
 
     const result = buildResult<TMetadata>({
@@ -238,7 +261,13 @@ export async function execute<TInput, TMetadata>(
       actorId: ctx.userId,
       storeId: ctx.storeId,
       storeDraftId: null,
-      metadata: (outcome.metadata ?? {}) as TMetadata,
+      metadata: {
+        ...(outcome.metadata ?? {}),
+        // Carried so a WARNING can name what did not land, and an unavailable
+        // row can say what could not be consulted. Absent when verification
+        // confirmed, because there is nothing to explain.
+        ...(verificationReason ? { verification: verificationReason } : {}),
+      } as TMetadata,
     });
     const logRow = await recordExecution(result);
     // Only reachable here on a real (non-FAILED) outcome — a thrown error

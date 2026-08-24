@@ -1,4 +1,5 @@
 import type { Executable } from "../executable";
+import { verified, type VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { EconomicsFact } from "@/lib/sourcing/economics";
 import {
@@ -107,7 +108,9 @@ export const answerSupplierEconomicsExecutable: Executable<
    * which is exactly what it promised to do.
    */
   async verify(input, ctx) {
-    if (input.answer.kind === "dont_know_yet") return { ok: true };
+    // "I don't know yet" records no economics, so there is nothing to read
+    // back and nothing that could have failed to land.
+    if (input.answer.kind === "dont_know_yet") return verified();
 
     const { supplierEconomics } = await import("@/lib/sourcing/economics");
     const stated = await supplierEconomics(ctx.storeId, {
@@ -116,7 +119,7 @@ export const answerSupplierEconomicsExecutable: Executable<
       externalVariantId: input.externalVariantId ?? null,
     });
 
-    if (!stated) return { ok: false, error: "nothing was recorded for that product" };
+    if (!stated) return { state: "failed", mismatches: ["nothing was recorded for that product"] };
 
     // PER FACT, because the write is. An owner who gave only the minimum has
     // stated one thing, and demanding that the price also carry their name would
@@ -139,8 +142,8 @@ export const answerSupplierEconomicsExecutable: Executable<
     const landed = facts.filter((fact) => stated.attribution[fact].provenance === expected);
     const kept = facts.filter((fact) => stated.attribution[fact].provenance === "OWNER");
     if (landed.length === 0 && kept.length === 0) {
-      return { ok: false, error: `nothing was recorded as ${expected}` };
+      return { state: "failed", mismatches: [`nothing was recorded as ${expected}`] };
     }
-    return { ok: true };
+    return verified();
   },
 };

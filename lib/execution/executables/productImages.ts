@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -95,6 +96,19 @@ export const addProductImagesExecutable: Executable<AddProductImagesInput, Produ
       metadata: { productId: product.id, imageCount },
     };
   },
+
+  // CLASS C — every url asked for must now be attached to the product.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const images = await prisma.productImage.findMany({
+      where: { product: { id: input.productId, storeId: ctx.storeId } },
+      select: { url: true },
+    });
+    const stored = new Set(images.map((i) => i.url));
+    const missing = input.urls.filter((u) => !stored.has(u));
+    return missing.length === 0
+      ? { state: "verified" }
+      : { state: "failed", mismatches: missing.map((u) => `productImage: ${u} was not attached`) };
+  },
 };
 
 export interface ReorderProductImagesInput {
@@ -135,6 +149,25 @@ export const reorderProductImagesExecutable: Executable<ReorderProductImagesInpu
       metadata: { productId: product.id, imageCount: existing.length },
     };
   },
+
+  // CLASS D — the rule is "position follows the order given", so the read-back
+  // compares stored positions against that order rather than against the input
+  // shape.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const images = await prisma.productImage.findMany({
+      where: { product: { id: input.productId, storeId: ctx.storeId } },
+      select: { id: true, position: true },
+    });
+    const byId = new Map(images.map((i) => [i.id, i.position]));
+    const mismatches: string[] = [];
+    input.orderedImageIds.forEach((id, index) => {
+      const stored = byId.get(id);
+      if (stored !== index) {
+        mismatches.push(`productImage ${id}.position: expected ${index}, stored ${stored ?? "nothing"}`);
+      }
+    });
+    return mismatches.length === 0 ? { state: "verified" } : { state: "failed", mismatches };
+  },
 };
 
 export interface DeleteProductImageInput {
@@ -169,6 +202,17 @@ export const deleteProductImageExecutable: Executable<DeleteProductImageInput, P
       metadata: { productId: image.productId, imageCount: remaining.length },
     };
   },
+
+  // CLASS C, absence.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const still = await prisma.productImage.findFirst({
+      where: { id: input.imageId, product: { storeId: ctx.storeId } },
+      select: { id: true },
+    });
+    return still
+      ? { state: "failed", mismatches: ["productImage: still present after the delete"] }
+      : { state: "verified" };
+  },
 };
 
 export interface ReplaceProductImageInput {
@@ -200,5 +244,17 @@ export const replaceProductImageExecutable: Executable<ReplaceProductImageInput,
       message: `Replaced an image on "${image.product.name}"`,
       metadata: { productId: image.productId, imageCount },
     };
+  },
+
+  // CLASS A in shape — the input carries the url that must now be stored.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const image = await prisma.productImage.findFirst({
+      where: { id: input.imageId, product: { storeId: ctx.storeId } },
+      select: { url: true },
+    });
+    if (!image) return { state: "failed", mismatches: ["productImage: no such row after the replace"] };
+    return image.url === input.url
+      ? { state: "verified" }
+      : { state: "failed", mismatches: [`productImage.url: expected ${input.url}, stored ${image.url}`] };
   },
 };

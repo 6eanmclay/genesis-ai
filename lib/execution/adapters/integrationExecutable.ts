@@ -1,4 +1,6 @@
 import type { IntegrationProvider } from "@prisma/client";
+import { unavailable } from "../verification";
+import { prisma } from "@/lib/prisma";
 import type { IntegrationConnector } from "@/lib/integrations/types";
 import { persistSyncedRecords, type PersistSyncResult } from "@/lib/businessModel/sync";
 import { RateLimitedError } from "@/lib/integrations/rateLimit";
@@ -80,6 +82,31 @@ export function connectExecutable(
       }
       return { message: `${connector.displayName} connected` };
     },
+
+    // CLASS E — the local half is verifiable, the remote half is not.
+    //
+    // A completed connect leaves a StoreIntegration row for this provider, and
+    // that row is what every other part of the platform reads to decide the
+    // business is connected. Re-reading it catches the real local failure: a
+    // provider that said yes while nothing was persisted here.
+    //
+    // The remote half — whether the provider still considers the grant good —
+    // is a live call, and verifyExecutable below is the action that exists to
+    // make it. Re-asking here would be a second provider round trip on every
+    // connect, which VERIFICATION_HARDENING_CONTRACT.md §6.4 puts out of scope.
+    async verify(_input, ctx) {
+      const row = await prisma.storeIntegration.findFirst({
+        where: { storeId: ctx.storeId, provider: connector.provider },
+        select: { status: true },
+      });
+      if (!row) {
+        return {
+          state: "failed" as const,
+          mismatches: [`storeIntegration: no ${connector.displayName} record after connecting`],
+        };
+      }
+      return { state: "verified" as const };
+    },
   };
 }
 
@@ -98,6 +125,24 @@ export function verifyExecutable(
       return result.ok
         ? { message: `${connector.displayName} verified` }
         : { message: result.error ?? "Verification failed", retryable: true };
+    },
+
+    // VERIFICATION UNAVAILABLE — and this is the clearest honest case of it.
+    //
+    // This action's entire job is to ask the provider whether the connection is
+    // good. Its result IS the provider's answer. Re-asking would repeat the same
+    // call rather than confirm it independently, which is not verification — it
+    // is the same question twice, and it would double a live provider call on
+    // every check.
+    //
+    // Declared rather than omitted. The mechanism that would be needed —
+    // something able to confirm the provider's answer without asking the
+    // provider — does not exist. That is a statement about the mechanism, not
+    // about anybody's willingness to write code.
+    async verify() {
+      return unavailable(
+        `${connector.displayName} reports its own connection state; re-asking would repeat the call rather than confirm it`
+      );
     },
   };
 }
@@ -205,6 +250,34 @@ export function syncExecutable(
         metadata: { written: result.written, errors: result.errors.length, changes: result.changes },
         retryable: result.errors.length > 0,
       };
+    },
+
+    // CLASS E — the local half is verifiable and is verified.
+    //
+    // A sync's own claim is a count: it says it wrote N records. That count is
+    // checkable against what is actually in the database for this provider,
+    // which catches the failure worth catching — a sync that reported writing
+    // and persisted nothing.
+    //
+    // What it cannot check is whether the provider's data was complete or
+    // current; nothing local can answer that. A count that matches is not a
+    // claim that the sync saw everything, and this reports only what it read.
+    async verify(_input, ctx, metadata) {
+      const claimed = metadata?.written ?? 0;
+      if (claimed === 0) {
+        // Nothing was claimed, so there is nothing to find. Verified rather
+        // than unavailable: the mechanism worked, the answer was zero.
+        return { state: "verified" as const };
+      }
+      const present = await prisma.businessRecord.count({
+        where: { storeId: ctx.storeId, sourceProvider: connector.provider.toLowerCase() },
+      });
+      return present > 0
+        ? { state: "verified" as const }
+        : {
+            state: "failed" as const,
+            mismatches: [`businessRecord: the sync reported writing ${claimed}, and none is stored`],
+          };
     },
   };
 }

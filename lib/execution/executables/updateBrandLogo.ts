@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { verifyStoreColumns } from "../readBack";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import { ASSET_ROLES, recordGeneratedAsset } from "@/lib/businessModel/assets";
 import type { Executable } from "../executable";
@@ -64,5 +66,10 @@ export const updateBrandLogoExecutable: Executable<UpdateBrandLogoInput, BrandLo
       message: `Updated the brand logo for "${store.name}"`,
       metadata: { imageUrl: input.imageUrl, assetId },
     };
+  },
+
+  // CLASS A — one column, written straight from the input.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    return verifyStoreColumns(ctx.storeId, { logoUrl: input.imageUrl });
   },
 };

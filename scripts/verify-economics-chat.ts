@@ -75,11 +75,11 @@ async function main() {
     const ctx = { storeId, userId: owner.userId, actorType: "USER" as const, executionId: `test_${++execSeq}` };
     {
       const ran = await answerSupplierEconomicsExecutable.run(input, ctx);
-      const checked = await answerSupplierEconomicsExecutable.verify!(input, ctx);
+      const checked = await answerSupplierEconomicsExecutable.verify(input, ctx, undefined);
       await prisma.executionLog.create({
         data: {
           executionId: ctx.executionId, storeId, action: "answer_supplier_economics",
-          status: checked.ok ? "SUCCESS" : "FAILED", verified: checked.ok,
+          status: (checked.state === 'verified') ? "SUCCESS" : "FAILED", verified: (checked.state === 'verified'),
           message: ran.message, retryable: false, actorType: "USER", actorId: owner.userId,
           metadata: {},
         },
@@ -89,8 +89,8 @@ async function main() {
         timestamp: new Date(),
         executionId: ctx.executionId,
         action: "answer_supplier_economics",
-        status: (checked.ok ? "SUCCESS" : "FAILED") as "SUCCESS" | "FAILED",
-        verified: checked.ok,
+        status: ((checked.state === 'verified') ? "SUCCESS" : "FAILED") as "SUCCESS" | "FAILED",
+        verified: (checked.state === 'verified'),
         message: ran.message,
         retryable: false,
         actorType: "USER" as const,

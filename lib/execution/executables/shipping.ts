@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable, ExecutionContext } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -242,4 +243,49 @@ export const purchaseShippingLabelExecutable: Executable<PurchaseShippingLabelIn
   action: EXECUTION_ACTIONS.ORDER_PURCHASE_SHIPPING_LABEL,
   requiredPermission: PERMISSIONS.ORDERS_MANAGE,
   run: (input, ctx) => purchaseLabelForOrder(input, ctx),
+
+  // CLASS E — a verifiable local half and an unverifiable remote one.
+  //
+  // The label itself was bought at EasyPost, and this platform cannot re-read
+  // the carrier's record of it. What it CAN re-read is everything the purchase
+  // wrote locally: the tracking number, the carrier, the cost, and the
+  // fulfilment state the order moved into. Those are the fields an owner sees,
+  // and a purchase that succeeded remotely while failing to persist locally is
+  // exactly the silent failure worth catching — the code below this even has a
+  // comment about the case where "the purchase succeeded and the write failed".
+  //
+  // The local half is therefore VERIFIED, not declared unavailable. Declaring
+  // the whole action unverifiable because one leg is out of reach would throw
+  // away a real guarantee. What the local half must never do is imply the
+  // remote one: a verified order row does not mean EasyPost accepted anything,
+  // and this reports only on what it actually read.
+  async verify(input, ctx, metadata): Promise<VerificationOutcome> {
+    const order = await prisma.order.findFirst({
+      where: { id: input.orderId, storeId: ctx.storeId },
+      select: {
+        trackingNumber: true,
+        carrier: true,
+        shippingCostInCents: true,
+        fulfillmentStatus: true,
+        labelUrl: true,
+      },
+    });
+    if (!order) return { state: "failed", mismatches: ["order: no such order after the purchase"] };
+
+    const mismatches: string[] = [];
+    if (!order.trackingNumber) mismatches.push("order.trackingNumber: nothing was stored");
+    if (!order.labelUrl) mismatches.push("order.labelUrl: nothing was stored");
+    if (order.fulfillmentStatus !== "fulfilled") {
+      mismatches.push(`order.fulfillmentStatus: expected fulfilled, stored ${order.fulfillmentStatus}`);
+    }
+    // Compared against what the purchase actually reported, where it reported
+    // it — the metadata is the statement of what should have landed, and the
+    // order row re-read above is the evidence.
+    if (metadata?.trackingNumber && order.trackingNumber !== metadata.trackingNumber) {
+      mismatches.push(
+        `order.trackingNumber: expected ${metadata.trackingNumber}, stored ${order.trackingNumber}`
+      );
+    }
+    return mismatches.length === 0 ? { state: "verified" } : { state: "failed", mismatches };
+  },
 };

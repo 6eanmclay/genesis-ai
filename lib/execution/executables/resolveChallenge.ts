@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -35,5 +36,24 @@ export const resolveChallengeExecutable: Executable<ResolveChallengeInput, Recor
     });
     await resolveMissingObservations(ctx.storeId, [], "urgent", `challenge:${record.id}`);
     return { message: `Marked "${data.description}" as resolved` };
+  },
+
+  // CLASS D — the rule's output is fixed rather than taken from the input:
+  // resolving sets status "resolved" AND a resolvedAt. Both are checked, because
+  // a status without its timestamp is a half-applied write.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const record = await prisma.businessRecord.findFirst({
+      where: { id: input.challengeRecordId, storeId: ctx.storeId },
+    });
+    if (!record) {
+      return { state: "failed", mismatches: ["challenge: the record no longer exists"] };
+    }
+    const data = record.data as { status?: string; resolvedAt?: string | null };
+    const mismatches: string[] = [];
+    if (data.status !== "resolved") {
+      mismatches.push(`challenge.status: expected resolved, stored ${data.status ?? "nothing"}`);
+    }
+    if (!data.resolvedAt) mismatches.push("challenge.resolvedAt: nothing was recorded");
+    return mismatches.length === 0 ? { state: "verified" } : { state: "failed", mismatches };
   },
 };

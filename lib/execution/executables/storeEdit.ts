@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { verifyStoreColumns } from "../readBack";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -38,5 +40,14 @@ export const editStoreExecutable: Executable<StoreEditInput, StoreEditMetadata> 
         descriptionChanged: before.description !== input.description,
       },
     };
+  },
+
+  // CLASS A — three columns, written straight from the input.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    return verifyStoreColumns(ctx.storeId, {
+      name: input.name,
+      tagline: input.tagline,
+      description: input.description,
+    });
   },
 };

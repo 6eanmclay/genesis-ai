@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -84,5 +85,41 @@ export const toggleOrderFulfilledExecutable: Executable<ToggleFulfilledInput, Or
       message: nowFulfilled ? `Order marked as fulfilled` : `Order marked as unfulfilled`,
       metadata: { orderId: order.id, fulfillmentStatus: nowFulfilled ? "fulfilled" : "unfulfilled" },
     };
+  },
+
+  // CLASS D, and the reason `verify` receives metadata at all.
+  //
+  // This is a TOGGLE: it flips whatever it finds, so what should be stored now
+  // depends on what was stored before — a fact only run() ever saw. The input
+  // alone cannot say. run() already computes and records the expectation, so
+  // verification looks for THAT against the re-read row.
+  //
+  // fulfilledAt is checked with it: a status that says fulfilled with no
+  // timestamp, or an unfulfilled row still carrying one, is a half-applied
+  // write and exactly what a read-back is for.
+  async verify(input, ctx, metadata): Promise<VerificationOutcome> {
+    const expected = metadata?.fulfillmentStatus;
+    if (!expected) {
+      return { state: "failed", mismatches: ["the run recorded no expected fulfilment status"] };
+    }
+    const order = await prisma.order.findFirst({
+      where: { id: input.orderId, storeId: ctx.storeId },
+      select: { fulfillmentStatus: true, fulfilledAt: true },
+    });
+    if (!order) return { state: "failed", mismatches: ["order: no such order after the write"] };
+
+    const mismatches: string[] = [];
+    if (order.fulfillmentStatus !== expected) {
+      mismatches.push(`order.fulfillmentStatus: expected ${expected}, stored ${order.fulfillmentStatus}`);
+    }
+    const shouldHaveTimestamp = expected === "fulfilled";
+    if (shouldHaveTimestamp !== Boolean(order.fulfilledAt)) {
+      mismatches.push(
+        shouldHaveTimestamp
+          ? "order.fulfilledAt: fulfilled, but no timestamp was recorded"
+          : "order.fulfilledAt: unfulfilled, but a timestamp is still recorded"
+      );
+    }
+    return mismatches.length === 0 ? { state: "verified" } : { state: "failed", mismatches };
   },
 };

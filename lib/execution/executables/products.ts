@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { verifiedUnless, namedKeyMismatches } from "../verification";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
 import type { Executable } from "../executable";
@@ -91,6 +93,25 @@ export const createProductExecutable: Executable<CreateProductInput, ProductMeta
       metadata: { productId: product.id, name: product.name, priceInCents: product.priceInCents },
     };
   },
+
+  // CLASS C — the row must now exist, found by the id run() recorded, carrying
+  // the values asked for. A create that wrote nothing does not throw.
+  async verify(input, ctx, metadata): Promise<VerificationOutcome> {
+    const id = metadata?.productId;
+    if (!id) return { state: "failed", mismatches: ["the run recorded no product id"] };
+    const product = await prisma.product.findFirst({
+      where: { id, storeId: ctx.storeId },
+      select: { name: true, priceInCents: true, description: true },
+    });
+    if (!product) return { state: "failed", mismatches: ["product: no such row after the create"] };
+    return verifiedUnless(
+      namedKeyMismatches(
+        { name: input.name, priceInCents: input.priceInCents, description: input.description },
+        product as unknown as Record<string, unknown>,
+        "product."
+      )
+    );
+  },
 };
 
 // J4 approvable product content changes (2026-08-09) — "if J4 can perform
@@ -129,6 +150,24 @@ export const editProductExecutable: Executable<EditProductInput, ProductMetadata
       metadata: { productId: product.id, name: product.name, priceInCents: product.priceInCents },
     };
   },
+
+  // CLASS B in shape though not in storage — the input names only the fields it
+  // is changing, so only those are compared. Comparing the whole row would fail
+  // an edit that deliberately left the rest alone.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const product = await prisma.product.findFirst({
+      where: { id: input.productId, storeId: ctx.storeId },
+      select: { name: true, priceInCents: true, description: true },
+    });
+    if (!product) return { state: "failed", mismatches: ["product: no such row after the edit"] };
+    return verifiedUnless(
+      namedKeyMismatches(
+        { name: input.name, description: input.description, priceInCents: input.priceInCents },
+        product as unknown as Record<string, unknown>,
+        "product."
+      )
+    );
+  },
 };
 
 interface ToggleActiveInput {
@@ -152,6 +191,21 @@ export const toggleProductActiveExecutable: Executable<ToggleActiveInput, Produc
       metadata: { productId: product.id, name: product.name },
     };
   },
+
+  // CLASS D, but the expectation IS derivable from the input: the write is
+  // `active: !input.currentActive`, so the caller's own statement of the prior
+  // value gives verification something exact to look for.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const product = await prisma.product.findFirst({
+      where: { id: input.productId, storeId: ctx.storeId },
+      select: { active: true },
+    });
+    if (!product) return { state: "failed", mismatches: ["product: no such row after the toggle"] };
+    const expected = !input.currentActive;
+    return product.active === expected
+      ? { state: "verified" }
+      : { state: "failed", mismatches: [`product.active: expected ${expected}, stored ${product.active}`] };
+  },
 };
 
 export interface DeleteProductInput {
@@ -170,5 +224,17 @@ export const deleteProductExecutable: Executable<DeleteProductInput, ProductMeta
       message: `Deleted product "${input.name}"`,
       metadata: { productId: input.productId, name: input.name },
     };
+  },
+
+  // CLASS C, the other direction. A delete that matched nothing does not throw
+  // — Prisma reports a count — so absence is the thing worth checking.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const still = await prisma.product.findFirst({
+      where: { id: input.productId, storeId: ctx.storeId },
+      select: { id: true },
+    });
+    return still
+      ? { state: "failed", mismatches: ["product: still present after the delete"] }
+      : { state: "verified" };
   },
 };

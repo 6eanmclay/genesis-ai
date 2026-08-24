@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { verified, type VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -84,7 +85,10 @@ export const updateHeroExecutable: Executable<UpdateHeroInput, { heroImageUrl: s
   // (Sean). Only checks when this proposal actually included an image —
   // a text-only hero edit has nothing image-related to verify.
   async verify(input, ctx) {
-    if (!("heroImageUrl" in input) || !input.heroImageUrl) return { ok: true };
+    // A text-only hero edit has no image to re-read. That is not the
+    // unavailable state — there is nothing this action was asked to persist
+    // that could fail to persist, so it is genuinely verified.
+    if (!("heroImageUrl" in input) || !input.heroImageUrl) return verified();
     const store = await prisma.store.findUniqueOrThrow({
       where: { id: ctx.storeId },
       select: { blueprint: true, theme: true },
@@ -92,7 +96,7 @@ export const updateHeroExecutable: Executable<UpdateHeroInput, { heroImageUrl: s
     const blueprint = (store.blueprint as BlueprintShape | null) ?? {};
     const storedUrl = (blueprint.homepageContent as { heroImageUrl?: string | null } | undefined)?.heroImageUrl;
     if (storedUrl !== input.heroImageUrl) {
-      return { ok: false, error: "The hero image wasn't actually saved to the storefront." };
+      return { state: "failed", mismatches: ["heroImageUrl: the hero image was not saved to the storefront"] };
     }
 
     // SAVED IS NOT SHOWN (2026-08-22), and the difference is the whole point of
@@ -109,17 +113,17 @@ export const updateHeroExecutable: Executable<UpdateHeroInput, { heroImageUrl: s
     // cannot pass while the page shows nothing.
     const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
     if (!heroLayoutRendersImage(heroLayoutOf(theme))) {
+      // Named as the real situation rather than a generic failure: the image is
+      // genuinely saved and will appear the moment the layout can show one.
+      // Silently switching the layout instead would be Genesis redesigning the
+      // storefront on the strength of a photo — a bigger change than the owner
+      // approved. It is still a failed verification, because the owner asked to
+      // see their photo and the storefront does not show it.
       return {
-        ok: false,
-        // Named as the real situation rather than a failure: the image is
-        // genuinely saved and will appear the moment the layout can show one.
-        // Silently switching the layout instead would be Genesis redesigning
-        // the storefront on the strength of a photo — a bigger change than the
-        // owner approved.
-        error:
-          "The hero image was saved, but this storefront's hero layout doesn't display one — it needs the split hero layout to appear.",
+        state: "failed",
+        mismatches: ["heroImageUrl: saved, but this hero layout does not display an image"],
       };
     }
-    return { ok: true };
+    return verified();
   },
 };

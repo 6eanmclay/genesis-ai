@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { verificationLabel } from "@/lib/execution/verification";
 import type { ExecutionStatus } from "@/lib/execution/types";
 import { STATUS_DOT } from "@/lib/execution/statusDisplay";
 
@@ -47,7 +48,12 @@ export function ExecutionStatusCard({
         <>
           <p className="mt-1 text-xs text-zinc-500">
             {log.message}
-            {log.verified ? " (verified)" : ""} — {log.createdAt.toLocaleString()}
+            {/* THREE STATES, not a present/absent flag. "(verified)" alone could
+                not distinguish "checked and fine" from "nobody checked", which
+                was true of 27 of 30 executables until this milestone. */}
+            {verificationLabel(status, log.verified)
+              ? ` (${verificationLabel(status, log.verified)!.toLowerCase()})`
+              : ""} — {log.createdAt.toLocaleString()}
           </p>
         </>
       )}

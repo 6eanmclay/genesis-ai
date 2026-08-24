@@ -150,14 +150,14 @@ async function main() {
     const owner = await prisma.store.findUniqueOrThrow({ where: { id: storeId }, select: { userId: true } });
     const ctx = { storeId, userId: owner.userId, actorType: "USER" as const, executionId: `test_${++execSeq}` };
     const ran = await answerSupplierEconomicsExecutable.run(input, ctx);
-    const checked = await answerSupplierEconomicsExecutable.verify!(input, ctx);
+    const checked = await answerSupplierEconomicsExecutable.verify(input, ctx, undefined);
     return {
       schemaVersion: 1 as const,
       timestamp: new Date(),
       executionId: ctx.executionId,
       action: "answer_supplier_economics",
-      status: (checked.ok ? "SUCCESS" : "FAILED") as "SUCCESS" | "FAILED",
-      verified: checked.ok,
+      status: ((checked.state === 'verified') ? "SUCCESS" : "FAILED") as "SUCCESS" | "FAILED",
+      verified: (checked.state === 'verified'),
       message: ran.message,
       retryable: false,
       actorType: "USER" as const,

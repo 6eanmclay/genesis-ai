@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { verifyBlueprintSection } from "../readBack";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -34,5 +36,13 @@ export const updateStoreContentExecutable: Executable<UpdateStoreContentInput, R
       data: { blueprint: updatedBlueprint as object },
     });
     return { message: "Updated store policies" };
+  },
+
+  // CLASS B — a merge into blueprint.storeContent. Only the keys this input named
+  // are compared: that section holds keys written by other actions too, and
+  // comparing the whole of it would fail a merge that did exactly what it
+  // promised.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    return verifyBlueprintSection(ctx.storeId, "storeContent", input);
   },
 };

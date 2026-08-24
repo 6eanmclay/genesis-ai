@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { verifyStoreColumns, verifyRowExists } from "../readBack";
+import type { VerificationOutcome } from "../verification";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
@@ -77,5 +79,22 @@ export const communicateFindingExecutable: Executable<
       message: `Communicated a ${input.kind} finding: "${input.summary}"`,
       metadata: { cognitiveOutputId: created.id },
     };
+  },
+
+  // CLASS C — a row that must now exist. Found by the id run() recorded, and
+  // re-read rather than trusted: a create that silently wrote nothing does not
+  // throw, and that is the defect this catches.
+  async verify(input, ctx, metadata): Promise<VerificationOutcome> {
+    const id = metadata?.cognitiveOutputId;
+    if (!id) return { state: "failed", mismatches: ["the run recorded no cognitive output id"] };
+    return verifyRowExists(
+      "finding",
+      () =>
+        prisma.cognitiveOutput.findFirst({
+          where: { id, storeId: ctx.storeId },
+          select: { summary: true, kind: true },
+        }) as Promise<Record<string, unknown> | null>,
+      { summary: input.summary, kind: input.kind }
+    );
   },
 };

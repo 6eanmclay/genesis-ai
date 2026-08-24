@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -39,5 +40,20 @@ export const updateGoalStatusExecutable: Executable<UpdateGoalStatusInput, Recor
       data: { data: updated as object, syncedAt: new Date() },
     });
     return { message: `Marked goal "${data.description}" as ${input.status}` };
+  },
+
+  // CLASS D — the write folds one field into the record's JSON, so the read-back
+  // checks that field on the persisted row rather than the whole payload.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    const record = await prisma.businessRecord.findFirst({
+      where: { id: input.goalRecordId, storeId: ctx.storeId },
+    });
+    if (!record) {
+      return { state: "failed", mismatches: ["goal: the record no longer exists"] };
+    }
+    const stored = (record.data as { status?: string }).status;
+    return stored === input.status
+      ? { state: "verified" }
+      : { state: "failed", mismatches: [`goal.status: expected ${input.status}, stored ${stored ?? "nothing"}`] };
   },
 };

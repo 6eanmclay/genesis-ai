@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { verifyStoreColumns } from "../readBack";
+import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Theme } from "@/lib/theme";
 import type { Executable } from "../executable";
@@ -15,5 +17,11 @@ export const updateThemeExecutable: Executable<UpdateThemeInput, Record<string, 
       data: { theme: input as object },
     });
     return { message: "Updated storefront theme" };
+  },
+
+  // CLASS A — the input IS the stored value: `data: { theme: input }`. So the
+  // read-back is an exact comparison, and there is nothing to interpret.
+  async verify(input, ctx): Promise<VerificationOutcome> {
+    return verifyStoreColumns(ctx.storeId, { theme: input });
   },
 };

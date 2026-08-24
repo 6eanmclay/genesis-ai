@@ -218,21 +218,27 @@ async function main() {
   console.log("\n=== 4. Verify refuses to call a missed image a success ===\n");
   // ==========================================================================
   check("verify passes when the image really landed",
-    await updateHeroExecutable.verify!({ heroHeadline: "x", heroSubheadline: "y", heroImageUrl: UPLOAD }, ctx(store.id)),
-    { ok: true });
+    await updateHeroExecutable.verify(
+      { heroHeadline: "x", heroSubheadline: "y", heroImageUrl: UPLOAD },
+      ctx(store.id),
+      undefined
+    ),
+    { state: "verified" });
 
   // The original bug, reproduced exactly: text applied, image silently not.
   await writeHomepageContent(store.id, { heroImageUrl: null });
-  const missed = await updateHeroExecutable.verify!(
+  const missed = await updateHeroExecutable.verify(
     { heroHeadline: "x", heroSubheadline: "y", heroImageUrl: UPLOAD },
-    ctx(store.id)
+    ctx(store.id),
+    undefined
   );
-  check("verify FAILS when only the text changed", missed.ok, false);
-  assert("and says the image is what did not save", (missed.error ?? "").includes("hero image"));
+  check("verify FAILS when only the text changed", (missed.state === 'verified'), false);
+  assert("and says the image is what did not save",
+    missed.state === "failed" && missed.mismatches.join(" ").includes("hero image"));
 
   check("a text-only proposal has no image claim to verify",
-    await updateHeroExecutable.verify!({ heroHeadline: "x", heroSubheadline: "y" }, ctx(store.id)),
-    { ok: true });
+    await updateHeroExecutable.verify({ heroHeadline: "x", heroSubheadline: "y" }, ctx(store.id), undefined),
+    { state: "verified" });
 
   // ==========================================================================
   console.log("\n=== 5. Saved is not the same as shown ===\n");
@@ -266,15 +272,17 @@ async function main() {
   );
   check("the image really is saved", (await homepageOf(plain.id)).heroImageUrl, PLAIN_UPLOAD);
 
-  const unseen = await updateHeroExecutable.verify!(
+  const unseen = await updateHeroExecutable.verify(
     { heroHeadline: "x", heroSubheadline: "y", heroImageUrl: PLAIN_UPLOAD },
-    ctx(plain.id)
+    ctx(plain.id),
+    undefined
   );
-  check("but verify refuses to call it done", unseen.ok, false);
-  assert("and says why the owner will not see it", (unseen.error ?? "").includes("layout"), unseen.error ?? "");
+  check("but verify refuses to call it done", (unseen.state === 'verified'), false);
+  const unseenWhy = unseen.state === "failed" ? unseen.mismatches.join(" ") : "";
+  assert("and says why the owner will not see it", unseenWhy.includes("layout"), unseenWhy);
   assert(
     "so J4 cannot report a photo is on a page that does not show one",
-    unseen.ok === false,
+    (unseen.state === 'verified') === false,
     "saved and shown are different claims, and only one is what the owner asked for"
   );
 
