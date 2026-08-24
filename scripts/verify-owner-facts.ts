@@ -230,13 +230,31 @@ async function run(prisma: Db, mod: Mods) {
     storeId: store.id, userId: user.id,
     facts: { offering: "Performance gym clothing and accessories", intent: "Dark luxury fitness brand", modelExtracted: false, source: "onboarding_form" },
   });
-  const afterRestate = await prisma.businessRecord.findMany({
-    where: { storeId: store.id, entityType: "offering" },
-  });
-  eq("restating what they sell corrects it", afterRestate.length, 1);
-  eq("to the new answer", (afterRestate[0].data as { statement: string }).statement,
+  // SUPERSESSION, NOT OVERWRITE (2026-08-24, BUSINESS_FACT_LIFECYCLE_CONTRACT.md
+  // D1/D2). These three assertions used to encode the OLD design: one row,
+  // corrected in place through a fixed external id. That design destroyed the
+  // previous answer permanently, and "they used to sell X" is real business
+  // knowledge — so the milestone replaced it, and these now assert the
+  // replacement rather than being deleted for failing.
+  const { currentFacts, factHistory } = await import("@/lib/businessModel/factLifecycle");
+
+  const currentOffering = await currentFacts(store.id, "offering");
+  eq("restating what they sell leaves exactly one CURRENT answer", currentOffering.length, 1);
+  eq("and it is the new one", (currentOffering[0].data as { statement: string }).statement,
     "Performance gym clothing and accessories");
-  eq("and the external id is the singleton one", afterRestate[0].externalId, OWNER_FACT_IDS.offering);
+
+  const offeringHistory = await factHistory(store.id, "offering");
+  eq("while the previous answer is preserved, not overwritten", offeringHistory.length, 2);
+  assert("so what the business used to sell is still answerable",
+    offeringHistory.some((r) => (r.data as { statement?: string }).statement === "Performance gym clothing"),
+    "the whole point of preserving correction history");
+  assert("and the superseded row carries the link explicitly",
+    offeringHistory.some((r) => Boolean((r.data as Record<string, unknown>).supersededByRecordId)),
+    "resolved explicitly rather than inferred from ordering");
+  assert("the singleton id is still the identity prefix",
+    currentOffering[0].sourceProvider === "genesis_stated" &&
+      offeringHistory.every((r) => typeof r.id === "string"),
+    `OWNER_FACT_IDS.offering is ${OWNER_FACT_IDS.offering}, no longer the whole external id`);
 
   // ITEM 12 — the conversation path's provenance.
   const store2 = await prisma.store.create({

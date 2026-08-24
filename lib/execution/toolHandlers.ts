@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
+import { stateFact } from "@/lib/businessModel/statements";
 import { prisma } from "@/lib/prisma";
 import type { BusinessUnderstanding } from "@/lib/businessModel/understanding";
-import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { ENTITY_REGISTRY, DesignSchema, AssetSchema } from "@/lib/businessModel/entities";
 import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { getSurface } from "@/lib/design/surfaces";
@@ -250,17 +250,39 @@ const captureBusinessFact: ToolHandler = async (ctx) => {
   // Confirming a capture that never happened is worse than falling back.
   if (!parsed.success) return { handled: false, reason: "invalid_input" };
 
-  const { changes } = await persistSyncedRecords(
-    ctx.storeId,
-    "genesis_chat",
-    [{ entityType, externalId: randomUUID(), data: parsed.data }],
-    {
-      provenance: "OWNER",
-      provenanceDetail: "chat",
-      statedById: ctx.userId,
-      modelExtracted: true,
-    }
-  );
+  // THROUGH stateFact, NOT AROUND IT (2026-08-24).
+  //
+  // This used to call persistSyncedRecords directly and pass
+  // `provenance: "OWNER"` as a parameter — a second door on the invariant
+  // lib/businessModel/statements.ts exists to hold, whose own comment reads
+  // "NOT from the caller. This is the invariant the whole file exists for."
+  // Not a hole, since both are server-side and the value was correct, but the
+  // shape of one: two ways to assert owner testimony, only one of which could
+  // not be told to lie.
+  //
+  // The identity also changed, and that is the point of the milestone. Every
+  // capture used to mint a fresh randomUUID(), so restating a goal produced a
+  // SECOND goal and nothing could tell a correction from a new fact. stateFact
+  // now resolves an explicit supersession target instead.
+  const stated = await stateFact({
+    storeId: ctx.storeId,
+    userId: ctx.userId,
+    entityType,
+    data: parsed.data,
+    // A model read this out of what the owner said. True whatever they said —
+    // the owner is the author, and a model still stood between.
+    modelExtracted: true,
+    context: "chat",
+    supersedesRecordId: input?.supersedesRecordId ?? null,
+  });
+
+  // A CORRECTION THAT NAMED SOMETHING UNFINDABLE IS NOT A NEW FACT. Writing it
+  // as one would leave the owner believing they had corrected something they
+  // had not, which is the exact class of quiet wrongness this milestone exists
+  // to end.
+  if (!stated.ok) return { handled: false, reason: "invalid_input" };
+
+  const changes = [{ recordId: stated.value.recordId }];
 
   // A HIGH-SEVERITY, ACTIVE CHALLENGE BECOMES SOMETHING J4 IS WATCHING, through
   // the Business Intelligence Engine's own existing mechanisms rather than a

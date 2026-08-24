@@ -1,8 +1,7 @@
 import { startTestDatabase } from "@/scripts/lib/testDatabase";
 import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
 import { execFile } from "child_process";
-import { readdirSync, readFileSync } from "fs";
-import { join } from "path";
+import { readdirSync } from "fs";
 
 // Run the suites that need a database, against the in-process one:
 //

@@ -127,7 +127,7 @@ export const refineStorefrontExecutable: Executable<
   // must fail rather than report success, because the owner approved one
   // improvement and half an improvement is not it — and because a FAILED
   // result is what stops the engine charging for it.
-  async verify(input, ctx) {
+  async verify(input, ctx): Promise<VerificationOutcome> {
     const store = await prisma.store.findUniqueOrThrow({
       where: { id: ctx.storeId },
       select: { theme: true },

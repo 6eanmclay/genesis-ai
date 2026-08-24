@@ -3,6 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { ENTITY_REGISTRY, type EntityType } from "./entities";
 import { persistSyncedRecords } from "./sync";
 import { relate, isRelationshipKind, type RelationshipKind } from "./relationships";
+import {
+  isOwnerAuthoritative,
+  markSuperseded,
+  resolveSupersessionTarget,
+} from "./factLifecycle";
 import { internalContactId, internalItemId, internalTransactionId } from "./internalMapper";
 
 // THE CONTROLLED PATH FOR SAYING SOMETHING NEW (2026-08-22, U3).
@@ -40,7 +45,11 @@ export type StatementRefusal =
   | "unknown_kind"
   | "unknown_record"
   | "self_reference"
-  | "not_stated";
+  | "not_stated"
+  // A correction naming a record that is not a real record of that type in this
+  // store. Refused rather than written as an unrelated new fact, which would
+  // leave the owner believing they had corrected something they had not.
+  | "unknown_target";
 
 export type StatementOutcome<T> =
   | { ok: true; value: T }
@@ -133,7 +142,19 @@ export async function stateFact(params: {
    * store existed being the case this was added for. Never a guess.
    */
   statedAt?: Date;
-}): Promise<StatementOutcome<{ recordId: string }>> {
+  /**
+   * The record this statement CORRECTS, when it corrects one (D5).
+   *
+   * Supplied explicitly or not at all. Nothing here infers a target from text
+   * similarity or from ordering — see resolveSupersessionTarget, which is the
+   * only thing allowed to decide, and which refuses an id it cannot confirm
+   * belongs to this store and this type.
+   *
+   * Singleton types (offering, intent) do not need it: they have exactly one
+   * current fact, so the target is unambiguous by construction.
+   */
+  supersedesRecordId?: string | null;
+}): Promise<StatementOutcome<{ recordId: string; supersededRecordId?: string }>> {
   const registryEntry = ENTITY_REGISTRY[params.entityType as EntityType];
   if (!registryEntry) {
     return { ok: false, refusal: "unknown_entity_type", detail: params.entityType };
@@ -142,6 +163,32 @@ export async function stateFact(params: {
   const parsed = registryEntry.schema.safeParse(params.data);
   if (!parsed.success) {
     return { ok: false, refusal: "invalid_shape", detail: parsed.error.message };
+  }
+
+  // RESOLVED BEFORE THE WRITE, and that ordering is load-bearing.
+  //
+  // A singleton's target is "the fact that is current". Resolving after writing
+  // made the NEW record the newest current one, so it resolved to itself and the
+  // guard below silently declined to supersede anything — two current offerings,
+  // no link, and the correction looking like it had worked. Found by the suite
+  // rather than by reading it back.
+  //
+  // A named target does not care about ordering; a singleton does, so both are
+  // resolved here where the answer is still "what did the business say before
+  // this sentence".
+  const correction = isOwnerAuthoritative(params.entityType)
+    ? await resolveSupersessionTarget({
+        storeId: params.storeId,
+        entityType: params.entityType,
+        supersedesRecordId: params.supersedesRecordId,
+      })
+    : { targetId: null as string | null, refusal: undefined };
+
+  // REFUSED BEFORE ANYTHING IS WRITTEN. A correction naming a record that cannot
+  // be confirmed must not leave a new fact behind — the owner would believe they
+  // had corrected something they had not.
+  if (correction.refusal === "unknown_target") {
+    return { ok: false, refusal: "unknown_target", detail: params.supersedesRecordId ?? "" };
   }
 
   const result = await persistSyncedRecords(
@@ -161,7 +208,30 @@ export async function stateFact(params: {
   if (result.errors.length > 0 || !result.changes[0]) {
     return { ok: false, refusal: "invalid_shape", detail: result.errors[0]?.error ?? "not written" };
   }
-  return { ok: true, value: { recordId: result.changes[0].recordId } };
+
+  const recordId = result.changes[0].recordId;
+
+  // THE LINK, WRITTEN ON THE OLD RECORD (D5).
+  //
+  // The new statement is already the authoritative current fact — it was written
+  // above, and nothing had to be deleted for that to be true. What remains is to
+  // say WHICH earlier statement it replaces, explicitly, rather than leaving a
+  // later reader to infer it from timestamps.
+  //
+  // NOTHING IS OVERWRITTEN. The prior fact keeps its text, its provenance, its
+  // author and the date it was said. It stops being current; it does not stop
+  // existing. That is the whole of D2, and it is what makes a mistaken
+  // correction recoverable rather than destructive.
+  if (correction.targetId && correction.targetId !== recordId) {
+    await markSuperseded({
+      storeId: params.storeId,
+      supersededRecordId: correction.targetId,
+      replacedByRecordId: recordId,
+    });
+    return { ok: true, value: { recordId, supersededRecordId: correction.targetId } };
+  }
+
+  return { ok: true, value: { recordId } };
 }
 
 /**
@@ -266,6 +336,7 @@ export const REFUSAL_MESSAGE: Record<StatementRefusal, string> = {
   unknown_kind: "I don't have a way to describe that kind of connection.",
   unknown_record: "I couldn't find one of those in this business.",
   self_reference: "Something can't be connected to itself.",
+  unknown_target: "I couldn't find the thing you're correcting — tell me which one you mean.",
   not_stated:
     "That connection comes from the record itself, so changing the record is what changes it.",
 };

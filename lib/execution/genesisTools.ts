@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { productSurfaceKeys } from "@/lib/design/surfaces";
 import type Anthropic from "@anthropic-ai/sdk";
-import { GoalCaptureSchema, ChallengeCaptureSchema, EmployeeCaptureSchema, LocationCaptureSchema } from "@/lib/businessModel/factCapture";
+import { GoalCaptureSchema, ChallengeCaptureSchema, EmployeeCaptureSchema, LocationCaptureSchema, OfferingCaptureSchema, IntentCaptureSchema } from "@/lib/businessModel/factCapture";
 import { STOREFRONT_TARGET_KEYS } from "@/lib/storefront/targets";
 import { REFINABLE_DIMENSION_KEYS, MAX_MUTATIONS_PER_IMPROVEMENT } from "@/lib/storefront/dimensions";
 
@@ -38,11 +38,18 @@ import { REFINABLE_DIMENSION_KEYS, MAX_MUTATIONS_PER_IMPROVEMENT } from "@/lib/s
 // the natural-language reply comes from the model's own accompanying text
 // block in the same turn, not a schema field.
 
+// WHICH EXISTING FACT A STATEMENT CORRECTS (D5). On every member, because any
+// owner-authoritative fact can be restated — and nullable, because most
+// statements correct nothing at all.
+const CORRECTS = { supersedesRecordId: z.string().nullable().optional() };
+
 export const BusinessFactCaptureInputSchema = z.discriminatedUnion("entityType", [
-  z.object({ entityType: z.literal("goal"), data: GoalCaptureSchema }),
-  z.object({ entityType: z.literal("challenge"), data: ChallengeCaptureSchema }),
-  z.object({ entityType: z.literal("employee"), data: EmployeeCaptureSchema }),
-  z.object({ entityType: z.literal("location"), data: LocationCaptureSchema }),
+  z.object({ entityType: z.literal("goal"), data: GoalCaptureSchema, ...CORRECTS }),
+  z.object({ entityType: z.literal("challenge"), data: ChallengeCaptureSchema, ...CORRECTS }),
+  z.object({ entityType: z.literal("employee"), data: EmployeeCaptureSchema, ...CORRECTS }),
+  z.object({ entityType: z.literal("location"), data: LocationCaptureSchema, ...CORRECTS }),
+  z.object({ entityType: z.literal("offering"), data: OfferingCaptureSchema, ...CORRECTS }),
+  z.object({ entityType: z.literal("intent"), data: IntentCaptureSchema, ...CORRECTS }),
 ]);
 export type BusinessFactCaptureInput = z.infer<typeof BusinessFactCaptureInputSchema>;
 
@@ -60,8 +67,21 @@ export type BusinessFactCaptureInput = z.infer<typeof BusinessFactCaptureInputSc
 // ENTITY_REGISTRY[entityType].schema.safeParse after the tool call
 // returns, completely unchanged.
 const BUSINESS_FACT_CAPTURE_TOOL_SCHEMA = z.object({
-  entityType: z.enum(["goal", "challenge", "employee", "location"]),
+  // THE SIX OWNER-AUTHORITATIVE TYPES (D3). offering and intent joined on
+  // 2026-08-24: the owner is the authoritative source for what a business sells
+  // and what they want it to be, and until now those two could be recorded at
+  // onboarding and never corrected. A connector-owned type is deliberately not
+  // here — "correcting" a QuickBooks transaction would write a fact the next
+  // sync silently overwrites.
+  entityType: z.enum(["goal", "challenge", "employee", "location", "offering", "intent"]),
   data: z.record(z.string(), z.unknown()),
+  // WHICH EXISTING FACT THIS CORRECTS, when it corrects one (D5).
+  //
+  // Named explicitly or left null — never guessed. A restatement with no target,
+  // of a type the business may have many of, is a NEW fact rather than a silent
+  // correction of whichever one looked closest. offering and intent do not need
+  // it: a business has one of each, so the target is unambiguous.
+  supersedesRecordId: z.string().nullable(),
 });
 
 export const RequestImageChangeInputSchema = z.object({

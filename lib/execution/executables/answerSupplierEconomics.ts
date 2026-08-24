@@ -107,7 +107,7 @@ export const answerSupplierEconomicsExecutable: Executable<
    * somebody looks. A `dont_know_yet` verifies as fine having written nothing,
    * which is exactly what it promised to do.
    */
-  async verify(input, ctx) {
+  async verify(input, ctx): Promise<VerificationOutcome> {
     // "I don't know yet" records no economics, so there is nothing to read
     // back and nothing that could have failed to land.
     if (input.answer.kind === "dont_know_yet") return verified();

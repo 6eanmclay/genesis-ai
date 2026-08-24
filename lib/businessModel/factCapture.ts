@@ -47,11 +47,20 @@ export const LocationCaptureSchema = z.object({
   country: z.string().nullable(),
 });
 
+/** What the owner says they sell, and what they want the business to be. */
+export const OfferingCaptureSchema = z.object({ statement: z.string() });
+export const IntentCaptureSchema = z.object({ statement: z.string() });
+
 export const BusinessFactSchema = z.discriminatedUnion("entityType", [
   z.object({ entityType: z.literal("goal"), data: GoalCaptureSchema, confirmationReply: z.string() }),
   z.object({ entityType: z.literal("challenge"), data: ChallengeCaptureSchema, confirmationReply: z.string() }),
   z.object({ entityType: z.literal("employee"), data: EmployeeCaptureSchema, confirmationReply: z.string() }),
   z.object({ entityType: z.literal("location"), data: LocationCaptureSchema, confirmationReply: z.string() }),
+  // THE TWO THAT COULD NOT BE CORRECTED (D3, 2026-08-24). Recorded at
+  // onboarding by lib/businessModel/ownerFacts.ts and, until this milestone,
+  // never again — so an owner whose business changed had nowhere to say so.
+  z.object({ entityType: z.literal("offering"), data: OfferingCaptureSchema, confirmationReply: z.string() }),
+  z.object({ entityType: z.literal("intent"), data: IntentCaptureSchema, confirmationReply: z.string() }),
   z.object({ entityType: z.literal("none"), data: z.null(), confirmationReply: z.null() }),
 ]);
 

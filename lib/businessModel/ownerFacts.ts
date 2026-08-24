@@ -1,5 +1,6 @@
+import { randomUUID } from "crypto";
 import { stateFact } from "./statements";
-import { queryRecords } from "./reasoning";
+import { currentFacts } from "./factLifecycle";
 import type { CanonicalRecord } from "./entities";
 
 // THE OWNER'S OWN ANSWERS TO THE TWO QUESTIONS ONBOARDING ASKS.
@@ -31,11 +32,20 @@ import type { CanonicalRecord } from "./entities";
 // See DRAFT_FIELD_SPLIT_CONTRACT.md.
 
 /**
- * The business has exactly one offering statement and one intent statement.
+ * The business has exactly one CURRENT offering statement and one current intent.
  *
- * Fixed external ids, so restating either one CORRECTS it through the existing
- * unique constraint rather than leaving two answers behind. A reader asking
- * "what does this business sell" must never have to pick.
+ * SUPERSESSION, NOT OVERWRITE (2026-08-24, D1/D2). These used to be fixed
+ * external ids, so restating either one updated the row through the unique
+ * constraint — one answer, and the previous one gone permanently. "They used to
+ * sell candles and now sell rings" is real business knowledge and that design
+ * destroyed it.
+ *
+ * Now each statement is its own record and the prior one is linked as superseded,
+ * so `currentFacts` still returns exactly one and `factHistory` returns the
+ * chain. A reader asking what the business sells still never has to pick.
+ *
+ * Kept exported because the onboarding write is still a singleton write and the
+ * id documents that intent — but it is no longer what makes correction work.
  */
 export const OWNER_FACT_IDS = {
   offering: "business_offering",
@@ -171,7 +181,11 @@ export async function recordOwnerFacts(params: {
       data: { statement },
       modelExtracted: facts.modelExtracted,
       context: facts.source,
-      externalId: OWNER_FACT_IDS[entityType],
+      // A NEW RECORD EACH TIME, superseding the last (D2). A fixed id here would
+      // reinstate the overwrite this milestone removed: the unique constraint
+      // would turn a correction back into an UPDATE and the prior statement
+      // would be gone. stateFact resolves the singleton target and links it.
+      externalId: `${OWNER_FACT_IDS[entityType]}:${randomUUID()}`,
       ...(facts.statedAt ? { statedAt: facts.statedAt } : {}),
     });
     // A refusal here is a programming error (unknown type, wrong shape), not a
@@ -199,9 +213,12 @@ export async function readOwnerFacts(storeId: string): Promise<{
   offering: string | null;
   intent: string | null;
 }> {
+  // CURRENT, NOT ALL (D2). queryRecords would return superseded statements too,
+  // and the newest-first ordering would usually hide that — usually being
+  // exactly the word that makes it a bug rather than a behaviour.
   const [offering, intent] = await Promise.all([
-    queryRecords(storeId, "offering"),
-    queryRecords(storeId, "intent"),
+    currentFacts(storeId, "offering"),
+    currentFacts(storeId, "intent"),
   ]);
   return {
     offering: statementOf(offering),

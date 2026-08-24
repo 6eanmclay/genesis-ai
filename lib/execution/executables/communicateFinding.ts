@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { verifyStoreColumns, verifyRowExists } from "../readBack";
+import { verifyRowExists } from "../readBack";
 import type { VerificationOutcome } from "../verification";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS } from "@/lib/permissions";

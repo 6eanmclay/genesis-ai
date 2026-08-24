@@ -1,4 +1,5 @@
 import { readOwnerFacts } from "./ownerFacts";
+import { currentFacts } from "./factLifecycle";
 import { prisma } from "@/lib/prisma";
 import { getProfitability, type Profitability } from "./profitability";
 import { getObligations, type Obligations } from "./obligations";
@@ -234,10 +235,14 @@ export async function getBusinessProfile(
     prisma.storeIntegration.findMany({ where: { storeId } }),
     queryRecords(storeId, "item"),
     queryRecords(storeId, "contact"),
-    queryRecords(storeId, "employee"),
-    queryRecords(storeId, "goal"),
-    queryRecords(storeId, "challenge"),
-    queryRecords(storeId, "location"),
+    // CURRENT, NOT ALL, for the owner-authoritative types (D2, 2026-08-24).
+    // A superseded goal is still a real row and is no longer what the owner
+    // believes; showing it beside the correction would be the understanding
+    // layer reporting two answers to one question.
+    currentFacts(storeId, "employee"),
+    currentFacts(storeId, "goal"),
+    currentFacts(storeId, "challenge"),
+    currentFacts(storeId, "location"),
     queryRecords(storeId, "asset"),
     queryRecords(storeId, "socialAccount"),
     readOwnerFacts(storeId),

@@ -84,7 +84,7 @@ export const updateHeroExecutable: Executable<UpdateHeroInput, { heroImageUrl: s
   // changed the text/layout while failing to apply the referenced image"
   // (Sean). Only checks when this proposal actually included an image —
   // a text-only hero edit has nothing image-related to verify.
-  async verify(input, ctx) {
+  async verify(input, ctx): Promise<VerificationOutcome> {
     // A text-only hero edit has no image to re-read. That is not the
     // unavailable state — there is nothing this action was asked to persist
     // that could fail to persist, so it is genuinely verified.
