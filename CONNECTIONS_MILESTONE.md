@@ -295,3 +295,77 @@ milestone exists to stop reading.
 
 No new provider implementations. No social connections. No BI or Learn changes.
 No identity data. No storefront code.
+
+
+---
+
+## 9. C1 deployed and verified — 2026-08-25
+
+**Deployed commit `4376b8d`**, from the build log:
+
+    Cloning github.com/6eanmclay/genesis-ai (Branch: master, Commit: 4376b8d)
+    91 migrations found in prisma/migrations
+    No pending migrations to apply.
+    ✓ Compiled successfully in 33.5s
+
+14 files. No `prisma/` changes, no storefront, nothing under `lib/intelligence/`
+or `lib/businessModel/`.
+
+### Every production connection, as the deployed code now sees it
+
+| State | Count |
+|---|---|
+| `connected_no_data` | **9** |
+| `failed` | **6** |
+| `needs_reconnection` | **2** |
+
+    MAILCHIMP         connected_no_data   Cofoundr            fails=0   recs=0    silent
+    PRINTFUL   × 4    connected_no_data                       fails=0   recs=0    silent
+    PAYPAL     × 2    connected_no_data                       fails=0   recs=0    silent
+    STRIPE            connected_no_data   Cubit & Coil        fails=0   recs=0    silent
+    STRIPE     × 6    failed                                  fails=0   recs=0    RAISES
+    GOOGLE_CALENDAR   needs_reconnection  Cofoundr            fails=11  recs=0    RAISES
+    QUICKBOOKS        needs_reconnection  Cofoundr            fails=14  recs=41   RAISES
+
+**Not one connection is reported as plain `connected`.** Every one is either
+failing, stale, or has never returned a record — which was true yesterday too,
+and simply could not be seen.
+
+### The six checks
+
+| | Result |
+|---|---|
+| `connectionHealth` is the single source of truth | **PASS** — the attention path and `connectionHealthOf` agree for all 16 stores, 8 items raised, **0 mismatches**, computed independently and compared |
+| Failed/stale no longer present as healthy | **PASS** — all 8 classify as `failed`/`needs_reconnection` and raise |
+| `needs_reconnection` at 3+ consecutive failures | **PASS** — GOOGLE_CALENDAR=11, QUICKBOOKS=14; control: 0 connections sit between 1 and 2 |
+| `connected_no_data` does not raise | **PASS** — 9 in production, every one silent |
+| Unavailable / not-connected accurate | **PASS**, see below |
+| No identity / storefront / BI / Learn drift | **PASS** — 48 INFERENCE facts across 12 stores, **0 OWNER**, blueprint intact in 12; cursors 12, outputs 894, beliefs 1 |
+
+### One check that first read FAIL, and why it was my instrument
+
+`configured()` reads environment variables, and the verification script runs on
+this machine against `.env.livecheck` — which holds a database URL and nothing
+else. So it reported Google Calendar and QuickBooks as *unavailable*, which is
+true of this laptop and false of production.
+
+Verified against the production environment directly instead, names only:
+
+| Variable | Production |
+|---|---|
+| `GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET` | **present** |
+| `QUICKBOOKS_CLIENT_ID` / `_SECRET` | **present** |
+| `FACEBOOK_*`, `TIKTOK_*`, `MAILCHIMP_*` | **absent** |
+
+So in the deployed runtime Google Calendar and QuickBooks are available, and
+Facebook, Instagram and TikTok read *Coming later* — which is the intended
+behaviour. Recorded rather than quietly re-run, because a local environment
+answering a production question is exactly the shape of a false green.
+
+### C1: CLOSED
+
+Scope A is deployed and verified. C2 and C3 are satisfied by what shipped and
+were not extended beyond it: the catalog still holds all 12 providers, and
+`connected_no_data` raises nothing.
+
+**Production baseline: `4376b8d`.**
