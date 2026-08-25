@@ -55,6 +55,7 @@ async function main() {
   const { prismaSystem } = await import("@/lib/prisma");
   const { INSIGHT_ENGINE_CONSUMER } = await import("@/lib/intelligence/insights");
   const { EXECUTION_ACTIONS } = await import("@/lib/execution/actions");
+  const { STAFF_POLICY_TOPIC } = await import("@/lib/businessModel/staffPolicyGap");
 
   console.log("=".repeat(66));
   console.log("1. IS THE ENGINE RUNNING?");
@@ -164,6 +165,105 @@ async function main() {
     console.log("\n  Every order is excluded. planNetOfPostage returns null for this store set,");
     console.log("  which is the honest answer and not a defect — but it means the");
     console.log("  net-of-postage read has never had real production input.");
+  }
+
+  console.log("\n" + "=".repeat(66));
+  console.log("4. EACH STAGE, INDEPENDENTLY, ON FIRST-PARTY DATA");
+  console.log("=".repeat(66));
+
+  // ONE STAGE AT A TIME, by the durable thing each one writes. A cycle summary
+  // says the pass completed; it does not say which stages had anything to do.
+  // These are the six stages' own footprints in production.
+  const [observations, beliefs, deliveries, staffAsks, insightOutputs] = await Promise.all([
+    prismaSystem.genesisObservation.groupBy({ by: ["status"], _count: { _all: true } }),
+    prismaSystem.belief.groupBy({ by: ["storeId"], _count: { _all: true } }),
+    prismaSystem.proactiveDelivery.count(),
+    // MEASURED WHERE IT IS ACTUALLY WRITTEN. This first counted CognitiveOutput
+    // rows with a "staff_policy" topicKey and reported a confident zero.
+    // proposeStaffPolicyGap does not write a CognitiveOutput at all — it upserts
+    // a GenesisObservation keyed on STAFF_POLICY_TOPIC. A zero from the wrong
+    // table is worse than no number: it reads as "this stage has never fired".
+    prismaSystem.genesisObservation.groupBy({
+      by: ["status"],
+      where: { dedupeKey: STAFF_POLICY_TOPIC },
+      _count: { _all: true },
+    }),
+    prismaSystem.cognitiveOutput.groupBy({ by: ["kind"], _count: { _all: true } }),
+  ]);
+
+  console.log("\ninsights   — cognitive outputs by kind:");
+  for (const k of insightOutputs.sort((a, b) => b._count._all - a._count._all)) {
+    console.log(`             ${String(k.kind).padEnd(18)} ${k._count._all}`);
+  }
+  console.log("\nnotify     — genesis observations by status:");
+  for (const o of observations) console.log(`             ${String(o.status).padEnd(18)} ${o._count._all}`);
+  console.log(`\nlearn      — stores with beliefs: ${beliefs.length}`);
+  for (const b of beliefs.slice(0, 10)) {
+    console.log(`             ${name.get(b.storeId) ?? b.storeId}  ${b._count._all} belief(s)`);
+  }
+  console.log(`\nai_review  — see section 2`);
+  const staffTotal = staffAsks.reduce((n, r) => n + r._count._all, 0);
+  console.log(`staff_ask  — "${STAFF_POLICY_TOPIC}" observations: ${staffTotal}`);
+  for (const r of staffAsks) console.log(`             ${String(r.status).padEnd(18)} ${r._count._all}`);
+  console.log(`speak      — proactive deliveries (J4 said it unprompted): ${deliveries}`);
+
+  console.log("\n" + "=".repeat(66));
+  console.log("5. DID A PROVIDER FAILURE EVER COST AN INSIGHT?");
+  console.log("=".repeat(66));
+
+  // THE PROPERTY THAT MATTERS MOST. A failed AI review must not resolve, empty
+  // or replace findings that are still true. `resolvedAt` is the only way a
+  // standing observation stops being shown, so if a provider failure had that
+  // effect it would appear as observations resolving at the failure's minute.
+  const failures = reviews.filter((r) => r.status === "FAILED");
+  if (failures.length === 0) {
+    console.log("\nNo FAILED review in the window read. Nothing to correlate.");
+  }
+  for (const f of failures.slice(0, 5)) {
+    const from = new Date(f.createdAt.getTime() - 5 * 60 * 1000);
+    const to = new Date(f.createdAt.getTime() + 5 * 60 * 1000);
+    const [resolvedThen, activeNow, spokenThen] = await Promise.all([
+      prismaSystem.genesisObservation.count({
+        where: { storeId: f.storeId ?? undefined, resolvedAt: { gte: from, lte: to } },
+      }),
+      prismaSystem.genesisObservation.count({
+        where: { storeId: f.storeId ?? undefined, status: "ACTIVE" },
+      }),
+      prismaSystem.proactiveDelivery.count({
+        where: { storeId: f.storeId ?? undefined, spokenAt: { gte: from, lte: to } },
+      }),
+    ]);
+    console.log(`\n${f.createdAt.toISOString()}  ${name.get(f.storeId ?? "") ?? f.storeId}`);
+    console.log(`  observations resolved within ±5 min of the failure: ${resolvedThen}`);
+    console.log(`  observations still ACTIVE for that store today:     ${activeNow}`);
+    console.log(`  proactive deliveries in that window:                ${spokenThen}`);
+    console.log(resolvedThen === 0
+      ? "  -> nothing was retracted by the failure."
+      : "  -> INVESTIGATE: findings resolved at the moment a provider call failed.");
+  }
+
+  console.log("\n" + "=".repeat(66));
+  console.log("6. CONNECTORS, EXACTLY AS FOUND");
+  console.log("=".repeat(66));
+
+  // RECORDED, NOT ACTED ON. The connector catalog is deliberately not expanded
+  // by this milestone; this is the observed state so that "the engine runs on
+  // first-party data" is a measurement rather than an assumption.
+  const connections = await prismaSystem.storeIntegration.findMany({
+    select: {
+      storeId: true, provider: true, status: true, lastSyncedAt: true,
+      nextSyncDueAt: true, syncFailureCount: true, lastError: true,
+    },
+    orderBy: { provider: "asc" },
+  });
+  console.log(`\nStoreIntegration rows: ${connections.length}`);
+  for (const c of connections) {
+    console.log(`  ${String(c.provider).padEnd(18)} ${String(c.status).padEnd(14)} ${name.get(c.storeId) ?? c.storeId}`);
+    console.log(`    last synced ${c.lastSyncedAt?.toISOString() ?? "never"}  failures ${c.syncFailureCount}`);
+    if (c.lastError) console.log(`    lastError: ${c.lastError.slice(0, 160)}`);
+  }
+  if (connections.length === 0) {
+    console.log("  none — every store's intelligence runs entirely on first-party data.");
   }
 
   console.log("\n" + "=".repeat(66));

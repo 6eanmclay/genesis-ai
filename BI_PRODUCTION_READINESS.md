@@ -304,3 +304,117 @@ Everything in `BI_ENGINE.md` §15 that this milestone did not touch stays open a
 is not rescheduled by having been listed here. In particular: no production
 backfill has been run, and the Printful live-API check remains externally
 blocked.
+
+
+---
+
+## 10. Production verification — 2026-08-24, read-only
+
+Run against the production database via `.env.livecheck`. **Nothing was written.**
+Sections 4–6 were added to the check during this run to answer the per-stage,
+provider-correlation and connector questions.
+
+### Two claims in this document were wrong, and are corrected here
+
+**§2 said the cycle throws at the AI review "on every daily cron since".** It does
+not. Production shows **99 SUCCESS, 1 FAILED** across ~100 review attempts, and
+the single failure was **2026-08-19**, five days ago, with an Anthropic billing
+error. The exhausted credit recorded in `NEXT_AFTER_D4.md` was *this machine's*
+key during local live runs, not production's. The defect §2 describes is real and
+was really reachable — it cost that one store its `staff_policy_gap` and `speak`
+stages on 2026-08-19 — but it is one occurrence, not a daily outage.
+
+**§6 said "no connector can reliably feed the engine in production today".** Too
+strong. Mailchimp, Printful (×2), PayPal (×2) and one Stripe connection all
+synced successfully at 06:36 on 2026-08-24, `syncFailureCount: 0`. Mailchimp is
+exactly the case COMPLIANCE.md flagged — an existing key-based connection,
+unaffected by the missing OAuth client credentials.
+
+### Is the engine running? Yes.
+
+| | |
+|---|---|
+| stores | 16 |
+| stores with business events | 5 |
+| stores with an Insight Engine cursor | 12 |
+| stores with events but **no cursor** (never processed) | **0** |
+| stores with **unconsumed events** (lag > 0) | **0** |
+| stores with cognitive output | 13 |
+
+Six stores produced output between 06:36 and 06:40 on 2026-08-24 — the daily
+cron at `0 6 * * *`, running and current. Nothing is behind.
+
+### Each stage, on first-party data
+
+| Stage | Production evidence | Verdict |
+|---|---|---|
+| `insights` | 214 `insight` outputs (+301 recommendation, 254 opportunity, 94 explanation, 23 briefing) | working |
+| `notify` | 279 observations — 131 ACTIVE, 148 RESOLVED | working |
+| `learn` | **1 belief, on 1 store** | running, producing almost nothing |
+| `ai_review` | 99 SUCCESS / 1 FAILED / 100 PENDING claim rows | working |
+| `staff_policy_gap` | **0** `document_gap:staff_policy` observations | runs, has never fired |
+| `speak` | 8 proactive deliveries | working |
+
+`learn` at 1 belief is **BI_ENGINE.md's own Defect 2, confirmed in production**:
+all three detectors filter on `topicKey: { not: null }` and chat-originated
+proposals leave it null. Deferred to M2, not a new finding.
+
+`staff_policy_gap` at 0 was first measured as 0 **from the wrong table** — the
+check counted `CognitiveOutput` rows with a `staff_policy` topicKey, and
+`proposeStaffPolicyGap` writes a `GenesisObservation` keyed on
+`STAFF_POLICY_TOPIC`. A confident zero from the wrong table reads as "this stage
+has never fired" when it might mean nothing of the kind. Re-measured where it is
+actually written: still 0, now honestly.
+
+### The two safety properties
+
+**An AI-review failure did not cost an insight.** Correlated against the real
+2026-08-19 failure on Cofoundr:
+
+- observations resolved within ±5 min of the failure: **0**
+- observations still ACTIVE for that store today: **5**
+- proactive deliveries in that window: **0**
+
+The code reason it is safe, in the deployed version and the new one alike:
+`runCognitiveReview` throws *before* `resolveMissingObservations` is reached, so
+a provider failure resolves nothing rather than resolving everything.
+
+**The notification path does not retract standing findings when insights fails
+— and did not before this milestone either.** In the deployed code
+`notifyFromInsights` is simply never reached when `computeInsights` throws. The
+new code had to take explicit care here precisely *because* isolating the stages
+could have introduced this risk: it records `notify` as failed rather than
+calling it with `[]`. **This milestone avoided introducing a retraction bug; it
+did not fix an existing one.** Stated plainly because the opposite would be a
+flattering misreading of the same diff.
+
+### Connectors, exactly as found — 17 rows, recorded not acted on
+
+| Provider | State |
+|---|---|
+| STRIPE | 1 CONNECTED (synced 08-24) · **6 FAILED** — test-account/live-key mismatches, leftovers of the live cutover |
+| PAYPAL | 2 CONNECTED, synced 08-24 |
+| PRINTFUL | 2 CONNECTED, synced 08-24 |
+| MAILCHIMP | 1 CONNECTED, synced 08-24, 0 failures |
+| GOOGLE_CALENDAR | 1 "CONNECTED", **11 failures, last synced 2026-08-06** |
+| QUICKBOOKS | 1 "CONNECTED", **14 failures, last synced 2026-08-01** |
+| FACEBOOK / INSTAGRAM / TIKTOK | **no rows at all** |
+
+Two observations that are not connector work and are recorded for the
+integration-readiness follow-up:
+
+- **`status` does not reflect reality.** QuickBooks and Google Calendar both read
+  `CONNECTED` while neither has synced in 18–23 days. COMPLIANCE.md's account of
+  both — a retired QuickBooks refresh token, Google's 7-day expiry on an
+  unpublished consent screen — matches the dates exactly.
+- **The six FAILED Stripe rows carry `syncFailureCount: 0`.** A row can be FAILED
+  with a zero failure count, so the counter is not what marks it.
+
+### The two open questions from BI_ENGINE.md §15, now answered
+
+- **`Order.status` values that actually occur: `paid` only** (5 of 5). Every other
+  branch of the obligations bucketing is unexercised in production.
+- **Orders carrying `shippingCostInCents`: 0 of 5.** All five are excluded from
+  net-of-postage, so `planNetOfPostage` returns `null` for the entire production
+  store set. That is the honest answer the code was built to give — and it means
+  the margin arithmetic has never had real production input.
