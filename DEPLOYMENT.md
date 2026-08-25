@@ -65,7 +65,33 @@ is on `COMPLIANCE.md`'s decision list rather than being quietly changed back.
 
 ---
 
-## Schema migrations — now a deliberate, separate step
+## Schema migrations — the section below describes a gate that is not there
+
+> **STALE, AND CONFIRMED STALE BY A PRODUCTION BUILD LOG (2026-08-25).**
+>
+> Everything from here to the end of this section describes the state after the
+> gate was added on 2026-08-01. The gate was reversed on 2026-08-13 and this
+> section was never updated, which is exactly the drift §"Correction — the gate
+> is not there" above already records.
+>
+> The deploy of `892f67b` on 2026-08-25 settles it with direct evidence rather
+> than inference. From the Vercel build log:
+>
+> ```
+> > node scripts/migrate-deploy.mjs && next build
+> migrate: using DATABASE_URL_UNPOOLED (direct connection)
+> 91 migrations found in prisma/migrations
+> No pending migrations to apply.
+> ```
+>
+> **`package.json`'s build script DOES run migrations, on every push to
+> `master`.** That deploy happened to carry none, which is why it was safe; a
+> deploy that carries one will apply it to production with no review step.
+>
+> The text below is kept rather than deleted because the *safe order* it
+> describes is still the right procedure — it is the opening claim that is
+> false. Whether to reinstate the gate remains Sean's decision and is on
+> `COMPLIANCE.md`'s list.
 
 `package.json`'s `build` script no longer runs `prisma migrate deploy`. It used to — every build, on every push to `master`, silently applied any pending migration to the **production** database with no review step. That's what changed, and why:
 

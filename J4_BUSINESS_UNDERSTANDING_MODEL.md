@@ -485,3 +485,20 @@ database" and then listed eight suites that call a live Anthropic model — whil
 the same report's lane 4 says those "must never run unasked". Following the plan
 therefore spent credit. `--plan` now holds those eight back, names them rather
 than dropping them silently, and takes `--with-live` for somebody who means it.
+
+
+---
+
+## 9. The promotion, run — 2026-08-25
+
+The residual migration risk §8 recorded is closed. `promote-brand-claims.ts`
+was dry-run against production, matched the expected 12 stores × 4 facts
+exactly, and was applied: **48 facts written, all INFERENCE /
+promoted_from_blueprint, none attributed to a person, blueprint untouched.**
+
+J4 now knows who those twelve businesses are for. It knows it as an inference it
+made, not as something an owner said — which is the distinction this milestone
+existed to draw. When an owner states their audience, that supersedes the
+inference through the ordinary lifecycle, with history preserved.
+
+Full read-back evidence in `PRE_CONNECTIONS_CHECKLIST.md` §6.

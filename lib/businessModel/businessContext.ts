@@ -150,9 +150,20 @@ export function businessContextOf(
         goal: b.goal,
         blockedBy: b.blockedBy.map((x) => x.challenge),
       })),
+      // THIS WAS ALWAYS FALSE (fixed 2026-08-25).
+      //
+      // It read `Boolean(s.syncedAgoLabel && s.lastSyncedAt === null)`.
+      // describeSyncAge returns a label ONLY when lastSyncedAt is non-null, so
+      // the two halves are mutually exclusive and no connector could ever be
+      // reported stale through this seam — J4 would describe a connection that
+      // had not synced in three weeks as though its data were current.
+      //
+      // The profile already computes the real answer, against the scheduler's
+      // own cadence, and digest.ts has been using it correctly all along. Same
+      // field, same meaning, one source.
       connectedSystems: p.connectedSystems.map((s) => ({
         name: s.displayName,
-        stale: Boolean(s.syncedAgoLabel && s.lastSyncedAt === null),
+        stale: s.isStale,
       })),
       // Overdue first, then upcoming — the horizon already ordered them by what
       // needs attention, and flattening preserves that rather than re-sorting.

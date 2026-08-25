@@ -1,3 +1,6 @@
+import { existsSync } from "fs";
+import * as dotenv from "dotenv";
+
 // ONE-TIME PROMOTION: brandIdentity's four claims → business facts.
 //
 //   npx tsx scripts/promote-brand-claims.ts            report only, writes nothing
@@ -37,6 +40,29 @@
 //     skipped, so re-running is safe and cannot clobber an owner's own words
 //   - blank values are skipped rather than written as empty facts
 //   - the blueprint is NOT modified; the old values stay where they are
+
+// AN ENV FILE, NOT AN INLINE CONNECTION STRING (2026-08-25).
+//
+// This script is meant to be pointed at PRODUCTION, and without this it silently
+// used the ambient .env — i.e. the dev database — while looking like it had run.
+// Same argument and the same reasoning as check-stripe-live-readiness.ts: naming
+// a file keeps a live connection string out of shell history, and out of a
+// terminal that treats `&` in a Postgres URL as an operator.
+//
+//   npx tsx scripts/promote-brand-claims.ts prod.env
+//   npx tsx scripts/promote-brand-claims.ts prod.env --apply
+const envFile = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : null;
+if (envFile) {
+  if (!existsSync(envFile)) {
+    console.error(`No such env file: ${envFile}`);
+    process.exit(1);
+  }
+  dotenv.config({ path: envFile, override: true });
+  console.log(`Loaded environment from: ${envFile}`);
+} else {
+  dotenv.config();
+  console.log("No env file named — using the ambient environment (probably dev).");
+}
 
 const APPLY = process.argv.includes("--apply");
 const ONE_STORE = (() => {

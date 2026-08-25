@@ -102,18 +102,60 @@ export async function getStaleExecutions(storeId: string): Promise<AttentionItem
     }));
 }
 
+/**
+ * A connection that has stopped working, whether or not anything re-verified it.
+ *
+ * `status` is the result of the last VERIFICATION — a point-in-time check of the
+ * credential — and nothing re-runs it on a schedule. `syncFailureCount` is the
+ * scheduler's own consecutive-failure counter, and it is the signal that keeps
+ * moving. The two are different questions, and reading only the first is how a
+ * dead connection presents as healthy.
+ *
+ * Found in production 2026-08-25: QuickBooks read CONNECTED with **14
+ * consecutive sync failures, last synced 2026-08-01**, and Google Calendar read
+ * CONNECTED with **11 failures, last synced 2026-08-06**. Both had been dead for
+ * weeks. Neither raised anything, so neither owner was ever told to reconnect —
+ * and reconnecting is the only thing that fixes either, because only the account
+ * holder can re-authorize.
+ */
+const CONSECUTIVE_FAILURES_BEFORE_ASKING = 3;
+
 export async function getIntegrationIssues(storeId: string): Promise<AttentionItem[]> {
   const rows = await prisma.storeIntegration.findMany({
-    where: { storeId, status: { in: ["NEEDS_ATTENTION", "FAILED"] } },
+    where: {
+      storeId,
+      OR: [
+        { status: { in: ["NEEDS_ATTENTION", "FAILED"] } },
+        // NOT "any failure". A single failed sync is ordinary — the scheduler
+        // backs off and retries, and telling an owner about it would be noise
+        // on something that fixes itself. Three consecutive failures is a
+        // connection that is not coming back on its own.
+        { syncFailureCount: { gte: CONSECUTIVE_FAILURES_BEFORE_ASKING } },
+      ],
+    },
   });
-  return rows.map((row) => ({
-    id: row.id,
-    kind: "integration-issue" as const,
-    severity: row.status === "FAILED" ? ("FAILED" as const) : ("WARNING" as const),
-    message: row.lastError ?? `${row.provider} needs attention`,
-    occurredAt: row.lastVerifiedAt,
-    actionHref: "/dashboard/payments",
-  }));
+  return rows.map((row) => {
+    const verificationFailed = row.status === "FAILED" || row.status === "NEEDS_ATTENTION";
+    // WHAT THE OWNER CAN ACT ON, in their own terms. `lastError` is the
+    // provider's sentence and is genuinely useful when verification failed; a
+    // stale connection has no such error, because nothing failed to verify —
+    // it simply stopped syncing, and saying so plainly is the honest message.
+    const message = verificationFailed
+      ? (row.lastError ?? `${row.provider} needs attention`)
+      : row.lastSyncedAt
+        ? `${row.provider} has not synced since ${row.lastSyncedAt.toLocaleDateString()} — ${row.syncFailureCount} attempts have failed. It needs reconnecting.`
+        : `${row.provider} has never synced — ${row.syncFailureCount} attempts have failed. It needs reconnecting.`;
+    return {
+      id: row.id,
+      kind: "integration-issue" as const,
+      severity: row.status === "FAILED" ? ("FAILED" as const) : ("WARNING" as const),
+      message,
+      // A stale connection has no meaningful lastVerifiedAt — nothing verified
+      // it. The last time it actually worked is the honest timestamp.
+      occurredAt: verificationFailed ? row.lastVerifiedAt : (row.lastSyncedAt ?? row.lastVerifiedAt),
+      actionHref: "/dashboard/payments",
+    };
+  });
 }
 
 // The one definition of "does this store have a working payment method" —

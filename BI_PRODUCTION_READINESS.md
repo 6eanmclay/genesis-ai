@@ -410,6 +410,15 @@ integration-readiness follow-up:
 - **The six FAILED Stripe rows carry `syncFailureCount: 0`.** A row can be FAILED
   with a zero failure count, so the counter is not what marks it.
 
+  **Corrected 2026-08-25: this is not an inconsistency, it is two fields
+  answering two questions.** `status` is the result of the last *verification* —
+  a point-in-time credential check, written by each connector's own
+  verify/status path. `syncFailureCount` is the *scheduler's* consecutive-failure
+  counter, used for backoff and reset to 0 on any successful sync
+  (`lib/intelligence/scheduler.ts`). A connection can therefore fail
+  verification while its last sync succeeded. Framing it as suspicious was
+  wrong; the real defect was elsewhere, and worse — see below.
+
 ### The two open questions from BI_ENGINE.md §15, now answered
 
 - **`Order.status` values that actually occur: `paid` only** (5 of 5). Every other
