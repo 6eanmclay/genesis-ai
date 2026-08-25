@@ -436,3 +436,65 @@ One gate of mine was green for the wrong reason and was fixed: checking the
 whole file for `connectIntegration.bind` passed with the Reconnect action swapped
 out, because the not-connected branch has a Connect button using the same call.
 The claim is about that button, so the assertion is now scoped to its block.
+
+
+---
+
+## 11. R1 verified, and the sweep that followed — 2026-08-25
+
+**R1 deployed: `8057684`.** 91 migrations found, none pending, compiled clean.
+
+### R1 in production
+
+| Check | Result |
+|---|---|
+| Reconnect offered only for `needs_reconnection` / `failed` | **PASS** — 8 production connections qualify |
+| Healthy and `connected_no_data` show none | **PASS** — 9 correctly show none |
+| Reuses the existing OAuth flow | **PASS** — `connectIntegration`, scoped to the Reconnect block |
+| Disconnect retained | **PASS** |
+| Routes to where each provider is managed | **PASS** — `STRIPE → /dashboard/payments`, `GOOGLE_CALENDAR` and `QUICKBOOKS → /dashboard/connections` |
+
+### One alarm of mine that was wrong
+
+I flagged `/dashboard/payments` as carrying C1's old pattern —
+`status !== "DISCONNECTED"` — and expected the six FAILED Stripe connections to
+render as "✓ Connected" there. **They do not.** That page already routes its
+badge through `paymentBadgeFor`, which returns *"Not working"* for FAILED, and it
+already has a Reconnect button and the line *"This store can't take payments
+through Stripe right now. Reconnect to fix it."* The loose variable only chooses
+between the Connect button and the manage cluster, and a broken connection
+correctly lands in the cluster that contains Reconnect.
+
+The Payments screen was right before I looked at it. Recorded because I nearly
+"fixed" something correct.
+
+### The sweep, and the one real find
+
+Every remaining place deciding connection state was checked. All strict and
+correct — `hasWorkingPaymentMethod`, `gaps.ts`, onboarding launch, the storefront
+action — except one:
+
+**`OrdersWorkspace.tsx` rendered a FAILED EasyPost connection as "✓ Connected"
+and let it buy shipping labels.** `canBuyLabel` was gated on
+`status !== "DISCONNECTED"`, so a store whose credentials had stopped verifying
+was still offered **Buy label**, and the purchase would fail at the provider.
+That is the worst of the three locations, because it gates an action that spends
+money.
+
+Now: `uspsWorking` is strict — only a verified-working connection can buy a
+label, exactly as `hasWorkingPaymentMethod` is strict about taking money. Broken
+is its own state showing *"Not working"* and a line saying labels cannot be
+bought until the key is replaced, with the API-key form still on screen —
+pasting a current key **is** how an `api_key` connector reconnects, and hiding it
+would leave an owner told what is wrong with no way to fix it.
+
+No production store has an EasyPost connection today, so there is no live
+impact — the defect was real and is closed before it could bite.
+
+`connectionHealth` untouched throughout.
+
+### Gates
+
+`tsc` clean · `next build` compiled · eslint **70 — baseline** · shared runner
+**42/42** · standalone **66/68** · `verify-connection-truthfulness.ts` — **57
+assertions, 18 negative controls**.

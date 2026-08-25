@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { isBrokenConnection } from "@/lib/integrations/paymentBadge";
 import type { Store, StoreRole } from "@prisma/client";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
 import { buildCommerceLead } from "@/lib/dashboard/commerceLead";
@@ -136,9 +137,24 @@ export async function OrdersWorkspace({
   }));
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
-  const uspsConnected = uspsIntegration && uspsIntegration.status !== "DISCONNECTED";
+  // WORKING, NOT MERELY PRESENT (2026-08-25, Connections).
+  //
+  // This read `status !== "DISCONNECTED"`, which is the same test the
+  // Connections screen carried until C1 removed it: a FAILED connection counted
+  // as connected. Here that was worse than a wrong badge — `canBuyLabel` gates
+  // an action that SPENDS MONEY, so a store whose EasyPost credentials had
+  // stopped verifying was still offered "Buy label", and the purchase would
+  // fail at the provider.
+  //
+  // Strict for the capability, exactly as hasWorkingPaymentMethod already is
+  // for "can this store take money": only a verified-working connection counts.
+  const uspsWorking = uspsIntegration?.status === "CONNECTED";
+  // And broken is its own state, not folded into "not connected" — an owner
+  // whose key stopped working needs to be told that, not shown a blank setup
+  // form as though they had never connected at all.
+  const uspsBroken = isBrokenConnection(uspsIntegration?.status);
   const returnAddress = store.returnAddress as unknown as StoreReturnAddress | null;
-  const canBuyLabel = Boolean(uspsConnected && returnAddress);
+  const canBuyLabel = Boolean(uspsWorking && returnAddress);
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
@@ -169,9 +185,13 @@ export async function OrdersWorkspace({
         <div className="mt-8 max-w-md rounded-xl border border-black/[.08] p-4 dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-medium text-black dark:text-zinc-50">USPS Shipping</p>
-            {uspsConnected ? (
+            {uspsWorking ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
                 ✓ Connected
+              </span>
+            ) : uspsBroken ? (
+              <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                Not working
               </span>
             ) : (
               <span className="inline-flex items-center rounded-full bg-black/[.04] px-2.5 py-0.5 text-xs font-medium text-zinc-500 dark:bg-white/[.06] dark:text-zinc-400">
@@ -188,8 +208,17 @@ export async function OrdersWorkspace({
           {integrationConnected === "usps" && (
             <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">USPS connected.</p>
           )}
+          {uspsBroken && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+              This store can&apos;t buy shipping labels right now — EasyPost stopped accepting these
+              credentials. Paste a current API key below to fix it.
+            </p>
+          )}
 
-          {!uspsConnected ? (
+          {/* The form shows for a broken connection too: pasting a current key
+              IS how an api_key connector reconnects, and hiding it would leave
+              an owner told what is wrong with no way to fix it. */}
+          {!uspsWorking ? (
             <form action={submitUspsCredentials.bind(null, slug)} className="mt-3 flex flex-col gap-2">
               <p className="text-xs text-zinc-500">
                 Create a free account at easypost.com — it&apos;s the real service behind USPS label purchases

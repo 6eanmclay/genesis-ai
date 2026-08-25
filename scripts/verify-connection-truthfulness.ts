@@ -278,6 +278,27 @@ async function main() {
   // it caught this line when it was written without one.
   await prisma.storeIntegration.delete({ where: { id: qb.id, storeId: store.id } });
 
+  // ========================================================================
+  console.log("\n=== 9. A broken shipping connection cannot buy a label ===\n");
+  // ========================================================================
+  // Third place carrying the pattern C1 removed, and the worst of the three:
+  // canBuyLabel gates an action that SPENDS MONEY, so a store whose EasyPost
+  // credentials had stopped verifying was still offered "Buy label".
+  const orders = codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "orders", "OrdersWorkspace.tsx"), "utf8"));
+  assert("buying a label requires a verified-working connection",
+    /uspsWorking = uspsIntegration\?\.status === "CONNECTED"/.test(orders),
+    "it read status !== DISCONNECTED, so a FAILED connection could buy labels");
+  assert("CONTROL: the loose test is gone",
+    !/uspsIntegration\.status !== "DISCONNECTED"/.test(orders));
+  assert("canBuyLabel is gated on it",
+    /canBuyLabel = Boolean\(uspsWorking/.test(orders));
+  assert("broken is its own state, not folded into not-connected",
+    /uspsBroken = isBrokenConnection/.test(orders) && /Not working/.test(orders),
+    "an owner whose key stopped working needs telling, not a blank setup form");
+  assert("and the way to fix it stays on screen",
+    /!uspsWorking \? \(/.test(orders),
+    "pasting a current key IS how an api_key connector reconnects");
+
   const card = codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "ConnectorCard.tsx"), "utf8"));
   assert("the card no longer treats any non-disconnected status as connected",
     !/integrationStatus\s*&&\s*integrationStatus\s*!==\s*"DISCONNECTED"/.test(card),
