@@ -502,3 +502,77 @@ a short-retention log line, and production can answer whether the engine ran.
    here.
 6. **The identity milestone is undeployed** and needs `promote-brand-claims.ts
    --apply` to ship without twelve stores losing their identity values.
+
+
+---
+
+## 12. The first cron run under the deployed code — 2026-08-25
+
+**The cron ran at 06:03 UTC**, 4h29m after the deploy completed at 01:34 UTC. So
+this is the first execution of `892f67b`'s stage-isolated cycle. Read-only
+evidence, nothing written.
+
+### It completed
+
+| | Pre-deploy (08-24) | After the 06:03 run | Δ |
+|---|---|---|---|
+| `insight` cognitive outputs | 214 | 222 | **+8** |
+| proactive deliveries (J4 spoke) | 8 | 16 | **+8** |
+| observations ACTIVE / RESOLVED | 131 / 148 | 131 / 148 | **unchanged** |
+| beliefs | 1 | 1 | 0 |
+| `document_gap:staff_policy` observations | 0 | 0 | 0 |
+| stores with unconsumed events | 0 | 0 | 0 |
+
+Seven stores produced output between 06:03:13 and 06:03:14. Five of those have
+business events of their own; the rest were reached through the connector path,
+whose syncs (Mailchimp, Printful ×2, PayPal ×2, Stripe) succeeded in the same
+pass.
+
+### Nothing was retracted
+
+The property the milestone most needed to hold, measured directly across the run
+window:
+
+- observations **newly first-noticed** 06:00–06:15: **0**
+- observations **resolved** 06:00–06:15: **0**
+- ACTIVE / RESOLVED after the run: **131 / 148**, identical to before
+
+No standing finding was withdrawn, and none was replaced with an empty result.
+
+### `speak` ran — the stage the old code would have skipped on a provider failure
+
+J4 spoke 8 findings in this pass. Deliveries by day: **8 on 08-24, 8 on 08-25**.
+That is a steady rate, not a jump — yesterday's 8 were produced by the *old*
+code. **This milestone did not unblock J4 speaking, and the numbers do not
+support claiming it did.**
+
+### The AI review did not run at all, and that is correct
+
+**0 AI reviews since the deploy** — no SUCCESS, no PENDING, no FAILED. The stage
+is gated on its own 24-hour staleness check, and the run landed 23h23m after the
+previous one, so it returned early for every store. No provider call, no spend,
+no failure. `STALE_REVIEW_MS` behaving exactly as written.
+
+### What this run therefore does and does not prove
+
+**Proves:** the deployed stage-isolated cycle executes end to end in production,
+produces insights, speaks findings, and retracts nothing.
+
+**Does not prove:** the isolation itself. **No stage failed in this run**, so the
+path where one stage's failure is contained and the stages behind it still run
+was never entered. That behaviour is proved by
+`verify-bi-production-readiness.ts` — 30 assertions with 8 negative controls,
+including the exact case of a throwing `ai_review` followed by `staff_policy_gap`
+and `speak` still executing — but it has not yet been observed in production, and
+will not be until a stage actually fails there.
+
+Stated plainly rather than folded into the success: a clean run is evidence the
+cycle works, not evidence that the failure handling works.
+
+### BI verification follow-up: CLOSED
+
+The remaining follow-up was "confirm the production cron is executing the
+deployed stage-isolation implementation". It is: commit `892f67b`, run at
+06:03 UTC on 2026-08-25, completed, nothing retracted.
+
+The other follow-ups in §11 are unchanged and stay open.
