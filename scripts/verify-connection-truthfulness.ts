@@ -160,12 +160,18 @@ async function main() {
     where: { id: conn.id, storeId: store.id },
     data: { syncFailureCount: 14, lastSyncedAt: daysAgo(24) },
   });
+  // OPTIONAL-CHAINED THROUGHOUT BELOW, deliberately. A negative control broke
+  // the FAILED branch and the suite CRASHED here on `failedItem[0].severity`
+  // rather than failing — which hid every assertion after it, including the
+  // ones that would have named the regression. A suite that stops early looks
+  // the same as one that had nothing more to say.
   const raised = await getIntegrationIssues(store.id);
   eq("a connection dead for weeks is raised", raised.length, 1);
   assert("saying what stopped and what to do",
-    raised[0].message.includes("has not synced since") && raised[0].message.includes("needs reconnecting"),
-    raised[0].message);
-  eq("as a warning, since nothing verified it as failed", raised[0].severity, "WARNING");
+    Boolean(raised[0]?.message.includes("has not synced since")) &&
+      Boolean(raised[0]?.message.includes("needs reconnecting")),
+    raised[0]?.message ?? "(nothing was raised)");
+  eq("as a warning, since nothing verified it as failed", raised[0]?.severity, "WARNING");
 
   // A verification failure keeps the provider's sentence, unprefixed.
   await prisma.storeIntegration.update({
@@ -175,9 +181,9 @@ async function main() {
   });
   const failedItem = await getIntegrationIssues(store.id);
   eq("a failed verification is raised", failedItem.length, 1);
-  eq("at FAILED severity", failedItem[0].severity, "FAILED");
+  eq("at FAILED severity", failedItem[0]?.severity, "FAILED");
   eq("carrying only the provider's own message",
-    failedItem[0].message, "Stripe account retrieval failed: the account was a test account");
+    failedItem[0]?.message, "Stripe account retrieval failed: the account was a test account");
 
   // Having produced data does not excuse a broken connection.
   await prisma.businessRecord.create({
@@ -277,6 +283,78 @@ async function main() {
   // Store-scoped: the tenant-isolation guard requires it on every delete, and
   // it caught this line when it was written without one.
   await prisma.storeIntegration.delete({ where: { id: qb.id, storeId: store.id } });
+
+  // ========================================================================
+  console.log("\n=== R2 — a rail is not a data source that has gone quiet ===\n");
+  // ========================================================================
+  // Stripe, Printful and PayPal deliberately implement no sync(). stripe.ts
+  // says so outright: "the absence of `sync` here is the answer". Telling
+  // their owner that nothing has arrived "yet" describes a wait that does not
+  // exist, and seven production connections were being told exactly that.
+  const rail = connectionHealthOf({ available: true, row: row(), recordsProduced: 0, syncs: false });
+  eq("a connector with no sync() is simply connected", rail.state, "connected");
+  assert("and never claims to be syncing",
+    !(rail.detail ?? "").includes("syncing"),
+    rail.detail ?? "");
+  assert("nor that data has not arrived yet",
+    !(rail.detail ?? "").includes("yet"),
+    "there is no yet — it will never send business data");
+  assert("it says what is actually true instead",
+    (rail.detail ?? "").includes("does not send business data"),
+    rail.detail ?? "");
+  assert("and invents no count",
+    !/\d/.test(rail.detail ?? ""),
+    rail.detail ?? "");
+  eq("still raises nothing", rail.raisesAttention, false);
+
+  // THE OTHER HALF, UNCHANGED. A connector that DOES sync and has returned
+  // nothing is still connected_no_data — that is Mailchimp, and it is the
+  // one production connection the state was ever true of.
+  const quiet = connectionHealthOf({ available: true, row: row(), recordsProduced: 0, syncs: true });
+  eq("a data source that has returned nothing is still connected_no_data",
+    quiet.state, "connected_no_data");
+  eq("with C1's own words", quiet.detail,
+    "Connected and syncing. This provider has not returned any business data yet.");
+  eq("and still raises nothing", quiet.raisesAttention, false);
+
+  // DEFAULTS TO A DATA SOURCE, so every pre-R2 call site means what it meant.
+  eq("omitting syncs behaves exactly as before R2",
+    connectionHealthOf({ available: true, row: row(), recordsProduced: 0 }).state,
+    "connected_no_data");
+
+  // C1 PRECEDENCE IS UNTOUCHED: a rail that is broken is still broken.
+  eq("a rail with a failed verification is still failed",
+    connectionHealthOf({ available: true, row: row({ status: "FAILED", lastError: "x" }), recordsProduced: 0, syncs: false }).state,
+    "failed");
+  eq("and a rail that stopped syncing is still needs_reconnection",
+    connectionHealthOf({ available: true, row: row({ syncFailureCount: 9 }), recordsProduced: 0, syncs: false }).state,
+    "needs_reconnection");
+
+  // SYNCS IS DELIBERATELY NOT PASSED BY THE ATTENTION PATH.
+  //
+  // A negative control proved it could not matter there: removing it changed
+  // nothing, because getIntegrationIssues drops every non-raising state before
+  // it reads a message, and both `connected` and `connected_no_data` are
+  // silent. Passing it would have been a parameter that could never affect an
+  // outcome — dead weight that reads as if it did something.
+  eq("neither connected state raises, so the attention path cannot depend on syncs",
+    [
+      connectionHealthOf({ available: true, row: row(), recordsProduced: 0, syncs: false }).raisesAttention,
+      connectionHealthOf({ available: true, row: row(), recordsProduced: 0, syncs: true }).raisesAttention,
+    ],
+    [false, false]);
+  assert("and it does not pass it",
+    !/syncs:/.test(codeOnly(readFileSync(join(process.cwd(), "lib", "dashboard", "needsAttention.ts"), "utf8"))),
+    "a parameter that cannot change an outcome should not be there");
+
+  // The callers ask the connector rather than keeping a list of their own.
+  const { getConnectorByName } = await import("@/lib/integrations/registry");
+  for (const p of ["STRIPE", "PRINTFUL", "PAYPAL"]) {
+    eq(`${p} declares no sync()`, typeof getConnectorByName(p).sync, "undefined");
+  }
+  for (const p of ["QUICKBOOKS", "MAILCHIMP", "GOOGLE_CALENDAR"]) {
+    eq(`CONTROL: ${p} does have one`, typeof getConnectorByName(p).sync, "function");
+  }
 
   // ========================================================================
   console.log("\n=== 9. A broken shipping connection cannot buy a label ===\n");

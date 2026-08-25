@@ -498,3 +498,90 @@ impact — the defect was real and is closed before it could bite.
 `tsc` clean · `next build` compiled · eslint **70 — baseline** · shared runner
 **42/42** · standalone **66/68** · `verify-connection-truthfulness.ts` — **57
 assertions, 18 negative controls**.
+
+
+---
+
+## 12. R2 — a rail is not a data source that has gone quiet
+
+### The change, in full
+
+`ConnectionEvidence` gained one optional field:
+
+```ts
+syncs?: boolean;   // defaults to true
+```
+
+and one branch became conditional on it. That is the whole change to
+`connectionHealth` — 28 lines including comments, no new state, no changed
+precedence, no changed attention behaviour.
+
+`IntegrationConnector.sync` was **already optional**, and several connectors
+deliberately do not implement it. `stripe.ts` says so outright — *"the absence of
+`sync` here is the answer"* — and `printful.ts` likewise. They are payment and
+fulfilment rails, not sources of the store's own records, and will never write
+one. So the caller asks the connector, and nothing keeps a list.
+
+`syncs` defaults to **true**, so every call site written before R2 means exactly
+what it meant before.
+
+### Before and after, on real production rows
+
+**8 of 17 connections were being described falsely** — five Printful, two PayPal,
+one Stripe:
+
+    before: Connected — no data received
+            "Connected and syncing. This provider has not returned any business data yet."
+    after:  Connected
+            "Connected. This provider does not send business data to Genesis."
+
+False on both halves: they do not sync, and there is no *yet*.
+
+| State | Before | After |
+|---|---|---|
+| `connected` | 0 | **8** |
+| `connected_no_data` | **9** | **1** |
+| `failed` | 6 | 6 |
+| `needs_reconnection` | 2 | 2 |
+
+**The one remaining `connected_no_data` is Mailchimp** — the only connector that
+genuinely syncs, succeeds daily, and has returned nothing. That is precisely the
+case the state was invented for, and it is now the only case wearing it.
+
+*(I had estimated 7. The measured figure is 8 — Printful is connected on five
+stores, not four.)*
+
+### C1 preserved, and checked rather than asserted
+
+**Attention-raising: 8 before, 8 after.** No state's `raisesAttention` changed,
+precedence is untouched, and Reconnect still appears for exactly
+`needs_reconnection` and `failed`. Two negative controls specifically break C1
+behaviour — a rail's failed verification, and `connected_no_data` starting to
+raise — and both are caught.
+
+### Two defects in my own tests, found by the controls
+
+**A gate that could never fail.** `!/\\d/.test(...)` matches a literal backslash
+followed by `d`, not a digit, so "a rail invents no count" was green with the
+count restored. Fixed to `/\d/`.
+
+**A suite that crashed instead of failing.** Breaking C1's FAILED branch made
+`failedItem[0].severity` throw, which aborted the run — hiding every assertion
+after it, including the ones that would have named the regression. With the
+accesses optional-chained, the same break now reports **13 failures instead of
+8**. Five real failures had been invisible behind the crash. A suite that stops
+early looks exactly like one that had nothing more to say.
+
+### One thing removed rather than kept
+
+`syncs` was initially passed by the attention path too. A negative control proved
+it could not matter there — `getIntegrationIssues` drops every non-raising state
+before it reads a message, and both connected states are silent. It was a
+parameter that could never change an outcome, so it is gone, and a gate asserts
+it stays gone.
+
+### Gates
+
+`tsc` clean · `next build` compiled · eslint **70 — baseline** · shared runner
+**42/42** · standalone **66/68** · `verify-connection-truthfulness.ts` — **81
+assertions, 25 negative controls**.

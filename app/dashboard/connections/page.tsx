@@ -144,6 +144,7 @@ async function resolveEntry(storeId: string, entry: CatalogEntry): Promise<Resol
         }
       : null,
     recordsProduced,
+    syncs: typeof entry.connector.sync === "function",
   });
 
   return {

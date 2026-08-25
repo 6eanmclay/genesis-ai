@@ -70,6 +70,23 @@ export interface ConnectionEvidence {
    * Zero is a real answer and NOT a failure — see the `connected_no_data` case.
    */
   recordsProduced: number;
+  /**
+   * Does this connector import business data at all? (R2, 2026-08-25)
+   *
+   * `IntegrationConnector.sync` is optional and several connectors deliberately
+   * do not implement it. stripe.ts says so in as many words — "the absence of
+   * `sync` here is the answer" — and printful.ts likewise. They are payment and
+   * fulfilment rails, not sources of the store's own records, and they will
+   * never write one.
+   *
+   * Without this, seven production connections were told "Connected and
+   * syncing. This provider has not returned any business data yet", which is
+   * false on both halves and implies something pending that never arrives.
+   *
+   * Defaults to true when the caller does not say, which keeps every existing
+   * call site meaning exactly what it meant before.
+   */
+  syncs?: boolean;
 }
 
 /**
@@ -81,7 +98,7 @@ export interface ConnectionEvidence {
  * useful thing to say.
  */
 export function connectionHealthOf(evidence: ConnectionEvidence): ConnectionHealth {
-  const { available, row, recordsProduced } = evidence;
+  const { available, row, recordsProduced, syncs = true } = evidence;
 
   if (!available) {
     return {
@@ -147,7 +164,10 @@ export function connectionHealthOf(evidence: ConnectionEvidence): ConnectionHeal
   // successfully every day with zero failures and has never written a record —
   // and until now that was indistinguishable from a connection returning real
   // data, because nothing reported what a sync actually produced.
-  if (recordsProduced === 0) {
+  // ONLY FOR A CONNECTOR THAT ACTUALLY IMPORTS DATA (R2). A payment or
+  // fulfilment rail has nothing to report here and never will, so telling its
+  // owner that nothing has arrived "yet" describes a wait that does not exist.
+  if (syncs && recordsProduced === 0) {
     return {
       state: "connected_no_data",
       label: "Connected — no data received",
@@ -160,7 +180,12 @@ export function connectionHealthOf(evidence: ConnectionEvidence): ConnectionHeal
   return {
     state: "connected",
     label: "Connected",
-    detail: `${recordsProduced} record${recordsProduced === 1 ? "" : "s"} received.`,
+    // Two different true sentences, because these are two different facts. A
+    // data source reports what arrived; a rail reports that arriving is not its
+    // job. Neither invents a count it does not have.
+    detail: syncs
+      ? `${recordsProduced} record${recordsProduced === 1 ? "" : "s"} received.`
+      : "Connected. This provider does not send business data to Genesis.",
     providerError: null,
     raisesAttention: false,
   };
