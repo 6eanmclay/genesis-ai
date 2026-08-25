@@ -643,3 +643,57 @@ business events, newest 2026-08-01.
 Nothing further can be built. A retired refresh token can only be replaced by
 fresh consent, and the owner has now been told, repeatedly, by several
 independent paths. **The system has done its part.**
+
+
+---
+
+## 15. Connections: CLOSED — 2026-08-25
+
+**Production baseline: `e99a2b4`.** No further code changes to Connections.
+
+### The foundation, as deployed
+
+| | Commit |
+|---|---|
+| Connection state is truthful — one definition, six states, provider errors preserved | `4376b8d` |
+| A dead connection asks to be reconnected, and the owner is routed to where the fix is | `6650011`, `8057684` |
+| A broken shipping connection cannot buy a label | `2358720` |
+| A payment rail is not a data source that has gone quiet | `e99a2b4` |
+
+Production now describes 17 connections as: 8 `connected`, 1 `connected_no_data`
+(Mailchimp, correctly), 6 `failed`, 2 `needs_reconnection`. Eight raise
+attention; nine are silent. Every one of those states was equally true before
+this milestone and none of it could be seen.
+
+### Three things deliberately not built
+
+Checked, and each dissolved under inspection rather than being deferred out of
+convenience:
+
+- **Unifying `paymentBadgeFor` with `connectionHealthOf`.** They can only
+  disagree at `CONNECTED` with 3+ sync failures, which is unreachable: a
+  connector without `sync()` returns success and *resets* the counter. A
+  refactor against a state that cannot occur.
+- **Guarding `gaps.ts` against recommending an unavailable provider.** Its three
+  evidence rules cover QuickBooks, Google Calendar and Mailchimp, all available.
+  A guard against a rule nobody has written.
+- **A management surface for Printful and EasyPost.** A real dead end — a failure
+  routes to a page they do not appear on — but closing it means building a screen
+  that does not exist, which is a feature, not a fix. Recorded, latent, and all
+  five Printful connections are healthy.
+
+### The one valuable thing left, which is a product decision
+
+VISION.md Chapter 4: *"never a generic settings-page checklist."* The
+Connections page is the earned-unlock recommendation **and** the checklist,
+stacked, with the checklist as the larger half. That is a redesign with real
+product judgment in it, to be done deliberately when wanted.
+
+### Blocked on Sean, none of it engineering
+
+**U2** QuickBooks re-consent *(deferred; connection correctly classified as
+needing reconnection and left exactly as-is)* · **U3** publish the Google
+Calendar OAuth app, then reconnect · **U4** reconnect six Stripe stores with
+correct-mode keys · **U1** Resend account and verified sending domain ·
+**U5** register Meta/TikTok apps · **U6** EasyPost account verification ·
+**U7** the migration-gate decision.
