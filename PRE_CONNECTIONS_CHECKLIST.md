@@ -178,3 +178,59 @@ warnings) — identical to baseline** · shared runner **42/42** (the new suite
 joined it) · deterministic standalone **66/68**, the two known baseline
 failures · `verify-business-understanding-model` and
 `verify-bi-production-readiness` both ALL PASS.
+
+
+---
+
+## 7. Deployed and closed — 2026-08-25
+
+**Deployed commit: `6650011`**, from the build log rather than inferred:
+
+    Cloning github.com/6eanmclay/genesis-ai (Branch: master, Commit: 6650011)
+    91 migrations found in prisma/migrations
+    No pending migrations to apply.
+    ✓ Compiled successfully in 30.6s
+    Build Completed in /vercel/output [1m]
+
+Four commits went out together: the identity milestone, the connector-health
+fix, and two documentation records. **28 files, no `prisma/` changes, no
+storefront files.**
+
+### The order mattered, and it was the right way round
+
+The promotion ran **before** the deploy. That is what made this safe: yesterday
+deploying `02503e4` would have left twelve stores with no identity at all,
+because the code stops reading the blueprint and there was nothing else to read.
+With the facts already written, the new code had something to find the moment it
+went live — and during the window in between, production's old code kept reading
+the blueprint, which was never touched. No gap in either direction.
+
+### Post-deployment verification
+
+**Identity read-back**, through `readOwnerFacts` — the path J4 itself uses:
+
+| | |
+|---|---|
+| stores with all four identity facts readable | **12** |
+| partial | **0** |
+| stores that never had blueprint values | 4 |
+| provenance after deploy | **`INFERENCE` × 48** — unchanged, nothing rewritten |
+
+**Connector health**, against real production rows — the two connections that
+had been silently dead now say so, in the owner's terms:
+
+    RAISED  Cofoundr           [WARNING] GOOGLE_CALENDAR has not synced since 8/6/2026 — 11 attempts have failed. It needs reconnecting.
+    RAISED  Cofoundr           [WARNING] QUICKBOOKS has not synced since 8/1/2026 — 14 attempts have failed. It needs reconnecting.
+    RAISED  ×6                 [FAILED]  Stripe account retrieval failed: … (the provider's own message, preserved)
+
+**8 raised, 9 healthy connections correctly silent** — Mailchimp, Printful ×4,
+PayPal ×2, and the working Stripe connection all say nothing, which is the half
+that would have been easy to get wrong.
+
+### Pre-Connections milestone: CLOSED
+
+Section 1 is empty and deployed. Everything remaining is section 2 (Sean's
+credential or decision) or section 3 (deliberately deferred). Neither blocks
+Connections.
+
+**Production baseline for Connections: `6650011`.**
