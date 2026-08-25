@@ -418,3 +418,87 @@ integration-readiness follow-up:
   net-of-postage, so `planNetOfPostage` returns `null` for the entire production
   store set. That is the honest answer the code was built to give — and it means
   the margin arithmetic has never had real production input.
+
+
+---
+
+## 11. Deployed and closed — 2026-08-25
+
+**Deployed commit: `892f67b`**, confirmed from the build log rather than inferred:
+
+    Cloning github.com/6eanmclay/genesis-ai (Branch: master, Commit: 892f67b)
+    91 migrations found in prisma/migrations
+    No pending migrations to apply.
+    ✓ Compiled successfully in 33.1s
+    Build Completed in /vercel/output [1m]
+
+**No migration ran.** 91 found, zero applied — the production schema is
+untouched, matching what the local diff promised.
+
+### What was deployed, and what deliberately was not
+
+The BI fix shipped **alone**. It sat on top of the J4 identity milestone in the
+branch, and `git push` would have carried both. Measured read-only first:
+**12 of 16 production stores** hold all four identity fields in
+`blueprint.brandIdentity`, and **0** hold the corresponding facts — so deploying
+that milestone without its promotion would have made J4 stop knowing who twelve
+businesses are for, including Cubit & Coil.
+
+The two BI commits touch eight files and overlap none of the identity
+milestone's, so they were cherry-picked onto `origin/master` and pushed on their
+own. Verified standing alone before the push: typecheck clean, `next build`
+compiled, lint at the 70/2/68 baseline, 41/41 shared suites, both BI suites
+ALL PASS. That mattered — the BI suites had only ever been run with the identity
+milestone present.
+
+The identity milestone stays local and undeployed until it can ship together
+with `promote-brand-claims.ts`.
+
+### Post-deployment state
+
+| | |
+|---|---|
+| deployed commit | `892f67b` — contains `runCycleStages` and both bound catches |
+| cron schedule | `0 6 * * *` → `/api/cron/sync`, unchanged |
+| `/api/cron/status` | deployed, **fails closed** — 401 unauthenticated |
+| production engine | 16 stores, **0 never processed, 0 with unconsumed events** |
+
+### The one thing not yet observed, stated plainly
+
+**No cron execution has happened under the new code.** The deploy completed at
+01:34 UTC on 2026-08-25; the last cycle ran at 06:36 UTC on 2026-08-24, under the
+old code, and the next is 06:00 UTC on 2026-08-25.
+
+What is confirmed is that the deployed code **is** the stage-isolation
+implementation and that the cron is scheduled against it. What is not yet
+confirmed is a run. Triggering one by hand needs `CRON_SECRET`, which this
+environment returns as the literal string `[SENSITIVE]` from
+`vercel env pull` — verified twice, and the reason the authenticated status call
+also returned 401.
+
+After the 06:00 UTC run, `check-bi-production-readiness.ts` against
+`.env.livecheck` will show it, with no new tooling required.
+
+### Milestone closed
+
+The BI Engine was already running safely in production; this milestone did not
+enable it and did not redesign it. What it changed is that one stage failing can
+no longer take the stages behind it, a failure now reaches an operator instead of
+a short-retention log line, and production can answer whether the engine ran.
+
+### Follow-ups — recorded, not blocking BI
+
+1. **QuickBooks and Google Calendar** read `CONNECTED` while neither has synced
+   in 18–23 days (14 and 11 failures). Both need owner re-consent; QuickBooks a
+   fresh grant, Google its OAuth app published first.
+2. **Six FAILED Stripe rows**, live/test key mismatches left from the live
+   cutover — and each carries `syncFailureCount: 0`, so the counter is not what
+   marks a row failed.
+3. **No production shipping-cost data** — 0 of 5 orders carry
+   `shippingCostInCents`, so `planNetOfPostage` returns `null` platform-wide.
+4. **`learn` is near-silent** — 1 belief across 16 stores. `BI_ENGINE.md`'s own
+   Defect 2, deferred to M2, now confirmed in production.
+5. **Deployed-route verification** stays open while `CRON_SECRET` is unavailable
+   here.
+6. **The identity milestone is undeployed** and needs `promote-brand-claims.ts
+   --apply` to ship without twelve stores losing their identity values.
