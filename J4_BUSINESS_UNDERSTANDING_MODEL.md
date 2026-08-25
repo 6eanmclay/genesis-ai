@@ -361,8 +361,17 @@ negative control that proves it can fail.
 | The reasoning boundary holds — an inference cannot be rendered as a fact | Render one; must fail |
 | The understanding carries `asOf` and a sequence mark | Remove it; must fail |
 | Provenance unweakened | The existing suites |
-| Fact Lifecycle untouched | `git diff` empty |
-| Canonical assembly still singular | `verify-canonical-understanding` unchanged |
+| Fact Lifecycle mechanism untouched | `verify-fact-lifecycle` passes |
+| Canonical assembly still singular | `verify-canonical-understanding` passes |
+
+**Two rows above were written wrong and are corrected here rather than quietly
+adjusted.** The proposal said "Fact Lifecycle untouched — `git diff` empty" and
+"`verify-canonical-understanding` unchanged". Neither could be true given what
+was then approved: D1-A adds four types to `OWNER_AUTHORITATIVE_TYPES`, and four
+types to `ENTITY_REGISTRY`. What must hold is that the *mechanism* — supersession,
+provenance, history, the singleton rule — is unchanged, and that both suites
+still pass. Both do. A gate stated as "the file does not change" would have
+failed for the approved reason and taught nothing.
 
 Plus: typecheck, **`npx next build` reported separately**, the shared runner, and
 every own-infrastructure suite.
@@ -377,3 +386,102 @@ It does not make J4 smarter, and it should not be judged on whether J4 says
 better things afterwards. It makes **what J4 knows** a declared, single,
 provenance-bearing, time-anchored thing — so that the intelligence built on top
 reasons from one model rather than four descriptions of one.
+
+
+---
+
+## 8. Acceptance record — 2026-08-24
+
+Implemented as approved: **D1-A** applied to the four reasoning fields, **B** to
+`brandStory` and the copy; **D2** enforced at the `BusinessContext` seam; **D3**
+three payloads replaced with selections; **D4** out of scope, and verified still
+out of scope; **D5** two things only — `asOf` and `throughEventSequence`.
+
+### What moved
+
+`targetAudience`, `brandPersonality`, `brandVoice`, `sellingProposition` are
+owner-authoritative singleton entity types. They are no longer produced by the
+content-generation pipeline: `BrandIdentitySchema` does not carry them, so a
+copy edit can no longer rewrite who a business is for as a side effect. Nothing
+reads them from `Store.blueprint.brandIdentity` any more.
+
+`Store.priorityAudience` is unchanged, as instructed — not removed, not migrated.
+
+`brandStory`, `missionStatement`, `visionStatement`, `brandPromise`, `coreValues`
+stay in the blueprint and in the content pipeline. **Storefront behaviour is
+unchanged**: the four fields have zero references anywhere under `app/store/`,
+and no storefront file is in the diff.
+
+### Three defects found in this milestone's own work
+
+1. **A partial update became a total overwrite.** `updateBrandIdentity` merged
+   `...input` wholesale; naming the five copy fields explicitly turned an absent
+   key into `undefined` written over a real value, so a caller sending only
+   `brandStory` erased `missionStatement` and `coreValues`.
+   `verify-blueprint-writers` caught it. The merge now filters on *presence*, so
+   a caller can still clear a field with `""`.
+
+2. **A read-back would have shrunk silently.** With four of nine fields gone from
+   the blueprint, `verify()` compared five and called it verified. It now reads
+   the four claims back from the fact lifecycle, so all nine writes are still
+   checked. One `CLAIM_FIELDS` list is read by both `run()` and `verify()` —
+   a verify that checks a different set than run writes is the failure shape this
+   repository keeps finding.
+
+3. **Reversal could have blanked the identity it exists to preserve.** The
+   generic autonomous path (`buildActionContext`) built a context with no
+   `storeId`, so a fact-aware `getCurrentValues` found nothing and captured `""`
+   for all four claims — reversing that proposal would have written the blanks
+   back over the owner's real answers. Found by reading the diff, not by a gate.
+   `buildActionContext` now carries the store, and a missing one throws instead
+   of answering emptily. The negative control for this needed fixing too: with
+   the guard deleted the call still throws somewhere downstream, so "it threw"
+   was green with nothing guarding. The gate now asserts on the refusal's
+   message.
+
+### Residual migration risk — the one thing not yet done
+
+**Existing stores still have their four values only in the blueprint, where
+nothing reads them.** Until promoted, J4 does not know who those businesses are
+for. New businesses are unaffected: onboarding and the executable both write
+facts.
+
+    npx tsx scripts/promote-brand-claims.ts            # reports, writes nothing
+    npx tsx scripts/promote-brand-claims.ts --apply
+
+Provenance is **INFERENCE**, not OWNER, and that is deliberate: a model produced
+these during onboarding, nobody stated them, and writing them as OWNER would
+fabricate testimony. When the owner later states their audience, that supersedes
+the inference through the ordinary lifecycle — an inference becoming testimony is
+the correct direction. The script never overwrites an existing current fact, skips
+blanks, and does not modify the blueprint, so it is re-runnable and reversible by
+deleting rows carrying `provenanceDetail: "promoted_from_blueprint"`.
+
+**It has not been run against production.** That is a deliberate decision to
+make, not a step to slip in.
+
+### Gate results
+
+| Lane | Result |
+|---|---|
+| `npx tsc --noEmit` | clean |
+| `npx next build` | succeeds |
+| `npx eslint` | 70 problems (2 errors, 68 warnings) — **identical to HEAD** |
+| shared runner | 41/41 |
+| own-infrastructure suites touching a changed module | 12/12 |
+| `verify-fact-lifecycle`, `verify-canonical-understanding` | pass, after their expected sets were updated for the approved growth |
+| deterministic standalone suites | 66/68 |
+| `verify-business-understanding-model.ts` (new) | 52 assertions, all pass, 13 negative controls confirmed |
+
+The two standalone failures — `verify-take-me-there`, `verify-workspace-context` —
+**fail identically at HEAD** with the milestone's changes stashed. They are
+pre-existing and unrelated; they are recorded here rather than fixed, because
+fixing them is not this milestone.
+
+### One correction to the verification tooling
+
+`verification-inventory.ts --plan` described lane 2 as "runs alone, cheaply, no
+database" and then listed eight suites that call a live Anthropic model — while
+the same report's lane 4 says those "must never run unasked". Following the plan
+therefore spent credit. `--plan` now holds those eight back, names them rather
+than dropping them silently, and takes `--with-live` for somebody who means it.

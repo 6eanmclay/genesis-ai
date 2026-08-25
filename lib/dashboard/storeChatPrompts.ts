@@ -60,10 +60,20 @@ export const BrandIdentitySchema = z.object({
   // Rendered prominently on the storefront, not just folded into copy.
   brandPromise: z.string(),
   coreValues: z.array(z.string()),
-  brandPersonality: z.string(),
-  brandVoiceAndTone: z.string(),
-  targetAudience: z.string(),
-  uniqueSellingProposition: z.string(),
+  // FOUR FIELDS LEFT THIS SCHEMA, 2026-08-24 (D1-A): targetAudience,
+  // brandPersonality, brandVoiceAndTone and uniqueSellingProposition.
+  //
+  // They are claims about the business that J4 reasons from, not copy the
+  // storefront renders — zero references under app/store, against
+  // cognitiveLayer and marketing/assets reading all four to reason and
+  // generate. They now live as owner-authoritative entity types with
+  // provenance and a correction path.
+  //
+  // THE CONTENT PIPELINE MUST NOT REGENERATE THEM. It runs on every content
+  // turn; leaving them here meant a model rewriting the business's stated
+  // audience as a side effect of an unrelated copy edit, with nothing able to
+  // tell that from something the owner said. What the model still writes is
+  // the narrative below, which is what a storefront shows.
 });
 
 export const FaqItemSchema = z.object({

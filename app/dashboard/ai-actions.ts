@@ -28,6 +28,7 @@ import { after as scheduleAfterResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { ownerFactsFromDraft, recordOwnerFacts } from "@/lib/businessModel/ownerFacts";
+import { stateFact } from "@/lib/businessModel/statements";
 import { slugify } from "@/lib/slugify";
 import { sourceHeroImageCandidate } from "@/lib/productImagery";
 import { resolveProductImage } from "@/lib/imageProviders/resolveProductImage";
@@ -230,9 +231,48 @@ const BusinessCategorySchema = z.object({
   revenueStreams: z.array(z.string()),
 });
 
+/** The brandIdentity fields that are still copy, and still diffed for the owner. */
+const BRAND_COPY_FIELDS = [
+  "brandStory",
+  "missionStatement",
+  "visionStatement",
+  "brandPromise",
+  "coreValues",
+] as const;
+
 const PrimaryBlueprintSchema = CoreFieldsSchema.extend({
   brandIdentity: BrandIdentitySchema,
   homepageContent: HomepageContentSchema,
+});
+
+/**
+ * ONBOARDING ONLY (2026-08-24, D1-A).
+ *
+ * The four claims J4 reasons from — targetAudience, brandPersonality,
+ * brandVoiceAndTone, uniqueSellingProposition — left BrandIdentitySchema so the
+ * CONTENT PIPELINE cannot rewrite a business's stated audience as a side effect
+ * of an unrelated copy edit. PrimaryBlueprintSchema is shared by two callers,
+ * and only one of them should still produce them.
+ *
+ * Onboarding is the other moment, and it is different in kind: it is where a
+ * business's identity is first established from the owner's own answers, and
+ * the icon generator reads brandPersonality. So onboarding asks for them here
+ * and records them as FACTS at confirmation — never into the blueprint.
+ *
+ * Provenance follows ownerFacts.ts exactly: OWNER, because the owner is the
+ * author, with modelExtracted true, because a model distilled them from what
+ * the owner typed. The same rule offering and intent already follow from the
+ * same moment.
+ */
+const OnboardingBrandClaimsSchema = z.object({
+  brandPersonality: z.string(),
+  brandVoiceAndTone: z.string(),
+  targetAudience: z.string(),
+  uniqueSellingProposition: z.string(),
+});
+
+const PRIMARY_WITH_CLAIMS = PrimaryBlueprintSchema.extend({
+  brandClaims: OnboardingBrandClaimsSchema,
 });
 
 const SecondaryBlueprintSchema = z.object({
@@ -432,7 +472,7 @@ async function generateStoreDraftCore(
       messages: [{ role: "user", content: briefText }],
       output_config: {
         effort: "high",
-        format: zodOutputFormat(PrimaryBlueprintSchema),
+        format: zodOutputFormat(PRIMARY_WITH_CLAIMS),
       },
     }, { userId, feature: "store_draft_primary_blueprint" }),
     callGenesisModel({
@@ -621,6 +661,15 @@ async function generateStoreDraftCore(
   }
 
   const blueprintContent: Blueprint = {
+    // STAGED ON THE DRAFT, NOT PART OF THE STORE'S BLUEPRINT (2026-08-24, D1-A).
+    //
+    // A draft has no store, so it has nowhere to put a business fact yet.
+    // confirmStoreDraftCore reads this and records the four as facts with OWNER
+    // provenance; it does not copy them onto the Store. They sit beside
+    // brandIdentity rather than inside it precisely because that section is
+    // copy, and a claim living in it is how these became indistinguishable from
+    // generated prose in the first place.
+    brandClaims: primary.brandClaims,
     brandIdentity: primary.brandIdentity,
     homepageContent: primary.homepageContent,
     storeContent: secondary.storeContent,
@@ -735,7 +784,7 @@ async function generateStoreDraftCore(
     const logoUrl = await generateBusinessIcon({
       businessName: primary.storeName,
       vision: inputVision,
-      brandPersonality: primary.brandIdentity.brandPersonality,
+      brandPersonality: primary.brandClaims.brandPersonality,
       scope: { userId },
     });
     await confirmStoreDraftCore(userId, { logoUrl, sessionInstanceId });
@@ -978,6 +1027,12 @@ type MarketingAssets = z.infer<typeof MarketingAssetsSchema>;
 type DesignDirection = z.infer<typeof DesignDirectionSchema>;
 
 type Blueprint = {
+  /**
+   * Staged on a DRAFT only (2026-08-24, D1-A). Never written to a Store — the
+   * four claims become facts at confirmation. Optional because every blueprint
+   * read after that point has none.
+   */
+  brandClaims?: z.infer<typeof OnboardingBrandClaimsSchema>;
   brandIdentity: BrandIdentity;
   homepageContent: HomepageContent;
   storeContent: StoreContent;
@@ -1044,9 +1099,21 @@ function diffDraftChanges(before: DraftState, after: DraftState): string[] {
   }
 
   if (before.blueprint && after.blueprint) {
+    // COMPARED FIELD BY FIELD, NOT BLOB TO BLOB (2026-08-24, D1-A).
+    //
+    // This stringified the whole brandIdentity object. When four fields left it
+    // to become facts, a blob comparison would have quietly stopped covering
+    // them — the owner losing change-log entries for changes that genuinely
+    // happened, with nothing failing. Naming the copy fields keeps this honest
+    // about exactly what it reports on. The four claims are reported by the
+    // fact lifecycle instead: a correction supersedes, and the superseded
+    // record IS the history.
     if (
-      JSON.stringify(before.blueprint.brandIdentity) !==
-      JSON.stringify(after.blueprint.brandIdentity)
+      BRAND_COPY_FIELDS.some(
+        (f) =>
+          JSON.stringify((before.blueprint?.brandIdentity as Record<string, unknown> | undefined)?.[f]) !==
+          JSON.stringify((after.blueprint?.brandIdentity as Record<string, unknown> | undefined)?.[f])
+      )
     ) {
       changes.push("Brand identity updated");
     }
@@ -1770,9 +1837,21 @@ function diffStoreChanges(before: StoreState, after: StoreState): string[] {
   }
 
   if (before.blueprint && after.blueprint) {
+    // COMPARED FIELD BY FIELD, NOT BLOB TO BLOB (2026-08-24, D1-A).
+    //
+    // This stringified the whole brandIdentity object. When four fields left it
+    // to become facts, a blob comparison would have quietly stopped covering
+    // them — the owner losing change-log entries for changes that genuinely
+    // happened, with nothing failing. Naming the copy fields keeps this honest
+    // about exactly what it reports on. The four claims are reported by the
+    // fact lifecycle instead: a correction supersedes, and the superseded
+    // record IS the history.
     if (
-      JSON.stringify(before.blueprint.brandIdentity) !==
-      JSON.stringify(after.blueprint.brandIdentity)
+      BRAND_COPY_FIELDS.some(
+        (f) =>
+          JSON.stringify((before.blueprint?.brandIdentity as Record<string, unknown> | undefined)?.[f]) !==
+          JSON.stringify((after.blueprint?.brandIdentity as Record<string, unknown> | undefined)?.[f])
+      )
     ) {
       changes.push("Brand identity updated");
     }
@@ -2803,6 +2882,9 @@ async function applyGenesisMessageToStore(
     // 1: chat and the recommendation engine now converge on the one
     // existing approval path instead of chat bypassing it.
     const actionContext: GenesisActionContext = {
+      // So a fact-aware getCurrentValues can read the four identity claims that
+      // no longer live in the blueprint (D1-A).
+      storeId: store.id,
       blueprint: currentBlueprint,
       theme: currentTheme,
       storeIdentity: { name: store.name, tagline: store.tagline, description: store.description },
@@ -2825,7 +2907,7 @@ async function applyGenesisMessageToStore(
           recommendationId: null,
           actionType,
           input: parsedInput.data as object,
-          previousValues: definition.getCurrentValues(actionContext) as object,
+          previousValues: (await definition.getCurrentValues(actionContext)) as object,
           summary,
           authorizationTier: definition.authorizationTier,
           groupId,
@@ -4168,6 +4250,42 @@ export async function confirmStoreDraftCore(
       await recordOwnerFacts({ storeId: store.id, userId, facts: ownerFacts });
     } catch (error) {
       console.error("confirmStoreDraftCore: owner facts not recorded", error);
+    }
+  }
+
+  // THE FOUR CLAIMS J4 REASONS FROM (2026-08-24, D1-A).
+  //
+  // Staged on the draft's blueprint at generation because a draft has no store
+  // to hold a fact. Recorded here, and deliberately NOT copied onto the Store's
+  // blueprint — this is the moment they stop being generated prose and become
+  // business facts with an author and a date.
+  //
+  // OWNER with modelExtracted true, the same rule offering and intent follow
+  // from this same moment: the owner is the author, a model distilled it from
+  // what they typed. Non-fatal for the reason the owner-facts write above is —
+  // the storefront is live by now and losing a record must not undo a launch.
+  const stagedClaims = (draft.blueprint as { brandClaims?: Record<string, string> } | null)
+    ?.brandClaims;
+  if (stagedClaims) {
+    for (const [entityType, statement] of [
+      ["targetAudience", stagedClaims.targetAudience],
+      ["brandPersonality", stagedClaims.brandPersonality],
+      ["brandVoice", stagedClaims.brandVoiceAndTone],
+      ["sellingProposition", stagedClaims.uniqueSellingProposition],
+    ] as const) {
+      if (!statement?.trim()) continue;
+      try {
+        await stateFact({
+          storeId: store.id,
+          userId,
+          entityType,
+          data: { statement },
+          modelExtracted: true,
+          context: "onboarding",
+        });
+      } catch (error) {
+        console.error(`confirmStoreDraftCore: ${entityType} not recorded`, error);
+      }
     }
   }
 

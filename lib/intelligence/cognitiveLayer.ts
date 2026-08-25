@@ -1,4 +1,5 @@
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { businessContextOf } from "@/lib/businessModel/businessContext";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -468,13 +469,27 @@ export async function runCognitiveReview(params: {
   // writes fresh ones. Unconditional, cheap, runs every real review pass.
   await proposeConnectionGaps(storeId);
 
+  // A SELECTION OF THE ONE DECLARED SHAPE (D3). The hand-assembled object below
+  // is kept for the fields this layer needs that are not business understanding
+  // — inventory, the store's own settings — and everything that IS business
+  // understanding now comes from `business`.
+  const business = businessContextOf(understanding, {
+    asOf: understanding.asOf,
+    throughEventSequence: understanding.throughEventSequence,
+  });
+
   const contextForPrompt = {
+    business,
     storeName: store.name,
     published: store.published,
-    brandPersonality: blueprint?.brandIdentity?.brandPersonality ?? null,
-    brandVoiceAndTone: blueprint?.brandIdentity?.brandVoiceAndTone ?? null,
-    targetAudience: blueprint?.brandIdentity?.targetAudience ?? null,
-    uniqueSellingProposition: blueprint?.brandIdentity?.uniqueSellingProposition ?? null,
+    // FROM THE CANONICAL UNDERSTANDING (2026-08-24, D1-A). These four are
+    // claims about the business with an author and a date, not copy sitting in
+    // the blueprint where nothing could tell a stated audience from a generated
+    // one — and this is the layer that was reading it either way.
+    brandPersonality: understanding.profile.identity.brandPersonality,
+    brandVoiceAndTone: understanding.profile.identity.brandVoiceAndTone,
+    targetAudience: understanding.profile.identity.targetAudience,
+    uniqueSellingProposition: understanding.profile.identity.uniqueSellingProposition,
     heroHeadline: blueprint?.homepageContent?.heroHeadline ?? null,
     heroSubheadline: blueprint?.homepageContent?.heroSubheadline ?? null,
     aboutUs: blueprint?.homepageContent?.aboutUs ?? null,
@@ -782,7 +797,8 @@ export async function runCognitiveReview(params: {
             select: { id: true, entityType: true, data: true },
           })
         : null;
-    const previousValues = definition.getCurrentValues({
+    const previousValues = await definition.getCurrentValues({
+      storeId,
       blueprint,
       businessRecord: currentRecord,
     });

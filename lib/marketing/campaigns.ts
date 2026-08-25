@@ -5,7 +5,6 @@ import { prisma } from "@/lib/prisma";
 import { callGenesisModel } from "@/lib/genesisModel";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
-import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import type { CreativeDirectionOption } from "@/lib/onboarding/types";
 
 // Marketing Engine (Chapter 3) — campaign planning and content generation.
@@ -57,12 +56,11 @@ export async function planMarketingCampaign(
   const [store, understanding] = await Promise.all([
     prisma.store.findUniqueOrThrow({
       where: { id: storeId },
-      select: { name: true, blueprint: true, creativeDirection: true },
+      select: { name: true, creativeDirection: true },
     }),
     getBusinessUnderstanding(storeId),
   ]);
 
-  const blueprint = store.blueprint as BlueprintContextSubset | null;
   const creativeDirection = store.creativeDirection as CreativeDirectionOption | null;
 
   const contextForPrompt = {
@@ -70,7 +68,8 @@ export async function planMarketingCampaign(
     request,
     // The two real, previously-unconsumed brand-DNA fields, finally read
     // into a prompt — see ARCHITECTURE.md's Marketing Engine section.
-    brandVoiceAndTone: blueprint?.brandIdentity?.brandVoiceAndTone ?? null,
+    // From the canonical understanding this function already holds (D1-A).
+    brandVoiceAndTone: understanding.profile.identity.brandVoiceAndTone,
     creativeBrandVoice: creativeDirection?.brandVoice ?? null,
     photographyStyle: creativeDirection?.photographyStyle ?? null,
     businessProfile: understanding.profile,

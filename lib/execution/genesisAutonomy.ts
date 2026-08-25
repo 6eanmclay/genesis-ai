@@ -53,6 +53,14 @@ async function buildActionContext(
       : Promise.resolve(null),
   ]);
   return {
+    // WITHOUT THIS, REVERSAL BLANKS THE IDENTITY IT EXISTS TO PRESERVE.
+    //
+    // This is the generic autonomous path: it looks an action up by name and
+    // calls its getCurrentValues. update_brand_identity's now reads four claims
+    // from the fact lifecycle, and a context with no store cannot find them —
+    // previousValues would capture "" for each, and reversing the proposal
+    // would write those empty strings back over the owner's real answers.
+    storeId,
     blueprint: store.blueprint as BlueprintContextSubset | null,
     theme: store.theme as Theme | null,
     storeIdentity: { name: store.name, tagline: store.tagline, description: store.description },
@@ -125,7 +133,11 @@ export async function tryExecuteAutonomousAction(
     storeId,
     recordId && entityType ? { id: recordId, entityType } : null
   );
-  const previousValues = definition.getCurrentValues(context);
+  // AWAITED since 2026-08-24 (D1-A): getCurrentValues may be async now, and a
+  // Promise stored here would serialise into previousValues as {} — reversal
+  // silently losing everything it exists to preserve. Typecheck cannot catch it
+  // because these flow into Json positions.
+  const previousValues = await definition.getCurrentValues(context);
 
   // Same supersede convention every other proposal-creation path already
   // uses — avoid piling up a stale PENDING_APPROVAL row for the same

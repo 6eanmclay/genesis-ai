@@ -44,6 +44,13 @@ export const OWNER_AUTHORITATIVE_TYPES = [
   "location",
   "offering",
   "intent",
+  // D1-A (2026-08-24). Claims about the business that J4 reasons from, promoted
+  // out of the brandIdentity blob where they had no author and no correction
+  // path. The owner is the authoritative source for who their business is for.
+  "targetAudience",
+  "brandPersonality",
+  "brandVoice",
+  "sellingProposition",
 ] as const;
 
 export type OwnerAuthoritativeType = (typeof OWNER_AUTHORITATIVE_TYPES)[number];
@@ -60,7 +67,19 @@ export function isOwnerAuthoritative(type: string): type is OwnerAuthoritativeTy
  * correcting, so the target is unambiguous by construction rather than by
  * guesswork. A business has many goals; it has one answer to "what do you sell".
  */
-export const SINGLETON_FACT_TYPES = ["offering", "intent"] as const;
+export const SINGLETON_FACT_TYPES = [
+  "offering",
+  "intent",
+  // A business has one answer to each of these, so a restatement corrects the
+  // one that exists rather than adding a second — the target is unambiguous by
+  // construction and needs no explicit id.
+  "targetAudience",
+  "brandPersonality",
+  "brandVoice",
+  "sellingProposition",
+] as const;
+
+export type SingletonFactType = (typeof SINGLETON_FACT_TYPES)[number];
 
 export function isSingletonFact(type: string): boolean {
   return (SINGLETON_FACT_TYPES as readonly string[]).includes(type);

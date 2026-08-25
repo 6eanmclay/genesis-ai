@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { stateFact } from "./statements";
 import { currentFacts } from "./factLifecycle";
 import type { CanonicalRecord } from "./entities";
+import type { SingletonFactType } from "./factLifecycle";
 
 // THE OWNER'S OWN ANSWERS TO THE TWO QUESTIONS ONBOARDING ASKS.
 //
@@ -212,17 +213,35 @@ export async function recordOwnerFacts(params: {
 export async function readOwnerFacts(storeId: string): Promise<{
   offering: string | null;
   intent: string | null;
+  targetAudience: string | null;
+  brandPersonality: string | null;
+  brandVoice: string | null;
+  sellingProposition: string | null;
 }> {
   // CURRENT, NOT ALL (D2). queryRecords would return superseded statements too,
   // and the newest-first ordering would usually hide that — usually being
   // exactly the word that makes it a bug rather than a behaviour.
-  const [offering, intent] = await Promise.all([
-    currentFacts(storeId, "offering"),
-    currentFacts(storeId, "intent"),
-  ]);
+  //
+  // THE FOUR BRAND CLAIMS JOINED 2026-08-24 (D1-A). They were read out of
+  // blueprint.brandIdentity, a blob where nothing could tell an audience the
+  // owner stated from one a model invented during onboarding — and the
+  // proactive layer read it either way.
+  const [offering, intent, targetAudience, brandPersonality, brandVoice, sellingProposition] =
+    await Promise.all([
+      currentFacts(storeId, "offering"),
+      currentFacts(storeId, "intent"),
+      currentFacts(storeId, "targetAudience"),
+      currentFacts(storeId, "brandPersonality"),
+      currentFacts(storeId, "brandVoice"),
+      currentFacts(storeId, "sellingProposition"),
+    ]);
   return {
     offering: statementOf(offering),
     intent: statementOf(intent),
+    targetAudience: statementOf(targetAudience),
+    brandPersonality: statementOf(brandPersonality),
+    brandVoice: statementOf(brandVoice),
+    sellingProposition: statementOf(sellingProposition),
   };
 }
 
@@ -234,7 +253,11 @@ export async function readOwnerFacts(storeId: string): Promise<{
  * those ids existed, or by a future second writer, would show up here. Taking
  * the most recently stated is the only answer that can be right.
  */
-function statementOf(records: CanonicalRecord<"offering" | "intent">[]): string | null {
+function statementOf(
+  // ANY SINGLETON OWNER FACT. All six carry the same one-field payload — the
+  // fact IS the statement — so one reader serves them rather than six.
+  records: CanonicalRecord<SingletonFactType>[]
+): string | null {
   if (records.length === 0) return null;
   const newest = records.reduce((a, b) => {
     const at = a.statedAt?.getTime() ?? a.syncedAt.getTime();

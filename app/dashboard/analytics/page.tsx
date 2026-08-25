@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { readOwnerFacts } from "@/lib/businessModel/ownerFacts";
 import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { formatMoney } from "@/lib/money";
 import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
@@ -59,7 +60,10 @@ export async function AnalyticsScreen({ slug, basePath }: { slug?: string; baseP
     }),
   ]);
 
-  const [orderSummary, customerSummaries, activityItems, attention, lastDiscoveryRunAt, profitSummary, fulfillmentBreakdown] =
+  // POSITIONAL — this list and the array below must stay aligned. brandClaims is
+  // appended at the END of both: inserting it mid-array once silently handed
+  // `attention` the identity claims, and the page still compiled.
+  const [orderSummary, customerSummaries, activityItems, attention, lastDiscoveryRunAt, profitSummary, fulfillmentBreakdown, brandClaims] =
     await Promise.all([
       declaredRead("presentation", "the analytics page renders these; it does not reason", () =>
         getOrderSummary(store.id, { includeRevenue: canViewRevenue })
@@ -77,6 +81,9 @@ export async function AnalyticsScreen({ slug, basePath }: { slug?: string; baseP
       getLastDiscoveryRunAt(store.id),
       canViewRevenue ? getProfitSummary(store.id) : Promise.resolve(null),
       getFulfillmentBreakdown(store.id),
+      declaredRead("presentation", "the four identity claims this page displays", () =>
+        readOwnerFacts(store.id)
+      ),
     ]);
 
   const inventorySnapshot = getInventorySnapshot(products);
@@ -94,14 +101,19 @@ export async function AnalyticsScreen({ slug, basePath }: { slug?: string; baseP
     customerSummaries,
     inventorySnapshot,
     recentActivity: activityItems,
-    blueprint: blueprint?.brandIdentity
+    // COPY FROM THE BLUEPRINT, CLAIMS FROM THE FACTS (2026-08-24, D1-A).
+    //
+    // The four claims left blueprint.brandIdentity and became owner-authoritative
+    // facts. Read here through the fact reader rather than the blueprint, and
+    // declared because this page presents rather than reasons.
+    blueprint: blueprint?.brandIdentity || brandClaims
       ? {
-          brandPersonality: blueprint.brandIdentity.brandPersonality ?? "",
-          brandVoiceAndTone: blueprint.brandIdentity.brandVoiceAndTone ?? "",
-          targetAudience: blueprint.brandIdentity.targetAudience ?? "",
-          uniqueSellingProposition: blueprint.brandIdentity.uniqueSellingProposition ?? "",
-          heroHeadline: blueprint.homepageContent?.heroHeadline ?? "",
-          aboutUs: blueprint.homepageContent?.aboutUs ?? "",
+          brandPersonality: brandClaims.brandPersonality ?? "",
+          brandVoiceAndTone: brandClaims.brandVoice ?? "",
+          targetAudience: brandClaims.targetAudience ?? "",
+          uniqueSellingProposition: brandClaims.sellingProposition ?? "",
+          heroHeadline: blueprint?.homepageContent?.heroHeadline ?? "",
+          aboutUs: blueprint?.homepageContent?.aboutUs ?? "",
         }
       : null,
   });

@@ -56,7 +56,13 @@ export interface BusinessProfile {
     visionStatement: string | null;
     brandPromise: string | null;
     coreValues: string[];
+    /**
+     * The four claims J4 reasons from, read from owner-authoritative facts
+     * rather than from the blueprint (D1-A). Null means nobody has stated one.
+     */
     targetAudience: string | null;
+    brandPersonality: string | null;
+    brandVoiceAndTone: string | null;
     uniqueSellingProposition: string | null;
     // SOURCE INFORMATION — what the owner told us, never generated and never
     // rendered to a customer. Null means they have not said, which is a real
@@ -279,13 +285,19 @@ export async function getBusinessProfile(
       // `description` or from `visionStatement`, whatever those happen to say.
       offering: ownerFacts.offering,
       intent: ownerFacts.intent,
+      // THE FOUR CLAIMS, READ FROM FACTS (2026-08-24, D1-A). They used to be
+      // read out of blueprint.brandIdentity, where they had no author and could
+      // not be corrected. Everything that reasons from them reads them here.
+      targetAudience: ownerFacts.targetAudience,
+      brandPersonality: ownerFacts.brandPersonality,
+      brandVoiceAndTone: ownerFacts.brandVoice,
+      uniqueSellingProposition: ownerFacts.sellingProposition,
       brandStory: brandIdentity?.brandStory ?? null,
       missionStatement: brandIdentity?.missionStatement ?? null,
       visionStatement: brandIdentity?.visionStatement ?? null,
       brandPromise: brandIdentity?.brandPromise ?? null,
       coreValues: brandIdentity?.coreValues ?? [],
-      targetAudience: brandIdentity?.targetAudience ?? null,
-      uniqueSellingProposition: brandIdentity?.uniqueSellingProposition ?? null,
+
     },
     classification: {
       businessCategories: store.businessCategories.map((slug) => ({

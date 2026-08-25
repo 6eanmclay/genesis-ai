@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readOwnerFacts } from "@/lib/businessModel/ownerFacts";
 import { DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { SECTION_KEYS, resolveSectionOrder, type SectionKey } from "@/lib/storefrontSections";
 import type { Executable } from "./executable";
@@ -131,6 +132,18 @@ export interface BlueprintContextSubset {
 // relevant to the action(s) it's creating and leaves the rest absent.
 export interface GenesisActionContext {
   blueprint: BlueprintContextSubset | null;
+  /**
+   * The store this is about (2026-08-24, D1-A).
+   *
+   * Added because four identity fields left the blueprint and became
+   * owner-authoritative facts. A getCurrentValues that needs them has to read
+   * them, and reading them needs a store — the blueprint alone can no longer
+   * answer what the business's stated audience is.
+   *
+   * Optional so every existing synchronous entry is untouched; only the one
+   * that needs facts asks for it.
+   */
+  storeId?: string;
   product?: { id: string; name: string; imageUrl: string | null; description?: string | null } | null;
   // The store's current brand logo, so a logo proposal can show what it
   // replaces. Its own field rather than part of storeIdentity: identity is the
@@ -233,7 +246,22 @@ interface GenesisActionDefinition<TInput> {
   // what it was shown. Same shape as TInput so the approval UI can diff
   // them generically, one row per key, driven by data shape rather than
   // per-action JSX.
-  getCurrentValues: (context: GenesisActionContext) => TInput;
+  /**
+   * The values a change would replace, captured so it can be reversed.
+   *
+   * MAY BE ASYNC SINCE 2026-08-24 (D1-A). Four identity fields became
+   * owner-authoritative facts, and a fact cannot be read synchronously out of a
+   * blueprint that no longer holds it. Returning a promise is allowed rather
+   * than required: every other entry in this registry is still synchronous and
+   * was not touched.
+   *
+   * THERE IS STILL ONE REVERSAL MECHANISM. update_brand_identity's copy fields
+   * reverse through previousValues as they always have; its four claims reverse
+   * through fact supersession, which is the fact lifecycle's own reversal and
+   * not a second one invented here. What this contract must never do is keep a
+   * duplicate of those four in the blueprint merely so undo can find them.
+   */
+  getCurrentValues: (context: GenesisActionContext) => TInput | Promise<TInput>;
   category: GenesisActionCategory;
   authorizationTier: AuthorizationTier;
   // Phase 6 — the maximum tier THIS SPECIFIC action could ever be granted,
@@ -609,17 +637,38 @@ export const GENESIS_ACTIONS: Record<
       targetAudience: z.string(),
       uniqueSellingProposition: z.string(),
     }),
-    getCurrentValues: ({ blueprint }) => ({
-      brandStory: blueprint?.brandIdentity?.brandStory ?? "",
-      missionStatement: blueprint?.brandIdentity?.missionStatement ?? "",
-      visionStatement: blueprint?.brandIdentity?.visionStatement ?? "",
-      brandPromise: blueprint?.brandIdentity?.brandPromise ?? "",
-      coreValues: blueprint?.brandIdentity?.coreValues ?? [],
-      brandPersonality: blueprint?.brandIdentity?.brandPersonality ?? "",
-      brandVoiceAndTone: blueprint?.brandIdentity?.brandVoiceAndTone ?? "",
-      targetAudience: blueprint?.brandIdentity?.targetAudience ?? "",
-      uniqueSellingProposition: blueprint?.brandIdentity?.uniqueSellingProposition ?? "",
-    }),
+    // COPY FROM THE BLUEPRINT, CLAIMS FROM THE FACTS (2026-08-24, D1-A).
+    //
+    // The two halves reverse by their own mechanisms. brandStory and the rest
+    // of the narrative are captured here and restored from previousValues, as
+    // they always were. The four claims are read from the fact lifecycle so the
+    // diff an owner approves shows what is actually current — and reversing
+    // them is a further owner statement that supersedes, which preserves
+    // history rather than overwriting it.
+    getCurrentValues: async ({ blueprint, storeId }) => {
+      // LOUD, NOT EMPTY. Falling back to nulls here would hand back "" for four
+      // fields the owner has real answers for, and reversing that proposal would
+      // erase them — a caller forgetting the store would look like an owner with
+      // no stated audience. A missing store is a wiring mistake, so it says so.
+      if (!storeId) {
+        throw new Error(
+          "update_brand_identity.getCurrentValues needs context.storeId: the four " +
+            "identity claims are facts, not blueprint fields, and cannot be read without a store."
+        );
+      }
+      const claims = await readOwnerFacts(storeId);
+      return {
+        brandStory: blueprint?.brandIdentity?.brandStory ?? "",
+        missionStatement: blueprint?.brandIdentity?.missionStatement ?? "",
+        visionStatement: blueprint?.brandIdentity?.visionStatement ?? "",
+        brandPromise: blueprint?.brandIdentity?.brandPromise ?? "",
+        coreValues: blueprint?.brandIdentity?.coreValues ?? [],
+        brandPersonality: claims.brandPersonality ?? "",
+        brandVoiceAndTone: claims.brandVoice ?? "",
+        targetAudience: claims.targetAudience ?? "",
+        uniqueSellingProposition: claims.sellingProposition ?? "",
+      };
+    },
     category: "content",
     authorizationTier: "always_ask",
     // Phase 6 — hard boundary regardless of category ceiling: brand

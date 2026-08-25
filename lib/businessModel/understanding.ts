@@ -152,6 +152,25 @@ export interface BusinessUnderstanding {
    * queries; see UnderstandingSection.
    */
   recentRecords: Record<string, unknown[]> | null;
+  /**
+   * WHEN THIS IS TRUE AS OF, and how far through the event stream (D5).
+   *
+   * The understanding has always been a snapshot with no "as of" — so nothing
+   * reading it could ask what changed since, and every consumer wanting that
+   * invented its own cursor. BusinessEvent.sequence is a monotonic
+   * autoincrement, so a later reader asks for everything after this number
+   * without comparing timestamps across clocks.
+   *
+   * This is the temporal ANCHOR, not history: the point from which history can
+   * be asked about. Reasoning over it is the intelligence engine's job, not
+   * this one's.
+   *
+   * A CORRECTION TO THE PROPOSAL THAT ASKED FOR THIS: the understanding already
+   * carried `asOf`. What it lacked was the event mark — the half that makes
+   * "what changed since" answerable without comparing clocks. Only that was
+   * added.
+   */
+  throughEventSequence: string | null;
   /** What is standing in the way of what. See BlockedGoal. */
   blockedGoals: BlockedGoal[];
   beliefs: Awaited<ReturnType<typeof getBeliefs>>;
@@ -248,6 +267,8 @@ export async function getBusinessUnderstanding(
     // OPT-IN. Seventeen queries when asked for, one cheap no-op when not.
     // Named apart from the imported recentRecords helper it calls.
     recentRecordsSection,
+    // The high-water mark this assembly reflects. One indexed read.
+    latestEvent,
   ] = await Promise.all([
     getBusinessProfile(storeId),
     getBeliefs(storeId, { viewerUserId: opts?.viewerUserId }),
@@ -294,6 +315,11 @@ export async function getBusinessUnderstanding(
           )
         ) as Promise<Record<string, unknown[]> | null>)
       : Promise.resolve(null),
+    prisma.businessEvent.findFirst({
+      where: { storeId },
+      orderBy: { sequence: "desc" },
+      select: { sequence: true },
+    }),
   ]);
 
   // Resolved against the goals and challenges ALREADY fetched, so naming what
@@ -327,6 +353,8 @@ export async function getBusinessUnderstanding(
       activity: recentActivity,
     },
     recentRecords: recentRecordsSection,
+    // BigInt does not survive JSON, and this reaches prompts and payloads.
+    throughEventSequence: latestEvent ? String(latestEvent.sequence) : null,
     beliefs,
     recentDecisions,
     currentAssets,

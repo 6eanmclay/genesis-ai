@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { readOwnerFacts } from "@/lib/businessModel/ownerFacts";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -46,19 +47,22 @@ export async function draftMarketingAssets(
     select: { name: true, description: true, blueprint: true, creativeDirection: true },
   });
   const blueprint = store.blueprint as BlueprintContextSubset | null;
+  // The four claims live in the fact lifecycle now. Read once, used below.
+  const claims = await readOwnerFacts(storeId);
   const creativeDirection = store.creativeDirection as CreativeDirectionOption | null;
 
   const contextForPrompt = {
     storeName: store.name,
     storeDescription: store.description,
     reason,
-    brandVoiceAndTone: blueprint?.brandIdentity?.brandVoiceAndTone ?? null,
+    // From the facts, not the blueprint (2026-08-24, D1-A).
+    brandVoiceAndTone: claims.brandVoice,
     creativeBrandVoice: creativeDirection?.brandVoice ?? null,
     businessProfile: {
       brandStory: blueprint?.brandIdentity?.brandStory ?? null,
-      brandPersonality: blueprint?.brandIdentity?.brandPersonality ?? null,
-      targetAudience: blueprint?.brandIdentity?.targetAudience ?? null,
-      uniqueSellingProposition: blueprint?.brandIdentity?.uniqueSellingProposition ?? null,
+      brandPersonality: claims.brandPersonality,
+      targetAudience: claims.targetAudience,
+      uniqueSellingProposition: claims.sellingProposition,
     },
   };
 
@@ -128,7 +132,11 @@ export async function checkAndProposeMarketingAssetsUpdate(storeId: string): Pro
     proposedAction: { actionType: "update_marketing_assets", input: drafted },
   });
 
-  const previousValues = definition.getCurrentValues({ blueprint: blueprint ?? null });
+  // AWAITED since 2026-08-24 (D1-A): getCurrentValues may be async now, and a
+  // Promise stored here would serialise into previousValues as {} — reversal
+  // silently losing everything it exists to preserve. Typecheck cannot catch it
+  // because these flow into Json positions.
+  const previousValues = await definition.getCurrentValues({ storeId, blueprint: blueprint ?? null });
   const groupId = randomUUID();
 
   const approval = await prisma.approvalRequest.create({

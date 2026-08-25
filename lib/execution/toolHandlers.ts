@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { businessContextOf } from "@/lib/businessModel/businessContext";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { stateFact } from "@/lib/businessModel/statements";
 import { prisma } from "@/lib/prisma";
@@ -1743,7 +1744,7 @@ export function makeRefineStorefront(deps?: {
         const row = await prisma.store.findUnique({ where: { id: storeId }, select: { theme: true } });
         return row?.theme ?? null;
       });
-    const previousValues = GENESIS_ACTIONS.refine_storefront.getCurrentValues({
+    const previousValues = await GENESIS_ACTIONS.refine_storefront.getCurrentValues({
       blueprint: null,
       theme: (await readTheme(ctx.storeId)) as Parameters<
         typeof GENESIS_ACTIONS.refine_storefront.getCurrentValues
@@ -2050,8 +2051,20 @@ export function makeLookUpBusinessData(deps?: {
       ...understanding.profile.assets,
     ];
 
+    // A SELECTION OF THE ONE DECLARED SHAPE (2026-08-24, D3).
+    //
+    // What follows used to be a hand-assembled field list — one of four
+    // describing the same business differently depending on which door the turn
+    // came through. businessContextOf is the declared shape; a consumer may take
+    // less of it and may not invent its own.
+    const context = businessContextOf(withRecent, {
+      asOf: withRecent.asOf,
+      throughEventSequence: withRecent.throughEventSequence,
+    });
+
     const payload = {
-      asOf: new Date().toISOString(),
+      business: context,
+      asOf: withRecent.asOf,
       // FROM THE UNDERSTANDING, NOT RECOMPUTED. These are the same figures the
       // canonical assembly already carries.
       revenue: {

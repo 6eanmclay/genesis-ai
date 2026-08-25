@@ -1,4 +1,5 @@
 import { getBusinessUnderstanding, type BusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { businessContextOf } from "@/lib/businessModel/businessContext";
 import { digestOf, renderDigest, digestIsSubstantive, type UnderstandingDigest } from "@/lib/businessModel/digest";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
 import { getOpenProposal } from "@/lib/storefront/proposals";
@@ -50,6 +51,7 @@ export interface TurnContext {
   /** The canonical object, fetched once and handed back so no caller re-reads it. */
   understanding: BusinessUnderstanding;
   digest: UnderstandingDigest;
+  business: ReturnType<typeof businessContextOf>;
   /** The lines that become the user turn, in a fixed order. */
   parts: string[];
 }
@@ -65,6 +67,14 @@ export interface TurnContext {
 export async function buildTurnContext(input: TurnContextInput): Promise<TurnContext> {
   const understanding = await getBusinessUnderstanding(input.storeId, { viewerUserId: input.userId });
   const digest = digestOf(understanding);
+  // THE THIRD SELECTION (D3). The digest stays what it is — a deliberately tiny
+  // routing context against a 2,400-character budget — and is now accompanied by
+  // the declared shape it is a selection OF, so a consumer needing more takes
+  // more of the same thing rather than assembling its own.
+  const business = businessContextOf(understanding, {
+    asOf: understanding.asOf,
+    throughEventSequence: understanding.throughEventSequence,
+  });
 
   const parts = [input.userMessage, `(Active products: ${input.activeProductNames})`];
 
@@ -118,5 +128,5 @@ export async function buildTurnContext(input: TurnContextInput): Promise<TurnCon
   const economicsLine = describeOutstandingForJ4(await outstandingEconomicsQuestions(input.storeId));
   if (economicsLine) parts.push(economicsLine);
 
-  return { understanding, digest, parts };
+  return { understanding, digest, business, parts };
 }

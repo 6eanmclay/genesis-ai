@@ -233,9 +233,14 @@ async function main() {
       include: ["recentRecords"],
     });
     assert("naming the section produces it", withRecent.recentRecords !== null);
+    // 17 → 21 (2026-08-24, D1-A added four identity claim types to
+    // ENTITY_REGISTRY). Read from the registry rather than restated as a
+    // literal: the claim is "every type", and a hand-copied number stops
+    // meaning that the moment the two drift.
+    const { ENTITY_TYPES } = await import("@/lib/businessModel/entities");
     assert("and it covers every entity type",
-      Object.keys(withRecent.recentRecords ?? {}).length === 17,
-      `${Object.keys(withRecent.recentRecords ?? {}).length} types`);
+      Object.keys(withRecent.recentRecords ?? {}).length === ENTITY_TYPES.length,
+      `${Object.keys(withRecent.recentRecords ?? {}).length} of ${ENTITY_TYPES.length} types`);
 
     // ==================================================================
     console.log("\n=== GATE 8 — provenance is not weakened ===\n");

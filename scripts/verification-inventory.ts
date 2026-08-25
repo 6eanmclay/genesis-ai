@@ -186,7 +186,29 @@ const all = inventory();
 if (args.includes("--json")) {
   console.log(JSON.stringify(all, null, 2));
 } else if (args.includes("--plan")) {
-  for (const s of all.filter((x) => x.lane === "standalone")) console.log(`npx tsx scripts/${s.file}`);
+  // THE PLAN LANE IS THE CHEAP LANE, AND IT HAS TO ACTUALLY BE CHEAP.
+  //
+  // Lane 2 is described two lines up as "runs alone, cheaply, no database", and
+  // this used to emit every standalone suite — including eight that call a live
+  // Anthropic model. Following the plan therefore spent real credit, twice,
+  // against a repository whose own lane 4 says those suites "must never run
+  // unasked". The lane already knows which ones they are; it just was not
+  // asking.
+  //
+  // --with-live restores the old behaviour for somebody who means it.
+  const withLive = args.includes("--with-live");
+  const plan = all.filter(
+    (x) => x.lane === "standalone" && (withLive || x.liveDependencies.length === 0)
+  );
+  for (const s of plan) console.log(`npx tsx scripts/${s.file}`);
+  const held = all.filter((x) => x.lane === "standalone" && x.liveDependencies.length > 0);
+  if (held.length > 0 && !withLive) {
+    // NAMED, NOT SILENTLY DROPPED. A plan that quietly omits suites reads as
+    // "this is everything", which is the exact failure this file exists about.
+    console.log(`\n# ${held.length} standalone suite(s) held back: they call a live provider.`);
+    for (const s of held) console.log(`#   ${s.file} (${s.liveDependencies.join(", ")})`);
+    console.log("# Add --with-live to include them, and expect to be billed for it.");
+  }
 } else {
   report(all);
 }

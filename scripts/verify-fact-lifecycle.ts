@@ -54,11 +54,19 @@ async function main() {
     });
 
     // ====================================================================
-    console.log("\n=== D3 — the six owner-authoritative types, and only those ===\n");
+    console.log("\n=== D3 — the owner-authoritative types, and only those ===\n");
     // ====================================================================
-    eq("exactly six types accept owner testimony",
+    // SIX BECAME TEN (2026-08-24, D1-A), and this assertion is why the change
+    // could not be made quietly: it names the whole set rather than checking
+    // that the ones it knows about are present, so growing the set failed here
+    // and had to be looked at. The four additions are the identity claims that
+    // used to sit in Store.blueprint.brandIdentity with no author and no
+    // correction path — the owner is authoritative about who their business is
+    // for, and a content-generation pass is not.
+    eq("exactly ten types accept owner testimony",
       [...life.OWNER_AUTHORITATIVE_TYPES],
-      ["goal", "challenge", "employee", "location", "offering", "intent"]);
+      ["goal", "challenge", "employee", "location", "offering", "intent",
+       "targetAudience", "brandPersonality", "brandVoice", "sellingProposition"]);
     assert("and every one is a registered entity type", life.ownerAuthoritativeTypesAreRegistered());
 
     assert("a connector-owned type is NOT owner-authoritative",
