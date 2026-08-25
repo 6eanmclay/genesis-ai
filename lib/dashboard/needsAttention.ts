@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { AttentionItem } from "./types";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { connectionHealthOf } from "@/lib/integrations/connectionHealth";
+import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -120,6 +121,31 @@ export async function getStaleExecutions(storeId: string): Promise<AttentionItem
  * `raisesAttention` is the whole filter. Notably `connected_no_data` does NOT
  * raise: a provider returning nothing is an ordinary state, not a fault.
  */
+/**
+ * Where an owner can actually fix this connection.
+ *
+ * Every integration issue used to link to /dashboard/payments. That is right for
+ * the two payment rails and wrong for everything else — and the two connections
+ * currently telling owners to reconnect, QuickBooks and Google Calendar, are
+ * both managed on /dashboard/connections. So the system said "it needs
+ * reconnecting" and sent them to a screen with nothing to click.
+ *
+ * Derived from the catalog rather than a second hand-kept list: a provider is
+ * managed on the Connections screen exactly when it has a catalog entry.
+ */
+function whereToFix(provider: string): string {
+  // Stripe and PayPal are deliberately NOT in the connector catalog — they are
+  // payment rails with their own screen, which is where reconnecting them
+  // actually happens.
+  if (provider === "STRIPE" || provider === "PAYPAL") return "/dashboard/payments";
+  if (CONNECTOR_CATALOG.some((e) => e.provider === provider)) return "/dashboard/connections";
+  // PRINTFUL and EASYPOST reach here: connected during onboarding, with no
+  // dashboard screen that manages them at all. Connections is the least wrong
+  // destination, and that gap is recorded rather than papered over — inventing
+  // a link to a screen that does not exist would be worse than an imperfect one.
+  return "/dashboard/connections";
+}
+
 export async function getIntegrationIssues(storeId: string): Promise<AttentionItem[]> {
   const rows = await prisma.storeIntegration.findMany({ where: { storeId } });
   if (rows.length === 0) return [];
@@ -161,7 +187,7 @@ export async function getIntegrationIssues(storeId: string): Promise<AttentionIt
       // A stale connection has no meaningful lastVerifiedAt — nothing verified
       // it. The last time it actually worked is the honest timestamp.
       occurredAt: health.state === "failed" ? row.lastVerifiedAt : (row.lastSyncedAt ?? row.lastVerifiedAt),
-      actionHref: "/dashboard/payments",
+      actionHref: whereToFix(row.provider),
     });
   }
   return items;

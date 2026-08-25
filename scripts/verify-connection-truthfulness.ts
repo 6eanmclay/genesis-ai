@@ -228,6 +228,56 @@ async function main() {
   assert("CONTROL: and the impossible expression is gone",
     !/syncedAgoLabel\s*&&\s*s\.lastSyncedAt === null/.test(ctx));
 
+  // ========================================================================
+  console.log("\n=== 8. R1 — the state's own action is offered ===\n");
+  // ========================================================================
+  // C1 made the system say "it needs reconnecting" and left the owner with
+  // Recheck, Sync now and Disconnect. Being told what is wrong and given no way
+  // to fix it is its own kind of dishonesty.
+  const cardSrc = codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "ConnectorCard.tsx"), "utf8"));
+  // SCOPED TO THE RECONNECT BLOCK. Checking the whole file for
+  // connectIntegration.bind was green with the Reconnect action swapped out,
+  // because the not-connected branch has a Connect button using the same call.
+  // The claim is about THIS button, so the slice has to be too.
+  const reconnectBlock = cardSrc.slice(
+    cardSrc.indexOf("{needsOwnerAction && ("),
+    cardSrc.indexOf("Reconnect", cardSrc.indexOf("{needsOwnerAction && ("))
+  );
+  assert("the card offers Reconnect",
+    /connectIntegration\.bind/.test(reconnectBlock),
+    "and it is connectIntegration, not a second mechanism");
+  assert("only when the state asks for it",
+    /needsOwnerAction\s*=\s*[\s\S]{0,140}"needs_reconnection"[\s\S]{0,60}"failed"/.test(cardSrc),
+    "a working connection showing Reconnect would send an owner through an OAuth flow for nothing");
+  assert("and it is gated on that, not rendered unconditionally",
+    /\{needsOwnerAction && \(/.test(cardSrc));
+  assert("CONTROL: Disconnect is still available",
+    /disconnectIntegration\.bind/.test(cardSrc),
+    "reconnect is a better route back, not the only one");
+
+  // WHERE the owner is sent. Every integration issue used to link to
+  // /dashboard/payments, including the two that are managed on Connections.
+  const qb = await prisma.storeIntegration.create({
+    data: { storeId: store.id, provider: "MAILCHIMP", status: "CONNECTED",
+            syncFailureCount: 7, lastSyncedAt: daysAgo(9) } as never,
+  });
+  const routed = await getIntegrationIssues(store.id);
+  const mailchimpItem = routed.find((i) => i.message.startsWith("MAILCHIMP"));
+  eq("a catalog provider is sent to the Connections screen",
+    mailchimpItem?.actionHref, "/dashboard/connections");
+
+  await prisma.storeIntegration.create({
+    data: { storeId: store.id, provider: "STRIPE", status: "FAILED",
+            syncFailureCount: 0, lastVerifiedAt: daysAgo(2),
+            lastError: "key mismatch" } as never,
+  });
+  const stripeItem = (await getIntegrationIssues(store.id)).find((i) => i.message === "key mismatch");
+  eq("CONTROL: a payment rail is still sent to Payments",
+    stripeItem?.actionHref, "/dashboard/payments");
+  // Store-scoped: the tenant-isolation guard requires it on every delete, and
+  // it caught this line when it was written without one.
+  await prisma.storeIntegration.delete({ where: { id: qb.id, storeId: store.id } });
+
   const card = codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "ConnectorCard.tsx"), "utf8"));
   assert("the card no longer treats any non-disconnected status as connected",
     !/integrationStatus\s*&&\s*integrationStatus\s*!==\s*"DISCONNECTED"/.test(card),

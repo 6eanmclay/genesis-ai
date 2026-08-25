@@ -369,3 +369,70 @@ were not extended beyond it: the catalog still holds all 12 providers, and
 `connected_no_data` raises nothing.
 
 **Production baseline: `4376b8d`.**
+
+
+---
+
+## 10. R1 — the state's own action — built 2026-08-25
+
+**Not deployed at time of writing.** Production is `4376b8d`.
+
+### The gap C1 created by being honest
+
+C1 made the system say *"it needs reconnecting"*. The card offered **Recheck,
+Sync now, Disconnect** — and nothing that reconnects. The only route back was to
+Disconnect first, an action whose own comment two files away says *"disconnecting
+the wrong one is not recoverable by the owner"*, and then Connect.
+
+Being told what is wrong and given no way to fix it is its own kind of
+dishonesty, and it is the largest gap in Connections that needs no credential.
+
+### What was built
+
+**A Reconnect action, offered exactly where the state asks for it.**
+`needsOwnerAction` is true for `needs_reconnection` and `failed`, and for
+nothing else — a working connection showing Reconnect would send an owner
+through a provider's consent screens for no reason.
+
+It is `connectIntegration` unchanged, **not a second mechanism**. Every OAuth
+callback in `lib/integrations/` upserts, so re-consent replaces the stored
+credentials in place. That is what reconnection *is*; there was nothing to build
+but the way in.
+
+Disconnect stays. Reconnect is a better route back, not the only one.
+
+**And the owner is now sent where the fix actually is.** Every integration issue
+linked to `/dashboard/payments`, which is right for the two payment rails and
+wrong for everything else — including QuickBooks and Google Calendar, the two
+connections that were telling owners to reconnect. They are managed on
+`/dashboard/connections`. So the system said "reconnect this" and sent them to a
+screen with nothing to click.
+
+`whereToFix` derives the destination from the catalog rather than a second
+hand-kept list: a provider is managed on Connections exactly when it has a
+catalog entry. Stripe and PayPal are deliberately not in that catalog and keep
+their own screen.
+
+### `connectionHealth` untouched
+
+R1 reads the states C1 defined and adds nothing to them. The single source of
+truth is unchanged.
+
+### One gap found and recorded, not fixed
+
+**Printful and EasyPost have no dashboard screen that manages them at all.**
+Both are connected during onboarding and appear nowhere afterwards, so a failure
+in either has no honest destination. `whereToFix` sends them to Connections as
+the least-wrong answer, and the comment says so. Inventing a link to a screen
+that does not exist would be worse than an imperfect one.
+
+### Gates
+
+`tsc` clean · `next build` compiled · eslint **70 problems — baseline** · shared
+runner **42/42** · standalone **66/68** (the two known baseline failures) ·
+`verify-connection-truthfulness.ts` — **52 assertions, 14 negative controls**.
+
+One gate of mine was green for the wrong reason and was fixed: checking the
+whole file for `connectIntegration.bind` passed with the Reconnect action swapped
+out, because the not-connected branch has a Connect button using the same call.
+The claim is about that button, so the assertion is now scoped to its block.

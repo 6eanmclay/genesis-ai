@@ -87,6 +87,12 @@ export function ConnectorCard({
   }
 
   const provider = entry.provider;
+  // Only the two states that actually need the owner. A working connection
+  // showing a Reconnect button would invite an owner to re-run an OAuth flow
+  // for no reason, and re-consent is not free — it is a trip through the
+  // provider's own screens.
+  const needsOwnerAction =
+    health.state === "needs_reconnection" || health.state === "failed";
   // NOT `status !== "DISCONNECTED"` any more. That treated FAILED as connected,
   // so a connection the provider had rejected rendered the same card as a
   // working one, with Recheck and Sync buttons and no indication anything was
@@ -103,6 +109,30 @@ export function ConnectorCard({
           log={statusDisplay}
           actions={
             <>
+              {needsOwnerAction && (
+                // THE ACTION THE STATE ASKS FOR (2026-08-25).
+                //
+                // C1 made the system say "it needs reconnecting" and left the
+                // owner with Recheck, Sync now and Disconnect. Nothing
+                // reconnected. The only route back was Disconnect first — an
+                // action whose own comment two files away says "disconnecting
+                // the wrong one is not recoverable by the owner" — and then
+                // Connect. Being told what is wrong and given no way to fix it
+                // is its own kind of dishonesty.
+                //
+                // This is connectIntegration unchanged, not a second mechanism.
+                // Every OAuth callback here upserts, so re-consent replaces the
+                // stored credentials in place; that is what reconnection IS.
+                <form action={connectIntegration.bind(null, slug, provider)}>
+                  <SubmitButton
+                    pendingText="Reconnecting..."
+                    className="rounded-full bg-black px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
+                    trackPerf={{ label: `Reconnect ${entry.name}`, storeId, attemptKey }}
+                  >
+                    Reconnect
+                  </SubmitButton>
+                </form>
+              )}
               <form action={verifyIntegration.bind(null, slug, provider)}>
                 <SubmitButton
                   pendingText="Checking..."
