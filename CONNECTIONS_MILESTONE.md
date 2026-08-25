@@ -153,3 +153,145 @@ silently does nothing, which is not. Whether J4 says something, and after how
 long, is a judgment about interrupting an owner.
 
 **No production code changes until these are answered.**
+
+---
+
+## 7. Decisions taken — 2026-08-25
+
+**C1 — Scope A: connection truthfulness.** The Connections foundation must be
+truthful before more providers are added. The smallest production-safe scope:
+
+1. A connection is never represented as healthy when it is stale, dead, or
+   unable to sync.
+2. Four states are distinguishable where the evidence supports them:
+   **Connected**, **Needs reconnection**, **Failed**, and **Connected — no data
+   received**.
+3. Provider error messages are preserved verbatim, and status is stated in terms
+   an owner can act on.
+4. A successful sync or a data state is never invented where the provider
+   produced nothing.
+
+**C2 — Keep the whole catalog.** A future provider is not removed because its
+credentials or implementation are missing. It is marked honestly as *coming
+later* or *unavailable* instead of being presented as currently connectable.
+
+**C3 — "Producing nothing" is not "broken".** If authentication is valid and the
+provider returns zero business data, that is represented honestly as **Connected
+— no data received**, and it does **not** raise a health warning. Escalation to
+*needs reconnection* happens only when the evidence shows an actual failure or
+staleness.
+
+**Out of scope, explicitly:** new provider implementations, social connections,
+and anything in business intelligence. No identity data is touched.
+
+### The shape this takes
+
+One function, `connectionHealthOf`, is the single definition of what a
+connection's state is. Both the Connections screen and the attention path read
+it, so what the owner is shown and what J4 raises cannot disagree — the same
+"one definition, two callers" rule `needsDatabase` and `hasWorkingPaymentMethod`
+already follow in this repository.
+
+Precedence, highest first, because more than one can be true at once:
+
+| | Condition | Raises attention |
+|---|---|---|
+| `unavailable` | no implementation, or OAuth credentials absent | no |
+| `not_connected` | no row, or DISCONNECTED | no |
+| `failed` | verification failed — the provider said why | **yes** |
+| `needs_reconnection` | 3+ consecutive sync failures | **yes** |
+| `connected_no_data` | healthy, and has never written a record | **no (C3)** |
+| `connected` | healthy, and has produced data | no |
+
+
+
+---
+
+## 8. As built — 2026-08-25
+
+**Not deployed.** Committed and verified locally; production remains `6650011`.
+
+### One definition, two consumers
+
+`lib/integrations/connectionHealth.ts` is now the single answer to "what is this
+connection". The Connections screen and the attention path both read it, so what
+the owner is shown and what J4 raises cannot disagree.
+
+Before this there were two definitions and they said different things about the
+same row. The screen asked `status !== "DISCONNECTED"` — so a **FAILED
+connection rendered as a working one**, with Recheck and Sync buttons and no
+indication anything was wrong. The attention path asked
+`status in (FAILED, NEEDS_ATTENTION)` and never looked at the scheduler's
+counter, which is how QuickBooks stayed silent for 24 days.
+
+Both were reading one column that answers a narrower question than either was
+asking. `status` is the last *verification*, re-run only when somebody presses
+Recheck. `syncFailureCount` is the *scheduler's* counter, reset by any success.
+Neither alone is "is this working".
+
+### What each state means
+
+| State | Condition | Raises attention |
+|---|---|---|
+| `unavailable` | no implementation, or OAuth credentials absent | no |
+| `not_connected` | no row, or DISCONNECTED | no |
+| `failed` | verification failed — provider's message kept verbatim | **yes** |
+| `needs_reconnection` | 3+ consecutive sync failures | **yes** |
+| `connected_no_data` | healthy, has never written a record | **no (C3)** |
+| `connected` | healthy, and counts what arrived | no |
+
+Precedence is ordered because more than one can be true at once, and the most
+actionable thing wins: a failed verification outranks a failing sync, which
+outranks having produced nothing.
+
+### Availability is declared by the connector
+
+`IntegrationConnector.configured?()` — optional, implemented by the five OAuth
+connectors that read platform credentials from the environment. **Declared by the
+connector, not by a list somewhere else**, because the connector is what reads
+those variables and is the only thing that cannot fall out of step with itself.
+
+This is what stops Facebook, Instagram and TikTok offering a Connect button that
+could only ever throw. They stay in the catalog (**C2**) and read *Coming later*.
+Mailchimp is unaffected: its catalog entry is `api_key`, and that path works
+without platform credentials — which is exactly the case `COMPLIANCE.md` said
+would keep working.
+
+### C3, held
+
+`connected_no_data` **does not raise**. An account with no campaigns is an
+ordinary thing to have, and telling an owner their connection is broken because
+their Mailchimp is empty would be wrong. What changed is only that the two cases
+stopped looking identical: Mailchimp has synced successfully every day with zero
+failures and has never written a record, and until now that was indistinguishable
+from a connection returning real data.
+
+### Two suites became one
+
+`verify-connection-health.ts` was written yesterday against the interim rule that
+lived inside `getIntegrationIssues`. That rule now lives in `connectionHealthOf`,
+so the suite was testing an implementation that no longer exists separately. Its
+one unique assertion — the `BusinessContext` staleness gate — moved into
+`verify-connection-truthfulness.ts` and the file was deleted.
+
+That was not tidiness. Running both exhausted the harness's single PGlite
+connection and deterministically broke the two suites that ran after them
+(`two-factor`, `update-product-image`) — reproduced twice, and confirmed by
+removing the new suite and watching 42/42 return. Two descriptions of one thing
+cost real coverage, which is the milestone's own subject.
+
+### Gates
+
+`tsc` clean · `next build` compiled · eslint **70 problems (2 errors, 68
+warnings) — baseline** · shared runner **42/42** · standalone **66/68** (the two
+known baseline failures) · `verify-connection-truthfulness.ts` — **44
+assertions, 8 negative controls**, all catching.
+
+`integrationStatus` was removed from `ConnectorCard` rather than left unused: an
+unread raw column sitting beside `health` is an invitation to read the field this
+milestone exists to stop reading.
+
+### Out of scope, untouched
+
+No new provider implementations. No social connections. No BI or Learn changes.
+No identity data. No storefront code.

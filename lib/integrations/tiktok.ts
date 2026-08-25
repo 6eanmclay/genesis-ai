@@ -128,6 +128,8 @@ export const tiktokConnector: IntegrationConnector = {
   provider: "TIKTOK",
   displayName: "TikTok",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  /** TIKTOK_CLIENT_KEY/TIKTOK_CLIENT_SECRET must exist for a new connection to be possible. */
+  configured: () => Boolean(process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET),
   capabilities: {
     authKind: "oauth",
     // ROTATING, in TikTok's own words: "The returned refresh_token may be

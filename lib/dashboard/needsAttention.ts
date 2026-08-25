@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { AttentionItem } from "./types";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
+import { connectionHealthOf } from "@/lib/integrations/connectionHealth";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -103,59 +104,67 @@ export async function getStaleExecutions(storeId: string): Promise<AttentionItem
 }
 
 /**
- * A connection that has stopped working, whether or not anything re-verified it.
+ * Connections that need the owner to do something.
  *
- * `status` is the result of the last VERIFICATION — a point-in-time check of the
- * credential — and nothing re-runs it on a schedule. `syncFailureCount` is the
- * scheduler's own consecutive-failure counter, and it is the signal that keeps
- * moving. The two are different questions, and reading only the first is how a
- * dead connection presents as healthy.
+ * READS connectionHealthOf RATHER THAN DECIDING FOR ITSELF (2026-08-25). This
+ * used to ask `status in (FAILED, NEEDS_ATTENTION)`, which is the last
+ * verification result and is never re-run on a schedule — so QuickBooks, with 14
+ * consecutive sync failures and no sync since 2026-08-01, read CONNECTED and
+ * raised nothing for 24 days. It then briefly asked its own separate question
+ * about syncFailureCount, which fixed the miss but created a second definition
+ * of connection health sitting beside the screen's.
  *
- * Found in production 2026-08-25: QuickBooks read CONNECTED with **14
- * consecutive sync failures, last synced 2026-08-01**, and Google Calendar read
- * CONNECTED with **11 failures, last synced 2026-08-06**. Both had been dead for
- * weeks. Neither raised anything, so neither owner was ever told to reconnect —
- * and reconnecting is the only thing that fixes either, because only the account
- * holder can re-authorize.
+ * Now there is one definition and this is a consumer of it, so what the owner is
+ * shown on the Connections screen and what J4 raises here cannot disagree.
+ *
+ * `raisesAttention` is the whole filter. Notably `connected_no_data` does NOT
+ * raise: a provider returning nothing is an ordinary state, not a fault.
  */
-const CONSECUTIVE_FAILURES_BEFORE_ASKING = 3;
-
 export async function getIntegrationIssues(storeId: string): Promise<AttentionItem[]> {
-  const rows = await prisma.storeIntegration.findMany({
-    where: {
-      storeId,
-      OR: [
-        { status: { in: ["NEEDS_ATTENTION", "FAILED"] } },
-        // NOT "any failure". A single failed sync is ordinary — the scheduler
-        // backs off and retries, and telling an owner about it would be noise
-        // on something that fixes itself. Three consecutive failures is a
-        // connection that is not coming back on its own.
-        { syncFailureCount: { gte: CONSECUTIVE_FAILURES_BEFORE_ASKING } },
-      ],
-    },
+  const rows = await prisma.storeIntegration.findMany({ where: { storeId } });
+  if (rows.length === 0) return [];
+
+  // One grouped count rather than a query per connection.
+  const produced = await prisma.businessRecord.groupBy({
+    by: ["sourceProvider"],
+    where: { storeId },
+    _count: { _all: true },
   });
-  return rows.map((row) => {
-    const verificationFailed = row.status === "FAILED" || row.status === "NEEDS_ATTENTION";
-    // WHAT THE OWNER CAN ACT ON, in their own terms. `lastError` is the
-    // provider's sentence and is genuinely useful when verification failed; a
-    // stale connection has no such error, because nothing failed to verify —
-    // it simply stopped syncing, and saying so plainly is the honest message.
-    const message = verificationFailed
-      ? (row.lastError ?? `${row.provider} needs attention`)
-      : row.lastSyncedAt
-        ? `${row.provider} has not synced since ${row.lastSyncedAt.toLocaleDateString()} — ${row.syncFailureCount} attempts have failed. It needs reconnecting.`
-        : `${row.provider} has never synced — ${row.syncFailureCount} attempts have failed. It needs reconnecting.`;
-    return {
+  const recordsBySource = new Map(produced.map((p) => [p.sourceProvider, p._count._all]));
+
+  const items: AttentionItem[] = [];
+  for (const row of rows) {
+    const health = connectionHealthOf({
+      // Availability is a question about the deployment, not about this store's
+      // row. A connection that already exists was connectable when it was made,
+      // so it is judged on its own evidence.
+      available: true,
+      row,
+      recordsProduced: recordsBySource.get(row.provider.toLowerCase()) ?? 0,
+    });
+    if (!health.raisesAttention) continue;
+
+    // A verification failure IS the provider's sentence — it names the account
+    // and what is wrong with it, and nothing this codebase could write would be
+    // more useful. Everything else is phrased by connectionHealthOf and only
+    // needs the provider's name in front of it.
+    const message =
+      health.state === "failed"
+        ? (health.providerError ?? `${row.provider} needs attention`)
+        : `${row.provider} ${health.detail}`;
+
+    items.push({
       id: row.id,
       kind: "integration-issue" as const,
-      severity: row.status === "FAILED" ? ("FAILED" as const) : ("WARNING" as const),
+      severity: health.state === "failed" ? ("FAILED" as const) : ("WARNING" as const),
       message,
       // A stale connection has no meaningful lastVerifiedAt — nothing verified
       // it. The last time it actually worked is the honest timestamp.
-      occurredAt: verificationFailed ? row.lastVerifiedAt : (row.lastSyncedAt ?? row.lastVerifiedAt),
+      occurredAt: health.state === "failed" ? row.lastVerifiedAt : (row.lastSyncedAt ?? row.lastVerifiedAt),
       actionHref: "/dashboard/payments",
-    };
-  });
+    });
+  }
+  return items;
 }
 
 // The one definition of "does this store have a working payment method" —

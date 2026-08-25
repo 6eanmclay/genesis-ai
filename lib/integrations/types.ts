@@ -154,6 +154,23 @@ export interface IntegrationConnector {
   /** Declared, not implied — see IntegrationCapabilities. */
   capabilities: IntegrationCapabilities;
 
+  /**
+   * Can a NEW connection to this provider be started right now? (2026-08-25)
+   *
+   * An OAuth connector needs client credentials that live in the environment,
+   * and four of them do not have any in production. Without this, the screen
+   * offered a Connect button that could only ever throw — the provider looked
+   * available and was not.
+   *
+   * DECLARED BY THE CONNECTOR, not by a list somewhere else, because the
+   * connector is what reads those variables and is the only thing that cannot
+   * fall out of step with itself. Same reasoning as capabilities above.
+   *
+   * Optional: absent means "nothing to configure", which is the right answer
+   * for a connector that needs no platform-level credentials at all.
+   */
+  configured?(): boolean;
+
   // Called once with no params to kick off a connection; called again with
   // whatever params that step produced (an OAuth `code`, a submitted API
   // key, ...) to continue/complete it. The connector owns its own steps.

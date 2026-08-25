@@ -95,6 +95,8 @@ export const googleCalendarConnector: IntegrationConnector = {
   provider: "GOOGLE_CALENDAR",
   displayName: "Google Calendar",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  /** GOOGLE_CALENDAR_CLIENT_ID/GOOGLE_CALENDAR_CLIENT_SECRET must exist for a new connection to be possible. */
+  configured: () => Boolean(process.env.GOOGLE_CALENDAR_CLIENT_ID && process.env.GOOGLE_CALENDAR_CLIENT_SECRET),
   capabilities: {
     authKind: "oauth",
     // The access token expires hourly; the refresh token does NOT rotate, so a

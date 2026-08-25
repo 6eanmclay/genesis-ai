@@ -118,6 +118,8 @@ export const quickbooksConnector: IntegrationConnector = {
   provider: "QUICKBOOKS",
   displayName: "QuickBooks Online",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  /** QUICKBOOKS_CLIENT_ID/QUICKBOOKS_CLIENT_SECRET must exist for a new connection to be possible. */
+  configured: () => Boolean(process.env.QUICKBOOKS_CLIENT_ID && process.env.QUICKBOOKS_CLIENT_SECRET),
   capabilities: {
     authKind: "oauth",
     // ROTATING, and the reason this field exists. Intuit issues a new refresh

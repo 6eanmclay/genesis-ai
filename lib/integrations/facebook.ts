@@ -51,6 +51,8 @@ export const facebookConnector: IntegrationConnector = {
   provider: "FACEBOOK",
   displayName: "Facebook Page",
   requiredPermission: PERMISSIONS.CONNECTIONS_MANAGE,
+  /** FACEBOOK_CLIENT_ID/FACEBOOK_CLIENT_SECRET must exist for a new connection to be possible. */
+  configured: () => Boolean(process.env.FACEBOOK_CLIENT_ID && process.env.FACEBOOK_CLIENT_SECRET),
   capabilities: {
     authKind: "oauth",
     // The Page token used for every API call is effectively non-expiring, but

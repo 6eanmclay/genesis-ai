@@ -9,6 +9,7 @@ import {
   type CatalogEntry,
 } from "@/lib/integrations/catalog";
 import { getConnectionGaps } from "@/lib/integrations/gaps";
+import { connectionHealthOf, type ConnectionHealth } from "@/lib/integrations/connectionHealth";
 import {
   connectExecutable,
   verifyExecutable,
@@ -27,7 +28,8 @@ interface ExecutionLogDisplay {
 
 interface ResolvedEntry {
   entry: CatalogEntry;
-  integrationStatus: string | null;
+  /** The one true answer about this connection — see lib/integrations/connectionHealth.ts. */
+  health: ConnectionHealth;
   statusDisplay: ExecutionLogDisplay | null;
   formFields: { name: string; label: string; type: string }[] | null;
   lastAttemptFailedMessage: string | null;
@@ -37,9 +39,12 @@ interface ResolvedEntry {
 
 async function resolveEntry(storeId: string, entry: CatalogEntry): Promise<ResolvedEntry> {
   if (!entry.connector || !entry.provider) {
+    // KEPT IN THE CATALOG, MARKED HONESTLY (C2, 2026-08-25). A future provider
+    // is not removed because it has no implementation yet — it simply must not
+    // be presented as something that can be connected today.
     return {
       entry,
-      integrationStatus: null,
+      health: connectionHealthOf({ available: false, row: null, recordsProduced: 0 }),
       statusDisplay: null,
       formFields: null,
       lastAttemptFailedMessage: null,
@@ -119,9 +124,31 @@ async function resolveEntry(storeId: string, entry: CatalogEntry): Promise<Resol
       ? (latestLog?.status === "FAILED" ? latestLog.message : null)
       : null;
 
+  // THE ONE ANSWER, computed here and rendered by the card (2026-08-25).
+  //
+  // `recordsProduced` is what makes "Connected — no data received" a real state
+  // rather than a guess: Mailchimp has synced successfully every day with zero
+  // failures and has never written a record, and until now that looked exactly
+  // like a connection returning real data.
+  const recordsProduced = await prisma.businessRecord.count({
+    where: { storeId, sourceProvider: provider.toLowerCase() },
+  });
+  const health = connectionHealthOf({
+    available: entry.connector.configured?.() ?? true,
+    row: integration
+      ? {
+          status: integration.status,
+          syncFailureCount: integration.syncFailureCount,
+          lastSyncedAt: integration.lastSyncedAt,
+          lastError: integration.lastError,
+        }
+      : null,
+    recordsProduced,
+  });
+
   return {
     entry,
-    integrationStatus: integration?.status ?? null,
+    health,
     statusDisplay,
     formFields,
     lastAttemptFailedMessage,
@@ -215,7 +242,7 @@ export async function ConnectionsScreen({
                   key={entry.id}
                   entry={r.entry}
                   storeId={store.id}
-                  integrationStatus={r.integrationStatus}
+                  health={r.health}
                   statusDisplay={r.statusDisplay}
                   formFields={r.formFields}
                   lastAttemptFailedMessage={r.lastAttemptFailedMessage}
@@ -245,7 +272,7 @@ export async function ConnectionsScreen({
                     key={entry.id}
                     entry={r.entry}
                     storeId={store.id}
-                    integrationStatus={r.integrationStatus}
+                    health={r.health}
                     statusDisplay={r.statusDisplay}
                     formFields={r.formFields}
                     lastAttemptFailedMessage={r.lastAttemptFailedMessage}
