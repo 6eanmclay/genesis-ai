@@ -539,17 +539,46 @@ async function main() {
   const cycleSource = readFileSync(
     join(process.cwd(), "lib", "intelligence", "cycle.ts"), "utf8"
   );
+  // THE SPELLING CHANGED, THE PROPERTY DID NOT (2026-08-24). The cycle's six
+  // stages were moved behind runCycleStages so one stage's failure stops taking
+  // the stages behind it — J4 speaking was one of the two being taken. These
+  // used to match `await speakNewFindings(storeId)` and `spoken: spoke.spoken`
+  // literally, which a refactor breaks without anything being wrong. What must
+  // stay true is that the cycle wires the real function, in the right order,
+  // and reports what it said — so that is what is asserted, and the third is
+  // now behavioural rather than a string match.
   assert("the intelligence cycle speaks new findings",
-    cycleSource.includes("await speakNewFindings(storeId)"),
+    /speak:\s*\(\)\s*=>\s*speakNewFindings\(storeId\)/.test(cycleSource),
     "without this J4 computes everything and says none of it");
   // AFTER the findings sweep, not before: speaking about the set from before
   // this pass would announce something that may have just stopped being true.
   assert("and does so after the findings sweep",
     cycleSource.indexOf("notifyFromInsights(storeId") < cycleSource.indexOf("speakNewFindings(storeId"),
     "speaking before the sweep would announce a finding that may have just resolved");
+
+  const { runCycleStages } = await import("@/lib/intelligence/cycle");
+  const spokenSummary = await runCycleStages("any-store", {
+    insights: async () => [],
+    notify: async () => {},
+    learn: async () => {},
+    aiReview: async () => {},
+    staffPolicyGap: async () => {},
+    speak: async () => ({ spoken: 7 }),
+  });
   assert("and reports what it said",
-    cycleSource.includes("spoken: spoke.spoken"),
+    spokenSummary.spoken === 7,
     "a cycle summary that cannot say whether J4 spoke is a cycle nobody can audit");
+  const silentSummary = await runCycleStages("any-store", {
+    insights: async () => [],
+    notify: async () => {},
+    learn: async () => {},
+    aiReview: async () => {},
+    staffPolicyGap: async () => {},
+    speak: async () => { throw new Error("speaking failed"); },
+  }, () => {});
+  assert("CONTROL: and never claims to have spoken when it could not",
+    silentSummary.spoken === 0 && silentSummary.failedStages.includes("speak"),
+    "zero is what this summary can honestly attest to, not a retraction of anything already said");
 
   // ==========================================================================
   console.log("\n=== Authorization is the conversation's, not a new one ===\n");

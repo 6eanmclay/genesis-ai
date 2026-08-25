@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorizedCronRequest } from "@/lib/auth/cronAuth";
+import { reportIssue } from "@/lib/observability/reportIssue";
 import { runDueSyncs } from "@/lib/intelligence/scheduler";
 import { runDueIntelligenceCycles } from "@/lib/intelligence/cycle";
 import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
@@ -24,7 +25,15 @@ export async function GET(request: NextRequest) {
   // rather than on every login, because the count query is already bounded by
   // occurredAt — stale rows are a storage concern, not a correctness one.
   await pruneExpiredAttempts().catch((error) => {
-    console.error("[cron/sync] pruning auth attempts failed:", error);
+    // Reported too, though it is the one stage here whose own comment calls it
+    // a storage concern rather than a correctness one. Four stages reporting
+    // and one not is how a rule stops being true for the case nobody looked at
+    // — and a sweep that has been silently failing for months is still worth
+    // knowing about.
+    reportIssue("pruning auth attempts failed", error, {
+      subsystem: "scheduler",
+      stage: "cron.pruneAuthAttempts",
+    });
   });
 
   // Stage isolation (2026-08-20). These three stages are independent — a
@@ -35,13 +44,24 @@ export async function GET(request: NextRequest) {
   //
   // Each stage now reports its own outcome, and a stage that failed says so in
   // the response instead of being indistinguishable from one that had no work.
+  // A FAILED STAGE REACHES A PERSON (2026-08-24).
+  //
+  // Each of these already isolated itself from the others, and each already
+  // reported "this stage failed" in the response body. What none of them did
+  // was tell anybody. On Vercel a console line is short-retention runtime log,
+  // found only by somebody who already suspects a problem — which is the exact
+  // reasoning lib/observability/reportIssue.ts's own header gives for existing.
+  // reportIssue keeps the console line and adds the operator.
   const stageErrors: string[] = [];
 
   let summaries: Awaited<ReturnType<typeof runDueSyncs>> = [];
   try {
     summaries = await runDueSyncs(50);
   } catch (error) {
-    console.error("[cron/sync] connector syncs failed:", error);
+    reportIssue("connector syncs failed", error, {
+      subsystem: "scheduler",
+      stage: "cron.syncs",
+    });
     stageErrors.push("syncs");
   }
   const synced = summaries.filter((s) => s.ok).length;
@@ -55,7 +75,10 @@ export async function GET(request: NextRequest) {
   try {
     growthPointRefreshes = await runDueGrowthPointRefreshes(50);
   } catch (error) {
-    console.error("[cron/sync] growth point refreshes failed:", error);
+    reportIssue("growth point refreshes failed", error, {
+      subsystem: "scheduler",
+      stage: "cron.growthPoints",
+    });
     stageErrors.push("growthPoints");
   }
 
@@ -79,7 +102,10 @@ export async function GET(request: NextRequest) {
       skipStoreIds: summaries.filter((s) => s.ok).map((s) => s.storeId),
     });
   } catch (error) {
-    console.error("[cron/sync] intelligence cycles failed:", error);
+    reportIssue("intelligence cycles failed", error, {
+      subsystem: "scheduler",
+      stage: "cron.intelligence",
+    });
     stageErrors.push("intelligence");
   }
 
@@ -99,7 +125,10 @@ export async function GET(request: NextRequest) {
   try {
     sourcing = await runDueSourcing();
   } catch (error) {
-    console.error("[cron/sync] sourcing pass failed:", error);
+    reportIssue("sourcing pass failed", error, {
+      subsystem: "scheduler",
+      stage: "cron.sourcing",
+    });
     stageErrors.push("sourcing");
   }
 
@@ -127,6 +156,12 @@ export async function GET(request: NextRequest) {
       storeId: c.storeId,
       ok: c.ok,
       insights: c.insights,
+      spoken: c.spoken,
+      // WHICH stage, not merely that the pass did not complete. A cycle that
+      // failed only at ai_review still ran Learn, still spoke, and needs a
+      // provider — not an engineer. One that failed at insights is a different
+      // problem entirely, and a bare `ok: false` cannot tell them apart.
+      failedStages: c.failedStages,
     })),
     // Per-store detail, same reasoning as the two above. A store that was
     // considered and correctly did nothing reads differently from one that was
