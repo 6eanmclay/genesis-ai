@@ -112,6 +112,7 @@ function OrderRowCard({
   canViewRevenue,
   canManage,
   canBuyLabel,
+  labelBlockedBy,
 }: {
   order: OrderRow;
   /** The store's own, never a default that happens to be the developer's. */
@@ -122,6 +123,8 @@ function OrderRowCard({
   // connected AND a real ship-from address on file) checked once by the
   // page, not re-derived per row.
   canBuyLabel: boolean;
+  /** Why not, when not — so a blocked order can say so instead of going quiet. */
+  labelBlockedBy: "return_address" | "shipping_provider" | null;
 }) {
   const [isPending, startTransition] = useTransition();
   const isFulfilled = order.fulfillmentStatus === "fulfilled";
@@ -219,6 +222,18 @@ function OrderRowCard({
           {canManage && canBuyLabel && order.shippingAddress && !order.trackingNumber && (
             <BuyLabelForm orderId={order.id} />
           )}
+          {/* AND WHEN IT CANNOT, WHY (2026-08-25). This branch used to be
+              nothing at all: a paid order with a delivery address and no way to
+              ship it, and no reason on the screen. Shown only for an order that
+              would otherwise qualify, so a fulfilled or unaddressed order does
+              not carry an explanation for a button it was never going to have. */}
+          {canManage && !canBuyLabel && order.shippingAddress && !order.trackingNumber && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {labelBlockedBy === "return_address"
+                ? "Add your ship-from address below to buy a label for this order."
+                : "Shipping isn't connected yet, so a label can't be bought for this order."}
+            </p>
+          )}
           {/* No "mark as unfulfilled" once a label exists — the parcel is in the
               post and the buyer has tracking, so the server refuses it. Offering
               a button that throws is worse than not offering it. Marking as
@@ -244,12 +259,14 @@ export function OrdersList({
   canViewRevenue,
   canManage,
   canBuyLabel,
+  labelBlockedBy,
 }: {
   orders: OrderRow[];
   currency: string;
   canViewRevenue: boolean;
   canManage: boolean;
   canBuyLabel: boolean;
+  labelBlockedBy: "return_address" | "shipping_provider" | null;
 }) {
   if (orders.length === 0) {
     return <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">No orders yet.</p>;
@@ -274,6 +291,7 @@ export function OrdersList({
                 canViewRevenue={canViewRevenue}
                 canManage={canManage}
                 canBuyLabel={canBuyLabel}
+                labelBlockedBy={labelBlockedBy}
               />
             ))}
           </ul>
@@ -293,6 +311,7 @@ export function OrdersList({
                 canViewRevenue={canViewRevenue}
                 canManage={canManage}
                 canBuyLabel={canBuyLabel}
+                labelBlockedBy={labelBlockedBy}
               />
             ))}
           </ul>

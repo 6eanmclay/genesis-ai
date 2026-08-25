@@ -155,6 +155,20 @@ export async function OrdersWorkspace({
   const uspsBroken = isBrokenConnection(uspsIntegration?.status);
   const returnAddress = store.returnAddress as unknown as StoreReturnAddress | null;
   const canBuyLabel = Boolean(uspsWorking && returnAddress);
+  // WHY NOT, WHEN NOT (2026-08-25).
+  //
+  // `canBuyLabel` alone is opaque: when it was false the Buy Label form simply
+  // did not render, so an owner looking at a paid order saw no way to ship it
+  // and no reason given. That is the R1 defect inverted — there, J4 said what
+  // to do with no way to do it; here there is no way to do it and nothing said.
+  //
+  // Two causes, and they have different remedies, so they are not collapsed
+  // into one message. Both remedies happen to live further down this same page.
+  const labelBlockedBy: "return_address" | "shipping_provider" | null = canBuyLabel
+    ? null
+    : !returnAddress
+      ? "return_address"
+      : "shipping_provider";
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
@@ -351,6 +365,7 @@ export async function OrdersWorkspace({
         canViewRevenue={canViewRevenue}
         canManage={canManage}
         canBuyLabel={canBuyLabel}
+        labelBlockedBy={labelBlockedBy}
       />
     </div>
   );
