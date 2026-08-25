@@ -585,3 +585,61 @@ it stays gone.
 `tsc` clean · `next build` compiled · eslint **70 — baseline** · shared runner
 **42/42** · standalone **66/68** · `verify-connection-truthfulness.ts` — **81
 assertions, 25 negative controls**.
+
+
+---
+
+## 13. R2 deployed and verified — 2026-08-25
+
+**Deployed commit `e99a2b4`.** 91 migrations found, none pending, compiled clean.
+
+### Production, after
+
+| State | Count |
+|---|---|
+| `connected` | **8** |
+| `connected_no_data` | **1** |
+| `failed` | 6 |
+| `needs_reconnection` | 2 |
+
+- Every non-syncing connector is plainly **Connected** — none says "no data",
+  none claims to be syncing, none says "yet", **none invents a record count**.
+- `connected_no_data` is down to **Mailchimp alone** — the one connector that
+  genuinely syncs and has returned nothing.
+
+### C1 non-regression
+
+**Attention-raising unchanged at 8.** `failed` still 6, `needs_reconnection`
+still 2, and no `connected*` state raises. The 6 failed rails still carry the
+provider's own message verbatim.
+
+### One more check of mine that was wrong
+
+"No connected rail invents a record count" first read FAIL — because I applied it
+to **all** rails including the six `failed` ones, whose detail is the provider's
+own sentence and legitimately contains digits (`acct_1U07coPiGlsEL0FC`). Narrowed
+to the claim actually being made: **8 connected rails, 0 inventing a count.**
+
+Third time this session a verification script has answered a slightly different
+question than the one asked. Recorded because the pattern is the point.
+
+---
+
+## 14. R3 — as far as it goes without re-consent: COMPLETE
+
+Everything buildable is built, and most of it already was:
+
+| | |
+|---|---|
+| J4 speaks about it | **since 2026-08-07** — the AI review layer has been saying "your QuickBooks connection is still failing its token refresh (400)" for weeks |
+| A deterministic attention card | `6650011` — `getIntegrationIssues` feeds `runDeterministicObservationSweep` → `communicateFinding` → a spoken finding |
+| The message names what stopped and when | *"QUICKBOOKS has not synced since 8/1/2026 — 14 attempts have failed. It needs reconnecting."* |
+| It routes to the right screen | `8057684` |
+| A Reconnect button is there | `8057684` |
+
+**What QuickBooks delivered before it died:** 25 documents, 16 transactions, 43
+business events, newest 2026-08-01.
+
+Nothing further can be built. A retired refresh token can only be replaced by
+fresh consent, and the owner has now been told, repeatedly, by several
+independent paths. **The system has done its part.**
