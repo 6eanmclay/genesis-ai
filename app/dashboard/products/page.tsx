@@ -172,6 +172,9 @@ export async function ProductsScreen({
                     description: product.description,
                     priceInCents: product.priceInCents,
                     weightOz: product.weightOz,
+                    lengthIn: product.lengthIn,
+                    widthIn: product.widthIn,
+                    heightIn: product.heightIn,
                   }}
                 />
 

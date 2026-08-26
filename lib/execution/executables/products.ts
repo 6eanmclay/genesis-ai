@@ -138,7 +138,31 @@ export interface EditProductInput {
    * `parsePackagedWeight` normalises. Zero or null clears it.
    */
   weightOz?: number | null;
+  /**
+   * The PACKAGED dimensions in inches — the box, not the product.
+   *
+   * Same columns `parcelForProduct` and the label form have always read, and
+   * the same clearing rule as the weight. All three or none is enforced where
+   * they are typed, because a parcel missing one side cannot be rated.
+   */
+  lengthIn?: number | null;
+  widthIn?: number | null;
+  heightIn?: number | null;
 }
+
+/**
+ * Zero or null means the merchant cleared it, and NULL is what is stored.
+ *
+ * `parcelForProduct` treats both as "not given", and null is the honest one:
+ * nobody has said what this measures, as opposed to somebody claiming it
+ * measures nothing.
+ */
+function clearedToNull(value: number | null): number | null {
+  return value === null || value <= 0 ? null : value;
+}
+
+/** The parcel fields, named once so run() and verify() cannot drift apart. */
+const PARCEL_FIELDS = ["weightOz", "lengthIn", "widthIn", "heightIn"] as const;
 
 export const editProductExecutable: Executable<EditProductInput, ProductMetadata> = {
   action: EXECUTION_ACTIONS.PRODUCT_EDIT,
@@ -149,16 +173,18 @@ export const editProductExecutable: Executable<EditProductInput, ProductMetadata
       description?: string | null;
       priceInCents?: number;
       weightOz?: number | null;
+      lengthIn?: number | null;
+      widthIn?: number | null;
+      heightIn?: number | null;
     } = {};
     if (input.name !== undefined) data.name = input.name;
     if (input.description !== undefined) data.description = input.description;
     if (input.priceInCents !== undefined) data.priceInCents = input.priceInCents;
-    // Zero means the merchant cleared it, and is stored as NULL rather than 0.
-    // `parcelForProduct` treats both as "cannot quote", and null is the honest
-    // one: nobody has said what this weighs, as opposed to somebody claiming it
-    // weighs nothing.
-    if (input.weightOz !== undefined) {
-      data.weightOz = input.weightOz === null || input.weightOz <= 0 ? null : input.weightOz;
+    // PRESENCE, not truthiness: a field the input does not name is left alone,
+    // so an edit that changes only the price does not blank the parcel.
+    for (const field of PARCEL_FIELDS) {
+      const value = input[field];
+      if (value !== undefined) data[field] = clearedToNull(value);
     }
 
     const product = await prisma.product.update({
@@ -177,7 +203,10 @@ export const editProductExecutable: Executable<EditProductInput, ProductMetadata
   async verify(input, ctx): Promise<VerificationOutcome> {
     const product = await prisma.product.findFirst({
       where: { id: input.productId, storeId: ctx.storeId },
-      select: { name: true, priceInCents: true, description: true, weightOz: true },
+      select: {
+        name: true, priceInCents: true, description: true,
+        weightOz: true, lengthIn: true, widthIn: true, heightIn: true,
+      },
     });
     if (!product) return { state: "failed", mismatches: ["product: no such row after the edit"] };
     return verifiedUnless(
@@ -186,11 +215,14 @@ export const editProductExecutable: Executable<EditProductInput, ProductMetadata
           name: input.name,
           description: input.description,
           priceInCents: input.priceInCents,
-          // Compared as it will be STORED, so a cleared weight verifies against
-          // null rather than against the zero that was submitted.
-          ...(input.weightOz !== undefined
-            ? { weightOz: input.weightOz === null || input.weightOz <= 0 ? null : input.weightOz }
-            : {}),
+          // Compared as they will be STORED, so a cleared measurement verifies
+          // against null rather than against the zero that was submitted.
+          ...Object.fromEntries(
+            PARCEL_FIELDS.filter((f) => input[f] !== undefined).map((f) => [
+              f,
+              clearedToNull(input[f] as number | null),
+            ])
+          ),
         },
         product as unknown as Record<string, unknown>,
         "product."

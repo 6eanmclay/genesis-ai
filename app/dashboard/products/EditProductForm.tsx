@@ -27,12 +27,18 @@ export function EditProductForm({
     description: string | null;
     priceInCents: number;
     weightOz: number | null;
+    lengthIn: number | null;
+    widthIn: number | null;
+    heightIn: number | null;
   };
 }) {
   const { state, formAction, resetKey } = useActionFormState(editProduct.bind(null, product.id));
   // Shown as the merchant weighed it. A value stored as 20 oz comes back as
   // "1 lb 4 oz", not 20 and not 1.25 — see toPoundsAndOunces.
   const saved = toPoundsAndOunces(product.weightOz);
+  // Blank rather than 0 for an unset dimension, so an empty box reads as "not
+  // given" and not as a claim that the parcel is flat.
+  const savedIn = (value: number | null) => (value && value > 0 ? String(value) : "");
 
   return (
     <form key={resetKey} action={formAction} className="flex flex-col gap-3">
@@ -106,6 +112,73 @@ export function EditProductForm({
             quote shipping for. */}
         <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
           Leave both blank if this product isn&apos;t shipped.
+        </p>
+      </fieldset>
+      {/* AND THE OTHER HALF OF THE PARCEL (2026-08-26). lengthIn/widthIn/heightIn
+          were added alongside weightOz and written by nothing either, so every
+          quote in the system was rated against a 6x4x2 default. That default is
+          about right for a tensor ring in a padded mailer and wrong for
+          anything larger, and Priority Mail prices dimensional weight — so a
+          merchant shipping a big light box was being quoted for a small one and
+          absorbing the gap on every order. */}
+      <fieldset className="flex flex-col gap-1">
+        <legend className="text-xs font-medium text-zinc-500">Package dimensions</legend>
+        <p className="text-xs text-zinc-400 dark:text-zinc-500">
+          The box as it goes out, in inches. Carriers price large light parcels by size, not
+          just weight.
+        </p>
+        <div className="mt-1 flex items-center gap-2">
+          <input
+            name="lengthIn"
+            type="number"
+            step="0.1"
+            min="0"
+            aria-label="Package length in inches"
+            placeholder="L"
+            defaultValue={
+              !state.ok && state.values?.lengthIn !== undefined
+                ? state.values.lengthIn
+                : savedIn(product.lengthIn)
+            }
+            className="w-20 rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+          />
+          <span className="text-xs text-zinc-500">&times;</span>
+          <input
+            name="widthIn"
+            type="number"
+            step="0.1"
+            min="0"
+            aria-label="Package width in inches"
+            placeholder="W"
+            defaultValue={
+              !state.ok && state.values?.widthIn !== undefined
+                ? state.values.widthIn
+                : savedIn(product.widthIn)
+            }
+            className="w-20 rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+          />
+          <span className="text-xs text-zinc-500">&times;</span>
+          <input
+            name="heightIn"
+            type="number"
+            step="0.1"
+            min="0"
+            aria-label="Package height in inches"
+            placeholder="H"
+            defaultValue={
+              !state.ok && state.values?.heightIn !== undefined
+                ? state.values.heightIn
+                : savedIn(product.heightIn)
+            }
+            className="w-20 rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+          />
+          <span className="text-xs text-zinc-500">in</span>
+        </div>
+        {/* All three or none — see parsePackagedDimensions. Two of three would
+            leave the rating code substituting a default for the third, which is
+            the invented number this field exists to remove. */}
+        <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+          Enter all three, or leave them blank to use a standard mailer size.
         </p>
       </fieldset>
       <label className="flex flex-col gap-1">

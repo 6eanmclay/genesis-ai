@@ -2,7 +2,7 @@
 
 import { redirect, unstable_rethrow } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { parsePackagedWeight } from "@/lib/shipping/packagedWeight";
+import { parsePackagedWeight, parsePackagedDimensions } from "@/lib/shipping/packagedWeight";
 import { auth, signOut } from "@/auth";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { prisma } from "@/lib/prisma";
@@ -293,6 +293,20 @@ export async function editProduct(
       throw new RecoverableError(weight.error);
     }
 
+    // AND THE PACKAGED DIMENSIONS (2026-08-26). lengthIn/widthIn/heightIn are
+    // the same three columns added alongside weightOz, read by
+    // `parcelForProduct` and pre-filled into the label form, and equally never
+    // written. Without them every quote is rated against a 6x4x2 default, which
+    // is right for a ring in a mailer and wrong for anything else.
+    const dimensions = parsePackagedDimensions(
+      formData.get("lengthIn") as string | null,
+      formData.get("widthIn") as string | null,
+      formData.get("heightIn") as string | null
+    );
+    if (!dimensions.ok) {
+      throw new RecoverableError(dimensions.error);
+    }
+
     await execute(
       editProductExecutable,
       {
@@ -301,6 +315,9 @@ export async function editProduct(
         description: description || null,
         priceInCents,
         weightOz: weight.weightOz,
+        lengthIn: dimensions.lengthIn,
+        widthIn: dimensions.widthIn,
+        heightIn: dimensions.heightIn,
       },
       { storeId: product.storeId }
     );

@@ -99,3 +99,72 @@ export function describePackagedWeight(weightOz: number | null): string | null {
   if (pounds) return `${pounds} lb`;
   return `${ounces} oz`;
 }
+
+// ---------------------------------------------------------------------------
+// PACKAGE DIMENSIONS
+//
+// The same field on Product that has always existed — lengthIn/widthIn/heightIn,
+// added 2026-08-20 alongside weightOz and, like it, never writable. Inches,
+// because that is the unit the columns already hold and what `parcelForProduct`
+// and the label purchase already read.
+//
+// THE DIMENSIONS OF THE PACKAGE, not the product. A 4-inch ring in a 9-inch
+// mailer is a 9-inch parcel, and the carrier prices the mailer.
+
+export type DimensionsParseResult =
+  | { ok: true; lengthIn: number | null; widthIn: number | null; heightIn: number | null }
+  | { ok: false; error: string };
+
+/** Beyond this no domestic service will take it, so it is caught where it is typed. */
+export const MAX_DIMENSION_IN = 108;
+
+/**
+ * Three dimensions as the merchant typed them.
+ *
+ * ALL THREE OR NONE. A parcel with a length and no width is not a partly-known
+ * parcel, it is an unusable one — no carrier prices a rectangle with a missing
+ * side, and storing two of three would leave `parcelForProduct` silently
+ * substituting a default for the third, which is exactly the invented number
+ * this whole module exists to avoid.
+ */
+export function parsePackagedDimensions(
+  lengthInput: string | null | undefined,
+  widthInput: string | null | undefined,
+  heightInput: string | null | undefined
+): DimensionsParseResult {
+  const raw = [lengthInput, widthInput, heightInput].map((v) => (v ?? "").trim());
+  const filled = raw.filter((v) => v !== "");
+
+  // All blank clears them, the same way a blank weight does.
+  if (filled.length === 0) return { ok: true, lengthIn: null, widthIn: null, heightIn: null };
+
+  if (filled.length < 3) {
+    return { ok: false, error: "Enter all three package dimensions, or leave all three blank." };
+  }
+
+  const [lengthIn, widthIn, heightIn] = raw.map(Number);
+  if (![lengthIn, widthIn, heightIn].every((n) => Number.isFinite(n))) {
+    return { ok: false, error: "Enter the package dimensions as numbers." };
+  }
+  if (![lengthIn, widthIn, heightIn].every((n) => n > 0)) {
+    return { ok: false, error: "Every package dimension has to be greater than zero." };
+  }
+  if ([lengthIn, widthIn, heightIn].some((n) => n > MAX_DIMENSION_IN)) {
+    return {
+      ok: false,
+      error: `That is over the ${MAX_DIMENSION_IN} in limit for domestic shipping.`,
+    };
+  }
+
+  return { ok: true, lengthIn, widthIn, heightIn };
+}
+
+/** How stored dimensions read in a sentence. */
+export function describePackageDimensions(
+  lengthIn: number | null,
+  widthIn: number | null,
+  heightIn: number | null
+): string | null {
+  if (!lengthIn || !widthIn || !heightIn) return null;
+  return `${lengthIn} × ${widthIn} × ${heightIn} in`;
+}
