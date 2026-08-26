@@ -213,6 +213,9 @@ export const COMMERCE_SECTIONS: NavSection[] = [
   // other is what Genesis thinks should be on it, and folding the second into
   // the first would make a recommendation look like inventory.
   { key: "catalog", label: "What you could sell", href: "/dashboard/catalog", permission: "products:manage" },
+  // Beside Products, under the same permission: a promotion is a pricing
+  // decision about products, not a separate department.
+  { key: "promotions", label: "Promotions", href: "/dashboard/promotions", permission: "products:manage" },
   { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
   { key: "analytics", label: "Revenue", href: "/dashboard/analytics", permission: "analytics:view" },
 ];

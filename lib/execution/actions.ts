@@ -16,6 +16,11 @@ export const EXECUTION_ACTIONS = {
   PRODUCT_REORDER_IMAGES: "product.reorder_images",
   PRODUCT_DELETE_IMAGE: "product.delete_image",
   PRODUCT_REPLACE_IMAGE: "product.replace_image",
+  // Promotions and discount codes (2026-08-26). Under PRODUCTS_MANAGE, because
+  // a promotion is a pricing decision about products.
+  PROMOTION_CREATE: "promotion.create",
+  PROMOTION_UPDATE: "promotion.update",
+  PROMOTION_DELETE: "promotion.delete",
   ORDER_TOGGLE_FULFILLED: "order.toggle_fulfilled",
   ORDER_PURCHASE_SHIPPING_LABEL: "order.purchase_shipping_label",
   ORDER_ATTACH_TRACKING: "order.attach_tracking",

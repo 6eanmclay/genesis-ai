@@ -2,7 +2,11 @@
 
 import { formatMoney } from "@/lib/money";
 import { useActionState } from "react";
-import { quoteShippingOptions, checkoutWithShipping, type ShippingQuoteState } from "../../actions";
+import { quoteShippingOptions, checkoutWithShipping, previewCheckoutPrice, type ShippingQuoteState } from "../../actions";
+import type { CheckoutPreviewState } from "@/lib/promotions/checkoutPreview";
+import { priceOrder } from "@/lib/pricing/orderPricing";
+import { PriceBreakdown } from "../../checkout/PriceBreakdown";
+import { DiscountCodeField } from "../../checkout/DiscountCodeField";
 import { useState } from "react";
 import { verificationStateOf } from "@/lib/shipping/addressVerification";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
@@ -46,6 +50,37 @@ export function ShippingStep({
     checkoutWithShipping.bind(null, slug, productId),
     { ok: true }
   );
+  // THE BREAKDOWN AND THE CODE (2026-08-26). This step showed "price plus
+  // shipping" and the price of each service, and never a total — the first
+  // figure adding the two together appeared on Stripe's own page, after the
+  // decision to buy.
+  //
+  // priceOrder is called here with no discounts purely to build the SHAPE the
+  // breakdown renders while nothing has been applied; every figure that
+  // survives a code being entered comes back from the server.
+  const [preview, previewAction, previewPending] = useActionState<CheckoutPreviewState, FormData>(
+    previewCheckoutPrice.bind(null, slug, productId),
+    { ok: true, pricing: priceOrder({ unitPriceInCents: priceInCents }), code: null }
+  );
+  const [code, setCode] = useState("");
+  // Which service is selected, so the breakdown can move with it. The AMOUNT is
+  // still never submitted — this drives a re-price whose numbers come from the
+  // server, and the checkout form below sends only the rate id.
+  const [selectedRateId, setSelectedRateId] = useState<string | null>(null);
+
+  const appliedCode = preview.ok && preview.code?.applied ? preview.code.candidate.code : null;
+  const codeError = preview.ok && preview.code && !preview.code.applied ? preview.code.message : null;
+
+  const reprice = (nextCode: string, rateId: string | null, shippingInCents: number) => {
+    setCode(nextCode);
+    const data = new FormData();
+    data.set("discountCode", nextCode);
+    if (rateId) {
+      data.set("rateId", rateId);
+      data.set("shippingInCents", String(shippingInCents));
+    }
+    previewAction(data);
+  };
 
   const address = quote.address;
   const verification = quote.verification;
@@ -213,7 +248,17 @@ export function ShippingStep({
             {quote.options.map((option, index) => (
               <li key={option.rateId}>
                 <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-black/[.10] px-4 py-3 hover:border-black/[.22] dark:border-white/[.12] dark:hover:border-white/[.24]">
-                  <input type="radio" name="rateId" value={option.rateId} defaultChecked={index === 0} required />
+                  <input
+                    type="radio"
+                    name="rateId"
+                    value={option.rateId}
+                    defaultChecked={index === 0}
+                    required
+                    onChange={() => {
+                      setSelectedRateId(option.rateId);
+                      reprice(appliedCode ?? code, option.rateId, option.amountInCents);
+                    }}
+                  />
                   <span className="flex-1">
                     <span className="block text-[15px] text-[var(--brand-text)]">
                       {option.carrier} {option.service}
@@ -231,6 +276,47 @@ export function ShippingStep({
               </li>
             ))}
           </ul>
+
+          <div className="mt-5">
+            <DiscountCodeField
+              applied={appliedCode}
+              error={codeError}
+              pending={previewPending}
+              onApply={(value) => {
+                const chosen = quote.options?.find((o) => o.rateId === selectedRateId) ?? quote.options?.[0];
+                reprice(value, chosen?.rateId ?? null, chosen?.amountInCents ?? 0);
+              }}
+              onRemove={() => {
+                const chosen = quote.options?.find((o) => o.rateId === selectedRateId) ?? quote.options?.[0];
+                reprice("", chosen?.rateId ?? null, chosen?.amountInCents ?? 0);
+              }}
+            />
+          </div>
+
+          {/* The code, never the discount. Re-resolved server-side at the
+              moment of the charge, so a promotion that expired while the
+              customer was choosing a service is not honoured by a stale field. */}
+          <input type="hidden" name="discountCode" value={appliedCode ?? code} />
+
+          <div className="mt-5 rounded-2xl border border-black/[.10] px-5 py-5 dark:border-white/[.12]">
+            <PriceBreakdown
+              pricing={
+                preview.ok
+                  ? preview.pricing
+                  : priceOrder({ unitPriceInCents: priceInCents })
+              }
+              currency={currency}
+              productName={productName}
+            />
+            {/* Until a service is chosen the breakdown has no delivery cost to
+                show. Said out loud rather than left as a total that quietly
+                omits it. */}
+            {preview.ok && preview.pricing.shippingInCents === 0 && (
+              <p className="mt-3 text-[13px] text-[var(--brand-text-secondary)]">
+                Shipping is added once you choose a service above.
+              </p>
+            )}
+          </div>
 
           {!checkout.ok && (
             <p className="mt-3 text-[14px] text-red-600 dark:text-red-400">{checkout.error}</p>

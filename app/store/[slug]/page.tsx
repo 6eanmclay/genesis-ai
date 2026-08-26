@@ -6,11 +6,10 @@ import { productSupportsLiveShipping } from "@/lib/shipping/checkoutShipping";
 import { parseCheckoutProblem, checkoutProblemNotice } from "@/lib/orders/checkoutOutcome";
 import { auth } from "@/auth";
 import { getStoreRole } from "@/lib/permissions";
-import { createCheckoutSession, subscribeToNewsletter } from "./actions";
+import { subscribeToNewsletter } from "./actions";
 import { resolvePreviewTheme } from "@/lib/storefront/previewTheme";
 import { formatMoney } from "@/lib/money";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
-import { ActionForm } from "@/app/dashboard/ActionForm";
 import {
   DEFAULT_THEME,
   googleFontsUrl,
@@ -107,12 +106,17 @@ async function BuyButton({
     );
   }
 
+  // EVERY OTHER PRODUCT NOW GETS A REVIEW STEP TOO (2026-08-26).
+  //
+  // This was a direct post to createCheckoutSession: one click from the
+  // storefront to a payment provider's hosted page, with no total shown in
+  // between and nowhere to enter a discount code. The review step is where a
+  // sale becomes visible and a code can be typed; the action it eventually
+  // submits, and everything the server does with it, is unchanged.
   return (
-    <ActionForm action={createCheckoutSession.bind(null, slug, product.id)}>
-      <SubmitButton pendingText="Redirecting to checkout..." className={className}>
-        Buy Now
-      </SubmitButton>
-    </ActionForm>
+    <Link href={`/store/${slug}/checkout/${product.id}`} className={className}>
+      Buy Now
+    </Link>
   );
 }
 

@@ -11,6 +11,10 @@ import { getBaseUrl } from "@/lib/integrations/util";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import { selectProvider } from "@/lib/payments/router";
+import { priceCheckout } from "@/lib/promotions/resolve";
+import type { CheckoutPreviewState } from "@/lib/promotions/checkoutPreview";
+import { toDiscountMetadata, packPaypalCustomId } from "@/lib/promotions/checkoutDiscount";
+import type { OrderPricing } from "@/lib/pricing/orderPricing";
 import { canStoreAcceptPayments, CHECKOUT_UNAVAILABLE_MESSAGE } from "./shared";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import type { Product, Store } from "@prisma/client";
@@ -42,6 +46,11 @@ async function createStripeCheckoutSession(
   product: Product,
   slug: string,
   baseUrl: string,
+  // WHAT THIS ORDER COSTS, already decided. Required rather than optional, so
+  // the compiler refuses any future call site that tries to charge a price this
+  // function worked out for itself — which is how the two rails drifted apart
+  // in the first place. See lib/pricing/orderPricing.ts.
+  pricing: OrderPricing,
   // Present only when the customer chose a shipping service on the storefront.
   // Absent for every other checkout, which behaves exactly as it always has.
   shipping?: {
@@ -70,8 +79,22 @@ async function createStripeCheckoutSession(
           // a price in one currency and charged in another, which is not a
           // display bug, it is the wrong amount of money.
           currency: store.currency.toLowerCase(),
-          product_data: { name: product.name },
-          unit_amount: product.priceInCents,
+          // The discount is named on Stripe's own page too. The customer saw
+          // the full breakdown on the review step before getting here; without
+          // this line the price would simply be lower than the one on the
+          // product page, with nothing to say why.
+          product_data: {
+            name: product.name,
+            ...(pricing.discount ? { description: `${pricing.discount.label} applied` } : {}),
+          },
+          // THE DISCOUNTED SUBTOTAL, not the list price and not a Stripe
+          // coupon. Applying it here rather than through Stripe's own discount
+          // API is what lets the PayPal rail below charge the same arithmetic —
+          // a Stripe Coupon would have been silently ignored there.
+          //
+          // This is the whole merchandise line because quantity is 1; see
+          // priceOrder, which is where quantity lives if it ever stops being.
+          unit_amount: pricing.merchandiseSubtotalInCents,
         },
         quantity: 1,
       },
@@ -109,19 +132,24 @@ async function createStripeCheckoutSession(
       : { shipping_address_collection: { allowed_countries: ["US" as const] } }),
     success_url: `${baseUrl}/store/${slug}/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/store/${slug}`,
-    metadata: shipping
-      ? toCheckoutMetadata({
-          storeId: store.id,
-          productId: product.id,
-          destination: shipping.destination,
-          selected: shipping.selected,
-          enteredAddress: shipping.enteredAddress ?? null,
-          addressVerification: shipping.addressVerification ?? null,
-        })
-      : {
-          storeId: store.id,
-          productId: product.id,
-        },
+    metadata: {
+      ...(shipping
+        ? toCheckoutMetadata({
+            storeId: store.id,
+            productId: product.id,
+            destination: shipping.destination,
+            selected: shipping.selected,
+            enteredAddress: shipping.enteredAddress ?? null,
+            addressVerification: shipping.addressVerification ?? null,
+          })
+        : {
+            storeId: store.id,
+            productId: product.id,
+          }),
+      // Empty when nothing was discounted, so an undiscounted checkout's
+      // metadata is byte-identical to what it was before promotions existed.
+      ...toDiscountMetadata(pricing),
+    },
   });
 
   if (!session.url) {
@@ -140,7 +168,9 @@ async function createPaypalCheckoutSession(
   store: Store,
   product: Product,
   slug: string,
-  baseUrl: string
+  baseUrl: string,
+  // The same priced order the Stripe rail is given, for the same reason.
+  pricing: OrderPricing
 ): Promise<string> {
   const integration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId: store.id, provider: "PAYPAL" } },
@@ -168,12 +198,37 @@ async function createPaypalCheckoutSession(
       intent: "CAPTURE",
       purchase_units: [
         {
-          custom_id: `${store.id}:${product.id}`,
+          // storeId and productId as always, plus the money when something was
+          // discounted. PayPal gives us ONE 127-character string and no
+          // metadata, so this is the entire channel back to the order — see
+          // lib/promotions/checkoutDiscount.ts.
+          custom_id: packPaypalCustomId({ storeId: store.id, productId: product.id, pricing }),
           amount: {
             // The store's own, exactly as the Stripe rail above. Uppercase
             // here because PayPal's API takes the ISO code as written.
             currency_code: store.currency.toUpperCase(),
-            value: (product.priceInCents / 100).toFixed(2),
+            // THE DISCOUNTED SUBTOTAL — the same number the Stripe rail
+            // charges, from the same function. This rail carries no shipping,
+            // which is unchanged: checkoutWithShipping is Stripe-only.
+            value: (pricing.merchandiseSubtotalInCents / 100).toFixed(2),
+            // The breakdown PayPal shows the customer on its own approval page.
+            // Written only when there is a discount to explain; item_total and
+            // discount must sum to `value` above, which they do by construction
+            // because both come out of the same OrderPricing.
+            ...(pricing.discount
+              ? {
+                  breakdown: {
+                    item_total: {
+                      currency_code: store.currency.toUpperCase(),
+                      value: (pricing.listSubtotalInCents / 100).toFixed(2),
+                    },
+                    discount: {
+                      currency_code: store.currency.toUpperCase(),
+                      value: (pricing.discount.amountInCents / 100).toFixed(2),
+                    },
+                  },
+                }
+              : {}),
           },
         },
       ],
@@ -207,7 +262,7 @@ export async function createCheckoutSession(
   slug: string,
   productId: string,
   _prevState: ActionState,
-  _formData: FormData
+  formData: FormData
 ): Promise<ActionState> {
   let redirectUrl: string;
 
@@ -237,19 +292,90 @@ export async function createCheckoutSession(
       throw new RecoverableError(CHECKOUT_UNAVAILABLE_MESSAGE);
     }
 
+    // THE PRICE, RE-DERIVED HERE AND NOWHERE ELSE.
+    //
+    // The form submits a CODE — a string the customer typed — and never an
+    // amount. Every figure below is worked out now, from this store's own rows,
+    // at the moment of the charge. A tampered form can ask for a discount that
+    // does not exist; it cannot invent one, because nothing it sends is
+    // arithmetic. This is the rule the shipping step already established by
+    // taking a rate id and re-quoting rather than trusting a posted price.
+    //
+    // Re-derived rather than carried from the review screen for the same
+    // reason: a promotion that expired while the customer was reading must not
+    // be honoured because a hidden field still remembers it.
+    const { pricing } = await priceCheckout({
+      storeId: store.id,
+      productId: product.id,
+      unitPriceInCents: product.priceInCents,
+      code: String(formData.get("discountCode") ?? "").trim() || null,
+    });
+
     const baseUrl = await getBaseUrl();
     const provider = await selectProvider(store.id);
 
     redirectUrl =
       provider === "PAYPAL"
-        ? await createPaypalCheckoutSession(store, product, slug, baseUrl)
-        : await createStripeCheckoutSession(store, product, slug, baseUrl);
+        ? await createPaypalCheckoutSession(store, product, slug, baseUrl, pricing)
+        : await createStripeCheckoutSession(store, product, slug, baseUrl, pricing);
   } catch (error) {
     unstable_rethrow(error);
     return toActionState(error);
   }
 
   redirect(redirectUrl);
+}
+
+/**
+ * What this order would cost with that code — asked before paying.
+ *
+ * SEPARATE FROM THE CHARGE ON PURPOSE. This tells the customer what they would
+ * be charged; it decides nothing. The checkout actions re-derive the price from
+ * the same rows at the moment of the charge and do not read a single number
+ * this returned, so a promotion that expires between the two is honoured
+ * according to when the money moves, not according to when the page rendered.
+ *
+ * It takes a CODE and a rate id — never an amount — for the same reason.
+ */
+export async function previewCheckoutPrice(
+  slug: string,
+  productId: string,
+  _prevState: CheckoutPreviewState,
+  formData: FormData
+): Promise<CheckoutPreviewState> {
+  try {
+    const store = await prisma.store.findUnique({ where: { slug }, select: { id: true } });
+    if (!store) throw new RecoverableError("Store not found");
+
+    const product = await prisma.product.findFirst({
+      where: { id: productId, storeId: store.id, active: true },
+      select: { id: true, priceInCents: true },
+    });
+    if (!product) throw new RecoverableError("Product not found");
+
+    // Shipping arrives as the id of a rate the customer selected, and its
+    // amount is looked up rather than accepted — the same rule as everything
+    // else here. An unrecognised id simply prices without shipping, because a
+    // preview that guessed a delivery cost would be worse than one that waits.
+    const rateId = String(formData.get("rateId") ?? "").trim();
+    const shippingInCents = Number(formData.get("shippingInCents") ?? 0);
+
+    const { pricing, code } = await priceCheckout({
+      storeId: store.id,
+      productId: product.id,
+      unitPriceInCents: product.priceInCents,
+      shippingInCents: rateId && Number.isFinite(shippingInCents) ? Math.max(0, shippingInCents) : 0,
+      code: String(formData.get("discountCode") ?? "").trim() || null,
+    });
+
+    return { ok: true, pricing, code };
+  } catch (error) {
+    unstable_rethrow(error);
+    return {
+      ok: false,
+      error: error instanceof RecoverableError ? error.message : "We couldn't check that just now.",
+    };
+  }
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -418,8 +544,21 @@ export async function checkoutWithShipping(
       }
     }
 
+    // The same re-derivation as the no-shipping path above, with the shipping
+    // the customer chose passed in. Shipping is added AFTER the discount inside
+    // priceOrder and is never part of what a percentage is taken from, which is
+    // the whole of "discounts do not apply to shipping" — there is no separate
+    // rule to enforce anywhere else.
+    const { pricing } = await priceCheckout({
+      storeId: store.id,
+      productId: product.id,
+      unitPriceInCents: product.priceInCents,
+      shippingInCents: confirmed.selected.amountInCents,
+      code: String(formData.get("discountCode") ?? "").trim() || null,
+    });
+
     const baseUrl = await getBaseUrl();
-    redirectUrl = await createStripeCheckoutSession(store, product, slug, baseUrl, {
+    redirectUrl = await createStripeCheckoutSession(store, product, slug, baseUrl, pricing, {
       destination: address,
       selected: confirmed.selected,
       enteredAddress,

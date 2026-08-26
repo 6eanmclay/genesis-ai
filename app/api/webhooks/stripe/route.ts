@@ -17,6 +17,7 @@ import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
 import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessModel/internalMapper";
 import { fromStripeShippingDetails } from "@/lib/orders/shippingAddress";
 import { parseCheckoutShipping } from "@/lib/shipping/checkoutShipping";
+import { parseDiscountMetadata } from "@/lib/promotions/checkoutDiscount";
 import { resolveWebhookStore } from "@/lib/orders/webhookStore";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
@@ -164,6 +165,34 @@ export async function POST(request: Request) {
         where: { id: productId, storeId },
       });
 
+      // What the checkout recorded about the discount, if anything. Read here
+      // rather than inside the transaction because the promotion lookup below
+      // needs it.
+      const discountFacts = parseDiscountMetadata(session.metadata);
+
+      // AND THE SAME FOR THE PROMOTION (2026-08-26).
+      //
+      // Order.appliedPromotionId is a foreign key, so writing an id from
+      // metadata unchecked is the defect immediately above with a new column:
+      // a merchant who deletes a promotion between a customer paying and
+      // Stripe delivering the event makes order.create violate the constraint,
+      // and the ENTIRE order is lost — money taken, nothing recorded. Caught by
+      // scripts/verify-promotions.ts before it could reach anyone.
+      //
+      // Scoped to this store for the second reason productId is: an id
+      // arriving in metadata is not proof of ownership, and linking another
+      // store's promotion would leak it into this order.
+      //
+      // Losing the link costs nothing that matters. The label, the code and
+      // the amount are frozen copies written below and stand entirely on their
+      // own — the order still says exactly what was taken off and why.
+      const appliedPromotion = discountFacts.promotionId
+        ? await prisma.promotion.findFirst({
+            where: { id: discountFacts.promotionId, storeId },
+            select: { id: true },
+          })
+        : null;
+
       // Idempotent: Stripe can redeliver the same event more than once. An
       // existence check (rather than inferring "was this new" from upsert's
       // return value) inside the same transaction as the Order write means
@@ -251,6 +280,28 @@ export async function POST(request: Request) {
             selectedShippingService: chosenShipping.service ?? undefined,
             selectedShippingRateId: chosenShipping.rateId ?? undefined,
             selectedShippingEstDays: chosenShipping.estimatedDays ?? undefined,
+            // HOW THIS TOTAL WAS ARRIVED AT (2026-08-26).
+            //
+            // amountInCents above is unchanged and still Stripe's own settled
+            // total. These say why it is what it is, which nothing could say
+            // before: a discounted order looked exactly like a cheap one, and
+            // profitability read the discount as thinner margin with nothing to
+            // attribute it to.
+            //
+            // FROZEN, not looked up. The label and code are copied here rather
+            // than read back through the relation, so this order stays true
+            // after the merchant renames the sale, changes its percentage,
+            // switches it off, or deletes it — the promotion may be gone, but
+            // what this customer paid and why cannot change.
+            listSubtotalInCents: discountFacts.listSubtotalInCents ?? undefined,
+            discountInCents: discountFacts.discountInCents ?? undefined,
+            // Only when the promotion genuinely still exists in THIS store —
+            // see the lookup above. The three fields below are unconditional
+            // because they are copies, not references.
+            appliedPromotionId: appliedPromotion?.id ?? undefined,
+            appliedPromotionLabel: discountFacts.promotionLabel ?? undefined,
+            appliedPromotionCode: discountFacts.promotionCode ?? undefined,
+            appliedPromotionKind: discountFacts.promotionKind ?? undefined,
           },
         });
 

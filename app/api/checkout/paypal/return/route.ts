@@ -4,6 +4,7 @@ import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { parsePaypalCustomId } from "@/lib/promotions/checkoutDiscount";
 import { formatMoney } from "@/lib/money";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
 import { decryptCredentials } from "@/lib/integrations/credentials";
@@ -177,7 +178,14 @@ export async function GET(request: NextRequest) {
   // the purchase_unit level the way the initial capture response has it —
   // check the capture-level one first, fall back to the top-level one.
   const customId = purchaseUnit?.payments?.captures?.[0]?.custom_id ?? purchaseUnit?.custom_id;
-  const [customStoreId, productId] = customId?.split(":") ?? [];
+  // PayPal gives us one 127-character string and no metadata, so `custom_id` is
+  // the entire channel from checkout to here. It has always carried storeId and
+  // productId; since 2026-08-26 it also carries the discount, appended after
+  // them so a checkout packed by the OLD two-part format still parses exactly
+  // as it did. See lib/promotions/checkoutDiscount.ts.
+  const packed = parsePaypalCustomId(customId);
+  const customStoreId = packed.storeId;
+  const productId = packed.productId;
   if (!productId || customStoreId !== store.id) {
     console.error(
       `[paypal/return] custom_id mismatch for order ${token}: got "${customId}", expected store ${store.id}`
@@ -240,6 +248,27 @@ export async function GET(request: NextRequest) {
     // records an honest "Unknown product" instead of a borrowed one.
     const product = await prisma.product.findFirst({ where: { id: productId, storeId: store.id } });
 
+    // Scoped to this store for the same reason the product lookup above is: a
+    // promotion id arriving in a field we built is still a field, and reading
+    // another store's promotion would put its name on this order.
+    const appliedPromotion = packed.promotionId
+      ? await prisma.promotion.findFirst({
+          where: { id: packed.promotionId, storeId: store.id },
+          select: { id: true, name: true, code: true, kind: true },
+        }).then((row) =>
+          row
+            ? {
+                id: row.id,
+                // The same label the pricing function chose: a code shows as
+                // the code the customer typed, a sale as its name.
+                label: row.kind === "CODE" && row.code ? row.code : row.name,
+                code: row.code,
+                kind: row.kind,
+              }
+            : null
+        )
+      : null;
+
     // Same existence-check-inside-a-transaction pattern as the Stripe
     // webhook handler — see PHASE1_DESIGN.md section 4-5. A double-hit on
     // this route (already handled above for the capture call itself) would
@@ -271,6 +300,20 @@ export async function GET(request: NextRequest) {
           paymentProvider: "PAYPAL",
           externalOrderId: token,
           shippingAddress: fromPaypalShipping(purchaseUnit?.shipping) ?? undefined,
+          // THE MONEY FACTS TRAVEL; THE WORDS ARE FETCHED.
+          //
+          // There is no room in 127 characters for an arbitrary merchant label,
+          // and truncating a code would store one that was never entered. So
+          // the amounts — the record of what was actually paid — are carried
+          // verbatim, and the label and code are read from the promotion row
+          // seconds later (above). If that row has since gone, the amounts
+          // still stand on their own and the attribution is simply absent.
+          listSubtotalInCents: packed.listSubtotalInCents ?? undefined,
+          discountInCents: packed.discountInCents ?? undefined,
+          appliedPromotionId: appliedPromotion?.id ?? undefined,
+          appliedPromotionLabel: appliedPromotion?.label ?? undefined,
+          appliedPromotionCode: appliedPromotion?.code ?? undefined,
+          appliedPromotionKind: appliedPromotion?.kind ?? undefined,
         },
       });
 

@@ -475,6 +475,7 @@ model Store {
   supplierEconomics         SupplierEconomics[]
   proactiveDeliveries       ProactiveDelivery[]
   conversations             Conversation[]
+  promotions                Promotion[]
 
   @@index([planId])
 }
@@ -821,6 +822,7 @@ model Product {
   images               ProductImage[]
   sourcedFrom          SourcedProduct[]
   progressionDecisions ProgressionDecision[]
+  promotions           PromotionProduct[]
 }
 
 // How a product comes into existence and reaches the customer.
@@ -1324,13 +1326,38 @@ model Order {
   selectedShippingService     String?
   selectedShippingRateId      String?
   selectedShippingEstDays     Int?
+  // WHAT THIS ORDER ACTUALLY COST, AND WHY (2026-08-26).
+  //
+  // amountInCents above stays the ORDER TOTAL, unchanged and still whatever the
+  // provider settled. These record how it was arrived at, which nothing could
+  // say before: a discounted order was indistinguishable from a cheap one, and
+  // profitability read the discount as thinner margin with no attribution.
+  //
+  // Null on every order that predates promotions and on every order that used
+  // none — "no discount" and "we did not record discounts yet" are the same
+  // absence here, and both correctly mean the customer paid list price.
+  listSubtotalInCents         Int?
+  discountInCents             Int?
+  // FROZEN AT PURCHASE, ON PURPOSE. The label and code are copied onto the
+  // order rather than read back through the relation, so an order stays true
+  // after the merchant renames the sale, edits its percentage, switches it off
+  // or deletes it outright. The relation below is SetNull for the same reason:
+  // a deleted promotion loses its link, never its history.
+  appliedPromotionId          String?
+  appliedPromotionLabel       String?
+  appliedPromotionCode        String?
+  appliedPromotionKind        PromotionKind?
   createdAt                   DateTime            @default(now())
 
-  store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  store            Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product          Product?   @relation(fields: [productId], references: [id], onDelete: SetNull)
+  appliedPromotion Promotion? @relation(fields: [appliedPromotionId], references: [id], onDelete: SetNull)
 
   @@unique([paymentProvider, externalOrderId])
   @@unique([paymentProvider, externalPaymentId])
+  // "Which orders used this promotion" is a question a merchant asks about a
+  // campaign, so the foreign key is indexed rather than scanned.
+  @@index([appliedPromotionId])
 }
 
 // The Execution & Verification Engine's history: append-only, never updated.
@@ -2469,4 +2496,97 @@ model BusinessPartnerTrialGrant {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// PROMOTIONS (2026-08-26) — the merchant's own offers, in Genesis rather than
+// in a payment provider.
+//
+// Deliberately NOT Stripe Coupon objects. Stripe's own promotion API would have
+// shown a strikethrough on Stripe's hosted page and done absolutely nothing on
+// the PayPal rail, which takes a single pre-formatted dollar string and has no
+// discount concept at all. A promotion that silently fails on one of two rails
+// is worse than no promotion. So the discount is applied to the amount BEFORE
+// it reaches either provider, by lib/pricing/orderPricing.ts, and both rails
+// charge the same arithmetic.
+model Promotion {
+  id      String @id @default(cuid())
+  storeId String
+  // What the customer sees on the breakdown: "Spring Sale", or the code.
+  name    String
+
+  kind PromotionKind
+
+  // Null for a SALE. For a CODE this is what the customer types, stored
+  // UPPERCASE and trimmed so "save10", "SAVE10" and " Save10 " are one code
+  // rather than three — a customer copying a code out of an email should not
+  // fail on whitespace.
+  code String?
+
+  discountType     DiscountType
+  // Exactly one of these is set, enforced by a CHECK constraint in the
+  // migration rather than by hope: a PERCENTAGE with no percentage is not a
+  // generous promotion, it is a broken one, and orderPricing treats it as zero.
+  percentOff       Int?
+  amountOffInCents Int?
+
+  scope PromotionScope
+
+  // The merchant's on/off switch, independent of dates. A promotion can be
+  // inactive inside its window (paused) or active outside it (scheduled), and
+  // both are real states — eligibility needs BOTH to pass.
+  active Boolean @default(true)
+
+  // Optional on purpose. A sale with no dates runs until switched off, which is
+  // the common case and should not require inventing a far-future date.
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store    Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  // Empty for ALL_PRODUCTS. Populated only for SELECTED_PRODUCTS.
+  products PromotionProduct[]
+  // Orders that used it. SetNull, never Cascade — deleting a promotion must
+  // never delete or blank the history of what people actually paid.
+  orders   Order[]
+
+  // One code per store, so two campaigns cannot both answer to SAVE10.
+  // Nullable codes do not collide in Postgres, so every SALE is exempt from
+  // this without needing a partial index.
+  @@unique([storeId, code])
+  @@index([storeId, active])
+}
+
+enum PromotionKind {
+  // Applies by itself to every eligible product. Nobody types anything.
+  SALE
+  // Applies only when the customer enters it at checkout.
+  CODE
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum PromotionScope {
+  ALL_PRODUCTS
+  SELECTED_PRODUCTS
+}
+
+// Which products a SELECTED_PRODUCTS promotion covers.
+//
+// A join table rather than a String[] of ids because these are real foreign
+// keys: a deleted product must leave the promotion, not leave a dangling id
+// that later reads as "this promotion covers a product that no longer exists".
+model PromotionProduct {
+  promotionId String
+  productId   String
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([promotionId, productId])
+  @@index([productId])
 }
