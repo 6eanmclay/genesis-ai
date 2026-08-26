@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toggleOrderFulfilled, purchaseShippingLabel } from "./actions";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
@@ -113,6 +114,7 @@ function OrderRowCard({
   canManage,
   canBuyLabel,
   labelBlockedBy,
+  basePath,
 }: {
   order: OrderRow;
   /** The store's own, never a default that happens to be the developer's. */
@@ -125,6 +127,8 @@ function OrderRowCard({
   canBuyLabel: boolean;
   /** Why not, when not — so a blocked order can say so instead of going quiet. */
   labelBlockedBy: "return_address" | "shipping_provider" | null;
+  /** Where this business lives, so a row never links into another one. */
+  basePath: string;
 }) {
   const [isPending, startTransition] = useTransition();
   const isFulfilled = order.fulfillmentStatus === "fulfilled";
@@ -141,12 +145,19 @@ function OrderRowCard({
               which has existed on Order since 2026-08-20 and was rendered
               nowhere. An owner packing a hand-wound product read "Tensor Ring
               — $255.00" and had to divide to learn it was three of them. */}
-          <p className="text-sm font-medium text-black dark:text-zinc-50">
+          {/* The way in to the whole record (2026-08-25). The row carries what
+              fits on a row; everything else about an order — the transaction
+              id, the ship-from address, whether the buyer was ever told it
+              shipped — lives on the detail page and had nowhere to be shown. */}
+          <Link
+            href={`${basePath}/orders/${order.id}`}
+            className="text-sm font-medium text-black hover:underline dark:text-zinc-50"
+          >
             {order.productName}
             {order.quantity > 1 && (
               <span className="ml-1.5 font-normal text-zinc-500">&times;{order.quantity}</span>
             )}
-          </p>
+          </Link>
           <p className="text-xs text-zinc-500">{order.buyerEmail}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -260,6 +271,7 @@ export function OrdersList({
   canManage,
   canBuyLabel,
   labelBlockedBy,
+  basePath,
 }: {
   orders: OrderRow[];
   currency: string;
@@ -267,6 +279,7 @@ export function OrdersList({
   canManage: boolean;
   canBuyLabel: boolean;
   labelBlockedBy: "return_address" | "shipping_provider" | null;
+  basePath: string;
 }) {
   if (orders.length === 0) {
     return <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">No orders yet.</p>;
@@ -292,6 +305,7 @@ export function OrdersList({
                 canManage={canManage}
                 canBuyLabel={canBuyLabel}
                 labelBlockedBy={labelBlockedBy}
+                basePath={basePath}
               />
             ))}
           </ul>
@@ -312,6 +326,7 @@ export function OrdersList({
                 canManage={canManage}
                 canBuyLabel={canBuyLabel}
                 labelBlockedBy={labelBlockedBy}
+                basePath={basePath}
               />
             ))}
           </ul>

@@ -366,6 +366,7 @@ export async function OrdersWorkspace({
         canManage={canManage}
         canBuyLabel={canBuyLabel}
         labelBlockedBy={labelBlockedBy}
+        basePath={basePath}
       />
     </div>
   );

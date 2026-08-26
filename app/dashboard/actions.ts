@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect, unstable_rethrow } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { auth, signOut } from "@/auth";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { prisma } from "@/lib/prisma";
@@ -18,6 +19,7 @@ import {
   deleteProductExecutable,
 } from "@/lib/execution/executables/products";
 import { toggleOrderFulfilledExecutable } from "@/lib/execution/executables/orders";
+import { attachTrackingExecutable } from "@/lib/execution/executables/attachTracking";
 import { purchaseShippingLabelExecutable } from "@/lib/execution/executables/shipping";
 import {
   addProductImagesExecutable,
@@ -318,6 +320,40 @@ export async function deleteProduct(productId: string) {
   );
 
   redirect("/dashboard/products");
+}
+
+/**
+ * Record a tracking number the merchant already has.
+ *
+ * Same fetch-then-authorize shape as toggleOrderFulfilled below: the lookup
+ * exists only to learn which store owns the order, so execute() can re-verify
+ * the caller's permission against that store.
+ *
+ * Returns rather than redirects, because the result carries something the
+ * merchant must read — on a deployment with no email configured, the buyer was
+ * NOT told, and only the merchant can put that right. Redirecting would throw
+ * that sentence away.
+ */
+export async function attachTrackingNumber(
+  orderId: string,
+  trackingNumber: string,
+  carrier?: string
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { storeId: true },
+  });
+  if (!order) return { ok: false, error: "Order not found" };
+
+  const result = await execute(
+    attachTrackingExecutable,
+    { orderId, trackingNumber, carrier },
+    { storeId: order.storeId }
+  );
+  revalidatePath("/dashboard/orders");
+  return result.status === "SUCCESS"
+    ? { ok: true, message: result.message }
+    : { ok: false, error: result.message };
 }
 
 export async function toggleOrderFulfilled(orderId: string) {

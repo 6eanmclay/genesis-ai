@@ -1,0 +1,244 @@
+import Link from "next/link";
+import { prisma } from "@/lib/prisma";
+import { notFound } from "next/navigation";
+import { formatMoney } from "@/lib/money";
+import { DEFAULT_THEME, type Theme, themeCssVars } from "@/lib/theme";
+import { PERMISSIONS, hasPermission } from "@/lib/permissions";
+import type { StoreRole } from "@prisma/client";
+import { AddTrackingPanel } from "./AddTrackingPanel";
+
+// THE WHOLE RECORD OF ONE ORDER, IN ONE PLACE.
+//
+// Orders existed only as rows in a list. Everything the schema already knows
+// about an order — who bought it, where it is going, what was paid and through
+// which transaction, what shipped and under what tracking — was either squeezed
+// into a row or not shown at all.
+//
+// Nothing here is computed or inferred. Every value is a column that already
+// existed; this milestone added no field to the Order model. What was missing
+// was a screen, not data.
+//
+// A NULL IS SHOWN AS A NULL. An order with no shipping address says so rather
+// than rendering an empty block, because "we were never given one" and "it is
+// here but blank" are different problems for the merchant.
+
+interface OrderDetailProps {
+  orderId: string;
+  storeId: string;
+  role: StoreRole;
+  basePath: string;
+}
+
+/** The store's own ship-from address, as the Orders page records it. */
+interface StoreReturnAddress {
+  name: string;
+  line1: string;
+  city: string;
+  state: string | null;
+  postalCode: string;
+}
+
+/** A shipping address as checkout recorded it. */
+interface ShippingAddress {
+  name?: string;
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+}
+
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap justify-between gap-2 py-1.5">
+      <span className="text-xs text-zinc-500 dark:text-zinc-400">{label}</span>
+      <span className="text-xs text-black dark:text-zinc-50">{value}</span>
+    </div>
+  );
+}
+
+/** Not shown as a blank — the merchant needs to know it was never supplied. */
+function NotProvided() {
+  return <span className="text-zinc-400 dark:text-zinc-500">Not provided</span>;
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-xl border border-black/[.08] p-4 dark:border-white/[.145]">
+      <h2 className="text-sm font-semibold text-black dark:text-zinc-50">{title}</h2>
+      <div className="mt-2 divide-y divide-black/[.04] dark:divide-white/[.06]">{children}</div>
+    </section>
+  );
+}
+
+export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDetailProps) {
+  // Store-scoped, so an order id from another business cannot be opened by
+  // guessing it — the same rule every other read in this codebase follows.
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, storeId },
+    include: { store: { select: { currency: true, theme: true, returnAddress: true } } },
+  });
+  if (!order) notFound();
+
+  const currency = order.store.currency;
+  const theme = (order.store.theme as Theme | null) ?? DEFAULT_THEME;
+  const address = order.shippingAddress as ShippingAddress | null;
+  const returnAddress = order.store.returnAddress as unknown as StoreReturnAddress | null;
+  const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
+  const canManage = hasPermission(role, PERMISSIONS.ORDERS_MANAGE);
+
+  return (
+    <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
+      <Link href={`${basePath}/orders`} className="text-xs text-zinc-500 hover:underline">
+        ← All orders
+      </Link>
+      <h1 className="mt-2 text-2xl font-semibold text-black dark:text-zinc-50">
+        {order.productName}
+      </h1>
+      <p className="mt-1 text-sm text-zinc-500">
+        Ordered {order.createdAt.toLocaleDateString()} · {order.status}
+        {order.fulfillmentStatus === "fulfilled" ? " · fulfilled" : " · awaiting fulfilment"}
+      </p>
+
+      <div className="mt-6 grid max-w-3xl grid-cols-1 gap-4 sm:grid-cols-2">
+        <Section title="Customer">
+          <Field label="Email" value={order.buyerEmail} />
+          <Field label="Name" value={address?.name ?? <NotProvided />} />
+        </Section>
+
+        <Section title="Payment">
+          <Field label="Provider" value={order.paymentProvider} />
+          <Field label="Status" value={order.status} />
+          {/* The transaction id, which is what a merchant quotes to a payment
+              provider when something needs looking into. */}
+          <Field label="Transaction ID" value={order.externalPaymentId ?? <NotProvided />} />
+          <Field label="Order reference" value={order.externalOrderId} />
+        </Section>
+
+        <Section title="Shipping to">
+          {address ? (
+            <>
+              <Field label="Address" value={address.line1 ?? <NotProvided />} />
+              {address.line2 && <Field label="" value={address.line2} />}
+              <Field
+                label="City"
+                value={[address.city, address.state, address.postalCode].filter(Boolean).join(", ") || <NotProvided />}
+              />
+              <Field label="Country" value={address.country ?? <NotProvided />} />
+            </>
+          ) : (
+            // A real state, and one that matters: no label can be bought for
+            // this order, and the merchant needs to know why before they look
+            // for a button that is not there.
+            <p className="py-2 text-xs text-amber-700 dark:text-amber-400">
+              No delivery address was recorded with this order, so it cannot be shipped through
+              Genesis. Contact the customer for one.
+            </p>
+          )}
+        </Section>
+
+        <Section title="Shipping from">
+          {returnAddress ? (
+            <>
+              <Field label="Name" value={returnAddress.name} />
+              <Field label="Address" value={returnAddress.line1} />
+              <Field
+                label="City"
+                value={[returnAddress.city, returnAddress.state, returnAddress.postalCode].filter(Boolean).join(", ")}
+              />
+            </>
+          ) : (
+            <p className="py-2 text-xs text-amber-700 dark:text-amber-400">
+              You have not set a ship-from address yet. Add one on the Orders page before buying a
+              label.
+            </p>
+          )}
+        </Section>
+
+        <Section title="Items">
+          <Field label={order.productName} value={`× ${order.quantity}`} />
+          {canViewRevenue && <Field label="Item total" value={formatMoney(order.amountInCents, currency)} />}
+          {canViewRevenue && (
+            <Field
+              label="Shipping charged"
+              value={
+                order.shippingChargedInCents !== null ? (
+                  formatMoney(order.shippingChargedInCents, currency)
+                ) : (
+                  <NotProvided />
+                )
+              }
+            />
+          )}
+          {canViewRevenue && order.shippingCostInCents !== null && (
+            // What postage actually cost, which is not the same number as what
+            // the customer was charged for it.
+            <Field label="Postage cost" value={formatMoney(order.shippingCostInCents, currency)} />
+          )}
+        </Section>
+
+        <Section title="Fulfilment">
+          <Field label="State" value={order.fulfillmentStatus} />
+          <Field
+            label="Fulfilled"
+            value={order.fulfilledAt ? order.fulfilledAt.toLocaleDateString() : <NotProvided />}
+          />
+          <Field
+            label="Delivered"
+            value={order.deliveredAt ? order.deliveredAt.toLocaleDateString() : <NotProvided />}
+          />
+          <Field
+            label="Customer told it shipped"
+            value={
+              order.shipmentNotifiedAt ? (
+                order.shipmentNotifiedAt.toLocaleDateString()
+              ) : (
+                // Not a blank. On a deployment with no email configured this is
+                // the norm, and the merchant is the only one who can tell them.
+                <span className="text-amber-700 dark:text-amber-400">Not yet</span>
+              )
+            }
+          />
+        </Section>
+      </div>
+
+      <div className="mt-4 max-w-3xl">
+        <Section title="Tracking">
+          {order.trackingNumber ? (
+            <>
+              <Field label="Carrier" value={order.carrier ?? <NotProvided />} />
+              <Field
+                label="Tracking number"
+                value={
+                  order.trackingUrl ? (
+                    <a href={order.trackingUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                      {order.trackingNumber}
+                    </a>
+                  ) : (
+                    order.trackingNumber
+                  )
+                }
+              />
+              {order.labelUrl && (
+                <Field
+                  label="Label"
+                  value={
+                    // Opens the carrier's own PDF, which is what gets printed.
+                    <a href={order.labelUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                      Print label
+                    </a>
+                  }
+                />
+              )}
+            </>
+          ) : canManage ? (
+            <AddTrackingPanel orderId={order.id} />
+          ) : (
+            <p className="py-2 text-xs text-zinc-500">No tracking yet.</p>
+          )}
+        </Section>
+      </div>
+    </div>
+  );
+}
