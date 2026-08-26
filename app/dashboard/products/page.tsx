@@ -171,6 +171,7 @@ export async function ProductsScreen({
                     name: product.name,
                     description: product.description,
                     priceInCents: product.priceInCents,
+                    weightOz: product.weightOz,
                   }}
                 />
 

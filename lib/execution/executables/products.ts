@@ -130,16 +130,36 @@ export interface EditProductInput {
   name?: string;
   description?: string | null;
   priceInCents?: number;
+  /**
+   * The PACKAGED shipping weight in ounces — product, box, filler and tape.
+   *
+   * Ounces because that is what Product.weightOz has always stored and what
+   * `parcelForProduct` reads; the merchant types pounds and ounces and
+   * `parsePackagedWeight` normalises. Zero or null clears it.
+   */
+  weightOz?: number | null;
 }
 
 export const editProductExecutable: Executable<EditProductInput, ProductMetadata> = {
   action: EXECUTION_ACTIONS.PRODUCT_EDIT,
   requiredPermission: PERMISSIONS.PRODUCTS_MANAGE,
   async run(input, ctx) {
-    const data: { name?: string; description?: string | null; priceInCents?: number } = {};
+    const data: {
+      name?: string;
+      description?: string | null;
+      priceInCents?: number;
+      weightOz?: number | null;
+    } = {};
     if (input.name !== undefined) data.name = input.name;
     if (input.description !== undefined) data.description = input.description;
     if (input.priceInCents !== undefined) data.priceInCents = input.priceInCents;
+    // Zero means the merchant cleared it, and is stored as NULL rather than 0.
+    // `parcelForProduct` treats both as "cannot quote", and null is the honest
+    // one: nobody has said what this weighs, as opposed to somebody claiming it
+    // weighs nothing.
+    if (input.weightOz !== undefined) {
+      data.weightOz = input.weightOz === null || input.weightOz <= 0 ? null : input.weightOz;
+    }
 
     const product = await prisma.product.update({
       where: { id: input.productId, storeId: ctx.storeId },
@@ -157,12 +177,21 @@ export const editProductExecutable: Executable<EditProductInput, ProductMetadata
   async verify(input, ctx): Promise<VerificationOutcome> {
     const product = await prisma.product.findFirst({
       where: { id: input.productId, storeId: ctx.storeId },
-      select: { name: true, priceInCents: true, description: true },
+      select: { name: true, priceInCents: true, description: true, weightOz: true },
     });
     if (!product) return { state: "failed", mismatches: ["product: no such row after the edit"] };
     return verifiedUnless(
       namedKeyMismatches(
-        { name: input.name, description: input.description, priceInCents: input.priceInCents },
+        {
+          name: input.name,
+          description: input.description,
+          priceInCents: input.priceInCents,
+          // Compared as it will be STORED, so a cleared weight verifies against
+          // null rather than against the zero that was submitted.
+          ...(input.weightOz !== undefined
+            ? { weightOz: input.weightOz === null || input.weightOz <= 0 ? null : input.weightOz }
+            : {}),
+        },
         product as unknown as Record<string, unknown>,
         "product."
       )

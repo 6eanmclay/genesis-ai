@@ -2,6 +2,7 @@
 
 import { redirect, unstable_rethrow } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { parsePackagedWeight } from "@/lib/shipping/packagedWeight";
 import { auth, signOut } from "@/auth";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { prisma } from "@/lib/prisma";
@@ -279,9 +280,28 @@ export async function editProduct(
       throw new RecoverableError("Enter a valid price");
     }
 
+    // THE PACKAGED SHIPPING WEIGHT (2026-08-25). Product.weightOz has existed
+    // since 2026-08-20 and nothing has ever written it — which is why checkout
+    // shipping, which is fully built, is unreachable on all 55 production
+    // products. Parsed rather than trusted: the merchant types pounds and
+    // ounces, and ounces is the stored unit.
+    const weight = parsePackagedWeight(
+      formData.get("weightLb") as string | null,
+      formData.get("weightOz") as string | null
+    );
+    if (!weight.ok) {
+      throw new RecoverableError(weight.error);
+    }
+
     await execute(
       editProductExecutable,
-      { productId, name, description: description || null, priceInCents },
+      {
+        productId,
+        name,
+        description: description || null,
+        priceInCents,
+        weightOz: weight.weightOz,
+      },
       { storeId: product.storeId }
     );
   } catch (error) {
