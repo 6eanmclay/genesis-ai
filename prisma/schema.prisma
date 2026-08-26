@@ -1319,6 +1319,21 @@ model Order {
   deliveredAt                 DateTime?
   lastScanAt                  DateTime?
   shippingCostInCents         Int?
+  // WHAT WAS ACTUALLY IN THE BOX (2026-08-26).
+  //
+  // Product.weightOz and its three dimensions are the owner's standing
+  // estimate. These are the parcel a label was really bought against — the
+  // numbers in the label form at the moment postage was paid for, which the
+  // owner may well have changed after packing it.
+  //
+  // Recorded because "the packaged dimensions used for shipping" is a fact
+  // about THIS order, not about the product: two orders for the same item can
+  // genuinely ship in different boxes, and only one of them can be the
+  // product's saved estimate.
+  parcelWeightOz              Float?
+  parcelLengthIn              Float?
+  parcelWidthIn               Float?
+  parcelHeightIn              Float?
   // What the CUSTOMER chose and was charged at checkout (2026-08-20). The gap
   // between this and shippingCostInCents is the store's shipping margin.
   shippingChargedInCents      Int?

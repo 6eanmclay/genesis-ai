@@ -4,6 +4,8 @@ import { editProduct } from "../actions";
 import { SubmitButton } from "../SubmitButton";
 import { useActionFormState } from "../useActionFormState";
 import { toPoundsAndOunces } from "@/lib/shipping/packagedWeight";
+import { packagingHandledBy } from "@/lib/shipping/whoShips";
+import type { ProductSourceKind } from "@prisma/client";
 
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
@@ -30,6 +32,10 @@ export function EditProductForm({
     lengthIn: number | null;
     widthIn: number | null;
     heightIn: number | null;
+    // Who ships it. Null for every manually created product, which genuinely
+    // is owner-shipped.
+    sourceKind: ProductSourceKind | null;
+    fulfillmentPartner: string | null;
   };
 }) {
   const { state, formAction, resetKey } = useActionFormState(editProduct.bind(null, product.id));
@@ -39,6 +45,8 @@ export function EditProductForm({
   // Blank rather than 0 for an unset dimension, so an empty box reads as "not
   // given" and not as a claim that the parcel is flat.
   const savedIn = (value: number | null) => (value && value > 0 ? String(value) : "");
+  // A sentence when somebody else packs this, null when the owner does.
+  const packedByOther = packagingHandledBy(product.sourceKind, product.fulfillmentPartner);
 
   return (
     <form key={resetKey} action={formAction} className="flex flex-col gap-3">
@@ -68,6 +76,18 @@ export function EditProductForm({
           className="w-full max-w-[10rem] rounded-lg border border-black/[.08] px-3 py-1.5 dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
         />
       </label>
+      {/* PACKAGING, BUT ONLY FROM WHOEVER ACTUALLY PACKS IT (2026-08-26).
+          A print-on-demand shirt is boxed in a partner's warehouse; asking this
+          owner what it weighs is asking them to invent a number that becomes
+          real postage. ProductSourceKind already recorded who ships it — see
+          lib/shipping/whoShips.ts. */}
+      {packedByOther ? (
+        <div className="rounded-xl border border-black/[.08] px-4 py-3 dark:border-white/[.145]">
+          <p className="text-xs font-medium text-zinc-500">Shipping</p>
+          <p className="mt-1 text-sm text-zinc-500">{packedByOther}</p>
+        </div>
+      ) : (
+        <>
       {/* THE FIELD THE WHOLE SHIPPING SUBSYSTEM WAS WAITING ON (2026-08-25).
           Product.weightOz has been read by checkout rating since 2026-08-20 and
           written by nothing, so every product had a null weight and shipping
@@ -181,6 +201,8 @@ export function EditProductForm({
           Enter all three, or leave them blank to use a standard mailer size.
         </p>
       </fieldset>
+        </>
+      )}
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium text-zinc-500">Description</span>
         <textarea

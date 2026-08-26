@@ -1,4 +1,5 @@
 import type { IntegrationProvider } from "@prisma/client";
+import type { PartnerParcel } from "./parcel";
 
 // Onboarding v2 — the provider-agnostic fulfillment-strategy layer. See
 // ONBOARDING_V2_DESIGN.md section 6: the owner never chooses between
@@ -70,6 +71,24 @@ export interface FulfillmentOrderResult {
 export interface FulfillmentConnector {
   provider: IntegrationProvider;
   profile: FulfillmentPartnerProfile;
+
+  /**
+   * What this variant's PARCEL is — packaged weight and box size — so a
+   * product created from this partner never needs them typed in.
+   *
+   * OPTIONAL, because most partners genuinely cannot answer. Printful's and
+   * Printify's catalog APIs were both checked field by field on 2026-08-26 and
+   * neither returns a weight or a box; the only dimensions either exposes are
+   * print areas for artwork placement. A connector that cannot answer omits
+   * this rather than returning a guess — see lib/fulfillment/parcel.ts, which
+   * treats absence and failure identically and never throws.
+   */
+  getParcel?(params: {
+    storeId: string | null;
+    storeDraftId: string | null;
+    externalProductId: string;
+    externalVariantId: string | null;
+  }): Promise<PartnerParcel | null>;
 
   browseCandidates(params: {
     storeId: string | null;

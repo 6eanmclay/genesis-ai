@@ -152,10 +152,52 @@ export async function purchaseLabelForOrder(
         trackingUrl: purchased.trackingUrl,
         labelUrl: purchased.labelUrl,
         shippingCostInCents: purchased.costInCents,
+        // THE PARCEL THIS LABEL WAS BOUGHT FOR, kept as its own fact.
+        //
+        // The owner weighs the box after packing it, and that number — not the
+        // product's saved estimate — is what the carrier priced. Recording it
+        // here is what makes "the packaged dimensions used for shipping"
+        // answerable per order.
+        parcelWeightOz: input.weightOz,
+        parcelLengthIn: input.lengthIn ?? null,
+        parcelWidthIn: input.widthIn ?? null,
+        parcelHeightIn: input.heightIn ?? null,
         fulfillmentStatus: "fulfilled",
         fulfilledAt: new Date(),
       },
     });
+
+    // AND THE PRODUCT LEARNS IT, BUT ONLY IF IT KNEW NOTHING.
+    //
+    // The second order for the same item should not need the same measuring
+    // again. But this NEVER OVERWRITES: a product whose owner already entered a
+    // weight keeps it, because a one-off heavier box must not silently rewrite
+    // the standing estimate every future quote is built from.
+    //
+    // updateMany with the nulls in the WHERE is what enforces that — the write
+    // simply matches nothing when a value is already there, rather than relying
+    // on a read-then-write this code would have to get right.
+    if (order.productId) {
+      const learned: Record<string, number> = {};
+      if (input.weightOz > 0) learned.weightOz = input.weightOz;
+      await prisma.product.updateMany({
+        where: { id: order.productId, storeId: ctx.storeId, weightOz: null },
+        data: learned,
+      });
+
+      const box = [input.lengthIn, input.widthIn, input.heightIn];
+      if (box.every((v) => typeof v === "number" && v > 0)) {
+        await prisma.product.updateMany({
+          // All three null, so a partly-measured product is left alone rather
+          // than half-filled — the same all-three-or-none rule the form uses.
+          where: {
+            id: order.productId, storeId: ctx.storeId,
+            lengthIn: null, widthIn: null, heightIn: null,
+          },
+          data: { lengthIn: input.lengthIn, widthIn: input.widthIn, heightIn: input.heightIn },
+        });
+      }
+    }
   } catch (error) {
     // Released only while no label actually landed. If the purchase succeeded
     // and the write failed, trackingNumber is still null here and the claim

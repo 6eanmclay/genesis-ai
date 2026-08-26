@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { partnerParcelFor, parcelToProductData } from "@/lib/fulfillment/parcel";
 import { writeBusinessEvents } from "@/lib/intelligence/businessEvents";
 import { internalItemId } from "@/lib/businessModel/internalMapper";
 import { fromVariantKey } from "./types";
@@ -94,6 +95,18 @@ export async function adoptSourcedProduct(params: {
   // The predicate is not simply `status != ADOPTED`: a row whose product was
   // deleted is still ADOPTED with a null `adoptedProductId`, and that genuinely
   // should be adoptable again.
+  // ASKED BEFORE THE TRANSACTION OPENS, deliberately. This is a network call to
+  // the partner, and holding a row lock across one would let a slow partner
+  // serialise every adoption in the business behind it. It never throws — an
+  // unreachable partner simply means no packaging was learned.
+  const parcel = await partnerParcelFor({
+    provider: candidate.fulfillmentProvider,
+    storeId,
+    storeDraftId: null,
+    externalProductId: candidate.externalProductId,
+    externalVariantId: fromVariantKey(candidate.externalVariantId),
+  });
+
   const outcome = await prisma.$transaction(async (tx) => {
     const claimed = await tx.sourcedProduct.updateMany({
       where: {
@@ -133,6 +146,14 @@ export async function adoptSourcedProduct(params: {
         // fulfilling on our behalf, and claiming otherwise would put it in front
         // of order-routing code with no idea what to do with it.
         fulfillmentProvider: candidate.fulfillmentProvider,
+        // PACKAGING FROM THE PARTNER, when the partner knows it (2026-08-26).
+        //
+        // Spread rather than assigned, so a partner that supplies nothing
+        // leaves these null instead of writing zeroes over them — and a
+        // partner that supplies a weight but no box contributes just the
+        // weight. Neither Printful nor Printify exposes a parcel today; see
+        // lib/fulfillment/parcel.ts for the field-by-field check.
+        ...parcelToProductData(parcel),
       },
       select: { id: true },
     });

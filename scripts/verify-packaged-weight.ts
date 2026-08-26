@@ -9,6 +9,12 @@ import {
   OUNCES_PER_POUND,
   MAX_DIMENSION_IN,
 } from "@/lib/shipping/packagedWeight";
+import { shippedBy, ownerPacksThis, packagingHandledBy } from "@/lib/shipping/whoShips";
+// NOT IMPORTED HERE. lib/fulfillment/parcel reaches the connector registry,
+// which reaches lib/prisma at module load — before DATABASE_URL below is
+// pointed at the throwaway Postgres. A static import binds that client to the
+// wrong database and every query after it is refused. Imported inside main()
+// instead, with everything else that touches the database.
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -55,6 +61,10 @@ async function main() {
   await db.prisma.$disconnect();
   process.env[TEST_DATABASE_ENV] = "1";
   process.env.DATABASE_URL = db.url;
+  // A throwaway key, so the EasyPost credentials this suite writes can be
+  // stored and read back the way the real ones are. Set before the credential
+  // module is imported, which reads it at load.
+  process.env.INTEGRATION_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString("base64");
 
   // Imported after the database is pointed at, so every client binds to it —
   // including the two shipping modules, which hold their own reference.
@@ -62,6 +72,11 @@ async function main() {
   const { parcelForProduct } = await import("@/lib/shipping/rates");
   const { productSupportsLiveShipping } = await import("@/lib/shipping/checkoutShipping");
   const { editProductExecutable } = await import("@/lib/execution/executables/products");
+  const { purchaseLabelForOrder } = await import("@/lib/execution/executables/shipping");
+  const { parcelToProductData, hasAnyMeasurement, partnerParcelFor, NO_PARTNER_PARCEL } =
+    await import("@/lib/fulfillment/parcel");
+  const { printfulFulfillmentConnector } = await import("@/lib/fulfillment/printful");
+  const { encryptCredentials } = await import("@/lib/integrations/credentials");
 
   // ========================================================================
   console.log("\n=== 1. Pounds and ounces become ounces ===\n");
@@ -309,6 +324,235 @@ async function main() {
     "one place a merchant describes the parcel, not two");
   assert("and says the box is what is being described",
     /Package dimensions/.test(form) && /box as it goes out/.test(form));
+
+  // ========================================================================
+  console.log("\n=== 8. Only whoever actually packs it is asked ===\n");
+  // ========================================================================
+  // ProductSourceKind has recorded who ships each kind since 2026-08-20 — in
+  // its own schema comments, no less — and nothing read it. So a Printful shirt
+  // that J4 created, boxed in Printful's warehouse and posted by Printful, was
+  // asked for a packaged weight the owner could not possibly know, and would
+  // have been offered a Buy Label button for a parcel not in the building.
+
+  eq("what the owner makes, the owner ships", shippedBy("OWNER_MADE"), "OWNER");
+  eq("wholesale they hold and post, likewise", shippedBy("WHOLESALE_STOCKED"), "OWNER");
+  eq("private label, likewise", shippedBy("PRIVATE_LABEL"), "OWNER");
+  eq("contract manufactured, likewise", shippedBy("CONTRACT_MANUFACTURED"), "OWNER");
+  eq("print on demand is shipped by the partner", shippedBy("PRINT_ON_DEMAND"), "PARTNER");
+  eq("so is a dropshipped order", shippedBy("WHOLESALE_DROPSHIP"), "PARTNER");
+  eq("and a digital product ships nothing at all", shippedBy("DIGITAL"), "NOBODY");
+  // Every product that predates sourcing, and every manually created one.
+  eq("an unsourced product is the owner's to ship", shippedBy(null), "OWNER");
+
+  assert("only the owner is asked to pack",
+    ownerPacksThis("OWNER_MADE") && !ownerPacksThis("PRINT_ON_DEMAND") && !ownerPacksThis("DIGITAL"));
+  assert("and a partner-shipped product says who does instead",
+    (packagingHandledBy("PRINT_ON_DEMAND", "Printful") ?? "").includes("Printful"));
+  eq("while an owner-shipped one has nothing to explain",
+    packagingHandledBy("OWNER_MADE", null), null);
+
+  // --- the gate the storefront actually uses -------------------------------
+  await prisma.product.update({
+    where: { id: product.id, storeId: store.id },
+    data: { weightOz: 20, lengthIn: 10, widthIn: 8, heightIn: 4, active: true, sourceKind: "OWNER_MADE" },
+  });
+  eq("an owner-made product with a weight can be quoted",
+    await productSupportsLiveShipping(store.id, product.id), true);
+
+  // THE SAME PRODUCT, SAME WEIGHT, ONLY WHO SHIPS IT CHANGED. Rates here are
+  // quoted against the OWNER'S OWN EasyPost account and the label is theirs to
+  // print — so quoting them for a parcel a partner posts would charge the
+  // customer for postage nobody in this business will ever buy.
+  await prisma.product.update({
+    where: { id: product.id, storeId: store.id },
+    data: { sourceKind: "PRINT_ON_DEMAND" },
+  });
+  eq("a partner-shipped product is not quoted against the owner's account",
+    await productSupportsLiveShipping(store.id, product.id), false);
+  await prisma.product.update({
+    where: { id: product.id, storeId: store.id },
+    data: { sourceKind: "DIGITAL" },
+  });
+  eq("and neither is one that ships nothing",
+    await productSupportsLiveShipping(store.id, product.id), false);
+  await prisma.product.update({
+    where: { id: product.id, storeId: store.id },
+    data: { sourceKind: "OWNER_MADE" },
+  });
+  eq("CONTROL: and it opens again for the owner's own",
+    await productSupportsLiveShipping(store.id, product.id), true);
+
+  const editForm = codeOnly(
+    readFileSync(join(process.cwd(), "app", "dashboard", "products", "EditProductForm.tsx"), "utf8")
+  );
+  assert("the product form asks who packs it before asking what it weighs",
+    /packagingHandledBy\(/.test(editForm) && /packedByOther \?/.test(editForm),
+    "otherwise an owner is asked to invent a number that becomes real postage");
+
+  const ordersList = codeOnly(
+    readFileSync(join(process.cwd(), "app", "dashboard", "OrdersList.tsx"), "utf8")
+  );
+  assert("and no label is offered for a parcel the owner never holds",
+    /order\.shippedBy === "OWNER" && canBuyLabel/.test(ordersList));
+  assert("with the partner named rather than a silent gap",
+    /Your fulfilment partner ships this one/.test(ordersList));
+
+  // ========================================================================
+  console.log("\n=== 9. Packaging from the partner, when the partner has it ===\n");
+  // ========================================================================
+  // The requirement is that a partner-created product never needs its weight
+  // typed in. Neither Printful nor Printify exposes one — checked field by
+  // field against both APIs' own documentation on 2026-08-26 — so what is
+  // asserted here is the SEAM: whatever a partner does supply is written, and
+  // what it does not supply is left alone rather than zeroed.
+
+  eq("nothing supplied writes nothing", parcelToProductData(NO_PARTNER_PARCEL), {});
+  eq("a weight alone contributes the weight",
+    parcelToProductData({ weightOz: 6, lengthIn: null, widthIn: null, heightIn: null }),
+    { weightOz: 6 });
+  eq("a full parcel contributes all four",
+    parcelToProductData({ weightOz: 6, lengthIn: 10, widthIn: 8, heightIn: 4 }),
+    { weightOz: 6, lengthIn: 10, widthIn: 8, heightIn: 4 });
+  // ALL THREE OR NONE, the same rule the form enforces: two of three would
+  // leave rating substituting a default for the third.
+  eq("a partial box contributes no box",
+    parcelToProductData({ weightOz: 6, lengthIn: 10, widthIn: null, heightIn: 4 }),
+    { weightOz: 6 });
+  eq("and zeroes are not measurements",
+    parcelToProductData({ weightOz: 0, lengthIn: 0, widthIn: 0, heightIn: 0 }), {});
+  assert("a parcel with nothing in it is recognised as empty",
+    !hasAnyMeasurement(NO_PARTNER_PARCEL) &&
+      hasAnyMeasurement({ weightOz: 6, lengthIn: null, widthIn: null, heightIn: null }));
+
+  // Printful answers honestly rather than being left unimplemented, so the
+  // absence is recorded in code instead of being re-investigated later.
+  eq("Printful is asked and says it does not know",
+    await printfulFulfillmentConnector.getParcel!({
+      storeId: store.id, storeDraftId: null, externalProductId: "1", externalVariantId: "1",
+    }),
+    null);
+  eq("and asking a partner that cannot answer yields nothing, never a throw",
+    await partnerParcelFor({
+      provider: "PRINTFUL", storeId: store.id, storeDraftId: null,
+      externalProductId: "1", externalVariantId: "1",
+    }),
+    NO_PARTNER_PARCEL);
+  eq("as does asking about a product with no partner at all",
+    await partnerParcelFor({
+      provider: null, storeId: store.id, storeDraftId: null,
+      externalProductId: null, externalVariantId: null,
+    }),
+    NO_PARTNER_PARCEL);
+
+  const fromDesign = codeOnly(
+    readFileSync(join(process.cwd(), "lib", "execution", "executables", "productFromDesign.ts"), "utf8")
+  );
+  assert("a product J4 hands to a partner records that the partner has it",
+    /fulfillmentProvider: connector\.provider/.test(fromDesign) &&
+      /sourceKind: "PRINT_ON_DEMAND"/.test(fromDesign),
+    "this wrote externalProductId alone, so the product looked owner-made and the owner was asked to weigh it");
+  assert("and writes whatever packaging the partner did supply",
+    /\.\.\.parcelToProductData\(parcel\)/.test(fromDesign));
+
+  const adopt = codeOnly(readFileSync(join(process.cwd(), "lib", "sourcing", "adopt.ts"), "utf8"));
+  assert("adoption does the same",
+    /\.\.\.parcelToProductData\(parcel\)/.test(adopt));
+  assert("and asks the partner OUTSIDE the transaction",
+    adopt.indexOf("partnerParcelFor") < adopt.indexOf("prisma.$transaction"),
+    "a network call under a row lock serialises every adoption behind the slowest partner");
+
+  // ========================================================================
+  console.log("\n=== 10. What actually shipped, kept as its own fact ===\n");
+  // ========================================================================
+  // Product.weightOz is the owner's standing ESTIMATE. What a label was really
+  // bought against is a different number — the owner weighs the box after
+  // packing it — and it was recorded nowhere.
+
+  const bare = await prisma.product.create({
+    data: { storeId: store.id, name: "Unmeasured", priceInCents: 1000, sourceKind: "OWNER_MADE" },
+  });
+  const order = await prisma.order.create({
+    data: {
+      storeId: store.id, productId: bare.id, productName: "Unmeasured",
+      amountInCents: 1000, buyerEmail: "b@test.local", status: "paid",
+      paymentProvider: "STRIPE", externalOrderId: `cs_${uniq()}`,
+      shippingAddress: {
+        name: "Sarah Chen", line1: "1600 Pearl St", city: "Boulder",
+        state: "CO", postalCode: "80302", country: "US",
+      },
+    },
+  });
+  await prisma.store.update({
+    where: { id: store.id },
+    data: {
+      returnAddress: {
+        name: "Cubit & Coil", line1: "417 Montgomery St", city: "San Francisco",
+        state: "CA", postalCode: "94104", country: "US",
+      },
+    },
+  });
+  await prisma.storeIntegration.updateMany({
+    where: { storeId: store.id, provider: "EASYPOST" },
+    data: { status: "CONNECTED", credentials: encryptCredentials({ apiKey: "EZTK_test" }) },
+  });
+
+  // The buyer is injected, so no postage is bought and no key is spent.
+  const fakeBuyer = async () => ({
+    carrier: "USPS", service: "Priority Mail", trackingNumber: "9400111899223197428490",
+    trackingUrl: "https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111899223197428490",
+    labelUrl: "https://example.test/label.pdf", costInCents: 892,
+  });
+
+  await purchaseLabelForOrder(
+    { orderId: order.id, weightOz: 26, lengthIn: 12, widthIn: 9, heightIn: 5 },
+    { storeId: store.id } as never,
+    fakeBuyer as never
+  );
+
+  const shipped = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+  eq("the order records the weight the label was bought against", shipped.parcelWeightOz, 26);
+  eq("and the box it was bought against",
+    [shipped.parcelLengthIn, shipped.parcelWidthIn, shipped.parcelHeightIn], [12, 9, 5]);
+  eq("CONTROL: alongside what the postage cost", shipped.shippingCostInCents, 892);
+
+  // AND THE PRODUCT LEARNS IT — but only because it knew nothing.
+  const learned = await prisma.product.findUniqueOrThrow({ where: { id: bare.id } });
+  eq("a product with no weight learns the one that shipped", learned.weightOz, 26);
+  eq("and the box", [learned.lengthIn, learned.widthIn, learned.heightIn], [12, 9, 5]);
+
+  // NEVER OVERWRITES. A one-off heavier box must not silently rewrite the
+  // estimate every future quote is built from — Sean's own instruction.
+  const alreadyMeasured = await prisma.product.create({
+    data: {
+      storeId: store.id, name: "Already measured", priceInCents: 1000,
+      sourceKind: "OWNER_MADE", weightOz: 20, lengthIn: 10, widthIn: 8, heightIn: 4,
+    },
+  });
+  const order2 = await prisma.order.create({
+    data: {
+      storeId: store.id, productId: alreadyMeasured.id, productName: "Already measured",
+      amountInCents: 1000, buyerEmail: "b2@test.local", status: "paid",
+      paymentProvider: "STRIPE", externalOrderId: `cs_${uniq()}`,
+      shippingAddress: {
+        name: "Sarah Chen", line1: "1600 Pearl St", city: "Boulder",
+        state: "CO", postalCode: "80302", country: "US",
+      },
+    },
+  });
+  await purchaseLabelForOrder(
+    { orderId: order2.id, weightOz: 44, lengthIn: 16, widthIn: 12, heightIn: 8 },
+    { storeId: store.id } as never,
+    fakeBuyer as never
+  );
+
+  const untouched = await prisma.product.findUniqueOrThrow({ where: { id: alreadyMeasured.id } });
+  eq("a product the owner already measured keeps their weight", untouched.weightOz, 20);
+  eq("and their box", [untouched.lengthIn, untouched.widthIn, untouched.heightIn], [10, 8, 4]);
+  const shipped2 = await prisma.order.findUniqueOrThrow({ where: { id: order2.id } });
+  eq("while the order still records what really shipped", shipped2.parcelWeightOz, 44);
+  assert("so the estimate and the actual parcel are separate facts",
+    untouched.weightOz !== shipped2.parcelWeightOz,
+    "one heavier box must not rewrite every future quote");
 
   await prisma.store.delete({ where: { id: store.id } });
   await prisma.user.delete({ where: { id: owner.id } });

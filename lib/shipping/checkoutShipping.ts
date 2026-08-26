@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { ownerPacksThis } from "./whoShips";
 import { quoteShippingForProduct, type DestinationAddress, type ShippingOption } from "./rates";
 
 // Customer-chosen shipping at checkout (2026-08-20).
@@ -54,13 +55,28 @@ export async function productSupportsLiveShipping(storeId: string, productId: st
     }),
     prisma.product.findFirst({
       where: { id: productId, storeId, active: true },
-      select: { weightOz: true },
+      select: { weightOz: true, sourceKind: true },
     }),
   ]);
 
   if (easypost?.status !== "CONNECTED") return false;
   if (stripe?.status !== "CONNECTED") return false;
-  return typeof product?.weightOz === "number" && product.weightOz > 0;
+  if (!product) return false;
+
+  // THE OWNER HAS TO BE THE ONE SHIPPING IT (2026-08-26).
+  //
+  // These rates are quoted against the OWNER'S OWN EasyPost account, and the
+  // label bought afterwards is theirs to print and attach. For a print-on-demand
+  // or dropshipped product the partner packs and posts it from their own
+  // warehouse — so quoting the owner's postage would charge the customer for a
+  // parcel nobody in this business will ever hold, and then offer the owner a
+  // label for it.
+  //
+  // ProductSourceKind has said which is which since 2026-08-20 and nothing read
+  // it. See lib/shipping/whoShips.ts.
+  if (!ownerPacksThis(product.sourceKind)) return false;
+
+  return typeof product.weightOz === "number" && product.weightOz > 0;
 }
 
 export type SelectionFailure =

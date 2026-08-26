@@ -37,6 +37,15 @@ export interface OrderRow {
    * packed in, so every field stays editable. What changes is that the common
    * case needs no typing at all.
    */
+  /**
+   * Who packs this — from the product's own sourceKind.
+   *
+   * A print-on-demand or dropshipped order is posted from the partner's
+   * warehouse, so there is no parcel here to weigh and no label for this owner
+   * to buy. "PARTNER" is not a blocked state to be fixed; it is the product
+   * working as intended.
+   */
+  shippedBy: "OWNER" | "PARTNER" | "NOBODY";
   parcel: {
     weightOz: number | null;
     lengthIn: number | null;
@@ -267,7 +276,14 @@ function OrderRowCard({
           )}
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          {canManage && canBuyLabel && order.shippingAddress && !order.trackingNumber && (
+          {/* PARTNER-SHIPPED ORDERS GET NO LABEL BUTTON (2026-08-26), and this
+              is not a block — the parcel is in somebody else's warehouse and
+              buying postage for it here would produce a label for a box that
+              will never be attached to anything. */}
+          {canManage && order.shippedBy === "PARTNER" && order.shippingAddress && !order.trackingNumber && (
+            <p className="text-xs text-zinc-500">Your fulfilment partner ships this one.</p>
+          )}
+          {canManage && order.shippedBy === "OWNER" && canBuyLabel && order.shippingAddress && !order.trackingNumber && (
             <BuyLabelForm orderId={order.id} parcel={order.parcel} />
           )}
           {/* AND WHEN IT CANNOT, WHY (2026-08-25). This branch used to be
@@ -275,7 +291,7 @@ function OrderRowCard({
               ship it, and no reason on the screen. Shown only for an order that
               would otherwise qualify, so a fulfilled or unaddressed order does
               not carry an explanation for a button it was never going to have. */}
-          {canManage && !canBuyLabel && order.shippingAddress && !order.trackingNumber && (
+          {canManage && order.shippedBy === "OWNER" && !canBuyLabel && order.shippingAddress && !order.trackingNumber && (
             <p className="text-xs text-amber-700 dark:text-amber-400">
               {labelBlockedBy === "return_address"
                 ? "Add your ship-from address below to buy a label for this order."

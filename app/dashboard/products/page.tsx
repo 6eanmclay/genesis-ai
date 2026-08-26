@@ -175,6 +175,10 @@ export async function ProductsScreen({
                     lengthIn: product.lengthIn,
                     widthIn: product.widthIn,
                     heightIn: product.heightIn,
+                    sourceKind: product.sourceKind,
+                    // The partner's own name, so the sentence reads "Printful
+                    // packs and ships this" rather than naming nobody.
+                    fulfillmentPartner: product.fulfillmentProvider,
                   }}
                 />
 

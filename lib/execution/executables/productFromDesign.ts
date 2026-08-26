@@ -4,6 +4,7 @@ import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
+import { partnerParcelFor, parcelToProductData } from "@/lib/fulfillment/parcel";
 import { SURFACES } from "@/lib/design/surfaces";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
@@ -159,9 +160,44 @@ export const createProductFromDesignExecutable: Executable<
             retailPriceInCents: input.priceInCents,
           });
           externalProductId = registered.externalProductId;
+
+          // WHO SHIPS THIS, RECORDED (2026-08-26).
+          //
+          // This wrote externalProductId and nothing else, so a product J4 had
+          // just handed to Printful looked, to the rest of Genesis, exactly
+          // like something the owner makes in their kitchen. sourceKind was
+          // null, which whoShips.ts reads as owner-shipped — so the owner was
+          // asked for a packaged weight and box size for a parcel that is
+          // packed in Printful's warehouse and that they will never see.
+          //
+          // These three facts are what stop that. They are also what
+          // productSupportsLiveShipping and the Buy Label button read, so a
+          // partner-shipped product no longer gets quoted against the owner's
+          // own EasyPost account or offered a label for a box they do not have.
+          const parcel = await partnerParcelFor({
+            provider: connector.provider,
+            storeId: ctx.storeId,
+            storeDraftId: null,
+            externalProductId: registered.externalProductId,
+            externalVariantId: candidate.variant.externalVariantId,
+          });
+
           await prisma.product.update({
             where: { id: product.id, storeId: ctx.storeId },
-            data: { externalProductId },
+            data: {
+              externalProductId,
+              externalVariantId: candidate.variant.externalVariantId,
+              fulfillmentProvider: connector.provider,
+              // Printed per order by a partner who ships it — the schema's own
+              // words for this kind. Read off the connector that actually
+              // accepted the product, never assumed from a provider name.
+              sourceKind: "PRINT_ON_DEMAND",
+              sourceKey: connector.provider.toLowerCase(),
+              // Empty for every partner today: neither Printful nor Printify
+              // exposes a parcel. Spread so that stays a no-op rather than
+              // writing zeroes. See lib/fulfillment/parcel.ts.
+              ...parcelToProductData(parcel),
+            },
           });
         } catch {
           // Non-fatal by design. See the note above.

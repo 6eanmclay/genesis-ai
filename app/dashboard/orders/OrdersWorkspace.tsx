@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { shippedBy } from "@/lib/shipping/whoShips";
 import { isBrokenConnection } from "@/lib/integrations/paymentBadge";
 import type { Store, StoreRole } from "@prisma/client";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
@@ -114,7 +115,14 @@ export async function OrdersWorkspace({
         // order, for a product whose weight is already on file. The executable
         // and the server action both already accept all four; only the form
         // never offered them and nothing ever filled them in.
-        product: { select: { weightOz: true, lengthIn: true, widthIn: true, heightIn: true } },
+        product: {
+          select: {
+            weightOz: true, lengthIn: true, widthIn: true, heightIn: true,
+            // Who ships it — see lib/shipping/whoShips.ts. Read here so the row
+            // never has to guess from a provider name.
+            sourceKind: true,
+          },
+        },
       },
     }),
     canManage
@@ -134,6 +142,10 @@ export async function OrdersWorkspace({
     status: order.status,
     paymentProvider: order.paymentProvider,
     createdAt: order.createdAt,
+    // Who packs this. A deleted product leaves order.product null, and an order
+    // with no product is one this owner has to handle themselves — which is
+    // what "OWNER" already means for a null sourceKind.
+    shippedBy: shippedBy(order.product?.sourceKind ?? null),
     fulfillmentStatus: order.fulfillmentStatus,
     shipmentStatus: order.shipmentStatus,
     deliveredAt: order.deliveredAt,

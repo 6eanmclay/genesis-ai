@@ -1,7 +1,7 @@
 import { startRealPostgres } from "@/scripts/lib/realPostgres";
 import { execFile } from "child_process";
 
-// DOES THE HAND-WRITTEN MIGRATION BUILD THE SCHEMA PRISMA THINKS IT DID:
+// DO THE HAND-WRITTEN MIGRATIONS BUILD THE SCHEMA PRISMA THINKS THEY DID:
 //
 //   powershell -File scripts/run-unelevated.ps1 \
 //     -Command "npx tsx scripts/check-promotion-migration.ts" -OutFile out.txt

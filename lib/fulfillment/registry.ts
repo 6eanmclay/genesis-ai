@@ -1,3 +1,4 @@
+import type { IntegrationProvider } from "@prisma/client";
 import type { FulfillmentConnector } from "./types";
 import { printfulFulfillmentConnector } from "./printful";
 
@@ -10,4 +11,18 @@ const FULFILLMENT_CONNECTORS: FulfillmentConnector[] = [printfulFulfillmentConne
 
 export function getFulfillmentConnectors(): FulfillmentConnector[] {
   return FULFILLMENT_CONNECTORS;
+}
+
+/**
+ * The connector a product came through, by the provider recorded on it.
+ *
+ * Read off the row rather than re-derived — the same correction adopt.ts
+ * carries: `createsListings ? "PRINTFUL" : null` was right exactly until a
+ * second print-on-demand partner existed.
+ */
+export function getFulfillmentConnector(
+  provider: IntegrationProvider | null
+): FulfillmentConnector | null {
+  if (!provider) return null;
+  return FULFILLMENT_CONNECTORS.find((connector) => connector.provider === provider) ?? null;
 }

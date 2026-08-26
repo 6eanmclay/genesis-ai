@@ -67,6 +67,16 @@ interface PrintfulVariant {
   id: number;
   name: string;
   price: string;
+  // NO WEIGHT AND NO DIMENSIONS, and that is Printful's shape rather than this
+  // interface's. Checked field by field against Printful's own v1 catalog
+  // documentation on 2026-08-26: a variant returns id, product_id, name, size,
+  // color, color_code, color_code2, image, price, in_stock,
+  // availability_regions, availability_status and material. The v2 catalog adds
+  // only `placement_dimensions`, which are print areas for artwork, in pixels.
+  //
+  // So `getParcel` below returns null. Widening this interface would not
+  // conjure fields the API does not send, and mapping a print area onto
+  // lengthIn would put an invented box on a real customer's postage.
 }
 
 /**
@@ -156,6 +166,23 @@ const profile: FulfillmentPartnerProfile = {
 export const printfulFulfillmentConnector: FulfillmentConnector = {
   provider: "PRINTFUL",
   profile,
+
+  /**
+   * WHAT PRINTFUL KNOWS ABOUT THE BOX: nothing.
+   *
+   * Implemented rather than omitted so the answer is recorded in code instead
+   * of being an absence somebody has to re-investigate. The moment Printful
+   * exposes a parcel — or a partner that already does is added — this is the
+   * only function that changes, because every creation path already writes
+   * whatever it returns.
+   *
+   * It matters less than it sounds: Printful PACKS AND SHIPS these itself. The
+   * owner never holds the parcel, so nothing in Genesis needs its weight —
+   * see lib/shipping/whoShips.ts, which is why the owner is no longer asked.
+   */
+  async getParcel() {
+    return null;
+  },
 
   async browseCandidates({ storeId, storeDraftId, keywords }) {
     const credentials = await resolveCredentials({ storeId, storeDraftId });
