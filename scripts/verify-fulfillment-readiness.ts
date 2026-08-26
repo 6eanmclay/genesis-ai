@@ -69,5 +69,52 @@ assert("and canBuyLabel still requires a working provider AND an address",
   /canBuyLabel = Boolean\(uspsWorking && returnAddress\)/.test(workspace),
   "this milestone explains the blocked state; it does not loosen it");
 
+console.log("\n=== The parcel is not retyped ===\n");
+
+// Product has carried weightOz/lengthIn/widthIn/heightIn since 2026-08-20, and
+// the label form asked for the weight on every order anyway. The executable and
+// the server action both already accepted all four; only the form never offered
+// them and nothing ever filled them in.
+assert("the order query reads the product's parcel",
+  /product: \{ select: \{ weightOz: true, lengthIn: true, widthIn: true, heightIn: true \} \}/.test(workspace),
+  "otherwise there is nothing to pre-fill from");
+
+for (const field of ["weightOz", "lengthIn", "widthIn", "heightIn"]) {
+  assert(`${field} is pre-filled from the product`,
+    new RegExp(`name="${field}"[\\s\\S]{0,180}defaultValue=\\{parcel\\.${field}`).test(list));
+}
+
+assert("every field stays editable",
+  !/readOnly|disabled=\{true\}/.test(list),
+  "a parcel is the product plus its packaging, and only the merchant knows what they used");
+
+assert("where the numbers came from is stated",
+  /From this product's saved weight and size/.test(list),
+  "pre-filled numbers an owner did not type are worth a sentence — a wrong product " +
+    "weight otherwise becomes a wrong postage purchase nobody looked at");
+assert("and a product with no saved weight says so",
+  /This product has no saved weight/.test(list),
+  "the merchant needs to know why the box is empty");
+
+console.log("\n=== Buying the label is the primary path, entering tracking the fallback ===\n");
+
+const detail = read("app", "dashboard", "orders", "OrderDetail.tsx");
+// TIED TO ITS CONDITION, not merely present. Checking for <BuyLabelForm/>
+// anywhere was green with the gate replaced by `false` — the component was
+// still in the source, in a branch that could never render.
+assert("the order record offers Buy shipping label when it can",
+  /\{canBuyLabel \? \([\s\S]{0,400}<BuyLabelForm/.test(detail));
+assert("gated on a working connection AND both addresses",
+  /shipping\?\.status === "CONNECTED" && returnAddress && order\.shippingAddress/.test(detail),
+  "this spends real postage, so it is strict for the same reason canBuyLabel is");
+assert("and says which of those is missing when it cannot",
+  /Add your ship-from address on the Orders page/.test(detail) &&
+    /Shipping isn't connected yet/.test(detail));
+assert("manual tracking is offered as the fallback, below it",
+  detail.indexOf("<BuyLabelForm") < detail.indexOf("<AddTrackingPanel"),
+  "order on the page says which is primary without a word of explanation");
+assert("and is introduced as such",
+  /Already bought postage elsewhere/.test(detail));
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} assertion(s) FAILED.`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -30,6 +30,19 @@ export interface OrderRow {
   carrier: string | null;
   trackingNumber: string | null;
   trackingUrl: string | null;
+  /**
+   * What this product weighs and measures, from the product itself.
+   *
+   * Defaults, not commitments — a parcel is the product plus whatever it is
+   * packed in, so every field stays editable. What changes is that the common
+   * case needs no typing at all.
+   */
+  parcel: {
+    weightOz: number | null;
+    lengthIn: number | null;
+    widthIn: number | null;
+    heightIn: number | null;
+  };
   labelUrl: string | null;
 }
 
@@ -45,9 +58,20 @@ function formatAddress(address: OrderShippingAddress): string {
     .join(" · ");
 }
 
-function BuyLabelForm({ orderId }: { orderId: string }) {
+export function BuyLabelForm({
+  orderId,
+  parcel,
+}: {
+  orderId: string;
+  parcel: OrderRow["parcel"];
+}) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  // The common case: this product's weight is already on file, so the merchant
+  // opens the form and presses the button. The fields stay editable because a
+  // parcel is the product plus its packaging, and only the merchant knows what
+  // they actually put it in.
+  const knowsWeight = parcel.weightOz !== null && parcel.weightOz > 0;
 
   if (!open) {
     return (
@@ -66,12 +90,22 @@ function BuyLabelForm({ orderId }: { orderId: string }) {
       className="flex flex-wrap items-center gap-2"
     >
       <input type="hidden" name="orderId" value={orderId} />
+      {/* SAID, NOT ASSUMED. Pre-filled numbers an owner did not type are worth
+          a sentence — otherwise a wrong product weight becomes a wrong postage
+          purchase that nobody looked at. And where the product carries no
+          weight, the merchant needs to know why the box is empty. */}
+      <p className="w-full text-xs text-zinc-500">
+        {knowsWeight
+          ? "From this product's saved weight and size — change them if this parcel differs."
+          : "This product has no saved weight. Enter the parcel's weight to get a rate."}
+      </p>
       <input
         name="weightOz"
         type="number"
         step="0.1"
         min="0.1"
         required
+        defaultValue={parcel.weightOz ?? undefined}
         placeholder="Weight (oz)"
         className="w-24 rounded-lg border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
       />
@@ -79,6 +113,7 @@ function BuyLabelForm({ orderId }: { orderId: string }) {
         name="lengthIn"
         type="number"
         step="0.1"
+        defaultValue={parcel.lengthIn ?? undefined}
         placeholder="L (in)"
         className="w-16 rounded-lg border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
       />
@@ -86,6 +121,7 @@ function BuyLabelForm({ orderId }: { orderId: string }) {
         name="widthIn"
         type="number"
         step="0.1"
+        defaultValue={parcel.widthIn ?? undefined}
         placeholder="W (in)"
         className="w-16 rounded-lg border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
       />
@@ -93,6 +129,7 @@ function BuyLabelForm({ orderId }: { orderId: string }) {
         name="heightIn"
         type="number"
         step="0.1"
+        defaultValue={parcel.heightIn ?? undefined}
         placeholder="H (in)"
         className="w-16 rounded-lg border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
       />
@@ -231,7 +268,7 @@ function OrderRowCard({
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {canManage && canBuyLabel && order.shippingAddress && !order.trackingNumber && (
-            <BuyLabelForm orderId={order.id} />
+            <BuyLabelForm orderId={order.id} parcel={order.parcel} />
           )}
           {/* AND WHEN IT CANNOT, WHY (2026-08-25). This branch used to be
               nothing at all: a paid order with a delivery address and no way to

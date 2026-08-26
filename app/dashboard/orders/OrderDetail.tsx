@@ -6,6 +6,7 @@ import { DEFAULT_THEME, type Theme, themeCssVars } from "@/lib/theme";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
 import type { StoreRole } from "@prisma/client";
 import { AddTrackingPanel } from "./AddTrackingPanel";
+import { BuyLabelForm } from "@/app/dashboard/OrdersList";
 
 // THE WHOLE RECORD OF ONE ORDER, IN ONE PLACE.
 //
@@ -77,9 +78,21 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
   // guessing it — the same rule every other read in this codebase follows.
   const order = await prisma.order.findFirst({
     where: { id: orderId, storeId },
-    include: { store: { select: { currency: true, theme: true, returnAddress: true } } },
+    include: {
+      store: { select: { currency: true, theme: true, returnAddress: true } },
+      // The parcel the merchant should not have to retype — see BuyLabelForm.
+      product: { select: { weightOz: true, lengthIn: true, widthIn: true, heightIn: true } },
+    },
   });
   if (!order) notFound();
+
+  // WHETHER A LABEL CAN BE BOUGHT AT ALL, decided the same way the Orders list
+  // decides it: a verified-working shipping connection AND a ship-from address.
+  // Read here rather than passed in, so this page cannot disagree with itself
+  // about what it is showing.
+  const shipping = await prisma.storeIntegration.findUnique({
+    where: { storeId_provider: { storeId, provider: "EASYPOST" } },
+  });
 
   const currency = order.store.currency;
   const theme = (order.store.theme as Theme | null) ?? DEFAULT_THEME;
@@ -87,6 +100,11 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
   const returnAddress = order.store.returnAddress as unknown as StoreReturnAddress | null;
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
   const canManage = hasPermission(role, PERMISSIONS.ORDERS_MANAGE);
+  // Strict, exactly as the Orders list is: only a verified-working connection
+  // counts, because this gates an action that spends real postage.
+  const canBuyLabel = Boolean(
+    shipping?.status === "CONNECTED" && returnAddress && order.shippingAddress
+  );
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
@@ -233,7 +251,37 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
               )}
             </>
           ) : canManage ? (
-            <AddTrackingPanel orderId={order.id} />
+            <>
+              {/* THE PRIMARY PATH FIRST. Buying the label inside Genesis is the
+                  intended flow; entering a number by hand is the fallback for a
+                  merchant who bought postage elsewhere. Order on the page says
+                  which is which without a word of explanation. */}
+              {canBuyLabel ? (
+                <div className="py-2">
+                  <BuyLabelForm
+                    orderId={order.id}
+                    parcel={{
+                      weightOz: order.product?.weightOz ?? null,
+                      lengthIn: order.product?.lengthIn ?? null,
+                      widthIn: order.product?.widthIn ?? null,
+                      heightIn: order.product?.heightIn ?? null,
+                    }}
+                  />
+                </div>
+              ) : (
+                <p className="py-2 text-xs text-amber-700 dark:text-amber-400">
+                  {!returnAddress
+                    ? "Add your ship-from address on the Orders page to buy a label here."
+                    : "Shipping isn't connected yet, so a label can't be bought for this order."}
+                </p>
+              )}
+              <div className="border-t border-black/[.04] pt-2 dark:border-white/[.06]">
+                <p className="text-xs text-zinc-500">
+                  Already bought postage elsewhere? Add the tracking number.
+                </p>
+                <AddTrackingPanel orderId={order.id} />
+              </div>
+            </>
           ) : (
             <p className="py-2 text-xs text-zinc-500">No tracking yet.</p>
           )}

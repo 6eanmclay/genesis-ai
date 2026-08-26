@@ -107,6 +107,14 @@ export async function OrdersWorkspace({
         trackingNumber: true,
         trackingUrl: true,
         labelUrl: true,
+        // THE PARCEL THE MERCHANT SHOULD NOT HAVE TO RETYPE (2026-08-25).
+        //
+        // Product has carried weightOz/lengthIn/widthIn/heightIn since
+        // 2026-08-20, and the label form asked for the weight anyway — on every
+        // order, for a product whose weight is already on file. The executable
+        // and the server action both already accept all four; only the form
+        // never offered them and nothing ever filled them in.
+        product: { select: { weightOz: true, lengthIn: true, widthIn: true, heightIn: true } },
       },
     }),
     canManage
@@ -133,6 +141,12 @@ export async function OrdersWorkspace({
     carrier: order.carrier,
     trackingNumber: order.trackingNumber,
     trackingUrl: order.trackingUrl,
+    parcel: {
+      weightOz: order.product?.weightOz ?? null,
+      lengthIn: order.product?.lengthIn ?? null,
+      widthIn: order.product?.widthIn ?? null,
+      heightIn: order.product?.heightIn ?? null,
+    },
     labelUrl: order.labelUrl,
   }));
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
