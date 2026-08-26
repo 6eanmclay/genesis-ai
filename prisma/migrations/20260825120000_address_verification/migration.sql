@@ -1,0 +1,32 @@
+-- Address verification at checkout (EasyPost, CASS-certified against USPS).
+--
+-- Both columns are NULLABLE and additive: no existing row changes meaning, no
+-- backfill, no rewrite. The five orders that already exist simply have no
+-- verification record, which is exactly what was true of them.
+--
+-- WHY NOT NEST INSIDE Order.shippingAddress. That column is read by the order
+-- list, the order detail page, the label-purchase executable and the owner
+-- notification, and its shape is OrderShippingAddress. Turning it into
+-- { entered, verified } would break every one of those readers for a feature
+-- none of them care about. Instead its MEANING is unchanged and made explicit:
+-- it is the address used for fulfilment, which is what it always was.
+--
+-- WHY shippingAddressEntered IS ONLY SET WHEN IT DIFFERS. If the customer typed
+-- the address exactly as the postal service writes it, the original and the
+-- standardised one are the same string and storing both is noise. This column
+-- answers a narrower and more useful question: what did the customer type that
+-- we changed? Null means nothing was changed.
+ALTER TABLE "Order" ADD COLUMN "shippingAddressEntered" JSONB;
+
+-- HOW THE ADDRESS BEING SHIPPED TO WAS ARRIVED AT.
+--
+-- Not derivable from the column above: with no entered address on file,
+-- "verified and needed no correction" and "never checked at all" look
+-- identical, and they are not. One is a CASS-confirmed deliverable address; the
+-- other is whatever somebody typed. A merchant about to spend real postage
+-- deserves to know which.
+--
+--   verified     the postal service confirmed it deliverable
+--   unverified   checked, not confirmed, and the customer chose to proceed
+--   not_checked  nobody looked (no connection, or not a US address)
+ALTER TABLE "Order" ADD COLUMN "shippingAddressVerification" TEXT;

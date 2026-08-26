@@ -241,6 +241,11 @@ export async function POST(request: Request) {
             // What the CUSTOMER paid to ship. Distinct from shippingCostInCents
             // (what the label later costs the owner) on purpose — see the
             // schema comment; the gap between them is the store's margin.
+            // BOTH ADDRESSES. shippingAddress above is the one being shipped to
+            // and is what the label will use; this is what the customer typed
+            // before it was standardised, absent when nothing was changed.
+            shippingAddressEntered: (chosenShipping.enteredAddress as object | null) ?? undefined,
+            shippingAddressVerification: chosenShipping.addressVerification ?? undefined,
             shippingChargedInCents: chosenShipping.amountInCents ?? undefined,
             selectedShippingCarrier: chosenShipping.carrier ?? undefined,
             selectedShippingService: chosenShipping.service ?? undefined,

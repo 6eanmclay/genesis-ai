@@ -5,6 +5,8 @@ import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
 import { quoteShippingForProduct, type DestinationAddress, type ShippingOption } from "@/lib/shipping/rates";
 import { confirmSelectedRate, toCheckoutMetadata, type SelectedShipping } from "@/lib/shipping/checkoutShipping";
+import { verifyShippingAddress } from "@/lib/shipping/verifyAddress";
+import type { AddressVerification } from "@/lib/shipping/addressVerification";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
 import { decryptCredentials } from "@/lib/integrations/credentials";
@@ -42,7 +44,14 @@ async function createStripeCheckoutSession(
   baseUrl: string,
   // Present only when the customer chose a shipping service on the storefront.
   // Absent for every other checkout, which behaves exactly as it always has.
-  shipping?: { destination: DestinationAddress; selected: SelectedShipping }
+  shipping?: {
+    destination: DestinationAddress;
+    selected: SelectedShipping;
+    /** What the customer typed, when accepting a suggestion changed it. */
+    enteredAddress?: DestinationAddress | null;
+    /** verified | unverified | not_checked. */
+    addressVerification?: string | null;
+  }
 ): Promise<string> {
   const storeStripe = await getStripeClientForStore(store.id);
 
@@ -106,6 +115,8 @@ async function createStripeCheckoutSession(
           productId: product.id,
           destination: shipping.destination,
           selected: shipping.selected,
+          enteredAddress: shipping.enteredAddress ?? null,
+          addressVerification: shipping.addressVerification ?? null,
         })
       : {
           storeId: store.id,
@@ -282,6 +293,13 @@ export interface ShippingQuoteState {
   options?: ShippingOption[];
   message?: string;
   address?: DestinationAddress;
+  /**
+   * What the address service made of what was typed (2026-08-25).
+   *
+   * Present whenever an address was submitted. The step renders a suggestion or
+   * a warning from this; nothing is ever swapped silently.
+   */
+  verification?: AddressVerification;
 }
 
 function readAddress(formData: FormData): DestinationAddress | null {
@@ -315,6 +333,28 @@ export async function quoteShippingOptions(
   const store = await prisma.store.findUnique({ where: { slug }, select: { id: true } });
   if (!store) return { status: "error", message: "Store not found" };
 
+  // CHECKED BEFORE ANYTHING IS QUOTED OR CHARGED (2026-08-25).
+  //
+  // Every required field being filled in is not the same as the parcel
+  // arriving: a transposed house number passes every check on this form and
+  // then fails in a sorting facility days later, at the merchant's expense.
+  //
+  // The customer decides what happens next — a correction is a suggestion they
+  // accept, an unverifiable address is a warning they acknowledge. Nothing here
+  // rejects an order or swaps an address behind their back.
+  const acknowledged = String(formData.get("addressAcknowledged") ?? "") === "1";
+  const verification = await verifyShippingAddress(store.id, address);
+
+  // A correction the customer has not seen yet stops here and asks. Once they
+  // have chosen — the suggested address becomes what the form holds, or they
+  // acknowledged their own — the flow continues with what they picked.
+  if (verification.outcome === "corrected" && !acknowledged) {
+    return { status: "error", message: "", address, verification };
+  }
+  if (verification.outcome === "unverifiable" && !acknowledged) {
+    return { status: "error", message: "", address, verification };
+  }
+
   const quote = await quoteShippingForProduct({ storeId: store.id, productId, destination: address });
   if (!quote.ok) {
     // Each failure names itself rather than collapsing into "no options",
@@ -326,7 +366,7 @@ export async function quoteShippingOptions(
     return { status: "error", message, address };
   }
 
-  return { status: "quoted", options: quote.options, address };
+  return { status: "quoted", options: quote.options, address, verification };
 }
 
 /**
@@ -363,10 +403,27 @@ export async function checkoutWithShipping(
       );
     }
 
+    // BOTH ADDRESSES, forward to the order. The one being shipped to is
+    // `address`; `addressEntered` is what the customer originally typed and is
+    // present only when accepting a suggestion changed it.
+    const enteredRaw = String(formData.get("addressEntered") ?? "").trim();
+    let enteredAddress: DestinationAddress | null = null;
+    if (enteredRaw) {
+      try {
+        enteredAddress = JSON.parse(enteredRaw) as DestinationAddress;
+      } catch {
+        // A malformed hidden field loses the audit copy and must not lose the
+        // sale — the address being shipped to is unaffected.
+        enteredAddress = null;
+      }
+    }
+
     const baseUrl = await getBaseUrl();
     redirectUrl = await createStripeCheckoutSession(store, product, slug, baseUrl, {
       destination: address,
       selected: confirmed.selected,
+      enteredAddress,
+      addressVerification: String(formData.get("addressVerification") ?? "").trim() || null,
     });
   } catch (error) {
     unstable_rethrow(error);

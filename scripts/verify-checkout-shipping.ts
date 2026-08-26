@@ -80,8 +80,14 @@ console.log("\n2. A checkout without live shipping is completely unaffected");
   check("no amount, so nothing is written to the order", parsed.amountInCents, null);
   check("no estimate", parsed.estimatedDays, null);
 
+  // EXHAUSTIVE ON PURPOSE, and it earned its keep: adding address verification
+  // to this shape in 2026-08-25 failed here rather than slipping through, which
+  // is exactly what an assertion over the whole object is for. A session with no
+  // shipping metadata has no verification either — nobody looked, and there is
+  // no entered address to keep because nothing was changed.
   check("and no metadata at all parses the same way", parseCheckoutShipping(null), {
-    address: null, carrier: null, service: null, rateId: null, amountInCents: null, estimatedDays: null,
+    address: null, enteredAddress: null, addressVerification: null,
+    carrier: null, service: null, rateId: null, amountInCents: null, estimatedDays: null,
   });
 }
 

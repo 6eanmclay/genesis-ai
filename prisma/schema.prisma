@@ -10,8 +10,8 @@ datasource db {
 }
 
 model User {
-  id                String    @id @default(cuid())
-  email             String    @unique
+  id                String         @id @default(cuid())
+  email             String         @unique
   name              String?
   password          String?
   emailVerified     DateTime?
@@ -23,7 +23,7 @@ model User {
   // that can be shared before any referral exists; Referral.code is a
   // per-relationship snapshot of which code was used for one specific
   // referred signup, written once redeemed.
-  referralCode      String?   @unique
+  referralCode      String?        @unique
   // WHICH BUSINESS IS THIS PERSON WORKING IN (2026-08-20).
   //
   // A Genesis account holds several businesses, each with its own identity,
@@ -42,7 +42,7 @@ model User {
   // Cascade, because deleting a business must leave the account working rather
   // than orphaning the person who owned it.
   activeStoreId     String?
-  activeStore       Store?    @relation("ActiveBusiness", fields: [activeStoreId], references: [id], onDelete: SetNull)
+  activeStore       Store?         @relation("ActiveBusiness", fields: [activeStoreId], references: [id], onDelete: SetNull)
   // Sessions are JWTs, so there is no server-side session row to delete when
   // someone resets their password — a token already in an attacker's hands
   // stays valid until it expires on its own. That makes "someone got into my
@@ -71,8 +71,8 @@ model User {
   // one as enabled would lock somebody out with a code they never verified.
   totpEnabledAt     DateTime?
   recoveryCodes     RecoveryCode[]
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   accounts                   Account[]
   sessions                   Session[]
@@ -178,23 +178,23 @@ model AuthAttempt {
 // — never the raw string, which is a fingerprint. What an owner needs is enough
 // to recognise their own session, not a dossier on themselves.
 model SecurityEvent {
-  id        String   @id @default(cuid())
-  userId    String
+  id                String   @id @default(cuid())
+  userId            String
   /// A value from SECURITY_EVENTS in lib/security/events.ts. A free String
   /// rather than an enum, matching ExecutionLog.action's own convention — but
   /// unlike that one, every value is asserted to have an owner-facing label,
   /// so a new kind cannot reach a merchant as a raw identifier.
-  kind      String
+  kind              String
   /// Coarse and human, e.g. "Windows · Chrome". Null when the event had no
   /// request behind it (a scheduled revocation, say) — which is a real
   /// difference from an unrecognised device and is kept distinguishable.
-  device    String?
+  device            String?
   /// Which sign-in this happened in, when there was one. Lets the history and
   /// the session list refer to the same thing.
   sessionInstanceId String?
   /// Anything specific the event needs — never a secret, asserted by suite.
-  detail    Json?
-  createdAt DateTime @default(now())
+  detail            Json?
+  createdAt         DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -223,19 +223,19 @@ model SecurityEvent {
 // No IP and no location, per D4 — same rule as SecurityEvent, and for the same
 // reason. `device` is the coarse label, never the raw agent.
 model UserSession {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   userId            String
   /// The id minted into the JWT at sign-in. Unique because one sign-in is one
   /// session; a second row for the same instance would mean two answers to
   /// "is this revoked".
-  sessionInstanceId String   @unique
+  sessionInstanceId String    @unique
   device            String?
   /// Moved forward on token refresh, which is the only signal a stateless
   /// session gives that somebody is still using it.
-  lastSeenAt        DateTime @default(now())
+  lastSeenAt        DateTime  @default(now())
   /// Set when the owner ends this session. Null means live.
   revokedAt         DateTime?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -473,10 +473,10 @@ model Store {
   sourcedProducts           SourcedProduct[]
   progressionDecisions      ProgressionDecision[]
   supplierEconomics         SupplierEconomics[]
+  proactiveDeliveries       ProactiveDelivery[]
+  conversations             Conversation[]
 
   @@index([planId])
-  proactiveDeliveries ProactiveDelivery[]
-  conversations Conversation[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -1016,13 +1016,13 @@ model SupplierRequestEvent {
 
   /// The business the request was made on behalf of. Null for a call with no
   /// business behind it, which is a real state rather than a gap.
-  storeId String?
+  storeId    String?
   /// The registered source (lib/sourcing/registry.ts), e.g. "printful".
-  sourceKey String
+  sourceKey  String
   /// What was being asked for — "search", "economics.quote", "cost". Free text
   /// rather than an enum: this is a ledger to read, not a thing to branch on.
-  operation String
-  ok        Boolean
+  operation  String
+  ok         Boolean
   durationMs Int
 
   /// The unattended pass this belonged to, or null when a person triggered it.
@@ -1081,19 +1081,19 @@ model SupplierEconomics {
   minimumOrderStatedById String?
 
   /// What one unit costs at that minimum. Never zero for unknown.
-  unitCostInCents      Int?
-  unitCostProvenance   EconomicsProvenance?
-  unitCostStatedAt     DateTime?
-  unitCostStatedById   String?
+  unitCostInCents    Int?
+  unitCostProvenance EconomicsProvenance?
+  unitCostStatedAt   DateTime?
+  unitCostStatedById String?
 
   /// Price breaks, [{ minUnits, unitCostInCents }]. NULL = none stated, which is
   /// different from a supplier that has no breaks (an empty array). Json because
   /// the shape of a price break varies by supplier and a table of two columns
   /// per tier would be a join for no reason.
-  tiers            Json?
-  tiersProvenance  EconomicsProvenance?
-  tiersStatedAt    DateTime?
-  tiersStatedById  String?
+  tiers           Json?
+  tiersProvenance EconomicsProvenance?
+  tiersStatedAt   DateTime?
+  tiersStatedById String?
 
   /// Delivery per unit on a bulk order. A stated 0 means "included" and is not
   /// the same as unknown.
@@ -1125,7 +1125,6 @@ model SupplierEconomics {
   @@unique([storeId, sourceKey, externalProductId, externalVariantId])
   @@index([storeId, sourceKey])
 }
-
 
 enum EconomicsProvenance {
   /// The supplier's own API or catalogue said so.
@@ -1194,10 +1193,10 @@ model NewsletterSignup {
 // one. Composite-unique rather than a bare unique on externalOrderId, so
 // two providers' ids can never collide.
 model Order {
-  id                      String              @id @default(cuid())
-  storeId                 String
-  productId               String?
-  productName             String
+  id                          String              @id @default(cuid())
+  storeId                     String
+  productId                   String?
+  productName                 String
   // HOW MANY UNITS THIS ORDER IS FOR (2026-08-20, P0.5).
   //
   // Progression evidence counts units, not orders: one order for 100 is not the
@@ -1212,12 +1211,12 @@ model Order {
   //
   // amountInCents stays the ORDER TOTAL. Per-unit revenue is amountInCents /
   // quantity, computed where needed and never stored twice.
-  quantity                Int                 @default(1)
-  amountInCents           Int
-  buyerEmail              String
-  status                  String              @default("paid")
-  paymentProvider         IntegrationProvider
-  externalOrderId         String
+  quantity                    Int                 @default(1)
+  amountInCents               Int
+  buyerEmail                  String
+  status                      String              @default("paid")
+  paymentProvider             IntegrationProvider
+  externalOrderId             String
   // Real gap closed (2026-08-09) — refunds had nowhere to attach: Order was
   // only ever keyed by the CHECKOUT-level id (externalOrderId, a Stripe
   // Checkout Session id), but a refund webhook (charge.refunded) arrives
@@ -1225,7 +1224,7 @@ model Order {
   // provider, or an order created before this field existed, may not have
   // one) and unique-when-set so a refund event can look its Order up
   // directly rather than re-deriving it from metadata a second time.
-  externalPaymentId       String?
+  externalPaymentId           String?
   // Implementation roadmap Milestone 1 — a real, fulfillable business needs
   // a real shipping address; neither checkout path collected or stored one
   // before this. Normalized to one common shape regardless of provider
@@ -1233,7 +1232,19 @@ model Order {
   // (Milestone 4) never has to branch on paymentProvider to read it.
   // Nullable: a digital-goods order (no such path exists yet, but the
   // field shouldn't assume every future Order is physical) has none.
-  shippingAddress         Json?
+  shippingAddress             Json?
+  // THE ADDRESS USED FOR FULFILMENT — which is what this has always been, now
+  // said out loud because there is a second address next to it.
+  //
+  // What the customer typed, kept ONLY when verification changed it. Null means
+  // nothing was changed, so storing a duplicate would be noise; this column
+  // answers "what did we alter?" rather than "what was typed?".
+  shippingAddressEntered      Json?
+  // verified | unverified | not_checked. Not derivable from the column above:
+  // with no entered address on file, "confirmed and needed no correction" and
+  // "nobody looked" are indistinguishable, and a merchant about to buy postage
+  // deserves to know which.
+  shippingAddressVerification String?
   // Owner-experience milestone — the owner's own manual acknowledgment that
   // an order has been fulfilled (shipped through Printful's own dashboard,
   // self-fulfilled, or otherwise). Deliberately separate from `status`
@@ -1241,8 +1252,8 @@ model Order {
   // V1 is manual-only by Sean's explicit choice: no automatic real-money
   // order placement with a fulfillment connector yet — that's an explicit,
   // later Phase 2 capability, not an oversight.
-  fulfillmentStatus       String              @default("unfulfilled")
-  fulfilledAt             DateTime?
+  fulfillmentStatus           String              @default("unfulfilled")
+  fulfilledAt                 DateTime?
   // WAS THE CUSTOMER ACTUALLY TOLD? (2026-08-20)
   //
   // A fourth axis, and deliberately not folded into any of the three above.
@@ -1256,15 +1267,15 @@ model Order {
   // Both are the CLAIM in a claim-then-send: set before the attempt so a
   // concurrent delivery cannot also send, and cleared again if the send fails
   // so a later retry can. See lib/orders/orderConfirmation.ts.
-  confirmationSentAt      DateTime?
-  shipmentNotifiedAt      DateTime?
+  confirmationSentAt          DateTime?
+  shipmentNotifiedAt          DateTime?
   // The OWNER was told a sale happened (2026-08-22). A fifth state, kept apart
   // from the four orderConfirmation.ts already names: an order can be paid,
   // confirmed to the customer, shipped and tracked while its owner has never
   // once been told it exists. Null means not told — true of every order
   // predating this column, and the honest reading rather than a backfilled
   // claim that somebody was emailed.
-  ownerNotifiedAt         DateTime?
+  ownerNotifiedAt             DateTime?
   // The claim that stops one shipment being paid for twice (2026-08-20).
   //
   // purchaseShippingLabelExecutable guarded on `trackingNumber` — but that is
@@ -1273,7 +1284,7 @@ model Order {
   // both reached EasyPost, so the merchant paid real postage twice for one
   // parcel. Set before any EasyPost call and cleared if the purchase fails, so
   // a genuine retry is still possible.
-  labelClaimedAt          DateTime?
+  labelClaimedAt              DateTime?
   // Priority 2 (shipping, 2026-08-09) — set together, only by a real,
   // owner-triggered EasyPost label purchase (lib/execution/executables/
   // shipping.ts). Nullable: unset for every order until the owner
@@ -1281,10 +1292,10 @@ model Order {
   // payment, matching fulfillmentStatus's own "manual, owner-triggered"
   // precedent above (now extended to a step that spends real money on
   // postage, so it must stay an explicit action more than ever).
-  carrier                 String?
-  trackingNumber          String?
-  trackingUrl             String?
-  labelUrl                String?
+  carrier                     String?
+  trackingNumber              String?
+  trackingUrl                 String?
+  labelUrl                    String?
   // What the LABEL cost the owner. Written only when a label is purchased.
   // Read by M7 profitability — do not conflate with what the customer paid.
   // WHERE THE PARCEL ACTUALLY IS (Shipping & Fulfilment, 2026-08-22, S3).
@@ -1302,18 +1313,18 @@ model Order {
   // The vocabulary is lib/businessModel/entities.ts's ShipmentSchema.status,
   // a free string for the reason that file already documents: a carrier
   // inventing a new state must not break ingestion.
-  shipmentStatus          String?
-  deliveredAt             DateTime?
-  lastScanAt              DateTime?
-  shippingCostInCents     Int?
+  shipmentStatus              String?
+  deliveredAt                 DateTime?
+  lastScanAt                  DateTime?
+  shippingCostInCents         Int?
   // What the CUSTOMER chose and was charged at checkout (2026-08-20). The gap
   // between this and shippingCostInCents is the store's shipping margin.
-  shippingChargedInCents  Int?
-  selectedShippingCarrier String?
-  selectedShippingService String?
-  selectedShippingRateId  String?
-  selectedShippingEstDays Int?
-  createdAt               DateTime            @default(now())
+  shippingChargedInCents      Int?
+  selectedShippingCarrier     String?
+  selectedShippingService     String?
+  selectedShippingRateId      String?
+  selectedShippingEstDays     Int?
+  createdAt                   DateTime            @default(now())
 
   store   Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -1748,15 +1759,15 @@ model GenesisObservation {
 /// Closing a delivery never touches the message. What J4 said stays said: a
 /// finding disappearing later does not un-say it.
 model ProactiveDelivery {
-  id            String    @id @default(cuid())
-  storeId       String
-  observationId String
+  id             String    @id @default(cuid())
+  storeId        String
+  observationId  String
   /// The message the owner actually saw. Kept even after this delivery closes.
   storeMessageId String
-  spokenAt      DateTime  @default(now())
+  spokenAt       DateTime  @default(now())
   /// Set when the finding stopped being active. Null means J4 has spoken about
   /// this occurrence and has not been released to speak about it again.
-  closedAt      DateTime?
+  closedAt       DateTime?
 
   store        Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
   observation  GenesisObservation @relation(fields: [observationId], references: [id], onDelete: Cascade)
@@ -1847,12 +1858,12 @@ model Task {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  store    Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  messages StoreMessage[]
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  messages      StoreMessage[]
+  conversations Conversation[]
 
   @@unique([storeId, dedupeKey])
   @@index([storeId, status])
-  conversations Conversation[]
 }
 
 // Family-beta behavioral/friction instrumentation (v20). One generic,
@@ -1946,7 +1957,7 @@ model BusinessRecord {
   /// column existed. That is an honest unknown and is deliberately NOT
   /// backfilled to a plausible value -- see the migration for why guessing
   /// here would defeat the entire point of the column.
-  provenance       RecordProvenance?
+  provenance RecordProvenance?
 
   /// The concrete source within that kind: the connector's own name, or the
   /// Asset BusinessRecord.id a document fact was read out of. Free text
@@ -1957,11 +1968,11 @@ model BusinessRecord {
   /// row was last written. "The owner told us in March" and "we wrote this row
   /// this morning" are different facts, and only the first one answers whether
   /// a claim about the business is still current.
-  statedAt         DateTime?
+  statedAt DateTime?
 
   /// The User who stated it, when a person did. Null for connector and derived
   /// facts, which have no author.
-  statedById       String?
+  statedById String?
 
   /// Whether a model stood between the source and this record.
   ///
@@ -1969,7 +1980,7 @@ model BusinessRecord {
   /// memo are both OWNER-provenance -- the owner is the author either way --
   /// but only one of them is the owner's own words. NULLABLE, not defaulted to
   /// false: a historical row does not get to claim nothing interpreted it.
-  modelExtracted   Boolean?
+  modelExtracted Boolean?
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 

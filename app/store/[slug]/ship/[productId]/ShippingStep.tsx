@@ -3,6 +3,8 @@
 import { formatMoney } from "@/lib/money";
 import { useActionState } from "react";
 import { quoteShippingOptions, checkoutWithShipping, type ShippingQuoteState } from "../../actions";
+import { useState } from "react";
+import { verificationStateOf } from "@/lib/shipping/addressVerification";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import type { ActionState } from "@/lib/actionState";
 
@@ -46,6 +48,14 @@ export function ShippingStep({
   );
 
   const address = quote.address;
+  const verification = quote.verification;
+  // The suggested address, when the postal service writes it differently. Held
+  // in state so accepting it re-fills the form the customer can still see and
+  // edit — never applied behind their back.
+  const suggestion = verification?.outcome === "corrected" ? verification.suggestion : null;
+  const [useSuggested, setUseSuggested] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const shown = useSuggested && suggestion ? suggestion : address;
 
   return (
     <div className="mx-auto w-full max-w-lg px-5 py-10">
@@ -55,34 +65,43 @@ export function ShippingStep({
         {formatMoney(priceInCents, currency)} plus shipping
       </p>
 
-      <form action={quoteAction} className="mt-7 flex flex-col gap-3">
+      <form
+        key={useSuggested ? "suggested" : "entered"}
+        action={quoteAction}
+        className="mt-7 flex flex-col gap-3"
+      >
         <div>
           <label className={labelClass} htmlFor="name">Full name</label>
-          <input id="name" name="name" className={field} defaultValue={address?.name ?? ""} autoComplete="name" />
+          <input id="name" name="name" className={field} defaultValue={shown?.name ?? ""} autoComplete="name" />
         </div>
         <div>
           <label className={labelClass} htmlFor="line1">Street address</label>
-          <input id="line1" name="line1" required className={field} defaultValue={address?.line1 ?? ""} autoComplete="address-line1" />
+          <input id="line1" name="line1" required className={field} defaultValue={shown?.line1 ?? ""} autoComplete="address-line1" />
         </div>
         <div>
           <label className={labelClass} htmlFor="line2">Apartment, suite (optional)</label>
-          <input id="line2" name="line2" className={field} defaultValue={address?.line2 ?? ""} autoComplete="address-line2" />
+          <input id="line2" name="line2" className={field} defaultValue={shown?.line2 ?? ""} autoComplete="address-line2" />
         </div>
         <div className="flex gap-3">
           <div className="flex-1">
             <label className={labelClass} htmlFor="city">City</label>
-            <input id="city" name="city" required className={field} defaultValue={address?.city ?? ""} autoComplete="address-level2" />
+            <input id="city" name="city" required className={field} defaultValue={shown?.city ?? ""} autoComplete="address-level2" />
           </div>
           <div className="w-24">
             <label className={labelClass} htmlFor="state">State</label>
-            <input id="state" name="state" className={field} defaultValue={address?.state ?? ""} autoComplete="address-level1" />
+            <input id="state" name="state" className={field} defaultValue={shown?.state ?? ""} autoComplete="address-level1" />
           </div>
           <div className="w-28">
             <label className={labelClass} htmlFor="postalCode">ZIP</label>
-            <input id="postalCode" name="postalCode" required className={field} defaultValue={address?.postalCode ?? ""} autoComplete="postal-code" />
+            <input id="postalCode" name="postalCode" required className={field} defaultValue={shown?.postalCode ?? ""} autoComplete="postal-code" />
           </div>
         </div>
         <input type="hidden" name="country" value="US" />
+        {/* Set once the customer has SEEN what the address service said and
+            chosen anyway — either by taking the suggestion or by keeping their
+            own. Without it a correction or an unverifiable address stops and
+            asks rather than proceeding. */}
+        <input type="hidden" name="addressAcknowledged" value={acknowledged ? "1" : ""} />
         <SubmitButton pendingText="Checking rates..." className="mt-1 w-full rounded-full bg-[var(--brand-accent)] px-5 py-2.5 text-[15px] font-medium text-white">
           {quote.status === "quoted" ? "Update shipping options" : "See shipping options"}
         </SubmitButton>
@@ -90,6 +109,75 @@ export function ShippingStep({
 
       {quote.status === "error" && quote.message && (
         <p className="mt-4 text-[14px] text-red-600 dark:text-red-400">{quote.message}</p>
+      )}
+
+      {/* DID YOU MEAN THIS? The postal service writes this address differently,
+          so the customer is shown both and picks. Accepting fills the form
+          above with the standardised version — visible, and still editable. */}
+      {suggestion && !acknowledged && (
+        <div className="mt-4 rounded-2xl border border-[var(--brand-border)] p-4">
+          <p className="text-[15px] font-medium text-[var(--brand-text)]">Did you mean this address?</p>
+          <p className="mt-2 text-[14px] text-[var(--brand-text)]">
+            {suggestion.line1}
+            {suggestion.line2 ? `, ${suggestion.line2}` : ""}
+            <br />
+            {suggestion.city}
+            {suggestion.state ? `, ${suggestion.state}` : ""} {suggestion.postalCode}
+          </p>
+          <p className="mt-2 text-[13px] text-[var(--brand-text-secondary)]">
+            You entered: {address?.line1}
+            {address?.line2 ? `, ${address.line2}` : ""}, {address?.city}
+            {address?.state ? `, ${address.state}` : ""} {address?.postalCode}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setUseSuggested(true);
+                setAcknowledged(true);
+              }}
+              className="rounded-full bg-[var(--brand-accent)] px-4 py-2 text-[14px] font-medium text-white"
+            >
+              Use this address
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setUseSuggested(false);
+                setAcknowledged(true);
+              }}
+              className="rounded-full border border-[var(--brand-border)] px-4 py-2 text-[14px] text-[var(--brand-text)]"
+            >
+              Keep what I entered
+            </button>
+          </div>
+          <p className="mt-2 text-[13px] text-[var(--brand-text-secondary)]">
+            Then choose &ldquo;See shipping options&rdquo; again.
+          </p>
+        </div>
+      )}
+
+      {/* COULD NOT BE CONFIRMED. Not a rejection — the customer may know
+          something the database does not, and a new-build address is a real
+          case. But they are told plainly and have to say so, rather than
+          discovering it when the parcel comes back. */}
+      {verification?.outcome === "unverifiable" && !acknowledged && (
+        <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/30">
+          <p className="text-[15px] font-medium text-amber-900 dark:text-amber-200">
+            We couldn&apos;t confirm this address
+          </p>
+          <p className="mt-1 text-[14px] text-amber-800 dark:text-amber-300">{verification.reason}</p>
+          <p className="mt-2 text-[13px] text-amber-800 dark:text-amber-300">
+            Check it above, or continue if you know it&apos;s right.
+          </p>
+          <button
+            type="button"
+            onClick={() => setAcknowledged(true)}
+            className="mt-3 rounded-full border border-amber-400 px-4 py-2 text-[14px] text-amber-900 dark:text-amber-200"
+          >
+            Use this address anyway
+          </button>
+        </div>
       )}
 
       {quote.status === "quoted" && quote.options && address && (
@@ -105,6 +193,21 @@ export function ShippingStep({
           <input type="hidden" name="state" value={address.state ?? ""} />
           <input type="hidden" name="postalCode" value={address.postalCode} />
           <input type="hidden" name="country" value={address.country} />
+          {/* WHAT THE CUSTOMER ORIGINALLY TYPED, carried forward so the order
+              can keep it. Once a suggestion is accepted the form above holds
+              the standardised address and the original is otherwise lost —
+              and the original is exactly what an audit needs. Empty when the
+              address was never changed, because storing a duplicate is noise. */}
+          <input
+            type="hidden"
+            name="addressEntered"
+            value={useSuggested && quote.address ? JSON.stringify(quote.address) : ""}
+          />
+          <input
+            type="hidden"
+            name="addressVerification"
+            value={verification ? verificationStateOf(verification.outcome) : ""}
+          />
 
           <ul className="mt-3 flex flex-col gap-2">
             {quote.options.map((option, index) => (

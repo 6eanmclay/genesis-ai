@@ -121,6 +121,10 @@ export function toCheckoutMetadata(params: {
   productId: string;
   destination: DestinationAddress;
   selected: SelectedShipping;
+  /** What the customer first typed, when verification changed it. */
+  enteredAddress?: DestinationAddress | null;
+  /** verified | unverified | not_checked. */
+  addressVerification?: string | null;
 }): Record<string, string> {
   return {
     storeId: params.storeId,
@@ -134,6 +138,15 @@ export function toCheckoutMetadata(params: {
       postalCode: params.destination.postalCode,
       country: params.destination.country,
     }).slice(0, 500),
+    // BOTH ADDRESSES SURVIVE THE TRIP. `shippingAddress` above is the one being
+    // shipped to; this is what the customer typed before it was standardised,
+    // and is absent when nothing was changed.
+    ...(params.enteredAddress
+      ? { shippingAddressEntered: JSON.stringify(params.enteredAddress).slice(0, 500) }
+      : {}),
+    ...(params.addressVerification
+      ? { shippingAddressVerification: params.addressVerification.slice(0, 40) }
+      : {}),
     shippingRateId: params.selected.rateId,
     shippingCarrier: params.selected.carrier,
     shippingService: params.selected.service,
@@ -145,7 +158,12 @@ export function toCheckoutMetadata(params: {
 }
 
 export interface ParsedCheckoutShipping {
+  /** The address being shipped to. */
   address: DestinationAddress | null;
+  /** What the customer typed, when verification changed it. Null when unchanged. */
+  enteredAddress: DestinationAddress | null;
+  /** verified | unverified | not_checked. */
+  addressVerification: "verified" | "unverified" | "not_checked" | null;
   carrier: string | null;
   service: string | null;
   rateId: string | null;
@@ -164,6 +182,8 @@ export interface ParsedCheckoutShipping {
 export function parseCheckoutShipping(metadata: Record<string, string> | null | undefined): ParsedCheckoutShipping {
   const empty: ParsedCheckoutShipping = {
     address: null,
+    enteredAddress: null,
+    addressVerification: null,
     carrier: null,
     service: null,
     rateId: null,
@@ -194,11 +214,44 @@ export function parseCheckoutShipping(metadata: Record<string, string> | null | 
     }
   }
 
+  // What the customer originally typed, present only when accepting a
+  // suggestion changed it. Malformed becomes null: losing the audit copy must
+  // never cost the address actually being shipped to.
+  let enteredAddress: DestinationAddress | null = null;
+  if (metadata.shippingAddressEntered) {
+    try {
+      const raw = JSON.parse(metadata.shippingAddressEntered) as Partial<DestinationAddress>;
+      if (raw?.line1 && raw?.city && raw?.postalCode && raw?.country) {
+        enteredAddress = {
+          name: raw.name ?? null,
+          line1: raw.line1,
+          line2: raw.line2 ?? null,
+          city: raw.city,
+          state: raw.state ?? null,
+          postalCode: raw.postalCode,
+          country: raw.country,
+        };
+      }
+    } catch {
+      enteredAddress = null;
+    }
+  }
+
+  // Only the three states the verifier can produce. Anything else is metadata
+  // this code did not write, and is discarded rather than stored as a fact.
+  const rawState = metadata.shippingAddressVerification;
+  const addressVerification =
+    rawState === "verified" || rawState === "unverified" || rawState === "not_checked"
+      ? rawState
+      : null;
+
   const amount = Number.parseInt(metadata.shippingAmountInCents ?? "", 10);
   const days = Number.parseInt(metadata.shippingEstDays ?? "", 10);
 
   return {
     address,
+    enteredAddress,
+    addressVerification,
     carrier: metadata.shippingCarrier || null,
     service: metadata.shippingService || null,
     rateId: metadata.shippingRateId || null,
