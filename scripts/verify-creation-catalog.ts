@@ -5,6 +5,7 @@ import {
   printfulHeaders,
   printfulFailure,
   withSellingRegion,
+  isStoreScoped,
   PRINTFUL_MAX_LIMIT,
   PRINTFUL_SELLING_REGION,
   PRINTFUL_V2_BASE,
@@ -127,18 +128,56 @@ async function main() {
     !!variantsPath && !variantsPath.includes("selling_region_name"), String(variantsPath));
 
   // ======================================================================
-  console.log("\n=== 2. The store header the request was missing ===\n");
+  console.log("\n=== 2. A catalogue read does not claim store context ===\n");
   // ======================================================================
   //
-  // An OAuth token belongs to an ACCOUNT, not a store, so Printful has to be
-  // told which store a call acts for. lib/fulfillment/printful.ts has sent this
-  // on its store-scoped calls since onboarding v2 and those calls work against
-  // real accounts; this path never sent it at all.
-  const headers = printfulHeaders("tok_abc", 16543210);
-  eq("the bearer token is sent", headers.Authorization, "Bearer tok_abc");
-  eq("and the store this token acts for is named", headers["X-PF-Store-Id"], "16543210");
+  // X-PF-Store-Id was added on my reasoning — an OAuth token belongs to an
+  // ACCOUNT, and lib/fulfillment/printful.ts sends it on store-scoped calls —
+  // and the error that came back named something else: "Selling region not
+  // found", unchanged by then sending an explicit selling_region_name=worldwide.
+  //
+  // Printful documents that header for endpoints REQUIRING store context. The
+  // catalogue is the same for every account, so it is not one. Supplying store
+  // context plausibly makes Printful resolve the region from the STORE rather
+  // than from the query parameter, which is exactly the error seen.
+  //
+  // Store-scoping is decided from the PATH, so a new catalogue call cannot
+  // accidentally opt itself into store context.
+  assert("the catalogue listing is not store-scoped",
+    !isStoreScoped("/catalog-products?limit=100"));
+  assert("nor a single catalogue product", !isStoreScoped("/catalog-products/71"));
+  assert("nor its variants", !isStoreScoped("/catalog-products/71/catalog-variants?limit=100"));
+  // AND THE CAPABILITY IS STILL THERE for a call that really does act for one
+  // store. An assertion that only ever proved the header absent would pass just
+  // as well against a function that had lost the ability to send it.
+  assert("but a store-scoped path still is", isStoreScoped("/orders"));
+
+  const catalogueHeaders = printfulHeaders("tok_abc", 16543210, isStoreScoped("/catalog-products?limit=100"));
+  eq("the bearer token is sent", catalogueHeaders.Authorization, "Bearer tok_abc");
+  eq("and no store id rides along on a catalogue read",
+    catalogueHeaders["X-PF-Store-Id"], undefined);
+
+  const orderHeaders = printfulHeaders("tok_abc", 16543210, isStoreScoped("/orders"));
+  eq("while a store-scoped call names the store", orderHeaders["X-PF-Store-Id"], "16543210");
   assert("as a string, because a header is a string",
-    typeof headers["X-PF-Store-Id"] === "string");
+    typeof orderHeaders["X-PF-Store-Id"] === "string");
+
+  // ======================================================================
+  console.log("\n=== 2b. A failure says what we asked for ===\n");
+  // ======================================================================
+  //
+  // Two rounds were spent not knowing whether a failure came from the build
+  // that carried the fix. The provider's answer alone cannot settle that; the
+  // request can.
+  const withPath = printfulFailure(
+    "creation.catalog",
+    400,
+    JSON.stringify({ error: { message: "Selling region not found" } }),
+    "/catalog-products?limit=100&selling_region_name=worldwide",
+  );
+  assert("the failure carries the path it was made against",
+    withPath.includes("asked for /catalog-products?limit=100&selling_region_name=worldwide"), withPath);
+  assert("alongside what Printful said", /Selling region not found/.test(withPath), withPath);
 
   // ======================================================================
   console.log("\n=== 3. A failure says what Printful said ===\n");

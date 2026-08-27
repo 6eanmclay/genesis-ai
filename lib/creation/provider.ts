@@ -5,7 +5,7 @@ import { decryptCredentials, encryptCredentials } from "@/lib/integrations/crede
 import { supplierRequest } from "@/lib/sourcing/sourcingBudget";
 import { refreshPrintfulToken, type PrintfulCredentials } from "@/lib/integrations/printful";
 import { printfulCreationProvider } from "./printfulCreation";
-import { printfulUrl, printfulHeaders, printfulFailure } from "./printfulRequest";
+import { printfulUrl, printfulHeaders, printfulFailure, isStoreScoped } from "./printfulRequest";
 import type { CreationProvider } from "./garment";
 
 // WHICH SUPPLIER CAN HOST A DESIGN, FOR THIS BUSINESS.
@@ -97,7 +97,7 @@ export async function creationAccessFor(storeId: string): Promise<CreationAccess
         // Both the URL and the headers come from printfulRequest.ts, which a
         // suite can reach. Building them here is what let a missing store
         // header sit unnoticed until it failed in front of the owner.
-        headers: printfulHeaders(credentials.accessToken, credentials.printfulStoreId),
+        headers: printfulHeaders(credentials.accessToken, credentials.printfulStoreId, isStoreScoped(path)),
         signal: AbortSignal.timeout(20_000),
       }),
     );
@@ -105,7 +105,9 @@ export async function creationAccessFor(storeId: string): Promise<CreationAccess
     if (!response.ok) {
       // THE PROVIDER'S OWN WORDS, NOT JUST A NUMBER. This threw
       // `Printful creation.catalog failed (400)` and dropped the body.
-      throw new Error(printfulFailure(operation, response.status, await response.text().catch(() => "")));
+      throw new Error(
+        printfulFailure(operation, response.status, await response.text().catch(() => ""), path),
+      );
     }
     return response.json();
   });
