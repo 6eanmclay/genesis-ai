@@ -1,5 +1,7 @@
 "use client";
 
+import { GENESIS_GREEN, genesisGreenAlpha } from "@/lib/brand/palette";
+
 // J4'S VOICE, AS A MARK.
 //
 // This replaces a literal 🔊 emoji, which read as a system alert from another
@@ -36,7 +38,7 @@
 // Sean's own line: don't make the entire Listen control green. If this becomes
 // Genesis's language for things that are alive or happening, it earns that by
 // being used sparingly first.
-const SPEAKING_GREEN = "#1F7A46";
+const SPEAKING_GREEN = GENESIS_GREEN;
 
 export function J4VoiceGlyph({
   speaking = false,
@@ -94,7 +96,7 @@ export function J4VoiceGlyph({
            illuminated rather than merely recoloured. Small enough that it is
            felt more than seen. */
         .j4voice-on {
-          filter: drop-shadow(0 0 3px rgba(31, 122, 70, 0.55));
+          filter: drop-shadow(0 0 3px ${genesisGreenAlpha(0.55)});
         }
         @keyframes j4voice {
           0%, 100% { transform: scaleY(0.55); opacity: 0.75; }

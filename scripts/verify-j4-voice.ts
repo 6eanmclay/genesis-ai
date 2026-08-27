@@ -6,6 +6,7 @@ import {
   type MicPermission,
 } from "@/lib/voice/micPermission";
 import { readFileSync } from "fs";
+import { GENESIS_GREEN, J4_BLUE, hslOf, readsAsGreen } from "@/lib/brand/palette";
 import { join } from "path";
 
 // J4'S VOICE, AND THE ATTACHMENTS THAT REACH IT:
@@ -246,8 +247,45 @@ async function main() {
   // that green exists -- it is that green is CONDITIONAL on speaking, which is
   // the difference between a signal and a colour scheme.
   const voiceGlyph = read("app", "j4", "J4VoiceGlyph.tsx");
-  assert("the speaking colour is a real hex, not a name",
-    /#[0-9A-Fa-f]{6}/.test(voiceGlyph));
+
+  // ============ THE COLOUR IS MEASURED, NOT EYEBALLED ==================
+  //
+  // Sean reported the speaking bars as grey. The likeliest cause was that the
+  // green had simply not deployed yet -- but "does this hex actually read as
+  // green" turns out to be a real question with a real answer, and one nobody
+  // can settle by looking at a hex in a diff.
+  //
+  // So the palette exposes hslOf and readsAsGreen, and this asserts the
+  // MEASURED hue and saturation rather than the presence of a G channel. A
+  // band rather than an equality test: pinning the exact value would assert
+  // that the green may never be adjusted; this asserts that whatever it
+  // becomes is still green.
+  assert("the speaking colour genuinely reads as green",
+    readsAsGreen(GENESIS_GREEN),
+    `${GENESIS_GREEN} measures ${JSON.stringify(hslOf(GENESIS_GREEN))}`);
+
+  const measured = hslOf(GENESIS_GREEN);
+  assert("not teal, which is where a green stops looking green",
+    measured.hue <= 150, `hue ${Math.round(measured.hue)}`);
+  assert("not lime either, which Sean ruled out by name",
+    measured.hue >= 90, `hue ${Math.round(measured.hue)}`);
+  assert("saturated enough not to collapse toward grey",
+    measured.saturation >= 0.3, `saturation ${measured.saturation.toFixed(2)}`);
+  assert("and neither so dark it disappears nor so light it is neon",
+    measured.lightness > 0.2 && measured.lightness < 0.6,
+    `lightness ${measured.lightness.toFixed(2)}`);
+
+  // THE GLYPH USES THE LANGUAGE, not a hex of its own -- otherwise there are
+  // two greens the moment either moves.
+  assert("the glyph takes its green from the palette",
+    /GENESIS_GREEN/.test(voiceGlyph),
+    "a second hardcoded hex is a second green waiting to drift");
+
+  // J4 STAYS BLUE. Green is a system state; his identity is not up for
+  // reallocation, and a green that borrowed it would erase the distinction.
+  assert("J4's own colour is still blue, not green",
+    hslOf(J4_BLUE).hue > 190 && hslOf(J4_BLUE).hue < 260,
+    `${J4_BLUE} measures hue ${Math.round(hslOf(J4_BLUE).hue)}`);
   assert("and it only applies while speaking",
     /speaking \? SPEAKING_GREEN : "currentColor"/.test(voiceGlyph),
     "a permanently green control says nothing, because it always says it");

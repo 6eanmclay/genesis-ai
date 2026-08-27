@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PortalItem } from "@/lib/creation/creatables";
+import { GENESIS_BLACK, GENESIS_GREEN } from "@/lib/brand/palette";
 
 // THE DOORWAY INTO CREATING.
 //
@@ -34,7 +35,7 @@ import type { PortalItem } from "@/lib/creation/creatables";
 // focused one, and only faintly — the same language the voice glyph uses for
 // "this is alive right now". `prefers-reduced-motion` removes all of it.
 
-const GREEN = "#1F7A46";
+const GREEN = GENESIS_GREEN;
 
 export function CreationPortal({
   items,
@@ -104,7 +105,8 @@ export function CreationPortal({
   }
 
   return (
-    <div className="relative min-h-[calc(100vh-4rem)] overflow-hidden bg-[#0B0C0E] text-zinc-100">
+    <div className="relative min-h-[calc(100vh-4rem)] overflow-hidden text-zinc-100"
+      style={{ background: GENESIS_BLACK }}>
       {/* The space itself. A single soft light behind the focused object, so
           the object is lit rather than the page being decorated. */}
       <div
