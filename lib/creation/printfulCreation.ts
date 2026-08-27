@@ -1,7 +1,7 @@
 import type { Garment, GarmentVariant, CreationProvider } from "./garment";
 import { brandFromTitle } from "./garment";
 import type { PrintArea } from "./design";
-import { withSellingRegion } from "./printfulRequest";
+import { withSellingRegion, PRINTFUL_MAX_LIMIT } from "./printfulRequest";
 
 // PRINTFUL, AS A PLACE TO DESIGN ON.
 //
@@ -168,31 +168,43 @@ export function printfulCreationProvider(
   return {
     provider: "PRINTFUL",
 
-    async listGarments({ storeId, keywords }) {
-      // selling_region_name is documented as optional with a default, and is
-      // not optional in practice — without it Printful answers 400 "Selling
-      // region not found". See withSellingRegion.
+    // ============ ONE CALL, AND IT IS THE ONLY CHEAP ONE ==============
+    //
+    // Printful's index returns id, name, type and a photograph for up to 100
+    // products at once. That is everything needed to decide WHAT to make and
+    // to choose WHICH blank — so both of those screens now cost exactly one
+    // request, where together they used to cost forty-nine.
+    async listBlanks({ storeId }) {
       const body = (await fetchJson(
         storeId,
         "creation.catalog",
-        withSellingRegion("/catalog-products?limit=100"),
-      )) as {
-        data?: PrintfulV2Product[];
-      } | null;
-      const products = body?.data ?? [];
+        withSellingRegion(`/catalog-products?limit=${PRINTFUL_MAX_LIMIT}`),
+      )) as { data?: PrintfulV2Product[] } | null;
 
-      // Filtered to what can actually be designed on, and by the owner's words
-      // where they gave any. Matching is deliberately shallow — Printful's
-      // catalogue has no semantic search, and pretending otherwise is the same
-      // overclaim lib/fulfillment/printful.ts already names in its own header.
-      const wanted = keywords?.toLowerCase().trim();
-      const matching = wanted
-        ? products.filter((p) => `${p.name ?? ""} ${p.type ?? ""}`.toLowerCase().includes(wanted))
-        : products;
+      return (body?.data ?? [])
+        .filter((p): p is PrintfulV2Product & { id: number } => typeof p.id === "number")
+        .map((p) => ({
+          externalProductId: String(p.id),
+          name: p.name ?? "",
+          type: p.type ?? null,
+          imageUrl: p.image ?? null,
+        }));
+    },
 
+    // ============ AND THE EXPENSIVE ONE, ON NAMED IDS ONLY ============
+    //
+    // Two requests per blank, so the caller passes the ids somebody is
+    // actually going to be shown rather than a slice of the whole catalogue.
+    //
+    // SEQUENTIAL, DELIBERATELY. Printful allows 120 requests a minute and
+    // restores them at two per second; firing a dozen blanks in parallel is
+    // how a shelf spends the whole allowance in one burst and then fails for
+    // everybody else using this account. A shelf of a handful is fast enough
+    // in order, and one that is not is a reason to show fewer.
+    async getGarments({ storeId, externalProductIds }) {
       const garments: Garment[] = [];
-      for (const product of matching.slice(0, 24)) {
-        const garment = await this.getGarment({ storeId, externalProductId: String(product.id) });
+      for (const externalProductId of externalProductIds) {
+        const garment = await this.getGarment({ storeId, externalProductId });
         if (garment) garments.push(garment);
       }
       return garments;

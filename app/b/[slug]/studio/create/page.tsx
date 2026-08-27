@@ -9,7 +9,8 @@ import { CreationPortal } from "./CreationPortal";
 import { SupplierStep } from "./SupplierStep";
 import { getConnector } from "@/lib/integrations/registry";
 import { connectExecutable } from "@/lib/execution/adapters/integrationExecutable";
-import { creatableById, garmentsFor, portalItems } from "@/lib/creation/creatables";
+import { creatableById, blanksFor, portalItems } from "@/lib/creation/creatables";
+import type { Blank } from "@/lib/creation/garment";
 
 // THE CREATION STATION, FOR ONE BUSINESS.
 //
@@ -50,15 +51,28 @@ export default async function CreationStationPage({
   // fixed at its source -- a NEEDS_ATTENTION integration still holds real
   // credentials and is worth trying.
   //
-  // The second is here: listGarments talks to Printful's v2 catalogue over
-  // the network, and anything that throws would have taken the whole page
-  // down or, worse, been read as an empty catalogue. Caught, so the failure
-  // can say what it actually is.
-  let garments: Awaited<ReturnType<NonNullable<typeof provider>["listGarments"]>> = [];
+  // The second is here: the catalogue call talks to Printful over the network,
+  // and anything that throws would have taken the whole page down or, worse,
+  // been read as an empty catalogue. Caught, so the failure can say what it
+  // actually is.
+  //
+  // ============ ONE INDEX CALL, NOT FORTY-NINE (2026-08-27) ============
+  //
+  // This used to build FULL garments — every colour, size and print area, two
+  // Printful requests each — for two dozen blanks, on every load of every
+  // screen here. The portal used that to show five photographs. The shelf used
+  // it to show two hoodies. Printful's answer, in its own words:
+  //
+  //     Rate limit exceeded. You have 0 out of 120 requests remaining.
+  //
+  // The index carries id, name, type and a photograph, which is everything
+  // both of those screens need. So the index is fetched once, and the
+  // expensive call runs only on the blanks somebody is actually about to see.
+  let blanks: Blank[] = [];
   let catalogError: string | null = null;
   if (provider) {
     try {
-      garments = await provider.listGarments({ storeId: store.id });
+      blanks = await provider.listBlanks({ storeId: store.id });
     } catch (error) {
       catalogError = error instanceof Error ? error.message : "Your supplier could not be reached.";
     }
@@ -84,7 +98,7 @@ export default async function CreationStationPage({
   if (!garmentId && !kind) {
     return (
       <CreationPortal
-        items={portalItems(garments)}
+        items={portalItems(blanks)}
         basePath={basePath}
         hasSupplier={provider !== null}
         catalogueUnreadable={catalogError !== null}
@@ -187,8 +201,37 @@ export default async function CreationStationPage({
   // WHICH BLANK, now that the intention is known. Narrowed to the creatable
   // chosen in the portal, so somebody who said "hoodie" is not handed the
   // whole catalogue back.
+  //
+  // THE NARROWING HAPPENS ON THE INDEX, BEFORE ANY DETAIL IS FETCHED. Doing it
+  // afterwards is what made a two-hoodie shelf cost forty-nine requests.
   const creatable = kind ? creatableById(kind) : null;
-  const shown = creatable ? garmentsFor(garments, creatable) : garments;
+  const matchingBlanks = creatable ? blanksFor(blanks, creatable) : blanks;
+
+  // A CEILING ON WHAT ONE SCREEN CAN SPEND. Each of these is two more requests
+  // against a 120-per-minute allowance shared with everything else this
+  // account does. Twelve is a shelf nobody scrolls past anyway; if a supplier
+  // has more, that is worth saying rather than silently paying for.
+  const DETAIL_LIMIT = 12;
+  let shown: Awaited<ReturnType<NonNullable<typeof provider>["getGarments"]>> = [];
+  if (matchingBlanks.length > 0) {
+    try {
+      shown = await provider.getGarments({
+        storeId: store.id,
+        externalProductIds: matchingBlanks.slice(0, DETAIL_LIMIT).map((b) => b.externalProductId),
+      });
+    } catch (error) {
+      return (
+        <SupplierStep
+          slug={slug}
+          creatableId={kind ?? ""}
+          creatableLabel={chosenLabel}
+          configured={supplierConfigured}
+          attemptFailed={attemptFailed}
+          problem={error instanceof Error ? error.message : "Your supplier could not be reached."}
+        />
+      );
+    }
+  }
 
   if (shown.length === 0) {
     return (
@@ -220,7 +263,7 @@ export default async function CreationStationPage({
           garment type and manufacturer, so picking a blank is a decision about
           what you are making rather than scrolling until something looks
           right. Both facts are theirs — see GarmentShelf. */}
-      <GarmentShelf garments={shown} basePath={basePath} />
+      <GarmentShelf garments={shown} basePath={basePath} availableCount={matchingBlanks.length} />
     </div>
   );
 }

@@ -190,14 +190,33 @@ function MugArt() {
 /**
  * Anything not rendered yet.
  *
- * A soft white solid rather than a question mark or a label: this is what
- * appears in a space full of objects, and it should look like one of them.
+ * ============ NOT A ROUNDED RECTANGLE (2026-08-27) ====================
+ *
+ * This was a soft white rounded square, which was a mistake of exactly the
+ * kind this whole file exists to avoid: in a dark room it reads as a CARD with
+ * nothing on it, not as an object sitting in the space. Sean, on seeing it:
+ * "I do not want a white square behind the product... no rectangular edge."
+ *
+ * It is reached whenever a creatable has no drawing — including the supplier
+ * step arrived at with a garment id and no chosen kind, which is where he saw
+ * it. So it is a parcel now: a real thing, in the same three tones and the
+ * same light as the other five, that happens to say nothing about what is
+ * inside it.
  */
 function GenericArt() {
   return (
     <>
-      <rect x="42" y="42" width="116" height="116" rx="26" fill={BODY} />
-      <path d="M100 42 H132 A26 26 0 0 1 158 68 V132 A26 26 0 0 1 132 158 H100 Z" fill={SHADE} />
+      {/* Top face, catching the light. */}
+      <path d="M46 90 L74 62 L166 62 L138 90 Z" fill="#FAFBFC" />
+      {/* Front. */}
+      <path d="M46 90 L138 90 L138 168 L46 168 Z" fill={BODY} />
+      {/* Right side, turned away from it. */}
+      <path d="M138 90 L166 62 L166 140 L138 168 Z" fill={SHADE} />
+      {/* Where the faces meet — without these it is three flat shapes. */}
+      <path d="M46 90 L138 90 L166 62" fill="none" stroke={LINE} strokeWidth="1.8" opacity="0.75" />
+      <path d="M138 90 L138 168" stroke={LINE} strokeWidth="1.8" opacity="0.75" />
+      {/* Tape, over the seam. */}
+      <path d="M92 62 L92 168" stroke={DEEP} strokeWidth="9" opacity="0.55" />
     </>
   );
 }

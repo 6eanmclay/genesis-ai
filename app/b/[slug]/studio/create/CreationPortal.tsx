@@ -341,17 +341,30 @@ function ObjectFace({ item, focused }: { item: PortalItem; focused: boolean }) {
           />
         )}
 
-        {item.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element -- supplier CDN
-          <img
-            src={item.imageUrl}
-            alt=""
-            draggable={false}
-            className="relative h-[88%] w-[88%] object-contain"
-          />
-        ) : (
-          <CreatableArt id={item.creatable.id} className="relative h-[86%] w-[86%]" />
-        )}
+        {/* ============ A CUTOUT, NEVER A PHOTOGRAPH (2026-08-27) =========
+
+            This preferred the supplier's own photograph, on the reasoning that
+            a real blank beats a drawing of one. That was right for a shelf and
+            wrong for this room, and it only became visible the hour Printful's
+            catalogue started answering — before that imageUrl was always null
+            and nobody had seen the other branch.
+
+            Printful's catalogue images are photographs on a white ground, and
+            several are LIFESTYLE shots: a person wearing the garment. Dropped
+            into a dark room they read as white rectangles, and there is no
+            background-removal that fixes them — you cannot cut a model out of
+            a photo and be left with a white hoodie floating in space. The
+            product is not separable from the picture.
+
+            Sean: "I do not want a white square behind the product. The
+            Creation Station background should be visible all the way around."
+
+            So the portal draws. These have no background to remove: they are
+            paths, so the room and its glow show through everywhere the object
+            is not. The supplier's real photographs still carry the shelf, one
+            step later, where the question is WHICH blank rather than WHAT to
+            make — and there a photograph on white inside a card is right. */}
+        <CreatableArt id={item.creatable.id} className="relative h-[86%] w-[86%]" />
       </span>
     </span>
   );

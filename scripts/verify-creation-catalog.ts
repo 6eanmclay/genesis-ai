@@ -11,6 +11,7 @@ import {
   PRINTFUL_V2_BASE,
 } from "@/lib/creation/printfulRequest";
 import { printfulCreationProvider } from "@/lib/creation/printfulCreation";
+import { portalItems } from "@/lib/creation/creatables";
 
 // WHAT THE CATALOGUE CALL SENDS, AND WHAT IT SAYS WHEN IT FAILS:
 //
@@ -72,7 +73,7 @@ async function main() {
     sent.push(path);
     return { data: [] };
   });
-  await provider.listGarments({ storeId: "store_harness" });
+  await provider.listBlanks({ storeId: "store_harness" });
   eq("one catalogue request goes out", sent.length, 1);
   assert("against the catalogue endpoint", sent[0].startsWith("/catalog-products?"), sent[0]);
 
@@ -129,7 +130,8 @@ async function main() {
       ? { data: [{ id: 71, name: "Unisex Staple T-Shirt", type: "T-SHIRT" }] }
       : { data: [] };
   });
-  await regionProvider.listGarments({ storeId: "store_harness" });
+  await regionProvider.listBlanks({ storeId: "store_harness" });
+  await regionProvider.getGarments({ storeId: "store_harness", externalProductIds: ["71"] });
 
   const listPath = paths.find((p) => p.startsWith("/catalog-products?"));
   const productPath = paths.find((p) => /^\/catalog-products\/\d+(\?|$)/.test(p));
@@ -147,6 +149,59 @@ async function main() {
   // would pass this and would also send it to endpoints nobody has tested.
   eq("every catalogue call that goes out carries a region",
     paths.filter((p) => p.includes("selling_region_name=worldwide")).length, paths.length);
+
+  // ======================================================================
+  console.log("\n=== 1c. What a screen costs ===\n");
+  // ======================================================================
+  //
+  // Printful, after the catalogue finally worked:
+  //
+  //     Printful creation.catalog failed (429): Rate limit exceeded. You have
+  //     0 out of 120 requests remaining.
+  //
+  // Both screens here were building FULL garments — two requests per blank —
+  // for two dozen candidates. The portal did that to show five photographs;
+  // the shelf did it to show two hoodies. The index carries name, type and a
+  // photograph, which is all either screen needs.
+  const indexOnly: string[] = [];
+  const cheap = printfulCreationProvider(async (_s, _o, path) => {
+    indexOnly.push(path);
+    return {
+      data: Array.from({ length: 40 }, (_, i) => ({
+        id: i + 1,
+        name: `Unisex Heavy Blend Hoodie ${i + 1} | Gildan 18500`,
+        type: "HOODIE",
+        image: `https://example.test/${i + 1}.png`,
+      })),
+    };
+  });
+
+  const blanks = await cheap.listBlanks({ storeId: "store_harness" });
+  eq("forty blanks come back from ONE request", indexOnly.length, 1);
+  eq("and all forty are usable without a second call", blanks.length, 40);
+  assert("each carrying the supplier's own photograph",
+    blanks.every((b) => !!b.imageUrl), JSON.stringify(blanks[0]));
+  assert("and enough to match on", blanks.every((b) => !!b.name && !!b.type));
+
+  // THE PORTAL, END TO END, on that one request.
+  const items = portalItems(blanks);
+  const hoodie = items.find((i) => i.creatable.id === "hoodie");
+  assert("the portal finds its hoodies", !!hoodie && hoodie.blankCount === 40, JSON.stringify(hoodie));
+  assert("with a real photograph to show", !!hoodie?.imageUrl, String(hoodie?.imageUrl));
+  eq("having spent no further requests", indexOnly.length, 1);
+
+  // THE SHELF pays per blank — so it pays only for what it shows.
+  const detailPaths: string[] = [];
+  const shelf = printfulCreationProvider(async (_s, _o, path) => {
+    detailPaths.push(path);
+    return path.startsWith("/catalog-products?")
+      ? { data: [{ id: 1, name: "Unisex Heavy Blend Hoodie | Gildan 18500", type: "HOODIE" }] }
+      : { data: [] };
+  });
+  await shelf.getGarments({ storeId: "store_harness", externalProductIds: ["1", "2"] });
+  eq("two blanks cost two requests each and nothing more", detailPaths.length, 4);
+  assert("and no index request is repeated to get them",
+    detailPaths.every((p) => !p.startsWith("/catalog-products?")), JSON.stringify(detailPaths));
 
   // ======================================================================
   console.log("\n=== 2. A catalogue read does not claim store context ===\n");
@@ -263,6 +318,53 @@ async function main() {
   assert("CONTROL: and no longer throws a bare status",
     !/failed \(\$\{response\.status\}\)/.test(src),
     "that is the message Sean was shown");
+
+  // ======================================================================
+  console.log("\n=== 6. The portal draws; it never shows a photograph ===\n");
+  // ======================================================================
+  //
+  // THE REGRESSION THIS EXISTS FOR (2026-08-27). ObjectFace preferred the
+  // supplier's own photograph and fell back to a drawing. For weeks that
+  // branch was dead — Printful was never connected, so imageUrl was always
+  // null — and the hour the catalogue started answering, the portal filled
+  // with white rectangles.
+  //
+  // Printful's catalogue images are photographs on a white ground, and several
+  // are LIFESTYLE shots: a person wearing the garment. There is no
+  // background-removal that rescues those; you cannot cut a model out and be
+  // left with a white hoodie floating in a dark room.
+  //
+  // Sean: "I do not want a white square behind the product. The Creation
+  // Station background should be visible all the way around the product."
+  //
+  // WHY THIS IS A SOURCE ASSERTION. The failing state needs a supplier whose
+  // catalogue returns real image URLs, which the browser harness cannot have —
+  // its Printful token is deliberately fake. What can be checked exactly is
+  // that the portal has no image element to fall into.
+  const portalSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationPortal.tsx"), "utf8")
+  );
+  assert("the portal renders no image element at all",
+    !/<img[\s/>]/.test(portalSrc),
+    "a supplier photograph in this room is a white rectangle in a dark space");
+  assert("and reaches for the drawn object instead",
+    /<CreatableArt\b/.test(portalSrc));
+  // CONTROL: the drawing is not merely present alongside a photograph.
+  assert("CONTROL: with no imageUrl branch left to prefer",
+    !/item\.imageUrl\s*\?/.test(portalSrc),
+    "the branch is what chose the photograph over the drawing");
+
+  // AND THE SHELF STILL USES THE REAL ONES. Deliberately the opposite rule:
+  // choosing WHICH blank is exactly when a real photograph of that blank is
+  // what somebody needs, and there it sits in a card on a light ground where
+  // it belongs. An assertion that only banned photographs everywhere would
+  // pass against a Creation Station that had lost them entirely.
+  const shelfSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "GarmentShelf.tsx"), "utf8")
+  );
+  assert("the shelf still shows the supplier's own photographs",
+    /<img[\s/>]/.test(shelfSrc),
+    "picking a specific blank is when a real photograph is the point");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

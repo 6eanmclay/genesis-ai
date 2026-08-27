@@ -135,10 +135,45 @@ export function brandFromTitle(title: string): string | null {
  * — and folding them together would make every such connector implement
  * methods it must answer null to.
  */
+/**
+ * A blank as it appears in a supplier's INDEX — enough to recognise and choose
+ * between, and nothing more.
+ *
+ * ============ WHY THIS IS A SEPARATE, CHEAPER SHAPE (2026-08-27) =========
+ *
+ * A full Garment carries every colour, size and print area, and for Printful
+ * that costs two API calls PER BLANK on top of the index. The Creation Station
+ * was building full Garments for two dozen blanks in order to show five
+ * photographs and, on the shelf, to display two hoodies — 49 calls against a
+ * documented 120-per-minute ceiling. Printful said so itself:
+ *
+ *     Printful creation.catalog failed (429): Rate limit exceeded. You have 0
+ *     out of 120 requests remaining.
+ *
+ * Deciding WHAT to make and choosing WHICH blank both work off the index. Only
+ * the designer needs the whole thing. So the index is its own call and its own
+ * type, and the expensive one runs on what a person is actually looking at.
+ */
+export interface Blank {
+  externalProductId: string;
+  name: string;
+  /** The supplier's own type, e.g. "T-SHIRT". Used for matching and grouping. */
+  type: string | null;
+  /** The supplier's own photograph, where they publish one. */
+  imageUrl: string | null;
+}
+
 export interface CreationProvider {
   provider: IntegrationProvider;
-  /** Blanks that can be designed on, for a business. */
-  listGarments(params: { storeId: string; keywords?: string }): Promise<Garment[]>;
+  /**
+   * The supplier's index, in ONE call. Cheap enough to run on every page.
+   */
+  listBlanks(params: { storeId: string }): Promise<Blank[]>;
+  /**
+   * Full blanks — colours, sizes, print areas. EXPENSIVE: a call or more per
+   * blank. Pass only the ids somebody is actually going to be shown.
+   */
+  getGarments(params: { storeId: string; externalProductIds: string[] }): Promise<Garment[]>;
   /** One blank in full, with every colour, size and print area. */
   getGarment(params: { storeId: string; externalProductId: string }): Promise<Garment | null>;
 }

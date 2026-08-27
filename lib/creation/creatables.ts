@@ -104,15 +104,35 @@ export function creatableById(id: string): Creatable | null {
  * substring rather than exact: "Unisex Staple T-Shirt | Bella + Canvas 3001"
  * has to find "t-shirt", and no supplier writes its catalogue to suit us.
  */
-export function garmentMatches(garment: Garment, creatable: Creatable): boolean {
+export function garmentMatches(garment: NameAndType, creatable: Creatable): boolean {
   if (creatable.match.length === 0) return false;
   const haystack = `${garment.name} ${garment.type ?? ""}`.toLowerCase();
   return creatable.match.some((word) => haystack.includes(word));
 }
 
-/** Every blank a supplier has for this creatable. */
+/**
+ * The two fields matching actually reads.
+ *
+ * Widened from Garment to this (2026-08-27) so the SAME matcher can run on a
+ * supplier's cheap index. Matching used to happen only after every candidate
+ * had been fetched in full — two Printful requests each — which is how showing
+ * two hoodies cost forty-nine calls and hit their rate limit. Narrowing the
+ * input rather than writing a second matcher keeps one definition of what
+ * counts as a hoodie.
+ */
+export interface NameAndType {
+  name: string;
+  type: string | null;
+}
+
+/** Every blank a supplier has for this creatable, from the full shape. */
 export function garmentsFor(garments: Garment[], creatable: Creatable): Garment[] {
   return garments.filter((g) => garmentMatches(g, creatable));
+}
+
+/** The same, from the index — before anything expensive has been fetched. */
+export function blanksFor<T extends NameAndType>(blanks: T[], creatable: Creatable): T[] {
+  return blanks.filter((b) => garmentMatches(b, creatable));
 }
 
 /**
@@ -138,14 +158,22 @@ export interface PortalItem {
   available: boolean;
 }
 
-export function portalItems(garments: Garment[]): PortalItem[] {
+export function portalItems(blanks: PortalSource[]): PortalItem[] {
   return CREATABLES.map((creatable) => {
-    const matching = garmentsFor(garments, creatable);
+    const matching = blanksFor(blanks, creatable);
     return {
       creatable,
-      imageUrl: matching.find((g) => g.imageUrl)?.imageUrl ?? null,
+      imageUrl: matching.find((b) => b.imageUrl)?.imageUrl ?? null,
       blankCount: matching.length,
       available: matching.length > 0,
     };
   });
 }
+
+/**
+ * What the portal needs from a blank: enough to recognise it and count it.
+ *
+ * A supplier's index already carries all three, so the portal costs ONE request
+ * rather than one per blank plus one — see the note on NameAndType.
+ */
+export type PortalSource = NameAndType & { imageUrl: string | null };

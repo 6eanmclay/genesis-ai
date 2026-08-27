@@ -18,7 +18,16 @@ import type { Garment } from "@/lib/creation/garment";
 
 const ALL = "__all__";
 
-export function GarmentShelf({ garments, basePath }: { garments: Garment[]; basePath: string }) {
+export function GarmentShelf({
+  garments,
+  basePath,
+  /** How many the supplier HAS, which may exceed how many were fetched. */
+  availableCount,
+}: {
+  garments: Garment[];
+  basePath: string;
+  availableCount: number;
+}) {
   const [type, setType] = useState(ALL);
   const [brand, setBrand] = useState(ALL);
 
@@ -50,10 +59,22 @@ export function GarmentShelf({ garments, basePath }: { garments: Garment[]; base
         </div>
       )}
 
+      {/* ============ THE COUNT HAS TO BE THE SUPPLIER'S ==================
+          `garments` is what was FETCHED, and a ceiling was put on that so one
+          screen cannot spend a supplier's whole rate-limit allowance (see
+          DETAIL_LIMIT in page.tsx). Reporting it as "N blanks from your
+          supplier" would then state a number that belongs to us, not to them —
+          a supplier with thirty hoodies would be described as having twelve.
+
+          `availableCount` is how many the supplier actually has. When it is
+          larger, the screen says both, because "showing twelve of thirty" is a
+          fact about this page and "thirty" is the fact about the business. */}
       <p className="mt-4 text-[13px] text-zinc-500">
-        {shown.length === garments.length
-          ? `${garments.length} blanks from your supplier. Colours, sizes and print areas are theirs.`
-          : `${shown.length} of ${garments.length}`}
+        {shown.length !== garments.length
+          ? `${shown.length} of ${garments.length}`
+          : availableCount > garments.length
+            ? `Showing ${garments.length} of ${availableCount} from your supplier. Colours, sizes and print areas are theirs.`
+            : `${garments.length} blanks from your supplier. Colours, sizes and print areas are theirs.`}
       </p>
 
       {shown.length === 0 ? (
