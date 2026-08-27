@@ -1,5 +1,6 @@
 import EasyPost from "@easypost/api";
 import { prisma } from "@/lib/prisma";
+import { quoteUspsRates } from "./usps/quote";
 import { formatMoney } from "@/lib/money";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import type { EasyPostCredentials } from "@/lib/integrations/easypost";
@@ -224,9 +225,35 @@ export async function quoteShippingForProduct(params: {
     };
   }
 
+  // USPS FIRST, ON GENESIS'S OWN CREDENTIALS (2026-08-26).
+  //
+  // This is the change that makes shipping reachable at all. Everything below
+  // needs the MERCHANT to have opened an EasyPost account and pasted an API
+  // key; across sixteen production businesses, none had. USPS rating needs only
+  // credentials Genesis holds, so it answers for every store with nothing asked
+  // of the owner.
+  //
+  // EasyPost is not removed and not deprecated — it still runs below, unchanged,
+  // whenever USPS is not configured or cannot price this parcel. A merchant who
+  // connected it keeps every carrier it brokers.
+  const usps = await quoteUspsRates({
+    originZip: origin.postalCode,
+    destination: params.destination,
+    parcel,
+  });
+  if (usps.ok) return { ok: true, options: usps.options };
+
   // Per-store credentials. See this file's header for why there is no fallback.
   const resolved = await resolveStoreEasyPostClient(params.storeId);
-  if (!resolved.ok) return { ok: false, reason: resolved.reason };
+  if (!resolved.ok) {
+    // USPS was configured and simply had nothing for this parcel — that is a
+    // more useful thing to tell somebody than EasyPost's absence, because it is
+    // about their package rather than their account.
+    if (usps.reason === "no_rates") {
+      return { ok: false, reason: "carrier_returned_none", detail: usps.detail };
+    }
+    return { ok: false, reason: resolved.reason };
+  }
 
   try {
     const shipment = await resolved.client.Shipment.create({

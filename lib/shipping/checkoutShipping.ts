@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ownerPacksThis } from "./whoShips";
+import { carrierAvailability } from "./carriers";
+import { uspsIsConfigured } from "./usps/client";
 import { quoteShippingForProduct, type DestinationAddress, type ShippingOption } from "./rates";
 
 // Customer-chosen shipping at checkout (2026-08-20).
@@ -26,9 +28,15 @@ export interface SelectedShipping {
 /**
  * Can this product be quoted live for shipping at all?
  *
- * Both halves must be true: the store has to have connected its own EasyPost
- * account, and the product has to have a real weight. Either missing means the
- * old checkout path, which is a working checkout — not a degraded one.
+ * Three things must hold: SOMETHING can quote a rate, the store can take the
+ * money, and the product has a real weight. Any missing means the old checkout
+ * path, which is a working checkout — not a degraded one.
+ *
+ * "Something can quote a rate" used to read "the merchant connected their own
+ * EasyPost account", and that was the whole problem: across sixteen production
+ * businesses not one had, so this returned false everywhere and a fully built
+ * shipping flow was reachable by nobody. Genesis's own USPS credentials now
+ * satisfy it for every store — see lib/shipping/carriers.ts.
  */
 export async function productSupportsLiveShipping(storeId: string, productId: string): Promise<boolean> {
   const [easypost, stripe, product] = await Promise.all([
@@ -59,7 +67,18 @@ export async function productSupportsLiveShipping(storeId: string, productId: st
     }),
   ]);
 
-  if (easypost?.status !== "CONNECTED") return false;
+  // A RATE SOURCE, not a specific vendor. USPS on Genesis's credentials counts,
+  // and so does a merchant's own EasyPost account — whichever is present.
+  const availability = carrierAvailability({
+    uspsConfigured: uspsIsConfigured(),
+    easypostConnected: easypost?.status === "CONNECTED",
+  });
+  if (availability.rates === "NONE") return false;
+
+  // STRIPE IS STILL REQUIRED, unchanged. A chosen shipping service has to
+  // become a Stripe shipping_options line, so a store without Stripe would take
+  // the customer through the whole address-and-rates flow and then fail on the
+  // buy — the exact dead end this check was extended for in 2026-08-20.
   if (stripe?.status !== "CONNECTED") return false;
   if (!product) return false;
 
