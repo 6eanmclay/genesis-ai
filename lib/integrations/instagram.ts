@@ -228,8 +228,14 @@ export const instagramConnector: IntegrationConnector = {
     try {
       const insights = await metaGraphGet<{
         data?: { name: string; values: { end_time: string; value: number }[] }[];
+      // `views`, NOT `impressions` (re-verified 2026-08-27). Meta deprecated
+      // the Instagram impressions metric in Graph v22.0 on 21 April 2025,
+      // replacing Impressions, Reel Plays, Reel Replays and Story Impressions
+      // with a single unified `views`. Asking for the old name on v22+ fails
+      // the whole call, which is why this moved in the same commit as the
+      // version bump in metaShared.ts.
       }>(`/${credentials.igUserId}/insights`, credentials.pageAccessToken, {
-        metric: "impressions,reach,profile_views",
+        metric: "views,reach,profile_views",
         period: "day",
       });
       const byMetric = new Map((insights.data ?? []).map((m) => [m.name, m.values]));
@@ -239,7 +245,11 @@ export const instagramConnector: IntegrationConnector = {
           date: point.end_time.slice(0, 10),
           followerCount: null,
           reach: point.value,
-          impressions: byMetric.get("impressions")?.[i]?.value ?? null,
+          // Still called `impressions` on our own shape, because that is what
+          // the rest of Genesis reads and what an owner recognises. The rename
+          // is Meta's; translating it here is cheaper than renaming a field
+          // across the business model to follow a vendor's label.
+          impressions: byMetric.get("views")?.[i]?.value ?? null,
           profileViews: byMetric.get("profile_views")?.[i]?.value ?? null,
         }));
       } else {
@@ -307,7 +317,11 @@ export const instagramConnector: IntegrationConnector = {
             const mediaInsights = await metaGraphGet<{ data?: { name: string; values: { value: number }[] }[] }>(
               `/${item.id}/insights`,
               credentials.pageAccessToken,
-              { metric: "reach,impressions,engagement" }
+              // Same rename, per media. `engagement` is left alone: it was not
+              // part of the April 2025 change, and every one of these calls
+              // degrades to "unavailable" rather than failing the sync — so an
+              // unverified guess here would cost more than it could win.
+              { metric: "reach,views,engagement" }
             );
             const metrics: Record<string, number> = {};
             for (const m of mediaInsights.data ?? []) {

@@ -17,9 +17,22 @@
 
 import { describeProviderError } from "./providerError";
 
-export const META_GRAPH_API_VERSION = "v21.0";
+// RE-VERIFIED AGAINST META'S OWN CHANGELOG (2026-08-27).
+//
+// v26.0 is the current version, released 29 July 2026. The v21.0 this was
+// written against on 2026-08-09 is still supported but reaches end of life on
+// 21 January 2027 — so a connection built today on v21 would need moving
+// inside five months, before it had carried a single real merchant.
+//
+// THE VERSION AND THE METRIC NAMES MOVE TOGETHER. Meta deprecated the
+// Instagram `impressions` metric in v22.0 on 21 April 2025 and replaced it with
+// `views`; bumping the version without that change would have made every
+// account-level insight fail. The two edits belong in the same commit for that
+// reason, and instagram.ts carries the same note where the metrics are asked
+// for. See https://developers.facebook.com/docs/graph-api/changelog.
+export const META_GRAPH_API_VERSION = "v26.0";
 export const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
-export const META_OAUTH_DIALOG_URL = "https://www.facebook.com/v21.0/dialog/oauth";
+export const META_OAUTH_DIALOG_URL = `https://www.facebook.com/${META_GRAPH_API_VERSION}/dialog/oauth`;
 export const META_OAUTH_TOKEN_URL = `${META_GRAPH_BASE}/oauth/access_token`;
 
 // Real permissions, not guessed — see this file's own top comment.
@@ -29,6 +42,28 @@ export const META_OAUTH_TOKEN_URL = `${META_GRAPH_BASE}/oauth/access_token`;
 // regardless of which of the two connectors the merchant actually clicked
 // first, since Meta's own Business Verification requirement for the
 // insights permissions is a one-time app-level approval, not per-connector.
+//
+// ALL FOUR NAMES RE-CONFIRMED CURRENT ON 2026-08-27. Instagram's Basic
+// Display API was shut down in December 2024, but that is a different product:
+// this is the Instagram API with Facebook Login, whose permissions still carry
+// these names.
+//
+// AND WHAT THEY COST, WHICH IS THE PART WORTH KNOWING (verified against
+// developers.facebook.com/docs/graph-api/overview/access-levels):
+//
+//   STANDARD ACCESS is granted automatically to Business apps for every
+//   permission here — no App Review, no Business Verification. It works for
+//   "app users who have a role on the requesting app", which means the owner
+//   of THIS app can connect their own Page and Instagram account today.
+//
+//   ADVANCED ACCESS is what lets any other merchant connect, and Meta is
+//   explicit: "Business Verification is required to get Advanced Access. In
+//   some cases additional App Review on an individual permission and feature
+//   basis might be required." That is the step the EIN is for, and it is the
+//   only thing standing between this integration and every Genesis merchant.
+//
+// So there is no waiting to test this, and no way to skip verification before
+// shipping it to others. Both facts are architectural, not opinions.
 export const META_SCOPES = [
   "pages_show_list",
   "pages_read_engagement",
