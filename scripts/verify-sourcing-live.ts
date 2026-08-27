@@ -594,13 +594,23 @@ async function main() {
           tagline: "Hand-wound copper for energy work",
           description: "Hand-wound copper tensor rings and coils.",
           brandPositioning: "minimalist",
-          // Brand identity lives inside the blueprint, which is where the
-          // onboarding flow puts it — read the same way here as in production.
+          // ============ TWO PLACES, BECAUSE THERE GENUINELY ARE TWO ========
+          //
+          // This fixture used to put all four of these in blueprint.brandIdentity
+          // and it had been failing since D1-A (2026-08-24) moved two of them
+          // out. The four claims J4 reasons from — targetAudience,
+          // brandPersonality, brandVoice, sellingProposition — are now
+          // owner-authoritative FACTS with an author and a date, written below
+          // through stateFact exactly as confirmStoreDraftCore does at
+          // onboarding. brandStory and coreValues really do still live in the
+          // blueprint, so they stay here.
+          //
+          // Seeding both the way production seeds both is the point: a fixture
+          // that wrote everything to one place would have gone on passing while
+          // testing a path the product no longer has.
           blueprint: {
             brandIdentity: {
               brandStory: "Every ring is wound by hand from solid copper.",
-              uniqueSellingProposition: "Sacred cubit measurements, wound by hand.",
-              targetAudience: "People who practise energy work and meditation at home",
               coreValues: ["Craftsmanship"],
             },
           },
@@ -608,6 +618,24 @@ async function main() {
           revenueStreams: ["product_sales"],
         },
       });
+      // The other two, through the real write path. `modelExtracted: true` and
+      // `context: "onboarding"` are what confirmStoreDraftCore passes: the owner
+      // is the author, a model distilled it from what they typed.
+      const { stateFact } = await import("@/lib/businessModel/statements");
+      for (const [entityType, statement] of [
+        ["sellingProposition", "Sacred cubit measurements, wound by hand."],
+        ["targetAudience", "People who practise energy work and meditation at home"],
+      ] as const) {
+        await stateFact({
+          storeId: store.id,
+          userId: user.id,
+          entityType,
+          data: { statement },
+          modelExtracted: true,
+          context: "onboarding",
+        });
+      }
+
       const ring = await prisma.product.create({
         data: { storeId: store.id, name: "Copper tensor ring", description: "Hand-wound", priceInCents: 8500 },
       });
@@ -676,6 +704,96 @@ async function main() {
       // "other" is a real slug meaning the owner has not said, and the one
       // positioning for which customisation earns nothing.
       check("and positioning falls back honestly", blankContext.brandPositioning, "other");
+    }
+
+    // -----------------------------------------------------------------------
+    console.log("\n14b. Claims stranded in the blueprint are lost, not fabricated");
+    {
+      // ============ WHY THIS SECTION EXISTS ================================
+      //
+      // §14's fixture used to write all four brand claims into
+      // blueprint.brandIdentity, and it had been FAILING since D1-A
+      // (2026-08-24) moved targetAudience, brandPersonality, brandVoice and
+      // sellingProposition out of that blob and into owner-authoritative facts.
+      // Fixing the fixture makes §14 test the real path again — but on its own
+      // it would delete the only signal anything had about the condition the
+      // stale test was accidentally describing, which is real and is in
+      // production right now:
+      //
+      //   scripts/promote-brand-claims.ts has NOT been run against production.
+      //   Every business onboarded before 2026-08-24 has a USP and an audience
+      //   sitting in its blueprint that nothing reads any more.
+      //
+      // So this pins the boundary in both directions. The temptation, when
+      // someone notices sourcing has gone quiet for an older store, will be to
+      // add a read-time fallback to the blueprint. That would be a REGRESSION,
+      // not a fix: businessContext.ts wraps uniqueSellingProposition as
+      // claim(..., "owner"), so a blueprint fallback would present copy a model
+      // wrote during onboarding as something the owner said. Losing a claim is
+      // recoverable. Fabricating testimony is not.
+      await reset();
+      const { buildSourcingContext } = await import("@/lib/sourcing/context");
+      const user = await prisma.user.create({ data: { email: "stranded@example.test" } });
+      const store = await prisma.store.create({
+        data: {
+          userId: user.id,
+          name: "Stranded Co",
+          slug: "stranded-co",
+          tagline: "Hand-wound copper for energy work",
+          description: "Hand-wound copper tensor rings and coils.",
+          brandPositioning: "minimalist",
+          // A pre-D1-A store, exactly as onboarding left it before the move.
+          blueprint: {
+            brandIdentity: {
+              brandStory: "Every ring is wound by hand from solid copper.",
+              uniqueSellingProposition: "Sacred cubit measurements, wound by hand.",
+              targetAudience: "People who practise energy work and meditation at home",
+              coreValues: ["Craftsmanship"],
+            },
+          },
+        },
+      });
+
+      const stranded = await buildSourcingContext(store.id);
+
+      // WHAT IS LOST. Stated as an assertion rather than left to be discovered
+      // by an owner wondering why their recommendations got worse.
+      assert("a blueprint-only USP does not reach the recommender",
+        !stranded.ownWords.includes("Sacred cubit"), stranded.ownWords);
+      assert("nor does a blueprint-only audience",
+        !stranded.ownWords.includes("practise energy work"), stranded.ownWords);
+
+      // WHAT IS NOT LOST, which is what makes this a boundary rather than an
+      // outage: brandStory and coreValues genuinely still live in the blueprint
+      // and are still read. If this ever fails, the whole blueprint read has
+      // been removed and that is a different, larger bug.
+      assert("while the brand story still comes through",
+        stranded.ownWords.includes("solid copper"), stranded.ownWords);
+      assert("and so do the core values",
+        stranded.ownWords.includes("Craftsmanship"), stranded.ownWords);
+
+      // AND IT IS RECOVERABLE. This is what promote-brand-claims.ts does — the
+      // same entityType, superseding nothing because there is nothing there.
+      // Asserting it here means the remediation is known to work before anyone
+      // points it at production.
+      const { stateFact } = await import("@/lib/businessModel/statements");
+      await stateFact({
+        storeId: store.id,
+        userId: user.id,
+        entityType: "sellingProposition",
+        data: { statement: "Sacred cubit measurements, wound by hand." },
+        modelExtracted: true,
+        context: "promoted_from_blueprint",
+      });
+
+      const recovered = await buildSourcingContext(store.id);
+      assert("stating it as a fact brings it back",
+        recovered.ownWords.includes("Sacred cubit"), recovered.ownWords);
+      // The audience was not promoted, so it must still be missing — otherwise
+      // the assertion above would be passing because SOMETHING refreshed rather
+      // than because that specific fact was recorded.
+      assert("and only what was actually promoted comes back",
+        !recovered.ownWords.includes("practise energy work"), recovered.ownWords);
     }
 
     // -----------------------------------------------------------------------
