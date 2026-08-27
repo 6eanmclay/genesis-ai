@@ -33,7 +33,6 @@ import type { PrintArea } from "./design";
 // exactly that reason: what a response MEANS is provable from a recorded shape,
 // and only the fetch itself needs credentials.
 
-const PRINTFUL_V2_BASE = "https://api.printful.com/v2";
 
 // ============ THE SHAPES PRINTFUL SENDS ==================================
 
@@ -210,4 +209,3 @@ export function printfulCreationProvider(
   };
 }
 
-export { PRINTFUL_V2_BASE };

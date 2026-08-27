@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { decryptCredentials, encryptCredentials } from "@/lib/integrations/credentials";
 import { supplierRequest } from "@/lib/sourcing/sourcingBudget";
 import { refreshPrintfulToken, type PrintfulCredentials } from "@/lib/integrations/printful";
-import { printfulCreationProvider, PRINTFUL_V2_BASE } from "./printfulCreation";
+import { printfulCreationProvider } from "./printfulCreation";
+import { printfulUrl, printfulHeaders, printfulFailure } from "./printfulRequest";
 import type { CreationProvider } from "./garment";
 
 // WHICH SUPPLIER CAN HOST A DESIGN, FOR THIS BUSINESS.
@@ -92,14 +93,19 @@ export async function creationAccessFor(storeId: string): Promise<CreationAccess
     // THROUGH THE SAME BOUNDARY every other supplier call goes through, so an
     // unattended run's budget is a real ceiling here too rather than a tally.
     const response = await supplierRequest({ sourceKey: "printful", operation, storeId: scopedStoreId }, () =>
-      fetch(`${PRINTFUL_V2_BASE}${path}`, {
-        headers: { Authorization: `Bearer ${credentials.accessToken}` },
+      fetch(printfulUrl(path), {
+        // Both the URL and the headers come from printfulRequest.ts, which a
+        // suite can reach. Building them here is what let a missing store
+        // header sit unnoticed until it failed in front of the owner.
+        headers: printfulHeaders(credentials.accessToken, credentials.printfulStoreId),
         signal: AbortSignal.timeout(20_000),
       }),
     );
 
     if (!response.ok) {
-      throw new Error(`Printful ${operation} failed (${response.status})`);
+      // THE PROVIDER'S OWN WORDS, NOT JUST A NUMBER. This threw
+      // `Printful creation.catalog failed (400)` and dropped the body.
+      throw new Error(printfulFailure(operation, response.status, await response.text().catch(() => "")));
     }
     return response.json();
   });
