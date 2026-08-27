@@ -476,6 +476,7 @@ model Store {
   proactiveDeliveries       ProactiveDelivery[]
   conversations             Conversation[]
   promotions                Promotion[]
+  checkoutDrafts            CheckoutDraft[]
 
   @@index([planId])
 }
@@ -823,6 +824,7 @@ model Product {
   sourcedFrom          SourcedProduct[]
   progressionDecisions ProgressionDecision[]
   promotions           PromotionProduct[]
+  orderItems           OrderItem[]
 }
 
 // How a product comes into existence and reaches the customer.
@@ -1195,7 +1197,7 @@ model NewsletterSignup {
 // one. Composite-unique rather than a bare unique on externalOrderId, so
 // two providers' ids can never collide.
 model Order {
-  id                          String              @id @default(cuid())
+  id                          String               @id @default(cuid())
   storeId                     String
   productId                   String?
   productName                 String
@@ -1213,10 +1215,10 @@ model Order {
   //
   // amountInCents stays the ORDER TOTAL. Per-unit revenue is amountInCents /
   // quantity, computed where needed and never stored twice.
-  quantity                    Int                 @default(1)
+  quantity                    Int                  @default(1)
   amountInCents               Int
   buyerEmail                  String
-  status                      String              @default("paid")
+  status                      String               @default("paid")
   paymentProvider             IntegrationProvider
   externalOrderId             String
   // Real gap closed (2026-08-09) — refunds had nowhere to attach: Order was
@@ -1254,7 +1256,7 @@ model Order {
   // V1 is manual-only by Sean's explicit choice: no automatic real-money
   // order placement with a fulfillment connector yet — that's an explicit,
   // later Phase 2 capability, not an oversight.
-  fulfillmentStatus           String              @default("unfulfilled")
+  fulfillmentStatus           String               @default("unfulfilled")
   fulfilledAt                 DateTime?
   // WAS THE CUSTOMER ACTUALLY TOLD? (2026-08-20)
   //
@@ -1330,6 +1332,13 @@ model Order {
   // about THIS order, not about the product: two orders for the same item can
   // genuinely ship in different boxes, and only one of them can be the
   // product's saved estimate.
+  // WHERE THIS ORDER'S LINE ITEMS CAME FROM (2026-08-26). See
+  // OrderLineItemSource — a contents-unknown order must not read as pure margin.
+  // Null on every order written before bags existed, all of which have exactly
+  // one product recorded on the row itself.
+  lineItemSource              OrderLineItemSource?
+  // The draft this order was written from, when there was one.
+  checkoutDraftId             String?
   parcelWeightOz              Float?
   parcelLengthIn              Float?
   parcelWidthIn               Float?
@@ -1362,11 +1371,12 @@ model Order {
   appliedPromotionLabel       String?
   appliedPromotionCode        String?
   appliedPromotionKind        PromotionKind?
-  createdAt                   DateTime            @default(now())
+  createdAt                   DateTime             @default(now())
 
-  store            Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  product          Product?   @relation(fields: [productId], references: [id], onDelete: SetNull)
-  appliedPromotion Promotion? @relation(fields: [appliedPromotionId], references: [id], onDelete: SetNull)
+  store            Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product          Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
+  appliedPromotion Promotion?  @relation(fields: [appliedPromotionId], references: [id], onDelete: SetNull)
+  items            OrderItem[]
 
   @@unique([paymentProvider, externalOrderId])
   @@unique([paymentProvider, externalPaymentId])
@@ -2603,5 +2613,163 @@ model PromotionProduct {
   product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@id([promotionId, productId])
+  @@index([productId])
+}
+
+// WHAT ONE CUSTOMER WAS QUOTED, AT ONE MOMENT (2026-08-26).
+//
+// NOT A CART. Browsing writes nothing at all — a bag is a cookie of product ids
+// and quantities, for anonymous visitors and signed-in ones alike. This row
+// appears only when somebody clicks Continue to payment, and it exists for one
+// reason: neither payment provider can carry a bag back to us.
+//
+//   PayPal gives us ONE 127-character custom_id. storeId and productId alone
+//   already spend 51 of it. Four products would not fit.
+//   Stripe's metadata is roomier but caps a bag at an arbitrary size and does
+//   nothing for the other rail.
+//
+// So both rails carry this row's id instead, and the shape is identical for
+// both — the same fix that made pricing one function rather than two.
+//
+// IMMUTABLE ONCE PAYMENT STARTS. The lines and totals here are the contract:
+// what the customer agreed to and what the provider charged. A merchant editing
+// a price, or a promotion expiring, while somebody is on PayPal must not change
+// what the order records afterwards, because the money has already moved at the
+// figure frozen here.
+//
+// AND IT IS NOT THE ONLY RECORD. Both providers also receive real line items —
+// PayPal's purchase_units[].items[], Stripe's line_items — so a lost or expired
+// draft can still be recovered from the provider's own account of what it
+// charged. See Order.lineItemSource for the three tiers.
+model CheckoutDraft {
+  id      String @id @default(cuid())
+  storeId String
+
+  status CheckoutDraftStatus @default(OPEN)
+
+  // The resolved bag, frozen. Shape: [{ productId, name, unitPriceInCents,
+  // quantity, listInCents, discountInCents, subtotalInCents, promotionId,
+  // promotionLabel }]. The NAME is captured deliberately: a product deleted
+  // between here and the webhook must not take the record of what somebody
+  // bought with it.
+  lines Json
+
+  // The priced totals, frozen alongside the lines they came from.
+  listSubtotalInCents Int
+  discountInCents     Int @default(0)
+  shippingInCents     Int @default(0)
+  totalInCents        Int
+
+  // Which promotion, when exactly one accounts for the whole discount. Null
+  // both when nothing was discounted and when several sales covered different
+  // lines — the per-line detail inside `lines` carries those.
+  appliedPromotionId    String?
+  appliedPromotionLabel String?
+  appliedPromotionCode  String?
+  appliedPromotionKind  PromotionKind?
+
+  // The delivery details, when this checkout went through the shipping step.
+  // Personal data belonging to somebody who may never buy, which is why
+  // expiresAt exists and why an unconverted draft is purged.
+  shippingAddress         Json?
+  selectedShippingCarrier String?
+  selectedShippingService String?
+  selectedShippingRateId  String?
+
+  // Which rail, and the session it became. Written when the customer is
+  // redirected; never edited afterwards.
+  paymentProvider   IntegrationProvider?
+  externalSessionId String?
+
+  // The order this became, once it did.
+  orderId String?
+
+  // 48 hours — comfortably past Stripe's 24-hour session and PayPal's ~3-hour
+  // order, so a draft never expires under a customer who is still deciding.
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, status])
+  // Finding the draft from what the provider sends back.
+  @@index([externalSessionId])
+  // The purge reads this: only OPEN drafts that never reached payment.
+  @@index([status, expiresAt])
+}
+
+enum CheckoutDraftStatus {
+  // Created, not yet handed to a provider.
+  OPEN
+  // The provider session exists and the customer was redirected. From here the
+  // row is evidence: a draft that never converts is the only trace that
+  // somebody tried to buy something.
+  PAYMENT_STARTED
+  // It became an order.
+  CONVERTED
+  // Cancelled, or expired without converting. Kept, never deleted, whenever it
+  // reached PAYMENT_STARTED.
+  ABANDONED
+}
+
+// WHERE AN ORDER'S LINE ITEMS CAME FROM (2026-08-26).
+//
+// Load-bearing rather than documentary. Profitability computes margin as
+// revenue minus product cost and reads cost from the items — so an order with a
+// real amount and NO items reads as pure margin, and a handful of them would
+// quietly make a business look more profitable than it is in the one report an
+// owner uses to decide what to sell. This is what lets those orders be excluded
+// from product analytics while still counting as revenue.
+enum OrderLineItemSource {
+  // The normal path: the frozen draft.
+  DRAFT
+  // The draft was gone; the provider's own line items were used instead. A
+  // complete record, arguably better sourced — it is what the customer was
+  // actually charged for.
+  PROVIDER
+  // Neither was available. The financial record is preserved and NOTHING is
+  // invented: the order carries its settled amount and no items at all.
+  NONE
+}
+
+// ONE PRODUCT ON ONE ORDER (2026-08-26).
+//
+// ADDITIVE. Order.productId, productName and quantity are untouched and still
+// describe the primary line — 154 call sites read them, including profitability,
+// customers and the briefing, and none of them is migrated here. For every
+// order that existed before bags, and every single-product order after, the two
+// agree exactly.
+model OrderItem {
+  id      String @id @default(cuid())
+  orderId String
+
+  // Null when the product has since been deleted. The name below is what keeps
+  // the record readable — see productName.
+  productId   String?
+  // CAPTURED AT PURCHASE, never read back through the relation. A merchant
+  // renaming a product does not rewrite what somebody bought.
+  productName String
+
+  quantity         Int
+  unitPriceInCents Int
+  /// unit x quantity, before anything was taken off.
+  listInCents      Int
+  /// This line's share of the order's discount. Zero when nothing applied.
+  discountInCents  Int @default(0)
+  /// listInCents - discountInCents.
+  subtotalInCents  Int
+
+  // Which promotion discounted THIS line, frozen the same way the order's is.
+  // Present for a line's own sale and for a line's share of an order-wide code.
+  promotionId    String?
+  promotionLabel String?
+
+  createdAt DateTime @default(now())
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
   @@index([productId])
 }
