@@ -203,26 +203,48 @@ export function sameColor(a: string | null, b: string | null): boolean {
  * match failed — which is how a black hoodie stayed black while the room
  * changed colour behind it.
  */
+/**
+ * Why there is no blank to show — which is never just "no image".
+ *
+ * Sean: "I don't want a missing garment simply dismissed as 'no image' until
+ * we've confirmed that Printful actually gave us no usable blank for that
+ * variant."
+ *
+ * Three different absences, and they call for three different sentences:
+ *
+ *   none          the supplier published nothing at all for this product
+ *   other-colours they published blanks, but none for the colour chosen and
+ *                 no colour-neutral one to paint
+ *   other-views   they published blanks for other placements only
+ */
+export type BlankAbsence = "none" | "other-colours" | "other-views" | null;
+
 export function blankFor(
   images: BlankImage[],
   placement: string,
   colorHex: string | null,
-): { url: string | null; tintWith: string | null } {
+): { url: string | null; tintWith: string | null; absence: BlankAbsence } {
+  if (images.length === 0) return { url: null, tintWith: null, absence: "none" };
+
   const forPlacement = images.filter((b) => b.placement === placement);
-  const pool = forPlacement.length > 0 ? forPlacement : images;
+  // FALLING BACK TO ANOTHER VIEW IS A DECISION, not a default. A front image
+  // shown on the back tab is the wrong picture presented confidently, so the
+  // pool stays empty and the absence is named instead.
+  if (forPlacement.length === 0) return { url: null, tintWith: null, absence: "other-views" };
 
-  const exact = pool.find((b) => sameColor(b.colorCode, colorHex));
+  const exact = forPlacement.find((b) => sameColor(b.colorCode, colorHex));
   // ALREADY THE RIGHT COLOUR. Nothing goes behind it.
-  if (exact) return { url: exact.url, tintWith: null };
+  if (exact) return { url: exact.url, tintWith: null, absence: null };
 
-  const neutral = pool.find((b) => b.colorCode === null);
+  const neutral = forPlacement.find((b) => b.colorCode === null);
   // COLOUR-NEUTRAL: this is the one meant to be painted behind.
-  if (neutral) return { url: neutral.url, tintWith: colorHex };
+  if (neutral) return { url: neutral.url, tintWith: colorHex, absence: null };
 
   // ONLY BLANKS FOR OTHER COLOURS. Showing one and tinting it would put a
   // second colour over a garment that already has one — a navy hoodie under a
-  // gold wash. Better to show nothing than to show the wrong product.
-  return { url: null, tintWith: null };
+  // gold wash. Better to show nothing than to show the wrong product, and
+  // better still to say WHICH nothing this is.
+  return { url: null, tintWith: null, absence: "other-colours" };
 }
 
 /** The distinct colours of a garment, each with one representative variant. */

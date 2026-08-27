@@ -788,6 +788,29 @@ async function main() {
   eq("CONTROL: and does not tint somebody else's colour",
     blankFor(colourBlanks, "front", "#FFD700").tintWith, null);
 
+  // ============ WHICH NOTHING (2026-08-27) ===========================
+  //
+  // Sean: "I don't want a missing garment simply dismissed as 'no image' until
+  // we've confirmed that Printful actually gave us no usable blank for that
+  // variant."
+  //
+  // One sentence covered three situations, and only one of them is the
+  // supplier having nothing. Reading "no blank image" when Printful had
+  // published a dozen, just not in gold, is how a data problem gets filed as a
+  // supplier limitation and stops being investigated.
+  eq("nothing at all is its own answer", blankFor([], "front", "#fff").absence, "none");
+  eq("blanks that exist but not in this colour is another",
+    blankFor(colourBlanks, "front", "#FFD700").absence, "other-colours");
+  eq("and blanks for other views is a third",
+    blankFor(colourBlanks, "sleeve_left", "#0A0A0A").absence, "other-views");
+  eq("CONTROL: while a blank that IS found reports no absence",
+    blankFor(colourBlanks, "front", "#0a0a0a").absence, null);
+
+  // A FRONT IMAGE IS NOT A BACK IMAGE. Falling back to another view would show
+  // the wrong picture confidently, which is worse than saying so.
+  eq("CONTROL: and no other view is substituted for the one asked for",
+    blankFor(colourBlanks, "sleeve_left", "#0A0A0A").url, null);
+
   // THIRD: the mask that shapes the fill is cross-origin, so it silently did
   // nothing and the fill kept its rectangle. It goes through our own origin now.
   const blankOnColorSrc = codeOnly(

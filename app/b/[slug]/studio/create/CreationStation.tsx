@@ -505,10 +505,19 @@ export function CreationStation({
               Designing on a Genesis outline — your supplier&apos;s blank images
               couldn&apos;t be read. {blankProblem}
             </p>
-          ) : blankImages.length === 0 ? (
+          ) : blank.absence ? (
+            // WHICH ABSENCE. "No image" was one sentence covering three
+            // different situations, and only one of them is the supplier
+            // having nothing. Reading "no blank image" when Printful had
+            // published a dozen of them, just not in gold, is how a data
+            // problem gets filed as a supplier limitation.
             <p className="mt-3 text-center text-[12px] text-zinc-500">
-              Designing on a Genesis outline — your supplier publishes no blank
-              image for this one. The print area and colours are still theirs.
+              {blank.absence === "none"
+                ? "Designing on a Genesis outline — your supplier publishes no blank image for this product."
+                : blank.absence === "other-colours"
+                  ? `Designing on a Genesis outline — your supplier publishes blanks for this hoodie, but not in ${color}.`
+                  : `Designing on a Genesis outline — your supplier publishes no blank for the ${placement}.`}{" "}
+              The print area and colours are still theirs.
             </p>
           ) : null}
 
