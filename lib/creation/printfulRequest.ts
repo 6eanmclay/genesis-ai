@@ -28,8 +28,28 @@ import { describeProviderError, redactSecrets } from "@/lib/integrations/provide
 
 export const PRINTFUL_V2_BASE = "https://api.printful.com/v2";
 
-/** The documented ceiling on `limit`. Sending more is a 400 by their spec. */
+/**
+ * The ceiling on `limit` — WHICH IS NOT ONE NUMBER.
+ *
+ * ============ ONE CEILING PER ENDPOINT (2026-08-27) ==================
+ *
+ * The catalogue takes 100, which their reference documents. The blank-images
+ * endpoint takes 20, which it does not — Printful said so itself, once the
+ * failure carried the request:
+ *
+ *     Printful creation.blanks failed (400): Limit for this endpoint cannot
+ *     exceed 20 (asked for /catalog-products/146/images?limit=100&...)
+ *
+ * A single MAX_LIMIT constant was the assumption behind that request, and it
+ * is the same shape of mistake as the two before it: one fact from the
+ * reference, applied where nobody checked it held. So the ceiling belongs to
+ * the endpoint, and a new endpoint has to state its own rather than inherit a
+ * number that happens to be in scope.
+ */
 export const PRINTFUL_MAX_LIMIT = 100;
+
+/** The blank-images endpoint's own, lower ceiling. Printful's words, above. */
+export const PRINTFUL_MAX_IMAGE_LIMIT = 20;
 
 /**
  * WHICH SELLING REGION THE CATALOGUE IS READ FOR — and why it is sent at all.

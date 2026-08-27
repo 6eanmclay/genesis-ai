@@ -7,11 +7,12 @@ import {
   withSellingRegion,
   isStoreScoped,
   PRINTFUL_MAX_LIMIT,
+  PRINTFUL_MAX_IMAGE_LIMIT,
   PRINTFUL_SELLING_REGION,
   PRINTFUL_V2_BASE,
 } from "@/lib/creation/printfulRequest";
 import { printfulCreationProvider } from "@/lib/creation/printfulCreation";
-import { productLabel, designableViews } from "@/lib/creation/garment";
+import { productLabel, designableViews, spinViews } from "@/lib/creation/garment";
 import { portalItems } from "@/lib/creation/creatables";
 
 // WHAT THE CATALOGUE CALL SENDS, AND WHAT IT SAYS WHEN IT FAILS:
@@ -446,6 +447,29 @@ async function main() {
   assert("carrying a selling region, like every other catalogue call",
     blankPaths[0].includes("selling_region_name=worldwide"), blankPaths[0]);
 
+  // ============ THIS ENDPOINT'S OWN CEILING (2026-08-27) ==============
+  //
+  // Printful, when asked for a hundred:
+  //
+  //     creation.blanks failed (400): Limit for this endpoint cannot exceed 20
+  //     (asked for /catalog-products/146/images?limit=100&...)
+  //
+  // The catalogue takes 100 and this takes 20. A single shared constant was
+  // the assumption that produced the 400, so the ceiling is asserted PER
+  // ENDPOINT and the two are asserted to differ — a test that read one
+  // constant twice would pass against the bug.
+  const blankLimit = Number(new URLSearchParams(blankPaths[0].split("?")[1]).get("limit"));
+  eq("asking for at most twenty images", blankLimit, PRINTFUL_MAX_IMAGE_LIMIT);
+  assert("which is Printful's stated ceiling here", PRINTFUL_MAX_IMAGE_LIMIT === 20,
+    String(PRINTFUL_MAX_IMAGE_LIMIT));
+  // Compared through numbers rather than the literals, so this is a claim
+  // about the VALUES and not a tautology the compiler folds away.
+  const imageCeiling: number = PRINTFUL_MAX_IMAGE_LIMIT;
+  const catalogueCeiling: number = PRINTFUL_MAX_LIMIT;
+  assert("CONTROL: and not the catalogue's, which is different",
+    imageCeiling !== catalogueCeiling,
+    "one shared limit is the assumption that earned the 400");
+
   eq("both placements come back", images.length, 2);
   eq("front and back are named", images.map((i) => i.placement).sort(), ["back", "front"]);
   assert("each with a real URL", images.every((i) => i.url.startsWith("https://")));
@@ -616,6 +640,95 @@ async function main() {
   assert("CONTROL: and never dumps the placement keys into a sentence",
     !/printAreas\.map\(\(a\) => a\.placement\)\.join/.test(stationSrc),
     "that line is what printed front, back, embroidery_chest_left, sleeve_left");
+
+  // ======================================================================
+  console.log("\n=== 10. Seven tools, and Spin turns a real product ===\n");
+  // ======================================================================
+  //
+  // Sean: "The existing functionality can be reused where it already exists.
+  // This is primarily a better organization of the controls, not a reason to
+  // rewrite working behavior."
+  const toolbarSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationStation.tsx"), "utf8")
+  );
+  for (const tool of ["Color", "Add", "Pad", "Edit", "Flip", "Paint", "Spin"]) {
+    assert(`${tool} is one of the tools`,
+      new RegExp(`label: "${tool}"`).test(toolbarSrc), tool);
+  }
+
+  // ============ PAINT IS SHOWN AND SAYS IT IS NOT BUILT ==============
+  //
+  // A tool that does nothing and admits it is a promise; one that does nothing
+  // and pretends is a bug somebody has to discover. `ready: false` is the
+  // mechanism, so a future tool cannot join the row without deciding which.
+  assert("Paint is present but declared unbuilt",
+    /id: "paint"[\s\S]{0,200}ready: false/.test(toolbarSrc),
+    "an unbuilt tool must not look finished");
+  assert("and every other tool is declared built",
+    (toolbarSrc.match(/ready: false/g) ?? []).length === 1,
+    "exactly one tool is unbuilt today");
+
+  // ============ THE COLOURS ARE STILL THE SUPPLIER'S =================
+  //
+  // Sean: "Color — choose only colours the selected supplier actually
+  // manufactures." Restructuring the controls must not have introduced a
+  // free picker on the way past.
+  assert("CONTROL: no free colour input crept in with the toolbar",
+    !/type="color"/.test(toolbarSrc),
+    "a colour Printful does not stock is a product nobody can order");
+  assert("the swatches are still the garment's own colours",
+    /colors\.map\(/.test(toolbarSrc) && /c\.colorHex/.test(toolbarSrc));
+
+  // ============ SPIN TURNS THROUGH REAL VIEWS ONLY ===================
+  //
+  // Sean wants a 360 "if the available supplier imagery supports it". That
+  // clause is the constraint: a view needs a photograph, and there is no
+  // three-quarter image, so there is no three-quarter view.
+  const spinHoodie: Parameters<typeof spinViews>[0] = {
+    provider: "PRINTFUL",
+    externalProductId: "146",
+    name: "Unisex Heavy Blend Hoodie | Gildan 18500",
+    type: "HOODIE",
+    brand: "Gildan",
+    description: null,
+    imageUrl: null,
+    variants: [],
+    printAreas: [
+      { placement: "front", width: 12, height: 16, unit: "inches" },
+      { placement: "back", width: 12, height: 16, unit: "inches" },
+      { placement: "sleeve_left", width: 3, height: 12, unit: "inches" },
+    ],
+  };
+
+  eq("with front and back photographed, the garment turns between them",
+    spinViews(spinHoodie, [
+      { placement: "front", colorCode: null, url: "https://x.test/f.png" },
+      { placement: "back", colorCode: null, url: "https://x.test/b.png" },
+    ]),
+    ["front", "back"]);
+
+  // A PRINTABLE PLACEMENT IS NOT A VIEW. sleeve_left has a print area and no
+  // picture; Spin is about looking at the product.
+  eq("a placement with no photograph is not somewhere to turn to",
+    spinViews(spinHoodie, [{ placement: "front", colorCode: null, url: "https://x.test/f.png" }]),
+    ["front"]);
+
+  // AND AN EXTRA ANGLE THE SUPPLIER PUBLISHED IS ONE, even though nobody
+  // prints on it — which is what makes this grow into a 360 without a rewrite.
+  eq("but an extra angle they did photograph is",
+    spinViews(spinHoodie, [
+      { placement: "front", colorCode: null, url: "https://x.test/f.png" },
+      { placement: "back", colorCode: null, url: "https://x.test/b.png" },
+      { placement: "left", colorCode: null, url: "https://x.test/l.png" },
+    ]),
+    ["front", "back", "left"]);
+
+  eq("CONTROL: and no view is invented when there are no pictures at all",
+    spinViews(spinHoodie, []), []);
+
+  assert("Spin is disabled rather than spinning nothing",
+    /views\.length < 2/.test(toolbarSrc),
+    "one view is not something to turn");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

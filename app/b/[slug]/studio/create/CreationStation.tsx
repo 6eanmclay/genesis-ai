@@ -18,6 +18,7 @@ import {
   colorsOf,
   designableViews,
   formatCents,
+  spinViews,
   productLabel,
   sizesFor,
   variantFor,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/creation/garment";
 import { applyOperation, describeOperation, operationsFor, type DesignOperation } from "@/lib/creation/operations";
 import { CreationCanvas } from "./CreationCanvas";
+import { DesignToolbar, ToolIcons } from "./DesignToolbar";
 
 // THE CREATION STATION.
 //
@@ -84,6 +86,8 @@ export function CreationStation({
   const variant = variantFor(garment, color, size);
   const [placement, setPlacement] = useState<PlacementId>(FRONT);
   const [selected, setSelected] = useState<string | null>(null);
+  // How far inside the printable area artwork is kept. See padPanel.
+  const [safeMargin, setSafeMargin] = useState(0.04);
   const [history, setHistory] = useState<ProductDesign[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
@@ -185,6 +189,26 @@ export function CreationStation({
   // WHAT THIS EXACT VARIANT COSTS FROM THE SUPPLIER. Null when Printful did
   // not price it — said plainly rather than filled in, which is the whole
   // reason every product used to read $75.
+  // ============ SPIN: TURNING THE PRODUCT, NOT THE ARTWORK ===========
+  //
+  // The views are the ones the supplier actually photographed. Two for a
+  // hoodie today. Advancing wraps, so it turns rather than stopping at the
+  // back, and it moves the DESIGN placement with it — turning the garment
+  // round should show you the back you have been designing on, not a
+  // disconnected picture.
+  const views = useMemo(() => spinViews(garment, blankImages), [garment, blankImages]);
+  const [turning, setTurning] = useState(false);
+
+  function spin() {
+    if (views.length < 2) return;
+    const next = views[(Math.max(views.indexOf(placement), 0) + 1) % views.length];
+    // The half-turn is presentation; the state change is instant underneath.
+    setTurning(true);
+    window.setTimeout(() => setTurning(false), 380);
+    setPlacement(next as PlacementId);
+    setSelected(null);
+  }
+
   const supplierCost =
     (variant?.externalVariantId ? supplierPrices[variant.externalVariantId] : undefined) ?? null;
   const blankUrl = useMemo(() => {
@@ -195,6 +219,173 @@ export function CreationStation({
       : undefined;
     return (exact ?? pool.find((b) => b.colorCode === null) ?? pool[0])?.url ?? null;
   }, [blankImages, placement, chosenHex]);
+
+  // ============ WHAT EACH TOOL OPENS ==================================
+  //
+  // Built here rather than inside DesignToolbar so the toolbar stays a
+  // presentational thing that knows nothing about garments — and so every one
+  // of these is visibly the SAME control that already worked, moved.
+
+  const colorPanel = (
+    <div className="flex flex-col gap-4">
+      <div>
+        <p className="mb-2 text-[12px] text-zinc-500">
+          {colors.length} colour{colors.length === 1 ? "" : "s"} your supplier makes this in
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {colors.map((c) => (
+            <button
+              key={c.color}
+              type="button"
+              title={c.color}
+              aria-label={c.color}
+              aria-pressed={c.color === color}
+              onClick={() => {
+                setColor(c.color);
+                const next = sizesFor(garment, c.color);
+                // A COLOUR SOLD OUT IN THIS SIZE IS A REAL STATE. Keeping an
+                // unavailable size selected would submit a variant that does
+                // not exist.
+                if (!next.includes(size)) setSize(next[0] ?? "");
+              }}
+              style={{ background: c.colorHex ?? "#d4d4d8" }}
+              className={[
+                "h-8 w-8 rounded-full border transition",
+                c.color === color
+                  ? "border-[var(--brand-accent,#6366f1)] ring-2 ring-[var(--brand-accent,#6366f1)]/40"
+                  : "border-black/15 dark:border-white/20",
+              ].join(" ")}
+            />
+          ))}
+        </div>
+        <p className="mt-2 text-[12px] text-zinc-500">{color}</p>
+      </div>
+
+      <div>
+        <p className="mb-2 text-[12px] text-zinc-500">Size</p>
+        <div className="flex flex-wrap gap-2">
+          {sizes.map((sz) => (
+            <button
+              key={sz}
+              type="button"
+              aria-pressed={sz === size}
+              onClick={() => setSize(sz)}
+              className={[
+                "rounded-lg px-3 py-1.5 text-[13px] transition",
+                sz === size ? "bg-zinc-900 text-white dark:bg-white dark:text-black" : "bg-black/[.06] dark:bg-white/[.08]",
+              ].join(" ")}
+            >
+              {sz}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const addPanel =
+    assets.length === 0 ? (
+      <p className="text-[13px] text-zinc-500">
+        Nothing uploaded yet. Add a logo or a graphic in your business assets and it will appear here.
+      </p>
+    ) : (
+      <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+        {assets.map((asset) => (
+          <button
+            key={asset.id}
+            type="button"
+            onClick={() => addArtwork(asset)}
+            title={`Add ${asset.name} to the ${placement}`}
+            className="aspect-square overflow-hidden rounded-lg border border-black/[.10] bg-white p-1 transition hover:border-black/30 dark:border-white/[.14] dark:bg-zinc-900"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- Blob-hosted */}
+            <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" />
+          </button>
+        ))}
+      </div>
+    );
+
+  // ============ PAD: THE MARGIN INSIDE THE PRINT AREA =================
+  //
+  // Sean asked for Pad to exist as its own tool and left its behaviour to be
+  // defined here. It is a SAFE MARGIN: how far inside the supplier's printable
+  // rectangle the artwork is kept.
+  //
+  // That is a real manufacturing concern rather than an invented one —
+  // printers cut and press with tolerance, and artwork pushed flush to the
+  // edge of a print area is the artwork that comes back trimmed. It is also
+  // the only spacing idea on this screen that belongs to the PRODUCT rather
+  // than to a layout.
+  const padPanel = (
+    <div>
+      <p className="text-[13px] text-zinc-500">
+        Keep artwork this far inside the printable area. A design pressed flush to the
+        edge is the one that comes back trimmed.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {([
+          ["None", 0],
+          ["Small", 0.04],
+          ["Comfortable", 0.08],
+        ] as const).map(([label, value]) => (
+          <button
+            key={label}
+            type="button"
+            aria-pressed={safeMargin === value}
+            onClick={() => setSafeMargin(value)}
+            className={[
+              "rounded-lg px-3 py-1.5 text-[13px] transition",
+              safeMargin === value ? "bg-zinc-900 text-white dark:bg-white dark:text-black" : "bg-black/[.06] dark:bg-white/[.08]",
+            ].join(" ")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  const editPanel = (
+    <div className="flex flex-wrap gap-2">
+      {([
+        ["Centre", () => run({ kind: "centre", placement, layerId: selected!, axis: "both" })],
+        ["Bigger", () => run({ kind: "scale", placement, layerId: selected!, factor: 1.1 })],
+        ["Smaller", () => run({ kind: "scale", placement, layerId: selected!, factor: 0.9 })],
+        ["Rotate", () => run({ kind: "rotate", placement, layerId: selected!, degrees: 90 })],
+        ["Remove", () => { run({ kind: "remove", placement, layerId: selected! }); setSelected(null); }],
+        ["Undo", undo],
+      ] as const).map(([label, action]) => (
+        <button
+          key={label}
+          type="button"
+          disabled={label === "Undo" ? history.length === 0 : !selected}
+          onClick={action}
+          className="rounded-full border border-black/[.12] px-3.5 py-1.5 text-[13px] transition hover:bg-black/[.04] disabled:opacity-35 dark:border-white/[.16] dark:hover:bg-white/[.06]"
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const flipPanel = (
+    <div className="flex flex-wrap gap-2">
+      {([
+        ["Flip across", "x"],
+        ["Flip over", "y"],
+      ] as const).map(([label, axis]) => (
+        <button
+          key={axis}
+          type="button"
+          disabled={!selected}
+          onClick={() => run({ kind: "flip", placement, layerId: selected!, axis })}
+          className="rounded-full border border-black/[.12] px-3.5 py-1.5 text-[13px] transition hover:bg-black/[.04] disabled:opacity-35 dark:border-white/[.16] dark:hover:bg-white/[.06]"
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div className="mx-auto w-full max-w-6xl px-5 py-8">
@@ -268,6 +459,8 @@ export function CreationStation({
             blankUrl={blankUrl}
             colorHex={chosenHex}
             creatableId={creatableId}
+            turning={turning}
+            safeMargin={safeMargin}
             selectedLayerId={selected}
             onSelect={setSelected}
             onMove={(layerId, dx, dy) => setDesign((d) => applyOperation(d, { kind: "move", placement, layerId, dx, dy }))}
@@ -297,36 +490,78 @@ export function CreationStation({
             </p>
           ) : null}
 
-          {/* The controls that act on the selected artwork. Disabled rather
-              than hidden, so the toolbar does not move under the pointer. */}
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            {([
-              ["Centre", () => run({ kind: "centre", placement, layerId: selected!, axis: "both" })],
-              ["Bigger", () => run({ kind: "scale", placement, layerId: selected!, factor: 1.1 })],
-              ["Smaller", () => run({ kind: "scale", placement, layerId: selected!, factor: 0.9 })],
-              ["Flip", () => run({ kind: "flip", placement, layerId: selected!, axis: "x" })],
-              ["Rotate", () => run({ kind: "rotate", placement, layerId: selected!, degrees: 90 })],
-              ["Remove", () => { run({ kind: "remove", placement, layerId: selected! }); setSelected(null); }],
-            ] as const).map(([label, action]) => (
-              <button
-                key={label}
-                type="button"
-                disabled={!selected}
-                onClick={action}
-                className="rounded-full border border-black/[.12] px-3.5 py-1.5 text-[13px] transition hover:bg-black/[.04] disabled:opacity-35 dark:border-white/[.16] dark:hover:bg-white/[.06]"
-              >
-                {label}
-              </button>
-            ))}
-            <button
-              type="button"
-              disabled={history.length === 0}
-              onClick={undo}
-              className="rounded-full border border-black/[.12] px-3.5 py-1.5 text-[13px] transition hover:bg-black/[.04] disabled:opacity-35 dark:border-white/[.16] dark:hover:bg-white/[.06]"
-            >
-              Undo
-            </button>
-          </div>
+          {/* ============ SEVEN NAMED TOOLS ============================
+              Every one of these is a door onto behaviour that already worked;
+              what changed is that it has a name and a place. See
+              DesignToolbar for why Paint is shown rather than hidden. */}
+          <DesignToolbar
+            tools={[
+              {
+                id: "color",
+                label: "Color",
+                icon: ToolIcons.color,
+                ready: true,
+                // ONLY WHAT THE MANUFACTURER MAKES. These are the supplier's
+                // own colours with the supplier's own hex — there is no
+                // free-colour picker here, because a colour Printful does not
+                // stock is a product nobody can order.
+                panel: colorPanel,
+              },
+              {
+                id: "add",
+                label: "Add",
+                icon: ToolIcons.add,
+                ready: true,
+                panel: addPanel,
+              },
+              {
+                id: "pad",
+                label: "Pad",
+                icon: ToolIcons.pad,
+                ready: true,
+                panel: padPanel,
+              },
+              {
+                id: "edit",
+                label: "Edit",
+                icon: ToolIcons.edit,
+                ready: true,
+                disabled: !selected,
+                disabledReason: "Tap a design on the garment first",
+                panel: editPanel,
+              },
+              {
+                id: "flip",
+                label: "Flip",
+                icon: ToolIcons.flip,
+                ready: true,
+                disabled: !selected,
+                disabledReason: "Tap a design on the garment first",
+                panel: flipPanel,
+              },
+              {
+                id: "paint",
+                label: "Paint",
+                icon: ToolIcons.paint,
+                ready: false,
+                soon:
+                  "Not built yet. This is where drawing, erasing and touching up artwork " +
+                  "will live — on the artwork itself, not on the garment.",
+              },
+              {
+                id: "spin",
+                label: "Spin",
+                icon: ToolIcons.spin,
+                ready: true,
+                onAct: spin,
+                disabled: views.length < 2,
+                disabledReason:
+                  views.length < 2
+                    ? "Your supplier published one view of this blank"
+                    : undefined,
+              },
+            ]}
+          />
 
           {!selected && !isEmpty(design) && (
             <p className="mt-3 text-center text-[12px] text-zinc-500">Tap a design to move or resize it.</p>
@@ -334,80 +569,11 @@ export function CreationStation({
         </div>
 
         <aside className="flex flex-col gap-6">
-          {/* THE GARMENT'S OWN COLOURS, with the supplier's own hex. */}
-          <section>
-            <h2 className="text-[13px] font-medium text-zinc-500">Colour</h2>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {colors.map((c) => (
-                <button
-                  key={c.color}
-                  type="button"
-                  title={c.color}
-                  aria-label={c.color}
-                  aria-pressed={c.color === color}
-                  onClick={() => {
-                    setColor(c.color);
-                    const next = sizesFor(garment, c.color);
-                    // A COLOUR SOLD OUT IN THIS SIZE IS A REAL STATE. Keeping
-                    // an unavailable size selected would submit a variant that
-                    // does not exist.
-                    if (!next.includes(size)) setSize(next[0] ?? "");
-                  }}
-                  style={{ background: c.colorHex ?? "#d4d4d8" }}
-                  className={[
-                    "h-8 w-8 rounded-full border transition",
-                    c.color === color
-                      ? "border-[var(--brand-accent,#6366f1)] ring-2 ring-[var(--brand-accent,#6366f1)]/40"
-                      : "border-black/15 dark:border-white/20",
-                  ].join(" ")}
-                />
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <h2 className="text-[13px] font-medium text-zinc-500">Size</h2>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {sizes.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  aria-pressed={s === size}
-                  onClick={() => setSize(s)}
-                  className={[
-                    "rounded-lg px-3 py-1.5 text-[13px] transition",
-                    s === size ? "bg-zinc-900 text-white dark:bg-white dark:text-black" : "bg-black/[.06] dark:bg-white/[.08]",
-                  ].join(" ")}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <h2 className="text-[13px] font-medium text-zinc-500">Your artwork</h2>
-            {assets.length === 0 ? (
-              <p className="mt-2 text-[13px] text-zinc-500">
-                Nothing uploaded yet. Add a logo or a graphic in your business assets and it will appear here.
-              </p>
-            ) : (
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {assets.map((asset) => (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={() => addArtwork(asset)}
-                    title={`Add ${asset.name} to the ${placement}`}
-                    className="aspect-square overflow-hidden rounded-lg border border-black/[.10] bg-white p-1 transition hover:border-black/30 dark:border-white/[.14] dark:bg-zinc-900"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element -- Blob-hosted */}
-                    <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
+          {/* COLOUR, SIZE AND ARTWORK NOW LIVE IN THE TOOLBAR (2026-08-27).
+              They were here AND there for a moment, which is two places to
+              change a colour and two places for them to disagree. The toolbar
+              is where Sean asked for them; this column keeps what is not a
+              tool — asking J4 for a change, and finishing. */}
 
           {/* J4, ALONGSIDE RATHER THAN IN CHARGE. Direct instructions are
               answered here and instantly; judgement is a conversation. */}

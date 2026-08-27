@@ -35,6 +35,8 @@ export function CreationCanvas({
   blankUrl,
   colorHex,
   creatableId,
+  turning,
+  safeMargin,
   selectedLayerId,
   onSelect,
   onMove,
@@ -50,6 +52,10 @@ export function CreationCanvas({
   colorHex: string | null;
   /** Only used when the supplier has no blank — see BlankOnColor. */
   creatableId: string;
+  /** True for the moment the garment is being turned to another view. */
+  turning: boolean;
+  /** Fraction of the print area kept clear at its edges. See padPanel. */
+  safeMargin: number;
   selectedLayerId: string | null;
   onSelect: (layerId: string | null) => void;
   /** Deltas as fractions of the print area — the model's own units. */
@@ -130,7 +136,16 @@ export function CreationCanvas({
         // NO CARD BEHIND THE PRODUCT. The blank is transparent, so the
         // Creation Station's own background belongs behind it — a filled
         // rounded rectangle here is the white square by another name.
-        className="relative aspect-[3/4] overflow-hidden rounded-2xl"
+        //
+        // THE TURN. Spin swaps to the next view the supplier photographed, and
+        // this is the half-second that makes it read as the garment turning
+        // rather than the picture being replaced. Presentation only: the view
+        // has already changed underneath.
+        className="relative aspect-[3/4] overflow-hidden rounded-2xl transition-transform duration-300"
+        style={{
+          transformStyle: "preserve-3d",
+          transform: turning ? "rotateY(28deg) scale(0.96)" : "rotateY(0deg) scale(1)",
+        }}
         onPointerDown={() => onSelect(null)}
       >
         {/* ============ THE BLANK, IN THE COLOUR THEY MAKE IT ===========
@@ -159,6 +174,23 @@ export function CreationCanvas({
             // and the one number here that is presentation rather than data.
             className="absolute left-1/2 top-[26%] h-[46%] w-[42%] -translate-x-1/2 border border-dashed border-black/25 dark:border-white/30"
           >
+            {/* THE SAFE MARGIN, WHERE THERE IS ONE. A second, tighter guide
+                inside the supplier's printable rectangle: printers cut and
+                press with tolerance, and artwork flush to the edge is the
+                artwork that comes back trimmed. Drawn rather than enforced —
+                a guide the owner can cross deliberately is more useful than a
+                wall they cannot, and the print area itself is still the hard
+                limit the design model checks against. */}
+            {safeMargin > 0 && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute border border-dashed border-black/15 dark:border-white/20"
+                style={{
+                  inset: `${safeMargin * 100}%`,
+                }}
+              />
+            )}
+
             {layers.map((layer) => (
               <LayerBox
                 key={layer.id}

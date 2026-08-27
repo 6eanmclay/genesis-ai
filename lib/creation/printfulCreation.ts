@@ -1,7 +1,11 @@
 import type { Garment, GarmentVariant, CreationProvider, BlankImage } from "./garment";
 import { brandFromTitle } from "./garment";
 import type { PrintArea } from "./design";
-import { withSellingRegion, PRINTFUL_MAX_LIMIT } from "./printfulRequest";
+import {
+  withSellingRegion,
+  PRINTFUL_MAX_LIMIT,
+  PRINTFUL_MAX_IMAGE_LIMIT,
+} from "./printfulRequest";
 
 // PRINTFUL, AS A PLACE TO DESIGN ON.
 //
@@ -288,7 +292,11 @@ export function printfulCreationProvider(
       const body = await fetchJson(
         storeId,
         "creation.blanks",
-        withSellingRegion(`/catalog-products/${externalProductId}/images?limit=${PRINTFUL_MAX_LIMIT}`),
+        // TWENTY, not a hundred — this endpoint's own ceiling. See
+        // PRINTFUL_MAX_IMAGE_LIMIT for the 400 that established it.
+        withSellingRegion(
+          `/catalog-products/${externalProductId}/images?limit=${PRINTFUL_MAX_IMAGE_LIMIT}`,
+        ),
       );
 
       const found: BlankImage[] = [];

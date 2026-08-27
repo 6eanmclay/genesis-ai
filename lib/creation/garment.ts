@@ -128,6 +128,41 @@ export function designableViews(garment: Garment): { placement: string; label: s
   }));
 }
 
+/**
+ * The views a garment can actually be turned to, in the order it turns.
+ *
+ * ============ SPIN IS LIMITED BY WHAT THE SUPPLIER PHOTOGRAPHED ========
+ *
+ * Sean wants the product itself rotatable — "Front → 3/4 → Back → 3/4 →
+ * Front", becoming a 360 viewer "if the available supplier imagery supports
+ * it". That last clause is the whole constraint, and it is worth being precise
+ * about rather than discovering later.
+ *
+ * A blank has as many views as Printful publishes pictures for. Today that is
+ * front and back for a hoodie. There is no three-quarter image, so there is no
+ * three-quarter view — inventing one would mean rendering a garment from an
+ * angle the manufacturer never photographed, which is the same rule that says
+ * we do not draw their product for them.
+ *
+ * So this returns the REAL views, and the number of them is what the interface
+ * should say. Two today; more the moment a supplier publishes more, with no
+ * change here.
+ */
+export function spinViews(garment: Garment, blankImages: BlankImage[]): string[] {
+  // A view needs a picture. Placements with a print area but no blank image
+  // are printable, not viewable, and Spin is about looking at the product.
+  const withImages = new Set(blankImages.map((b) => b.placement));
+  const ordered = designableViews(garment)
+    .map((v) => v.placement)
+    .filter((p) => withImages.has(p));
+
+  // Any other angle the supplier published, after the two named ones — a
+  // "left" or "lifestyle" placement is a real view even though it is not a
+  // design surface, and Spin is the one control that wants it.
+  const extras = [...withImages].filter((p) => !ordered.includes(p)).sort();
+  return [...ordered, ...extras];
+}
+
 /** The distinct colours of a garment, each with one representative variant. */
 export function colorsOf(garment: Garment): { color: string; colorHex: string | null; imageUrl: string | null }[] {
   const seen = new Map<string, { color: string; colorHex: string | null; imageUrl: string | null }>();
