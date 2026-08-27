@@ -611,14 +611,30 @@ export function DashboardShell({
   // A link, not a menu: switching business changes every number on the page, and
   // BUSINESS_CONTEXT.md's rule is that it stays a deliberate act. A dropdown
   // that swapped context in place would make it a glance.
-  const switchBusinessLink = hasOtherBusinesses ? (
+  // ============ THE PREMISE ABOVE CHANGED (2026-08-27) ==================
+  //
+  // "Only when there is genuinely somewhere else to go" was right, and it
+  // silently assumed that an account with ONE business had nowhere. That was
+  // true only because creating a second one was unreachable: /dashboard offered
+  // creation behind `if (!store)`, so having a business was what removed the
+  // way to make another. /create-business is that door, so there is now
+  // somewhere to go in both cases — and the link says which.
+  //
+  // Still a link and still one destination, per BUSINESS_CONTEXT.md's rule that
+  // switching stays a deliberate act. A dropdown that swapped context in place
+  // would make it a glance.
+  //
+  // Not gated on role: creating a business is not a permission over THIS
+  // business. A member invited to somebody else's shop can still have their
+  // own, and /create-business requires nothing but a session.
+  const switchBusinessLink = (
     <Link
-      href="/choose-business"
+      href={hasOtherBusinesses ? "/choose-business" : "/create-business"}
       className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-zinc-500 transition hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 dark:text-zinc-400 dark:hover:text-zinc-50"
     >
-      Switch
+      {hasOtherBusinesses ? "Switch" : "Add business"}
     </Link>
-  ) : null;
+  );
 
   const primaryNavRow = (
     <>

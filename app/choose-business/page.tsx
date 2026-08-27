@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { accessibleBusinesses } from "@/lib/businessContext";
@@ -73,6 +74,16 @@ export default async function ChooseBusinessPage() {
           </li>
         ))}
       </ul>
+
+      {/* Quiet, and below the list on purpose. Somebody who came here to
+          switch is choosing between businesses they already have; creating a
+          fourth is a different intention and should not compete with that. */}
+      <Link
+        href="/create-business"
+        className="mt-6 inline-block text-sm text-neutral-600 underline-offset-4 hover:underline dark:text-neutral-400"
+      >
+        Add another business
+      </Link>
     </main>
   );
 }

@@ -3,6 +3,18 @@
 *One Genesis account, several businesses. The architecture, and the exact plan
 for finishing it.*
 
+**Status (2026-08-27). Phase E is complete; the suite is finished.**
+scripts/verify-multi-business-suite.ts runs three deliberately different
+businesses on one account -- Cubit & Coil, Genesis, Creator Presence -- through
+isolation, differentiation, switching, the two-tab test and a real browser: 51
+assertions. Phase B item 5 (an entry that creates another business when you
+already have one) shipped as app/create-business. The tenant guard gained the
+eight store-scoped models that had drifted out of it, and now reads the schema
+so it cannot drift again.
+
+Still deliberately excepted: onboarding and the legacy /dashboard composer.
+Still outstanding: the legacy actionHref data migration.
+
 **Status (2026-08-21).** Phases 0, A, B, C and D are complete. Phase B was
 answered by testing — it turned out not to be needed. Phase C is done, including
 the five route handlers and `/j4/room`, and it surfaced five real defects rather
