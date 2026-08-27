@@ -239,6 +239,22 @@ async function main() {
     "a scrubber with timestamps is not what a two-sentence reply needs");
   assert("the five-bar glyph is what shows speech instead",
     /J4VoiceGlyph speaking=\{speaking\}/.test(speak));
+  // ============ GREEN IS THE SIGNAL, NOT THE PAINT (2026-08-27) =========
+  //
+  // Sean wants a restrained dark green to mean "J4 is speaking right now", and
+  // explicitly does not want the whole control green. So the assertion is not
+  // that green exists -- it is that green is CONDITIONAL on speaking, which is
+  // the difference between a signal and a colour scheme.
+  const voiceGlyph = read("app", "j4", "J4VoiceGlyph.tsx");
+  assert("the speaking colour is a real hex, not a name",
+    /#[0-9A-Fa-f]{6}/.test(voiceGlyph));
+  assert("and it only applies while speaking",
+    /speaking \? SPEAKING_GREEN : "currentColor"/.test(voiceGlyph),
+    "a permanently green control says nothing, because it always says it");
+  assert("the silent state still inherits the surrounding colour",
+    /currentColor/.test(voiceGlyph),
+    "the resting control must look exactly as it did");
+
   assert("and tapping it pauses and resumes",
     /togglePlayback/.test(speak) && /el\.pause\(\)/.test(speak),
     "pause and resume were the reason the player was there; they are kept");
@@ -254,8 +270,19 @@ async function main() {
     "a waveform moving when nothing plays is decoration pretending to be state");
   assert("and stops for anyone who asked for less motion",
     /prefers-reduced-motion/.test(glyph));
-  assert("it takes the surrounding colour rather than introducing its own",
-    /fill="currentColor"/.test(glyph),
+  // ============ REFINED, NOT ABANDONED (2026-08-27) ====================
+  //
+  // This asserted `fill="currentColor"` unconditionally: the glyph takes the
+  // surrounding colour and belongs to whatever surface it sits on. That rule
+  // is still right for the RESTING control, and Sean's green brief does not
+  // contradict it — it adds a second state.
+  //
+  // So the requirement narrows rather than disappearing: silent still inherits,
+  // and green is the exception that means "speaking right now". Written this
+  // way round because the failure worth catching is a glyph that introduces
+  // its own colour when nothing is happening.
+  assert("silent, it takes the surrounding colour rather than introducing its own",
+    /: "currentColor"/.test(glyph),
     "so it belongs to whatever surface it sits on");
 
   console.log("\n=== 9. A turn with no words says so ===\n");

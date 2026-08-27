@@ -49,6 +49,23 @@ import { uploadBusinessAssetFromChat } from "../ai-actions";
 export async function StudioScreen({ slug, basePath }: { slug?: string; basePath: string }) {
   const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
 
+  // ============ THE CREATION STATION IS BUSINESS-SCOPED (2026-08-27) =====
+  //
+  // A 404, found by Sean the moment he tapped either entry point.
+  //
+  // These links were `${basePath}/studio/create`, and basePath is "/dashboard"
+  // on the legacy route -- which is where an account with one business
+  // actually lands. There is no /dashboard/studio/create and there should not
+  // be: the workspace resolves ONE business from the URL, which is the whole
+  // reason /b/[slug] exists. /dashboard resolves the account's active business
+  // instead, a per-account fact shared by every tab.
+  //
+  // So the href is built from the store this screen already resolved, and it
+  // points into the business tree from both routes. That is the migration
+  // direction rather than a workaround -- BUSINESS_CONTEXT.md has /dashboard
+  // as legacy, and a new surface should not be added to it.
+  const creationHref = `/b/${store.slug}/studio/create`;
+
   const [assetsByRole, designRows, assetRows] = await Promise.all([
     declaredRead("presentation", "the studio lists assets by role; it does not reason", () =>
       currentAssetsByRole(store.id)
@@ -200,7 +217,7 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
           </p>
 
           <Link
-            href={`${basePath}/studio/create`}
+            href={creationHref}
             className="mt-5 inline-flex items-center gap-2 rounded-full bg-zinc-900 px-5 py-2.5 text-[15px] font-medium text-white transition hover:opacity-90 dark:bg-white dark:text-black"
           >
             Create something
@@ -221,7 +238,7 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
                in. What it opens is the workspace, where this can be taken
                apart and rebuilt rather than only asked about. */
             <Link
-              href={`${basePath}/studio/create`}
+              href={creationHref}
               className="group block overflow-hidden rounded-2xl border border-black/[.07] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_12px_32px_-12px_rgba(0,0,0,.18)] transition hover:border-black/20 dark:border-white/[.09] dark:bg-[#222226] dark:hover:border-white/30">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -256,7 +273,7 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
                 so it can start from what you sell and how you present it.
               </p>
               <Link
-                href={`${basePath}/studio/create`}
+                href={creationHref}
                 className="mt-5 inline-block rounded-full bg-zinc-900 px-5 py-2.5 text-[15px] font-medium text-white dark:bg-white dark:text-black"
               >
                 Create something

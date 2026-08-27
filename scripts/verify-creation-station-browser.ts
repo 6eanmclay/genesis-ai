@@ -210,25 +210,60 @@ async function main() {
     // Asserted because an entry point is exactly what gets lost in a later
     // layout change -- and a Creation Station nobody can reach is a Creation
     // Station nobody has.
-    await page.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
-    const studio = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    // ============ BOTH ROUTES, BECAUSE ONE OF THEM WAS A 404 ==========
+    //
+    // Studio renders from two places: /b/[slug]/studio and the legacy
+    // /dashboard/studio, which is where an account with one business actually
+    // lands. The entry points were built with `${basePath}/studio/create`, and
+    // on the legacy route basePath is "/dashboard" -- so every one of them
+    // pointed at /dashboard/studio/create, which does not exist.
+    //
+    // The first suite only ever visited /b/[slug], so it passed while the
+    // route a real person used was broken. Testing one of two paths is how a
+    // 404 ships with a green suite behind it.
+    for (const [label, studioPath] of [
+      ["business route", `/b/${store.slug}/studio`],
+      ["legacy route", "/dashboard/studio"],
+    ] as const) {
+      await page.goto(`${server.baseUrl}${studioPath}`, { waitUntil: "domcontentloaded" });
+      const studio = (await page.locator("body").innerText()).replace(/\s+/g, " ");
 
-    const intoStation = page.locator(`a[href="/b/${store.slug}/studio/create"]`);
-    assert("Studio offers a way into the Creation Station", await intoStation.count() > 0,
-      studio.slice(0, 300));
-    assert("and says so in words somebody would look for",
-      /create something/i.test(studio), studio.slice(0, 300));
+      // THE HREF IS THE BUSINESS-SCOPED ONE FROM BOTH. The Creation Station
+      // resolves one business from the URL; /dashboard resolves the account's
+      // active business, which is a different thing and shared across tabs.
+      const intoStation = page.locator(`a[href="/b/${store.slug}/studio/create"]`);
+      assert(`${label}: Studio offers a way into the Creation Station`,
+        await intoStation.count() > 0, studio.slice(0, 300));
+      assert(`${label}: and says so in words somebody would look for`,
+        /create something/i.test(studio), studio.slice(0, 300));
+      assert(`${label}: no link points at a route that does not exist`,
+        await page.locator('a[href="/dashboard/studio/create"]').count() === 0,
+        "that path has no page and 404s");
 
-    // IT LEADS WITH CREATING rather than describing what J4 can make. The old
-    // copy made asking the whole product.
-    assert("the page no longer says J4 does the work for you",
-      !/tell j4 what you want and it does the work/i.test(studio), studio.slice(0, 400));
+      // IT LEADS WITH CREATING rather than describing what J4 can make.
+      assert(`${label}: the page no longer says J4 does the work for you`,
+        !/tell j4 what you want and it does the work/i.test(studio), studio.slice(0, 400));
 
-    // And the link genuinely arrives.
-    await intoStation.first().click();
-    await page.waitForURL(`**/studio/create`, { timeout: 30_000 });
-    check("and it arrives at the Creation Station",
-      new URL(page.url()).pathname, `/b/${store.slug}/studio/create`);
+      // AND THE LINK GENUINELY ARRIVES AT A PAGE THAT RENDERS. A 200 is not
+      // enough on its own -- Next serves its own 404 page with a 200 in some
+      // configurations -- so the workspace's own words are what is checked.
+      await intoStation.first().click();
+      await page.waitForURL("**/studio/create", { timeout: 30_000 });
+      check(`${label}: it arrives at the Creation Station`,
+        new URL(page.url()).pathname, `/b/${store.slug}/studio/create`);
+
+      const landed = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+      assert(`${label}: and the workspace actually rendered`,
+        /connect a print supplier|what do you want to make/i.test(landed), landed.slice(0, 300));
+      assert(`${label}: rather than a not-found page`,
+        !/404|this page could not be found/i.test(landed), landed.slice(0, 300));
+    }
+
+    // The library Sean asked to keep is still on Studio, from both routes.
+    await page.goto(`${server.baseUrl}/dashboard/studio`, { waitUntil: "domcontentloaded" });
+    const withLibrary = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("the materials section is still there",
+      /what j4 can use/i.test(withLibrary), withLibrary.slice(0, 400));
 
     await context.close();
   } finally {

@@ -15,6 +15,28 @@
 // It animates only while actually speaking. A waveform that moves when nothing
 // is playing is decoration pretending to be state, and `prefers-reduced-motion`
 // stops it entirely for anyone who has asked for that.
+//
+// ============ GREEN MEANS ALIVE, AND ONLY THAT (2026-08-27) =============
+//
+// Sean's brief: a restrained dark green, somewhere between original Xbox and
+// the illumination in Alien. Dark, technological, slightly organic. Not light,
+// not neon, not so dark it disappears.
+//
+// #1F7A46 sits there. Deep enough to read as illumination rather than paint,
+// saturated enough to look lit rather than grey, and it holds on both a dark
+// and a light ground — this control appears on both.
+//
+// THE GREEN IS ONLY EVER THE SPEAKING STATE. The bars inherit currentColor
+// when silent, so the control looks exactly as it did; the colour arrives with
+// the sound and leaves with it. That is the whole point of the signal — a
+// permanently green control would say nothing, because it would always be
+// saying it.
+//
+// Deliberately NOT applied to the label, the button, or anything around it.
+// Sean's own line: don't make the entire Listen control green. If this becomes
+// Genesis's language for things that are alive or happening, it earns that by
+// being used sparingly first.
+const SPEAKING_GREEN = "#1F7A46";
 
 export function J4VoiceGlyph({
   speaking = false,
@@ -53,7 +75,8 @@ export function J4VoiceGlyph({
             width="2.4"
             height={bar.h}
             rx="1.2"
-            fill="currentColor"
+            // currentColor when silent, so the resting control is unchanged.
+            fill={speaking ? SPEAKING_GREEN : "currentColor"}
             style={{
               transformOrigin: "center",
               // Staggered from the centre out, which is what makes it read as
@@ -66,6 +89,12 @@ export function J4VoiceGlyph({
       <style>{`
         .j4voice-on rect {
           animation: j4voice 900ms ease-in-out infinite;
+        }
+        /* A breath of the same green behind the bars, so speech reads as
+           illuminated rather than merely recoloured. Small enough that it is
+           felt more than seen. */
+        .j4voice-on {
+          filter: drop-shadow(0 0 3px rgba(31, 122, 70, 0.55));
         }
         @keyframes j4voice {
           0%, 100% { transform: scaleY(0.55); opacity: 0.75; }
