@@ -83,7 +83,12 @@ export default async function CreationStationPage({
   // none, and the supplier check happens at the step that actually needs one.
   if (!garmentId && !kind) {
     return (
-      <CreationPortal items={portalItems(garments)} basePath={basePath} hasSupplier={provider !== null} />
+      <CreationPortal
+        items={portalItems(garments)}
+        basePath={basePath}
+        hasSupplier={provider !== null}
+        catalogueUnreadable={catalogError !== null}
+      />
     );
   }
 

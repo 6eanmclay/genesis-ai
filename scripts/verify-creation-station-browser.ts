@@ -282,7 +282,35 @@ async function main() {
     check("without a detour to the connections directory",
       await page.locator(`a[href*="/connections"]`).count(), 0);
 
+    // ============ AND THE PORTAL MUST NOT LIE ABOUT IT ================
+    //
+    // Sean, on a portal where every object claimed the supplier didn't make it:
+    // "even when you are picking between tshirt hoodie hat it's already saying
+    // your supplier doesn't make this one."
+    //
+    // The catalogue call had thrown, so the garment list was empty — and empty
+    // was rendered as "the supplier stocks none of these". Printful makes all
+    // five. This is the same connected-but-unreachable state as above, viewed
+    // from the portal instead of the chosen product.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/create`, { waitUntil: "domcontentloaded" });
+    const portalWhileBroken = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("an unreadable catalogue is never reported as a supplier that doesn't stock it",
+      !/doesn't make this one/i.test(portalWhileBroken), portalWhileBroken.slice(0, 400));
+    assert("it says the catalogue could not be read",
+      /couldn't read your supplier's catalogue/i.test(portalWhileBroken),
+      portalWhileBroken.slice(0, 400));
+
     await prisma.storeIntegration.deleteMany({ where: { storeId: store.id, provider: "PRINTFUL" } });
+
+    // AND THE SENTENCE IS STILL AVAILABLE WHEN IT IS TRUE. With no supplier at
+    // all the portal offers the intention and says nothing about stock — an
+    // assertion that only ever proved the string absent would pass just as well
+    // against a portal that had lost the ability to say it.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/create`, { waitUntil: "domcontentloaded" });
+    const portalNoSupplier = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("with no supplier it claims nothing about what is stocked",
+      !/doesn't make this one|couldn't read your supplier/i.test(portalNoSupplier),
+      portalNoSupplier.slice(0, 400));
 
     // ------------------------------------------------------------------
     console.log("\n1e. The Printful connection, in all three of its states");

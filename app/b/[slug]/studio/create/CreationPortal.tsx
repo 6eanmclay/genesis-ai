@@ -42,11 +42,19 @@ export function CreationPortal({
   items,
   basePath,
   hasSupplier,
+  catalogueUnreadable,
 }: {
   items: PortalItem[];
   basePath: string;
   /** False when no print supplier is connected — see the note below. */
   hasSupplier: boolean;
+  /**
+   * True when a supplier IS connected but its catalogue could not be read.
+   *
+   * Without this the portal cannot tell "they don't make hats" from "we never
+   * found out", and an empty list reads as the first — see the note below.
+   */
+  catalogueUnreadable: boolean;
 }) {
   const router = useRouter();
   const [index, setIndex] = useState(0);
@@ -221,11 +229,26 @@ export function CreationPortal({
         <div className="relative z-10 mt-6 text-center sm:mt-8">
           <p className="text-[22px] font-medium">{focused?.creatable.label}</p>
           <p className="mx-auto mt-1.5 max-w-xs text-[13px] text-zinc-400">
+            {/* ============ EMPTY IS NOT THE SAME AS ABSENT =============
+                Sean, looking at a portal where every single object claimed the
+                supplier didn't make it: "even when you are picking between
+                tshirt hoodie hat it's already saying your supplier doesn't
+                make this one."
+
+                He was right, and it was a lie. The catalogue call had thrown,
+                so the garment list was empty — and empty was being read as
+                "the supplier stocks none of these". Printful makes all five.
+
+                "Your supplier doesn't make this one" is only TRUE when the
+                catalogue was read successfully and had nothing matching. That
+                is now the only case it is said in. */}
             {focused?.available
               ? `${focused.blankCount} to choose from · ${focused.creatable.hint}`
-              : hasSupplier
-                ? "Your supplier doesn't make this one"
-                : focused?.creatable.hint}
+              : catalogueUnreadable
+                ? "We couldn't read your supplier's catalogue just now"
+                : hasSupplier
+                  ? "Your supplier doesn't make this one"
+                  : focused?.creatable.hint}
           </p>
 
           <button
