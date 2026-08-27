@@ -7,6 +7,8 @@ import { facebookConnector } from "./facebook";
 import { instagramConnector } from "./instagram";
 import { tiktokConnector } from "./tiktok";
 import { twilioConnector } from "./twilio";
+import { squareConnector } from "./square";
+import { xeroConnector } from "./xero";
 
 // Phase 3 Milestone 2 — the categorized registry driving /dashboard/
 // connections. Covers all 7 of Sean's categories immediately, even though
@@ -201,14 +203,15 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   },
   {
     id: "square-pos",
-    provider: null,
+    provider: "SQUARE",
     name: "Square POS",
     category: "business_systems",
-    description: "Point-of-sale and in-person payments for retail and services.",
+    description:
+      "Bring your in-person sales, customers and product catalog into Genesis so J4 can explain what's actually selling.",
     authMethod: "oauth",
     sensitivity: "sensitive",
     recommendedFor: ["general_retail", "boutique_apparel", "salon_spa", "barbershop"],
-    connector: null,
+    connector: squareConnector,
   },
   {
     id: "calendly",
@@ -223,14 +226,15 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
   },
   {
     id: "xero",
-    provider: null,
+    provider: "XERO",
     name: "Xero",
     category: "finance_accounting",
-    description: "Accounting and bookkeeping, as an alternative to QuickBooks.",
+    description:
+      "Bring your invoices and contacts into Genesis so it can explain your numbers in plain English — the alternative to QuickBooks.",
     authMethod: "oauth",
     sensitivity: "sensitive",
     recommendedFor: ["accounting_bookkeeping", "consulting", "real_estate"],
-    connector: null,
+    connector: xeroConnector,
   },
   {
     id: "hubspot",

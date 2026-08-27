@@ -209,11 +209,11 @@ async function main() {
   // catalog keeps its unbuildable entries and marks them honestly, and a count
   // that stopped being exact would stop noticing an entry quietly disappearing.
   // Building one is the only legitimate way this moves, and it moves DOWN.
-  eq("including the five with no implementation", unbuilt.length, 5);
+  eq("including the three with no implementation", unbuilt.length, 3);
   // The one that left is named, so this cannot be edited past without saying
   // what changed.
-  eq("Twilio is no longer among them",
-    unbuilt.some((e) => e.id === "twilio"), false);
+  eq("Twilio, Square and Xero are no longer among them",
+    unbuilt.filter((e) => ["twilio", "square-pos", "xero"].includes(e.id)).length, 0);
   for (const e of unbuilt) {
     eq(`${e.id} reports itself unavailable rather than connectable`,
       connectionHealthOf({ available: false, row: null, recordsProduced: 0 }).state, "unavailable");
@@ -224,8 +224,15 @@ async function main() {
     .filter((e) => e.connector?.configured !== undefined)
     .map((e) => e.id)
     .sort();
+  // GREW BY TWO ON 2026-08-27, correctly. Square and Xero are OAuth connectors
+  // whose client id and secret live in the environment, so they genuinely do
+  // have something to check and genuinely do belong here. Twilio, added the
+  // same day, does NOT -- its credentials are the merchant's own, so it omits
+  // configured() entirely, which is how a connector says "nothing to
+  // configure". An earlier version of the Twilio connector answered
+  // `configured() { return true }` and this assertion caught it.
   eq("the OAuth connectors that need platform credentials declare it",
-    declaring, ["facebook", "google-calendar", "instagram", "quickbooks", "tiktok"]);
+    declaring, ["facebook", "google-calendar", "instagram", "quickbooks", "square-pos", "tiktok", "xero"]);
 
   // ========================================================================
   console.log("\n=== 7. BusinessContext reports staleness that can be true ===\n");

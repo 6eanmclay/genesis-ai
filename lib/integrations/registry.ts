@@ -12,6 +12,8 @@ import { tiktokConnector } from "./tiktok";
 import { easypostConnector } from "./easypost";
 import { twilioConnector } from "./twilio";
 import { aliexpressConnector } from "./aliexpress";
+import { squareConnector } from "./square";
+import { xeroConnector } from "./xero";
 
 // Adding a new integration means writing a connector module and adding one
 // line here — nothing else in the framework needs to know it exists. The 3
@@ -45,6 +47,12 @@ const CONNECTORS: Partial<Record<IntegrationProvider, IntegrationConnector>> = {
   // "Unknown integration provider" for the very URL the Open Platform
   // application has to declare.
   ALIEXPRESS: aliexpressConnector,
+  // Two of the five remaining catalog entries, built 2026-08-27. Both are
+  // read-only, both revoke at the provider on disconnect, and their token
+  // behaviour is deliberately opposite: Square's refresh tokens neither expire
+  // nor rotate, Xero's rotate on every use.
+  SQUARE: squareConnector,
+  XERO: xeroConnector,
 };
 
 export function getConnector(provider: IntegrationProvider): IntegrationConnector {

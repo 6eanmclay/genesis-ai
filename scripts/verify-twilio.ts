@@ -336,7 +336,13 @@ async function main() {
     const comingSoon = CONNECTOR_CATALOG.filter((e) => e.connector === null);
     assert("the other unbuilt entries still declare no provider",
       comingSoon.every((e) => e.provider === null), comingSoon.map((e) => e.id).join(", "));
-    check("and there are five of them left", comingSoon.length, 5);
+    // WAS FIVE UNTIL SQUARE AND XERO WERE BUILT (2026-08-27). Kept as an
+    // exact number: the point of this assertion is that the catalog keeps its
+    // unbuildable entries and marks them honestly, and a count that stopped
+    // being exact would stop noticing one quietly disappearing.
+    check("and there are three of them left", comingSoon.length, 3);
+    check("Toast, Calendly and HubSpot, by name",
+      comingSoon.map((e) => e.id).sort(), ["calendly", "hubspot", "toast-pos"]);
   }
 
   console.log("\n11. No secret reaches a client bundle");

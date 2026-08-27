@@ -552,6 +552,11 @@ enum IntegrationProvider {
   // that merchant's own account -- so their orders are paid from their money,
   // not fronted by Genesis.
   ALIEXPRESS
+  // Point of sale, and the first connector to carry a CATALOG (2026-08-27).
+  SQUARE
+  // Accounting, as the alternative to QuickBooks for the businesses that do
+  // not use it. Its refresh tokens ROTATE -- see capabilities.tokenLifetime.
+  XERO
 }
 
 enum IntegrationStatus {
