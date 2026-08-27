@@ -540,6 +540,11 @@ enum IntegrationProvider {
   FACEBOOK
   INSTAGRAM
   TIKTOK
+  // SMS to customers (2026-08-27). The first connector that produces no
+  // business data at all -- it is a way to say something, not a thing to learn
+  // from -- which the IntegrationConnector contract has always allowed and
+  // nothing had yet exercised.
+  TWILIO
 }
 
 enum IntegrationStatus {

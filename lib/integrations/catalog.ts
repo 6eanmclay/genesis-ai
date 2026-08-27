@@ -6,6 +6,7 @@ import { mailchimpConnector } from "./mailchimp";
 import { facebookConnector } from "./facebook";
 import { instagramConnector } from "./instagram";
 import { tiktokConnector } from "./tiktok";
+import { twilioConnector } from "./twilio";
 
 // Phase 3 Milestone 2 — the categorized registry driving /dashboard/
 // connections. Covers all 7 of Sean's categories immediately, even though
@@ -167,6 +168,22 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     recommendedFor: ["boutique_apparel", "online_dtc_brand", "artist_maker", "marketing_agency"],
     connector: tiktokConnector,
   },
+  {
+    id: "twilio",
+    provider: "TWILIO",
+    name: "Twilio",
+    category: "communication",
+    // WHAT IT DOES, NOT WHAT TWILIO SELLS. Twilio also does voice, video and a
+    // dozen other things; this connector sends SMS, and describing the vendor's
+    // catalogue rather than the capability is how an owner ends up connecting
+    // something expecting a feature that is not there.
+    description:
+      "Text your customers when their order ships. Needs a Twilio account and, for US numbers, Twilio's A2P registration — see TWILIO_REQUIREMENTS_VERIFIED.md.",
+    authMethod: "api_key",
+    sensitivity: "standard",
+    recommendedFor: ["restaurant", "salon_spa", "contractor_construction", "event_venue"],
+    connector: twilioConnector,
+  },
 
   // Coming soon — seeds every category so the page shows the full vision
   // immediately, per Sean's own "don't build dozens immediately... but the
@@ -224,17 +241,6 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     authMethod: "oauth",
     sensitivity: "standard",
     recommendedFor: ["marketing_agency", "consulting", "real_estate", "financial_services"],
-    connector: null,
-  },
-  {
-    id: "twilio",
-    provider: null,
-    name: "Twilio",
-    category: "communication",
-    description: "SMS and voice notifications to customers.",
-    authMethod: "api_key",
-    sensitivity: "standard",
-    recommendedFor: ["restaurant", "salon_spa", "contractor_construction", "event_venue"],
     connector: null,
   },
 ];

@@ -10,6 +10,7 @@ import { facebookConnector } from "./facebook";
 import { instagramConnector } from "./instagram";
 import { tiktokConnector } from "./tiktok";
 import { easypostConnector } from "./easypost";
+import { twilioConnector } from "./twilio";
 
 // Adding a new integration means writing a connector module and adding one
 // line here — nothing else in the framework needs to know it exists. The 3
@@ -33,6 +34,10 @@ const CONNECTORS: Partial<Record<IntegrationProvider, IntegrationConnector>> = {
   // via EasyPost. See lib/integrations/usps.ts's own comment for why the
   // provider is named USPS even though EasyPost is the real mechanism.
   EASYPOST: easypostConnector,
+  // SMS (2026-08-27). The only one of the six unbuilt catalog entries that
+  // needed no third-party app review to reach -- the rest are OAuth, and an
+  // OAuth app is somebody else's queue before a line can be exercised.
+  TWILIO: twilioConnector,
 };
 
 export function getConnector(provider: IntegrationProvider): IntegrationConnector {
