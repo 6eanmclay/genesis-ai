@@ -227,11 +227,19 @@ export function useJ4Talk({
         try {
           const text = (await transcribeRef.current(blob, type)).trim();
           if (!text) {
-            // Transcription succeeded and returned nothing. Said out loud
-            // rather than looped silently: a turn that quietly restarts looks
-            // identical to one that failed, and that ambiguity has already
-            // cost hours of blind debugging.
-            setError("Recorded " + Math.round(blob.size / 1024) + "KB of " + type + ", got no words back.");
+            // WHAT THE OWNER SEES WHEN A TURN PRODUCES NO WORDS.
+            //
+            // This is the Listening -> Thinking -> Listening cycle Sean
+            // reported. It is not a broken state machine: speech was heard,
+            // the recording was sent, and transcription came back empty — a
+            // half-word, a cough, a room that was louder than the speaker. The
+            // machine then correctly starts a new turn.
+            //
+            // What was wrong is that it said so in engineering terms
+            // ("Recorded 37KB of audio/webm, got no words back"), which reads
+            // as a fault rather than as "say that again". The bounce looked
+            // unexplained because the explanation was unreadable.
+            setError("I didn't catch that — try speaking again.");
             if (stateRef.current === "thinking") restartRef.current();
             return;
           }
@@ -242,7 +250,10 @@ export function useJ4Talk({
           // the only thing between a working loop and a broken one, so it
           // goes on screen where it can be read.
           const detail = err instanceof Error ? err.message : String(err);
-          setError("Transcription failed: " + detail.slice(0, 120));
+          // The real reason still reaches the console, where it is useful; what
+          // reaches the owner is something they can act on.
+          console.error("[j4talk] transcription failed:", detail);
+          setError("I couldn't make out that one. Tap J4 and try again.");
           if (stateRef.current === "thinking") restartRef.current();
         }
       })();

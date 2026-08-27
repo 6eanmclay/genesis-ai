@@ -8,11 +8,19 @@
 // permission recovery, stream-reuse fix, Priority 3 responsiveness).
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import type { J4Surface } from "./J4Workspace";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import { callGenesisAction } from "@/lib/dashboard/submitGenesisAction";
 import { ALLOWED_VOICE_MEMO_CONTENT_TYPES, MAX_VOICE_MEMO_BYTES } from "@/lib/voice/voiceMemoFile";
+import {
+  readMicPermission,
+  micGuidanceFor,
+  platformFromUserAgent,
+  canPromptFor,
+  type MicGuidance,
+} from "@/lib/voice/micPermission";
 
 function randomAssetKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -45,19 +53,9 @@ function pickSupportedVoiceMemoMimeType(): string | null {
 // to go fix it, and the "where" differs by platform. A coarse User-Agent
 // check is standard, accepted practice for this kind of messaging-only
 // branch (never used for anything security-relevant).
-function describeMicPermissionFix(): string {
-  if (typeof navigator === "undefined") {
-    return "Check your browser's site settings for this page, allow microphone access, then try again.";
-  }
-  const ua = navigator.userAgent;
-  if (/Android/i.test(ua)) {
-    return "Tap the lock or info icon next to the address bar, then Permissions → Microphone → Allow. If it's still blocked, check your phone's own Settings → Apps → " +
-      "(your browser) → Permissions → Microphone.";
-  }
-  if (/iPhone|iPad|iPod/i.test(ua)) {
-    return "Open the Settings app → Safari → Microphone, and set this website to Allow. Or in Safari, tap \"aA\" in the address bar → Website Settings → Microphone → Allow.";
-  }
-  return "Check your browser's site settings for this page, allow microphone access, then try again.";
+/** This device's platform, for wording only. See micPermission.ts. */
+function currentPlatform() {
+  return platformFromUserAgent(typeof navigator === "undefined" ? "" : navigator.userAgent);
 }
 
 export function VoiceMemoButton({
@@ -107,6 +105,10 @@ export function VoiceMemoButton({
   // conversation turn, no business context) until "Send to J4" is
   // actually tapped — Delete just revokes the local object URL and this
   // state, a purely client-side no-op as far as J4/the server ever knows.
+  const router = useRouter();
+  // Why the last send failed, shown INSIDE the review panel so it sits beside
+  // the recording it is about rather than somewhere else on the page.
+  const [sendError, setSendError] = useState<string | null>(null);
   const [pendingBlob, setPendingBlob] = useState<{
     blob: Blob;
     url: string;
@@ -127,7 +129,11 @@ export function VoiceMemoButton({
   // just another toast — platform-specific instructions plus a real "Try
   // again" that re-attempts getUserMedia() (works for the case permission
   // was just fixed in Settings, harmless no-op otherwise).
-  const [micBlocked, setMicBlocked] = useState(false);
+  // WHAT THE BROWSER ACTUALLY SAID, not just "something went wrong". Null when
+  // there is nothing to explain. Carries whether a retry can possibly work —
+  // see micGuidanceFor.
+  const [micGuidance, setMicGuidance] = useState<MicGuidance | null>(null);
+  const micBlocked = micGuidance !== null;
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -190,7 +196,25 @@ export function VoiceMemoButton({
   }
 
   async function startRecording() {
-    setMicBlocked(false);
+    setMicGuidance(null);
+
+    // ASK THE BROWSER BEFORE ASKING THE OWNER (2026-08-27).
+    //
+    // Sean's requirement, and the actual fix for the Android report: when the
+    // browser has already stopped asking, calling getUserMedia() cannot produce
+    // a prompt. It rejects instantly, and the owner sees a button that does
+    // nothing while being told to allow something they were never asked about.
+    //
+    // Checked here so that case goes straight to the settings instructions and
+    // no pointless request is made. Android Chrome answers this; iOS Safari
+    // returns "unknown", which canPromptFor treats as yes — so iOS keeps
+    // exactly the behaviour that already works there.
+    const permission = await readMicPermission();
+    if (!canPromptFor(permission)) {
+      setMicGuidance(micGuidanceFor(permission, currentPlatform()));
+      return;
+    }
+
     try {
       // Reuse the already-granted stream whenever it's still live —
       // this is the real fix: only ever call getUserMedia() again if
@@ -256,7 +280,14 @@ export function VoiceMemoButton({
       // owner can act on.
       const name = err instanceof DOMException ? err.name : "";
       if (name === "NotAllowedError") {
-        setMicBlocked(true);
+        // ASK THE BROWSER WHICH KIND OF NO THAT WAS (2026-08-27). A refusal in
+        // the moment and a remembered block both arrive here as
+        // NotAllowedError, and they need opposite advice: one should offer to
+        // ask again, the other must send the owner to settings because no
+        // prompt is ever coming. Android Chrome answers this; iOS Safari
+        // returns "unknown" and is treated exactly as before.
+        const permission = await readMicPermission();
+        setMicGuidance(micGuidanceFor(permission, currentPlatform()));
       } else if (name === "NotFoundError") {
         onFailure("No microphone was found on this device.");
       } else if (name === "NotReadableError") {
@@ -272,8 +303,8 @@ export function VoiceMemoButton({
   // conversation, and J4's business context never learn this recording
   // existed.
   function handleDeleteRecording() {
-    if (pendingBlob) URL.revokeObjectURL(pendingBlob.url);
-    setPendingBlob(null);
+    setSendError(null);
+    clearPending();
   }
 
   // The one real boundary where a recording becomes J4 input — same real
@@ -281,9 +312,19 @@ export function VoiceMemoButton({
   // automatically on stop, now gated behind an explicit tap.
   function handleSendToJ4() {
     if (!pendingBlob) return;
-    const { blob, contentType, extension, url } = pendingBlob;
-    URL.revokeObjectURL(url);
-    setPendingBlob(null);
+    const { blob, contentType, extension } = pendingBlob;
+
+    // NOTHING IS THROWN AWAY UNTIL THE SEND HAS ACTUALLY SUCCEEDED.
+    //
+    // This used to revoke the object URL and clear pendingBlob on the FIRST
+    // line, before a single byte had left the browser. The review panel
+    // vanished instantly, the upload happened invisibly, and a failure left
+    // the owner looking at a composer with no recording, no error and no way
+    // back to the audio they had just made. "I pressed Send and nothing
+    // happened" is exactly what that looks like from the outside.
+    //
+    // The recording now stays on screen, disabled, until the server confirms.
+    setSendError(null);
     onStart();
     startTransition(async () => {
       const result = await callGenesisAction(async () => {
@@ -300,11 +341,39 @@ export function VoiceMemoButton({
         formData.set("surface", surface);
         return uploadVoiceMemo(formData);
       });
+
       if (!result.ok) {
+        // KEPT, DELIBERATELY. The recording is still in the panel and can be
+        // sent again — losing somebody's only copy of what they said because a
+        // network call failed is the worst outcome available here.
+        setSendError(result.message);
         onFailure(result.message);
-      } else if (result.value) {
-        onTranscribed(result.value.transcript, result.value.audioUrl);
+        return;
       }
+
+      // SUCCESS WITH NO PAYLOAD IS STILL SUCCESS, and this is the case that
+      // made Send look dead. The server action completes through
+      // redirectKeepingChatOpen, which throws ChatTurnFinished — runChatTurn
+      // turns that into `undefined`. So an ok result with no value means the
+      // turn genuinely finished; it just had nothing to hand back, because the
+      // conversation is refreshed rather than patched from here.
+      //
+      // The old code had `if (!ok) … else if (value) …` with no third branch,
+      // so this path did nothing at all: no message, no error, no recording.
+      clearPending();
+      if (result.value) {
+        onTranscribed(result.value.transcript, result.value.audioUrl);
+      } else {
+        router.refresh();
+      }
+    });
+  }
+
+  /** Let go of the recording and its object URL, once it is safe to. */
+  function clearPending() {
+    setPendingBlob((current) => {
+      if (current) URL.revokeObjectURL(current.url);
+      return null;
     });
   }
 
@@ -358,24 +427,30 @@ export function VoiceMemoButton({
 
       {/* Absolutely positioned so this never affects the composer row's
           own height/layout — the horizontal-scroll fix stays untouched. */}
-      {micBlocked && (
+      {micGuidance && (
         <div
-          className="absolute bottom-full left-0 z-10 mb-2 w-64 rounded-xl border border-amber-500/25 p-3 text-xs shadow-lg"
+          className="absolute bottom-full left-0 z-10 mb-2 w-72 rounded-xl border border-amber-500/25 p-3 text-xs shadow-lg"
           style={{ backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
         >
-          <p className="font-medium text-amber-400">Microphone is blocked for this site</p>
-          <p className="mt-1.5 text-[rgba(244,242,251,0.75)]">{describeMicPermissionFix()}</p>
+          <p className="font-medium text-amber-400">{micGuidance.headline}</p>
+          <p className="mt-1.5 text-[rgba(244,242,251,0.75)]">{micGuidance.detail}</p>
           <div className="mt-2.5 flex gap-2">
+            {/* TRY AGAIN ONLY WHEN A PROMPT CAN ACTUALLY APPEAR. Offering it
+                when the browser has stopped asking is the cruellest control on
+                the page: it can only ever fail, and it implies the owner did
+                something wrong when the browser simply will not ask again. */}
+            {micGuidance.canRetry && (
+              <button
+                type="button"
+                onClick={() => startRecording()}
+                className="rounded-full bg-amber-500/20 px-3 py-1 text-xs font-medium text-amber-400 hover:bg-amber-500/30"
+              >
+                Try again
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => startRecording()}
-              className="rounded-full bg-amber-500/20 px-3 py-1 text-xs font-medium text-amber-400 hover:bg-amber-500/30"
-            >
-              Try again
-            </button>
-            <button
-              type="button"
-              onClick={() => setMicBlocked(false)}
+              onClick={() => setMicGuidance(null)}
               className="rounded-full px-3 py-1 text-xs text-[rgba(244,242,251,0.62)] hover:bg-white/[.06]"
             >
               Dismiss
@@ -404,19 +479,33 @@ export function VoiceMemoButton({
             <button
               type="button"
               onClick={handleSendToJ4}
-              className="rounded-full px-3 py-1 text-xs font-medium text-white hover:opacity-90"
+              disabled={isPending}
+              className="rounded-full px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
               style={{ backgroundColor: GENESIS_ATMOSPHERE.violet }}
             >
-              Send to J4 →
+              {/* SAYS WHICH OF THE THREE STATES IT IS IN. A button that looks
+                  identical while idle, sending and failed is the button this
+                  panel used to have. */}
+              {isPending ? "Sending…" : sendError ? "Try again →" : "Send to J4 →"}
             </button>
             <button
               type="button"
               onClick={handleDeleteRecording}
-              className="rounded-full px-3 py-1 text-xs text-[rgba(244,242,251,0.62)] hover:bg-white/[.06]"
+              disabled={isPending}
+              className="rounded-full px-3 py-1 text-xs text-[rgba(244,242,251,0.62)] hover:bg-white/[.06] disabled:opacity-60"
             >
               Delete
             </button>
           </div>
+
+          {/* The failure, beside the recording it is about — and the recording
+              is still here, so Try again is a real option rather than advice to
+              go and say it all over. */}
+          {sendError && (
+            <p className="mt-2 text-[11px] text-red-400" role="alert">
+              {sendError}
+            </p>
+          )}
         </div>
       )}
     </div>
