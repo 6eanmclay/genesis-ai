@@ -4,7 +4,9 @@ import {
   printfulUrl,
   printfulHeaders,
   printfulFailure,
+  withSellingRegion,
   PRINTFUL_MAX_LIMIT,
+  PRINTFUL_SELLING_REGION,
   PRINTFUL_V2_BASE,
 } from "@/lib/creation/printfulRequest";
 import { printfulCreationProvider } from "@/lib/creation/printfulCreation";
@@ -76,6 +78,53 @@ async function main() {
   const limit = Number(new URLSearchParams(sent[0].split("?")[1]).get("limit"));
   assert("with a limit Printful documents as valid",
     Number.isInteger(limit) && limit >= 1 && limit <= PRINTFUL_MAX_LIMIT, String(limit));
+
+  // ======================================================================
+  console.log("\n=== 1b. The selling region, per endpoint ===\n");
+  // ======================================================================
+  //
+  // Printful, once the body was finally surfacing:
+  //
+  //     Printful creation.catalog failed (400): Selling region not found
+  //
+  // The parameter is documented as optional with a default of "worldwide" and
+  // is not optional in practice. It is also NOT documented on catalog-variants,
+  // and sending a parameter an endpoint does not know is its own way of earning
+  // a 400 — so this is a decision per endpoint, and asserted per endpoint.
+  const REGIONS = [
+    "worldwide", "north_america", "canada", "europe", "spain", "latvia", "uk",
+    "france", "germany", "australia", "japan", "new_zealand", "italy", "brazil",
+    "southeast_asia", "republic_of_korea", "all",
+  ];
+  assert("the region we send is one of Printful's own enum values",
+    REGIONS.includes(PRINTFUL_SELLING_REGION), PRINTFUL_SELLING_REGION);
+  eq("appended to a path that already has a query",
+    withSellingRegion("/catalog-products?limit=100"),
+    "/catalog-products?limit=100&selling_region_name=worldwide");
+  eq("and to one that does not",
+    withSellingRegion("/catalog-products/71"),
+    "/catalog-products/71?selling_region_name=worldwide");
+
+  // WHAT THE PROVIDER ACTUALLY SENDS, on all three calls, read off a real run.
+  const paths: string[] = [];
+  const regionProvider = printfulCreationProvider(async (_s, _o, path) => {
+    paths.push(path);
+    return path.startsWith("/catalog-products?")
+      ? { data: [{ id: 71, name: "Unisex Staple T-Shirt", type: "T-SHIRT" }] }
+      : { data: [] };
+  });
+  await regionProvider.listGarments({ storeId: "store_harness" });
+
+  const listPath = paths.find((p) => p.startsWith("/catalog-products?"));
+  const productPath = paths.find((p) => /^\/catalog-products\/\d+(\?|$)/.test(p));
+  const variantsPath = paths.find((p) => p.includes("/catalog-variants"));
+
+  assert("the catalogue listing carries a selling region",
+    !!listPath && listPath.includes("selling_region_name=worldwide"), String(listPath));
+  assert("the single product carries one too",
+    !!productPath && productPath.includes("selling_region_name=worldwide"), String(productPath));
+  assert("and the variants call does NOT, because it does not document it",
+    !!variantsPath && !variantsPath.includes("selling_region_name"), String(variantsPath));
 
   // ======================================================================
   console.log("\n=== 2. The store header the request was missing ===\n");

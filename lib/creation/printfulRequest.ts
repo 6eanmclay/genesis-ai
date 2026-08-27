@@ -30,6 +30,45 @@ export const PRINTFUL_V2_BASE = "https://api.printful.com/v2";
 /** The documented ceiling on `limit`. Sending more is a 400 by their spec. */
 export const PRINTFUL_MAX_LIMIT = 100;
 
+/**
+ * WHICH SELLING REGION THE CATALOGUE IS READ FOR — and why it is sent at all.
+ *
+ * ============ PRINTFUL SAID SO, IN THOSE WORDS (2026-08-27) ==============
+ *
+ * With the body finally surfacing, the 400 read:
+ *
+ *     Printful creation.catalog failed (400): Selling region not found
+ *
+ * `selling_region_name` is documented as optional with a default of
+ * "worldwide", so leaving it out should have been fine — and is not. Absent,
+ * the beta resolves an empty region and cannot find it. Sending the default
+ * explicitly is the difference between relying on a documented default and
+ * stating the value.
+ *
+ * "worldwide" is one of Printful's own enum values, taken from their spec
+ * rather than guessed: worldwide, north_america, canada, europe, spain,
+ * latvia, uk, france, germany, australia, japan, new_zealand, italy, brazil,
+ * southeast_asia, republic_of_korea, all.
+ *
+ * It is a CONSTANT rather than a setting because Genesis has no per-business
+ * selling region yet. When it does, this becomes a parameter and everything
+ * downstream keeps working — and until it does, hard-coding one is honest
+ * where inventing a per-store answer would not be.
+ */
+export const PRINTFUL_SELLING_REGION = "worldwide";
+
+/**
+ * The catalogue endpoints that accept `selling_region_name`.
+ *
+ * `/catalog-products/{id}/catalog-variants` does NOT document it, and sending a
+ * parameter an endpoint does not document is its own way of earning a 400 — so
+ * this is a decision made per endpoint rather than a blanket append.
+ */
+export function withSellingRegion(path: string): string {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}selling_region_name=${PRINTFUL_SELLING_REGION}`;
+}
+
 /** Absolute URL for a v2 path such as `/catalog-products?limit=100`. */
 export function printfulUrl(path: string): string {
   return `${PRINTFUL_V2_BASE}${path}`;

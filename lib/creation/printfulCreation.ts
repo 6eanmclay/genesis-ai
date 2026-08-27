@@ -1,6 +1,7 @@
 import type { Garment, GarmentVariant, CreationProvider } from "./garment";
 import { brandFromTitle } from "./garment";
 import type { PrintArea } from "./design";
+import { withSellingRegion } from "./printfulRequest";
 
 // PRINTFUL, AS A PLACE TO DESIGN ON.
 //
@@ -168,7 +169,14 @@ export function printfulCreationProvider(
     provider: "PRINTFUL",
 
     async listGarments({ storeId, keywords }) {
-      const body = (await fetchJson(storeId, "creation.catalog", "/catalog-products?limit=100")) as {
+      // selling_region_name is documented as optional with a default, and is
+      // not optional in practice — without it Printful answers 400 "Selling
+      // region not found". See withSellingRegion.
+      const body = (await fetchJson(
+        storeId,
+        "creation.catalog",
+        withSellingRegion("/catalog-products?limit=100"),
+      )) as {
         data?: PrintfulV2Product[];
       } | null;
       const products = body?.data ?? [];
@@ -192,9 +200,17 @@ export function printfulCreationProvider(
 
     async getGarment({ storeId, externalProductId }) {
       const [productBody, variantBody] = await Promise.all([
-        fetchJson(storeId, "creation.product", `/catalog-products/${externalProductId}`) as Promise<{
+        // Same parameter, same reason — this endpoint documents it too.
+        fetchJson(
+          storeId,
+          "creation.product",
+          withSellingRegion(`/catalog-products/${externalProductId}`),
+        ) as Promise<{
           data?: PrintfulV2Product;
         } | null>,
+        // NOT here. catalog-variants does not document selling_region_name, and
+        // sending a parameter an endpoint does not know is its own way of
+        // earning a 400.
         fetchJson(
           storeId,
           "creation.variants",
