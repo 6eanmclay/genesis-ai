@@ -52,7 +52,11 @@ const MAX_METADATA_VALUE = 500;
  * what it would have been before promotions existed.
  */
 export function toDiscountMetadata(pricing: OrderPricing): Record<string, string> {
-  if (!pricing.discount) return {};
+  // KEYED ON THE MONEY, not on whether one promotion can be named. A bag whose
+  // lines were discounted by several different sales has a real discount and no
+  // single promotion — `discount` is null there by design, and guarding on it
+  // would silently drop the discount metadata for exactly that order.
+  if (pricing.discountInCents <= 0 || !pricing.discount) return {};
   return {
     listSubtotalInCents: String(pricing.listSubtotalInCents),
     discountInCents: String(pricing.discount.amountInCents),
