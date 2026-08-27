@@ -11,6 +11,7 @@ import { instagramConnector } from "./instagram";
 import { tiktokConnector } from "./tiktok";
 import { easypostConnector } from "./easypost";
 import { twilioConnector } from "./twilio";
+import { aliexpressConnector } from "./aliexpress";
 
 // Adding a new integration means writing a connector module and adding one
 // line here — nothing else in the framework needs to know it exists. The 3
@@ -38,6 +39,12 @@ const CONNECTORS: Partial<Record<IntegrationProvider, IntegrationConnector>> = {
   // needed no third-party app review to reach -- the rest are OAuth, and an
   // OAuth app is somebody else's queue before a line can be exercised.
   TWILIO: twilioConnector,
+  // Wholesale sourcing (2026-08-27). Registering it here is what makes
+  // /api/integrations/aliexpress/callback resolve at all -- the generic
+  // callback route looks the connector up by name, and before this it threw
+  // "Unknown integration provider" for the very URL the Open Platform
+  // application has to declare.
+  ALIEXPRESS: aliexpressConnector,
 };
 
 export function getConnector(provider: IntegrationProvider): IntegrationConnector {

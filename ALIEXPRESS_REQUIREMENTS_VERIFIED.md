@@ -37,19 +37,41 @@ different next actions.
 | `scripts/verify-aliexpress.ts` | 85 assertions, no credentials needed. |
 | `scripts/check-aliexpress-live.ts` | One real search, when credentials exist. **Never run.** |
 
-## 2. The signature, exactly
+## 2. The signature — and a correction
 
-Four steps, and each is a place to get it wrong quietly — a wrong one still
-produces a plausible 32-character string that the gateway simply refuses:
+**The first version of this integration implemented MD5 only, and that was
+probably the wrong default.** Recorded rather than quietly fixed, because the
+shape recurs: MD5 *is* real — it is what Taobao's TOP gateway has always
+documented, and AliExpress inherited that gateway — but the **maintained
+AliExpress SDK signs with HMAC-SHA256**, and shipping only MD5 would have been a
+coin flip settled by an opaque error on the first live call.
+
+The basestring is the same for both:
 
 1. Sort every parameter **by key**
 2. Concatenate key and value in that order, **with no separators at all**
-3. Wrap the result in the app secret on **both** sides
-4. **MD5, hex, UPPERCASE**
+
+What differs is what the secret *is*:
+
+| | The secret is | The computation |
+|---|---|---|
+| `md5` (legacy TOP) | a **wrapper** | `MD5(secret + basestring + secret)` |
+| `sha256` (**default**) | the **HMAC key** | `HMAC-SHA256(key = secret, basestring)` |
+
+Both uppercase the hex. Feeding one's basestring to the other's algorithm
+produces a well-formed signature the gateway refuses, with an error that says
+nothing about which was wrong.
+
+**Both are implemented; the default is HMAC-SHA256.** Switching is one variable,
+so the first live call settles it with a redeploy rather than an edit:
 
 ```
-MD5( SECRET + "app_key12345methodaliexpress.affiliate.product.queryv2.0" + SECRET )
+ALIEXPRESS_SIGN_METHOD=md5     # only if the live call says so
 ```
+
+The declared `sign_method` parameter and the algorithm actually used always
+agree — sending `sign_method=md5` alongside an HMAC-SHA256 signature is a
+refusal that looks exactly like bad credentials.
 
 The signature covers the **system parameters and the method's own arguments
 together**. Signing only the system half is another way to produce a string that

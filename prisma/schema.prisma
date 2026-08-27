@@ -545,6 +545,13 @@ enum IntegrationProvider {
   // from -- which the IntegrationConnector contract has always allowed and
   // nothing had yet exercised.
   TWILIO
+  // Wholesale sourcing (2026-08-27). DISTINCT from the AliExpress entry in
+  // lib/sourcing/registry.ts, which searches with Genesis's own app
+  // credentials and involves no merchant. This is the per-merchant OAuth grant
+  // AliExpress's dropshipping API requires in order to place an order against
+  // that merchant's own account -- so their orders are paid from their money,
+  // not fronted by Genesis.
+  ALIEXPRESS
 }
 
 enum IntegrationStatus {

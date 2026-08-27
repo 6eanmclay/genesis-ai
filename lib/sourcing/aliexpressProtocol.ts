@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import { createHash, createHmac } from "crypto";
 
 // TALKING TO ALIEXPRESS.
 //
@@ -10,23 +10,24 @@ import { createHash } from "crypto";
 // an opaque error at the gateway rather than anywhere useful. Making it pure is
 // what lets it be checked against a known vector before that day arrives.
 //
-// ============ THE SIGNATURE, EXACTLY =====================================
+// ============ THE SIGNATURE ==============================================
 //
-//   1. sort every parameter by key
+// The basestring is the same for both methods:
+//
+//   1. sort every parameter by KEY
 //   2. concatenate key and value in that order, with NO separators at all
-//   3. wrap the result in the app secret on BOTH sides
-//   4. MD5, hex, UPPERCASE
 //
-// Each of those four is a place to get it wrong quietly. Sorting by value,
+// What differs is what happens to it -- see the AliexpressSignMethod comment
+// below. Each step is a place to get it wrong quietly: sorting by value,
 // joining with "&", wrapping on one side, or lowercase hex all produce a
-// plausible-looking 32-character string that the gateway simply rejects.
+// well-formed signature that the gateway simply rejects, with an error that
+// says nothing about which step was wrong.
 //
-// SOURCE AND ITS LIMIT. This matches the algorithm as documented publicly and
-// implemented by the established client libraries. AliExpress's own reference
-// sits behind a developer login this project does not yet have, so it is
-// verified against the community consensus rather than the vendor's page, and
-// the first live call is what settles it. That is stated here rather than
-// implied by silence.
+// SOURCE AND ITS LIMIT. AliExpress's own API reference sits behind a developer
+// login this project does not have, so this is verified against its public
+// getting-started material and the maintained client SDKs rather than the
+// vendor's reference page. The first live call is what settles it, and
+// check-aliexpress-live.ts exists to be that call.
 
 /** The AliExpress/Taobao gateway. All methods are routed through the one URL. */
 export const ALIEXPRESS_GATEWAY = "https://api-sg.aliexpress.com/sync";
@@ -37,30 +38,77 @@ export interface AliexpressSystemParams {
   method: string;
   /** "yyyy-MM-dd HH:mm:ss" in UTC. */
   timestamp: string;
-  sign_method: "md5";
+  sign_method: AliexpressSignMethod;
   format: "json";
   v: "2.0";
 }
 
 /**
- * The signature for a set of parameters.
+ * ============ TWO SIGNING METHODS, AND THE DEFAULT MOVED ==================
  *
- * PURE, and deliberately takes the secret last so a call site cannot pass the
- * arguments the wrong way round without the types complaining.
+ * The first version of this file implemented MD5 only, and MD5 is real — it is
+ * the algorithm Taobao's TOP gateway has always documented, and AliExpress
+ * inherited that gateway. But it is the LEGACY half of the story, and shipping
+ * only it would have been a coin flip on the first live call.
+ *
+ * The maintained AliExpress SDK signs with HMAC-SHA256, and the two are not
+ * variations on a theme — they differ in what the secret even is:
+ *
+ *   md5     the secret WRAPS the basestring on both sides, and the whole
+ *           thing is hashed.        MD5(secret + basestring + secret)
+ *
+ *   sha256  the secret is the HMAC KEY and wraps nothing.
+ *           HMAC-SHA256(key = secret, data = basestring)
+ *
+ * Both then uppercase the hex. Feeding one's basestring to the other's
+ * algorithm produces a perfectly well-formed signature that the gateway
+ * refuses, with an error that says nothing about which of them was wrong.
+ *
+ * So both are implemented, the default is HMAC-SHA256 because that is what the
+ * current SDK does for AliExpress specifically, and switching is one
+ * environment variable rather than a rewrite. The first live call settles it,
+ * and settling it costs a redeploy instead of a debugging session.
  */
-export function signRequest(params: Record<string, string>, appSecret: string): string {
-  // Sorted by KEY. Object key order in JavaScript is insertion order for string
-  // keys, which is not the order AliExpress expects — relying on it would work
-  // until somebody reordered a literal.
-  const sorted = Object.keys(params).sort();
+export type AliexpressSignMethod = "md5" | "sha256";
 
-  // Concatenated with NO delimiter. `key1value1key2value2`.
+/** Overridable, so the first live call can settle it without a code change. */
+export function configuredSignMethod(): AliexpressSignMethod {
+  return process.env.ALIEXPRESS_SIGN_METHOD?.trim().toLowerCase() === "md5" ? "md5" : "sha256";
+}
+
+/** Sorted by KEY, concatenated `keyvaluekeyvalue`, with no delimiter at all. */
+function basestring(params: Record<string, string>): string {
+  const sorted = Object.keys(params).sort();
   let concatenated = "";
   for (const key of sorted) concatenated += key + params[key];
+  return concatenated;
+}
 
-  // Wrapped on BOTH sides by the secret.
-  const wrapped = `${appSecret}${concatenated}${appSecret}`;
+/**
+ * The signature for a set of parameters.
+ *
+ * PURE, and deliberately takes the secret before the method so a call site
+ * cannot pass the arguments the wrong way round without the types complaining.
+ */
+export function signRequest(
+  params: Record<string, string>,
+  appSecret: string,
+  signMethod: AliexpressSignMethod = "md5",
+): string {
+  if (signMethod === "sha256") return signHmacSha256(params, appSecret);
+  return signMd5(params, appSecret);
+}
 
+/** HMAC-SHA256 with the secret as the KEY. Nothing is wrapped. */
+export function signHmacSha256(params: Record<string, string>, appSecret: string): string {
+  return createHmac("sha256", appSecret).update(basestring(params), "utf8").digest("hex").toUpperCase();
+}
+
+/** The legacy TOP algorithm: the secret WRAPS the basestring on both sides. */
+export function signMd5(params: Record<string, string>, appSecret: string): string {
+  // Wrapped on BOTH sides by the secret. This is the whole difference from
+  // HMAC-SHA256, where the secret is the key and wraps nothing.
+  const wrapped = `${appSecret}${basestring(params)}${appSecret}`;
   return createHash("md5").update(wrapped, "utf8").digest("hex").toUpperCase();
 }
 
@@ -86,12 +134,18 @@ export function buildSignedParams(params: {
   appSecret: string;
   args?: Record<string, string | number | undefined>;
   now?: Date;
+  /** Defaults to whatever the environment says, so one variable moves it. */
+  signMethod?: AliexpressSignMethod;
 }): Record<string, string> {
+  // THE DECLARED METHOD AND THE ONE ACTUALLY USED MUST BE THE SAME ONE.
+  // Sending sign_method=md5 alongside an HMAC-SHA256 signature is a refusal
+  // that looks exactly like bad credentials.
+  const signMethod = params.signMethod ?? configuredSignMethod();
   const system: AliexpressSystemParams = {
     app_key: params.appKey,
     method: params.method,
     timestamp: aliexpressTimestamp(params.now ?? new Date()),
-    sign_method: "md5",
+    sign_method: signMethod,
     format: "json",
     v: "2.0",
   };
@@ -104,7 +158,7 @@ export function buildSignedParams(params: {
     all[key] = String(value);
   }
 
-  return { ...all, sign: signRequest(all, params.appSecret) };
+  return { ...all, sign: signRequest(all, params.appSecret, signMethod) };
 }
 
 // ============ WHAT COMES BACK ============================================

@@ -43,22 +43,27 @@ authenticates with the app key and secret alone and needs no redirect at all. If
 AliExpress grants only the affiliate group, this URL goes unused. Supplying it
 is still correct: it is where authorization *would* land.
 
-**That URL does not work yet, and this is a real gap rather than a formality.**
-The path pattern is genuine — `app/api/integrations/[provider]/callback/route.ts`
-is a live generic route — but it resolves the provider through
-`getConnectorByName`, which today **throws `Unknown integration provider
-"aliexpress"`**. AliExpress is currently a *sourcing source*
-(`lib/sourcing/registry.ts`), not a registered *connector*
-(`lib/integrations/registry.ts`), and those are two different registries serving
-two different purposes.
+**That URL now resolves — it did not when this file was first written**, and
+the difference is worth recording because it was the thing blocking submission.
 
-So **if capabilities 4–5 are granted, an AliExpress connector has to be built**:
-an `IntegrationProvider` enum value, an OAuth connect/verify/disconnect
-lifecycle, and encrypted per-merchant token storage — the shape Printful already
-has. That is real work, it does not exist, and it is not implied by anything
-built so far. Supplying the URL on the form is still right: it is the address
-that handler will live at, and AliExpress does not test it at application time.
-It must not be described to anyone as working today.
+The path pattern was always genuine (`app/api/integrations/[provider]/callback/route.ts`
+is a live generic route), but it resolves the provider through
+`getConnectorByName`, which **threw `Unknown integration provider "aliexpress"`**.
+AliExpress was a *sourcing source* (`lib/sourcing/registry.ts`) with no
+*connector* (`lib/integrations/registry.ts`) behind it — two different
+registries serving two different purposes. Submitting a form whose callback 500s
+is not something to discover after a 1–2 day review.
+
+`lib/integrations/aliexpress.ts` is now that connector: an `IntegrationProvider`
+enum value, an OAuth connect/verify/disconnect lifecycle, encrypted per-merchant
+token storage, and refresh-before-expiry — the shape Printful already has.
+`verify-aliexpress.ts` §14 asserts the callback resolves, and unregistering the
+connector fails that assertion.
+
+**Still honest about what is unproven**: no consent screen has been reached,
+because there are no client credentials to reach one with. The authorization
+host and the token method are written from AliExpress's published material and
+its maintained SDKs, and the first real handoff is what settles them.
 
 ## 2. What Genesis is — the description to submit
 

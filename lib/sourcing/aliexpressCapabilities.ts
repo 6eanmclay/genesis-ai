@@ -107,6 +107,11 @@ export const ALIEXPRESS_CAPABILITY_SPECS: Record<AliexpressCapability, Capabilit
   },
   freight: {
     capability: "freight",
+    // AFFILIATE, because that is the group Genesis can use without an
+    // account. The dropshipping group has its own and better freight methods
+    // (aliexpress.logistics.buyer.freight.calculate), but they authenticate
+    // per account -- so if only the affiliate group is granted, this is the
+    // one that works, and naming the other here would overstate the grant.
     apiGroup: "affiliate",
     method: "aliexpress.affiliate.product.shipping.get",
     methodVerified: true,
@@ -126,12 +131,14 @@ export const ALIEXPRESS_CAPABILITY_SPECS: Record<AliexpressCapability, Capabilit
   tracking: {
     capability: "tracking",
     apiGroup: "dropshipping",
-    // NOT INDEPENDENTLY VERIFIED. The DS group documents order tracking, but
-    // the exact method string was not confirmable without a developer login,
-    // and guessing one from the naming pattern is how an integration ships a
-    // call that has never existed.
-    method: "aliexpress.ds.order.tracking.get",
-    methodVerified: false,
+    // CORRECTED 2026-08-27. This said `aliexpress.ds.order.tracking.get`,
+    // which was a name derived from the naming pattern and marked unverified
+    // for exactly that reason. The real method is in the logistics family, not
+    // the ds one, and no amount of pattern-matching would have got there --
+    // which is the argument for marking a guess as a guess rather than letting
+    // it read as fact.
+    method: "aliexpress.logistics.ds.trackinginfo.query",
+    methodVerified: true,
     needsOAuth: true,
     whatItEnables:
       "The customer is told where their parcel is, and the order's delivery state in Genesis reflects reality rather than an assumption.",

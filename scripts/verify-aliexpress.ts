@@ -148,7 +148,10 @@ async function main() {
 
     check("carries the method", signed.method, "aliexpress.affiliate.product.query");
     check("carries the app key", signed.app_key, "APPKEY");
-    check("declares md5 signing", signed.sign_method, "md5");
+    // THE DECLARED METHOD AND THE ONE ACTUALLY USED MUST AGREE. Sending
+    // sign_method=md5 alongside an HMAC-SHA256 signature is a refusal that
+    // looks exactly like bad credentials.
+    check("declares the signing method it actually used", signed.sign_method, "sha256");
     check("declares JSON", signed.format, "json");
     check("declares the API version", signed.v, "2.0");
     check("timestamps in AliExpress's format, in UTC", signed.timestamp, "2026-08-27 14:03:22");
@@ -173,7 +176,25 @@ async function main() {
     // And it verifies: recomputing over everything-but-sign reproduces it.
     const everythingElse = { ...signed };
     delete everythingElse.sign;
-    check("and recomputing over the rest reproduces it", signRequest(everythingElse, "APPSECRET"), signed.sign);
+    check("and recomputing over the rest reproduces it",
+      signRequest(everythingElse, "APPSECRET", "sha256"), signed.sign);
+    // ...with the OTHER method it must NOT, or the two are not really distinct.
+    assert("while the other method would not",
+      signRequest(everythingElse, "APPSECRET", "md5") !== signed.sign);
+
+    // And md5 is still reachable and still self-consistent, because the first
+    // live call may yet say md5 is the right one.
+    const md5Signed = buildSignedParams({
+      method: "aliexpress.affiliate.product.query",
+      appKey: "APPKEY",
+      appSecret: "APPSECRET",
+      now: new Date(Date.UTC(2026, 7, 27, 14, 3, 22)),
+      signMethod: "md5",
+    });
+    check("md5 declares itself too", md5Signed.sign_method, "md5");
+    const md5Rest = { ...md5Signed };
+    delete md5Rest.sign;
+    check("and verifies under md5", signRequest(md5Rest, "APPSECRET", "md5"), md5Signed.sign);
 
     // An absent argument is absent, not the string "undefined".
     const sparse = buildSignedParams({
@@ -370,9 +391,17 @@ async function main() {
     assert("and it is the only file that reads the secret",
       client.includes("ALIEXPRESS_APP_SECRET") && !protocol.includes("ALIEXPRESS_APP_SECRET"));
 
-    // The pure half holds no environment access at all, which is what makes it
-    // safe to test and safe to import from anywhere.
-    assert("the protocol reads no environment", !protocol.includes("process.env"));
+    // THE PROTOCOL READS ONE THING FROM THE ENVIRONMENT, and it is not a
+    // secret: ALIEXPRESS_SIGN_METHOD, so the first live call can settle md5
+    // versus HMAC-SHA256 with a redeploy instead of an edit. The property that
+    // actually matters is narrower than "reads no environment" and is the one
+    // asserted here -- no CREDENTIAL is ever read outside the server-only file.
+    const protocolEnvReads = [...protocol.matchAll(/process\.env\.([A-Z_]+)/g)].map((m) => m[1]);
+    check("the protocol reads exactly one environment variable",
+      [...new Set(protocolEnvReads)], ["ALIEXPRESS_SIGN_METHOD"]);
+    assert("and it is not a credential",
+      !protocolEnvReads.some((name) => /KEY|SECRET|TOKEN|PASSWORD/.test(name)),
+      protocolEnvReads.join(", "));
 
     // The registry-facing module reads the variables to answer blockedOn, but
     // must not import the server-only client at module scope — that would stop
@@ -490,10 +519,19 @@ async function main() {
       check(`${capability}'s OAuth need matches its API group`,
         spec.needsOAuth, spec.apiGroup === "dropshipping");
     }
-    // And the unverified method names are flagged rather than presented as fact.
-    assert("at least one method is honestly marked unverified",
-      ALL_ALIEXPRESS_CAPABILITIES.some((c) => !ALIEXPRESS_CAPABILITY_SPECS[c].methodVerified),
-      "AliExpress's API reference is login-gated; a name taken from a pattern must say so");
+    // WAS "at least one is marked unverified", which was true when tracking
+    // carried a name derived from the naming pattern. That name turned out to
+    // be WRONG -- the real method is in the logistics family, not the ds one --
+    // and marking it as a guess is what stopped it being shipped as fact. Now
+    // that every name is confirmed against a maintained SDK, the invariant is
+    // the flag's honesty rather than the presence of a guess.
+    for (const capability of ALL_ALIEXPRESS_CAPABILITIES) {
+      const spec = ALIEXPRESS_CAPABILITY_SPECS[capability];
+      assert(`${capability} declares whether its method name is verified`,
+        typeof spec.methodVerified === "boolean");
+    }
+    check("and every method name is now confirmed",
+      ALL_ALIEXPRESS_CAPABILITIES.filter((c) => !ALIEXPRESS_CAPABILITY_SPECS[c].methodVerified), []);
   }
 
   console.log("\n13. A refused search capability stops the call being made");
@@ -518,6 +556,74 @@ async function main() {
       },
     );
   }
+
+  console.log("\n14. The callback URL on the application form actually resolves");
+  {
+    // ============ THE WHOLE POINT OF THE CONNECTOR ========================
+    //
+    // The AliExpress Open Platform application declares a callback URL. Before
+    // this connector existed, /api/integrations/aliexpress/callback THREW
+    // "Unknown integration provider" -- the generic route resolves the provider
+    // through getConnectorByName, and AliExpress was a sourcing SOURCE with no
+    // CONNECTOR behind it. Submitting a form whose callback 500s is not
+    // something to find out after a 1-2 day review.
+    const { getConnectorByName } = await import("@/lib/integrations/registry");
+    const { integrationCallbackUrl } = await import("@/lib/integrations/util");
+
+    let resolved = true;
+    try {
+      getConnectorByName("aliexpress");
+    } catch {
+      resolved = false;
+    }
+    assert("the generic callback route can resolve 'aliexpress'", resolved,
+      "getConnectorByName threw - the callback URL on the application form would 500");
+
+    check("and the URL is the one the form declares",
+      integrationCallbackUrl("https://genesis-ai-rho.vercel.app", "ALIEXPRESS"),
+      "https://genesis-ai-rho.vercel.app/api/integrations/aliexpress/callback");
+
+    const connector = getConnectorByName("aliexpress");
+    check("it is an OAuth connector", connector.capabilities.authKind, "oauth");
+    // An empty scope list must mean "none exist", never "nobody filled this in"
+    // -- which is why the contract requires a reason alongside it.
+    check("declaring no scopes", connector.capabilities.scopes, []);
+    assert("with the reason AliExpress takes none",
+      (connector.capabilities.noScopesReason ?? "").length > 40);
+
+    // IT SPENDS THE MERCHANT'S MONEY. Declared, the way EasyPost's label
+    // purchase is.
+    assert("it declares that it spends the merchant's own money",
+      connector.capabilities.writes.some((w) => /money|spend/i.test(w)),
+      connector.capabilities.writes.join("; "));
+    // Per-merchant, not Genesis-fronted: the whole reason this is OAuth.
+    assert("and says the money is the merchant's, not Genesis's",
+      connector.capabilities.writes.some((w) => /merchant/i.test(w)),
+      connector.capabilities.writes.join("; "));
+
+    check("its token expires", connector.capabilities.tokenLifetime, "expires");
+    // HONEST FALSE - no documented revocation endpoint was found.
+    check("it does not claim to revoke on disconnect", connector.capabilities.revokesOnDisconnect, false);
+    check("it reads no business data", connector.capabilities.reads, []);
+    check("and implements no sync", typeof connector.sync, "undefined");
+
+    // It is unavailable until the app credentials exist, and says so itself
+    // rather than offering a Connect button that can only throw.
+    await withEnv({ ALIEXPRESS_APP_KEY: undefined, ALIEXPRESS_APP_SECRET: undefined }, () => {
+      check("unconfigured, the connector reports itself unavailable", connector.configured?.(), false);
+    });
+    await withEnv({ ALIEXPRESS_APP_KEY: "K", ALIEXPRESS_APP_SECRET: "S" }, () => {
+      check("configured, it is available", connector.configured?.(), true);
+    });
+
+    // THE TWO ALIEXPRESSES ARE DIFFERENT THINGS, and conflating them is the
+    // easy mistake: one searches with Genesis's app credentials and involves no
+    // merchant, the other is one merchant's OAuth grant.
+    const { getProductSource: source } = await import("@/lib/sourcing/registry");
+    assert("the sourcing source and the connector are not the same object",
+      (source("aliexpress") as unknown) !== (connector as unknown));
+  }
+
 
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${passes} passed, ${failures} failed\n`);
   process.exit(failures === 0 ? 0 : 1);
