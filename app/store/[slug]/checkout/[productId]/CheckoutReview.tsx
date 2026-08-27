@@ -8,6 +8,8 @@ import type { OrderPricing } from "@/lib/pricing/orderPricing";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { PriceBreakdown } from "../PriceBreakdown";
 import { DiscountCodeField } from "../DiscountCodeField";
+import { PaymentMethodChoice } from "../../PaymentMethodChoice";
+import { PAYMENT_PROVIDER_LABELS, type PaymentProviderChoice } from "@/lib/payments/providers";
 
 // One product, its price broken down, and a place to enter a code.
 //
@@ -21,6 +23,7 @@ export function CheckoutReview({
   productId,
   productName,
   imageUrl,
+  providers,
   currency,
   initialPricing,
 }: {
@@ -28,6 +31,8 @@ export function CheckoutReview({
   productId: string;
   productName: string;
   imageUrl: string | null;
+  /** Every provider this store can charge through, in preference order. */
+  providers: PaymentProviderChoice[];
   currency: string;
   /** Priced on the server, so any automatic sale is visible on arrival. */
   initialPricing: OrderPricing;
@@ -95,6 +100,11 @@ export function CheckoutReview({
             own rows at the moment of the charge — so a promotion that expired
             while this page was open is not honoured by a stale hidden field. */}
         <input type="hidden" name="discountCode" value={applied ?? code} />
+
+        {/* INSIDE THE FORM, so the chosen value is submitted with the rest of
+            it. Renders nothing when there is only one way to pay, which is
+            most stores -- see PaymentMethodChoice. */}
+        <PaymentMethodChoice providers={providers} labels={PAYMENT_PROVIDER_LABELS} />
 
         {!checkout.ok && (
           <p className="mb-3 text-[14px] text-red-600 dark:text-red-400">{checkout.error}</p>

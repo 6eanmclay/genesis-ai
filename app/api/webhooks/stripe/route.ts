@@ -100,6 +100,28 @@ export async function POST(request: Request) {
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
     const productId = session.metadata?.productId;
+    // ============ A BAG IS AN ORDER TARGET TOO (2026-08-27) ==============
+    //
+    // Read HERE, above the guard, rather than deep inside the productId
+    // branch where it used to live. Until now every order this route wrote
+    // came from a single-product checkout, so "no productId" and "nothing to
+    // write an order for" were the same sentence. The bag rail made them
+    // different: createStripeBagSession deliberately sends NO productId --
+    // correctly, because a bag has no single product -- and sends a draft id
+    // instead.
+    //
+    // The guard below still asked only about productId, so a paid bag
+    // checkout took the customer's money, logged "the checkout did not carry
+    // a product", and wrote no order at all. Everything needed to write one
+    // was already in place: the create call has handled bagLines since the
+    // draft work, Order.productId is nullable, and productName falls back.
+    // The only thing missing was permission to get there.
+    //
+    // Found by scripts/verify-checkout-e2e.ts on its first run -- which is
+    // the argument for an end-to-end test that neither half's own suite
+    // could make, because neither half was wrong.
+    const draftId = session.metadata?.checkoutDraftId;
+    const hasOrderTarget = Boolean(productId) || Boolean(draftId);
 
     // `event.account` is set when this event came from a connected
     // account's own activity (a store using its connected Stripe account,
@@ -150,7 +172,7 @@ export async function POST(request: Request) {
         byAccount,
       }).storeId ?? undefined;
 
-    if (!storeId || !productId) {
+    if (!storeId || !hasOrderTarget) {
       console.error("[stripe webhook] could not resolve order target", {
         sessionId: session.id,
         account: event.account ?? null,
@@ -177,7 +199,7 @@ export async function POST(request: Request) {
             verified: false,
             message:
               `A payment completed in Stripe (session ${session.id}) but no order could be created — ` +
-              `the checkout did not carry a product. Reconcile this in Stripe before assuming it is not a real sale.`,
+              `the checkout carried neither a product nor a bag. Reconcile this in Stripe before assuming it is not a real sale.`,
             retryable: false,
             actorType: "USER",
             actorId: null,
@@ -198,16 +220,21 @@ export async function POST(request: Request) {
       }
     }
 
-    if (storeId && productId) {
+    if (storeId && hasOrderTarget) {
       // Scoped to the store this event was resolved to (2026-08-20). The
       // lookup used to be by bare id, so a session carrying another store's
       // productId would have put THAT store's product name on this order. The
       // order is still created when the product is missing — the money is real
       // whatever the catalogue says — it just records an honest "Unknown
       // product" rather than a name borrowed from somewhere else.
-      const product = await prisma.product.findFirst({
-        where: { id: productId, storeId },
-      });
+      // GUARDED ON productId EXISTING, which is not fussiness: Prisma treats
+      // `id: undefined` as "no constraint on id", so on a bag checkout this
+      // would have returned an ARBITRARY product from the store and hung its
+      // name on the order. A missing filter is not a filter that matches
+      // nothing.
+      const product = productId
+        ? await prisma.product.findFirst({ where: { id: productId, storeId } })
+        : null;
 
       // What the checkout recorded about the discount, if anything. Read here
       // rather than inside the transaction because the promotion lookup below
@@ -251,7 +278,6 @@ export async function POST(request: Request) {
       //             are used — not a fabrication, it is what the customer was
       //             actually charged for.
       //   NONE      neither. The financial record is kept and nothing invented.
-      const draftId = session.metadata?.checkoutDraftId;
       let bagLines: RecoveredLines | null = null;
       let bagMismatch: { draft: number; settled: number } | null = null;
       let writtenOrderId: string | null = null;

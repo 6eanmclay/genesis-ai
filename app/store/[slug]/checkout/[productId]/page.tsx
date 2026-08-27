@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { productSupportsLiveShipping } from "@/lib/shipping/checkoutShipping";
 import { canStoreAcceptPayments } from "../../shared";
+import { availableProviders } from "@/lib/payments/router";
 import { priceCheckout } from "@/lib/promotions/resolve";
 import { CheckoutReview } from "./CheckoutReview";
 
@@ -61,6 +62,7 @@ export default async function CheckoutPage({
       productId={product.id}
       productName={product.name}
       imageUrl={product.imageUrl}
+      providers={await availableProviders(store.id)}
       currency={store.currency}
       initialPricing={pricing}
     />

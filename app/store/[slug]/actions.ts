@@ -10,7 +10,7 @@ import type { AddressVerification } from "@/lib/shipping/addressVerification";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
 import { decryptCredentials } from "@/lib/integrations/credentials";
-import { selectProvider } from "@/lib/payments/router";
+import { resolveProvider } from "@/lib/payments/router";
 import { priceCheckout } from "@/lib/promotions/resolve";
 import type { CheckoutPreviewState } from "@/lib/promotions/checkoutPreview";
 import { resolveBag } from "@/lib/bag/resolveBag";
@@ -100,6 +100,22 @@ async function createStripeCheckoutSession(
           product_data: {
             name: product.name,
             ...(pricing.discount ? { description: `${pricing.discount.label} applied` } : {}),
+            // THE PICTURE OF THE THING THEY ARE BUYING (2026-08-27).
+            //
+            // Stripe's hosted checkout renders the order summary down the left
+            // and shows a product image when one is given. Without this the
+            // column is a name and a number, and the customer's last look at
+            // what they are paying for was a page ago.
+            //
+            // It is the SAME URL the storefront and the bag render, so what
+            // they confirm against is what they have been looking at all along
+            // rather than a second, differently-processed copy.
+            //
+            // Stripe fetches these itself, so the URL must be publicly
+            // reachable and absolute. Blob-hosted product images are both.
+            // Omitted entirely when there is no image — an empty array is a
+            // request to render nothing, which is not what "unknown" means.
+            ...(product.imageUrl ? { images: [product.imageUrl] } : {}),
           },
           // THE DISCOUNTED SUBTOTAL, not the list price and not a Stripe
           // coupon. Applying it here rather than through Stripe's own discount
@@ -326,7 +342,11 @@ export async function createCheckoutSession(
     });
 
     const baseUrl = await getBaseUrl();
-    const provider = await selectProvider(store.id);
+    // THE CUSTOMER'S CHOICE, not the store's preference. An absent or
+    // unrecognised value falls back to the default, which is what every
+    // single-provider store sends and is the behaviour this path has always
+    // had. See lib/payments/router.ts for why that distinction mattered.
+    const provider = await resolveProvider(store.id, String(formData.get("paymentMethod") ?? ""));
 
     redirectUrl =
       provider === "PAYPAL"
@@ -525,7 +545,7 @@ async function createPaypalBagSession(params: {
 export async function checkoutFromBag(
   slug: string,
   _prevState: ActionState,
-  _formData: FormData
+  formData: FormData
 ): Promise<ActionState> {
   let redirectUrl: string;
   try {
@@ -558,7 +578,8 @@ export async function checkoutFromBag(
     const lines = freezeLines(resolved.lines, resolved.pricing);
 
     const baseUrl = await getBaseUrl();
-    const provider = await selectProvider(store.id);
+    // The customer's choice, resolved against what is genuinely connected.
+    const provider = await resolveProvider(store.id, String(formData.get("paymentMethod") ?? ""));
 
     const session =
       provider === "PAYPAL"

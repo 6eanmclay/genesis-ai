@@ -34,6 +34,15 @@ export interface DraftLine {
    * and the webhook must not take the record of what somebody bought with it.
    */
   productName: string;
+  /**
+   * FROZEN LIKE THE NAME, and for the same reason.
+   *
+   * A product whose image changes -- or whose product row is deleted --
+   * between this moment and the webhook must not take the picture of what
+   * somebody actually bought with it. Null where there was none; never an
+   * empty string, which would ask a provider to render nothing.
+   */
+  imageUrl: string | null;
   quantity: number;
   unitPriceInCents: number;
   listInCents: number;
@@ -69,6 +78,7 @@ export function freezeLines(lines: ResolvedBagLine[], pricing: OrderPricing): Dr
     return {
       productId: line.productId,
       productName: line.name,
+      imageUrl: line.imageUrl,
       quantity: priced.quantity,
       unitPriceInCents: priced.unitPriceInCents,
       listInCents: priced.listInCents,

@@ -8,6 +8,7 @@ import { bagCount } from "@/lib/bag/bagCookie";
 import { resolveBag } from "@/lib/bag/resolveBag";
 import { displayPriceFor } from "@/lib/pricing/displayPrice";
 import { canStoreAcceptPayments, CHECKOUT_UNAVAILABLE_MESSAGE } from "../shared";
+import { availableProviders } from "@/lib/payments/router";
 import { BagBar } from "../BagBar";
 import { Price } from "../Price";
 import { BagLine } from "./BagLine";
@@ -159,7 +160,7 @@ export default async function BagPage({ params }: { params: Promise<{ slug: stri
 
                 <div className="mt-5">
                   {canAcceptPayments ? (
-                    <CheckoutButton slug={slug} />
+                    <CheckoutButton slug={slug} providers={await availableProviders(store.id)} />
                   ) : (
                     <p className="text-[14px] text-[var(--brand-text-secondary)]">
                       {CHECKOUT_UNAVAILABLE_MESSAGE}

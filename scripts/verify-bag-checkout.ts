@@ -54,6 +54,9 @@ const read = (...p: string[]) => codeOnly(readFileSync(join(process.cwd(), ...p)
 const line = (over: Partial<DraftLine> = {}): DraftLine => ({
   productId: "prod_ring",
   productName: "Tensor Ring",
+  // Defaults to HAVING one, so the assertions below exercise the path a real
+  // product takes. The no-image case is asked for explicitly where it matters.
+  imageUrl: "https://images.example.test/ring.png",
   quantity: 1,
   unitPriceInCents: 3500,
   listInCents: 3500,

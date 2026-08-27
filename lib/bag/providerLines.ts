@@ -21,10 +21,26 @@ import type { DraftLine } from "./checkoutDraft";
 export interface StripeLineItem {
   price_data: {
     currency: string;
-    product_data: { name: string };
+    /** `images` is omitted entirely when the line has none -- see imagesFor. */
+    product_data: { name: string; images?: string[] };
     unit_amount: number;
   };
   quantity: number;
+}
+
+/**
+ * The image Stripe should render for a line, if there is one.
+ *
+ * AN ABSENT KEY, NOT AN EMPTY ARRAY. `images: []` is a request to render
+ * nothing, which is a different statement from "we do not know of an image"
+ * and is the sort of difference Stripe is entitled to treat as either.
+ *
+ * Stripe fetches these itself, so the URL has to be publicly reachable and
+ * absolute. It is the same URL the storefront and the bag already render, so
+ * the customer confirms against the picture they have been looking at.
+ */
+function imagesFor(line: DraftLine): { images: string[] } | Record<string, never> {
+  return line.imageUrl ? { images: [line.imageUrl] } : {};
 }
 
 /**
@@ -48,7 +64,7 @@ export function toStripeLineItems(lines: DraftLine[], currency: string): StripeL
       return {
         price_data: {
           currency: lower,
-          product_data: { name: nameFor(line) },
+          product_data: { name: nameFor(line), ...imagesFor(line) },
           unit_amount: line.subtotalInCents / line.quantity,
         },
         quantity: line.quantity,
@@ -59,7 +75,7 @@ export function toStripeLineItems(lines: DraftLine[], currency: string): StripeL
         currency: lower,
         // The count moves into the name so the customer still sees it, and so
         // the provider's own record says how many were bought.
-        product_data: { name: `${nameFor(line)} × ${line.quantity}` },
+        product_data: { name: `${nameFor(line)} × ${line.quantity}`, ...imagesFor(line) },
         unit_amount: line.subtotalInCents,
       },
       quantity: 1,
