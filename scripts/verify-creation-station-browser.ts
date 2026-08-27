@@ -198,6 +198,38 @@ async function main() {
     assert("a drag that leaves the area still moves it",
       escaped.x < after.x && escaped.y < after.y, `${JSON.stringify(after)} -> ${JSON.stringify(escaped)}`);
 
+    // ------------------------------------------------------------------
+    console.log("\n3. Studio is the way in");
+    //
+    // ============ A HIDDEN URL IS NOT A FEATURE ======================
+    //
+    // Sean, after using Studio on a phone: tapping the product you can see is
+    // far more intuitive than a separate URL nobody knows exists. So Studio
+    // leads with creating, and the thing on the bench is the door.
+    //
+    // Asserted because an entry point is exactly what gets lost in a later
+    // layout change -- and a Creation Station nobody can reach is a Creation
+    // Station nobody has.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
+    const studio = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+
+    const intoStation = page.locator(`a[href="/b/${store.slug}/studio/create"]`);
+    assert("Studio offers a way into the Creation Station", await intoStation.count() > 0,
+      studio.slice(0, 300));
+    assert("and says so in words somebody would look for",
+      /create something/i.test(studio), studio.slice(0, 300));
+
+    // IT LEADS WITH CREATING rather than describing what J4 can make. The old
+    // copy made asking the whole product.
+    assert("the page no longer says J4 does the work for you",
+      !/tell j4 what you want and it does the work/i.test(studio), studio.slice(0, 400));
+
+    // And the link genuinely arrives.
+    await intoStation.first().click();
+    await page.waitForURL(`**/studio/create`, { timeout: 30_000 });
+    check("and it arrives at the Creation Station",
+      new URL(page.url()).pathname, `/b/${store.slug}/studio/create`);
+
     await context.close();
   } finally {
     await browser?.close();

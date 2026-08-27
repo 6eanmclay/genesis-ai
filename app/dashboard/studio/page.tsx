@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
 import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
@@ -183,11 +184,27 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
   return (
     <div className="min-h-screen pb-32 text-zinc-900 dark:text-zinc-100">
       <div className="mx-auto max-w-5xl px-5 pt-8 lg:px-8">
+        {/* ============ THE HIERARCHY CHANGED (2026-08-27) ==============
+            Sean, after using this on a phone: Studio reads as a menu of things
+            J4 can make, and that is too small a description of what this is.
+            "Tell J4 what you want and it does the work" makes asking the whole
+            product; the point is that the owner can BUILD here, with J4
+            alongside them.
+
+            So creating leads, and everything J4 can do is a way into it rather
+            than the definition of it. */}
         <header>
           <h1 className="text-[28px] font-semibold tracking-tight">Studio</h1>
           <p className="mt-1.5 max-w-lg text-[15px] text-zinc-600 dark:text-zinc-400">
-            Where you and J4 make things for your business. Tell J4 what you want and it does the work.
+            Where you make things for your business. Design them yourself, with J4 alongside you.
           </p>
+
+          <Link
+            href={`${basePath}/studio/create`}
+            className="mt-5 inline-flex items-center gap-2 rounded-full bg-zinc-900 px-5 py-2.5 text-[15px] font-medium text-white transition hover:opacity-90 dark:bg-white dark:text-black"
+          >
+            Create something
+          </Link>
         </header>
 
         {/* THE WORK SURFACE. The most recent creation, large. This is the
@@ -195,14 +212,24 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
             across a room, not a thumbnail in a grid. */}
         <section className="mt-7">
           {latest?.mockupUrl ? (
-            <figure className="overflow-hidden rounded-2xl border border-black/[.07] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_12px_32px_-12px_rgba(0,0,0,.18)] dark:border-white/[.09] dark:bg-[#222226]">
+            /* ============ THE CARD IS THE DOOR (2026-08-27) ==============
+               Sean's own words: seeing the generated hoodie and being able to
+               tap into the full creation experience is far more intuitive than
+               a separate URL nobody knows exists.
+       
+               So the thing on the bench is not a report any more, it is the way
+               in. What it opens is the workspace, where this can be taken
+               apart and rebuilt rather than only asked about. */
+            <Link
+              href={`${basePath}/studio/create`}
+              className="group block overflow-hidden rounded-2xl border border-black/[.07] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_12px_32px_-12px_rgba(0,0,0,.18)] transition hover:border-black/20 dark:border-white/[.09] dark:bg-[#222226] dark:hover:border-white/30">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={latest.mockupUrl}
                 alt={`${surfaceLabel(latest.surface)} made in Studio`}
                 className="aspect-[4/3] w-full bg-white object-contain dark:bg-[#eeeeef]"
               />
-              <figcaption className="flex flex-wrap items-center justify-between gap-2 border-t border-black/[.06] px-5 py-3.5 dark:border-white/[.08]">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-black/[.06] px-5 py-3.5 dark:border-white/[.08]">
                 <div className="min-w-0">
                   <p className="text-[15px] font-medium">{surfaceLabel(latest.surface)}</p>
                   <p className="text-[13px] text-zinc-500">
@@ -210,15 +237,14 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
                     {latest.printFileUrl ? " · print file ready" : ""}
                   </p>
                 </div>
-                {/* Honest about where this is in its life. Approving and
-                    sending it to the Storefront is the next real capability
-                    (WORK_STUDIO.md) — this says so plainly rather than showing
-                    a button that cannot yet do it. */}
-                <span className="rounded-full bg-black/[.05] px-3 py-1 text-[12px] text-zinc-600 dark:bg-white/[.08] dark:text-zinc-300">
-                  Ask J4 to change it, or to make another version
+                {/* WHAT TAPPING DOES, said plainly. The old copy -- "ask
+                    J4 to change it" -- described the only thing that used to
+                    be possible, and describing it kept it the only thing. */}
+                <span className="rounded-full bg-black/[.05] px-3 py-1 text-[12px] text-zinc-600 transition group-hover:bg-black/[.09] dark:bg-white/[.08] dark:text-zinc-300 dark:group-hover:bg-white/[.14]">
+                  Open in Creation Station
                 </span>
-              </figcaption>
-            </figure>
+              </div>
+            </Link>
           ) : (
             // The empty state is an invitation, not a report of absence. The
             // old one said "No logo yet", which described a missing file and
@@ -226,9 +252,15 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
             <div className="rounded-2xl border border-dashed border-black/[.12] bg-white/70 px-6 py-14 text-center dark:border-white/[.14] dark:bg-white/[.03]">
               <p className="text-[17px] font-medium">Nothing on the bench yet</p>
               <p className="mx-auto mt-2 max-w-md text-[15px] text-zinc-600 dark:text-zinc-400">
-                Tap J4 and ask for something. It already knows your business, so it can start from
-                what you sell and how you present it.
+                Start something in the Creation Station, or ask J4 — it already knows your business,
+                so it can start from what you sell and how you present it.
               </p>
+              <Link
+                href={`${basePath}/studio/create`}
+                className="mt-5 inline-block rounded-full bg-zinc-900 px-5 py-2.5 text-[15px] font-medium text-white dark:bg-white dark:text-black"
+              >
+                Create something
+              </Link>
             </div>
           )}
         </section>
@@ -239,8 +271,11 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
             rather than an editor with a chat box attached. Derived from what
             exists, so J4 is guiding rather than listing commands. */}
         <section className="mt-8">
+          {/* SHORTCUTS INTO CREATING, not the description of it. Somebody
+              who knows what they want says it here; somebody who wants to
+              experiment opens the workspace above. Both are creating. */}
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            What you and J4 can make
+            Or tell J4 what you want
           </h2>
           <StudioActions
             categories={categories}

@@ -4,6 +4,7 @@ import { businessBasePath } from "@/lib/dashboard/navConfig";
 import { prisma } from "@/lib/prisma";
 import { creationProviderFor } from "@/lib/creation/provider";
 import { CreationStationClient } from "./CreationStationClient";
+import { GarmentShelf } from "./GarmentShelf";
 
 // THE CREATION STATION, FOR ONE BUSINESS.
 //
@@ -95,34 +96,12 @@ export default async function CreationStationPage({
 
   return (
     <div className="mx-auto w-full max-w-5xl px-5 py-8">
-      <h1 className="text-[22px] font-semibold">Choose something to make</h1>
-      <p className="mt-1 text-[13px] text-zinc-500">
-        {garments.length} blanks from your supplier. Colours, sizes and print areas are theirs.
-      </p>
-
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        {garments.map((g) => (
-          <Link
-            key={g.externalProductId}
-            href={`${basePath}/studio/create?garment=${encodeURIComponent(g.externalProductId)}`}
-            className="group rounded-2xl border border-black/[.10] p-3 transition hover:border-black/30 dark:border-white/[.14] dark:hover:border-white/40"
-          >
-            <div className="aspect-square overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-900">
-              {g.imageUrl && (
-                // eslint-disable-next-line @next/next/no-img-element -- supplier CDN
-                <img src={g.imageUrl} alt="" className="h-full w-full object-contain" />
-              )}
-            </div>
-            <p className="mt-2 line-clamp-2 text-[13px] font-medium">{g.name}</p>
-            <p className="mt-0.5 text-[12px] text-zinc-500">
-              {/* THE MANUFACTURER WHERE THE SUPPLIER NAMED ONE, and the number
-                  of colours — both real facts, neither invented. */}
-              {g.brand ? `${g.brand} · ` : ""}
-              {new Set(g.variants.map((v) => v.color)).size} colours
-            </p>
-          </Link>
-        ))}
-      </div>
+      <h1 className="text-[22px] font-semibold">What do you want to make?</h1>
+      {/* CHOOSING IS PART OF CREATING. The shelf filters by the supplier's own
+          garment type and manufacturer, so picking a blank is a decision about
+          what you are making rather than scrolling until something looks
+          right. Both facts are theirs — see GarmentShelf. */}
+      <GarmentShelf garments={garments} basePath={basePath} />
     </div>
   );
 }
