@@ -141,6 +141,30 @@ So `blockedOn` answers from the environment as it is now. `verify-aliexpress.ts`
 §8 and §11 assert both directions, and reverting it to a static array fails four
 assertions.
 
+## 6b. The capability set, and asking broadly
+
+Sean's instruction (2026-08-27): ask AliExpress for the **full legitimate
+capability set** rather than voluntarily limiting Genesis to basic search, and
+negotiate down only if they refuse.
+
+`lib/sourcing/aliexpressCapabilities.ts` models the grant as data for exactly
+that reason -- a partial approval becomes one environment variable, not a
+rewrite:
+
+```
+ALIEXPRESS_GRANTED_CAPABILITIES=search,product_detail,freight
+```
+
+Five capabilities are requested: **search**, **product_detail**, **freight**
+(affiliate group, app credentials only) and **order**, **tracking**
+(dropshipping group, per-account OAuth). Anything not granted is reported as
+denied **with a reason**, and never becomes a call that fails in front of an
+owner.
+
+See `ALIEXPRESS_APPLICATION.md` for what to submit, the justification for each
+capability, and the answer to the app-URL question -- **Genesis's existing
+production website is what the form wants; no native app is needed.**
+
 ## 7. What Sean needs to do — in order
 
 1. [openservice.aliexpress.com](https://openservice.aliexpress.com/) → register a

@@ -1,5 +1,6 @@
 import type { ProductSource, SourceQuoteResult, SourceSearchResult, SourcingIntent } from "./types";
 import { priceInCents, type AliexpressFailure, type AliexpressProduct } from "./aliexpressProtocol";
+import { capabilityUnavailableReason, hasCapability } from "./aliexpressCapabilities";
 
 // AliExpress, as a wholesale/dropship source.
 //
@@ -94,11 +95,25 @@ export const aliexpressSource: ProductSource = {
     // others — and a top-level import would not fail loudly there; it would
     // stop this whole module loading, which is how a source silently
     // disappears from discovery.
-    if (aliexpressConfiguredInEnvironment()) {
-      const { searchAliexpress } = await import("./aliexpressClient");
-      return await runSearch(searchAliexpress, intent);
+    if (!aliexpressConfiguredInEnvironment()) {
+      return NOT_CONFIGURED("its catalog can be searched");
     }
-    return NOT_CONFIGURED("its catalog can be searched");
+
+    // A grant AliExpress refused is not a request worth making. Search is the
+    // affiliate baseline and is granted by default (see grantedCapabilities),
+    // so this only fires where the operator has recorded an actual refusal.
+    if (!hasCapability("search")) {
+      return {
+        ok: false,
+        reason: "not_connected",
+        detail:
+          "Genesis's AliExpress app isn't approved to search the catalog. " +
+          capabilityUnavailableReason("search"),
+      };
+    }
+
+    const { searchAliexpress } = await import("./aliexpressClient");
+    return await runSearch(searchAliexpress, intent);
   },
 
   // Present because the capability is declared. A wholesale supplier genuinely

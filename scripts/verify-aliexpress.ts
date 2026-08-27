@@ -10,6 +10,13 @@ import {
 } from "@/lib/sourcing/aliexpressProtocol";
 import { aliexpressSource, ALIEXPRESS_REQUIRED_CREDENTIALS } from "@/lib/sourcing/aliexpress";
 import {
+  ALIEXPRESS_CAPABILITY_SPECS,
+  ALL_ALIEXPRESS_CAPABILITIES,
+  deniedCapabilities,
+  grantedCapabilities,
+  hasCapability,
+} from "@/lib/sourcing/aliexpressCapabilities";
+import {
   describeBlockedSources,
   getProductSource,
   getProductSources,
@@ -421,6 +428,95 @@ async function main() {
       // that turns the whole registry on and off.
       assert("while Printful is untouched by any of it", getProductSources().some((s) => s.key === "printful"));
     });
+  }
+
+  console.log("\n12. Capability grants, and what a refusal does");
+  {
+    // ============ ASKING BROADLY, DEGRADING HONESTLY ======================
+    //
+    // AliExpress approves an app for capability GROUPS and can refuse some
+    // while granting others. The application asks for the full legitimate set;
+    // this is what happens when part of it comes back denied.
+    await withEnv({ ALIEXPRESS_GRANTED_CAPABILITIES: undefined }, () => {
+      // Search is the default, and only search — it is the one capability with
+      // a live call site that already reports its own refusal honestly.
+      check("search is assumed until told otherwise", grantedCapabilities(), ["search"]);
+      assert("but nothing beyond it is", !hasCapability("order") && !hasCapability("freight"));
+    });
+
+    await withEnv({ ALIEXPRESS_GRANTED_CAPABILITIES: "search,product_detail,freight" }, () => {
+      check("a partial grant is taken literally",
+        grantedCapabilities(), ["search", "product_detail", "freight"]);
+      assert("what was granted is available", hasCapability("freight"));
+      assert("and what was not is not", !hasCapability("order"));
+
+      const denied = deniedCapabilities().map((d) => d.capability);
+      check("the denied ones are named, not silently absent", denied, ["order", "tracking"]);
+      // Each denial has to say something the operator can act on.
+      assert("each with a reason",
+        deniedCapabilities().every((d) => d.reason.length > 40),
+        JSON.stringify(deniedCapabilities()));
+    });
+
+    await withEnv({ ALIEXPRESS_GRANTED_CAPABILITIES: "all" }, () => {
+      check("'all' is the full set", grantedCapabilities().length, ALL_ALIEXPRESS_CAPABILITIES.length);
+      check("and nothing is denied", deniedCapabilities(), []);
+    });
+
+    await withEnv({ ALIEXPRESS_GRANTED_CAPABILITIES: "none" }, () => {
+      // The honest case where the app is approved and every group refused.
+      check("'none' really means none", grantedCapabilities(), []);
+    });
+
+    // A TYPO MUST NOT BECOME A CAPABILITY. A granted capability nothing
+    // implements would unlock a call that fails in front of an owner.
+    await withEnv({ ALIEXPRESS_GRANTED_CAPABILITIES: "search,ordering,teleport" }, () => {
+      check("unrecognised names are dropped, not passed through", grantedCapabilities(), ["search"]);
+    });
+    await withEnv({ ALIEXPRESS_GRANTED_CAPABILITIES: "  SEARCH , Freight  " }, () => {
+      check("case and spacing don't change the answer", grantedCapabilities(), ["search", "freight"]);
+    });
+
+    // Every spec must be internally consistent, because the application form is
+    // written from these and a wrong group would be a false statement to
+    // AliExpress.
+    for (const capability of ALL_ALIEXPRESS_CAPABILITIES) {
+      const spec = ALIEXPRESS_CAPABILITY_SPECS[capability];
+      assert(`${capability} names a real-looking method`, /^aliexpress\.[a-z.]+$/.test(spec.method), spec.method);
+      assert(`${capability} says what the owner gets`, spec.whatItEnables.length > 40);
+      // THE ARCHITECTURAL LINE: the dropshipping group authenticates per
+      // AliExpress account, the affiliate group per app. A spec claiming a DS
+      // method needs no OAuth would hide a whole missing auth flow.
+      check(`${capability}'s OAuth need matches its API group`,
+        spec.needsOAuth, spec.apiGroup === "dropshipping");
+    }
+    // And the unverified method names are flagged rather than presented as fact.
+    assert("at least one method is honestly marked unverified",
+      ALL_ALIEXPRESS_CAPABILITIES.some((c) => !ALIEXPRESS_CAPABILITY_SPECS[c].methodVerified),
+      "AliExpress's API reference is login-gated; a name taken from a pattern must say so");
+  }
+
+  console.log("\n13. A refused search capability stops the call being made");
+  {
+    await withEnv(
+      { ALIEXPRESS_APP_KEY: "K", ALIEXPRESS_APP_SECRET: "S", ALIEXPRESS_GRANTED_CAPABILITIES: "none" },
+      async () => {
+        const result = await aliexpressSource.search({
+          storeId: "store_1",
+          keywords: "copper rings",
+          brandPositioning: "minimalist",
+          limit: 8,
+        });
+        check("it refuses", result.ok, false);
+        if (!result.ok) {
+          // NOT not_configured: the credentials are there. This is AliExpress
+          // withholding a capability, which is a different conversation.
+          check("as a connection problem, not a configuration one", result.reason, "not_connected");
+          assert("naming AliExpress as the one who has to approve it",
+            /approv/i.test(result.detail), result.detail);
+        }
+      },
+    );
   }
 
   console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${passes} passed, ${failures} failed\n`);
