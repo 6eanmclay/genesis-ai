@@ -277,7 +277,16 @@ async function main() {
 
     // Unlike every OAuth connector here, this one needs no platform credentials,
     // so it is never "unavailable" for want of an environment variable.
-    check("it needs nothing from the environment", twilioConnector.configured?.(), true);
+    // ============ ABSENT, NOT TRUE =======================================
+    //
+    // The contract says an absent configured() means "nothing to configure".
+    // So implementing it — even returning true — is the statement that this
+    // connector HAS platform credentials worth checking, and
+    // verify-connection-truthfulness builds its list of such connectors by
+    // asking exactly this. The first version of this connector answered true
+    // and put itself in that list; the C1 suite caught it.
+    check("it declares no platform credentials by not implementing configured()",
+      twilioConnector.configured, undefined);
   }
 
   console.log("\n9. The connect form asks for what Twilio actually needs");

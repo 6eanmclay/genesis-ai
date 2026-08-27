@@ -166,12 +166,17 @@ export const twilioConnector: IntegrationConnector = {
     revokesOnDisconnect: false,
   },
 
-  // Nothing platform-level to configure: the credentials are the merchant's
-  // own, so unlike every OAuth connector here this one is never "unavailable"
-  // for want of an environment variable.
-  configured() {
-    return true;
-  },
+  // ============ NO configured(), AND THAT IS THE DECLARATION =============
+  //
+  // This started as `configured() { return true }`, which reads as harmless and
+  // is not. The contract says absent means "nothing to configure", so
+  // IMPLEMENTING it is the statement that this connector has platform
+  // credentials to check — and verify-connection-truthfulness builds its list
+  // of such connectors by asking which ones implement it. A connector that
+  // always answered true put itself in that list and made it wrong.
+  //
+  // Twilio genuinely has nothing at the platform level: the credentials are the
+  // merchant's own. Omitting this is how that is said.
 
   async connect(storeId, userId, params) {
     if (params?.accountSid && params.apiKeySid && params.apiKeySecret) {

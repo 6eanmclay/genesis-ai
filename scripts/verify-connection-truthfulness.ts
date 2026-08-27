@@ -204,7 +204,16 @@ async function main() {
   // ========================================================================
   eq("every catalog entry is still present", CONNECTOR_CATALOG.length, 12);
   const unbuilt = CONNECTOR_CATALOG.filter((e) => e.connector === null);
-  eq("including the six with no implementation", unbuilt.length, 6);
+  // WAS SIX UNTIL 2026-08-27, when Twilio was built. The count is left as an
+  // exact number rather than relaxed to "some" — C2's whole point is that the
+  // catalog keeps its unbuildable entries and marks them honestly, and a count
+  // that stopped being exact would stop noticing an entry quietly disappearing.
+  // Building one is the only legitimate way this moves, and it moves DOWN.
+  eq("including the five with no implementation", unbuilt.length, 5);
+  // The one that left is named, so this cannot be edited past without saying
+  // what changed.
+  eq("Twilio is no longer among them",
+    unbuilt.some((e) => e.id === "twilio"), false);
   for (const e of unbuilt) {
     eq(`${e.id} reports itself unavailable rather than connectable`,
       connectionHealthOf({ available: false, row: null, recordsProduced: 0 }).state, "unavailable");
