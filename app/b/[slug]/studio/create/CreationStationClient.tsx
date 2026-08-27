@@ -21,21 +21,36 @@ export function CreationStationClient({
   slug,
   garment,
   assets,
-  blankImages,
+  blanks,
+  supplierPrices,
   creatableId,
 }: {
   slug: string;
   garment: Garment;
   assets: { id: string; url: string; name: string }[];
-  blankImages: BlankImage[];
+  /** The supplier's blanks, and why there are none if there are none. */
+  blanks: { images: BlankImage[]; problem: string | null };
+  /** What the supplier charges, in cents, keyed by external variant id. */
+  supplierPrices: Record<string, number>;
   creatableId: string;
 }) {
   const [name, setName] = useState(garment.name);
-  // A default that is a real number rather than zero: roughly three times the
-  // blank's own cost, which is a normal apparel margin and is a starting point
-  // the owner can change rather than a recommendation.
-  const suggested = garment.variants.find((v) => v.costInCents)?.costInCents ?? 2500;
-  const [price, setPrice] = useState(String(Math.max(Math.round((suggested * 3) / 100), 1)));
+  // ============ THE $75 (2026-08-27) ==================================
+  //
+  // This read the blank's cost off the variant, and Printful's catalog-variants
+  // response has no price field at all — so `suggested` was ALWAYS the 2500
+  // placeholder, tripled to 7500, printed as $75. Every product, every time.
+  //
+  // The real supplier price now comes from Printful's prices endpoint. Where
+  // they price it, the starting selling price is three times that — a normal
+  // apparel margin, and a starting point rather than a recommendation. Where
+  // they do not, the field starts EMPTY: a number nobody can source is worse
+  // than an empty box that has to be filled in.
+  const supplierCost =
+    garment.variants.map((v) => supplierPrices[v.externalVariantId]).find((c) => c) ?? null;
+  const [price, setPrice] = useState(
+    supplierCost === null ? "" : String(Math.max(Math.round((supplierCost * 3) / 100), 1)),
+  );
 
   async function handleAdd(design: ProductDesign): Promise<string | null> {
     const dollars = Number(price);
@@ -59,7 +74,7 @@ export function CreationStationClient({
           />
         </label>
         <label className="flex w-32 flex-col gap-1">
-          <span className="text-[12px] text-zinc-500">Price</span>
+          <span className="text-[12px] text-zinc-500">Your price</span>
           <input
             value={price}
             inputMode="decimal"
@@ -72,7 +87,9 @@ export function CreationStationClient({
       <CreationStation
         garment={garment}
         assets={assets}
-        blankImages={blankImages}
+        blankImages={blanks.images}
+        blankProblem={blanks.problem}
+        supplierPrices={supplierPrices}
         creatableId={creatableId}
         onAddToStore={handleAdd}
       />

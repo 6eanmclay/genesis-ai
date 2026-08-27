@@ -10,7 +10,7 @@ import { SupplierStep } from "./SupplierStep";
 import { getConnector } from "@/lib/integrations/registry";
 import { connectExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { creatableById, blanksFor, portalItems } from "@/lib/creation/creatables";
-import type { Blank } from "@/lib/creation/garment";
+import type { Blank, BlankImage } from "@/lib/creation/garment";
 
 // THE CREATION STATION, FOR ONE BUSINESS.
 //
@@ -29,26 +29,56 @@ import type { Blank } from "@/lib/creation/garment";
 export const metadata = { title: "Creation Station" };
 
 /**
- * The supplier's transparent blanks for one product, or an empty list.
+ * The supplier's transparent blanks for one product, and why there are none.
  *
  * ONE MORE REQUEST, AND ONLY THE CANVAS MAKES IT. A shelf of twelve does not
  * need blank imagery, and paying for twelve of these to draw a grid is how the
  * rate limit was hit the first time.
  *
- * A failure here is NOT a failure of the page. The blanks are how the canvas
- * shows the real product; without them it falls back to a drawn object and
- * says so. Losing the whole designer because a picture would not load would be
- * a worse answer than designing on ours for a minute.
+ * ============ THE CATCH THAT HID THE BUG (2026-08-27) ==================
+ *
+ * This swallowed the error and returned an empty list, so that the designer
+ * would survive a picture failing to load. What it actually did was make a
+ * broken data path indistinguishable from a supplier who publishes no blanks
+ * — and when the first live run produced no blank at all, the screen said
+ * nothing was wrong. Sean had told me not to do exactly this, and I did it
+ * anyway, one file away from where I wrote the rule down.
+ *
+ * The reason survives now. A failure still does not take the page down — the
+ * canvas falls back to a drawn object — but it arrives WITH the reason, and
+ * the screen says which of the two happened.
  */
 async function blankImagesFor(
   provider: NonNullable<Awaited<ReturnType<typeof creationAccessFor>>["provider"]>,
   storeId: string,
   externalProductId: string,
-) {
+): Promise<{ images: BlankImage[]; problem: string | null }> {
   try {
-    return await provider.getBlankImages({ storeId, externalProductId });
+    return { images: await provider.getBlankImages({ storeId, externalProductId }), problem: null };
+  } catch (error) {
+    return {
+      images: [],
+      problem: error instanceof Error ? error.message : "Your supplier's blank images could not be read.",
+    };
+  }
+}
+
+/**
+ * What the supplier charges, keyed by external variant id.
+ *
+ * A failure is an empty map rather than a dead page — a price that cannot be
+ * fetched leaves the field blank and says "supplier price unavailable", which
+ * is the honest version of the $75 that used to appear instead.
+ */
+async function supplierPricesFor(
+  provider: NonNullable<Awaited<ReturnType<typeof creationAccessFor>>["provider"]>,
+  storeId: string,
+  externalProductId: string,
+): Promise<Record<string, number>> {
+  try {
+    return await provider.getSupplierPrices({ storeId, externalProductId });
   } catch {
-    return [];
+    return {};
   }
 }
 
@@ -138,7 +168,7 @@ export default async function CreationStationPage({
       ? await Promise.all(
           portalItems(blanks).map(async (item) => {
             if (!item.representativeProductId) return item;
-            const images = await blankImagesFor(provider, store.id, item.representativeProductId);
+            const { images } = await blankImagesFor(provider, store.id, item.representativeProductId);
             const front = images.find((i) => i.placement === "front") ?? images[0] ?? null;
             return { ...item, blankUrl: front?.url ?? null, blankColorHex: front?.colorCode ?? null };
           }),
@@ -249,7 +279,8 @@ export default async function CreationStationPage({
         slug={slug}
         garment={garment}
         assets={await artworkFor(store.id)}
-        blankImages={await blankImagesFor(provider, store.id, garment.externalProductId)}
+        blanks={await blankImagesFor(provider, store.id, garment.externalProductId)}
+        supplierPrices={await supplierPricesFor(provider, store.id, garment.externalProductId)}
         creatableId={kind ?? ""}
       />
     );
@@ -313,7 +344,8 @@ export default async function CreationStationPage({
         slug={slug}
         garment={shown[0]}
         assets={await artworkFor(store.id)}
-        blankImages={await blankImagesFor(provider, store.id, shown[0].externalProductId)}
+        blanks={await blankImagesFor(provider, store.id, shown[0].externalProductId)}
+        supplierPrices={await supplierPricesFor(provider, store.id, shown[0].externalProductId)}
         creatableId={kind ?? ""}
       />
     );

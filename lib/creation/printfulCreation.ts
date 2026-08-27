@@ -210,6 +210,63 @@ export function printfulCreationProvider(
       return garments;
     },
 
+    // ============ WHAT PRINTFUL CHARGES, FROM PRINTFUL ================
+    //
+    // catalog-variants carries no price — their own reference lists the fields
+    // and price is not among them — which is why every product showed the same
+    // placeholder. This is where the number actually lives.
+    //
+    // Their documented shape puts the blank's own cost under
+    // variant.techniques[].price and the cost of PRINTING under
+    // product.placements[].price. Only the first is the supplier price for the
+    // blank; the second is a charge for a decoration that has not been chosen
+    // yet, and adding them together would invent a number for a product nobody
+    // has finished designing.
+    //
+    // Walked rather than indexed, for the same reason as the blank images: the
+    // reference has been wrong twice, and a price read from the wrong field is
+    // worse than no price at all — so anything ambiguous is left out.
+    async getSupplierPrices({ storeId, externalProductId }) {
+      const body = (await fetchJson(
+        storeId,
+        "creation.prices",
+        withSellingRegion(`/catalog-products/${externalProductId}/prices`),
+      )) as { data?: unknown } | null;
+
+      const payload = (body?.data ?? body) as Record<string, unknown> | null;
+      const out: Record<string, number> = {};
+      if (!payload || typeof payload !== "object") return out;
+
+      const variants = Array.isArray(payload.variants)
+        ? (payload.variants as unknown[])
+        : payload.variant
+          ? [payload.variant]
+          : [];
+
+      for (const entry of variants) {
+        if (!entry || typeof entry !== "object") continue;
+        const v = entry as Record<string, unknown>;
+        const id = v.id ?? v.catalog_variant_id;
+        if (typeof id !== "number" && typeof id !== "string") continue;
+
+        // The cheapest technique is the blank's own price: a technique is a way
+        // of decorating, and the owner has not picked one. Taking the lowest is
+        // the honest floor rather than a guess at which they will use.
+        const techniques = Array.isArray(v.techniques) ? (v.techniques as unknown[]) : [];
+        const prices = techniques
+          .map((tech) =>
+            tech && typeof tech === "object"
+              ? priceToCents((tech as Record<string, unknown>).price as string | undefined)
+              : null,
+          )
+          .filter((c): c is number => c !== null);
+        const direct = priceToCents(v.price as string | undefined);
+        const cents = prices.length > 0 ? Math.min(...prices) : direct;
+        if (cents !== null) out[String(id)] = cents;
+      }
+      return out;
+    },
+
     // ============ THE BLANK ITSELF, FOR THE CANVAS ====================
     //
     // Printful's own words for this endpoint's imagery: blank images are
@@ -256,16 +313,29 @@ export function printfulCreationProvider(
               ? obj.color
               : colorCode;
 
-        for (const key of ["image_url", "url", "image", "src"]) {
-          const value = obj[key];
-          if (typeof value === "string" && /^https?:\/\//.test(value) && !seen.has(value)) {
-            seen.add(value);
-            found.push({
-              placement: nextPlacement ?? "front",
-              colorCode: nextColor && /^#?[0-9a-f]{3,8}$/i.test(nextColor) ? nextColor : null,
-              url: value,
-            });
-          }
+        // ANY string that is an image, under any key.
+        //
+        // WIDENED (2026-08-27) after the first live run produced no blank at
+        // all. The previous version looked under four key names I had guessed
+        // — image_url, url, image, src — which is the same mistake as trusting
+        // the published schema, one level down. Printful's real response may
+        // key these as mockup_url, thumbnail_url, or nest them in a list of
+        // plain strings, and none of those would have been seen.
+        //
+        // So: anything that looks like an image URL counts, wherever it sits.
+        // A false positive is a picture of the right product from the wrong
+        // field; a false negative is a blank canvas, which is what happened.
+        for (const [key, value] of Object.entries(obj)) {
+          if (typeof value !== "string" || !/^https?:\/\//.test(value)) continue;
+          const looksLikeImage =
+            /\.(png|jpe?g|webp|avif)(\?|$)/i.test(value) || /image|url|src|mockup|thumb/i.test(key);
+          if (!looksLikeImage || seen.has(value)) continue;
+          seen.add(value);
+          found.push({
+            placement: nextPlacement ?? "front",
+            colorCode: nextColor && /^#?[0-9a-f]{3,8}$/i.test(nextColor) ? nextColor : null,
+            url: value,
+          });
         }
 
         for (const value of Object.values(obj)) walk(value, nextPlacement, nextColor);
@@ -276,13 +346,39 @@ export function printfulCreationProvider(
       if (found.length === 0) {
         // AN EMPTY ANSWER IS REAL — a supplier may publish no blank imagery.
         // A SHAPE WE COULD NOT READ IS NOT, and the two must not look alike.
-        const keys =
-          body && typeof body === "object"
-            ? Object.keys(body as Record<string, unknown>).join(", ")
-            : typeof body;
-        if (keys !== "data") {
+        //
+        // TIGHTENED (2026-08-27). This only complained when the top-level key
+        // was not `data`, so a response that WAS shaped {data: ...} but
+        // carried its URLs somewhere unexpected returned an empty list and
+        // read as "your supplier has no pictures". That is the failure mode
+        // this check exists to prevent, and it walked straight past it.
+        //
+        // Now: an empty container is a real empty answer; a container with
+        // something in it and no image we could find is a shape we cannot read.
+        const container = body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+        const payload = container?.data ?? container;
+        const isEmpty =
+          payload === null ||
+          payload === undefined ||
+          (Array.isArray(payload) && payload.length === 0) ||
+          (typeof payload === "object" && Object.keys(payload as object).length === 0);
+
+        if (!isEmpty) {
+          const keys = container ? Object.keys(container).join(", ") : typeof body;
+          const inner =
+            payload === container
+              ? ""
+              : payload && typeof payload === "object" && !Array.isArray(payload)
+              ? ` / ${Object.keys(payload as object).slice(0, 12).join(", ")}`
+              : Array.isArray(payload)
+                ? ` / array of ${payload.length}, first: ${
+                    payload[0] && typeof payload[0] === "object"
+                      ? Object.keys(payload[0] as object).slice(0, 12).join(", ")
+                      : typeof payload[0]
+                  }`
+                : "";
           throw new Error(
-            `Printful returned blank images in an unfamiliar shape (top-level: ${keys}).`,
+            `Printful sent blank images in a shape with no image in it (keys: ${keys}${inner}).`,
           );
         }
       }

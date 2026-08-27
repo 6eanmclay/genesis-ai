@@ -68,6 +68,66 @@ export interface Garment {
   printAreas: PrintArea[];
 }
 
+/** Cents as money, for a screen. Pure, and the one place this is spelled. */
+export function formatCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+/**
+ * The product's name in the words a person would use for it — pure.
+ *
+ * ============ THE CATALOGUE TITLE IS NOT A PRODUCT NAME (2026-08-27) ====
+ *
+ * Sean, on the live screen: "Users should never see that." The screen was
+ * showing Printful's own catalogue title —
+ *
+ *     Unisex Heavy Blend Hoodie | Gildan 18500
+ *
+ * — which is a SKU line: an audience qualifier, the blank's marketing name,
+ * the manufacturer and a model number. Somebody about to make a hoodie is
+ * looking at a hoodie.
+ *
+ * PRESENTATION ONLY. Nothing here changes the catalogue data; garment.name
+ * keeps the supplier's exact title, because that is what the supplier calls it
+ * and the order, the shelf filter and the manufacturer extraction all depend
+ * on it. This is a different sentence for a different reader.
+ *
+ * The manufacturer is dropped here rather than lost — brandFromTitle already
+ * pulls "Gildan" out of the same string, and the screen shows it as its own
+ * fact rather than as punctuation in a title.
+ */
+export function productLabel(name: string): string {
+  // Everything before the pipe is the product; after it is the maker and model.
+  const beforePipe = name.split("|")[0]?.trim() ?? name.trim();
+  // Audience qualifiers describe who a size chart is for, not what the thing
+  // is. Removed from the FRONT only, so "Unisex Hoodie" becomes "Hoodie" and a
+  // product genuinely called something else keeps its name.
+  const withoutAudience = beforePipe.replace(
+    /^(unisex|men'?s|women'?s|kids'?|youth|toddler|baby|infant)\s+/i,
+    "",
+  );
+  return withoutAudience.trim() || beforePipe || name;
+}
+
+/**
+ * The placements a person is offered as views, in the order they think of them.
+ *
+ * A blank can print in a dozen places — front, back, embroidery_chest_left,
+ * sleeve_left, front_dtf — and the screen was listing all of them by their
+ * internal names. Front and back are the two views Sean asked to be
+ * first-class; the rest stay in printAreas, where validation and the eventual
+ * order still read them.
+ */
+const VIEW_ORDER = ["front", "back"];
+
+export function designableViews(garment: Garment): { placement: string; label: string }[] {
+  const has = new Set(garment.printAreas.map((a) => a.placement));
+  return VIEW_ORDER.filter((v) => has.has(v)).map((v) => ({
+    placement: v,
+    label: v === "front" ? "Front" : "Back",
+  }));
+}
+
 /** The distinct colours of a garment, each with one representative variant. */
 export function colorsOf(garment: Garment): { color: string; colorHex: string | null; imageUrl: string | null }[] {
   const seen = new Map<string, { color: string; colorHex: string | null; imageUrl: string | null }>();
@@ -214,6 +274,33 @@ export interface CreationProvider {
   getGarments(params: { storeId: string; externalProductIds: string[] }): Promise<Garment[]>;
   /** One blank in full, with every colour, size and print area. */
   getGarment(params: { storeId: string; externalProductId: string }): Promise<Garment | null>;
+  /**
+   * What the SUPPLIER charges for one of these, in cents, per variant.
+   *
+   * ============ WHY THIS IS ITS OWN CALL (2026-08-27) =================
+   *
+   * Sean, on every product showing $75: "That's clearly the test/store selling
+   * price, not the supplier price."
+   *
+   * He was right, and the cause is upstream of the number. Printful's
+   * catalog-variants response carries no price field at all — their own
+   * reference lists id, catalog_product_id, name, size, color, color_code,
+   * image and _links, and nothing else. So costInCents was null for every
+   * variant of every product, the designer fell back to a placeholder of
+   * 2500 cents, tripled it for a starting margin, and printed $75. The same
+   * $75, for everything, forever.
+   *
+   * The real number lives on /v2/catalog-products/{id}/prices. It is a
+   * separate request because it is separate data — and it is the SUPPLIER's
+   * price, which is not the selling price and must never be shown as one.
+   *
+   * An empty map is a real answer: prices vary by selling region and technique,
+   * and a product we could not price is better said than guessed.
+   */
+  getSupplierPrices(params: {
+    storeId: string;
+    externalProductId: string;
+  }): Promise<Record<string, number>>;
   /**
    * Pictures of the blank itself, for the design canvas.
    *

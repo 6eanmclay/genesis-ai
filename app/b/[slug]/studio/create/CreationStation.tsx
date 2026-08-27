@@ -13,7 +13,17 @@ import {
   type PlacementId,
   type ProductDesign,
 } from "@/lib/creation/design";
-import { areaFor, colorsOf, sizesFor, variantFor, type Garment, type BlankImage } from "@/lib/creation/garment";
+import {
+  areaFor,
+  colorsOf,
+  designableViews,
+  formatCents,
+  productLabel,
+  sizesFor,
+  variantFor,
+  type Garment,
+  type BlankImage,
+} from "@/lib/creation/garment";
 import { applyOperation, describeOperation, operationsFor, type DesignOperation } from "@/lib/creation/operations";
 import { CreationCanvas } from "./CreationCanvas";
 
@@ -48,6 +58,8 @@ export function CreationStation({
   garment,
   assets,
   blankImages,
+  blankProblem,
+  supplierPrices,
   creatableId,
   onAddToStore,
 }: {
@@ -55,6 +67,10 @@ export function CreationStation({
   assets: Asset[];
   /** The supplier's transparent blanks for this product. Empty is a real answer. */
   blankImages: BlankImage[];
+  /** Set when the blanks could not be read — which is NOT the same as none. */
+  blankProblem: string | null;
+  /** What the supplier charges, in cents, keyed by external variant id. */
+  supplierPrices: Record<string, number>;
   /** Only used for the drawn fallback when the supplier has no blank. */
   creatableId: string;
   /** Returns null on success, or a message the owner can act on. */
@@ -165,6 +181,12 @@ export function CreationStation({
   // for the rest, and the per-colour version is the truer picture where it
   // exists.
   const chosenHex = colors.find((c) => c.color === color)?.colorHex ?? null;
+
+  // WHAT THIS EXACT VARIANT COSTS FROM THE SUPPLIER. Null when Printful did
+  // not price it — said plainly rather than filled in, which is the whole
+  // reason every product used to read $75.
+  const supplierCost =
+    (variant?.externalVariantId ? supplierPrices[variant.externalVariantId] : undefined) ?? null;
   const blankUrl = useMemo(() => {
     const forPlacement = blankImages.filter((b) => b.placement === placement);
     const pool = forPlacement.length > 0 ? forPlacement : blankImages;
@@ -176,13 +198,34 @@ export function CreationStation({
 
   return (
     <div className="mx-auto w-full max-w-6xl px-5 py-8">
+      {/* ============ WHAT A PERSON IS LOOKING AT =======================
+          The supplier's catalogue title and its list of internal placement
+          keys used to be printed here verbatim. Both are still carried in the
+          data; neither belongs on the screen of somebody making a hoodie. */}
       <header className="mb-6">
-        <h1 className="text-[22px] font-semibold text-[var(--brand-text,inherit)]">{garment.name}</h1>
-        <p className="mt-1 text-[13px] text-zinc-500">
+        <h1 className="text-[22px] font-semibold text-[var(--brand-text,inherit)]">
+          {productLabel(garment.name)}
+        </h1>
+        <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-[13px] text-zinc-500">
+          {/* WHAT THE SUPPLIER CHARGES, which is not what this will sell for.
+              Two different numbers about two different transactions, and the
+              screen showed neither until now. */}
+          {supplierCost !== null ? (
+            <span className="text-[15px] font-medium text-[var(--brand-text,inherit)]">
+              {formatCents(supplierCost)}
+            </span>
+          ) : null}
+          {supplierCost !== null ? <span aria-hidden="true">·</span> : null}
+          <span>{supplierCost !== null ? "supplier price" : "supplier price unavailable"}</span>
           {/* THE MANUFACTURER, WHERE THE SUPPLIER NAMED ONE. Absent rather
-              than invented — see brandFromTitle. */}
-          {garment.brand ? `${garment.brand} · ` : ""}
-          {garment.printAreas.map((a) => a.placement).join(" and ")} printable
+              than invented — see brandFromTitle. Its own fact now, rather than
+              punctuation inside a title. */}
+          {garment.brand ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{garment.brand}</span>
+            </>
+          ) : null}
         </p>
       </header>
 
@@ -191,23 +234,27 @@ export function CreationStation({
           {/* FRONT AND BACK ARE SEPARATE CANVASES on the same garment. Only
               the sides this blank actually prints on are offered. */}
           <div className="mb-4 flex gap-2">
-            {garment.printAreas.map((a) => {
-              const count = layersOn(design, a.placement).length;
-              const active = a.placement === placement;
+            {/* FRONT AND BACK, NAMED IN ENGLISH. Every other placement this
+                blank supports stays in printAreas, where the print-area
+                validation and the eventual order still read it — it is simply
+                not a tab labelled embroidery_chest_left. */}
+            {designableViews(garment).map((view) => {
+              const count = layersOn(design, view.placement).length;
+              const active = view.placement === placement;
               return (
                 <button
-                  key={a.placement}
+                  key={view.placement}
                   type="button"
                   onClick={() => {
-                    setPlacement(a.placement);
+                    setPlacement(view.placement);
                     setSelected(null);
                   }}
                   className={[
-                    "rounded-full px-4 py-1.5 text-[13px] capitalize transition",
+                    "rounded-full px-4 py-1.5 text-[13px] transition",
                     active ? "bg-zinc-900 text-white dark:bg-white dark:text-black" : "bg-black/[.06] dark:bg-white/[.08]",
                   ].join(" ")}
                 >
-                  {a.placement}
+                  {view.label}
                   {count > 0 && <span className="ml-1.5 opacity-60">{count}</span>}
                 </button>
               );
@@ -226,6 +273,29 @@ export function CreationStation({
             onMove={(layerId, dx, dy) => setDesign((d) => applyOperation(d, { kind: "move", placement, layerId, dx, dy }))}
             onScale={(layerId, factor) => setDesign((d) => applyOperation(d, { kind: "scale", placement, layerId, factor }))}
           />
+
+          {/* ============ WHOSE GARMENT IS ON THE CANVAS ==================
+              Three different situations that all end with a drawing on screen,
+              and they must not read the same:
+
+                - the supplier's blanks could not be READ (a bug our end);
+                - the supplier publishes none for this blank (their catalogue);
+                - the real blank is there, and nothing needs saying.
+
+              Silence for the third; the reason for the other two. The first is
+              the one that was hidden, and hiding it is what let a broken data
+              path look like a supplier with no pictures. */}
+          {blankProblem ? (
+            <p className="mt-3 text-center text-[12px] text-amber-600 dark:text-amber-400">
+              Designing on a Genesis outline — your supplier&apos;s blank images
+              couldn&apos;t be read. {blankProblem}
+            </p>
+          ) : blankImages.length === 0 ? (
+            <p className="mt-3 text-center text-[12px] text-zinc-500">
+              Designing on a Genesis outline — your supplier publishes no blank
+              image for this one. The print area and colours are still theirs.
+            </p>
+          ) : null}
 
           {/* The controls that act on the selected artwork. Disabled rather
               than hidden, so the toolbar does not move under the pointer. */}

@@ -11,6 +11,7 @@ import {
   PRINTFUL_V2_BASE,
 } from "@/lib/creation/printfulRequest";
 import { printfulCreationProvider } from "@/lib/creation/printfulCreation";
+import { productLabel, designableViews } from "@/lib/creation/garment";
 import { portalItems } from "@/lib/creation/creatables";
 
 // WHAT THE CATALOGUE CALL SENDS, AND WHAT IT SAYS WHEN IT FAILS:
@@ -477,9 +478,144 @@ async function main() {
   } catch (error) {
     shapeError = error instanceof Error ? error.message : String(error);
   }
-  assert("but a shape we cannot read says so", /unfamiliar shape/.test(shapeError), shapeError);
+  assert("but a shape we cannot read says so",
+    /no image in it/.test(shapeError), shapeError);
   assert("naming the keys that came back, never their values",
-    /top-level: result/.test(shapeError), shapeError);
+    /keys: result/.test(shapeError), shapeError);
+
+  // AND THE ONE THAT SLIPPED THROUGH (2026-08-27). A response shaped {data:...}
+  // with its URLs somewhere unexpected used to return an empty list, which the
+  // screen showed as "your supplier has no pictures" — the exact confusion this
+  // check exists to prevent, walking straight past it because the old test only
+  // looked at whether the top-level key was `data`.
+  let dataShapedError = "";
+  const dataShaped = printfulCreationProvider(async () => ({
+    data: [{ catalog_variant_id: 1, some_unknown_field: 12 }],
+  }));
+  try {
+    await dataShaped.getBlankImages({ storeId: "s", externalProductId: "71" });
+  } catch (error) {
+    dataShapedError = error instanceof Error ? error.message : String(error);
+  }
+  assert("a data-shaped response with no image in it is not silently empty",
+    /no image in it/.test(dataShapedError), dataShapedError || "(returned an empty list)");
+  assert("and it names what it did find",
+    /catalog_variant_id/.test(dataShapedError), dataShapedError);
+
+  // ======================================================================
+  console.log("\n=== 8. The supplier's price, and the product's name ===\n");
+  // ======================================================================
+  //
+  // Sean: "Every product is showing $75. That's clearly the test/store selling
+  // price, not the supplier price."
+  //
+  // THE CAUSE WAS UPSTREAM OF THE NUMBER. Printful's catalog-variants response
+  // carries no price field — their reference lists id, catalog_product_id,
+  // name, size, color, color_code, image and _links. So costInCents was null
+  // for every variant, the designer fell back to 2500 cents, tripled it for a
+  // starting margin, and printed $75. Forever, for everything.
+  const pricePaths: string[] = [];
+  const priced = printfulCreationProvider(async (_s, _o, path) => {
+    pricePaths.push(path);
+    return {
+      data: {
+        currency: "USD",
+        variant: {
+          id: 4012,
+          techniques: [
+            { technique_key: "dtg", price: "28.95" },
+            { technique_key: "embroidery", price: "31.50" },
+          ],
+        },
+      },
+    };
+  });
+
+  const prices = await priced.getSupplierPrices({ storeId: "s", externalProductId: "71" });
+  assert("prices come from Printful's own prices endpoint",
+    pricePaths[0]?.startsWith("/catalog-products/71/prices"), String(pricePaths[0]));
+  assert("carrying a selling region, like every other catalogue call",
+    pricePaths[0]?.includes("selling_region_name=worldwide"), String(pricePaths[0]));
+  eq("the variant is priced in cents", prices["4012"], 2895);
+
+  // THE CHEAPEST TECHNIQUE, because a technique is a way of DECORATING and the
+  // owner has not chosen one. Taking the highest, or adding them, would invent
+  // a number for a product nobody has finished designing.
+  assert("from the cheapest technique, not the sum of them",
+    prices["4012"] === 2895 && prices["4012"] !== 2895 + 3150,
+    JSON.stringify(prices));
+
+  // A PRODUCT PRINTFUL DOES NOT PRICE HAS NO PRICE. Not a placeholder.
+  const unpriced = printfulCreationProvider(async () => ({ data: { currency: "USD" } }));
+  eq("an unpriced product yields nothing rather than a guess",
+    Object.keys(await unpriced.getSupplierPrices({ storeId: "s", externalProductId: "71" })).length, 0);
+
+  // ============ AND THE PLACEHOLDER IS GONE FROM THE SCREEN ===========
+  //
+  // The exact arithmetic that produced $75, asserted absent: a 2500-cent
+  // fallback tripled. If this comes back, so does the same price on every
+  // product in the catalogue.
+  const clientSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationStationClient.tsx"), "utf8")
+  );
+  assert("CONTROL: no invented cost survives in the designer",
+    !/\?\?\s*2500/.test(clientSrc),
+    "2500 tripled is the $75 that appeared on every product");
+  assert("and an unpriced blank starts with an empty price field",
+    /supplierCost === null \? ""/.test(clientSrc),
+    "a number nobody can source is worse than a box that must be filled in");
+
+  // ======================================================================
+  console.log("\n=== 9. Catalogue data stays in the data ===\n");
+  // ======================================================================
+  //
+  // Sean, on the live screen showing "Unisex Heavy Blend Hoodie | Gildan 18500"
+  // over a list of front, back, embroidery_chest_left, sleeve_left, front_dtf:
+  // "Users should never see that."
+  eq("the catalogue title becomes a product name",
+    productLabel("Unisex Heavy Blend Hoodie | Gildan 18500"), "Heavy Blend Hoodie");
+  eq("audience qualifiers go, whoever they are for",
+    productLabel("Men's Fitted T-Shirt | Bella + Canvas 3001"), "Fitted T-Shirt");
+  eq("a title with no maker still works", productLabel("Tote Bag"), "Tote Bag");
+  // NOT A BLIND TRIM. A product genuinely called something keeps its name.
+  eq("CONTROL: and a name that is only a qualifier is not emptied",
+    productLabel("Unisex"), "Unisex");
+
+  // THE PLACEMENT KEYS STAY INTERNAL. Front and back are offered as views;
+  // everything else remains in printAreas, where validation still reads it.
+  const manyAreas: Parameters<typeof designableViews>[0] = {
+    provider: "PRINTFUL",
+    externalProductId: "71",
+    name: "Unisex Heavy Blend Hoodie | Gildan 18500",
+    type: "HOODIE",
+    brand: "Gildan",
+    description: null,
+    imageUrl: null,
+    variants: [],
+    printAreas: [
+      { placement: "front", width: 12, height: 16, unit: "inches" },
+      { placement: "embroidery_chest_left", width: 4, height: 4, unit: "inches" },
+      { placement: "sleeve_left", width: 3, height: 12, unit: "inches" },
+      { placement: "back", width: 12, height: 16, unit: "inches" },
+      { placement: "front_dtf", width: 12, height: 16, unit: "inches" },
+    ],
+  };
+  eq("only front and back are offered as views",
+    designableViews(manyAreas).map((v) => v.label), ["Front", "Back"]);
+  eq("in the order a person thinks of them",
+    designableViews(manyAreas).map((v) => v.placement), ["front", "back"]);
+  // AND THE REST IS NOT DELETED — the data keeps every placement, because the
+  // print-area validation and the eventual order both read them.
+  eq("CONTROL: while the data keeps every placement", manyAreas.printAreas.length, 5);
+
+  const stationSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationStation.tsx"), "utf8")
+  );
+  assert("the screen shows the product name, not the catalogue title",
+    /productLabel\(garment\.name\)/.test(stationSrc));
+  assert("CONTROL: and never dumps the placement keys into a sentence",
+    !/printAreas\.map\(\(a\) => a\.placement\)\.join/.test(stationSrc),
+    "that line is what printed front, back, embroidery_chest_left, sleeve_left");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
