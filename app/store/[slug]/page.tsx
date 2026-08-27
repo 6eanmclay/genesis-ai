@@ -7,8 +7,14 @@ import { parseCheckoutProblem, checkoutProblemNotice } from "@/lib/orders/checko
 import { auth } from "@/auth";
 import { getStoreRole } from "@/lib/permissions";
 import { subscribeToNewsletter } from "./actions";
+import { addProductToBag } from "./bagActions";
+import { Price } from "./Price";
+import { BagBar } from "./BagBar";
+import { salePricesFor } from "@/lib/promotions/storefrontSales";
+import { readBag } from "@/lib/bag/bagStore";
+import { bagCount } from "@/lib/bag/bagCookie";
+import type { DisplayPrice } from "@/lib/pricing/displayPrice";
 import { resolvePreviewTheme } from "@/lib/storefront/previewTheme";
-import { formatMoney } from "@/lib/money";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import {
   DEFAULT_THEME,
@@ -106,17 +112,21 @@ async function BuyButton({
     );
   }
 
-  // EVERY OTHER PRODUCT NOW GETS A REVIEW STEP TOO (2026-08-26).
+  // ADD TO BAG IS THE PRIMARY ACTION NOW (2026-08-26).
   //
-  // This was a direct post to createCheckoutSession: one click from the
-  // storefront to a payment provider's hosted page, with no total shown in
-  // between and nowhere to enter a discount code. The review step is where a
-  // sale becomes visible and a code can be typed; the action it eventually
-  // submits, and everything the server does with it, is unchanged.
+  // The storefront had one button and it left the store: Buy Now went straight
+  // toward a payment page, so a customer could not put two things together.
+  // Adding stays on the page — the whole point is that they carry on shopping.
+  //
+  // A form posting a server action, deliberately, rather than a client
+  // component: adding to a bag works with no JavaScript at all, and the header
+  // count is server-rendered from the same cookie the action writes.
   return (
-    <Link href={`/store/${slug}/checkout/${product.id}`} className={className}>
-      Buy Now
-    </Link>
+    <form action={addProductToBag.bind(null, slug, product.id)}>
+      <SubmitButton pendingText="Adding..." className={className}>
+        Add to Bag
+      </SubmitButton>
+    </form>
   );
 }
 
@@ -184,6 +194,16 @@ export default async function StorefrontPage({
   // informational/service store with zero products never needs this check
   // at all, matching the "only stores that actually sell products" scope.
   const canAcceptPayments = products.length === 0 || (await canStoreAcceptPayments(store.id));
+
+  // SALES BECOME VISIBLE HERE (2026-08-26). One query for the whole page rather
+  // than one per product — and the same discount arithmetic the charge uses, so
+  // the price on a card and the price at checkout cannot disagree.
+  const salePrices = await salePricesFor({ storeId: store.id, products });
+  const priceOf = (product: { id: string; priceInCents: number }): DisplayPrice =>
+    salePrices.get(product.id) ?? { listInCents: product.priceInCents, saleInCents: null, percentOff: null, label: null };
+
+  // What the header shows. Read from the cookie; no database row is involved.
+  const bagItemCount = bagCount(await readBag(slug));
 
   // Captured as plain locals — TypeScript doesn't carry the `!store` null
   // narrowing above into nested function declarations like renderHero().
@@ -427,8 +447,8 @@ export default async function StorefrontPage({
                           {product.description}
                         </p>
                       )}
-                      <p className="mt-2 text-lg font-semibold">
-                        {formatMoney(product.priceInCents, currency)}
+                      <p className="mt-2">
+                        <Price price={priceOf(product)} currency={currency} />
                       </p>
                     </div>
                     <ProductActions
@@ -464,7 +484,7 @@ export default async function StorefrontPage({
                       </p>
                     )}
                     <p className="mt-4 text-2xl font-semibold">
-                      {formatMoney(products[0].priceInCents, currency)}
+                      <Price price={priceOf(products[0])} currency={currency} size="lead" />
                     </p>
                     <ProductActions
                       slug={slug}
@@ -486,6 +506,7 @@ export default async function StorefrontPage({
                         slug={slug}
                         storeId={product.storeId}
                         product={product}
+                        price={priceOf(product)}
                         currency={currency}
                         buyButtonClass={buyButtonClass}
                         detailsLinkClass={detailsLinkClass}
@@ -504,6 +525,7 @@ export default async function StorefrontPage({
                     slug={slug}
                     storeId={product.storeId}
                     product={product}
+                    price={priceOf(product)}
                     currency={currency}
                     buyButtonClass={buyButtonClass}
                     detailsLinkClass={detailsLinkClass}
@@ -744,6 +766,7 @@ export default async function StorefrontPage({
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
       {!store.published && viewerRole && <PreviewModeBanner />}
+      <BagBar slug={slug} count={bagItemCount} canAcceptPayments={canAcceptPayments} />
       {problemNotice && (
         <div
           className={`border-b px-8 py-4 text-center text-sm ${
@@ -859,6 +882,7 @@ function ProductCard({
   slug,
   storeId,
   product,
+  price,
   currency,
   buyButtonClass,
   detailsLinkClass,
@@ -868,6 +892,8 @@ function ProductCard({
   slug: string;
   storeId: string;
   product: StoreProduct;
+  /** Computed once for the whole page — see salePricesFor. */
+  price: DisplayPrice;
   currency: string;
   buyButtonClass: string;
   detailsLinkClass: string;
@@ -891,8 +917,8 @@ function ProductCard({
             {product.description}
           </p>
         )}
-        <p className="mt-3 text-lg font-semibold">
-          {formatMoney(product.priceInCents, currency)}
+        <p className="mt-3">
+          <Price price={price} currency={currency} />
         </p>
         <ProductActions
           slug={slug}

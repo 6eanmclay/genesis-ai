@@ -13,6 +13,20 @@ import { decryptCredentials } from "@/lib/integrations/credentials";
 import { selectProvider } from "@/lib/payments/router";
 import { priceCheckout } from "@/lib/promotions/resolve";
 import type { CheckoutPreviewState } from "@/lib/promotions/checkoutPreview";
+import { resolveBag } from "@/lib/bag/resolveBag";
+import {
+  createCheckoutDraft,
+  markPaymentStarted,
+  freezeLines,
+  packDraftCustomId,
+  type DraftLine,
+} from "@/lib/bag/checkoutDraft";
+import {
+  toStripeLineItems,
+  toPaypalItems,
+  toPaypalAmount,
+  stripeLineItemsTotal,
+} from "@/lib/bag/providerLines";
 import { toDiscountMetadata, packPaypalCustomId } from "@/lib/promotions/checkoutDiscount";
 import type { OrderPricing } from "@/lib/pricing/orderPricing";
 import { canStoreAcceptPayments, CHECKOUT_UNAVAILABLE_MESSAGE } from "./shared";
@@ -376,6 +390,206 @@ export async function previewCheckoutPrice(
       error: error instanceof RecoverableError ? error.message : "We couldn't check that just now.",
     };
   }
+}
+
+// ============================ CHECKING OUT A BAG ===========================
+//
+// A SECOND CHECKOUT PATH, deliberately alongside the single-product one rather
+// than replacing it. createCheckoutSession has been taking real money since
+// before bags existed and is untouched: same signature, same Stripe payload,
+// same metadata. A customer buying one thing from a product page still goes
+// through exactly the code that has always served them.
+//
+// What is genuinely different here is the SHAPE of the request — N line items,
+// a draft id instead of a product id — not the rules. The price still comes
+// from priceOrder, the discount still cannot stack, and the browser still sends
+// nothing but a request.
+
+/** Stripe, for a bag. Charges the draft, and carries the draft id home. */
+async function createStripeBagSession(params: {
+  store: Store;
+  slug: string;
+  baseUrl: string;
+  draftId: string;
+  lines: DraftLine[];
+  totalInCents: number;
+}): Promise<{ url: string; sessionId: string }> {
+  const storeStripe = await getStripeClientForStore(params.store.id);
+  const lineItems = toStripeLineItems(params.lines, params.store.currency);
+
+  // WHAT WE ASK FOR MUST EQUAL WHAT WE PROMISED. Stripe sums the line items and
+  // charges that, so a cent of drift here is a wrong charge nobody would notice
+  // until a settlement report. Checked before the request leaves.
+  const asked = stripeLineItemsTotal(lineItems);
+  if (asked !== params.totalInCents) {
+    throw new Error(
+      `Refusing to charge ${asked} for a bag quoted at ${params.totalInCents}`
+    );
+  }
+
+  const session = await storeStripe.checkout.sessions.create({
+    mode: "payment",
+    line_items: lineItems,
+    shipping_address_collection: { allowed_countries: ["US" as const] },
+    success_url: `${params.baseUrl}/store/${params.slug}/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${params.baseUrl}/store/${params.slug}/bag`,
+    // ONE KEY IS THE WHOLE CHANNEL. The bag lives in the draft; this says which
+    // one. productId is deliberately absent — a bag has no single product, and
+    // writing one would make the webhook record the wrong thing.
+    metadata: {
+      storeId: params.store.id,
+      checkoutDraftId: params.draftId,
+    },
+  });
+
+  if (!session.url) throw new Error("Failed to create checkout session");
+  return { url: session.url, sessionId: session.id };
+}
+
+/** PayPal, for a bag. Items at list price, with the discount expressed. */
+async function createPaypalBagSession(params: {
+  store: Store;
+  slug: string;
+  baseUrl: string;
+  draftId: string;
+  lines: DraftLine[];
+  listSubtotalInCents: number;
+  discountInCents: number;
+  shippingInCents: number;
+  totalInCents: number;
+}): Promise<{ url: string; sessionId: string }> {
+  const integration = await prisma.storeIntegration.findUnique({
+    where: { storeId_provider: { storeId: params.store.id, provider: "PAYPAL" } },
+  });
+  const credentials = integration?.credentials
+    ? decryptCredentials<PaypalCredentials>(integration.credentials)
+    : null;
+  if (integration?.status !== "CONNECTED" || !credentials) {
+    throw new Error("PayPal is not connected for this store");
+  }
+
+  const token = await getPaypalAccessToken(
+    credentials.clientId,
+    credentials.clientSecret,
+    credentials.environment
+  );
+
+  const res = await fetch(`${paypalApiBase(credentials.environment)}/v2/checkout/orders`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      intent: "CAPTURE",
+      purchase_units: [
+        {
+          // storeId and the DRAFT id — 51 characters, comfortably inside
+          // PayPal's 127. The bag itself rides in `items` below, which is the
+          // structure built for it; trying to pack it in here is what could
+          // never have worked.
+          custom_id: packDraftCustomId(params.store.id, params.draftId),
+          amount: toPaypalAmount({
+            currency: params.store.currency,
+            listSubtotalInCents: params.listSubtotalInCents,
+            discountInCents: params.discountInCents,
+            shippingInCents: params.shippingInCents,
+            totalInCents: params.totalInCents,
+          }),
+          items: toPaypalItems(params.lines, params.store.currency),
+        },
+      ],
+      application_context: {
+        return_url: `${params.baseUrl}/api/checkout/paypal/return?slug=${params.slug}`,
+        cancel_url: `${params.baseUrl}/store/${params.slug}/bag`,
+        shipping_preference: "GET_FROM_FILE",
+      },
+    }),
+  });
+
+  if (!res.ok) throw new Error("Failed to create PayPal order");
+  const data = (await res.json()) as { id?: string; links?: { rel: string; href: string }[] };
+  const approve = data.links?.find((l) => l.rel === "approve")?.href;
+  if (!approve || !data.id) throw new Error("Failed to create PayPal order");
+  return { url: approve, sessionId: data.id };
+}
+
+/**
+ * Continue to payment, from the bag.
+ *
+ * THE FIRST DATABASE ROW IN THE WHOLE JOURNEY is written here. Everything up to
+ * this click has been a cookie.
+ *
+ * The bag is re-read and re-priced at this instant rather than trusted from the
+ * page the customer is looking at — a sale that ended or a code that expired
+ * while they were deciding is honoured according to now, not according to when
+ * the page rendered.
+ */
+export async function checkoutFromBag(
+  slug: string,
+  _prevState: ActionState,
+  _formData: FormData
+): Promise<ActionState> {
+  let redirectUrl: string;
+  try {
+    const store = await prisma.store.findUnique({ where: { slug } });
+    if (!store) throw new RecoverableError("Store not found");
+    if (!(await canStoreAcceptPayments(store.id))) {
+      throw new RecoverableError(CHECKOUT_UNAVAILABLE_MESSAGE);
+    }
+
+    // IMPORTED HERE, NOT AT MODULE SCOPE. bagStore is marked `server-only`,
+    // which Next resolves through its own bundler and nothing else does — so a
+    // top-level import made this whole module unloadable outside Next, and
+    // scripts/verify-promotions.ts (which imports previewCheckoutPrice from
+    // here) stopped running entirely. Narrowing it to the one function that
+    // needs the cookie jar is also simply more correct: nothing else in this
+    // file touches cookies.
+    const { readBag } = await import("@/lib/bag/bagStore");
+    const bag = await readBag(slug);
+    const resolved = await resolveBag({ storeId: store.id, bag });
+    if (resolved.lines.length === 0) {
+      throw new RecoverableError("Your bag is empty.");
+    }
+
+    // Frozen here, and never recomputed downstream.
+    const draftId = await createCheckoutDraft({
+      storeId: store.id,
+      lines: resolved.lines,
+      pricing: resolved.pricing,
+    });
+    const lines = freezeLines(resolved.lines, resolved.pricing);
+
+    const baseUrl = await getBaseUrl();
+    const provider = await selectProvider(store.id);
+
+    const session =
+      provider === "PAYPAL"
+        ? await createPaypalBagSession({
+            store, slug, baseUrl, draftId, lines,
+            listSubtotalInCents: resolved.pricing.listSubtotalInCents,
+            discountInCents: resolved.pricing.discountInCents,
+            shippingInCents: resolved.pricing.shippingInCents,
+            totalInCents: resolved.pricing.totalInCents,
+          })
+        : await createStripeBagSession({
+            store, slug, baseUrl, draftId, lines,
+            totalInCents: resolved.pricing.totalInCents,
+          });
+
+    // Recorded AFTER the session exists, so a draft only claims a provider it
+    // genuinely reached. A failure above leaves it OPEN and it simply expires.
+    await markPaymentStarted({
+      storeId: store.id,
+      draftId,
+      provider: provider === "PAYPAL" ? "PAYPAL" : "STRIPE",
+      externalSessionId: session.sessionId,
+    });
+
+    redirectUrl = session.url;
+  } catch (error) {
+    unstable_rethrow(error);
+    return toActionState(error);
+  }
+
+  redirect(redirectUrl);
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

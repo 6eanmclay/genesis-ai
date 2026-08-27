@@ -2,10 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { formatMoney } from "@/lib/money";
-import { createCheckoutSession } from "../../actions";
+import { Price, SaleName } from "../../Price";
+import { BagBar } from "../../BagBar";
+import { addProductToBag } from "../../bagActions";
+import { salePriceFor } from "@/lib/promotions/storefrontSales";
+import { readBag } from "@/lib/bag/bagStore";
+import { bagCount } from "@/lib/bag/bagCookie";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
-import { ActionForm } from "@/app/dashboard/ActionForm";
 import {
   DEFAULT_THEME,
   googleFontsUrl,
@@ -68,6 +71,11 @@ export default async function ProductDetailPage({
 
   const canAcceptPayments = await canStoreAcceptPayments(store.id);
 
+  // The same sale arithmetic the card and the charge use. A customer who saw a
+  // discount on the grid must see the same one here.
+  const price = await salePriceFor({ storeId: store.id, product });
+  const bagItemCount = bagCount(await readBag(slug));
+
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const brandIdentity = (store.blueprint as Blueprint | null)?.brandIdentity;
   const richContent = product.richContent as ProductRichContent | null;
@@ -83,6 +91,7 @@ export default async function ProductDetailPage({
       className="min-h-screen bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
+      <BagBar slug={slug} count={bagItemCount} canAcceptPayments={canAcceptPayments} />
 
       <div className="mx-auto max-w-5xl px-8 py-8">
         <Link
@@ -108,23 +117,48 @@ export default async function ProductDetailPage({
             <h1 className="font-[var(--font-heading)] text-3xl font-bold tracking-tight">
               {product.name}
             </h1>
-            <p className="mt-3 text-2xl font-semibold">
-              {formatMoney(product.priceInCents, store.currency)}
+            <p className="mt-3">
+              <Price price={price} currency={store.currency} size="lead" />
+            </p>
+            {/* Named here, where there is room. A customer looking at one item
+                deserves to know it is the Spring Sale rather than an
+                unexplained lower number. */}
+            <p className="mt-1">
+              <SaleName price={price} />
             </p>
             {product.description && (
               <p className="mt-4 text-[var(--brand-text-secondary)]">{product.description}</p>
             )}
 
-            <div className="mt-6 max-w-xs">
+            <div className="mt-6 flex max-w-xs flex-col gap-3">
               {canAcceptPayments ? (
-                <ActionForm action={createCheckoutSession.bind(null, slug, product.id)}>
-                  <SubmitButton
-                    pendingText="Redirecting to checkout..."
-                    className={`w-full ${buttonRadius} bg-[var(--brand-accent)] px-6 py-3 text-base font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50`}
+                <>
+                  {/* ADD TO BAG IS PRIMARY. Buy Now stays for somebody who
+                      wants exactly this one thing and nothing else — it skips
+                      the bag entirely and goes to the single-product review
+                      step, which is the path that has been taking real money
+                      and is deliberately left alone. */}
+                  <form action={addProductToBag.bind(null, slug, product.id)}>
+                    <SubmitButton
+                      pendingText="Adding..."
+                      className={`w-full ${buttonRadius} bg-[var(--brand-accent)] px-6 py-3 text-base font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50`}
+                    >
+                      Add to Bag
+                    </SubmitButton>
+                  </form>
+                  {/* Buy Now goes to the single-product REVIEW step, not
+                      straight to the provider. Posting directly would skip the
+                      one place a code can be entered and the only breakdown
+                      shown before paying — and would orphan that step, since
+                      the storefront cards now add to the bag instead. The
+                      action it eventually submits is unchanged. */}
+                  <Link
+                    href={`/store/${slug}/checkout/${product.id}`}
+                    className={`block w-full ${buttonRadius} border border-[var(--brand-text)]/[.16] px-6 py-3 text-center text-base font-medium text-[var(--brand-text)] transition hover:border-[var(--brand-text)]/[.32]`}
                   >
                     Buy Now
-                  </SubmitButton>
-                </ActionForm>
+                  </Link>
+                </>
               ) : (
                 <p className="text-sm text-[var(--brand-text-secondary)]">{CHECKOUT_UNAVAILABLE_MESSAGE}</p>
               )}

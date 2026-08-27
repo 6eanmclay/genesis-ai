@@ -786,10 +786,52 @@ async function main() {
     /preview\.code\?\.applied \? preview\.code\.candidate\.code : null/.test(review),
     "a rejected code sitting in the input must not travel to checkout");
 
+  // THE REQUIREMENT, RESTATED AGAINST THE FLOW THAT NOW CARRIES IT (2026-08-26).
+  //
+  // What this has always protected is one thing: NO CUSTOMER REACHES A PAYMENT
+  // PAGE WITHOUT HAVING SEEN A TOTAL AND HAD SOMEWHERE TO ENTER A CODE. Before
+  // bags there was exactly one route to that — the storefront card linked
+  // straight to the single-product review step — so checking for that link was
+  // the same as checking the requirement.
+  //
+  // There are now two routes, and the card takes the other one: Add to Bag,
+  // then the bag, which is where the total and the code field live. Checking
+  // for the old link would now be checking an implementation detail that has
+  // moved, while the requirement itself is untouched.
+  //
+  // So this asserts the requirement end to end instead, which is strictly more
+  // than the single link test did: the card must route into the bag, the bag
+  // must genuinely offer a code and a total, and the single-product review step
+  // must still be reachable for somebody buying one thing outright.
   const buyButton = read("app", "store", "[slug]", "page.tsx");
-  assert("every product now reaches a review step before paying",
-    /\/checkout\/\$\{product\.id\}/.test(buyButton),
-    "there was previously nowhere to enter a code on a product without live shipping");
+  assert("the storefront card routes into the bag",
+    /addProductToBag\.bind\(null, slug, product\.id\)/.test(buyButton),
+    "adding is what keeps a customer in the store; Buy Now used to take them out of it");
+  assert("and the bag is reachable from every page of the store",
+    /<BagBar/.test(buyButton));
+
+  const bagPage = read("app", "store", "[slug]", "bag", "page.tsx");
+  assert("the bag shows a total before anything is paid",
+    /label="Total"[\s\S]{0,120}formatMoney\(pricing\.merchandiseSubtotalInCents/.test(bagPage),
+    "which is the half of this requirement a payment page cannot provide");
+  // THE JSX USAGE, not the import. The first version of this matched
+  // /BagCodeField/ anywhere in the file, so deleting the component from the
+  // page still passed on the strength of its own import line — a green for the
+  // wrong reason, caught by breaking it deliberately.
+  assert("and offers somewhere to enter a code",
+    /<BagCodeField/.test(bagPage));
+  const bagCode = read("app", "store", "[slug]", "bag", "BagCodeField.tsx");
+  assert("that submits the code and nothing else",
+    /name="discountCode"/.test(bagCode) &&
+      !/name="(discountInCents|totalInCents|promotionId)"/.test(bagCode));
+  assert("and shows the customer why a rejected one did not work",
+    /outcome\.message/.test(bagCode),
+    "clearing the field on a failure hides the typo that caused it");
+
+  const detail = read("app", "store", "[slug]", "products", "[productId]", "page.tsx");
+  assert("CONTROL: buying one thing outright still goes through the review step",
+    /\/checkout\/\$\{product\.id\}/.test(detail),
+    "posting straight to a provider would skip the total and the code field entirely");
 
   const step = read("app", "store", "[slug]", "ship", "[productId]", "ShippingStep.tsx");
   assert("the shipping step has the code field too",

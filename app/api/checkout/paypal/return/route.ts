@@ -5,6 +5,16 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parsePaypalCustomId } from "@/lib/promotions/checkoutDiscount";
+import { parseDraftCustomId, loadDraft, draftTotalMismatch } from "@/lib/bag/checkoutDraft";
+import {
+  linesFromDraft,
+  linesFromPaypal,
+  noLines,
+  primaryNameFor,
+  primaryProductId,
+  totalQuantity,
+  type RecoveredLines,
+} from "@/lib/bag/orderLines";
 import { formatMoney } from "@/lib/money";
 import { getPaypalAccessToken, paypalApiBase, type PaypalCredentials } from "@/lib/integrations/paypal";
 import { decryptCredentials } from "@/lib/integrations/credentials";
@@ -125,6 +135,9 @@ export async function GET(request: NextRequest) {
     purchase_units?: {
       custom_id?: string;
       amount?: { value?: string };
+      // PayPal keeps the line items it was asked to charge. This is the second,
+      // independent record that makes tier-PROVIDER recovery possible.
+      items?: { name?: string; sku?: string; quantity?: string; unit_amount?: { value?: string } }[];
       payments?: { captures?: { id?: string; custom_id?: string; amount?: { value?: string } }[] };
       shipping?: {
         name?: { full_name?: string | null } | null;
@@ -184,9 +197,15 @@ export async function GET(request: NextRequest) {
   // them so a checkout packed by the OLD two-part format still parses exactly
   // as it did. See lib/promotions/checkoutDiscount.ts.
   const packed = parsePaypalCustomId(customId);
+  // A BAG SAYS SO EXPLICITLY. `storeId:draft_<id>` rather than
+  // `storeId:productId` — see packDraftCustomId for why the marker exists
+  // rather than looking both ids up and guessing.
+  const draftRef = parseDraftCustomId(customId);
   const customStoreId = packed.storeId;
-  const productId = packed.productId;
-  if (!productId || customStoreId !== store.id) {
+  // Null for a bag, which has no single product. The single-product path below
+  // is completely unchanged for every other checkout.
+  const productId = draftRef.draftId ? null : packed.productId;
+  if ((!productId && !draftRef.draftId) || customStoreId !== store.id) {
     console.error(
       `[paypal/return] custom_id mismatch for order ${token}: got "${customId}", expected store ${store.id}`
     );
@@ -246,7 +265,31 @@ export async function GET(request: NextRequest) {
     // leak in both directions, through a field nobody scoped because it is
     // built server-side. Defence in depth: the order is still created, it just
     // records an honest "Unknown product" instead of a borrowed one.
-    const product = await prisma.product.findFirst({ where: { id: productId, storeId: store.id } });
+    const product = productId
+      ? await prisma.product.findFirst({ where: { id: productId, storeId: store.id } })
+      : null;
+
+    // ============ THE THREE TIERS (2026-08-26) =========================
+    //
+    // Absent for every single-product checkout. A payment ALWAYS becomes an
+    // order; line items are NEVER guessed.
+    let bagLines: RecoveredLines | null = null;
+    let bagMismatch: { draft: number; settled: number } | null = null;
+    if (draftRef.draftId) {
+      const draft = await loadDraft(store.id, draftRef.draftId);
+      if (draft) {
+        bagLines = linesFromDraft(draft.lines);
+        bagMismatch = draftTotalMismatch(draft.totalInCents, amountInCents);
+      } else {
+        // PayPal's own items, sent at list price with `sku` carrying the
+        // product id — which is what lets a recovered line relink to a real
+        // product rather than being a name and a number.
+        const items = purchaseUnit?.items ?? [];
+        bagLines = items.length > 0
+          ? linesFromPaypal(items)
+          : noLines("The checkout draft was unavailable and PayPal returned no line items.");
+      }
+    }
 
     // Scoped to this store for the same reason the product lookup above is: a
     // promotion id arriving in a field we built is still a field, and reading
@@ -291,8 +334,31 @@ export async function GET(request: NextRequest) {
           // behind this route to ever put it right. The same defect the Stripe
           // rail carried until its first real end-to-end run found it
           // (COMPLIANCE.md §34); found here the same way.
-          productId: product?.id ?? null,
-          productName: product?.name ?? "Unknown product",
+          // A bag overrides these, and only then. primaryProductId is null for
+          // a multi-product order, because pointing Order.productId at one of
+          // four would make every report reading it quietly wrong.
+          productId: bagLines ? primaryProductId(bagLines) : (product?.id ?? null),
+          productName: bagLines ? primaryNameFor(bagLines) : (product?.name ?? "Unknown product"),
+          quantity: bagLines ? totalQuantity(bagLines) : undefined,
+          lineItemSource: bagLines?.source ?? undefined,
+          checkoutDraftId: draftRef.draftId ?? undefined,
+          ...(bagLines && bagLines.lines.length > 0
+            ? {
+                items: {
+                  create: bagLines.lines.map((line) => ({
+                    productId: line.productId,
+                    productName: line.productName,
+                    quantity: line.quantity,
+                    unitPriceInCents: line.unitPriceInCents,
+                    listInCents: line.listInCents,
+                    discountInCents: line.discountInCents,
+                    subtotalInCents: line.subtotalInCents,
+                    promotionId: line.promotionId,
+                    promotionLabel: line.promotionLabel,
+                  })),
+                },
+              }
+            : {}),
           externalPaymentId: captureId,
           amountInCents,
           buyerEmail,
@@ -330,6 +396,19 @@ export async function GET(request: NextRequest) {
         },
       ]);
 
+      // THE DRAFT BECOMES AN ORDER, in the SAME transaction — so a draft can
+      // never read CONVERTED against an order that did not commit.
+      if (draftRef.draftId) {
+        await tx.checkoutDraft.updateMany({
+          where: {
+            id: draftRef.draftId,
+            storeId: store.id,
+            status: { in: ["OPEN", "PAYMENT_STARTED"] },
+          },
+          data: { status: "CONVERTED", orderId: created.id },
+        });
+      }
+
       return created;
     });
 
@@ -342,6 +421,23 @@ export async function GET(request: NextRequest) {
     // And the owner (2026-08-22, P1.8). Same ordering as the Stripe path: the
     // customer first, because they have nothing but this email, and the owner
     // has the dashboard regardless.
+    // ============ WHAT MUST BE SEEN, NOT MERELY STORED ==================
+    // Written after the transaction, so neither can roll back a paid order.
+    if (bagLines?.source === "NONE") {
+      await recordCaptureProblem(
+        store.id,
+        token,
+        `order ${order.id} was paid for but its contents could not be established. ${bagLines.note ?? ""}`
+      );
+    }
+    if (bagMismatch) {
+      await recordCaptureProblem(
+        store.id,
+        token,
+        `order ${order.id}: the draft quoted ${bagMismatch.draft} but PayPal settled ${bagMismatch.settled}`
+      );
+    }
+
     await notifyOwnerOfSale({ orderId: order.id, storeId: store.id });
 
     return NextResponse.redirect(new URL(`/store/${slug}/success?order_id=${order.id}`, request.url));

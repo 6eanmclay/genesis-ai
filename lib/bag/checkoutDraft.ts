@@ -225,3 +225,30 @@ export function draftTotalMismatch(
   if (settledTotalInCents === draftTotalInCents) return null;
   return { draft: draftTotalInCents, settled: settledTotalInCents };
 }
+
+// PayPal gives us one 127-character `custom_id`, and the single-product path
+// already uses it as `storeId:productId[:promo:amount:subtotal]`. A bag needs
+// the same field to mean something different, so it says so:
+//
+//   storeId:draft_<id>      about 57 characters, comfortably inside the limit.
+//
+// The prefix is not decoration. Without it parts[1] would be a product id on
+// one path and a draft id on the other, distinguishable only by looking both
+// up — and a wrong guess writes an order against the wrong thing.
+const DRAFT_MARKER = "draft_";
+
+export function packDraftCustomId(storeId: string, draftId: string): string {
+  return `${storeId}:${DRAFT_MARKER}${draftId}`;
+}
+
+/** The store and draft, or nulls when this custom_id is not a bag's. */
+export function parseDraftCustomId(
+  customId: string | null | undefined
+): { storeId: string | null; draftId: string | null } {
+  const parts = (customId ?? "").split(":");
+  const storeId = parts[0]?.trim() || null;
+  const second = parts[1]?.trim() ?? "";
+  if (!second.startsWith(DRAFT_MARKER)) return { storeId, draftId: null };
+  const draftId = second.slice(DRAFT_MARKER.length);
+  return { storeId, draftId: draftId || null };
+}

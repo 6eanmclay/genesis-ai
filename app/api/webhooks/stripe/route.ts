@@ -18,9 +18,53 @@ import { mapOrdersToTransactions, internalTransactionId } from "@/lib/businessMo
 import { fromStripeShippingDetails } from "@/lib/orders/shippingAddress";
 import { parseCheckoutShipping } from "@/lib/shipping/checkoutShipping";
 import { parseDiscountMetadata } from "@/lib/promotions/checkoutDiscount";
+import { loadDraft, draftTotalMismatch } from "@/lib/bag/checkoutDraft";
+import {
+  linesFromDraft,
+  linesFromStripe,
+  noLines,
+  primaryNameFor,
+  primaryProductId,
+  totalQuantity,
+  type RecoveredLines,
+} from "@/lib/bag/orderLines";
 import { resolveWebhookStore } from "@/lib/orders/webhookStore";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+/**
+ * Money arrived and something about the order could not be established.
+ *
+ * The pattern this route already uses for a payment it cannot account for
+ * (CHECKOUT_STRIPE_UNRECORDED), reused rather than reinvented — so a
+ * contents-unknown order and a mismatched charge surface where an owner is
+ * already looking. Never throws: a logging failure must not lose an order that
+ * has already committed.
+ */
+async function recordCheckoutProblem(
+  storeId: string,
+  params: { message: string; metadata: Record<string, unknown> }
+): Promise<void> {
+  try {
+    await recordExecution({
+      executionId: randomUUID(),
+      action: EXECUTION_ACTIONS.CHECKOUT_STRIPE_UNRECORDED,
+      status: "FAILED",
+      verified: false,
+      message: params.message,
+      retryable: false,
+      actorType: "USER",
+      actorId: null,
+      storeId,
+      storeDraftId: null,
+      schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
+      timestamp: new Date(),
+      metadata: params.metadata,
+    });
+  } catch {
+    // Deliberately swallowed. See above.
+  }
+}
 
 
 export async function POST(request: Request) {
@@ -193,6 +237,54 @@ export async function POST(request: Request) {
           })
         : null;
 
+      // ============ A BAG, IF THIS CHECKOUT WAS ONE (2026-08-26) ============
+      //
+      // Absent for every single-product checkout, which is every order this
+      // route has ever written — those keep the productId path below entirely
+      // unchanged. Present only when the customer came from the bag.
+      //
+      // THREE TIERS, and the rule is that a payment ALWAYS becomes an order
+      // while line items are NEVER guessed:
+      //
+      //   DRAFT     the frozen contract. Normal.
+      //   PROVIDER  the draft is gone or expired, so Stripe's own line items
+      //             are used — not a fabrication, it is what the customer was
+      //             actually charged for.
+      //   NONE      neither. The financial record is kept and nothing invented.
+      const draftId = session.metadata?.checkoutDraftId;
+      let bagLines: RecoveredLines | null = null;
+      let bagMismatch: { draft: number; settled: number } | null = null;
+      let writtenOrderId: string | null = null;
+
+      if (draftId) {
+        const draft = await loadDraft(storeId, draftId);
+        if (draft) {
+          bagLines = linesFromDraft(draft.lines);
+          // Recorded, never reconciled. Silently trusting either number is how
+          // a wrong charge becomes invisible.
+          bagMismatch = draftTotalMismatch(draft.totalInCents, session.amount_total);
+        } else {
+          // Stripe keeps the line items it was asked to charge, so a lost draft
+          // is recoverable. Not on the event — one retrieval, and only on this
+          // path, so the normal path pays nothing for it.
+          try {
+            // ON THE CONNECTED ACCOUNT, not the platform. This session belongs
+            // to the merchant's own Stripe account, and the module client above
+            // holds the PLATFORM key — asking it for these line items finds
+            // nothing, which would have silently demoted every recoverable
+            // order to tier NONE without ever erroring in an obvious way.
+            const items = await stripe.checkout.sessions.listLineItems(
+              session.id,
+              { limit: 100 },
+              event.account ? { stripeAccount: event.account } : undefined
+            );
+            bagLines = linesFromStripe(items.data);
+          } catch {
+            bagLines = noLines("The checkout draft was unavailable and Stripe's line items could not be read.");
+          }
+        }
+      }
+
       // Idempotent: Stripe can redeliver the same event more than once. An
       // existence check (rather than inferring "was this new" from upsert's
       // return value) inside the same transaction as the Order write means
@@ -239,8 +331,34 @@ export async function POST(request: Request) {
             // column is nullable and the relation is onDelete: SetNull, so an
             // order without a product was always the intended shape; the write
             // simply never honoured it.
-            productId: product?.id ?? null,
-            productName: product?.name ?? "Unknown product",
+            // A BAG OVERRIDES THE SINGLE-PRODUCT FIELDS, and only then. For a
+            // multi-product order there is no one product this order "was for",
+            // so linking one of four would make every report reading it quietly
+            // wrong — primaryProductId returns null unless there is exactly one.
+            productId: bagLines ? primaryProductId(bagLines) : (product?.id ?? null),
+            productName: bagLines ? primaryNameFor(bagLines) : (product?.name ?? "Unknown product"),
+            quantity: bagLines ? totalQuantity(bagLines) : undefined,
+            lineItemSource: bagLines?.source ?? undefined,
+            checkoutDraftId: draftId ?? undefined,
+            ...(bagLines && bagLines.lines.length > 0
+              ? {
+                  items: {
+                    create: bagLines.lines.map((line) => ({
+                      // Only linked when the product still exists in this store;
+                      // the captured name is what keeps the line readable.
+                      productId: line.productId,
+                      productName: line.productName,
+                      quantity: line.quantity,
+                      unitPriceInCents: line.unitPriceInCents,
+                      listInCents: line.listInCents,
+                      discountInCents: line.discountInCents,
+                      subtotalInCents: line.subtotalInCents,
+                      promotionId: line.promotionId,
+                      promotionLabel: line.promotionLabel,
+                    })),
+                  },
+                }
+              : {}),
             amountInCents: session.amount_total ?? 0,
             buyerEmail: session.customer_details?.email ?? "unknown",
             status: "paid",
@@ -305,6 +423,23 @@ export async function POST(request: Request) {
           },
         });
 
+        // THE DRAFT BECOMES AN ORDER, in the SAME transaction as the order
+        // itself — so a draft can never read CONVERTED against an order that
+        // did not commit, and a redelivered event finds the order already
+        // there and returns before reaching this at all.
+        //
+        // Store-scoped and only from a draft that actually reached payment.
+        if (draftId) {
+          await tx.checkoutDraft.updateMany({
+            where: { id: draftId, storeId, status: { in: ["OPEN", "PAYMENT_STARTED"] } },
+            data: { status: "CONVERTED", orderId: order.id },
+          });
+        }
+        // Carried out of the transaction so the two records below can be
+        // written AFTER it commits — an execution row must never be able to
+        // roll back a paid order.
+        writtenOrderId = order.id;
+
         const transaction = mapOrdersToTransactions([order])[0];
         await writeBusinessEvents(tx, storeId, "internal", [
           {
@@ -321,6 +456,32 @@ export async function POST(request: Request) {
           },
         ]);
       });
+
+      // ============ WHAT MUST BE SEEN, NOT MERELY STORED ==================
+      //
+      // Written after the transaction commits, deliberately: neither of these
+      // may ever be the reason a paid order rolls back.
+      if (writtenOrderId && bagLines?.source === "NONE") {
+        // An order whose contents could not be established is a real thing the
+        // owner has to reconcile against their Stripe dashboard. A column
+        // nobody looks at would not tell them.
+        await recordCheckoutProblem(storeId, {
+          message:
+            `Order ${writtenOrderId} was paid for but its contents could not be established. ` +
+            `${bagLines.note ?? ""} Reconcile it against Stripe session ${session.id}.`,
+          metadata: { orderId: writtenOrderId, sessionId: session.id, draftId: draftId ?? null },
+        });
+      }
+      if (writtenOrderId && bagMismatch) {
+        // NEVER RECONCILED SILENTLY. Recording it is the only way a wrong
+        // charge is ever found.
+        await recordCheckoutProblem(storeId, {
+          message:
+            `Order ${writtenOrderId}: the draft quoted ${bagMismatch.draft} but Stripe settled ` +
+            `${bagMismatch.settled}. The order records what was settled.`,
+          metadata: { orderId: writtenOrderId, ...bagMismatch },
+        });
+      }
       } catch (error) {
         // See lib/orders/orderFailure.ts for why the two are told apart.
         const permanent = isPermanentOrderFailure(error);
