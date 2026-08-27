@@ -366,6 +366,90 @@ async function main() {
     /<img[\s/>]/.test(shelfSrc),
     "picking a specific blank is when a real photograph is the point");
 
+  // ======================================================================
+  console.log("\n=== 7. The blank itself, for the design canvas ===\n");
+  // ======================================================================
+  //
+  // Sean: "I do NOT want the product shown on a person or inside a
+  // rectangular/white-background product photo. I want the actual blank
+  // product itself isolated on the canvas."
+  //
+  // Printful publishes exactly that, on its own endpoint, and says what it is:
+  // blank images are "transparent and require the developer to overlay them on
+  // top of the color defined on the resource". The colour is painted BEHIND a
+  // transparent blank that carries the shading and folds — which is how one
+  // image serves every colour the manufacturer actually makes.
+  //
+  // Parsed by SHAPE rather than by field name. Printful's reference has been
+  // wrong twice today and does not spell this response out at all, so the
+  // parser walks what arrives and takes anything carrying a placement and a
+  // URL. These fixtures are two plausible nestings, not a claim about which
+  // one is real — the point is that either is read correctly.
+  const blankPaths: string[] = [];
+  const blanksProvider = printfulCreationProvider(async (_s, _o, path) => {
+    blankPaths.push(path);
+    return {
+      data: [
+        {
+          catalog_variant_id: 4012,
+          color: "White",
+          color_code: "#ffffff",
+          images: [
+            { placement: "front", url: "https://files.printful.test/front.png" },
+            { placement: "back", url: "https://files.printful.test/back.png" },
+          ],
+        },
+      ],
+    };
+  });
+
+  const images = await blanksProvider.getBlankImages({
+    storeId: "store_harness",
+    externalProductId: "71",
+  });
+
+  eq("one request fetches the blanks", blankPaths.length, 1);
+  assert("against the blank-images endpoint",
+    blankPaths[0].startsWith("/catalog-products/71/images?"), blankPaths[0]);
+  assert("carrying a selling region, like every other catalogue call",
+    blankPaths[0].includes("selling_region_name=worldwide"), blankPaths[0]);
+
+  eq("both placements come back", images.length, 2);
+  eq("front and back are named", images.map((i) => i.placement).sort(), ["back", "front"]);
+  assert("each with a real URL", images.every((i) => i.url.startsWith("https://")));
+  // THE COLOUR THE IMAGE IS FOR, inherited from the variant it sits under —
+  // this is what gets painted behind a transparent blank.
+  eq("and the colour to paint behind it", images[0].colorCode, "#ffffff");
+
+  // A DIFFERENT NESTING, read the same. Printful may key the URL differently
+  // or nest one level deeper; neither should need a code change.
+  const flat = printfulCreationProvider(async () => ({
+    data: { placements: [{ placement: "front", image_url: "https://files.printful.test/f.png" }] },
+  }));
+  const flatImages = await flat.getBlankImages({ storeId: "s", externalProductId: "71" });
+  eq("a differently nested response is read the same", flatImages.length, 1);
+  eq("keeping its placement", flatImages[0].placement, "front");
+
+  // ============ AN EMPTY ANSWER AND AN UNREADABLE ONE DIFFER ==========
+  //
+  // A supplier may genuinely publish no blank imagery, and that is a real
+  // answer. A response we could not parse is NOT, and the two must not look
+  // alike — that is how a parsing bug becomes "your supplier has no pictures".
+  const empty = printfulCreationProvider(async () => ({ data: [] }));
+  eq("no imagery is an empty list, not an error",
+    (await empty.getBlankImages({ storeId: "s", externalProductId: "71" })).length, 0);
+
+  let shapeError = "";
+  const strange = printfulCreationProvider(async () => ({ result: { pictures: [] } }));
+  try {
+    await strange.getBlankImages({ storeId: "s", externalProductId: "71" });
+  } catch (error) {
+    shapeError = error instanceof Error ? error.message : String(error);
+  }
+  assert("but a shape we cannot read says so", /unfamiliar shape/.test(shapeError), shapeError);
+  assert("naming the keys that came back, never their values",
+    /top-level: result/.test(shapeError), shapeError);
+
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }

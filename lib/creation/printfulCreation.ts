@@ -1,4 +1,4 @@
-import type { Garment, GarmentVariant, CreationProvider } from "./garment";
+import type { Garment, GarmentVariant, CreationProvider, BlankImage } from "./garment";
 import { brandFromTitle } from "./garment";
 import type { PrintArea } from "./design";
 import { withSellingRegion, PRINTFUL_MAX_LIMIT } from "./printfulRequest";
@@ -208,6 +208,85 @@ export function printfulCreationProvider(
         if (garment) garments.push(garment);
       }
       return garments;
+    },
+
+    // ============ THE BLANK ITSELF, FOR THE CANVAS ====================
+    //
+    // Printful's own words for this endpoint's imagery: blank images are
+    // "transparent and require the developer to overlay them on top of the
+    // color defined on the resource."
+    //
+    // ============ PARSED BY SHAPE, NOT BY FAITH =======================
+    //
+    // Printful's published reference has been wrong twice today — it omitted
+    // selling_region_name from an endpoint that rejects requests without it,
+    // and it does not spell out this response at all. So this walks whatever
+    // comes back and collects anything that carries a placement and a URL,
+    // rather than reaching for field names nobody has verified.
+    //
+    // When it finds nothing it says WHAT IT GOT — the shape's own keys, never
+    // its values — because the alternative is another round of guessing at a
+    // response only a connected account can see.
+    async getBlankImages({ storeId, externalProductId }) {
+      const body = await fetchJson(
+        storeId,
+        "creation.blanks",
+        withSellingRegion(`/catalog-products/${externalProductId}/images?limit=${PRINTFUL_MAX_LIMIT}`),
+      );
+
+      const found: BlankImage[] = [];
+      const seen = new Set<string>();
+
+      const walk = (node: unknown, placement: string | null, colorCode: string | null): void => {
+        if (Array.isArray(node)) {
+          for (const entry of node) walk(entry, placement, colorCode);
+          return;
+        }
+        if (!node || typeof node !== "object") return;
+        const obj = node as Record<string, unknown>;
+
+        // Placement and colour are inherited downward: Printful nests images
+        // under the variant or placement they belong to.
+        const nextPlacement =
+          typeof obj.placement === "string" ? obj.placement : placement;
+        const nextColor =
+          typeof obj.color_code === "string"
+            ? obj.color_code
+            : typeof obj.color === "string"
+              ? obj.color
+              : colorCode;
+
+        for (const key of ["image_url", "url", "image", "src"]) {
+          const value = obj[key];
+          if (typeof value === "string" && /^https?:\/\//.test(value) && !seen.has(value)) {
+            seen.add(value);
+            found.push({
+              placement: nextPlacement ?? "front",
+              colorCode: nextColor && /^#?[0-9a-f]{3,8}$/i.test(nextColor) ? nextColor : null,
+              url: value,
+            });
+          }
+        }
+
+        for (const value of Object.values(obj)) walk(value, nextPlacement, nextColor);
+      };
+
+      walk(body, null, null);
+
+      if (found.length === 0) {
+        // AN EMPTY ANSWER IS REAL — a supplier may publish no blank imagery.
+        // A SHAPE WE COULD NOT READ IS NOT, and the two must not look alike.
+        const keys =
+          body && typeof body === "object"
+            ? Object.keys(body as Record<string, unknown>).join(", ")
+            : typeof body;
+        if (keys !== "data") {
+          throw new Error(
+            `Printful returned blank images in an unfamiliar shape (top-level: ${keys}).`,
+          );
+        }
+      }
+      return found;
     },
 
     async getGarment({ storeId, externalProductId }) {
