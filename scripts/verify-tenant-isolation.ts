@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   hasValidScope,
   TENANT_SCOPED_MODEL_KEYS,
@@ -182,6 +184,54 @@ console.log("\nStoreMember is scoped by the person as well as the business");
   // An OR with one unscoped branch still selects other people's rows.
   assert("an OR needs every branch scoped",
     !hasValidScope({ OR: [{ userId: "user_1" }, { role: "OWNER" }] }, MEMBER));
+}
+
+// ============ THE MAP AND THE SCHEMA MUST NOT DRIFT ======================
+//
+// This is a SWEEP, not a list, and the difference is the whole point of it.
+//
+// On 2026-08-27 the map and the schema had drifted by EIGHT models --
+// conversation, task, promotion, checkoutDraft, proactiveDelivery,
+// recordRelationship, supplierRequestEvent, businessPartnerTrialGrant -- every
+// one added after the map was last widened. None of them leaked, because every
+// call site happened to pass storeId. But the guard returns early for a model
+// it does not know, so nothing would have objected if one had not.
+//
+// A maintained list would have needed the same person who forgot the map to
+// remember the list. Reading the schema removes that: adding a storeId column
+// fails this suite until the model is either guarded or deliberately excused.
+//
+// Same lesson, and the same fix, as scripts/lib/suiteLanes.ts's needsDatabase.
+{
+  console.log("\n=== The guard covers every store-scoped model in the schema ===\n");
+
+  const schema = readFileSync(join(process.cwd(), "prisma", "schema.prisma"), "utf8");
+  const lower = (name: string) => name.charAt(0).toLowerCase() + name.slice(1);
+
+  const withStoreId = [...schema.matchAll(/model\s+(\w+)\s*\{([\s\S]*?)\n\}/g)]
+    .filter((m) => /\n\s+storeId\s/.test(m[2]))
+    .map((m) => lower(m[1]));
+
+  assert("the schema really does have store-scoped models", withStoreId.length > 20,
+    `found ${withStoreId.length}`);
+
+  const guarded = new Set(Object.keys(TENANT_SCOPED_MODEL_KEYS));
+
+  // DELIBERATELY UNGUARDED, each with a reason. Empty today: every model that
+  // carries a storeId is guarded. An entry here is a decision somebody made,
+  // which is the only acceptable way for this list to be non-empty.
+  const excused = new Map<string, string>([]);
+
+  const unguarded = withStoreId.filter((m) => !guarded.has(m) && !excused.has(m));
+  check("every model carrying storeId is guarded", unguarded, []);
+
+  // AND THE REVERSE: a guarded model that no longer carries storeId is a rule
+  // pointing at nothing, which reads as protection and is not.
+  const schemaModels = new Set(
+    [...schema.matchAll(/model\s+(\w+)\s*\{/g)].map((m) => lower(m[1])),
+  );
+  const stale = [...guarded].filter((m) => !schemaModels.has(m));
+  check("and no guarded model has left the schema", stale, []);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

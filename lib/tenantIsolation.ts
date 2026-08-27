@@ -125,6 +125,43 @@ const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
   sourcedProduct: ["storeId"],
   supplierEconomics: ["storeId"],
   progressionDecision: ["storeId"],
+
+  // ============ THE EIGHT THAT HAD NO NET (2026-08-27) ====================
+  //
+  // Found by sweeping the schema for models carrying `storeId` and comparing
+  // that list to this map, rather than by reading either — the two had drifted
+  // by eight models, every one of them added since this map was last widened.
+  //
+  // NOT A LEAK, AND WORTH BEING PRECISE ABOUT THAT. All fourteen live call
+  // sites across these models already pass `storeId`, checked one by one
+  // before adding them here. What was missing was the ENFORCEMENT: the guard
+  // returns early for any model it does not know (`if (!scopeKeys) return
+  // query(args)`), so a forgetful query against one of these would have
+  // compiled, run, and returned another business's rows without anything
+  // objecting.
+  //
+  // That distinction is why adding them is safe: nothing should begin throwing,
+  // and the full suite is what proves it rather than the reasoning.
+  //
+  // Several are squarely on the isolation list a second business depends on:
+  //
+  //   conversation        every word an owner has said to J4, per business
+  //   proactiveDelivery   what J4 raised unprompted, and to which business
+  //   task                the work a business has outstanding
+  //   recordRelationship  the edges of the business understanding graph
+  //   promotion           what a shop has on sale
+  //   checkoutDraft       a customer's frozen order, mid-payment
+  //
+  // A collection read that forgot the store on any of them would show one
+  // owner another owner's conversations, sales or orders.
+  conversation: ["storeId"],
+  proactiveDelivery: ["storeId"],
+  task: ["storeId"],
+  recordRelationship: ["storeId"],
+  promotion: ["storeId"],
+  checkoutDraft: ["storeId"],
+  supplierRequestEvent: ["storeId"],
+  businessPartnerTrialGrant: ["storeId"],
 };
 
 function isRealFilterObject(value: unknown): value is Record<string, unknown> {

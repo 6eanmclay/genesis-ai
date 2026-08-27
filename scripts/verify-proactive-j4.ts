@@ -112,8 +112,16 @@ async function main() {
     where: { storeId: shop.id, dedupeKey: "insight:revenue.decreased" },
   });
   check("the finding is still active", standing.status, "ACTIVE");
+  // SCOPED BY STORE AS WELL AS BY OBSERVATION (2026-08-27). This counted on
+  // observationId alone, which was narrow in fact — an observation belongs to
+  // one business — but not narrow by CONSTRUCTION, and the tenant guard now
+  // covers ProactiveDelivery and said so. Adding the store is what production
+  // does at every call site (lib/intelligence/proactive.ts), so this asserts
+  // the same thing through the same shape rather than a shape only a test uses.
   check("and its delivery is still open",
-    await prisma.proactiveDelivery.count({ where: { observationId: standing.id, closedAt: null } }), 1);
+    await prisma.proactiveDelivery.count({
+      where: { storeId: shop.id, observationId: standing.id, closedAt: null },
+    }), 1);
   // The card and the sentence have different lifetimes on purpose.
   assert("so the card may persist while the sentence does not repeat",
     standing.status === "ACTIVE" && (await assistantMessages(shop.id)).length === 1,
