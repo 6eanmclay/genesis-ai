@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { DesignLayer, PlacementId, PrintArea, ProductDesign } from "@/lib/creation/design";
 import { layersOn } from "@/lib/creation/design";
+import { BlankOnColor } from "./BlankOnColor";
 
 // THE GARMENT, AND THE ARTWORK ON IT.
 //
@@ -31,7 +32,9 @@ export function CreationCanvas({
   design,
   placement,
   area,
-  garmentImageUrl,
+  blankUrl,
+  colorHex,
+  creatableId,
   selectedLayerId,
   onSelect,
   onMove,
@@ -41,7 +44,12 @@ export function CreationCanvas({
   placement: PlacementId;
   /** Null when this blank does not print on this side. */
   area: PrintArea | null;
-  garmentImageUrl: string | null;
+  /** The supplier's transparent blank for the placement on screen. */
+  blankUrl: string | null;
+  /** The hex the supplier declares for the chosen colour. */
+  colorHex: string | null;
+  /** Only used when the supplier has no blank — see BlankOnColor. */
+  creatableId: string;
   selectedLayerId: string | null;
   onSelect: (layerId: string | null) => void;
   /** Deltas as fractions of the print area — the model's own units. */
@@ -119,24 +127,26 @@ export function CreationCanvas({
   return (
     <div className="relative mx-auto w-full max-w-[420px] select-none">
       <div
-        className="relative aspect-[3/4] overflow-hidden rounded-2xl bg-zinc-100 dark:bg-zinc-900"
+        // NO CARD BEHIND THE PRODUCT. The blank is transparent, so the
+        // Creation Station's own background belongs behind it — a filled
+        // rounded rectangle here is the white square by another name.
+        className="relative aspect-[3/4] overflow-hidden rounded-2xl"
         onPointerDown={() => onSelect(null)}
       >
-        {/* THE GARMENT'S OWN PHOTOGRAPH, in the chosen colour. Not a tinted
-            copy of one image — the supplier gives a real photo per colour. */}
-        {garmentImageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element -- supplier CDN, no remotePatterns
-          <img
-            src={garmentImageUrl}
-            alt=""
-            className="pointer-events-none absolute inset-0 h-full w-full object-contain"
-            draggable={false}
-          />
-        ) : (
-          <div className="absolute inset-0 grid place-items-center text-[13px] text-zinc-500">
-            No preview for this colour
-          </div>
-        )}
+        {/* ============ THE BLANK, IN THE COLOUR THEY MAKE IT ===========
+            Colour behind, the supplier's transparent blank on top, artwork
+            above that. Printful's own instruction for this imagery: overlay
+            it "on top of the color defined on the resource".
+
+            This used to be the catalogue photograph for the chosen colour,
+            which is a picture of a product rather than a product being made —
+            and for many blanks it is a lifestyle shot with a person in it. */}
+        <BlankOnColor
+          blankUrl={blankUrl}
+          colorHex={colorHex}
+          creatableId={creatableId}
+          className="pointer-events-none absolute inset-0 h-full w-full"
+        />
 
         {area ? (
           <div

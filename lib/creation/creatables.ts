@@ -152,7 +152,16 @@ export function blanksFor<T extends NameAndType>(blanks: T[], creatable: Creatab
  */
 export interface PortalItem {
   creatable: Creatable;
-  imageUrl: string | null;
+  /** The blank whose picture stands for this intention, if the supplier has one. */
+  representativeProductId: string | null;
+  /**
+   * The supplier's own transparent blank, once fetched. Null means either no
+   * supplier or no blank imagery — which are different, and the portal is told
+   * which by `available` and by whether a supplier is connected at all.
+   */
+  blankUrl?: string | null;
+  /** The colour to paint behind that blank. */
+  blankColorHex?: string | null;
   /** How many blanks the connected supplier has. Zero is a real answer. */
   blankCount: number;
   available: boolean;
@@ -163,7 +172,9 @@ export function portalItems(blanks: PortalSource[]): PortalItem[] {
     const matching = blanksFor(blanks, creatable);
     return {
       creatable,
-      imageUrl: matching.find((b) => b.imageUrl)?.imageUrl ?? null,
+      // WHICH PRODUCT WOULD REPRESENT THIS INTENTION. The portal shows the
+      // supplier's real blank for it, and needs an id to go and fetch one.
+      representativeProductId: matching[0]?.externalProductId ?? null,
       blankCount: matching.length,
       available: matching.length > 0,
     };
@@ -176,4 +187,4 @@ export function portalItems(blanks: PortalSource[]): PortalItem[] {
  * A supplier's index already carries all three, so the portal costs ONE request
  * rather than one per blank plus one — see the note on NameAndType.
  */
-export type PortalSource = NameAndType & { imageUrl: string | null };
+export type PortalSource = NameAndType & { externalProductId: string };

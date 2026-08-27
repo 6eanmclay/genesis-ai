@@ -187,8 +187,13 @@ async function main() {
   const items = portalItems(blanks);
   const hoodie = items.find((i) => i.creatable.id === "hoodie");
   assert("the portal finds its hoodies", !!hoodie && hoodie.blankCount === 40, JSON.stringify(hoodie));
-  assert("with a real photograph to show", !!hoodie?.imageUrl, String(hoodie?.imageUrl));
-  eq("having spent no further requests", indexOnly.length, 1);
+  // A PRODUCT TO FETCH THE REAL BLANK FOR — not a photograph to display.
+  // The portal shows the supplier's own transparent blank, which is a second
+  // request per intention; the index's job is only to name which product
+  // stands for each one.
+  assert("naming the blank that stands for the intention",
+    !!hoodie?.representativeProductId, String(hoodie?.representativeProductId));
+  eq("having spent no further requests to decide that", indexOnly.length, 1);
 
   // THE SHELF pays per blank — so it pays only for what it shows.
   const detailPaths: string[] = [];
@@ -320,7 +325,7 @@ async function main() {
     "that is the message Sean was shown");
 
   // ======================================================================
-  console.log("\n=== 6. The portal draws; it never shows a photograph ===\n");
+  console.log("\n=== 6. The portal shows the supplier blank, never a photograph ===\n");
   // ======================================================================
   //
   // THE REGRESSION THIS EXISTS FOR (2026-08-27). ObjectFace preferred the
@@ -344,15 +349,41 @@ async function main() {
   const portalSrc = codeOnly(
     readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationPortal.tsx"), "utf8")
   );
-  assert("the portal renders no image element at all",
-    !/<img[\s/>]/.test(portalSrc),
-    "a supplier photograph in this room is a white rectangle in a dark space");
-  assert("and reaches for the drawn object instead",
-    /<CreatableArt\b/.test(portalSrc));
-  // CONTROL: the drawing is not merely present alongside a photograph.
-  assert("CONTROL: with no imageUrl branch left to prefer",
-    !/item\.imageUrl\s*\?/.test(portalSrc),
-    "the branch is what chose the photograph over the drawing");
+  // REVISED, DELIBERATELY (2026-08-27). This asserted the portal rendered no
+  // image element at all, which was right when the only image available was a
+  // catalogue photograph on a white ground. It is wrong now: Printful also
+  // publishes TRANSPARENT blanks, and Sean's rule is that the real supplier
+  // blank wins wherever there is one. The claim that survives is narrower and
+  // truer — never the photograph, always the blank where it exists.
+  assert("the portal goes through the layered blank, not a raw image",
+    !/<img[\s/>]/.test(portalSrc) && /<BlankOnColor\b/.test(portalSrc),
+    "colour behind, transparent blank on top — see BlankOnColor");
+  // THE CATALOGUE PHOTOGRAPH IS GONE AT THE SOURCE. PortalItem no longer
+  // carries one, so there is nothing for the portal to fall back into.
+  assert("CONTROL: and there is no catalogue photograph left to prefer",
+    !/item\.imageUrl/.test(portalSrc),
+    "that property is what chose a lifestyle shot over the product");
+
+  // AND THE DRAWING IS STILL REACHABLE, through the one component that owns
+  // the choice. An assertion that only banned images would pass against a
+  // portal with nothing to show when a supplier publishes no blank.
+  const blankSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "BlankOnColor.tsx"), "utf8")
+  );
+  assert("the drawn object remains the fallback when there is no blank",
+    /<CreatableArt\b/.test(blankSrc) && /usesRealBlank\(/.test(blankSrc));
+  assert("the colour is painted behind, masked to the blank's own shape",
+    /maskImage/.test(blankSrc) && /backgroundColor/.test(blankSrc),
+    "an unmasked fill is a coloured rectangle, which is the thing being removed");
+  assert("and the blend is isolated from the page behind it",
+    /isolation:\s*"isolate"/.test(blankSrc),
+    "multiply against a near-black room erases the garment");
+
+  // WHOSE PICTURE IT IS, SAID OUT LOUD. The drawing is honest as a picture and
+  // silent as a claim; the portal has to speak for it.
+  assert("and the portal says when the drawing is ours, not the supplier's",
+    /drawn by Genesis/.test(portalSrc),
+    "a Genesis outline presented as the manufacturer's product is the failure here");
 
   // AND THE SHELF STILL USES THE REAL ONES. Deliberately the opposite rule:
   // choosing WHICH blank is exactly when a real photograph of that blank is

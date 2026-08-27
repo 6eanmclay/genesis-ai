@@ -13,7 +13,7 @@ import {
   type PlacementId,
   type ProductDesign,
 } from "@/lib/creation/design";
-import { areaFor, colorsOf, sizesFor, variantFor, type Garment } from "@/lib/creation/garment";
+import { areaFor, colorsOf, sizesFor, variantFor, type Garment, type BlankImage } from "@/lib/creation/garment";
 import { applyOperation, describeOperation, operationsFor, type DesignOperation } from "@/lib/creation/operations";
 import { CreationCanvas } from "./CreationCanvas";
 
@@ -47,10 +47,16 @@ interface Asset {
 export function CreationStation({
   garment,
   assets,
+  blankImages,
+  creatableId,
   onAddToStore,
 }: {
   garment: Garment;
   assets: Asset[];
+  /** The supplier's transparent blanks for this product. Empty is a real answer. */
+  blankImages: BlankImage[];
+  /** Only used for the drawn fallback when the supplier has no blank. */
+  creatableId: string;
   /** Returns null on success, or a message the owner can act on. */
   onAddToStore: (design: ProductDesign) => Promise<string | null>;
 }) {
@@ -147,7 +153,26 @@ export function CreationStation({
     }
   }
 
-  const swatchImage = colors.find((c) => c.color === color)?.imageUrl ?? garment.imageUrl;
+  // ============ WHICH BLANK, AND WHICH COLOUR BEHIND IT ================
+  //
+  // Both come from the supplier. The blank is chosen by PLACEMENT, so turning
+  // the garment over shows its back rather than the same picture twice; the
+  // colour is the hex Printful declares for the variant, so a colour that
+  // cannot be manufactured cannot be selected.
+  //
+  // An image marked for a specific colour wins over a general one — Printful
+  // publishes per-colour blanks for some products and one transparent blank
+  // for the rest, and the per-colour version is the truer picture where it
+  // exists.
+  const chosenHex = colors.find((c) => c.color === color)?.colorHex ?? null;
+  const blankUrl = useMemo(() => {
+    const forPlacement = blankImages.filter((b) => b.placement === placement);
+    const pool = forPlacement.length > 0 ? forPlacement : blankImages;
+    const exact = chosenHex
+      ? pool.find((b) => b.colorCode?.toLowerCase() === chosenHex.toLowerCase())
+      : undefined;
+    return (exact ?? pool.find((b) => b.colorCode === null) ?? pool[0])?.url ?? null;
+  }, [blankImages, placement, chosenHex]);
 
   return (
     <div className="mx-auto w-full max-w-6xl px-5 py-8">
@@ -193,7 +218,9 @@ export function CreationStation({
             design={design}
             placement={placement}
             area={area}
-            garmentImageUrl={swatchImage}
+            blankUrl={blankUrl}
+            colorHex={chosenHex}
+            creatableId={creatableId}
             selectedLayerId={selected}
             onSelect={setSelected}
             onMove={(layerId, dx, dy) => setDesign((d) => applyOperation(d, { kind: "move", placement, layerId, dx, dy }))}

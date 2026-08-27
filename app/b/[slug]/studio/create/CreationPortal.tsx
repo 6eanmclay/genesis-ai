@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PortalItem } from "@/lib/creation/creatables";
 import { GENESIS_BLACK, GENESIS_GREEN } from "@/lib/brand/palette";
-import { CreatableArt } from "./CreatableArt";
+import { BlankOnColor, usesRealBlank } from "./BlankOnColor";
 
 // THE DOORWAY INTO CREATING.
 //
@@ -243,7 +243,16 @@ export function CreationPortal({
                 catalogue was read successfully and had nothing matching. That
                 is now the only case it is said in. */}
             {focused?.available
-              ? `${focused.blankCount} to choose from · ${focused.creatable.hint}`
+              ? usesRealBlank(focused.blankUrl ?? null)
+                ? `${focused.blankCount} to choose from · ${focused.creatable.hint}`
+                : // WHOSE PICTURE THIS IS, said out loud (2026-08-27).
+                  //
+                  // Sean: "don't silently pretend a Genesis drawing is the
+                  // manufacturer's product." The supplier stocks this and can
+                  // make it — they just publish no blank image for it, so what
+                  // is on screen is ours. Both facts belong here, because
+                  // either one alone misleads.
+                  `${focused.blankCount} to choose from · outline drawn by Genesis, your supplier has no image`
               : catalogueUnreadable
                 ? "We couldn't read your supplier's catalogue just now"
                 : hasSupplier
@@ -364,7 +373,12 @@ function ObjectFace({ item, focused }: { item: PortalItem; focused: boolean }) {
             is not. The supplier's real photographs still carry the shelf, one
             step later, where the question is WHICH blank rather than WHAT to
             make — and there a photograph on white inside a card is right. */}
-        <CreatableArt id={item.creatable.id} className="relative h-[86%] w-[86%]" />
+        <BlankOnColor
+          blankUrl={item.blankUrl ?? null}
+          colorHex={item.blankColorHex ?? null}
+          creatableId={item.creatable.id}
+          className="relative h-[86%] w-[86%]"
+        />
       </span>
     </span>
   );

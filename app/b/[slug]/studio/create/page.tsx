@@ -28,6 +28,30 @@ import type { Blank } from "@/lib/creation/garment";
 
 export const metadata = { title: "Creation Station" };
 
+/**
+ * The supplier's transparent blanks for one product, or an empty list.
+ *
+ * ONE MORE REQUEST, AND ONLY THE CANVAS MAKES IT. A shelf of twelve does not
+ * need blank imagery, and paying for twelve of these to draw a grid is how the
+ * rate limit was hit the first time.
+ *
+ * A failure here is NOT a failure of the page. The blanks are how the canvas
+ * shows the real product; without them it falls back to a drawn object and
+ * says so. Losing the whole designer because a picture would not load would be
+ * a worse answer than designing on ours for a minute.
+ */
+async function blankImagesFor(
+  provider: NonNullable<Awaited<ReturnType<typeof creationAccessFor>>["provider"]>,
+  storeId: string,
+  externalProductId: string,
+) {
+  try {
+    return await provider.getBlankImages({ storeId, externalProductId });
+  } catch {
+    return [];
+  }
+}
+
 export default async function CreationStationPage({
   params,
   searchParams,
@@ -96,9 +120,34 @@ export default async function CreationStationPage({
   // supplier photographs where there are any, says plainly where there are
   // none, and the supplier check happens at the step that actually needs one.
   if (!garmentId && !kind) {
+    // ============ THE PORTAL SHOWS THE SUPPLIER'S OWN BLANKS ===========
+    //
+    // Sean: "use the real Printful blank imagery anywhere it is available...
+    // No generated garment should be used when Printful provides the real
+    // blank."
+    //
+    // So each intention fetches the transparent blank of the product that
+    // stands for it — five requests on top of the index, not one per blank in
+    // the catalogue. Everything is fetched together rather than in sequence
+    // because five is well inside Printful's allowance and a portal that takes
+    // five round trips to appear is a portal nobody waits for.
+    //
+    // A failure or a missing blank is NOT hidden: the item keeps a null
+    // blankUrl, the portal draws ours instead, and it says whose it is.
+    const items = provider
+      ? await Promise.all(
+          portalItems(blanks).map(async (item) => {
+            if (!item.representativeProductId) return item;
+            const images = await blankImagesFor(provider, store.id, item.representativeProductId);
+            const front = images.find((i) => i.placement === "front") ?? images[0] ?? null;
+            return { ...item, blankUrl: front?.url ?? null, blankColorHex: front?.colorCode ?? null };
+          }),
+        )
+      : portalItems(blanks);
+
     return (
       <CreationPortal
-        items={portalItems(blanks)}
+        items={items}
         basePath={basePath}
         hasSupplier={provider !== null}
         catalogueUnreadable={catalogError !== null}
@@ -195,7 +244,15 @@ export default async function CreationStationPage({
       );
     }
 
-    return <CreationStationClient slug={slug} garment={garment} assets={await artworkFor(store.id)} />;
+    return (
+      <CreationStationClient
+        slug={slug}
+        garment={garment}
+        assets={await artworkFor(store.id)}
+        blankImages={await blankImagesFor(provider, store.id, garment.externalProductId)}
+        creatableId={kind ?? ""}
+      />
+    );
   }
 
   // WHICH BLANK, now that the intention is known. Narrowed to the creatable
@@ -251,7 +308,15 @@ export default async function CreationStationPage({
   // EXACTLY ONE MEANS THE QUESTION IS ALREADY ANSWERED. Showing a shelf of one
   // is asking somebody to choose between a single option.
   if (shown.length === 1) {
-    return <CreationStationClient slug={slug} garment={shown[0]} assets={await artworkFor(store.id)} />;
+    return (
+      <CreationStationClient
+        slug={slug}
+        garment={shown[0]}
+        assets={await artworkFor(store.id)}
+        blankImages={await blankImagesFor(provider, store.id, shown[0].externalProductId)}
+        creatableId={kind ?? ""}
+      />
+    );
   }
 
   return (

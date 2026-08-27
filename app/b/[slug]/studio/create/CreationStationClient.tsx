@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Garment } from "@/lib/creation/garment";
+import type { Garment, BlankImage } from "@/lib/creation/garment";
 import type { ProductDesign } from "@/lib/creation/design";
 import { CreationStation } from "./CreationStation";
 import { addDesignToStore } from "./actions";
@@ -21,10 +21,14 @@ export function CreationStationClient({
   slug,
   garment,
   assets,
+  blankImages,
+  creatableId,
 }: {
   slug: string;
   garment: Garment;
   assets: { id: string; url: string; name: string }[];
+  blankImages: BlankImage[];
+  creatableId: string;
 }) {
   const [name, setName] = useState(garment.name);
   // A default that is a real number rather than zero: roughly three times the
@@ -65,7 +69,13 @@ export function CreationStationClient({
         </label>
       </div>
 
-      <CreationStation garment={garment} assets={assets} onAddToStore={handleAdd} />
+      <CreationStation
+        garment={garment}
+        assets={assets}
+        blankImages={blankImages}
+        creatableId={creatableId}
+        onAddToStore={handleAdd}
+      />
     </div>
   );
 }
