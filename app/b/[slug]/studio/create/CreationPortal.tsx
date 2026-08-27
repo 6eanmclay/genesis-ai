@@ -284,9 +284,10 @@ export function CreationPortal({
  *
  * A supplier photograph wins whenever there is one, because a real blank is
  * more honest than a drawing of one. Where there is none — which is every
- * business before a supplier is connected — a silhouette stands in, because
- * the other half of his correction is the part a label cannot satisfy: "I
- * shouldn't have to read T-shirt to know I'm looking at a T-shirt."
+ * business before a supplier is connected — a white rendering stands in,
+ * because the other half of his correction is the part a label cannot
+ * satisfy: "I shouldn't have to read T-shirt to know I'm looking at a
+ * T-shirt."
  */
 function ObjectFace({ item, focused }: { item: PortalItem; focused: boolean }) {
   return (
@@ -294,7 +295,17 @@ function ObjectFace({ item, focused }: { item: PortalItem; focused: boolean }) {
       className={focused ? "creation-portal-breathe block" : "block"}
       style={focused ? { animation: "creationPortalBreathe 4.5s ease-in-out infinite" } : undefined}
     >
-      <span className="relative grid h-[190px] w-[190px] place-items-center sm:h-[230px] sm:w-[230px]">
+      {/* HOW LIT THIS ONE IS, decided once for the whole object.
+          It used to be a text colour the drawn artwork inherited, which
+          stopped meaning anything the moment the objects became shaded
+          renderings rather than one-colour shapes — and never touched a
+          supplier photograph at all. Opacity dims both the same way, so a
+          business with photographs and a business without get the same
+          sense of depth. */}
+      <span
+        className="relative grid h-[190px] w-[190px] place-items-center transition-opacity duration-500 sm:h-[230px] sm:w-[230px]"
+        style={{ opacity: focused ? 1 : 0.42 }}
+      >
         {/* The light sits BEHIND the object, so the object is lit rather than
             outlined. Only the focused one is lit — that is the whole depth
             cue, and it is the same green the rest of the language uses for
@@ -316,12 +327,7 @@ function ObjectFace({ item, focused }: { item: PortalItem; focused: boolean }) {
             className="relative h-[88%] w-[88%] object-contain"
           />
         ) : (
-          // currentColor, so how lit this is comes from the parent rather than
-          // from a second copy of the artwork per state.
-          <CreatableArt
-            id={item.creatable.id}
-            className={`relative h-[86%] w-[86%] ${focused ? "text-zinc-100" : "text-zinc-500"}`}
-          />
+          <CreatableArt id={item.creatable.id} className="relative h-[86%] w-[86%]" />
         )}
       </span>
     </span>

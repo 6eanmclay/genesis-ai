@@ -3,6 +3,7 @@ import { prisma, prismaSystem } from "@/lib/prisma";
 import { connectionHealthOf, CONSECUTIVE_FAILURES_BEFORE_RECONNECT } from "@/lib/integrations/connectionHealth";
 import { getIntegrationIssues } from "@/lib/dashboard/needsAttention";
 import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
+import { printfulConnector } from "@/lib/integrations/printful";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -233,6 +234,37 @@ async function main() {
   // `configured() { return true }` and this assertion caught it.
   eq("the OAuth connectors that need platform credentials declare it",
     declaring, ["facebook", "google-calendar", "instagram", "quickbooks", "square-pos", "tiktok", "xero"]);
+
+  // ============ PRINTFUL DECLARES ITS CREDENTIALS TOO =================
+  //
+  // Not a catalog entry — Printful is reached through the Creation Station
+  // rather than the connections directory — so the sweep above cannot see it.
+  // It needs the same declaration for the same reason, and now something reads
+  // it: the creation flow hides its Connect button when this is false, instead
+  // of offering one that fails and lands the owner on the connections page.
+  //
+  // Asserted BOTH WAYS against the real environment, so a configured() that
+  // always answers true cannot pass.
+  const pfEnv = { id: process.env.PRINTFUL_CLIENT_ID, secret: process.env.PRINTFUL_CLIENT_SECRET };
+  try {
+    process.env.PRINTFUL_CLIENT_ID = "harness-id";
+    process.env.PRINTFUL_CLIENT_SECRET = "harness-secret";
+    assert("Printful is configured when both halves are present", printfulConnector.configured?.() === true);
+
+    // ONE HALF IS NOT ENOUGH. The authorize URL needs the id and the token
+    // exchange needs the secret, so half a credential fails a step later —
+    // after the owner has left for Printful and come back.
+    delete process.env.PRINTFUL_CLIENT_SECRET;
+    assert("and not configured with only the client id", printfulConnector.configured?.() === false);
+    process.env.PRINTFUL_CLIENT_SECRET = "harness-secret";
+    delete process.env.PRINTFUL_CLIENT_ID;
+    assert("nor with only the secret", printfulConnector.configured?.() === false);
+  } finally {
+    if (pfEnv.id === undefined) delete process.env.PRINTFUL_CLIENT_ID;
+    else process.env.PRINTFUL_CLIENT_ID = pfEnv.id;
+    if (pfEnv.secret === undefined) delete process.env.PRINTFUL_CLIENT_SECRET;
+    else process.env.PRINTFUL_CLIENT_SECRET = pfEnv.secret;
+  }
 
   // ========================================================================
   console.log("\n=== 7. BusinessContext reports staleness that can be true ===\n");

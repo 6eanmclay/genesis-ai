@@ -6,6 +6,8 @@ import { creationAccessFor } from "@/lib/creation/provider";
 import { CreationStationClient } from "./CreationStationClient";
 import { GarmentShelf } from "./GarmentShelf";
 import { CreationPortal } from "./CreationPortal";
+import { SupplierStep } from "./SupplierStep";
+import { getConnector } from "@/lib/integrations/registry";
 import { creatableById, garmentsFor, portalItems } from "@/lib/creation/creatables";
 
 // THE CREATION STATION, FOR ONE BUSINESS.
@@ -84,14 +86,35 @@ export default async function CreationStationPage({
     );
   }
 
-  // NO CREDENTIALS AT ALL is the only case that means "connect one".
+  // ============ THE SUPPLIER STEP IS PART OF CREATING =================
+  //
+  // Sean: "The user should never click Make a T-shirt and get dumped into a
+  // generic Connections page with no relevant supplier available."
+  //
+  // Both of these used to send somebody to a directory of twelve integrations
+  // to work out which one their T-shirt needed. They now stay in the flow,
+  // keep the thing that was chosen on screen, and offer the one connection
+  // that matters -- started through the same action the Connections screen
+  // uses, so there is one connect path rather than a second that drifts.
+  const chosenLabel = kind ? (creatableById(kind)?.label ?? "product") : "product";
+
+  // WHETHER THIS DEPLOYMENT CAN OFFER PRINTFUL AT ALL, asked of the connector
+  // rather than read here, so this page cannot fall out of step with the
+  // variables Printful actually needs. A boolean crosses to the client; the
+  // credentials never do.
+  //
+  // Without it, an unconfigured deployment shows a Connect button that starts
+  // the action, fails, and redirects to the connections screen with an error
+  // -- the dead end coming back through the one door left open.
+  const supplierConfigured = getConnector("PRINTFUL").configured?.() ?? true;
+
   if (!provider) {
     return (
-      <Empty
-        title="Connect a print supplier to start designing"
-        body="The Creation Station works from your supplier's real catalogue — their blanks, their colours, their print areas. Connect one and every garment they make becomes something you can design on."
-        actionHref={`${basePath}/connections`}
-        actionLabel="Go to connections"
+      <SupplierStep
+        slug={slug}
+        creatableId={kind ?? ""}
+        creatableLabel={chosenLabel}
+        configured={supplierConfigured}
       />
     );
   }
@@ -101,13 +124,14 @@ export default async function CreationStationPage({
   // reconnecting something that was never disconnected.
   if (catalogError) {
     return (
-      <Empty
-        title="Your supplier didn't answer"
-        body={`Printful is connected${
-          status && status !== "CONNECTED" ? ` but its last check reported ${status.toLowerCase().replace("_", " ")}` : ""
-        }. It said: ${catalogError}`}
-        actionHref={`${basePath}/connections`}
-        actionLabel="Check the connection"
+      <SupplierStep
+        slug={slug}
+        creatableId={kind ?? ""}
+        creatableLabel={chosenLabel}
+        configured={supplierConfigured}
+        problem={`${catalogError}${
+          status && status !== "CONNECTED" ? ` (last check: ${status.toLowerCase().replace("_", " ")})` : ""
+        }`}
       />
     );
   }

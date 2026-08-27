@@ -26,14 +26,17 @@ const PASSWORD = "correct-horse-battery-staple";
 let failures = 0;
 let passes = 0;
 
-function check(label: string, actual: unknown, expected: unknown): void {
+function check(label: string, actual: unknown, expected: unknown, detail = ""): void {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
   if (ok) {
     passes++;
     console.log(`  ✓ ${label}`);
   } else {
     failures++;
-    console.error(`  ✗ ${label}\n      expected ${JSON.stringify(expected)}\n      got      ${JSON.stringify(actual)}`);
+    console.error(
+      `  ✗ ${label}\n      expected ${JSON.stringify(expected)}\n      got      ${JSON.stringify(actual)}` +
+        (detail ? `\n      where    ${detail}` : ""),
+    );
   }
 }
 
@@ -66,6 +69,21 @@ async function signIn(page: Page, baseUrl: string, email: string): Promise<void>
 
 async function main() {
   console.log("Starting a real Next server on a real Postgres. First compile takes a while.\n");
+
+  // PRINTFUL'S APP CREDENTIALS, DETERMINISTIC AND FAKE — the same device the
+  // harness already uses for Stripe. They are never sent anywhere: the only
+  // thing that reads them here is printfulConnector.configured(), which
+  // decides whether the creation flow can honestly offer a Connect button.
+  //
+  // Set BEFORE the server starts, because startTestServer hands its child a
+  // snapshot of this environment. Without them the suite would prove only the
+  // unconfigured screen and would silently stop covering the connect path —
+  // the branch that matters most, since it is the one that used to dead-end.
+  // The other direction is proved in verify-connection-truthfulness, where the
+  // connector can be asked both ways without a second server.
+  process.env.PRINTFUL_CLIENT_ID = "harness-printful-client";
+  process.env.PRINTFUL_CLIENT_SECRET = "harness-printful-secret";
+
   const server = await startTestServer();
   const prisma = server.db.prisma;
   let browser: Browser | undefined;
@@ -140,11 +158,32 @@ async function main() {
     // ============ THE RULE THIS PAGE IS BUILT ON ======================
     // A design tool with an invented catalogue produces something nobody can
     // order. Naming the cause is worth more than a populated screen that lies.
-    assert("with no supplier, it names the missing supplier",
-      /connect a print supplier/i.test(chosen), chosen.slice(0, 300));
     assert("and shows no blanks", !/which t-shirt/i.test(chosen), chosen.slice(0, 300));
-    check("with a way to fix it",
-      await page.locator(`a[href="/b/${store.slug}/connections"]`).count() > 0, true);
+
+    // ============ THE DEAD END, ASSERTED SHUT =========================
+    //
+    // Sean: "The user should never click Make a T-shirt and get dumped into a
+    // generic Connections page with no relevant supplier available."
+    //
+    // The supplier requirement is real and does not go away. What must not
+    // happen is handing somebody a directory of twelve integrations and asking
+    // them to work out which one a T-shirt needs. Four things prove the
+    // difference, and the last one is the one that regressed before.
+    assert("the supplier step names the supplier, not the category",
+      /printful/i.test(chosen), chosen.slice(0, 400));
+    assert("it still knows what was chosen",
+      /t-shirt/i.test(chosen), chosen.slice(0, 400));
+    check("and offers the real connection right there",
+      await page.locator("form button", { hasText: /connect printful/i }).count(), 1);
+
+    // THE REGRESSION GUARD. A link to the connections directory anywhere on
+    // this screen is the dead end coming back.
+    check("with no detour to the connections directory",
+      await page.locator(`a[href*="/connections"]`).count(), 0);
+
+    // Leaving is BACK TO CHOOSING, which is where they were.
+    check("and a way back to the portal",
+      await page.locator(`a[href="/b/${store.slug}/studio/create"]`).count() > 0, true);
 
     // ------------------------------------------------------------------
     console.log("\n1c. The objects are objects, and the gestures share the screen");
@@ -173,10 +212,11 @@ async function main() {
     // The stage carried touch-none, so a finger anywhere near the carousel
     // could not scroll and Sean had to hunt for a safe strip. pan-y hands
     // vertical panning back to the browser while horizontal stays here.
-    const touchAction = await page
-      .locator('[role="listbox"]')
-      .evaluate((el) => getComputedStyle(el).touchAction);
-    check("the stage lets vertical gestures through", touchAction, "pan-y");
+    const stage = page.locator('[role="listbox"]');
+    const stageHtml = await stage.evaluate((el) => el.outerHTML.slice(0, 400));
+    const touchAction = await stage.evaluate((el) =>
+      getComputedStyle(el).getPropertyValue("touch-action"));
+    check("the stage lets vertical gestures through", touchAction, "pan-y", stageHtml);
     assert("and does not claim every gesture", touchAction !== "none",
       "touch-none is why the page could not be scrolled near the carousel");
 
@@ -226,6 +266,14 @@ async function main() {
       /did not answer|didn't answer/i.test(connected), connected.slice(0, 300));
     assert("naming the supplier's own message",
       /printful/i.test(connected), connected.slice(0, 300));
+
+    // AND THE FIX IS HERE TOO. A broken connection used to send the owner to
+    // the same directory as a missing one; reconnecting is one button, in the
+    // flow, still holding the thing they were trying to make.
+    check("reconnecting happens in the flow",
+      await page.locator("form button", { hasText: /reconnect printful/i }).count(), 1);
+    check("without a detour to the connections directory",
+      await page.locator(`a[href*="/connections"]`).count(), 0);
 
     await prisma.storeIntegration.deleteMany({ where: { storeId: store.id, provider: "PRINTFUL" } });
 

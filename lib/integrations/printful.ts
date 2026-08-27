@@ -167,6 +167,17 @@ export const printfulConnector: IntegrationConnector = {
     revokesOnDisconnect: false,
   },
 
+  // BOTH HALVES OF THE OAUTH CREDENTIAL, OR IT IS NOT CONFIGURED.
+  //
+  // buildPrintfulAuthorizeUrl needs the id and the token exchange needs the
+  // secret, so having one without the other is an offer that fails a step
+  // later — after the person has left for Printful and come back. This is
+  // what lets a Connect button be absent instead of broken, and it is now
+  // read by the creation flow as well as the connections screen.
+  configured() {
+    return Boolean(process.env.PRINTFUL_CLIENT_ID && process.env.PRINTFUL_CLIENT_SECRET);
+  },
+
   async connect(storeId, userId, params) {
     if (params?.code) {
       const baseUrl = await getBaseUrl();
