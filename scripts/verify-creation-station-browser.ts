@@ -93,15 +93,56 @@ async function main() {
     await signIn(page, server.baseUrl, email);
 
     // ------------------------------------------------------------------
-    console.log("\n1. No print supplier connected — and it says so");
+    console.log("\n1. The portal opens, and asks before it shows");
     await page.goto(`${server.baseUrl}/b/${store.slug}/studio/create`, { waitUntil: "domcontentloaded" });
-    const empty = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    const portal = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+
+    // ============ THE DOORWAY, NOT THE DESIGNER =======================
+    //
+    // Sean's distinction: the Creation Station is where you decide WHAT you
+    // are making. Opening straight into an editor put somebody in a room they
+    // had not chosen to be in.
+    assert("it asks what to create", /what do you want to create/i.test(portal), portal.slice(0, 300));
+    assert("and does not open an editor", !/add to my store|choose a colour/i.test(portal),
+      portal.slice(0, 300));
+
+    // THE OBJECTS ARE THE CONTROL. A listbox of options, each one a thing to
+    // make, not a row in a list.
+    const options = page.locator('[role="option"]');
+    assert("several things are offered", await options.count() >= 5, `${await options.count()}`);
+    check("exactly one is focused", await page.locator('[role="option"][aria-selected="true"]').count(), 1);
+
+    // ============ INTENT IS OFFERED EVEN WITH NO SUPPLIER =============
+    //
+    // "What do you want to make?" is a question about intention, and a T-shirt
+    // is a T-shirt whether or not this account has connected somebody who
+    // prints them. What must stay honest is INVENTORY -- which is checked at
+    // the next step, below.
+    assert("the things themselves are named", /t-shirt/i.test(portal), portal.slice(0, 400));
+
+    // ------------------------------------------------------------------
+    console.log("\n1b. Choosing one is honest about what can actually be made");
+
+    // Rotating changes what is focused -- the carousel is not decoration.
+    const firstFocused = await page.locator('[role="option"][aria-selected="true"]').getAttribute("aria-label");
+    await page.locator('[role="listbox"]').press("ArrowRight");
+    await page.waitForTimeout(300);
+    const afterRotate = await page.locator('[role="option"][aria-selected="true"]').getAttribute("aria-label");
+    assert("rotating focuses a different thing", firstFocused !== afterRotate,
+      `${firstFocused} -> ${afterRotate}`);
+
+    // And choosing carries the INTENTION in the URL, not a product id.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/create?kind=t-shirt`, {
+      waitUntil: "domcontentloaded",
+    });
+    const chosen = (await page.locator("body").innerText()).replace(/\s+/g, " ");
 
     // ============ THE RULE THIS PAGE IS BUILT ON ======================
     // A design tool with an invented catalogue produces something nobody can
     // order. Naming the cause is worth more than a populated screen that lies.
-    assert("it names the missing supplier", /connect a print supplier/i.test(empty), empty.slice(0, 300));
-    assert("and does not show any blanks", !/choose something to make/i.test(empty), empty.slice(0, 300));
+    assert("with no supplier, it names the missing supplier",
+      /connect a print supplier/i.test(chosen), chosen.slice(0, 300));
+    assert("and shows no blanks", !/which t-shirt/i.test(chosen), chosen.slice(0, 300));
     check("with a way to fix it",
       await page.locator(`a[href="/b/${store.slug}/connections"]`).count() > 0, true);
 
@@ -253,8 +294,8 @@ async function main() {
         new URL(page.url()).pathname, `/b/${store.slug}/studio/create`);
 
       const landed = (await page.locator("body").innerText()).replace(/\s+/g, " ");
-      assert(`${label}: and the workspace actually rendered`,
-        /connect a print supplier|what do you want to make/i.test(landed), landed.slice(0, 300));
+      assert(`${label}: and the portal actually rendered`,
+        /what do you want to create/i.test(landed), landed.slice(0, 300));
       assert(`${label}: rather than a not-found page`,
         !/404|this page could not be found/i.test(landed), landed.slice(0, 300));
     }
