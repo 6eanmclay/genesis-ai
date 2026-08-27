@@ -48,6 +48,18 @@ export interface BlankOnColorProps {
   transparent?: boolean;
 }
 
+/**
+ * The same image, served from our own origin.
+ *
+ * A CSS mask-image from another origin is subject to CORS, and Printful's CDN
+ * does not allow it — so the mask silently did nothing and the colour fill
+ * kept its rectangle, painting the room instead of the garment. Silently is
+ * the point: a failed mask does not error, it just stops masking.
+ */
+function sameOrigin(url: string): string {
+  return `/api/creation/blank?url=${encodeURIComponent(url)}`;
+}
+
 /** Whether a blank shown for these inputs is the supplier's or ours. */
 export function usesRealBlank(blankUrl: string | null): boolean {
   return blankUrl !== null && blankUrl !== "";
@@ -83,8 +95,8 @@ export function BlankOnColor({
           className="absolute inset-0"
           style={{
             backgroundColor: colorHex,
-            WebkitMaskImage: `url(${blankUrl})`,
-            maskImage: `url(${blankUrl})`,
+            WebkitMaskImage: `url(${sameOrigin(blankUrl)})`,
+            maskImage: `url(${sameOrigin(blankUrl)})`,
             WebkitMaskSize: "contain",
             maskSize: "contain",
             WebkitMaskRepeat: "no-repeat",
@@ -109,7 +121,7 @@ export function BlankOnColor({
           for every product. Multiply cannot fail that way. */}
       {/* eslint-disable-next-line @next/next/no-img-element -- supplier CDN, no remotePatterns */}
       <img
-        src={blankUrl}
+        src={sameOrigin(blankUrl)}
         alt=""
         draggable={false}
         className="relative h-full w-full object-contain"

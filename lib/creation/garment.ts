@@ -163,6 +163,68 @@ export function spinViews(garment: Garment, blankImages: BlankImage[]): string[]
   return [...ordered, ...extras];
 }
 
+/**
+ * Two colour codes that mean the same colour — pure.
+ *
+ * ============ WHY THIS IS NOT `a === b` (2026-08-27) ==================
+ *
+ * The blank on the canvas never changed with the colour, and this is half the
+ * reason: Printful writes a variant's colour as "#0A0A0A" in one place and its
+ * blank image's colour as "0a0a0a" in another. Compared as strings those are
+ * different colours, so the per-colour blank was never found, the code fell
+ * back to whatever image came first, and the garment stayed that colour
+ * whatever was selected.
+ */
+export function sameColor(a: string | null, b: string | null): boolean {
+  if (!a || !b) return false;
+  const norm = (v: string) => v.trim().toLowerCase().replace(/^#/, "");
+  const left = norm(a);
+  const right = norm(b);
+  if (left === right) return true;
+  // #fff and #ffffff are the same colour written two ways.
+  const expand = (v: string) => (v.length === 3 ? v.split("").map((c) => c + c).join("") : v);
+  return expand(left) === expand(right);
+}
+
+/**
+ * The blank to show for a placement and a colour, and whether it needs tinting.
+ *
+ * ============ TWO KINDS OF BLANK, AND ONLY ONE NEEDS COLOURING ========
+ *
+ * Printful publishes per-colour blanks for some products and one colour-neutral
+ * blank for others. They are not interchangeable:
+ *
+ *   - a blank FOR this colour is already the product in that colour, with the
+ *     manufacturer's own lighting. Painting anything behind it is wrong.
+ *   - a colour-neutral blank is the one their documentation means by "overlay
+ *     on top of the color defined on the resource".
+ *
+ * The old code always tinted, and always used the first image when the colour
+ * match failed — which is how a black hoodie stayed black while the room
+ * changed colour behind it.
+ */
+export function blankFor(
+  images: BlankImage[],
+  placement: string,
+  colorHex: string | null,
+): { url: string | null; tintWith: string | null } {
+  const forPlacement = images.filter((b) => b.placement === placement);
+  const pool = forPlacement.length > 0 ? forPlacement : images;
+
+  const exact = pool.find((b) => sameColor(b.colorCode, colorHex));
+  // ALREADY THE RIGHT COLOUR. Nothing goes behind it.
+  if (exact) return { url: exact.url, tintWith: null };
+
+  const neutral = pool.find((b) => b.colorCode === null);
+  // COLOUR-NEUTRAL: this is the one meant to be painted behind.
+  if (neutral) return { url: neutral.url, tintWith: colorHex };
+
+  // ONLY BLANKS FOR OTHER COLOURS. Showing one and tinting it would put a
+  // second colour over a garment that already has one — a navy hoodie under a
+  // gold wash. Better to show nothing than to show the wrong product.
+  return { url: null, tintWith: null };
+}
+
 /** The distinct colours of a garment, each with one representative variant. */
 export function colorsOf(garment: Garment): { color: string; colorHex: string | null; imageUrl: string | null }[] {
   const seen = new Map<string, { color: string; colorHex: string | null; imageUrl: string | null }>();

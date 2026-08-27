@@ -16,6 +16,7 @@ import {
 import {
   areaFor,
   colorsOf,
+  blankFor,
   designableViews,
   formatCents,
   spinViews,
@@ -211,14 +212,10 @@ export function CreationStation({
 
   const supplierCost =
     (variant?.externalVariantId ? supplierPrices[variant.externalVariantId] : undefined) ?? null;
-  const blankUrl = useMemo(() => {
-    const forPlacement = blankImages.filter((b) => b.placement === placement);
-    const pool = forPlacement.length > 0 ? forPlacement : blankImages;
-    const exact = chosenHex
-      ? pool.find((b) => b.colorCode?.toLowerCase() === chosenHex.toLowerCase())
-      : undefined;
-    return (exact ?? pool.find((b) => b.colorCode === null) ?? pool[0])?.url ?? null;
-  }, [blankImages, placement, chosenHex]);
+  const blank = useMemo(
+    () => blankFor(blankImages, placement, chosenHex),
+    [blankImages, placement, chosenHex],
+  );
 
   // ============ WHAT EACH TOOL OPENS ==================================
   //
@@ -290,18 +287,38 @@ export function CreationStation({
       </p>
     ) : (
       <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-        {assets.map((asset) => (
-          <button
-            key={asset.id}
-            type="button"
-            onClick={() => addArtwork(asset)}
-            title={`Add ${asset.name} to the ${placement}`}
-            className="aspect-square overflow-hidden rounded-lg border border-black/[.10] bg-white p-1 transition hover:border-black/30 dark:border-white/[.14] dark:bg-zinc-900"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element -- Blob-hosted */}
-            <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" />
-          </button>
-        ))}
+        {assets.map((asset) => {
+          // ALREADY ON THIS SIDE OF THE GARMENT. Without this the panel gave no
+          // sign that a tap had done anything — and because the panel covers
+          // the canvas, the artwork it had just added was not visible either.
+          // Two silences on top of each other read as a dead control.
+          const onGarment = layersOn(design, placement).some((l) => l.assetUrl === asset.url);
+          return (
+            <button
+              key={asset.id}
+              type="button"
+              onClick={() => addArtwork(asset)}
+              title={`Add ${asset.name} to the ${placement}`}
+              className={[
+                "relative aspect-square overflow-hidden rounded-lg border bg-white p-1 transition dark:bg-zinc-900",
+                onGarment
+                  ? "border-[var(--brand-accent,#6366f1)] ring-2 ring-[var(--brand-accent,#6366f1)]/40"
+                  : "border-black/[.10] hover:border-black/30 dark:border-white/[.14]",
+              ].join(" ")}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- Blob-hosted */}
+              <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" />
+              {onGarment && (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-accent,#6366f1)] text-[10px] font-semibold text-white"
+                >
+                  ✓
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
     );
 
@@ -388,7 +405,12 @@ export function CreationStation({
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-5 py-8">
+    // ROOM FOR THE TOOLBAR (2026-08-27). It is sticky at the bottom with a
+    // z-index, so without this it sits ON TOP of whatever the page ends with —
+    // which on a phone is "Ask for a change" and the add-to-store button. Sean
+    // could type an instruction and not reach Go, because Go was underneath
+    // the tool row.
+    <div className="mx-auto w-full max-w-6xl px-5 pb-40 pt-8">
       {/* ============ WHAT A PERSON IS LOOKING AT =======================
           The supplier's catalogue title and its list of internal placement
           keys used to be printed here verbatim. Both are still carried in the
@@ -456,8 +478,8 @@ export function CreationStation({
             design={design}
             placement={placement}
             area={area}
-            blankUrl={blankUrl}
-            colorHex={chosenHex}
+            blankUrl={blank.url}
+            colorHex={blank.tintWith}
             creatableId={creatableId}
             turning={turning}
             safeMargin={safeMargin}

@@ -12,7 +12,13 @@ import {
   PRINTFUL_V2_BASE,
 } from "@/lib/creation/printfulRequest";
 import { printfulCreationProvider } from "@/lib/creation/printfulCreation";
-import { productLabel, designableViews, spinViews } from "@/lib/creation/garment";
+import {
+  productLabel,
+  designableViews,
+  spinViews,
+  sameColor,
+  blankFor,
+} from "@/lib/creation/garment";
 import { portalItems } from "@/lib/creation/creatables";
 
 // WHAT THE CATALOGUE CALL SENDS, AND WHAT IT SAYS WHEN IT FAILS:
@@ -729,6 +735,112 @@ async function main() {
   assert("Spin is disabled rather than spinning nothing",
     /views\.length < 2/.test(toolbarSrc),
     "one view is not something to turn");
+
+  // ======================================================================
+  console.log("\n=== 11. The three interaction bugs ===\n");
+  // ======================================================================
+
+  // ---- 1. THE COLOUR PAINTED THE ROOM, NOT THE GARMENT ---------------
+  //
+  // Sean: "when I select a different garment color, the background changes
+  // color while the hoodie itself stays black."
+  //
+  // Two causes, and both are asserted here.
+  //
+  // FIRST: a variant's colour is written "#0A0A0A" and its blank image's is
+  // written "0a0a0a". Compared as strings those are different colours, so the
+  // per-colour blank was never found and the first image was used whatever was
+  // selected — a black hoodie, permanently.
+  assert("a colour is the same colour however it is written",
+    sameColor("#0A0A0A", "0a0a0a") && sameColor("#FFF", "#ffffff"));
+  assert("CONTROL: and two different colours still are",
+    !sameColor("#0A0A0A", "#ffffff") && !sameColor(null, "#fff"));
+
+  const colourBlanks = [
+    { placement: "front", colorCode: "0a0a0a", url: "https://x.test/black-front.png" },
+    { placement: "front", colorCode: "7BA4DB", url: "https://x.test/carolina-front.png" },
+    { placement: "back", colorCode: "0a0a0a", url: "https://x.test/black-back.png" },
+  ];
+
+  // SECOND: a blank that IS the chosen colour must not be tinted. It already
+  // carries the manufacturer's own lighting; painting behind it is what put a
+  // colour on the room.
+  eq("Carolina Blue picks the Carolina Blue blank",
+    blankFor(colourBlanks, "front", "#7ba4db").url, "https://x.test/carolina-front.png");
+  eq("and nothing is painted behind it",
+    blankFor(colourBlanks, "front", "#7ba4db").tintWith, null);
+  eq("Black picks the black one", blankFor(colourBlanks, "front", "#0A0A0A").url,
+    "https://x.test/black-front.png");
+  eq("and the back view picks the back blank",
+    blankFor(colourBlanks, "back", "#0A0A0A").url, "https://x.test/black-back.png");
+
+  // A COLOUR-NEUTRAL BLANK IS THE ONE THAT GETS PAINTED. Printful's own
+  // instruction — "overlay on top of the color defined on the resource" —
+  // applies to these and only these.
+  const neutral = [{ placement: "front", colorCode: null, url: "https://x.test/neutral.png" }];
+  eq("a colour-neutral blank is tinted", blankFor(neutral, "front", "#FFD700").tintWith, "#FFD700");
+  eq("with the neutral image", blankFor(neutral, "front", "#FFD700").url, "https://x.test/neutral.png");
+
+  // AND GOLD, WHEN THE SUPPLIER ONLY PUBLISHES OTHER COLOURS, SHOWS NOTHING.
+  // Tinting a navy blank gold produces a garment nobody manufactures.
+  eq("Gold with no gold blank and no neutral shows no blank",
+    blankFor(colourBlanks, "front", "#FFD700").url, null);
+  eq("CONTROL: and does not tint somebody else's colour",
+    blankFor(colourBlanks, "front", "#FFD700").tintWith, null);
+
+  // THIRD: the mask that shapes the fill is cross-origin, so it silently did
+  // nothing and the fill kept its rectangle. It goes through our own origin now.
+  const blankOnColorSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "BlankOnColor.tsx"), "utf8")
+  );
+  assert("the mask and the image are served from our own origin",
+    /sameOrigin\(blankUrl\)/.test(blankOnColorSrc) && /api\/creation\/blank/.test(blankOnColorSrc),
+    "a cross-origin mask-image does not error, it just stops masking");
+  assert("CONTROL: and the raw supplier URL is not used for either",
+    !/url\(\$\{blankUrl\}\)/.test(blankOnColorSrc) && !/src=\{blankUrl\}/.test(blankOnColorSrc));
+
+  // THE PROXY REFUSES ANYTHING THAT IS NOT PRINTFUL. An open image proxy is a
+  // way to make a server fetch arbitrary URLs, internal ones included.
+  const proxySrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "api", "creation", "blank", "route.ts"), "utf8")
+  );
+  assert("the proxy allows only Printful's own hosts",
+    /ALLOWED_HOSTS\.has\(target\.hostname\)/.test(proxySrc));
+  assert("over https only", /target\.protocol !== "https:"/.test(proxySrc));
+  assert("and relays images only", /startsWith\("image\/"\)/.test(proxySrc));
+
+  // ---- 2. GO WAS UNDER THE TOOLBAR -----------------------------------
+  //
+  // The instruction box worked; the button beneath it could not be tapped. The
+  // toolbar is sticky at the bottom with a z-index, so it sat on top of
+  // whatever the page ended with — on a phone, "Ask for a change" and the
+  // add-to-store button.
+  assert("the page leaves room beneath the sticky toolbar",
+    /pb-40/.test(toolbarSrc),
+    "without this the tool row sits on top of the last controls on the page");
+  assert("CONTROL: and the toolbar is still the sticky one that needed it",
+    /sticky bottom-0/.test(
+      codeOnly(readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "DesignToolbar.tsx"), "utf8"))
+    ));
+  // The Go button was never disabled — worth pinning, so a future "fix" does
+  // not add a disabled state to a control that was only ever obscured.
+  assert("Go is not disabled by anything",
+    /onClick=\{ask\}[\s\S]{0,160}>\s*Go/.test(toolbarSrc),
+    "the button worked; it was underneath the toolbar");
+
+  // ---- 3. TAPPING ARTWORK LOOKED LIKE NOTHING ------------------------
+  //
+  // The tap DID add the artwork. Nothing in the panel changed to say so, and
+  // the panel covers the canvas where the result appeared — two silences on
+  // top of each other, which read as a dead control.
+  assert("an artwork already on this side is shown as such",
+    /const onGarment = layersOn\(design, placement\)\.some/.test(toolbarSrc),
+    "the panel gave no sign that a tap had done anything");
+  assert("with a visible selected state",
+    /onGarment[\s\S]{0,200}ring-2/.test(toolbarSrc));
+  assert("CONTROL: and adding still goes through the same handler as before",
+    /onClick=\{\(\) => addArtwork\(asset\)\}/.test(toolbarSrc),
+    "this was organisation, not a rewrite of what the tap does");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
