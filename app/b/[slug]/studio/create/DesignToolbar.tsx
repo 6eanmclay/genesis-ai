@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
 // THE SEVEN TOOLS, AND WHICH OF THEM ARE REAL.
 //
@@ -44,8 +44,24 @@ export interface Tool {
   disabledReason?: string;
 }
 
-export function DesignToolbar({ tools }: { tools: Tool[] }) {
-  const [openId, setOpenId] = useState<string | null>(null);
+export function DesignToolbar({
+  tools,
+  openId,
+  onOpenChange,
+}: {
+  tools: Tool[];
+  /**
+   * CONTROLLED, so the screen can close a panel when the thing it was for has
+   * happened (2026-08-27).
+   *
+   * Adding artwork puts it on the canvas — behind the panel that was used to
+   * add it. Leaving the sheet up means the one piece of feedback that matters,
+   * the artwork appearing on the garment, is the one thing you cannot see.
+   */
+  openId: string | null;
+  onOpenChange: (id: string | null) => void;
+}) {
+  const setOpenId = onOpenChange;
   const open = tools.find((t) => t.id === openId) ?? null;
 
   return (

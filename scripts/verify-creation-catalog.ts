@@ -12,6 +12,8 @@ import {
   PRINTFUL_V2_BASE,
 } from "@/lib/creation/printfulRequest";
 import { printfulCreationProvider } from "@/lib/creation/printfulCreation";
+import { operationsFor, applyOperation } from "@/lib/creation/operations";
+import { emptyDesign, addLayer, layerForAsset, layersOn } from "@/lib/creation/design";
 import {
   productLabel,
   designableViews,
@@ -928,6 +930,79 @@ async function main() {
   ];
   eq("an unlabelled blank is still tinted",
     blankFor(unlabelled, "front", "#FFD700", "Gold").tintWith, "#FFD700");
+
+  // ======================================================================
+  console.log("\n=== 13. Add and Ask, end to end ===\n");
+  // ======================================================================
+  //
+  // Both were reported as dead controls, and neither was: the data paths work.
+  // Add was hidden feedback behind a panel; Ask was a button underneath the
+  // toolbar. What follows pins the behaviour so a future change to the panel
+  // or the row cannot quietly break them again.
+
+  // ---- ASK executes a supported command with nothing selected --------
+  //
+  // Sean will test "make the artwork bigger". It must EXECUTE, not merely be
+  // accepted — and it must work without first tapping the artwork, because
+  // nobody selects a thing before describing it.
+  let asked = emptyDesign("146");
+  asked = addLayer(asked, "front", layerForAsset({ id: "a1", assetUrl: "https://x.test/logo.png" }));
+  const widthBefore = layersOn(asked, "front")[0].width;
+
+  const askOps = operationsFor("make the artwork bigger", asked, {
+    activePlacement: "front",
+    selectedLayerId: null,
+  });
+  assert("a supported instruction parses with nothing selected", askOps !== null,
+    "nobody taps a thing before describing it");
+  let afterAsk = asked;
+  for (const op of askOps ?? []) afterAsk = applyOperation(afterAsk, op);
+  assert("and actually changes the artwork",
+    layersOn(afterAsk, "front")[0].width > widthBefore,
+    `${widthBefore} -> ${layersOn(afterAsk, "front")[0].width}`);
+
+  // AN UNSUPPORTED ONE IS REFUSED RATHER THAN GUESSED AT.
+  eq("CONTROL: an instruction about the garment is not invented",
+    operationsFor("make the hoodie white", asked, {
+      activePlacement: "front",
+      selectedLayerId: null,
+    }),
+    null);
+
+  // AND "NOTHING TO ACT ON" IS ITS OWN ANSWER. Every instruction here is about
+  // artwork, so with none on this side the parser returns null for a reason
+  // that has nothing to do with the words — answering "I can move, resize..."
+  // to a perfectly reasonable request reads as a broken feature.
+  eq("an empty side also parses to nothing",
+    operationsFor("make the artwork bigger", emptyDesign("146"), {
+      activePlacement: "front",
+      selectedLayerId: null,
+    }),
+    null);
+  assert("and the screen says which of the two it is",
+    /Add some artwork to the/.test(toolbarSrc),
+    "not understanding and having nothing to act on are different answers");
+
+  // ---- ADD places artwork, and the panel gets out of the way ---------
+  let added = emptyDesign("146");
+  added = addLayer(added, "front", layerForAsset({
+    id: "a1",
+    assetUrl: "https://x.test/logo.png",
+    area: { placement: "front", width: 12, height: 16, unit: "inches" },
+  }));
+  eq("tapping an asset puts a layer on the garment", layersOn(added, "front").length, 1);
+  const placed = layersOn(added, "front")[0];
+  assert("at a real size rather than nothing",
+    placed.width > 0 && placed.height > 0, JSON.stringify(placed));
+  assert("and inside the printable area",
+    placed.x >= 0 && placed.y >= 0 && placed.x + placed.width <= 1 && placed.y + placed.height <= 1,
+    JSON.stringify(placed));
+
+  assert("adding closes the panel that was covering the canvas",
+    /function addArtwork[\s\S]{0,400}setOpenTool\(null\)/.test(toolbarSrc),
+    "the artwork lands behind the sheet used to add it");
+  assert("CONTROL: and the toolbar is controlled so it can be closed",
+    /openId=\{openTool\}/.test(toolbarSrc) && /onOpenChange=\{setOpenTool\}/.test(toolbarSrc));
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

@@ -87,6 +87,8 @@ export function CreationStation({
   const variant = variantFor(garment, color, size);
   const [placement, setPlacement] = useState<PlacementId>(FRONT);
   const [selected, setSelected] = useState<string | null>(null);
+  // Which tool panel is open, held here so adding artwork can close it.
+  const [openTool, setOpenTool] = useState<string | null>(null);
   // How far inside the printable area artwork is kept. See padPanel.
   const [safeMargin, setSafeMargin] = useState(0.04);
   const [history, setHistory] = useState<ProductDesign[]>([]);
@@ -129,6 +131,10 @@ export function CreationStation({
   }
 
   function addArtwork(asset: Asset) {
+    // OUT OF THE WAY. The artwork lands on the canvas, which is behind this
+    // panel — so the panel steps aside rather than leaving the one piece of
+    // feedback that matters hidden behind the control that caused it.
+    setOpenTool(null);
     const image = new Image();
     image.src = asset.url;
     commit(
@@ -151,6 +157,15 @@ export function CreationStation({
 
   function ask() {
     const ops = operationsFor(instruction, design, { activePlacement: placement, selectedLayerId: selected });
+    if (!ops && layersOn(design, placement).length === 0) {
+      // NOTHING TO ACT ON IS NOT THE SAME AS NOT UNDERSTANDING. Every
+      // instruction here is about artwork, so with none on this side the
+      // parser returns null for a reason that has nothing to do with the
+      // words — and answering "I can move, resize, centre..." to somebody who
+      // asked something perfectly reasonable reads as a broken feature.
+      setNote(`Add some artwork to the ${placement} first, then ask.`);
+      return;
+    }
     if (!ops) {
       // HONEST ABOUT NOT UNDERSTANDING. A parser that guessed would move
       // somebody's artwork somewhere they did not ask for, which is worse
@@ -529,6 +544,8 @@ export function CreationStation({
               what changed is that it has a name and a place. See
               DesignToolbar for why Paint is shown rather than hidden. */}
           <DesignToolbar
+            openId={openTool}
+            onOpenChange={setOpenTool}
             tools={[
               {
                 id: "color",
