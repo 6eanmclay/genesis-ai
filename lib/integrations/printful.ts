@@ -7,6 +7,7 @@ import { toStatusView } from "./types";
 import { getBaseUrl, integrationCallbackUrl } from "./util";
 import { encryptCredentials, decryptCredentials } from "./credentials";
 import { integrationFetch } from "./rateLimit";
+import { beginOAuthHandoff } from "./oauthState";
 
 // Onboarding v2 — the OAuth auth backbone for Printful, the first
 // fulfillment-strategy connector (see lib/fulfillment/printful.ts for what
@@ -209,8 +210,36 @@ export const printfulConnector: IntegrationConnector = {
       return { kind: "connected" };
     }
 
+    // ============ THE STATE HAS TO BE A SIGNED HANDOFF ==================
+    //
+    // THE BUG, 2026-08-27. This passed the raw `storeId` as `state`, which is
+    // what every OAuth connector here did before Phase 0 and what none of them
+    // does now. The shared callback verifies `state` with completeOAuthHandoff:
+    // a bare cuid has no `.`, so it failed at the first check as "malformed",
+    // storeId came back null, and the route redirected to
+    // /dashboard/connections?integration_error=printful.
+    //
+    // Every single attempt. Printful's authorize screen appeared, the owner
+    // approved it, and the connection could never complete — which is exactly
+    // what Sean saw. Printful was the last connector still on the old shape,
+    // missed when Phase 0 converted the other ten, and nothing caught it
+    // because no test drove Printful through the real callback.
+    //
+    // The handoff also carries this attempt's executionId, so the callback
+    // closes its own ExecutionLog row instead of guessing at the newest
+    // PENDING one, and `returnTo`, so a supplier connected from inside the
+    // Creation Station comes back to what the owner was making.
     const baseUrl = await getBaseUrl();
-    const url = buildPrintfulAuthorizeUrl(integrationCallbackUrl(baseUrl, "PRINTFUL"), storeId);
+    const url = buildPrintfulAuthorizeUrl(
+      integrationCallbackUrl(baseUrl, "PRINTFUL"),
+      await beginOAuthHandoff({
+        storeId,
+        userId,
+        provider: "PRINTFUL",
+        executionId: params?.executionId,
+        returnTo: params?.returnTo,
+      })
+    );
     return { kind: "redirect", url } satisfies ConnectResult;
   },
 

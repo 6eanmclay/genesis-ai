@@ -8,6 +8,7 @@ import { GarmentShelf } from "./GarmentShelf";
 import { CreationPortal } from "./CreationPortal";
 import { SupplierStep } from "./SupplierStep";
 import { getConnector } from "@/lib/integrations/registry";
+import { connectExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { creatableById, garmentsFor, portalItems } from "@/lib/creation/creatables";
 
 // THE CREATION STATION, FOR ONE BUSINESS.
@@ -31,10 +32,10 @@ export default async function CreationStationPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ garment?: string; kind?: string }>;
+  searchParams: Promise<{ garment?: string; kind?: string; integration_error?: string }>;
 }) {
   const { slug } = await params;
-  const { garment: garmentId, kind } = await searchParams;
+  const { garment: garmentId, kind, integration_error: integrationError } = await searchParams;
   const { store } = await requireBusinessPage(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const basePath = businessBasePath(slug);
 
@@ -108,6 +109,29 @@ export default async function CreationStationPage({
   // -- the dead end coming back through the one door left open.
   const supplierConfigured = getConnector("PRINTFUL").configured?.() ?? true;
 
+  // WHY THE LAST ATTEMPT FAILED, FROM THE RECORD THAT ALREADY HOLDS IT.
+  //
+  // The callback writes a FAILED ExecutionLog row with the connector's own
+  // message and sends the owner back here. Reading that row rather than
+  // inventing a sentence means the creation flow and the connections page
+  // explain the same failure the same way -- one record, two surfaces.
+  //
+  // Only read when a failure actually just came back, so an old attempt from
+  // last week cannot decorate a fresh screen.
+  let attemptFailed: string | null = null;
+  if (integrationError?.toUpperCase() === "PRINTFUL") {
+    const failure = await prisma.executionLog.findFirst({
+      where: {
+        storeId: store.id,
+        action: connectExecutable(getConnector("PRINTFUL")).action,
+        status: "FAILED",
+      },
+      orderBy: { createdAt: "desc" },
+      select: { message: true },
+    });
+    attemptFailed = failure?.message ?? "Printful didn't finish connecting. Try again.";
+  }
+
   if (!provider) {
     return (
       <SupplierStep
@@ -115,6 +139,7 @@ export default async function CreationStationPage({
         creatableId={kind ?? ""}
         creatableLabel={chosenLabel}
         configured={supplierConfigured}
+        attemptFailed={attemptFailed}
       />
     );
   }
@@ -129,6 +154,7 @@ export default async function CreationStationPage({
         creatableId={kind ?? ""}
         creatableLabel={chosenLabel}
         configured={supplierConfigured}
+        attemptFailed={attemptFailed}
         problem={`${catalogError}${
           status && status !== "CONNECTED" ? ` (last check: ${status.toLowerCase().replace("_", " ")})` : ""
         }`}

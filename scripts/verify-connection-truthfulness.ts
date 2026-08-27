@@ -203,7 +203,12 @@ async function main() {
   // ========================================================================
   console.log("\n=== 6. C2 — the catalog keeps everything, honestly ===\n");
   // ========================================================================
-  eq("every catalog entry is still present", CONNECTOR_CATALOG.length, 12);
+  // GREW BY ONE ON 2026-08-27, correctly. Printful had been a real, built
+  // connector since onboarding v2 and was never a catalog entry -- and this
+  // catalog is the only thing the connections page enumerates, so Printful
+  // could be fully connected while Connections showed nothing at all. Adding
+  // the entry is what makes the two surfaces read the same record.
+  eq("every catalog entry is still present", CONNECTOR_CATALOG.length, 13);
   const unbuilt = CONNECTOR_CATALOG.filter((e) => e.connector === null);
   // WAS SIX UNTIL 2026-08-27, when Twilio was built. The count is left as an
   // exact number rather than relaxed to "some" — C2's whole point is that the
@@ -233,15 +238,16 @@ async function main() {
   // configure". An earlier version of the Twilio connector answered
   // `configured() { return true }` and this assertion caught it.
   eq("the OAuth connectors that need platform credentials declare it",
-    declaring, ["facebook", "google-calendar", "instagram", "quickbooks", "square-pos", "tiktok", "xero"]);
+    declaring,
+    ["facebook", "google-calendar", "instagram", "printful", "quickbooks", "square-pos", "tiktok", "xero"]);
 
-  // ============ PRINTFUL DECLARES ITS CREDENTIALS TOO =================
+  // ============ PRINTFUL'S DECLARATION IS ALSO TRUE ===================
   //
-  // Not a catalog entry — Printful is reached through the Creation Station
-  // rather than the connections directory — so the sweep above cannot see it.
-  // It needs the same declaration for the same reason, and now something reads
-  // it: the creation flow hides its Connect button when this is false, instead
-  // of offering one that fails and lands the owner on the connections page.
+  // The sweep above sees Printful now that it is a catalog entry, but it only
+  // proves the declaration EXISTS. What follows proves it is TRUE — which is
+  // what the creation flow relies on when it decides whether a Connect button
+  // can honestly be offered at all, rather than offering one that fails and
+  // lands the owner on the connections page.
   //
   // Asserted BOTH WAYS against the real environment, so a configured() that
   // always answers true cannot pass.

@@ -9,6 +9,7 @@ import { tiktokConnector } from "./tiktok";
 import { twilioConnector } from "./twilio";
 import { squareConnector } from "./square";
 import { xeroConnector } from "./xero";
+import { printfulConnector } from "./printful";
 
 // Phase 3 Milestone 2 — the categorized registry driving /dashboard/
 // connections. Covers all 7 of Sean's categories immediately, even though
@@ -185,6 +186,36 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     sensitivity: "standard",
     recommendedFor: ["restaurant", "salon_spa", "contractor_construction", "event_venue"],
     connector: twilioConnector,
+  },
+
+  {
+    // ============ WHY PRINTFUL IS HERE NOW (2026-08-27) =================
+    //
+    // It always should have been. Printful has been a real, built connector
+    // since onboarding v2 — it holds a StoreIntegration row like every other
+    // provider — but it was never a catalog entry, and this catalog is the
+    // only thing the connections page enumerates. So Printful could be fully
+    // connected and Connections would show nothing at all, while the Creation
+    // Station said "connected". Two truthful surfaces, one of them blind.
+    //
+    // Sean: "The Creation Station should never have one answer while
+    // Connections has another." They read the same StoreIntegration row and
+    // always did; what was missing was Connections being told the provider
+    // exists. Nothing about the connection state moved to fix this.
+    //
+    // business_systems rather than a new "Making & Fulfilment" category: a
+    // manufacturer IS a system the business runs on, and inventing a category
+    // is a product decision rather than a defect fix.
+    id: "printful",
+    provider: "PRINTFUL",
+    name: "Printful",
+    category: "business_systems",
+    description:
+      "Print and ship your products on demand. Connecting Printful brings their real blanks, colours and print areas into the Creation Station.",
+    authMethod: "oauth",
+    sensitivity: "sensitive",
+    recommendedFor: ["boutique_apparel", "online_dtc_brand", "artist_maker", "music_entertainment"],
+    connector: printfulConnector,
   },
 
   // Coming soon — seeds every category so the page shows the full vision

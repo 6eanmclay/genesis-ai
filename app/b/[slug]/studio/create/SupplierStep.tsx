@@ -42,13 +42,23 @@ export function SupplierStep({
   problem,
   /** Whether this deployment holds Printful's OAuth credentials at all. */
   configured,
+  /** Set when an attempt just came back from Printful having failed. */
+  attemptFailed,
 }: {
   slug: string;
   creatableId: string;
   creatableLabel: string;
   problem?: string | null;
   configured: boolean;
+  attemptFailed?: string | null;
 }) {
+  // WHERE PRINTFUL SENDS THE OWNER BACK TO — this exact step, still holding
+  // what they chose. Signed into the OAuth state by the connector, never put on
+  // the wire, so it cannot be turned into an open redirect.
+  const returnTo = `/b/${slug}/studio/create${
+    creatableId ? `?kind=${encodeURIComponent(creatableId)}` : ""
+  }`;
+
   return (
     <div className="relative min-h-[calc(100vh-4rem)] text-zinc-100" style={{ background: GENESIS_BLACK }}>
       <div
@@ -66,10 +76,20 @@ export function SupplierStep({
         <h1 className="mt-7 text-[22px] font-semibold">
           {problem
             ? `Your supplier didn't answer`
-            : configured
-              ? `Where should your ${creatableLabel.toLowerCase()} be made?`
-              : `Printful isn't available here yet`}
+            : attemptFailed
+              ? `That didn't connect`
+              : configured
+                ? `Where should your ${creatableLabel.toLowerCase()} be made?`
+                : `Printful isn't available here yet`}
         </h1>
+
+        {/* THE ACTUAL REASON, WHERE THE ATTEMPT HAPPENED (2026-08-27).
+            A connection that fails silently and re-offers the same button is
+            indistinguishable from one that never ran. This is the connector's
+            own recorded message, not a guess made here. */}
+        {attemptFailed ? (
+          <p className="mt-2.5 max-w-sm text-[13px] leading-relaxed text-amber-300/80">{attemptFailed}</p>
+        ) : null}
 
         <p className="mt-2.5 text-[14px] leading-relaxed text-zinc-400">
           {problem ? (
@@ -104,13 +124,13 @@ export function SupplierStep({
             that cannot work. */}
         {configured ? (
           <>
-            <form action={connectIntegration.bind(null, slug, "PRINTFUL")} className="mt-7 w-full">
+            <form action={connectIntegration.bind(null, slug, "PRINTFUL", returnTo)} className="mt-7 w-full">
               <button
                 type="submit"
                 className="w-full rounded-full px-6 py-3 text-[15px] font-medium text-white transition hover:brightness-110"
                 style={{ background: GENESIS_GREEN }}
               >
-                {problem ? "Reconnect Printful" : "Connect Printful"}
+                {problem ? "Reconnect Printful" : attemptFailed ? "Try connecting again" : "Connect Printful"}
               </button>
             </form>
 

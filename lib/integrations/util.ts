@@ -8,7 +8,17 @@ import type { IntegrationProvider } from "@prisma/client";
 export async function getBaseUrl(): Promise<string> {
   const headersList = await headers();
   const host = headersList.get("host");
-  const protocol = host?.startsWith("localhost") ? "http" : "https";
+  // LOOPBACK IS LOOPBACK BY ADDRESS, NOT BY SPELLING (2026-08-27).
+  //
+  // This tested `startsWith("localhost")`, so a dev server on 127.0.0.1 — the
+  // same machine, reached by number instead of name — was handed https. The
+  // redirect_url given to the provider then pointed at a scheme nothing was
+  // listening on, and the callback could not come back.
+  //
+  // Found by the Creation Station browser suite, whose harness binds 127.0.0.1.
+  // Production is https either way, so this was only ever a local-development
+  // failure — which is exactly the kind that costs an afternoon.
+  const protocol = host && /^(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(host) ? "http" : "https";
   return `${protocol}://${host}`;
 }
 

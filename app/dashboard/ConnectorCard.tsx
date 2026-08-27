@@ -123,7 +123,7 @@ export function ConnectorCard({
                 // This is connectIntegration unchanged, not a second mechanism.
                 // Every OAuth callback here upserts, so re-consent replaces the
                 // stored credentials in place; that is what reconnection IS.
-                <form action={connectIntegration.bind(null, slug, provider)}>
+                <form action={connectIntegration.bind(null, slug, provider, null)}>
                   <SubmitButton
                     pendingText="Reconnecting..."
                     className="rounded-full bg-black px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
@@ -216,7 +216,7 @@ export function ConnectorCard({
           Last attempt failed: {lastAttemptFailedMessage}
         </p>
       )}
-      <form action={connectIntegration.bind(null, slug, provider)} className="mt-3">
+      <form action={connectIntegration.bind(null, slug, provider, null)} className="mt-3">
         <SubmitButton
           pendingText={entry.authMethod === "oauth" ? "Redirecting..." : "Connecting..."}
           className={`px-4 py-1.5 text-xs ${ACCENT_BUTTON}`}

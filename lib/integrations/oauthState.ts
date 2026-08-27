@@ -74,9 +74,36 @@ export interface OAuthStatePayload {
    * action" — the guess that left 18 orphaned rows on one real store.
    */
   executionId: string;
+  /**
+   * Where to send the owner after the callback, when the flow did not start on
+   * the connections page (2026-08-27).
+   *
+   * The Creation Station asks for a supplier mid-task: somebody who was making
+   * a T-shirt should land back on the T-shirt, not on a directory of every
+   * integration. This travels INSIDE the signed state rather than as a query
+   * parameter precisely because an attacker-controlled return path is an open
+   * redirect — signed, it can only be one this server minted.
+   *
+   * Belt and braces: `safeReturnTo` also refuses anything that is not a plain
+   * same-origin path, so a bug at the minting end cannot become one either.
+   */
+  returnTo?: string;
   nonce: string;
   /** Epoch ms. */
   expiresAt: number;
+}
+
+/**
+ * A return path this server is willing to redirect to, or null.
+ *
+ * Same-origin, absolute-from-root, no protocol-relative "//evil.com" (which a
+ * browser resolves as a host, not a path) and no backslash form of it.
+ */
+export function safeReturnTo(candidate: string | null | undefined): string | null {
+  if (!candidate) return null;
+  if (!candidate.startsWith("/")) return null;
+  if (candidate.startsWith("//") || candidate.startsWith("/\\")) return null;
+  return candidate;
 }
 
 function b64url(input: Buffer | string): string {
@@ -231,8 +258,11 @@ export async function beginOAuthHandoff(params: {
   userId: string;
   provider: string;
   executionId?: string;
+  /** Where to land after the callback. Ignored unless it is a same-origin path. */
+  returnTo?: string;
 }): Promise<string> {
   const nonce = newNonce();
+  const safeReturn = safeReturnTo(params.returnTo);
   const state = signOAuthState(
     {
       storeId: params.storeId ?? "",
@@ -240,6 +270,7 @@ export async function beginOAuthHandoff(params: {
       provider: params.provider.toUpperCase(),
       userId: params.userId,
       executionId: params.executionId ?? "",
+      ...(safeReturn ? { returnTo: safeReturn } : {}),
       nonce,
       expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
     },

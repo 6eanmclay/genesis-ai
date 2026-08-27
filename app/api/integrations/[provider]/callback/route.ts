@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { unstable_rethrow } from "next/navigation";
 import { auth } from "@/auth";
-import { completeOAuthHandoff, oauthStateFailureMessage } from "@/lib/integrations/oauthState";
+import { completeOAuthHandoff, oauthStateFailureMessage, safeReturnTo } from "@/lib/integrations/oauthState";
 import { getConnectorByName } from "@/lib/integrations/registry";
 import { prisma } from "@/lib/prisma";
 import { execute } from "@/lib/execution/engine";
@@ -59,6 +59,23 @@ export async function GET(
   });
   const storeId = verified.ok ? verified.payload.storeId : null;
   const handoffExecutionId = verified.ok && verified.payload.executionId ? verified.payload.executionId : null;
+
+  // WHERE THE FLOW STARTED, WHEN IT WASN'T THE CONNECTIONS PAGE (2026-08-27).
+  //
+  // The Creation Station asks for a supplier mid-task. Somebody who was making
+  // a T-shirt has to land back on the T-shirt — on both outcomes, because a
+  // failure they can retry in place beats a failure explained on a page they
+  // did not ask for.
+  //
+  // Read only out of the VERIFIED payload, so it is a path this server signed,
+  // and re-checked by safeReturnTo, so a minting bug cannot turn it into an
+  // open redirect either.
+  const returnTo = verified.ok ? safeReturnTo(verified.payload.returnTo) : null;
+  if (returnTo) {
+    const target = new URL(returnTo, request.url);
+    redirectUrl.pathname = target.pathname;
+    redirectUrl.search = target.search;
+  }
 
   if (!verified.ok && state) {
     // A rejected state is worth its own console signal — it is either a real

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import type { IntegrationProvider } from "@prisma/client";
 import { auth } from "@/auth";
 import { getConnector } from "@/lib/integrations/registry";
+import { safeReturnTo } from "@/lib/integrations/oauthState";
 import { execute } from "@/lib/execution/engine";
 import type { ExecutionResult } from "@/lib/execution/types";
 import {
@@ -61,17 +62,45 @@ async function logConnectAttempt(
 const connectionsPath = (slug?: string) =>
   `${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/connections`;
 
-export async function connectIntegration(slug: string | undefined, provider: IntegrationProvider) {
+/**
+ * Start a connection. THE one connect path — every surface uses this.
+ *
+ * `returnTo` is where to land afterwards, for a flow that did not start on the
+ * connections page: the Creation Station asks for a supplier mid-task, and
+ * somebody who was making a T-shirt should come back to the T-shirt. It is a
+ * parameter rather than a second action precisely because a second action is
+ * how two connect implementations start (2026-08-27).
+ *
+ * It is passed to the connector, which signs it into the OAuth state — never
+ * put on the wire as a query parameter, where it would be an open redirect.
+ */
+export async function connectIntegration(
+  slug: string | undefined,
+  provider: IntegrationProvider,
+  // NOT OPTIONAL, deliberately. A trailing optional parameter leaves
+  // `.bind(null, slug, provider)` with the signature `(returnTo?: string)`,
+  // which React will not accept as a form action — it must take FormData. Every
+  // caller binds all three, so the bound function takes nothing.
+  returnTo: string | null
+) {
   const { storeId } = await requireBusinessOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
-  const result = await execute(connectExecutable(getConnector(provider)), {}, { storeId });
+  const result = await execute(
+    connectExecutable(getConnector(provider)),
+    returnTo ? { params: { returnTo } } : {},
+    { storeId }
+  );
   await logConnectAttempt(provider, "integration.connect_attempt", result);
   if (result.redirectUrl) {
     redirect(result.redirectUrl);
   }
+  // A non-OAuth connector finishes here rather than at a callback, so this is
+  // the one place its own return path can be honoured.
+  const landing = safeReturnTo(returnTo) ?? connectionsPath(slug);
+  const separator = landing.includes("?") ? "&" : "?";
   redirect(
     result.status === "FAILED"
-      ? `${connectionsPath(slug)}?integration_error=${provider.toLowerCase()}`
-      : `${connectionsPath(slug)}?integration_connected=${provider.toLowerCase()}`
+      ? `${landing}${separator}integration_error=${provider.toLowerCase()}`
+      : `${landing}${separator}integration_connected=${provider.toLowerCase()}`
   );
 }
 

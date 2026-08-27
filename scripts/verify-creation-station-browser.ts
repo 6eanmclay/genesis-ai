@@ -1,6 +1,7 @@
 import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { verifyOAuthState, OAUTH_STATE_COOKIE } from "@/lib/integrations/oauthState";
 
 // THE CREATION STATION, IN A REAL BROWSER:
 //
@@ -22,6 +23,7 @@ import { startTestServer } from "@/scripts/lib/testServer";
 // supplier catalogue, and it is the state every business is in today.
 
 const PASSWORD = "correct-horse-battery-staple";
+const HARNESS_AUTH_SECRET = "harness-oauth-signing-secret";
 
 let failures = 0;
 let passes = 0;
@@ -81,6 +83,11 @@ async function main() {
   // the branch that matters most, since it is the one that used to dead-end.
   // The other direction is proved in verify-connection-truthfulness, where the
   // connector can be asked both ways without a second server.
+  //
+  // The secret the handoff is signed with. Set here so the suite can verify a
+  // state with the SAME function the callback uses, rather than trusting that
+  // the string looks about right.
+  process.env.AUTH_SECRET = HARNESS_AUTH_SECRET;
   process.env.PRINTFUL_CLIENT_ID = "harness-printful-client";
   process.env.PRINTFUL_CLIENT_SECRET = "harness-printful-secret";
 
@@ -276,6 +283,173 @@ async function main() {
       await page.locator(`a[href*="/connections"]`).count(), 0);
 
     await prisma.storeIntegration.deleteMany({ where: { storeId: store.id, provider: "PRINTFUL" } });
+
+    // ------------------------------------------------------------------
+    console.log("\n1e. The Printful connection, in all three of its states");
+
+    // ============ WHY THIS SECTION EXISTS ==============================
+    //
+    // Sean, after trying it on the real deployment: "The Printful
+    // authorization screen appears correctly, but the connection does not
+    // complete successfully." It never could.
+    //
+    // printfulConnector.connect() passed the raw storeId as the OAuth `state`.
+    // Phase 0 (686f847, 2026-08-19) converted every OAuth connector to a
+    // signed, single-use, session-bound handoff and hardened the shared
+    // callback to require one — and missed Printful. A bare cuid has no `.`,
+    // so completeOAuthHandoff rejected it as "malformed" on the first check,
+    // storeId came back null, and the route redirected to
+    // /dashboard/connections?integration_error=printful. Every attempt, for
+    // eight days, with the authorize screen appearing perfectly each time.
+    //
+    // Nothing caught it because no test drove Printful through the real
+    // callback. That is what this section is.
+
+    // ================== STATE 1 — NOT CONNECTED ========================
+    //
+    // 1d deleted the integration row, so this store genuinely has no supplier.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/create?kind=t-shirt`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    // Printful's own site is stubbed, so the suite never leaves for the real
+    // internet and never depends on printful.com being up.
+    await context.route("https://www.printful.com/**", (route) =>
+      route.fulfill({ status: 200, contentType: "text/html", body: "<html><body>stub</body></html>" })
+    );
+
+    await page.locator("form button", { hasText: /connect printful/i }).click();
+    await page.waitForURL(/printful\.com/, { timeout: 15_000 });
+
+    const authorize = new URL(page.url());
+    check("Connect goes to Printful's own authorize screen",
+      `${authorize.origin}${authorize.pathname}`, "https://www.printful.com/oauth/authorize");
+    assert("carrying this deployment's client id",
+      authorize.searchParams.get("client_id") === "harness-printful-client",
+      String(authorize.searchParams.get("client_id")));
+    check("and the callback this server actually serves",
+      authorize.searchParams.get("redirect_url"),
+      `${server.baseUrl}/api/integrations/printful/callback`);
+
+    // ============ THE BUG ITSELF, ASSERTED SHUT ========================
+    //
+    // The one claim that matters: the `state` Printful is handed is a handoff
+    // the callback will accept. Verified with the SAME function the callback
+    // uses, against the nonce cookie the server actually set — not by looking
+    // at the string and deciding it seems fine.
+    const handoffState = authorize.searchParams.get("state") ?? "";
+    const nonceCookie = (await context.cookies()).find((c) => c.name === OAUTH_STATE_COOKIE);
+    assert("the handoff set its single-use nonce cookie", Boolean(nonceCookie?.value), "no cookie");
+
+    const verdict = verifyOAuthState(handoffState, {
+      secret: HARNESS_AUTH_SECRET,
+      provider: "PRINTFUL",
+      cookieNonce: nonceCookie?.value,
+      sessionUserId: user.id,
+    });
+    assert("the state is a signed handoff the callback will accept",
+      verdict.ok, JSON.stringify(verdict));
+    check("bound to this store", verdict.ok ? verdict.payload.storeId : null, store.id);
+    check("and carrying the way back into creation",
+      verdict.ok ? verdict.payload.returnTo : null,
+      `/b/${store.slug}/studio/create?kind=t-shirt`);
+
+    // NEGATIVE CONTROL — the exact shape that shipped, through the exact
+    // function the callback runs. If this ever passes, the guard above is
+    // proving nothing.
+    const asShipped = verifyOAuthState(store.id, {
+      secret: HARNESS_AUTH_SECRET,
+      provider: "PRINTFUL",
+      cookieNonce: nonceCookie?.value,
+      sessionUserId: user.id,
+    });
+    assert("CONTROL: a raw storeId is rejected, which is why every attempt failed",
+      !asShipped.ok && asShipped.reason === "malformed", JSON.stringify(asShipped));
+
+    // ============ ONE RECORD, TWO SURFACES =============================
+    //
+    // Sean: "The Creation Station should never have one answer while
+    // Connections has another." Printful was a built connector that was not a
+    // catalog entry, and the connections page enumerates the catalog — so it
+    // could be fully connected and Connections would show nothing at all.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/connections`, { waitUntil: "domcontentloaded" });
+    const notConnectedPage = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("Connections knows Printful exists", /printful/i.test(notConnectedPage),
+      notConnectedPage.slice(0, 400));
+
+    // ================== STATE 2 — ALREADY CONNECTED ====================
+    await prisma.storeIntegration.create({
+      data: {
+        storeId: store.id,
+        provider: "PRINTFUL",
+        status: "CONNECTED",
+        externalAccountId: "pf_harness_connected",
+        credentials: { schemaVersion: 1, accessToken: "harness-not-a-real-token" },
+        connectedAt: new Date(),
+        lastVerifiedAt: new Date(),
+      },
+    });
+
+    await page.goto(`${server.baseUrl}/b/${store.slug}/connections`, { waitUntil: "domcontentloaded" });
+    const connectionsSays = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("Connections says Printful is connected", /printful/i.test(connectionsSays),
+      connectionsSays.slice(0, 400));
+
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/create?kind=t-shirt`, {
+      waitUntil: "domcontentloaded",
+    });
+    const creationSays = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    // ASSERTED ON THE BUTTON, AND EXACTLY.
+    //
+    // The first version of this searched the page text for "connect printful",
+    // which "Reconnect Printful" contains — so it failed against a screen that
+    // was behaving correctly. Establishing a connection and repairing one are
+    // different offers, and only the first is wrong here.
+    check("and the Creation Station never offers to establish one again",
+      await page.locator("button", { hasText: /^Connect Printful$/ }).count(), 0, creationSays.slice(0, 300));
+    // The catalogue call fails against a fake token, and SAYS so — which is the
+    // honest third answer, not a fourth state. What must never happen is the
+    // two surfaces disagreeing about whether a supplier exists.
+    assert("the two surfaces agree a supplier exists",
+      /didn't answer|which t-shirt|blanks/i.test(creationSays), creationSays.slice(0, 400));
+
+    // ================== STATE 3 — THE ATTEMPT FAILED ===================
+    //
+    // A connection that fails silently and re-offers the same button is
+    // indistinguishable from one that never ran. The reason shown here is the
+    // connector's own recorded message, read from the same ExecutionLog row the
+    // connections page reads.
+    await prisma.storeIntegration.deleteMany({ where: { storeId: store.id, provider: "PRINTFUL" } });
+    await prisma.executionLog.create({
+      data: {
+        executionId: `harness-pf-${stamp}`,
+        action: "integration.printful.connect",
+        status: "FAILED",
+        verified: false,
+        message: "The connection link was invalid or had expired. Please try again.",
+        retryable: true,
+        actorType: "USER",
+        storeId: store.id,
+        schemaVersion: 1,
+      },
+    });
+
+    await page.goto(
+      `${server.baseUrl}/b/${store.slug}/studio/create?kind=t-shirt&integration_error=printful`,
+      { waitUntil: "domcontentloaded" }
+    );
+    const failed = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("a failed attempt says it failed", /didn't connect/i.test(failed), failed.slice(0, 400));
+    assert("with the reason that was actually recorded",
+      /invalid or had expired/i.test(failed), failed.slice(0, 400));
+    check("and a retry in place rather than a directory",
+      await page.locator("form button", { hasText: /try connecting again/i }).count(), 1);
+    check("still with no detour to the connections directory",
+      await page.locator(`a[href*="/connections"]`).count(), 0);
+
+    await prisma.executionLog.deleteMany({ where: { storeId: store.id } });
+    await context.unroute("https://www.printful.com/**");
+
 
     // ------------------------------------------------------------------
     console.log("\n2. The canvas, driven by a real pointer");
