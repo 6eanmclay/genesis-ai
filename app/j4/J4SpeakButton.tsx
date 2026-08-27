@@ -96,6 +96,28 @@ export function J4SpeakButton({ text }: { text: string }) {
     }
   }
 
+  /**
+   * Pause or resume the reply already playing.
+   *
+   * Acts on the SAME element the tap unlocked, which is the whole reason it is
+   * held in a ref: a second element created here would need its own gesture to
+   * be allowed to play, and would not have one.
+   */
+  function togglePlayback() {
+    const el = audioElRef.current;
+    if (!el) return;
+    if (el.paused) {
+      // A resume can still be refused — say so rather than leaving a control
+      // that looks like it did nothing.
+      void el.play().then(
+        () => setNeedsTap(false),
+        () => setNeedsTap(true),
+      );
+    } else {
+      el.pause();
+    }
+  }
+
   // The element is created imperatively so it can be unlocked during the tap,
   // so its state is mirrored here rather than read from a rendered <audio>.
   useEffect(() => {
@@ -113,33 +135,39 @@ export function J4SpeakButton({ text }: { text: string }) {
     };
   }, [status]);
 
+  // ============ THE INDICATOR IS THE PLAYER (2026-08-27) ==================
+  //
+  // This used to render a native <audio controls> — a full media bar with a
+  // scrubber and elapsed/remaining times, sitting inside a conversation. Sean's
+  // own words: bulky, and it interrupts the interface.
+  //
+  // The scrub control was added because he asked for pause and resume, and it
+  // delivered them by putting a piece of desktop chrome in a chat. The five-bar
+  // glyph already says "J4 is speaking" better than a timeline does — so it
+  // becomes the control as well as the indicator. Tapping it pauses; tapping
+  // again resumes.
+  //
+  // What is genuinely lost is scrubbing to a position. That is the right thing
+  // to lose: nobody scrubs a two-sentence reply, and the cost of keeping it was
+  // a media player in every message.
   if (status === "ready" && audioUrl) {
     return (
       <div className="mt-1.5 flex flex-col gap-1">
-        <div className="flex items-center gap-2">
-          <span className="text-[rgba(244,242,251,0.62)]">
-            <J4VoiceGlyph speaking={speaking} size={15} />
-          </span>
-          {/* Pause, resume and scrub, as asked for — but no longer the thing
-              standing between a tap and hearing anything. */}
-          <audio
-            controls
-            src={audioUrl}
-            ref={(node) => {
-              // Hand the rendered element the one already playing, so the
-              // controls operate the audio the owner can hear rather than a
-              // second, silent copy of it.
-              if (node && audioElRef.current && node !== audioElRef.current) {
-                node.currentTime = audioElRef.current.currentTime;
-              }
-            }}
-            className="h-8 max-w-full"
-            style={{ width: 200 }}
-          />
-        </div>
+        <button
+          type="button"
+          onClick={togglePlayback}
+          aria-label={speaking ? "Pause J4's reply" : "Resume J4's reply"}
+          title={speaking ? "Pause" : "Resume"}
+          className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-[rgba(244,242,251,0.62)] transition hover:bg-white/[.06] hover:text-[rgba(244,242,251,0.85)]"
+        >
+          {/* The bars animate only while sound is actually coming out — see
+              J4VoiceGlyph, which also respects prefers-reduced-motion. */}
+          <J4VoiceGlyph speaking={speaking} size={15} />
+          {speaking ? "Speaking" : "Paused"}
+        </button>
         {needsTap && (
           <span className="text-xs text-[rgba(244,242,251,0.62)]">
-            Your browser blocked autoplay — press play to hear it.
+            Your browser blocked autoplay — tap to hear it.
           </span>
         )}
       </div>

@@ -223,6 +223,26 @@ async function main() {
     /audioUnlock/.test(speak),
     "Talk Mode has done this since its first iPhone test; this is that technique extracted");
 
+  // ============ NO MEDIA PLAYER IN A CONVERSATION (2026-08-27) ==========
+  //
+  // Listening used to render a native <audio controls> — a scrubber with
+  // elapsed and remaining times — inside a chat message. It delivered the
+  // pause and resume Sean asked for by putting desktop chrome in a
+  // conversation, and on a phone it was the bulkiest thing on screen.
+  //
+  // The five-bar glyph already says "J4 is speaking" better than a timeline
+  // does, so it is the control now as well as the indicator. Asserted rather
+  // than trusted, because a media element is exactly the sort of thing that
+  // comes back when somebody wants a progress bar.
+  assert("no native media player is rendered",
+    !/<audio/.test(speak),
+    "a scrubber with timestamps is not what a two-sentence reply needs");
+  assert("the five-bar glyph is what shows speech instead",
+    /J4VoiceGlyph speaking=\{speaking\}/.test(speak));
+  assert("and tapping it pauses and resumes",
+    /togglePlayback/.test(speak) && /el\.pause\(\)/.test(speak),
+    "pause and resume were the reason the player was there; they are kept");
+
   console.log("\n=== 8. The voice control looks like J4 ===\n");
 
   assert("the speaker emoji is gone", !/🔊/.test(speak),
