@@ -223,6 +223,8 @@ export function blankFor(
   images: BlankImage[],
   placement: string,
   colorHex: string | null,
+  /** The supplier's name for the chosen colour, which is how they label blanks. */
+  colorName?: string | null,
 ): { url: string | null; tintWith: string | null; absence: BlankAbsence } {
   if (images.length === 0) return { url: null, tintWith: null, absence: "none" };
 
@@ -232,11 +234,22 @@ export function blankFor(
   // pool stays empty and the absence is named instead.
   if (forPlacement.length === 0) return { url: null, tintWith: null, absence: "other-views" };
 
-  const exact = forPlacement.find((b) => sameColor(b.colorCode, colorHex));
+  // BY HEX OR BY NAME. Printful labels these by name, and the variant carries
+  // both — matching on only one of them is what made every colour resolve to
+  // the same black hoodie.
+  const exact = forPlacement.find(
+    (b) =>
+      sameColor(b.colorCode, colorHex) ||
+      (b.colorName != null &&
+        colorName != null &&
+        b.colorName.trim().toLowerCase() === colorName.trim().toLowerCase()),
+  );
   // ALREADY THE RIGHT COLOUR. Nothing goes behind it.
   if (exact) return { url: exact.url, tintWith: null, absence: null };
 
-  const neutral = forPlacement.find((b) => b.colorCode === null);
+  // NEUTRAL MEANS UNLABELLED — no code AND no name. An image labelled "Black"
+  // is not a blank canvas for gold.
+  const neutral = forPlacement.find((b) => b.colorCode === null && b.colorName === null);
   // COLOUR-NEUTRAL: this is the one meant to be painted behind.
   if (neutral) return { url: neutral.url, tintWith: colorHex, absence: null };
 
@@ -370,13 +383,24 @@ export interface BlankImage {
   /** "front", "back", "left", ... — the supplier's own placement name. */
   placement: string;
   /**
-   * The colour this image is FOR, as a hex the variant declares, or null when
-   * the image serves every colour.
+   * The colour this image is FOR, as a hex, or null.
    *
-   * Null is the common case and the useful one: one transparent blank, painted
-   * with whichever colour the owner picked.
+   * ============ NULL IS NOT "SERVES EVERY COLOUR" (2026-08-27) ========
+   *
+   * It used to be documented as exactly that, and the assumption cost two
+   * rounds. Printful labels its blanks by colour NAME — "Black", "Gold" — and
+   * the parser only accepted a hex, so every image came back with a null code,
+   * every image therefore looked colour-neutral, and the first one got painted
+   * for all fourteen colours. The first one is the black hoodie, and multiply
+   * cannot lighten black: gold over it produced a gold background and a brown
+   * garment.
+   *
+   * So a blank is colour-neutral only when it carries NEITHER a code nor a
+   * name. Both are kept, and either can identify it.
    */
   colorCode: string | null;
+  /** The supplier's own name for that colour, e.g. "Gold". */
+  colorName: string | null;
   url: string;
 }
 

@@ -95,8 +95,12 @@ export function BlankOnColor({
           className="absolute inset-0"
           style={{
             backgroundColor: colorHex,
-            WebkitMaskImage: `url(${sameOrigin(blankUrl)})`,
-            maskImage: `url(${sameOrigin(blankUrl)})`,
+            // QUOTED. An unquoted url() carrying a query string of
+            // percent-encoded characters is a CSS parse away from being
+            // dropped silently — and a dropped mask does not error, it just
+            // stops masking, which is how the fill kept its rectangle.
+            WebkitMaskImage: `url("${sameOrigin(blankUrl)}")`,
+            maskImage: `url("${sameOrigin(blankUrl)}")`,
             WebkitMaskSize: "contain",
             maskSize: "contain",
             WebkitMaskRepeat: "no-repeat",

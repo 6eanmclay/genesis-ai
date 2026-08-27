@@ -212,9 +212,12 @@ export function CreationStation({
 
   const supplierCost =
     (variant?.externalVariantId ? supplierPrices[variant.externalVariantId] : undefined) ?? null;
+  // BY HEX AND BY NAME. Printful labels its blanks by colour NAME, and the
+  // variant carries both — passing only the hex is what made every colour
+  // resolve to the same black hoodie.
   const blank = useMemo(
-    () => blankFor(blankImages, placement, chosenHex),
-    [blankImages, placement, chosenHex],
+    () => blankFor(blankImages, placement, chosenHex, color),
+    [blankImages, placement, chosenHex, color],
   );
 
   // ============ WHAT EACH TOOL OPENS ==================================

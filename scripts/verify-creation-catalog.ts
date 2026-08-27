@@ -708,24 +708,24 @@ async function main() {
 
   eq("with front and back photographed, the garment turns between them",
     spinViews(spinHoodie, [
-      { placement: "front", colorCode: null, url: "https://x.test/f.png" },
-      { placement: "back", colorCode: null, url: "https://x.test/b.png" },
+      { placement: "front", colorCode: null, colorName: null, url: "https://x.test/f.png" },
+      { placement: "back", colorCode: null, colorName: null, url: "https://x.test/b.png" },
     ]),
     ["front", "back"]);
 
   // A PRINTABLE PLACEMENT IS NOT A VIEW. sleeve_left has a print area and no
   // picture; Spin is about looking at the product.
   eq("a placement with no photograph is not somewhere to turn to",
-    spinViews(spinHoodie, [{ placement: "front", colorCode: null, url: "https://x.test/f.png" }]),
+    spinViews(spinHoodie, [{ placement: "front", colorCode: null, colorName: null, url: "https://x.test/f.png" }]),
     ["front"]);
 
   // AND AN EXTRA ANGLE THE SUPPLIER PUBLISHED IS ONE, even though nobody
   // prints on it — which is what makes this grow into a 360 without a rewrite.
   eq("but an extra angle they did photograph is",
     spinViews(spinHoodie, [
-      { placement: "front", colorCode: null, url: "https://x.test/f.png" },
-      { placement: "back", colorCode: null, url: "https://x.test/b.png" },
-      { placement: "left", colorCode: null, url: "https://x.test/l.png" },
+      { placement: "front", colorCode: null, colorName: null, url: "https://x.test/f.png" },
+      { placement: "back", colorCode: null, colorName: null, url: "https://x.test/b.png" },
+      { placement: "left", colorCode: null, colorName: null, url: "https://x.test/l.png" },
     ]),
     ["front", "back", "left"]);
 
@@ -757,9 +757,9 @@ async function main() {
     !sameColor("#0A0A0A", "#ffffff") && !sameColor(null, "#fff"));
 
   const colourBlanks = [
-    { placement: "front", colorCode: "0a0a0a", url: "https://x.test/black-front.png" },
-    { placement: "front", colorCode: "7BA4DB", url: "https://x.test/carolina-front.png" },
-    { placement: "back", colorCode: "0a0a0a", url: "https://x.test/black-back.png" },
+    { placement: "front", colorCode: "0a0a0a", colorName: null, url: "https://x.test/black-front.png" },
+    { placement: "front", colorCode: "7BA4DB", colorName: null, url: "https://x.test/carolina-front.png" },
+    { placement: "back", colorCode: "0a0a0a", colorName: null, url: "https://x.test/black-back.png" },
   ];
 
   // SECOND: a blank that IS the chosen colour must not be tinted. It already
@@ -777,7 +777,7 @@ async function main() {
   // A COLOUR-NEUTRAL BLANK IS THE ONE THAT GETS PAINTED. Printful's own
   // instruction — "overlay on top of the color defined on the resource" —
   // applies to these and only these.
-  const neutral = [{ placement: "front", colorCode: null, url: "https://x.test/neutral.png" }];
+  const neutral = [{ placement: "front", colorCode: null, colorName: null, url: "https://x.test/neutral.png" }];
   eq("a colour-neutral blank is tinted", blankFor(neutral, "front", "#FFD700").tintWith, "#FFD700");
   eq("with the neutral image", blankFor(neutral, "front", "#FFD700").url, "https://x.test/neutral.png");
 
@@ -864,6 +864,70 @@ async function main() {
   assert("CONTROL: and adding still goes through the same handler as before",
     /onClick=\{\(\) => addArtwork\(asset\)\}/.test(toolbarSrc),
     "this was organisation, not a rewrite of what the tap does");
+
+  // ======================================================================
+  console.log("\n=== 12. Blanks labelled by colour NAME ===\n");
+  // ======================================================================
+  //
+  // Sean, on a gold hoodie: "It still is changing the background and not the
+  // actual hoodie." The screenshots were the diagnosis — a gold RECTANGLE with
+  // a dark brown garment on it.
+  //
+  // Gold times black is dark brown. Multiply cannot lighten, so whatever was
+  // being tinted was the BLACK colourway, for every colour in the row.
+  //
+  // The cause is one line in the parser. Printful labels these blanks by
+  // colour NAME, the walker collapsed name and hex into one string and tested
+  // it against a hex pattern, "Black" failed the test and became null — so
+  // every image looked colour-neutral, and a colour-neutral blank is exactly
+  // the one that gets painted behind.
+  const printfulShaped = printfulCreationProvider(async () => ({
+    data: [
+      {
+        catalog_variant_id: 4012,
+        color: "Black",
+        color_code: "#0a0a0a",
+        images: [{ placement: "front", url: "https://x.test/black.png" }],
+      },
+      {
+        catalog_variant_id: 4020,
+        color: "Gold",
+        images: [{ placement: "front", url: "https://x.test/gold.png" }],
+      },
+    ],
+  }));
+
+  const labelled = await printfulShaped.getBlankImages({ storeId: "s", externalProductId: "146" });
+  eq("both blanks come back", labelled.length, 2);
+  eq("the one with a hex keeps it", labelled[0].colorCode, "#0a0a0a");
+  eq("and its name", labelled[0].colorName, "Black");
+  // THE ONE THAT BROKE IT: a blank labelled only by name.
+  eq("a blank labelled only by name keeps the name", labelled[1].colorName, "Gold");
+  eq("CONTROL: and is NOT recorded as colour-neutral", labelled[1].colorCode, null);
+  assert("CONTROL: so it is not treated as a blank canvas for other colours",
+    labelled[1].colorName !== null,
+    "null name AND null code is what made every colour paint the black hoodie");
+
+  // ============ AND GOLD NOW FINDS THE GOLD ONE ======================
+  eq("Gold selects the Gold blank by name",
+    blankFor(labelled, "front", null, "Gold").url, "https://x.test/gold.png");
+  eq("with nothing painted behind it",
+    blankFor(labelled, "front", null, "Gold").tintWith, null);
+  eq("Black still selects the black one by hex",
+    blankFor(labelled, "front", "#0A0A0A", "Black").url, "https://x.test/black.png");
+
+  // THE REGRESSION, EXACTLY. Before the fix every colour resolved to the first
+  // image and tinted it — a gold wash over a black hoodie.
+  assert("CONTROL: no colour resolves to another colour's blank",
+    blankFor(labelled, "front", null, "Gold").url !== "https://x.test/black.png",
+    "gold over black is the brown garment on the gold rectangle");
+
+  // A GENUINELY UNLABELLED BLANK IS STILL THE ONE THAT GETS PAINTED.
+  const unlabelled = [
+    { placement: "front", colorCode: null, colorName: null, url: "https://x.test/neutral.png" },
+  ];
+  eq("an unlabelled blank is still tinted",
+    blankFor(unlabelled, "front", "#FFD700", "Gold").tintWith, "#FFD700");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

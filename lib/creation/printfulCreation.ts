@@ -302,9 +302,14 @@ export function printfulCreationProvider(
       const found: BlankImage[] = [];
       const seen = new Set<string>();
 
-      const walk = (node: unknown, placement: string | null, colorCode: string | null): void => {
+      const walk = (
+        node: unknown,
+        placement: string | null,
+        colorCode: string | null,
+        colorName: string | null,
+      ): void => {
         if (Array.isArray(node)) {
-          for (const entry of node) walk(entry, placement, colorCode);
+          for (const entry of node) walk(entry, placement, colorCode, colorName);
           return;
         }
         if (!node || typeof node !== "object") return;
@@ -314,12 +319,12 @@ export function printfulCreationProvider(
         // under the variant or placement they belong to.
         const nextPlacement =
           typeof obj.placement === "string" ? obj.placement : placement;
-        const nextColor =
-          typeof obj.color_code === "string"
-            ? obj.color_code
-            : typeof obj.color === "string"
-              ? obj.color
-              : colorCode;
+        // A HEX AND A NAME ARE DIFFERENT FACTS. Collapsing them into one
+        // string and then testing it against a hex pattern is what threw the
+        // names away: "Black" failed the test, became null, and every blank
+        // looked colour-neutral.
+        const nextCode = typeof obj.color_code === "string" ? obj.color_code : colorCode;
+        const nextName = typeof obj.color === "string" ? obj.color : colorName;
 
         // ANY string that is an image, under any key.
         //
@@ -341,15 +346,18 @@ export function printfulCreationProvider(
           seen.add(value);
           found.push({
             placement: nextPlacement ?? "front",
-            colorCode: nextColor && /^#?[0-9a-f]{3,8}$/i.test(nextColor) ? nextColor : null,
+            colorCode: nextCode && /^#?[0-9a-f]{3,8}$/i.test(nextCode) ? nextCode : null,
+            // A name that is a hex is a code, not a name — keeping it as both
+            // would make one image match two different colours.
+            colorName: nextName && !/^#?[0-9a-f]{3,8}$/i.test(nextName) ? nextName : null,
             url: value,
           });
         }
 
-        for (const value of Object.values(obj)) walk(value, nextPlacement, nextColor);
+        for (const value of Object.values(obj)) walk(value, nextPlacement, nextCode, nextName);
       };
 
-      walk(body, null, null);
+      walk(body, null, null, null);
 
       if (found.length === 0) {
         // AN EMPTY ANSWER IS REAL — a supplier may publish no blank imagery.
