@@ -4,11 +4,12 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Price, SaleName } from "../../Price";
 import { BagBar } from "../../BagBar";
-import { addProductToBag } from "../../bagActions";
+import { FloatingBag } from "../../FloatingBag";
+import { AddToBagButton } from "../../AddToBagButton";
+import { resolveBag } from "@/lib/bag/resolveBag";
 import { salePriceFor } from "@/lib/promotions/storefrontSales";
 import { readBag } from "@/lib/bag/bagStore";
 import { bagCount } from "@/lib/bag/bagCookie";
-import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import {
   DEFAULT_THEME,
   googleFontsUrl,
@@ -74,7 +75,10 @@ export default async function ProductDetailPage({
   // The same sale arithmetic the card and the charge use. A customer who saw a
   // discount on the grid must see the same one here.
   const price = await salePriceFor({ storeId: store.id, product });
-  const bagItemCount = bagCount(await readBag(slug));
+  const bag = await readBag(slug);
+  const bagItemCount = bagCount(bag);
+  const bagTotalInCents =
+    bagItemCount > 0 ? (await resolveBag({ storeId: store.id, bag })).pricing.merchandiseSubtotalInCents : 0;
 
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const brandIdentity = (store.blueprint as Blueprint | null)?.brandIdentity;
@@ -92,6 +96,12 @@ export default async function ProductDetailPage({
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
       <BagBar slug={slug} count={bagItemCount} canAcceptPayments={canAcceptPayments} />
+      <FloatingBag
+        slug={slug}
+        count={bagItemCount}
+        totalInCents={bagTotalInCents}
+        currency={store.currency}
+      />
 
       <div className="mx-auto max-w-5xl px-8 py-8">
         <Link
@@ -138,14 +148,11 @@ export default async function ProductDetailPage({
                       the bag entirely and goes to the single-product review
                       step, which is the path that has been taking real money
                       and is deliberately left alone. */}
-                  <form action={addProductToBag.bind(null, slug, product.id)}>
-                    <SubmitButton
-                      pendingText="Adding..."
-                      className={`w-full ${buttonRadius} bg-[var(--brand-accent)] px-6 py-3 text-base font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50`}
-                    >
-                      Add to Bag
-                    </SubmitButton>
-                  </form>
+                  <AddToBagButton
+                    slug={slug}
+                    productId={product.id}
+                    className={`w-full ${buttonRadius} bg-[var(--brand-accent)] px-6 py-3 text-base font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50`}
+                  />
                   {/* Buy Now goes to the single-product REVIEW step, not
                       straight to the provider. Posting directly would skip the
                       one place a code can be entered and the only breakdown

@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { formatMoney } from "@/lib/money";
 import type { DisplayPrice } from "@/lib/pricing/displayPrice";
@@ -40,15 +39,22 @@ export function BagLine({
   return (
     <div className="flex gap-4">
       {imageUrl ? (
-        <Image
+        // A PLAIN <img>, LIKE THE REST OF THE STOREFRONT. next/image was used
+        // here first and rendered a broken thumbnail on every line: product
+        // images live on Vercel Blob, an arbitrary per-deployment host that
+        // next/image will not load without remotePatterns config this app
+        // deliberately does not carry — which is why ProductImage and
+        // ProductGallery already use <img> with the lint rule disabled.
+        // eslint-disable-next-line @next/next/no-img-element -- see above
+        <img
           src={imageUrl}
-          alt=""
-          width={80}
-          height={80}
+          alt={name}
           className="h-20 w-20 shrink-0 rounded-xl object-cover"
         />
       ) : (
-        <div className="h-20 w-20 shrink-0 rounded-xl bg-[var(--brand-text)]/[.06]" />
+        <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-text)]/[.06] text-[11px] text-[var(--brand-text-secondary)]">
+          No image
+        </div>
       )}
 
       <div className="flex min-w-0 flex-1 flex-col gap-2">

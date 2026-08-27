@@ -804,9 +804,21 @@ async function main() {
   // must genuinely offer a code and a total, and the single-product review step
   // must still be reachable for somebody buying one thing outright.
   const buyButton = read("app", "store", "[slug]", "page.tsx");
+  // THE CHAIN, not one file's current contents. The first version of this
+  // matched the bind expression inside page.tsx, which broke the moment the
+  // button moved into its own component to add a confirmation — the
+  // requirement was untouched and the assertion still failed. Both links are
+  // checked instead: the card renders the control, and the control posts the
+  // action.
   assert("the storefront card routes into the bag",
-    /addProductToBag\.bind\(null, slug, product\.id\)/.test(buyButton),
+    /<AddToBagButton/.test(buyButton),
     "adding is what keeps a customer in the store; Buy Now used to take them out of it");
+  const addToBag = read("app", "store", "[slug]", "AddToBagButton.tsx");
+  assert("and that control adds to the bag",
+    /addProductToBag\.bind\(null, slug, productId\)/.test(addToBag));
+  assert("confirming that it worked, where the customer is looking",
+    /Added to Bag/.test(addToBag),
+    "a silent add halfway down a long storefront is indistinguishable from a broken button");
   assert("and the bag is reachable from every page of the store",
     /<BagBar/.test(buyButton));
 

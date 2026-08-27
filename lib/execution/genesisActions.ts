@@ -4,6 +4,12 @@ import { DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { SECTION_KEYS, resolveSectionOrder, type SectionKey } from "@/lib/storefrontSections";
 import type { Executable } from "./executable";
 import { updateSeoExecutable, type UpdateSeoInput } from "./executables/updateSeo";
+import {
+  createPromotionExecutable,
+  updatePromotionExecutable,
+  type CreatePromotionInput,
+  type UpdatePromotionInput,
+} from "./executables/promotions";
 import { updateHeroExecutable, type UpdateHeroInput } from "./executables/updateHero";
 import {
   updateProductImageExecutable,
@@ -350,6 +356,8 @@ export const GENESIS_ACTIONS: Record<
     | DeleteProductInput
     | EditProductInput
     | AnswerSupplierEconomicsInput
+    | CreatePromotionInput
+    | UpdatePromotionInput
   >
 > = {
   // The owner answering J4's question about what a supplier charges (2026-08-20).
@@ -565,6 +573,71 @@ export const GENESIS_ACTIONS: Record<
   // "destructive" specifically so CATEGORY_MAX_TIER's hard "always_ask"
   // ceiling applies here by construction — a real, permanent Product
   // delete must never become delegable, unlike update_seo.
+  // PROMOTIONS (2026-08-26) — the last link in the chain.
+  //
+  // createPromotionExecutable already existed, wired only to the merchant's own
+  // Promotions page. Registering it here is the whole of what J4 needed: no new
+  // execution machinery, no J4-specific pricing logic, and the same execute()/
+  // verify() path the Accept button already runs. The dashboard and J4 become
+  // two callers of one implementation, which is the point.
+  //
+  // CATEGORY IS "money", NOT "content". A promotion changes what customers are
+  // charged, and CATEGORY_MAX_TIER caps money at "always_ask" by construction —
+  // so a sale can never become something Genesis applies on its own, however
+  // much the owner later delegates. That ceiling is the reason to declare the
+  // category honestly rather than picking the one with the least friction.
+  create_promotion: {
+    executable: createPromotionExecutable,
+    inputSchema: z.object({
+      name: z.string().min(1),
+      kind: z.enum(["SALE", "CODE"]),
+      code: z.string().nullable().optional(),
+      discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]),
+      // Bounded at the schema boundary, so a model that proposes 400% off is
+      // rejected before it reaches an executable — the same defence in depth
+      // the merchant's own form applies.
+      percentOff: z.number().int().min(1).max(100).nullable().optional(),
+      amountOffInCents: z.number().int().min(1).nullable().optional(),
+      scope: z.enum(["ALL_PRODUCTS", "SELECTED_PRODUCTS"]),
+      productIds: z.array(z.string()).optional(),
+      active: z.boolean().optional(),
+      startsAt: z.date().nullable().optional(),
+      endsAt: z.date().nullable().optional(),
+    }) as unknown as z.ZodType<CreatePromotionInput>,
+    // NOTHING IS BEING REPLACED. A new promotion has no previous values, so
+    // this is the empty shape rather than an invented "before" — the approval
+    // diff correctly shows a creation rather than a change.
+    getCurrentValues: () => ({
+      name: "",
+      kind: "SALE" as const,
+      discountType: "PERCENTAGE" as const,
+      scope: "ALL_PRODUCTS" as const,
+    }),
+    category: "money",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  // Switching a sale on or off, and correcting one. Same category and ceiling:
+  // turning a discount back on is as much a pricing change as creating it.
+  update_promotion: {
+    executable: updatePromotionExecutable,
+    inputSchema: z.object({
+      promotionId: z.string().min(1),
+      name: z.string().min(1).optional(),
+      active: z.boolean().optional(),
+      percentOff: z.number().int().min(1).max(100).nullable().optional(),
+      amountOffInCents: z.number().int().min(1).nullable().optional(),
+      startsAt: z.date().nullable().optional(),
+      endsAt: z.date().nullable().optional(),
+      productIds: z.array(z.string()).optional(),
+    }) as unknown as z.ZodType<UpdatePromotionInput>,
+    // The id is all that can be known without a fetch, and the reversal that
+    // matters here is the switch — which the input itself carries.
+    getCurrentValues: () => ({ promotionId: "" }),
+    category: "money",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
   delete_product: {
     executable: deleteProductExecutable,
     inputSchema: z.object({ productId: z.string(), name: z.string() }),

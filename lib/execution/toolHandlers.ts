@@ -191,6 +191,15 @@ export type ToolTurnResult =
       reason: "invalid_input";
     };
 
+import {
+  resolveSelection,
+  describeSelection,
+  selectionProblem,
+  listNames,
+  type ProductSelector,
+} from "@/lib/products/selection";
+import { formatMoney } from "@/lib/money";
+
 export type ToolHandler = (ctx: ToolTurnContext) => Promise<ToolTurnResult>;
 
 /**
@@ -614,6 +623,187 @@ export function resolveScopedProducts<T extends { name: string }>(
  * because a proposal the owner skims should still be unambiguous about what
  * approving it does.
  */
+/**
+ * Propose a sale or a discount code. NEVER creates one.
+ *
+ * THE THREE STEPS, and none of them is J4-specific business logic:
+ *
+ *   1. The model reads the merchant's sentence and names products from the list
+ *      it was given. It can already do this; what it lacked was a way to say
+ *      "everything except these".
+ *   2. resolveSelection turns those names into a real set — and REPORTS what it
+ *      could not resolve rather than dropping it.
+ *   3. An ApprovalRequest is written for the merchant's existing Accept button,
+ *      which runs the same execute()/verify() path the Promotions page does.
+ *
+ * WHAT THE MERCHANT IS SHOWN COMES FROM THE RESOLVED SET, not from the model's
+ * memory of what it asked for. If the count is wrong, it is wrong because the
+ * selection is wrong — which is precisely what they are being shown in order to
+ * catch.
+ */
+const requestSale: ToolHandler = async (ctx) => {
+  const input = ctx.input as {
+    name?: string;
+    kind?: "SALE" | "CODE";
+    code?: string | null;
+    discountType?: "PERCENTAGE" | "FIXED_AMOUNT";
+    percentOff?: number | null;
+    amountOffInCents?: number | null;
+    include?: "all" | "named";
+    includeNames?: string[] | null;
+    excludeNames?: string[] | null;
+    startsAt?: string | null;
+    endsAt?: string | null;
+  };
+
+  if (ctx.products.length === 0) {
+    return {
+      handled: true,
+      reply: "There are no active products to put on sale yet — add one and I'll take it from there.",
+      kind: "sale_request_no_products",
+      executionStatus: "WARNING",
+      // J4 asked rather than acted; the log must not read as a success.
+      outcome: "failure",
+    };
+  }
+
+  // A discount that cannot say how much it takes off is not a generous
+  // promotion, it is a broken one. Refused here rather than reaching Postgres
+  // and coming back as a constraint name.
+  const discountType = input.discountType === "FIXED_AMOUNT" ? "FIXED_AMOUNT" : "PERCENTAGE";
+  const percentOff = discountType === "PERCENTAGE" ? input.percentOff ?? null : null;
+  const amountOffInCents = discountType === "FIXED_AMOUNT" ? input.amountOffInCents ?? null : null;
+  if (discountType === "PERCENTAGE" ? !percentOff : !amountOffInCents) {
+    return {
+      handled: true,
+      reply: "How much off would you like? A percentage, or an amount.",
+      kind: "sale_request_incomplete",
+      executionStatus: "WARNING",
+      // J4 asked rather than acted; the log must not read as a success.
+      outcome: "failure",
+    };
+  }
+
+  const selector: ProductSelector = {
+    include:
+      input.include === "named"
+        ? { kind: "named", names: input.includeNames ?? [] }
+        : { kind: "all" },
+    ...(input.excludeNames && input.excludeNames.length > 0
+      ? { exclude: { kind: "named" as const, names: input.excludeNames } }
+      : {}),
+  };
+  const selection = resolveSelection(ctx.products, selector);
+
+  // ASKING IS THE RIGHT ANSWER when a name did not resolve. A merchant who
+  // excludes a mug this store does not have believes they own one, and one of
+  // us is wrong — discounting it anyway is the failure this reports its way out
+  // of.
+  const problem = selectionProblem(selection);
+  if (problem) {
+    return {
+      handled: true,
+      reply: `${problem} Your active products are: ${listNames(ctx.products.map((p) => p.name))}.`,
+      kind: "sale_request_unresolved",
+      executionStatus: "WARNING",
+      // J4 asked rather than acted; the log must not read as a success.
+      outcome: "failure",
+    };
+  }
+
+  if (selection.matched.length === 0) {
+    return {
+      handled: true,
+      reply: `That would leave nothing on sale. Your active products are: ${listNames(ctx.products.map((p) => p.name))}.`,
+      kind: "sale_request_empty",
+      executionStatus: "WARNING",
+      // J4 asked rather than acted; the log must not read as a success.
+      outcome: "failure",
+    };
+  }
+
+  const kind = input.kind === "CODE" ? "CODE" : "SALE";
+  const coversEverything = selection.matched.length === ctx.products.length;
+  const name = input.name?.trim() || (kind === "CODE" ? "Discount code" : "Sale");
+
+  const promotionInput = {
+    name,
+    kind,
+    code: kind === "CODE" ? input.code?.trim() || null : null,
+    discountType,
+    percentOff,
+    amountOffInCents,
+    // ALL_PRODUCTS when it genuinely covers everything, so the promotion keeps
+    // covering new products the merchant adds later — which is what a merchant
+    // means by "everything". A selective list frozen today would quietly miss
+    // tomorrow's product.
+    scope: coversEverything ? "ALL_PRODUCTS" : "SELECTED_PRODUCTS",
+    productIds: coversEverything ? [] : selection.matched.map((p) => p.id),
+    active: true,
+    startsAt: parseDateOrNull(input.startsAt),
+    endsAt: parseDateOrNull(input.endsAt),
+  };
+
+  const howMuch =
+    discountType === "PERCENTAGE" ? `${percentOff}% off` : `${formatMoney(amountOffInCents ?? 0, "USD")} off`;
+  const what = describeSelection(selection, { totalProducts: ctx.products.length });
+  const summary =
+    kind === "CODE"
+      ? `Create discount code ${promotionInput.code} — ${howMuch} on ${what}`
+      : `${howMuch} on ${what}`;
+
+  await prisma.approvalRequest.create({
+    data: {
+      storeId: ctx.storeId,
+      recommendationId: null,
+      actionType: "create_promotion",
+      topicKey: deriveTopicKey("create_promotion", null),
+      input: promotionInput as unknown as object,
+      // Nothing is being replaced — a new promotion has no previous values, so
+      // the approval reads as a creation rather than an invented "before".
+      previousValues: {},
+      summary,
+      authorizationTier: GENESIS_ACTIONS.create_promotion.authorizationTier,
+      groupId: randomUUID(),
+    },
+  });
+
+  // The reply states the resolved set and what was left out, because that is
+  // the sentence the merchant is checking against their own intention.
+  // `what` already names what was left out — see describeSelection — so saying
+  // it again here reads as a stutter to the merchant.
+  return {
+    handled: true,
+    reply:
+      `I've prepared ${howMuch} on ${what}. ` +
+      `It's waiting for your approval — nothing has changed yet.`,
+    kind: "sale_request",
+    // PENDING, not SUCCESS: something real happened and no price moved.
+    executionStatus: "PENDING",
+    // AND THE OUTCOME IS DECLARED, because the reply says "nothing has changed
+    // yet" — which verify-tool-handlers' sweep reads, correctly, as language
+    // that could mean J4 failed. It did not: the proposal was written. The
+    // sentence is true about the STORE, not about the turn, and leaving the
+    // outcome implicit would let the log record a success while the words read
+    // like a failure. That sweep caught this; the rule is worth the annotation.
+    outcome: "success",
+    logMessage: `Proposed ${summary}`,
+    metadata: {
+      productIds: selection.matched.map((p) => p.id),
+      excludedProductIds: selection.excluded.map((p) => p.id),
+      scope: promotionInput.scope,
+    },
+  };
+};
+
+/** A date the model wrote, or null. Never a guess. */
+function parseDateOrNull(raw: string | null | undefined): Date | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  const date = new Date(trimmed);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 const requestProductRemoval: ToolHandler = async (ctx) => {
   const input = ctx.input as { scope?: "all" | "specific" | null; productNames?: string[] | null };
   const targets = resolveScopedProducts(ctx.products, input?.scope, input?.productNames);
@@ -2195,6 +2385,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   request_image_change: makeRequestImageChange(),
   refine_storefront: makeRefineStorefront(),
   request_product_content_change: makeRequestProductContentChange(),
+  request_sale: requestSale,
   look_up_business_data: makeLookUpBusinessData(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the

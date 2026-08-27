@@ -339,6 +339,7 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "request_image_change",
   "request_product_removal",
   "request_product_content_change",
+  "request_sale",
   "approve_pending_changes",
   "edit_store_content",
   "manage_business_asset",
@@ -346,6 +347,34 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "answer_supplier_economics",
 ] as const;
 export type StoreChatUnifiedToolName = (typeof STORE_CHAT_UNIFIED_TOOL_NAMES)[number];
+
+/**
+ * A sale or a discount code, as the model proposes it.
+ *
+ * SCOPE IS INCLUDE/EXCLUDE, which is the whole reason this tool exists. The
+ * three older scoped tools understand "all" or an exact list of names, and no
+ * way at all to say the most ordinary sentence a merchant says: "everything
+ * except the T-shirt, hoodie and mug". The model can already READ which
+ * products are which — it receives the list every turn — so what was missing
+ * was never comprehension, only vocabulary.
+ */
+export const RequestSaleInputSchema = z.object({
+  /** What the merchant will see it called. For a code, name it for them. */
+  name: z.string().min(1),
+  kind: z.enum(["SALE", "CODE"]),
+  /** Required for a CODE. Ignored for a SALE. */
+  code: z.string().nullable().optional(),
+  discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]),
+  percentOff: z.number().int().min(1).max(100).nullable().optional(),
+  amountOffInCents: z.number().int().min(1).nullable().optional(),
+  /** "all", or the exact product names the merchant named. */
+  include: z.enum(["all", "named"]),
+  includeNames: z.array(z.string()).nullable().optional(),
+  /** Products to leave out of whatever `include` selected. */
+  excludeNames: z.array(z.string()).nullable().optional(),
+  startsAt: z.string().nullable().optional(),
+  endsAt: z.string().nullable().optional(),
+});
 
 export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
   return [
@@ -390,6 +419,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant is asking you to rename, rewrite, improve, or clean up the name and/or description of one or more EXISTING products — this includes both an explicit instruction ('change the name to X') and a genuine request for your own recommendation ('these names are too keyword-stuffed, what should they be', 'review my products and suggest better descriptions'). Either way, you have the real capability to prepare the actual change for the merchant's approval — never just describe what they should type in themselves. Resolve scope the same way as request_image_change: 'all' when they clearly mean every active product, 'specific' with productNames set to the exact matching names, or null only when genuinely unclear (then ask a specific clarifying question in your reply text). Set changeType to whichever the merchant is actually asking about — 'name', 'description', or 'both'. This tool only decides WHICH products and WHAT KIND of change; the actual proposed wording is generated separately, grounded in what you really know about the business and each product, not guessed from the existing text alone.",
       input_schema: z.toJSONSchema(RequestProductContentChangeInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "request_sale",
+      description:
+        "Call this when the merchant asks you to put products on sale, discount them, change what they cost as a promotion, or create a discount code — 'put everything 26% off', 'put all the tensor rings on sale except the t-shirt, hoodie and mug', 'make me a code for 10% off', 'take the pyramid off sale'. This PROPOSES the promotion for the merchant's own review and approval; it never changes a price immediately. Resolve the scope yourself from the product list you were given: include 'all' when they mean every product, or 'named' with includeNames set to the exact matching names — and put anything they explicitly want left OUT into excludeNames, which is how 'everything except X and Y' is expressed. Use the real product names as they appear in that list, not the merchant's shorthand. Never tell the merchant to go and create a sale themselves; you can prepare the real thing for them to approve.",
+      input_schema: z.toJSONSchema(RequestSaleInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "approve_pending_changes",

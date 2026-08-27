@@ -48,6 +48,9 @@ export default async function BagPage({ params }: { params: Promise<{ slug: stri
       className="min-h-screen bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
     >
       <BagBar slug={slug} count={bagCount(bag)} canAcceptPayments={canAcceptPayments} />
+      {/* Deliberately NOT rendered on the bag itself — a pill inviting somebody
+          to the page they are already on is noise, and it would sit on top of
+          the Continue to Payment button. */}
 
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
         <h1 className="font-[var(--font-heading)] text-2xl font-semibold">Your bag</h1>
@@ -169,10 +172,25 @@ export default async function BagPage({ params }: { params: Promise<{ slug: stri
               </div>
             </div>
 
-            <div className="mt-8">
-              <Link href={`/store/${slug}`} className="text-[14px] underline underline-offset-2">
-                Continue shopping
+            {/* A REAL PAIR, not a link left over at the bottom. Returning to
+                the shop is a genuine choice a customer makes from here, so it
+                reads as a control — while Continue to Payment above stays the
+                primary action and keeps the accent to itself.
+
+                "Continue Shopping", never "Go Back": this navigates to the
+                storefront, and a customer who arrived from a product page or a
+                shared link has no history to go back to. */}
+            <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--brand-text)]/[.08] pt-6">
+              <Link
+                href={`/store/${slug}`}
+                className="inline-flex items-center gap-2 rounded-full border border-[var(--brand-text)]/[.14] px-5 py-2.5 text-[15px] font-medium text-[var(--brand-text)] transition hover:border-[var(--brand-text)]/[.32]"
+              >
+                <span aria-hidden="true">&larr;</span>
+                Continue Shopping
               </Link>
+              <span className="text-[13px] text-[var(--brand-text-secondary)]">
+                Your bag is saved while you look around.
+              </span>
             </div>
           </>
         )}

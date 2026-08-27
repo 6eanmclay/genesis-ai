@@ -64,6 +64,8 @@ async function main() {
   const { createCheckoutDraft, markPaymentStarted, loadDraft, freezeLines, draftTotalMismatch, DRAFT_TTL_HOURS } =
     await import("@/lib/bag/checkoutDraft");
   const { createPromotionExecutable } = await import("@/lib/execution/executables/promotions");
+  const { salePricesFor } = await import("@/lib/promotions/storefrontSales");
+  const { isOnSale, effectivePriceInCents } = await import("@/lib/pricing/displayPrice");
 
   // ========================================================================
   console.log("\n=== 1. The cookie holds intent and nothing else ===\n");
@@ -448,6 +450,276 @@ async function main() {
   assert("and the cookie module touches neither database nor framework",
     !/prisma|next\/headers/.test(cookieSrc),
     "which is what makes every rule above provable without a browser");
+
+  // ========================================================================
+  console.log("\n=== 12. The price on the shelf is the price at the till ===\n");
+  // ========================================================================
+  // THE DEFECT THIS EXISTS FOR IS A STOREFRONT THAT LIES. A card showing
+  // "$25.90, 26% off" while checkout charges $35.00 is worse than showing no
+  // discount at all — the customer has been told something untrue about money
+  // before being asked for it.
+  //
+  // Both numbers come from discountAmountFor, so they cannot drift by
+  // construction. This asserts the equality anyway, because "by construction"
+  // is exactly the kind of claim that stops being true when somebody adds a
+  // second path.
+  //
+  // Mirrors the real production sale: 26% off, SELECTED_PRODUCTS, dated.
+  const shelfOwner = await prisma.user.create({ data: { email: `shelf-${uniq()}@test.local` } });
+  const shelf = await prisma.store.create({
+    data: { userId: shelfOwner.id, name: "Shelf", slug: `shelf-${uniq()}`, published: true, currency: "USD" },
+  });
+  const onSaleProduct = await prisma.product.create({
+    data: { storeId: shelf.id, name: "Tensor Ring", priceInCents: 3500, active: true },
+  });
+  const fullPriceProduct = await prisma.product.create({
+    data: { storeId: shelf.id, name: "Cubit & Coil T-Shirt", priceInCents: 2500, active: true },
+  });
+  const shelfCtx = { storeId: shelf.id } as never;
+
+  await createPromotionExecutable.run(
+    {
+      name: "Back to School Sale!", kind: "SALE",
+      discountType: "PERCENTAGE", percentOff: 26,
+      scope: "SELECTED_PRODUCTS", productIds: [onSaleProduct.id],
+      startsAt: new Date("2026-08-26T00:00:00Z"),
+      endsAt: new Date("2026-10-28T00:00:00Z"),
+    },
+    shelfCtx
+  );
+
+  const shelfPrices = await salePricesFor({
+    storeId: shelf.id,
+    products: [
+      { id: onSaleProduct.id, priceInCents: 3500 },
+      { id: fullPriceProduct.id, priceInCents: 2500 },
+    ],
+    now: NOW,
+  });
+  const ringShelf = shelfPrices.get(onSaleProduct.id)!;
+  const shirtShelf = shelfPrices.get(fullPriceProduct.id)!;
+
+  eq("the card shows the original price", ringShelf.listInCents, 3500);
+  eq("and the sale price", ringShelf.saleInCents, 2590);
+  eq("with the badge the customer reads", ringShelf.percentOff, 26);
+  eq("and the sale named", ringShelf.label, "Back to School Sale!");
+  assert("so the card renders as a sale", isOnSale(ringShelf));
+
+  // A SELECTIVE SALE MUST NOT LEAK ONTO EVERYTHING.
+  eq("a product outside the sale shows no discount", shirtShelf.saleInCents, null);
+  eq("no badge either", shirtShelf.percentOff, null);
+  assert("and renders as an ordinary price", !isOnSale(shirtShelf));
+  eq("CONTROL: at its real price", shirtShelf.listInCents, 2500);
+
+  // --- THE EQUALITY THAT MATTERS -------------------------------------------
+  const shelfBag = addToBag(addToBag(EMPTY_BAG, onSaleProduct.id, 2), fullPriceProduct.id, 1);
+  const shelfResolved = await resolveBag({ storeId: shelf.id, bag: shelfBag, now: NOW });
+
+  const chargedPerUnit = shelfResolved.pricing.lines[0].subtotalInCents / shelfResolved.pricing.lines[0].quantity;
+  eq("what the shelf shows is what the bag charges, per unit",
+    chargedPerUnit, effectivePriceInCents(ringShelf));
+  eq("and the full-price line is charged at list",
+    shelfResolved.pricing.lines[1].subtotalInCents, effectivePriceInCents(shirtShelf));
+  eq("two of a discounted item is twice the shelf price",
+    shelfResolved.pricing.lines[0].subtotalInCents, effectivePriceInCents(ringShelf) * 2);
+  eq("and the bag total is exactly what the two cards promised",
+    shelfResolved.pricing.merchandiseSubtotalInCents,
+    effectivePriceInCents(ringShelf) * 2 + effectivePriceInCents(shirtShelf));
+
+  // --- and the same through the draft, which is what a provider charges ----
+  const shelfDraftId = await createCheckoutDraft({
+    storeId: shelf.id, lines: shelfResolved.lines, pricing: shelfResolved.pricing, now: NOW,
+  });
+  const shelfDraft = await loadDraft(shelf.id, shelfDraftId);
+  eq("the frozen contract carries the same price the card showed",
+    shelfDraft!.lines[0].subtotalInCents / shelfDraft!.lines[0].quantity,
+    effectivePriceInCents(ringShelf));
+  eq("and the same total", shelfDraft!.totalInCents, shelfResolved.pricing.totalInCents);
+  assert("so shelf, bag and charge are one number end to end",
+    effectivePriceInCents(ringShelf) * 2 + effectivePriceInCents(shirtShelf) === shelfDraft!.totalInCents);
+
+  // --- a sale that is not running shows nothing ----------------------------
+  const notYet = await salePricesFor({
+    storeId: shelf.id,
+    products: [{ id: onSaleProduct.id, priceInCents: 3500 }],
+    now: new Date("2026-08-01T00:00:00Z"),
+  });
+  eq("before it starts, the card is an ordinary price", notYet.get(onSaleProduct.id)!.saleInCents, null);
+  const over = await salePricesFor({
+    storeId: shelf.id,
+    products: [{ id: onSaleProduct.id, priceInCents: 3500 }],
+    now: new Date("2026-11-01T00:00:00Z"),
+  });
+  eq("after it ends, likewise", over.get(onSaleProduct.id)!.saleInCents, null);
+
+  const paused = await prisma.promotion.findFirstOrThrow({
+    where: { storeId: shelf.id, name: "Back to School Sale!" },
+    select: { id: true },
+  });
+  await prisma.promotion.updateMany({
+    where: { id: paused.id, storeId: shelf.id },
+    data: { active: false },
+  });
+  const switchedOff = await salePricesFor({
+    storeId: shelf.id, products: [{ id: onSaleProduct.id, priceInCents: 3500 }], now: NOW,
+  });
+  eq("and a switched-off sale disappears from the storefront",
+    switchedOff.get(onSaleProduct.id)!.saleInCents, null);
+  assert("which is why the price is derived and never written onto the product",
+    (await prisma.product.findUniqueOrThrow({ where: { id: onSaleProduct.id } })).priceInCents === 3500,
+    "burning a sale into Product.priceInCents would make it unswitchable and lose the original");
+
+
+  // ========================================================================
+  console.log("\n=== 13. The bag is reachable, and it shows real products ===\n");
+  // ========================================================================
+  // THE THUMBNAIL BUG THAT STARTED THIS SECTION. The bag rendered every product
+  // image through next/image, which cannot load a Vercel Blob URL without
+  // remotePatterns config this app deliberately does not carry — so every line
+  // showed a broken image. The rest of the storefront already knew this and
+  // uses a plain <img> (see ProductImage, ProductGallery, and their comments).
+  //
+  // Asserted at source because there is no DOM here: what matters is that the
+  // bag uses the same image path the storefront proved works.
+
+  const bagLineSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "store", "[slug]", "bag", "BagLine.tsx"), "utf8")
+  );
+  assert("the bag renders thumbnails the way the rest of the storefront does",
+    /<img/.test(bagLineSrc) && !/from "next\/image"/.test(bagLineSrc),
+    "next/image cannot load Blob-hosted product images; every line rendered broken");
+  assert("from the product's own image url",
+    /src=\{imageUrl\}/.test(bagLineSrc));
+  assert("with the product's name as alt text, not an empty string",
+    /alt=\{name\}/.test(bagLineSrc),
+    "an empty alt on a product thumbnail tells a screen reader nothing about what is in the bag");
+  assert("and a product with no image says so rather than showing a gap",
+    /No image/.test(bagLineSrc));
+
+  const reviewSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "store", "[slug]", "checkout", "[productId]", "CheckoutReview.tsx"), "utf8")
+  );
+  assert("CONTROL: the single-product review step had the same bug and the same fix",
+    /<img/.test(reviewSrc) && !/from "next\/image"/.test(reviewSrc));
+
+  // --- the image genuinely reaches the bag, for MORE THAN ONE product -------
+  const imgOwner = await prisma.user.create({ data: { email: `img-${uniq()}@test.local` } });
+  const imgStore = await prisma.store.create({
+    data: { userId: imgOwner.id, name: "Thumbs", slug: `img-${uniq()}`, published: true },
+  });
+  const withImages = [];
+  for (const [i, url] of ["https://blob.example/one.png", "https://blob.example/two.png"].entries()) {
+    withImages.push(
+      await prisma.product.create({
+        data: {
+          storeId: imgStore.id, name: `Product ${i + 1}`, priceInCents: 1000 + i * 500,
+          active: true, imageUrl: url, position: i,
+        },
+      })
+    );
+  }
+  const noImage = await prisma.product.create({
+    data: { storeId: imgStore.id, name: "Unphotographed", priceInCents: 900, active: true, position: 2 },
+  });
+
+  let thumbBag = EMPTY_BAG;
+  for (const p of [...withImages, noImage]) thumbBag = addToBag(thumbBag, p.id, 1);
+  const thumbs = await resolveBag({ storeId: imgStore.id, bag: thumbBag, now: NOW });
+
+  eq("every line carries its own image url",
+    thumbs.lines.map((l) => l.imageUrl),
+    ["https://blob.example/one.png", "https://blob.example/two.png", null]);
+  assert("including the second product, not just the first",
+    thumbs.lines[1].imageUrl === "https://blob.example/two.png",
+    "a bug that only showed on line one would pass a single-product test");
+  eq("and a product with no image is an honest null, not an empty string",
+    thumbs.lines[2].imageUrl, null);
+  eq("CONTROL: with the names beside them", thumbs.lines.map((l) => l.name),
+    ["Product 1", "Product 2", "Unphotographed"]);
+
+  // ========================================================================
+  console.log("\n=== 14. The bag follows the customer ===\n");
+  // ========================================================================
+
+  const floating = codeOnly(
+    readFileSync(join(process.cwd(), "app", "store", "[slug]", "FloatingBag.tsx"), "utf8")
+  );
+  assert("the pill is fixed to the viewport, so scrolling never loses it",
+    /fixed/.test(floating) && /bottom-0/.test(floating),
+    "a bag only at the top means scrolling back up to find it, which is where a purchase gets abandoned");
+  assert("and clicking it opens the bag",
+    /href=\{`\/store\/\$\{slug\}\/bag`\}/.test(floating));
+  assert("it clears the phone's own bottom controls",
+    /safe-area-inset-bottom/.test(floating),
+    "otherwise it sits under the home indicator and the browser chrome");
+  assert("it shows the count and the amount",
+    /\{count\}/.test(floating) && /formatMoney\(totalInCents/.test(floating));
+  assert("and disappears when the bag is empty",
+    /if \(count === 0\) return null;/.test(floating),
+    "a control following somebody around saying '0 items' is clutter");
+
+  const storefront = codeOnly(
+    readFileSync(join(process.cwd(), "app", "store", "[slug]", "page.tsx"), "utf8")
+  );
+  assert("the storefront renders it",
+    /<FloatingBag/.test(storefront));
+  // THE AMOUNT COMES FROM THE PRICING FUNCTION, not a running total kept in the
+  // browser — which is how a floating cart usually ends up disagreeing with
+  // checkout.
+  assert("with an amount resolved by the same function the charge uses",
+    /resolveBag\(\{ storeId: store\.id, bag \}\)\)\.pricing\.merchandiseSubtotalInCents/.test(storefront));
+  assert("and only when there is something in it",
+    /bagItemCount > 0 \?/.test(storefront),
+    "an empty bag must cost no queries on the most-rendered page in Genesis");
+
+  const addButton = codeOnly(
+    readFileSync(join(process.cwd(), "app", "store", "[slug]", "AddToBagButton.tsx"), "utf8")
+  );
+  assert("adding confirms in place",
+    /Added to Bag/.test(addButton),
+    "a silent add halfway down a long storefront is indistinguishable from a broken button");
+  assert("and it is still a form posting the server action",
+    /addProductToBag\.bind\(null, slug, productId\)/.test(addButton),
+    "so it keeps working with no JavaScript");
+
+  // ========================================================================
+  console.log("\n=== 15. Leaving the bag, and coming back ===\n");
+  // ========================================================================
+
+  const bagPageSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "store", "[slug]", "bag", "page.tsx"), "utf8")
+  );
+  assert("Continue Shopping returns to the storefront",
+    /href=\{`\/store\/\$\{slug\}`\}[\s\S]{0,400}Continue Shopping/.test(bagPageSrc));
+  assert("as a control rather than a link left at the bottom",
+    /Continue Shopping/.test(bagPageSrc) && /rounded-full border/.test(bagPageSrc));
+  assert("and it is never called 'Go Back'",
+    !/Go Back/i.test(bagPageSrc),
+    "a customer who arrived from a shared link has no history to go back to");
+  assert("with Continue to Payment still the primary action",
+    /<CheckoutButton/.test(bagPageSrc));
+
+  // The prices on the bag are still the discounted ones — the UX changes must
+  // not have touched the pricing.
+  //
+  // The sale was deliberately switched OFF at the end of section 12 to prove it
+  // disappears from the storefront, so it is switched back on here rather than
+  // comparing against a bag that correctly has no discount. The first version
+  // of this assertion missed that and failed for the right reason.
+  await prisma.promotion.updateMany({
+    where: { storeId: shelf.id, name: "Back to School Sale!" },
+    data: { active: true },
+  });
+  const stillDiscounted = await resolveBag({ storeId: shelf.id, bag: shelfBag, now: NOW });
+  eq("CONTROL: discounted prices are unchanged by any of this",
+    stillDiscounted.pricing.merchandiseSubtotalInCents,
+    shelfResolved.pricing.merchandiseSubtotalInCents);
+
+  await prisma.store.delete({ where: { id: imgStore.id } });
+  await prisma.user.delete({ where: { id: imgOwner.id } });
+
+  await prisma.store.delete({ where: { id: shelf.id } });
+  await prisma.user.delete({ where: { id: shelfOwner.id } });
 
   await prisma.store.delete({ where: { id: store.id } });
   await prisma.store.delete({ where: { id: other.id } });

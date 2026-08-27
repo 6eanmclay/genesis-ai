@@ -10,6 +10,9 @@ import { subscribeToNewsletter } from "./actions";
 import { addProductToBag } from "./bagActions";
 import { Price } from "./Price";
 import { BagBar } from "./BagBar";
+import { FloatingBag } from "./FloatingBag";
+import { AddToBagButton } from "./AddToBagButton";
+import { resolveBag } from "@/lib/bag/resolveBag";
 import { salePricesFor } from "@/lib/promotions/storefrontSales";
 import { readBag } from "@/lib/bag/bagStore";
 import { bagCount } from "@/lib/bag/bagCookie";
@@ -121,13 +124,9 @@ async function BuyButton({
   // A form posting a server action, deliberately, rather than a client
   // component: adding to a bag works with no JavaScript at all, and the header
   // count is server-rendered from the same cookie the action writes.
-  return (
-    <form action={addProductToBag.bind(null, slug, product.id)}>
-      <SubmitButton pendingText="Adding..." className={className}>
-        Add to Bag
-      </SubmitButton>
-    </form>
-  );
+  // CONFIRMS IN PLACE. A silent add halfway down a long storefront is
+  // indistinguishable from a broken button — see AddToBagButton.
+  return <AddToBagButton slug={slug} productId={product.id} className={className} />;
 }
 
 export default async function StorefrontPage({
@@ -202,8 +201,15 @@ export default async function StorefrontPage({
   const priceOf = (product: { id: string; priceInCents: number }): DisplayPrice =>
     salePrices.get(product.id) ?? { listInCents: product.priceInCents, saleInCents: null, percentOff: null, label: null };
 
-  // What the header shows. Read from the cookie; no database row is involved.
-  const bagItemCount = bagCount(await readBag(slug));
+  // What the header and the floating pill show. Read from the cookie; no
+  // database row is involved.
+  const bag = await readBag(slug);
+  const bagItemCount = bagCount(bag);
+  // The AMOUNT comes from the same resolveBag the bag page and the charge use,
+  // so the pill can never quote a total checkout disagrees with. Resolved only
+  // when there is something in the bag — an empty bag costs no queries.
+  const bagTotalInCents =
+    bagItemCount > 0 ? (await resolveBag({ storeId: store.id, bag })).pricing.merchandiseSubtotalInCents : 0;
 
   // Captured as plain locals — TypeScript doesn't carry the `!store` null
   // narrowing above into nested function declarations like renderHero().
@@ -767,6 +773,12 @@ export default async function StorefrontPage({
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
       {!store.published && viewerRole && <PreviewModeBanner />}
       <BagBar slug={slug} count={bagItemCount} canAcceptPayments={canAcceptPayments} />
+      <FloatingBag
+        slug={slug}
+        count={bagItemCount}
+        totalInCents={bagTotalInCents}
+        currency={currency}
+      />
       {problemNotice && (
         <div
           className={`border-b px-8 py-4 text-center text-sm ${
