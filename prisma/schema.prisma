@@ -826,6 +826,21 @@ model Product {
   // Defaulted to OWNER_MADE because that is the truth about every product that
   // exists today: each one was entered by hand by the person who makes or holds
   // it. Nothing is backfilled or inferred.
+  // WHAT WAS DESIGNED, FROZEN AT THE MOMENT IT WAS ADDED (2026-08-27).
+  //
+  // The Creation Station's own design document: the artwork on each placement,
+  // in normalised coordinates, PLUS the provider positions already resolved
+  // against the supplier's print areas at that instant.
+  //
+  // Both halves are stored on purpose. The normalised design is what can be
+  // reopened and edited; the resolved positions are what the supplier was
+  // going to be told. Keeping only the first would mean re-deriving placement
+  // from a catalogue that may since have changed a print area -- and a product
+  // whose print position quietly moved is one nobody would notice until it
+  // arrived wrong.
+  //
+  // Null for every product not made here, which is all of them today.
+  designSpec          Json?
   sourceKind          ProductSourceKind    @default(OWNER_MADE)
   // Which registered source this came from (lib/sourcing/registry.ts), e.g.
   // "printful". A plain string, not an enum, for the same reason the business
