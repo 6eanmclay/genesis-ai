@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PortalItem } from "@/lib/creation/creatables";
 import { GENESIS_BLACK, GENESIS_GREEN } from "@/lib/brand/palette";
+import { CreatableArt } from "./CreatableArt";
 
 // THE DOORWAY INTO CREATING.
 //
@@ -50,7 +51,7 @@ export function CreationPortal({
   const router = useRouter();
   const [index, setIndex] = useState(0);
   const [entered, setEntered] = useState(false);
-  const drag = useRef<{ startX: number; moved: boolean } | null>(null);
+  const drag = useRef<{ startX: number; startY: number; axis: "x" | "y" | null } | null>(null);
 
   const count = items.length;
   const focused = items[((index % count) + count) % count];
@@ -82,21 +83,49 @@ export function CreationPortal({
     router.push(`${basePath}/studio/create?kind=${encodeURIComponent(item.creatable.id)}`);
   }
 
+  // ============ HORIZONTAL IS OURS, VERTICAL IS THE PAGE'S ============
+  //
+  // The stage used to carry `touch-none`, which told the browser this element
+  // handles ALL gestures — so a finger anywhere near the carousel could not
+  // scroll the page, and Sean had to hunt for a safe strip to scroll in.
+  //
+  // `touch-action: pan-y` is the fix, and it is the browser doing the work
+  // rather than us: vertical panning stays with the page, horizontal comes
+  // here. The axis test below is the same decision made for pointer events,
+  // which do not honour touch-action on their own.
+  //
+  // The axis is decided ONCE per gesture and then held. Re-deciding every move
+  // makes a slightly diagonal swipe flicker between scrolling and rotating,
+  // which feels broken in a way nobody can describe.
   function onPointerDown(event: React.PointerEvent) {
-    drag.current = { startX: event.clientX, moved: false };
+    drag.current = { startX: event.clientX, startY: event.clientY, axis: null };
   }
 
   function onPointerMove(event: React.PointerEvent) {
     const state = drag.current;
     if (!state) return;
+
     const dx = event.clientX - state.startX;
+    const dy = event.clientY - state.startY;
+
+    if (state.axis === null) {
+      // Nothing is claimed until the gesture has travelled far enough to have
+      // a direction. Ten pixels is below the threshold at which anybody has
+      // decided what they are doing.
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      state.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    }
+
+    // A vertical gesture is the page's. Doing nothing here is what lets it
+    // scroll normally.
+    if (state.axis === "y") return;
+
     // One step per threshold, so a long swipe travels several places rather
     // than one — which is what makes a big set feel reachable.
     const step = 90;
     if (Math.abs(dx) >= step) {
       rotate(dx > 0 ? -1 : 1);
       state.startX = event.clientX;
-      state.moved = true;
     }
   }
 
@@ -137,8 +166,10 @@ export function CreationPortal({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
-          className="relative mt-6 flex-1 touch-none select-none outline-none"
-          style={{ perspective: 1200 }}
+          // pan-y, not none: the page keeps vertical scrolling. See the
+          // gesture note above.
+          className="relative mt-4 h-[300px] shrink-0 select-none outline-none sm:h-[360px]"
+          style={{ perspective: 1200, touchAction: "pan-y" }}
         >
           {items.map((item, i) => {
             // Where this object sits on the circle, relative to what is
@@ -174,11 +205,22 @@ export function CreationPortal({
           })}
         </div>
 
-        {/* What is focused, named. The object is the control; this is the
-            label for it, and the one place a count belongs. */}
-        <div className="relative z-10 mt-2 text-center">
-          <p className="text-[20px] font-medium">{focused?.creatable.label}</p>
-          <p className="mt-1 text-[13px] text-zinc-400">
+        {/* ============ WHAT IS SELECTED, AND WHAT TO DO WITH IT ==========
+            Lifted off the bottom, where it sat next to the navigation bar and
+            was easy to miss. Sean: this whole block needs enough room that
+            somebody immediately understands "this is what I've selected, and
+            this is what I can do with it".
+
+            Order matters here — name, then what it is, then the action, then
+            the dots. The indicator is the least important thing on the screen
+            and now reads as such rather than competing with the button.
+
+            The button stays even though tapping the object does the same
+            thing: not everybody will guess that the product itself is the
+            control, and an explicit way in costs nothing. */}
+        <div className="relative z-10 mt-6 text-center sm:mt-8">
+          <p className="text-[22px] font-medium">{focused?.creatable.label}</p>
+          <p className="mx-auto mt-1.5 max-w-xs text-[13px] text-zinc-400">
             {focused?.available
               ? `${focused.blankCount} to choose from · ${focused.creatable.hint}`
               : hasSupplier
@@ -189,15 +231,15 @@ export function CreationPortal({
           <button
             type="button"
             onClick={() => focused && choose(focused)}
-            className="mt-5 rounded-full px-6 py-2.5 text-[15px] font-medium text-white transition"
+            className="mt-6 rounded-full px-7 py-3 text-[15px] font-medium text-white transition hover:brightness-110"
             style={{ background: GREEN }}
           >
             Make a {focused?.creatable.label.toLowerCase()}
           </button>
 
           {/* Dots, because a circle with no ends needs something to say where
-              you are in it. */}
-          <div className="mt-5 flex items-center justify-center gap-1.5">
+              you are in it. Below the action and quieter than it. */}
+          <div className="mt-7 flex items-center justify-center gap-1.5 pb-2">
             {items.map((item, i) => (
               <span
                 key={item.creatable.id}
@@ -226,40 +268,60 @@ export function CreationPortal({
   );
 }
 
+/**
+ * The object itself, floating.
+ *
+ * ============ NO CARD ================================================
+ *
+ * This used to be a bordered square with the product inside it, which meant
+ * the thing in the space was a CARD and the product was its contents. Sean's
+ * correction: "I don't want squares representing products. I want the actual
+ * products floating there."
+ *
+ * So the chrome is gone. What remains is the product, lit by a glow behind it
+ * rather than framed by a border — the light is in the space, not around the
+ * object.
+ *
+ * A supplier photograph wins whenever there is one, because a real blank is
+ * more honest than a drawing of one. Where there is none — which is every
+ * business before a supplier is connected — a silhouette stands in, because
+ * the other half of his correction is the part a label cannot satisfy: "I
+ * shouldn't have to read T-shirt to know I'm looking at a T-shirt."
+ */
 function ObjectFace({ item, focused }: { item: PortalItem; focused: boolean }) {
   return (
     <span
       className={focused ? "creation-portal-breathe block" : "block"}
-      style={
-        focused
-          ? { animation: "creationPortalBreathe 4.5s ease-in-out infinite" }
-          : undefined
-      }
+      style={focused ? { animation: "creationPortalBreathe 4.5s ease-in-out infinite" } : undefined}
     >
-      <span
-        className="grid h-[190px] w-[190px] place-items-center rounded-3xl border sm:h-[230px] sm:w-[230px]"
-        style={{
-          borderColor: focused ? `${GREEN}66` : "rgba(255,255,255,.08)",
-          background: focused
-            ? `linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02))`
-            : "rgba(255,255,255,.03)",
-          boxShadow: focused ? `0 0 40px -12px ${GREEN}` : "none",
-        }}
-      >
+      <span className="relative grid h-[190px] w-[190px] place-items-center sm:h-[230px] sm:w-[230px]">
+        {/* The light sits BEHIND the object, so the object is lit rather than
+            outlined. Only the focused one is lit — that is the whole depth
+            cue, and it is the same green the rest of the language uses for
+            "this is the live one". */}
+        {focused && (
+          <span
+            aria-hidden="true"
+            className="absolute inset-0 rounded-full blur-2xl"
+            style={{ background: `radial-gradient(circle, ${GREEN}55 0%, transparent 70%)` }}
+          />
+        )}
+
         {item.imageUrl ? (
-          // THE SUPPLIER'S OWN PHOTOGRAPH, so the floating object is a real
-          // thing that can really be made.
           // eslint-disable-next-line @next/next/no-img-element -- supplier CDN
           <img
             src={item.imageUrl}
             alt=""
             draggable={false}
-            className="h-[78%] w-[78%] object-contain"
+            className="relative h-[88%] w-[88%] object-contain"
           />
         ) : (
-          // No photograph is not no answer. The intention is still real; the
-          // page says plainly what cannot be ordered yet.
-          <span className="px-4 text-center text-[13px] text-zinc-500">{item.creatable.label}</span>
+          // currentColor, so how lit this is comes from the parent rather than
+          // from a second copy of the artwork per state.
+          <CreatableArt
+            id={item.creatable.id}
+            className={`relative h-[86%] w-[86%] ${focused ? "text-zinc-100" : "text-zinc-500"}`}
+          />
         )}
       </span>
     </span>

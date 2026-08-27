@@ -32,13 +32,46 @@ import type { CreationProvider } from "./garment";
  * — the alternative is a catalogue of blanks nobody can actually order.
  */
 export async function creationProviderFor(storeId: string): Promise<CreationProvider | null> {
+  return (await creationAccessFor(storeId)).provider;
+}
+
+/** Whether a supplier can be reached, and what to say when it cannot. */
+export interface CreationAccess {
+  /** Present whenever credentials exist -- see the note below. */
+  provider: CreationProvider | null;
+  /** The integration row's own status, or null when there is no row at all. */
+  status: "CONNECTED" | "NEEDS_ATTENTION" | "FAILED" | "DISCONNECTED" | null;
+}
+
+/**
+ * The creation provider a business can design through, and why not.
+ *
+ * ============ CONNECTED-BUT-TOLD-TO-CONNECT (2026-08-27) ===============
+ *
+ * This used to require status === "CONNECTED" and return null otherwise, so a
+ * Printful integration sitting at NEEDS_ATTENTION or FAILED -- which still
+ * holds real, working-in-most-cases credentials -- produced the same answer as
+ * having no supplier at all. The owner was then shown "Connect a print
+ * supplier" about a supplier they had already connected, with no way to tell
+ * the two situations apart.
+ *
+ * So the provider is built whenever CREDENTIALS EXIST, and the status travels
+ * beside it. A stale status is a fact about the last verification, not about
+ * whether a catalogue call will work now -- and letting the real call decide is
+ * both more honest and more likely to just work. Where it genuinely does not,
+ * the caller has the status and can say something true.
+ *
+ * DISCONNECTED is the one status that really does mean no: disconnecting
+ * clears the credentials, so there is nothing to build a provider from.
+ */
+export async function creationAccessFor(storeId: string): Promise<CreationAccess> {
   const integration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId, provider: "PRINTFUL" } },
     select: { id: true, status: true, credentials: true },
   });
-  if (integration?.status !== "CONNECTED" || !integration.credentials) return null;
+  if (!integration?.credentials) return { provider: null, status: integration?.status ?? null };
 
-  return printfulCreationProvider(async (scopedStoreId, operation, path) => {
+  const provider = printfulCreationProvider(async (scopedStoreId, operation, path) => {
     // RESOLVED PER CALL, so a token that expires mid-session is refreshed
     // rather than failing the second request. Same rule the fulfilment
     // connector already follows.
@@ -70,4 +103,6 @@ export async function creationProviderFor(storeId: string): Promise<CreationProv
     }
     return response.json();
   });
+
+  return { provider, status: integration.status };
 }

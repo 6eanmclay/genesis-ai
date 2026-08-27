@@ -147,6 +147,89 @@ async function main() {
       await page.locator(`a[href="/b/${store.slug}/connections"]`).count() > 0, true);
 
     // ------------------------------------------------------------------
+    console.log("\n1c. The objects are objects, and the gestures share the screen");
+
+    // BACK TO THE PORTAL FIRST. The section above navigated away to check what
+    // choosing does, and everything below is about the portal — running these
+    // on whatever page happened to be open is how a suite reports that objects
+    // are missing from a screen that never had any.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/create`, { waitUntil: "domcontentloaded" });
+
+    // ============ NO CARDS ============================================
+    //
+    // Sean: "I don't want squares representing products. I want the actual
+    // products floating there" -- and the half a label cannot satisfy, "I
+    // shouldn't have to read T-shirt to know I'm looking at a T-shirt".
+    //
+    // With no supplier there is no photograph, so what must be there is a
+    // drawn object. Asserted by shape: a real <svg> with a path inside it,
+    // not a box with a word in it.
+    const drawn = page.locator('[role="option"] svg path, [role="option"] svg rect');
+    assert("every object is drawn rather than lettered", await drawn.count() > 0,
+      "a labelled rectangle is not a product");
+
+    // ============ VERTICAL BELONGS TO THE PAGE ========================
+    //
+    // The stage carried touch-none, so a finger anywhere near the carousel
+    // could not scroll and Sean had to hunt for a safe strip. pan-y hands
+    // vertical panning back to the browser while horizontal stays here.
+    const touchAction = await page
+      .locator('[role="listbox"]')
+      .evaluate((el) => getComputedStyle(el).touchAction);
+    check("the stage lets vertical gestures through", touchAction, "pan-y");
+    assert("and does not claim every gesture", touchAction !== "none",
+      "touch-none is why the page could not be scrolled near the carousel");
+
+    // ============ THE ACTION IS ABOVE THE INDICATOR ===================
+    //
+    // It sat next to the bottom navigation and was easy to miss. Order carries
+    // the meaning: what is selected, then what it is, then what to do with it,
+    // then the least important thing on the screen.
+    const ctaBox = await page.locator("button", { hasText: /^Make a / }).first().boundingBox();
+    const dotsBox = await page.locator('[role="listbox"] ~ div span[aria-hidden="true"]').first().boundingBox();
+    assert("the make button sits above the page indicator",
+      !!ctaBox && !!dotsBox && ctaBox.y < dotsBox.y,
+      `${JSON.stringify(ctaBox)} vs ${JSON.stringify(dotsBox)}`);
+
+    // ------------------------------------------------------------------
+    console.log("\n1d. Connected means connected");
+
+    // ============ THE INSTRUCTION THIS EXISTS FOR =====================
+    //
+    // "Don't send the user to the generic Connect a print supplier screen if a
+    // supplier is already connected."
+    //
+    // creationAccessFor used to require status CONNECTED, so an integration at
+    // NEEDS_ATTENTION -- which still holds real credentials -- produced the
+    // same answer as having no supplier at all. The owner was told to connect
+    // something they had already connected, with no way to tell the two apart.
+    await prisma.storeIntegration.create({
+      data: {
+        storeId: store.id,
+        provider: "PRINTFUL",
+        status: "NEEDS_ATTENTION",
+        externalAccountId: "pf_harness",
+        credentials: { schemaVersion: 1, accessToken: "harness-not-a-real-token" },
+      },
+    });
+
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/create?kind=t-shirt`, {
+      waitUntil: "domcontentloaded",
+    });
+    const connected = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+
+    assert("a connected supplier is never told to connect one",
+      !/connect a print supplier/i.test(connected), connected.slice(0, 300));
+    // The call will fail against a fake token, and that is the point: it must
+    // say WHAT failed rather than pretending the supplier is absent.
+    assert("and a failed catalogue call says so instead",
+      /did not answer|didn't answer/i.test(connected), connected.slice(0, 300));
+    assert("naming the supplier's own message",
+      /printful/i.test(connected), connected.slice(0, 300));
+
+    await prisma.storeIntegration.deleteMany({ where: { storeId: store.id, provider: "PRINTFUL" } });
+
+    // ------------------------------------------------------------------
     console.log("\n2. The canvas, driven by a real pointer");
     //
     // The page above cannot render a garment without a supplier, and this
@@ -154,7 +237,11 @@ async function main() {
     // browser with real pointer events — which is the part a headless model
     // test cannot cover. The page's own empty state is proven above; what is
     // proven here is the interaction.
-    await page.setContent(`
+    // ITS OWN PAGE. This mounts synthetic content and has nothing to do with
+    // the app, so sharing a tab with the sections around it only means racing
+    // whatever navigation they left in flight -- which is exactly what it did.
+    const canvasPage = await context.newPage();
+    await canvasPage.setContent(`
       <!doctype html><html><body style="margin:0">
         <div id="area" style="position:relative;width:400px;height:500px;background:#eee">
           <div id="layer" style="position:absolute;left:20%;top:20%;width:60%;height:60%;touch-action:none;background:#39f"></div>
@@ -184,7 +271,7 @@ async function main() {
       </body></html>
     `, { waitUntil: "domcontentloaded" });
 
-    const before = await page.evaluate(() => (window as unknown as { __pos: { x: number; y: number } }).__pos);
+    const before = await canvasPage.evaluate(() => (window as unknown as { __pos: { x: number; y: number } }).__pos);
     check("it starts where it was put", [before.x, before.y], [0.2, 0.2]);
 
     // A REAL DRAG: press, move in steps, release. Steps rather than one jump,
@@ -192,7 +279,7 @@ async function main() {
     // MEASURED FROM THE PAGE, not from Playwright's boundingBox -- which
     // returned null here for a freshly setContent-ed element and took the
     // suite down with a TypeError rather than a failed assertion.
-    const box = await page.evaluate(() => {
+    const box = await canvasPage.evaluate(() => {
       const r = document.getElementById("layer")!.getBoundingClientRect();
       return { x: r.x, y: r.y, width: r.width, height: r.height };
     });
@@ -200,12 +287,12 @@ async function main() {
 
     const startX = box.x + box.width / 2;
     const startY = box.y + box.height / 2;
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
-    await page.mouse.move(startX + 80, startY + 50, { steps: 10 });
-    await page.mouse.up();
+    await canvasPage.mouse.move(startX, startY);
+    await canvasPage.mouse.down();
+    await canvasPage.mouse.move(startX + 80, startY + 50, { steps: 10 });
+    await canvasPage.mouse.up();
 
-    const after = await page.evaluate(() => (window as unknown as { __pos: { x: number; y: number } }).__pos);
+    const after = await canvasPage.evaluate(() => (window as unknown as { __pos: { x: number; y: number } }).__pos);
     // 80px across a 400px area is 0.2; 50px down a 500px area is 0.1.
     assert("dragging moves it by the right fraction",
       Math.abs(after.x - 0.4) < 0.02 && Math.abs(after.y - 0.3) < 0.02, JSON.stringify(after));
@@ -214,7 +301,7 @@ async function main() {
     // The element's own CSS is what the model holds, times 100. If these ever
     // disagreed, the preview would be showing something other than what gets
     // printed.
-    const rendered = await page.evaluate(() => {
+    const rendered = await canvasPage.evaluate(() => {
       const el = document.getElementById("layer")!;
       return { left: el.style.left, top: el.style.top };
     });
@@ -231,15 +318,16 @@ async function main() {
     // is exactly where somebody drags when moving artwork to an edge.
     const grabX = startX + 80;
     const grabY = startY + 50;
-    await page.mouse.move(grabX, grabY);
-    await page.mouse.down();
-    await page.mouse.move(grabX - 150, grabY - 150, { steps: 8 });
-    await page.mouse.up();
-    const escaped = await page.evaluate(() => (window as unknown as { __pos: { x: number; y: number } }).__pos);
+    await canvasPage.mouse.move(grabX, grabY);
+    await canvasPage.mouse.down();
+    await canvasPage.mouse.move(grabX - 150, grabY - 150, { steps: 8 });
+    await canvasPage.mouse.up();
+    const escaped = await canvasPage.evaluate(() => (window as unknown as { __pos: { x: number; y: number } }).__pos);
     assert("a drag that leaves the area still moves it",
       escaped.x < after.x && escaped.y < after.y, `${JSON.stringify(after)} -> ${JSON.stringify(escaped)}`);
 
     // ------------------------------------------------------------------
+    await canvasPage.close();
     console.log("\n3. Studio is the way in");
     //
     // ============ A HIDDEN URL IS NOT A FEATURE ======================

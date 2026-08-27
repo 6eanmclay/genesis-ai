@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireBusinessPage, PERMISSIONS } from "@/lib/permissions";
 import { businessBasePath } from "@/lib/dashboard/navConfig";
 import { prisma } from "@/lib/prisma";
-import { creationProviderFor } from "@/lib/creation/provider";
+import { creationAccessFor } from "@/lib/creation/provider";
 import { CreationStationClient } from "./CreationStationClient";
 import { GarmentShelf } from "./GarmentShelf";
 import { CreationPortal } from "./CreationPortal";
@@ -36,7 +36,30 @@ export default async function CreationStationPage({
   const { store } = await requireBusinessPage(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const basePath = businessBasePath(slug);
 
-  const provider = await creationProviderFor(store.id);
+  const { provider, status } = await creationAccessFor(store.id);
+
+  // ============ A CATALOGUE CALL THAT FAILS IS NOT "NO SUPPLIER" ========
+  //
+  // Sean, explicitly: do not send somebody to the connect screen when a
+  // supplier is already connected. Two things were doing that.
+  //
+  // The first was creationAccessFor requiring status CONNECTED, which is
+  // fixed at its source -- a NEEDS_ATTENTION integration still holds real
+  // credentials and is worth trying.
+  //
+  // The second is here: listGarments talks to Printful's v2 catalogue over
+  // the network, and anything that throws would have taken the whole page
+  // down or, worse, been read as an empty catalogue. Caught, so the failure
+  // can say what it actually is.
+  let garments: Awaited<ReturnType<NonNullable<typeof provider>["listGarments"]>> = [];
+  let catalogError: string | null = null;
+  if (provider) {
+    try {
+      garments = await provider.listGarments({ storeId: store.id });
+    } catch (error) {
+      catalogError = error instanceof Error ? error.message : "Your supplier could not be reached.";
+    }
+  }
 
   // ============ THREE SCREENS, IN THE ORDER SOMEBODY THINKS ============
   //
@@ -55,14 +78,13 @@ export default async function CreationStationPage({
   // them. What must stay honest is INVENTORY -- so the portal shows real
   // supplier photographs where there are any, says plainly where there are
   // none, and the supplier check happens at the step that actually needs one.
-  const garments = provider ? await provider.listGarments({ storeId: store.id }) : [];
-
   if (!garmentId && !kind) {
     return (
       <CreationPortal items={portalItems(garments)} basePath={basePath} hasSupplier={provider !== null} />
     );
   }
 
+  // NO CREDENTIALS AT ALL is the only case that means "connect one".
   if (!provider) {
     return (
       <Empty
@@ -70,6 +92,22 @@ export default async function CreationStationPage({
         body="The Creation Station works from your supplier's real catalogue — their blanks, their colours, their print areas. Connect one and every garment they make becomes something you can design on."
         actionHref={`${basePath}/connections`}
         actionLabel="Go to connections"
+      />
+    );
+  }
+
+  // CONNECTED, AND SOMETHING WENT WRONG. Naming the supplier and its own
+  // message is the difference between a person fixing it and a person
+  // reconnecting something that was never disconnected.
+  if (catalogError) {
+    return (
+      <Empty
+        title="Your supplier didn't answer"
+        body={`Printful is connected${
+          status && status !== "CONNECTED" ? ` but its last check reported ${status.toLowerCase().replace("_", " ")}` : ""
+        }. It said: ${catalogError}`}
+        actionHref={`${basePath}/connections`}
+        actionLabel="Check the connection"
       />
     );
   }
