@@ -59,11 +59,24 @@ export const PRINTFUL_MAX_LIMIT = 100;
 export const PRINTFUL_SELLING_REGION = "worldwide";
 
 /**
- * The catalogue endpoints that accept `selling_region_name`.
+ * Append `selling_region_name` to a catalogue path.
  *
- * `/catalog-products/{id}/catalog-variants` does NOT document it, and sending a
- * parameter an endpoint does not document is its own way of earning a 400 — so
- * this is a decision made per endpoint rather than a blanket append.
+ * ============ EVERY CATALOGUE CALL NEEDS IT (2026-08-27) ===============
+ *
+ * Printful's reference lists this parameter on /catalog-products and
+ * /catalog-products/{id} and NOT on /catalog-products/{id}/catalog-variants,
+ * so it was left off that one — sending a parameter an endpoint does not know
+ * is its own way of earning a 400.
+ *
+ * The live API disagreed. Once the store header was gone the first two calls
+ * started working and the third failed alone, with the request in the message:
+ *
+ *     Printful creation.variants failed (400): Selling region not found
+ *     (asked for /catalog-products/1/catalog-variants?limit=100)
+ *
+ * Behaviour beats the reference. Still applied per call site rather than
+ * folded into printfulUrl, so a future non-catalogue path cannot inherit a
+ * parameter nobody has tested it with.
  */
 export function withSellingRegion(path: string): string {
   const separator = path.includes("?") ? "&" : "?";

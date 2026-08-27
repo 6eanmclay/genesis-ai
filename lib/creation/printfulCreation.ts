@@ -208,13 +208,26 @@ export function printfulCreationProvider(
         ) as Promise<{
           data?: PrintfulV2Product;
         } | null>,
-        // NOT here. catalog-variants does not document selling_region_name, and
-        // sending a parameter an endpoint does not know is its own way of
-        // earning a 400.
+        // HERE TOO — AND THE DOCUMENTATION SAYS OTHERWISE (2026-08-27).
+        //
+        // Printful's v2 reference lists selling_region_name on
+        // /catalog-products and /catalog-products/{id} and NOT on this one, so
+        // it was deliberately left off: sending a parameter an endpoint does
+        // not know is its own way of earning a 400.
+        //
+        // The live API disagreed, and said so precisely once the failure
+        // carried the request:
+        //
+        //     Printful creation.variants failed (400): Selling region not found
+        //     (asked for /catalog-products/1/catalog-variants?limit=100)
+        //
+        // The two calls that send it had just started working. This one, alone
+        // in not sending it, failed with the same message it used to fail with.
+        // Behaviour beats the reference.
         fetchJson(
           storeId,
           "creation.variants",
-          `/catalog-products/${externalProductId}/catalog-variants?limit=100`,
+          withSellingRegion(`/catalog-products/${externalProductId}/catalog-variants?limit=100`),
         ) as Promise<{ data?: PrintfulV2Variant[] } | null>,
       ]);
 

@@ -89,9 +89,24 @@ async function main() {
   //     Printful creation.catalog failed (400): Selling region not found
   //
   // The parameter is documented as optional with a default of "worldwide" and
-  // is not optional in practice. It is also NOT documented on catalog-variants,
-  // and sending a parameter an endpoint does not know is its own way of earning
-  // a 400 — so this is a decision per endpoint, and asserted per endpoint.
+  // is not optional in practice.
+  //
+  // ============ AND THE REFERENCE IS WRONG ABOUT WHERE ==================
+  //
+  // Printful's v2 reference lists it on /catalog-products and
+  // /catalog-products/{id} and NOT on /catalog-products/{id}/catalog-variants.
+  // This suite encoded that, and asserted the variants call must NOT send it.
+  //
+  // The live API disagreed. With the store header gone the first two calls
+  // started working, and the third — alone in not sending the parameter —
+  // failed with the same message, now carrying its own request:
+  //
+  //     Printful creation.variants failed (400): Selling region not found
+  //     (asked for /catalog-products/1/catalog-variants?limit=100)
+  //
+  // So the assertion is inverted, and this note is why. A test that encodes a
+  // published claim is only ever as right as the claim; when behaviour
+  // contradicts it, behaviour wins and the reason gets written down.
   const REGIONS = [
     "worldwide", "north_america", "canada", "europe", "spain", "latvia", "uk",
     "france", "germany", "australia", "japan", "new_zealand", "italy", "brazil",
@@ -124,8 +139,14 @@ async function main() {
     !!listPath && listPath.includes("selling_region_name=worldwide"), String(listPath));
   assert("the single product carries one too",
     !!productPath && productPath.includes("selling_region_name=worldwide"), String(productPath));
-  assert("and the variants call does NOT, because it does not document it",
-    !!variantsPath && !variantsPath.includes("selling_region_name"), String(variantsPath));
+  // ALL THREE, including the one the reference says does not take it.
+  assert("and the variants call carries one too, because Printful requires it",
+    !!variantsPath && variantsPath.includes("selling_region_name=worldwide"), String(variantsPath));
+  // NOT A BLANKET APPEND, still: the region goes on exactly the calls that are
+  // known to need it, and each is named. A helper that appended to everything
+  // would pass this and would also send it to endpoints nobody has tested.
+  eq("every catalogue call that goes out carries a region",
+    paths.filter((p) => p.includes("selling_region_name=worldwide")).length, paths.length);
 
   // ======================================================================
   console.log("\n=== 2. A catalogue read does not claim store context ===\n");
