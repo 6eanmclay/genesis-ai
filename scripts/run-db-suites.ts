@@ -173,7 +173,13 @@ async function main() {
   const suites = readdirSync(SCRIPTS_DIR)
     .filter((f) => f.startsWith("verify-") && f.endsWith(".ts"))
     .filter(needsDatabase)
-    .filter((f) => (only ? f.includes(only) : true))
+    // A COMMA-SEPARATED FILTER, because the interesting failures are about
+    // ORDER (2026-08-28). A suite that passes alone and fails after another
+    // one cannot be reproduced by a filter that only names a single suite, so
+    // diagnosing it meant a five-minute full sweep per experiment. Naming the
+    // two or three suites that interact takes seconds and reproduces it
+    // exactly. One name still behaves as before.
+    .filter((f) => (only ? only.split(",").some((o) => f.includes(o.trim())) : true))
     .sort();
 
   if (only && suites.length === 0) {
@@ -185,8 +191,18 @@ async function main() {
 
   const results: { file: string; ok: boolean; tail: string }[] = [];
   for (const file of suites) {
+    const started = Date.now();
     const result = await runSuite(file, db.url, suites.length === 1);
     results.push(result);
+    // SUITE_PROBE=1 shows the harness's connection budget draining. Kept
+    // because a full sweep is the only thing that reproduces exhaustion, and
+    // without a number the failure looks like it belongs to an innocent suite.
+    if (process.env.SUITE_PROBE) {
+      const rss = Math.round(process.memoryUsage().rss / 1048576);
+      const heap = Math.round(process.memoryUsage().heapUsed / 1048576);
+      const s = db.stats();
+      console.log(`        probe conns=${s.activeConnections}/${s.maxConnections} queued=${s.queuedQueries} rss=${rss}MB took=${Date.now() - started}ms`);
+    }
     console.log(`${result.ok ? "PASS" : "FAIL"}  ${file.replace(/^verify-|\.ts$/g, "")}`);
     if (!result.ok) console.log(`        ${result.tail}`);
   }

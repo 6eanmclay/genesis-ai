@@ -53,6 +53,8 @@ export interface TestDatabase {
    */
   expectRejected(fn: () => Promise<unknown>): Promise<boolean>;
   /** Truncate every table, so each suite starts from nothing. */
+  /** TEMPORARY PROBE: live connection accounting from the socket server. */
+  stats(): { activeConnections: number; queuedQueries: number; maxConnections: number };
   reset(): Promise<void>;
   close(): Promise<void>;
 }
@@ -116,7 +118,39 @@ export async function startTestDatabase(): Promise<TestDatabase> {
   // nothing), and then raising this number. Set with real headroom for that
   // reason: the failure it produces is a false report against innocent code,
   // and it arrives whenever somebody writes the next suite.
-  const server = new PGLiteSocketServer({ db, port, host: "127.0.0.1", maxConnections: 60 });
+  // MAX CONNECTIONS IS A BUDGET FOR THE WHOLE RUN, NOT FOR ONE SUITE.
+  //
+  // ============ MEASURED, 2026-08-28 ====================================
+  //
+  // This was 60, and the run reached it. `getStats().activeConnections`,
+  // sampled after every suite in a full sweep, climbs monotonically across the
+  // run and does not fall when a child exits:
+  //
+  //     ... suite 34   conns=48/60
+  //     ... suite 39   conns=50/60
+  //     ... suite 40   conns=60/60   <- saturated
+  //     FAIL two-factor            Connection terminated unexpectedly
+  //     FAIL update-product-image  Connection terminated unexpectedly
+  //
+  // The server refuses a connection past the cap by writing "Too many
+  // connections" and ending the socket, which reaches the client as exactly
+  // that error. So the two suites that failed were the two that happened to run
+  // after the budget ran out; both pass alone, and both pass in any smaller
+  // selection. THE FAILURE HAD NOTHING TO DO WITH THE SUITES IT LANDED ON.
+  //
+  // A handler is removed from the set on the socket's `close` event, so this is
+  // not meant to accumulate — but empirically it does, and a suite closing its
+  // own clients does not release it either (verified: adding $disconnect to the
+  // heaviest suite left the count unchanged). Rather than pretend to fix
+  // pglite-socket's accounting from outside, the budget is now sized for a
+  // whole run with room to grow.
+  //
+  // WHAT THIS IS NOT: it is not a fix for whichever suite happened to be added
+  // last. The run stood at 50 of 60 before the newest suite existed, so it was
+  // one or two suites away from this failure regardless of what came next, and
+  // the next person to add a suite would have paid for it instead. Set
+  // SUITE_PROBE=1 on run-db-suites.ts to watch the count.
+  const server = new PGLiteSocketServer({ db, port, host: "127.0.0.1", maxConnections: 1000 });
   await server.start();
 
   // PGlite's wire server accepts any credentials; the database name is fixed.
@@ -172,6 +206,7 @@ ${stderr}`));
   return {
     prisma,
     url,
+    stats: () => server.getStats(),
     async expectRejected(fn) {
       try {
         await fn();
