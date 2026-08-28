@@ -1397,6 +1397,90 @@ async function main() {
     /Could not render that colour/.test(routeSrc),
     "the caller drops the colour rather than showing a wrong garment");
 
+  // ======================================================================
+  console.log("\n=== 17. Designed is not the same as ready to sell ===\n");
+  // ======================================================================
+  //
+  // Sean: "I don't want us to quietly fake that capability... Treat it as a
+  // saved design/draft until the supplier creation contract is actually
+  // wired." And the rule behind it: "If the user can see it, they should be
+  // able to actually do it."
+  //
+  // THE CHAIN, TRACED BEFORE ANY OF THIS CHANGED:
+  //
+  //   1. Printful declares a back print area            true
+  //   2. printAreas carries it                          true
+  //   3. the designer places artwork on it              true
+  //   4. the preview renders it there                   true
+  //   5. an ORDER uses that placement                   FALSE
+  //
+  // And step 5 fails identically for the FRONT. addDesignToStore never calls
+  // Printful; designSpec has no readers anywhere; createDraftOrder sends one
+  // file with no placement. So the thing being over-advertised was never the
+  // Back tab — it was the button, which said "Add to my store".
+  const actionsSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "actions.ts"), "utf8")
+  );
+
+  assert("a saved design is not put on sale",
+    /active: false/.test(actionsSrc),
+    "an active PRINT_ON_DEMAND product is a promise the supplier has never heard");
+  assert("and records that the supplier does not have it",
+    /supplierProductCreated: false/.test(actionsSrc),
+    "one thing to flip and one thing to read, the day it becomes true");
+  assert("CONTROL: while the design itself is still stored complete",
+    /providerPlacements: placements/.test(actionsSrc) && /placements: design\.placements/.test(actionsSrc),
+    "the point is to stop claiming, not to stop keeping");
+
+  // THE COPY, BEFORE AND AFTER THE CLICK. A button that says "Add to my store"
+  // is the claim; saying it only in the confirmation would be too late.
+  assert("the button says what it does",
+    /Save this design/.test(toolbarSrc) && !/Add to my store/.test(toolbarSrc));
+  assert("and says so before it is pressed",
+    /Creating it with Printful is a separate step that is not built yet/.test(toolbarSrc),
+    "the promise is made by the label, not by the toast");
+  assert("CONTROL: and the confirmation no longer claims a store",
+    !/Added to your store/.test(toolbarSrc),
+    "that sentence was the whole misrepresentation");
+
+  // ============ AND BACK IS STILL CAPABILITY-DRIVEN ==================
+  //
+  // Sean: "Don't remove Back from Creation Station globally. Make it
+  // capability-driven... Don't create a second capability system if we already
+  // have the foundation for it."
+  //
+  // We already had it. printAreas comes from the supplier's own
+  // placement_dimensions and designableViews shows a view only when the
+  // supplier declares it — no Printful-specific branch anywhere in that path.
+  // Asserted so nobody "fixes" the honesty problem by hardcoding Back away.
+  const oneSided: Parameters<typeof designableViews>[0] = {
+    provider: "PRINTFUL",
+    externalProductId: "1",
+    name: "Ceramic Mug",
+    type: "MUG",
+    brand: null,
+    description: null,
+    imageUrl: null,
+    variants: [],
+    printAreas: [{ placement: "front", width: 9, height: 4, unit: "in" }],
+  };
+  eq("a blank the supplier prints on one side offers one view",
+    designableViews(oneSided).map((v) => v.label), ["Front"]);
+  eq("and a blank it prints on both offers both",
+    designableViews({
+      ...oneSided,
+      printAreas: [
+        { placement: "front", width: 12, height: 16, unit: "in" },
+        { placement: "back", width: 12, height: 16, unit: "in" },
+      ],
+    }).map((v) => v.label),
+    ["Front", "Back"]);
+  assert("CONTROL: Back is not hardcoded off",
+    /VIEW_ORDER/.test(
+      codeOnly(readFileSync(join(process.cwd(), "lib", "creation", "garment.ts"), "utf8"))
+    ),
+    "the supplier decides, not this file");
+
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }

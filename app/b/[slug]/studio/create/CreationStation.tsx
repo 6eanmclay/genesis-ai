@@ -203,7 +203,11 @@ export function CreationStation({
     setSaving(true);
     try {
       const error = await onAddToStore(current);
-      setNote(error ?? "Added to your store.");
+      setNote(
+        error ??
+          "Saved as a design. It has not been created with Printful yet, so it is not on sale — " +
+            "that step is not built.",
+      );
     } finally {
       setSaving(false);
     }
@@ -683,8 +687,16 @@ export function CreationStation({
               onClick={addToStore}
               className="w-full rounded-full bg-[var(--brand-accent,#6366f1)] px-5 py-2.5 text-[15px] font-medium text-white transition disabled:opacity-40"
             >
-              {saving ? "Adding…" : "Add to my store"}
+              {saving ? "Saving…" : "Save this design"}
             </button>
+            {/* WHAT THIS BUTTON DOES, BEFORE IT IS PRESSED. "Add to my store"
+                promised a sellable product; the design never reaches Printful,
+                so nothing could be ordered from it. Saying so here is the
+                difference between a saved design and a product that exists. */}
+            <p className="mt-2 text-center text-[12px] text-zinc-500">
+              Saves the design. Creating it with Printful is a separate step that is not built yet,
+              so it will not go on sale.
+            </p>
             {problem && <p className="mt-2 text-center text-[12px] text-zinc-500">{problem}</p>}
             {!problem && (
               <p className="mt-2 text-center text-[12px] text-zinc-500">

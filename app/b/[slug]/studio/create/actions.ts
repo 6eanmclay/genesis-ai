@@ -30,6 +30,24 @@ import { creationProviderFor } from "@/lib/creation/provider";
 // is how a supplier ends up printing something nobody previewed. So the design
 // is stored complete, the provider placements are computed and stored with it,
 // and the supplier call is the next step rather than a guess made now.
+//
+// ============ AND THE PRODUCT SAYS SO (2026-08-28) =====================
+//
+// That reasoning was right and the product record did not carry it. It was
+// written ACTIVE, marked PRINT_ON_DEMAND, with a Printful provider and a
+// catalogue id — indistinguishable, to every other part of Genesis, from a
+// product a supplier could actually make. The button said "Add to my store"
+// and the note said "Added to your store."
+//
+// Two states, and they are not the same thing:
+//
+//   I have designed this
+//   this product has been created with my supplier and is ready to sell
+//
+// Only the first is true today, so only the first is claimed: active false,
+// supplierProductCreated false on the design, and copy that says which one it
+// is. Nothing about the design is thrown away — when the supplier contract is
+// wired and verified, this becomes a transition rather than a rebuild.
 
 export interface AddToStoreResult {
   ok: boolean;
@@ -78,6 +96,23 @@ export async function addDesignToStore(
       // supplier mockup exists. A real image of the artwork beats a blank card,
       // and it is honestly the artwork rather than a rendered garment.
       imageUrl: placements[0]?.layers[0]?.assetUrl ?? garment.imageUrl,
+      // ============ NOT ON SALE, BECAUSE IT CANNOT BE MADE YET ==========
+      //
+      // Sean: "I don't want us to quietly fake that capability... Treat it as a
+      // saved design/draft until the supplier creation contract is actually
+      // wired."
+      //
+      // This wrote an ACTIVE product marked PRINT_ON_DEMAND with a Printful
+      // provider and a catalogue id — every signal of a manufacturable item —
+      // for a design Printful has never been told about. designSpec has no
+      // readers, and createDraftOrder sends one file with no placement, so an
+      // order against this would have printed the raw artwork at whatever
+      // position Printful chose, or nothing.
+      //
+      // `active: false` is the whole correction. The design is kept complete,
+      // the provenance is kept honest, and the product is not sellable until
+      // something has actually created it with the supplier.
+      active: false,
       sourceKind: "PRINT_ON_DEMAND",
       externalProductId: garment.externalProductId,
       externalVariantId: variant.externalVariantId,
@@ -95,6 +130,12 @@ export async function addDesignToStore(
         providerPlacements: placements,
         printAreas: garment.printAreas,
         capturedAt: new Date().toISOString(),
+        // WHETHER THE SUPPLIER HAS IT. False until multi-placement product
+        // creation is wired and VERIFIED against a live account — recorded on
+        // the design rather than inferred from the product's other fields, so
+        // the day it becomes true there is one thing to flip and one thing to
+        // read.
+        supplierProductCreated: false,
       },
     },
   });
