@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   urlsIn,
   storedUrlMatcher,
@@ -131,6 +133,32 @@ function main(): void {
   eq("kilobytes", humanBytes(2048), "2.0 KB");
   eq("megabytes", humanBytes(5 * 1024 * 1024), "5.0 MB");
   eq("and the number that matters here", humanBytes(1024 * 1024 * 1024), "1.0 GB");
+
+  // ======================================================================
+  console.log("\n=== 6. Deletion refuses what it cannot prove is unused ===\n");
+  // ======================================================================
+  //
+  // Sean, authorising a cleanup: "Do not delete anything referenced by an
+  // existing product... anything where you're unsure whether deleting it will
+  // break something."
+  //
+  // The guarantee is that deletion re-runs the scan itself rather than trusting
+  // a list, so a file that became load-bearing between the report and the
+  // delete is still refused. Asserted against the source because running it
+  // needs a storage account.
+
+  const cleanupSrc = readFileSync(join(process.cwd(), "lib", "storage", "cleanup.ts"), "utf8");
+  assert("deletion is the only place del is imported",
+    /import \{ del \} from "@vercel\/blob"/.test(cleanupSrc));
+  assert("and it re-checks references itself rather than trusting a list",
+    /await referencedUrls\(/.test(cleanupSrc),
+    "a report is a photograph; between reading it and acting a file can become load-bearing");
+  assert("a referenced file is refused, not deleted",
+    /if \(holder\) \{[\s\S]{0,200}refused\.push/.test(cleanupSrc));
+  assert("CONTROL: and confirmation must be explicit and positive",
+    /params\.get\("confirm"\) === "yes"/.test(
+      readFileSync(join(process.cwd(), "app", "api", "storage", "cleanup", "route.ts"), "utf8")),
+    "a typo, a missing parameter or a pasted link must all mean show me");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
