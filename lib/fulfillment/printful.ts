@@ -371,12 +371,35 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
       result?: { sync_variants?: { files?: { type?: string }[] }[] };
     };
 
+    // ============ "default" IS WHAT PRINTFUL CALLS THE FRONT ===========
+    //
+    // MEASURED 2026-08-28, from a real creation. We sent files typed `front`
+    // and `back`. Printful accepted both, and the read-back reported:
+    //
+    //     default, back
+    //
+    // So `front` is an alias Printful normalises to `default` — its name for
+    // the primary print file — while every other placement keeps the name the
+    // catalogue gave it. This is the one thing the product-creation trace could
+    // not answer, because the store had no existing product whose files[] could
+    // be read. It took a real creation to find out, and the verification
+    // catching it is exactly why the verification exists: a two-sided design
+    // was refused rather than a product going on sale with a front print nobody
+    // had confirmed.
+    //
+    // Translated HERE, in the adapter, because this is the only file that is
+    // allowed to know Printful's dialect. The caller compares against the
+    // placement names the CATALOGUE uses, and must not learn that one supplier
+    // renames one of them.
+    const PRINTFUL_PLACEMENT_ALIASES: Record<string, string> = { default: "front" };
+
     const placements = Array.from(
       new Set(
         (body.result?.sync_variants ?? [])
           .flatMap((variant) => variant.files ?? [])
           .map((file) => file.type)
           .filter((type): type is string => typeof type === "string")
+          .map((type) => PRINTFUL_PLACEMENT_ALIASES[type] ?? type)
       )
     );
 

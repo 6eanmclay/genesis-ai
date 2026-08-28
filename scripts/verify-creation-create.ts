@@ -471,6 +471,36 @@ async function main() {
     /HANDLE_HIT = 44/.test(canvasSrc3),
     "it was 14px — a quarter of what a finger needs, the same mistake as the delete X");
 
+  // ======================================================================
+  console.log("\n=== 15. Printful calls the front print 'default' ===\n");
+  // ======================================================================
+  //
+  // MEASURED 2026-08-28, by a real creation failing. Sean created a two-sided
+  // hoodie; the supplier accepted it and the read-back reported "default, back".
+  // We had sent "front" and "back", so verification found no front, refused, and
+  // said so — which is the verification working rather than failing.
+  //
+  // `front` is an alias Printful normalises to `default`, its name for the
+  // primary print file. Every other placement keeps the catalogue's name. This
+  // is the one question /api/creation/product-trace could not answer, because
+  // the store had no product whose files[] could be read; it took a real
+  // creation to learn it.
+  //
+  // The translation belongs in the adapter, and these check that it stays
+  // there: the executable compares catalogue names and must never learn that
+  // one supplier renames one of them.
+
+  assert("the adapter translates Printful's name for the front back to ours",
+    /PRINTFUL_PLACEMENT_ALIASES/.test(printfulSrc) && /default: "front"/.test(printfulSrc),
+    "sending front and being told default is not a mismatch, it is a dialect");
+  assert("CONTROL: and the executable knows nothing about it",
+    !/default/.test(
+      readFileSync(join(process.cwd(), "lib", "execution", "executables", "productFromDesign.ts"), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, ""),
+    ),
+    "a supplier's dialect leaking into the caller is how the abstraction dies");
+
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }
