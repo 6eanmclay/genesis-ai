@@ -1,6 +1,6 @@
 # Storage Architecture and Lifecycle
 
-**Status: REQUIREMENTS. Recorded 2026-08-28 from a real cleanup. Implementation is NOT authorized — see [What is left to build](#what-is-left-to-build).**
+**Status: REQUIREMENTS, direction locked 2026-08-28. Implementation is NOT authorized — see [What is left to build](#what-is-left-to-build).**
 
 Sean, after the cleanup that produced this document:
 
@@ -23,7 +23,7 @@ Cubit & Coil's storage reached **954 MB of a 1 GB ceiling — 93.2% — and Crea
 
 **One ordinary month of one account produced 306 MB of storage that nothing pointed at.** Nothing in the product told the owner, and nothing in the product could have cleaned it up: before this work, `del` from `@vercel/blob` was imported **nowhere in the codebase**. Genesis had never deleted a file.
 
-That is the finding. A customer on a 1 GB plan would hit the same wall in roughly the same time, and would have no way out.
+That is the finding, and raising the allocation does not answer it. At that rate the leak alone consumes a **5 GB** plan in about sixteen months — a customer filling their whole allocation without keeping a single thing they chose. A bigger number buys time; only the lifecycle in section 6 fixes it.
 
 ### What the refusals proved
 
@@ -74,9 +74,9 @@ The first is right and should stay — it exists so tidying a toolbox does not m
 
 ---
 
-## 4. The three leaks
+## 4. The four leaks
 
-Found while investigating. All three are ongoing, all three affect every customer.
+Found while investigating. All four are ongoing, all four affect every customer, and none is specific to one account.
 
 ### Voice-turn audio, abandoned after transcription
 
@@ -85,6 +85,23 @@ Found while investigating. All three are ongoing, all three affect every custome
 ### Empty and failed generations, uploaded anyway
 
 Eight `products/` blobs were **68 to 179 bytes** — failed or empty image generations that were written to storage regardless. Small individually, permanent collectively, and a signal that generation paths do not check what they got before storing it.
+
+### Deleting a record does not reclaim its file
+
+`deleteProductImageExecutable` removes the `ProductImage` row and leaves the
+blob. So does every other delete path in Genesis, because until this work there
+was no delete path for blobs at all. **An owner who tidies their product
+gallery frees nothing**, and the storage they think they recovered is still
+being counted against them.
+
+This is the same shape as the Creation Station's removal in section 3, and it
+matters more than either one alone: it means Genesis currently has *two*
+operations that read as deletion to a customer and are not, and no operation
+that actually is.
+
+**Requirement:** deleting a record must either reclaim its derived files or
+leave them for a sweep that will — never silently orphan them. Which of the two
+depends on the file's class in section 6; doing neither is not an option.
 
 ### Failed Create attempts, stranding print files and mockups
 
@@ -166,25 +183,70 @@ Add to the production-readiness checklist, with **tests that prove it rather tha
 
 ---
 
-## 9. Economics — storage is part of the subscription
+## 9. Economics — storage is capacity, not a trap
 
-> *"Storage is a real part of the Genesis subscription infrastructure. We should design the plans around efficient storage rather than assuming every customer needs enormous amounts of space."*
+> **Storage should feel like capacity, not a trap.**
+>
+> *"Genesis should give customers enough storage that they normally never have to think about it. If someone genuinely grows beyond their allocation, they can purchase additional capacity."*
 
-**Working numbers, not final:**
+### Locked direction, 2026-08-28
 
 | Plan | Included storage |
 |---|---|
-| $20 | 1 GB |
-| $50 | 3 GB |
-| $100 | 10 GB |
+| $20 | **5 GB** |
+| $50 | **15 GB** |
+| $100 (Pro) | **50 GB** |
 
-Additional storage is purchasable beyond the included allocation, in the same shape as Growth Points expanding beyond their included amount — see [GROWTH_POINTS.md](GROWTH_POINTS.md).
+*Supersedes the 1 / 3 / 10 GB figures recorded earlier the same day.*
 
-**The architecture must make these tiers possible; the numbers stay open until we know our real costs.** And the sequence matters: *"The immediate goal isn't 'give me more than 1 GB.' The immediate goal is: make sure Genesis isn't wasting the storage customers are already paying for."*
+Sean's reasoning, which is the part worth keeping: **5 GB is already an enormous
+amount of room for a normal small business once Genesis manages its own
+generated and temporary storage properly.** 15 GB gives a growing business
+substantially more, and 50 GB makes Pro feel genuinely generous rather than
+artificially restricted. The shape matters as much as the numbers — the top tier
+should feel different without the lower ones feeling crippled.
 
-One month of one ordinary account wasted 306 MB — **32% of a 1 GB plan, in a month, from leaks alone.** Selling more space before fixing that is selling customers the cost of our own inefficiency. Every megabyte the lifecycle reclaims is margin that does not need a price increase behind it.
+### Additional storage as an add-on
 
----
+Available to customers who legitimately need it, and **priced as close to our
+actual incremental cost as is economically practical**, with enough margin to
+cover infrastructure and management.
+
+**Storage must never become a predatory upsell.** A customer with real
+photographs, videos and product assets should be able to buy more without
+feeling punished for having content. The business Genesis is in is helping
+somebody build a business; charging them a premium for owning pictures of their
+own products is the opposite of that.
+
+### Storage is not Growth Points
+
+**Keep the two architectures separate and do not conflate them.**
+
+| | |
+|---|---|
+| **Storage** | Infrastructure capacity. Passive. You have it or you need more. |
+| **Growth Points** | The business-growth and action economy. Spent deliberately on things that move the business. |
+
+A Growth Point buys an action. A gigabyte holds a file. Metering storage the way
+actions are metered would turn keeping your own photographs into a transaction,
+which is exactly the feeling section 9 exists to prevent — and pricing an action
+by the bytes it happens to produce would make the cost of creating something
+depend on how large its output was. See [GROWTH_POINTS.md](GROWTH_POINTS.md),
+which stays the single source for the action economy.
+
+### Why the cleanup comes first
+
+The measured leak was **306 MB in roughly one month of one ordinary account**.
+Unchecked, that alone consumes a 5 GB allocation in about sixteen months —
+**a customer could fill their entire plan without storing a single thing they
+chose to keep.**
+
+That is the argument for the whole of this document, and for the order Sean put
+it in: *"The immediate goal isn't 'give me more than 1 GB.' The immediate goal
+is: make sure Genesis isn't wasting the storage customers are already paying
+for."* Raising the allocation before fixing the waste sells customers the cost
+of our own inefficiency, and buys perhaps a year before the same wall arrives.
+Fixing it first is what makes 5 GB the generous number it should be.
 
 ## What is left to build
 

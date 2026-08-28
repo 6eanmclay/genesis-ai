@@ -109,9 +109,10 @@ Five real phases, in order:
 
 **A blob path with no declared lifecycle is a leak that has not been noticed yet.**
 
-One ordinary month of one account left 306 MB that nothing referenced — 32% of a
-1 GB plan — and Genesis could not have cleaned any of it up, because `del` from
-`@vercel/blob` was imported nowhere in the codebase. Three separate leaks were
+One ordinary month of one account left 306 MB that nothing referenced — enough,
+unchecked, to consume an entire 5 GB allocation in about sixteen months without
+the customer keeping a single thing — and Genesis could not have cleaned any of
+it up, because `del` from `@vercel/blob` was imported nowhere in the codebase. Three separate leaks were
 found, and the worst of them is self-worsening: a failed product creation
 strands its print files and mockups, so every failure consumes the quota the
 next attempt needs.
