@@ -1,16 +1,8 @@
 import "server-only";
 
-import { prismaSystem } from "@/lib/prisma";
 import { vercelBlobStorage } from "./vercelBlob";
-import {
-  referencesFrom,
-  storedUrlMatcher,
-  canonicalUrl,
-  summarise,
-  humanBytes,
-  type ReferenceSource,
-  type StorageUsage,
-} from "./references";
+import { scanAllReferences, hostsOf } from "./scan";
+import { canonicalUrl, summarise, humanBytes, type StorageUsage } from "./references";
 
 // WHAT IS IN STORAGE, AND WHAT STILL NEEDS IT.
 //
@@ -71,40 +63,23 @@ export async function buildStorageReport(limitBytes = HOBBY_LIMIT_BYTES): Promis
     notes.push("The listing stopped at its ceiling, so these totals are a floor rather than the whole store.");
   }
 
-  // Every URL that actually exists, so a reference to a supplier's CDN or a
-  // deleted file is not counted as a reference to something we hold.
-  const isStoredUrl = storedUrlMatcher(listing.objects.map((object) => canonicalUrl(object.url)));
-
   // ---- everything in the database that could point at a file ------------
   //
-  // Whole rows are handed to the walker rather than named columns. The
-  // asset-library work added four URL-bearing fields in one commit, and a
-  // reference check that lists field names falls behind the first time somebody
-  // stores a URL somewhere new — silently, which is the dangerous way.
-  const [records, products, images, stores, sourced] = await Promise.all([
-    prismaSystem.businessRecord.findMany({ select: { id: true, data: true } }),
-    prismaSystem.product.findMany({
-      select: { id: true, imageUrl: true, richContent: true, designSpec: true },
-    }),
-    prismaSystem.productImage.findMany({ select: { id: true, url: true } }),
-    prismaSystem.store.findMany({ select: { id: true, logoUrl: true } }),
-    prismaSystem.sourcedProduct.findMany({ select: { id: true, imageUrl: true } }),
-  ]);
+  // ============ THE FIRST VERSION OF THIS SCANNED FIVE TABLES ==========
+  //
+  // And the schema has more than forty JSON columns. It showed itself
+  // honestly: voice-memos/ and voice-turns/ came back 100% unreferenced,
+  // thirty-three files and not one reference between them. A whole category
+  // being orphaned is not a plausible fact about a working system — it is the
+  // shape of a scan that cannot see. uploadVoiceMemo records the audio on
+  // StoreMessage.changes, which the scan never read, and deleting on that
+  // report would have stripped the audio out of the owner's conversation.
+  //
+  // It now asks information_schema what the columns are, so a column added next
+  // month is covered the day it exists. See lib/storage/scan.ts.
+  const referenceMap = await scanAllReferences(hostsOf(listing.objects.map((o) => o.url)));
 
-  const sources: ReferenceSource[] = [
-    ...records.map((r) => ({ kind: "businessRecord", id: r.id, values: [r.data] })),
-    ...products.map((p) => ({
-      kind: "product",
-      id: p.id,
-      values: [p.imageUrl, p.richContent, p.designSpec],
-    })),
-    ...images.map((i) => ({ kind: "productImage", id: i.id, values: [i.url] })),
-    ...stores.map((s) => ({ kind: "store", id: s.id, values: [s.logoUrl] })),
-    ...sourced.map((s) => ({ kind: "sourcedProduct", id: s.id, values: [s.imageUrl] })),
-  ];
-
-  const references = referencesFrom(sources, isStoredUrl);
-  const referenced = new Set(references.keys());
+  const referenced = new Set([...referenceMap.keys()].map(canonicalUrl));
   const usage = summarise(listing.objects, referenced);
 
   const unreferenced = listing.objects
@@ -116,8 +91,8 @@ export async function buildStorageReport(limitBytes = HOBBY_LIMIT_BYTES): Promis
   );
 
   notes.push(
-    `${records.length} business records, ${products.length} products, ${images.length} product images, ` +
-      `${stores.length} stores and ${sourced.length} sourced products were scanned for references.`,
+    `${referenceMap.size} distinct stored files are referenced somewhere in the database. ` +
+      `Every text and JSON column in the schema was swept, not a fixed list of tables.`,
   );
   notes.push("Nothing was deleted. This report cannot delete — the storage interface has no delete yet.");
 

@@ -1,15 +1,9 @@
 import "server-only";
 
 import { del } from "@vercel/blob";
-import { prismaSystem } from "@/lib/prisma";
 import { vercelBlobStorage } from "./vercelBlob";
-import {
-  referencesFrom,
-  storedUrlMatcher,
-  canonicalUrl,
-  humanBytes,
-  type ReferenceSource,
-} from "./references";
+import { scanAllReferences, hostsOf } from "./scan";
+import { canonicalUrl, humanBytes } from "./references";
 
 // RECLAIMING STORAGE, ONCE NOTHING NEEDS IT.
 //
@@ -71,32 +65,12 @@ export interface CleanupResult {
  * delete. A scan scoped to one business would happily delete another's.
  */
 async function referencedUrls(knownUrls: string[]): Promise<Map<string, string>> {
-  const isStoredUrl = storedUrlMatcher(knownUrls);
-
-  const [records, products, images, stores, sourced] = await Promise.all([
-    prismaSystem.businessRecord.findMany({ select: { id: true, data: true } }),
-    prismaSystem.product.findMany({
-      select: { id: true, imageUrl: true, richContent: true, designSpec: true },
-    }),
-    prismaSystem.productImage.findMany({ select: { id: true, url: true } }),
-    prismaSystem.store.findMany({ select: { id: true, logoUrl: true } }),
-    prismaSystem.sourcedProduct.findMany({ select: { id: true, imageUrl: true } }),
-  ]);
-
-  const sources: ReferenceSource[] = [
-    ...records.map((r) => ({ kind: "businessRecord", id: r.id, values: [r.data] })),
-    ...products.map((p) => ({
-      kind: "product",
-      id: p.id,
-      values: [p.imageUrl, p.richContent, p.designSpec],
-    })),
-    ...images.map((i) => ({ kind: "productImage", id: i.id, values: [i.url] })),
-    ...stores.map((s) => ({ kind: "store", id: s.id, values: [s.logoUrl] })),
-    ...sourced.map((s) => ({ kind: "sourcedProduct", id: s.id, values: [s.imageUrl] })),
-  ];
-
-  const found = referencesFrom(sources, isStoredUrl);
-  return new Map([...found].map(([url, reference]) => [url, reference.source]));
+  // THE SAME WHOLE-DATABASE SWEEP THE REPORT USES, deliberately — the check
+  // that decides a deletion must not be a weaker version of the check that
+  // proposed it. See lib/storage/scan.ts for why it reads information_schema
+  // rather than a list of tables somebody has to remember to extend.
+  const found = await scanAllReferences(hostsOf(knownUrls));
+  return new Map([...found].map(([url, source]) => [canonicalUrl(url), source]));
 }
 
 /**
