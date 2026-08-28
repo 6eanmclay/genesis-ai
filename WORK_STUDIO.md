@@ -218,3 +218,168 @@ Neither costs anything to honour now. Both are expensive to retrofit.
 ## Explicitly out of scope today
 
 Do not build composition. Do not expand the current Asset work into it. This section exists to be read *before* the Design layer is designed, and for no other purpose yet.
+
+---
+
+# One design system, two ways in
+
+**Recorded 2026-08-28, from Sean. A core Creation Station principle, not a shortcut feature.**
+
+> **The goal is not to teach users how to design. The goal is to let them choose how much designing they want to do.**
+
+Creation Station supports **J4-directed creation** and **hands-on creation** over the *same* underlying creation system.
+
+An owner must be able to stay in the ordinary Genesis conversation and say:
+
+> *"Put my logo on a T-shirt and make it available in my store."*
+
+and have it happen. If J4 already holds the owner's logo in their assets, he uses it. If the owner uploads a logo or photo in the conversation, he uses that. He then applies his product and supplier knowledge to choose the best available placement, product, colour and size, and **shows the owner the resulting design before completing the action**.
+
+> *"Put this logo on a hoodie"* must not require entering Creation Station. J4 makes the reasonable design decisions himself.
+
+And when the owner wants control — exact placement, size, rotation, product colour, front or back, different artwork — they open Creation Station and take over.
+
+```
+"J4, do it for me."            ->  instant creation
+"Let me make it exactly how    ->  Creation Station
+ I want."
+```
+
+## The architectural principle
+
+**These are not two creation systems.** The conversational path must produce the *same* design and placement representation Creation Station uses. Creation Station is the visual and manual control layer over that one representation — not a parallel implementation that happens to produce similar output.
+
+Both paths therefore end at the same saved design, and eventually at the same supplier-ready product once the supplier contract supports the requested placements.
+
+This is the same constraint the composition section above places on `surface`, arriving from the other direction: a representation that only Creation Station can write is a representation J4 cannot use, and the conversational path would then grow its own. Design must be a value both callers construct, with no privileged writer.
+
+## "Make it available in my shop" has to stay true
+
+**An actual active, manufacturable product only when the supplier integration can genuinely fulfil the complete design.** Otherwise J4 saves the completed design and says plainly what the limitation is.
+
+He does not report a product as live because the design is finished. This is the same rule already enforced in `addDesignToStore`, which writes `active: false` and `supplierProductCreated: false` rather than claiming a product exists — see *Designed is not the same as ready to sell* (`3361c08`). The conversational path inherits that rule; it does not get a friendlier version of it.
+
+## Explicitly out of scope today
+
+Not authorized to build. Recorded so that the design representation is settled **before** either path is implemented against it, because the cost of getting this wrong is exactly the second architecture this section exists to prevent.
+
+---
+
+# Product presentation is not the product
+
+**Recorded 2026-08-28, from Sean. A Creation Station / product-publishing requirement.**
+
+## The separation
+
+Two objects, kept apart:
+
+```
+Product               ->  hoodie + design + colour + size + supplier information
+Product Presentation  ->  the image used to represent that product in the storefront
+```
+
+**Do not make the model image the product itself.** The same black hoodie can carry a clean product image, a model front, a model side, a lifestyle shot, a close-up and a seasonal campaign image **without becoming six products**. Collapsing presentation into the product forecloses all of that, and it is the kind of collapse that cannot be undone later without a migration of live catalogues.
+
+Design is settled before presentation is considered. Once the product itself is final, J4 decides how it should appear.
+
+## The three presentations
+
+1. **Product-only** — clean product or mockup image, no person. The straightforward catalogue presentation.
+2. **Lifestyle / model** — the product worn or used by a person. J4 selects or generates something appropriate to the product and the brand.
+3. **Varied** — across a catalogue. When a store has several products of the same type, they must not all arrive with the same model, pose, framing and composition. J4 varies people, poses, angles, crops, environments and body positions deliberately, while keeping the brand coherent.
+
+Variety is the requirement that makes this a storefront capability rather than a per-product one: it cannot be decided by looking at the product in hand. J4 has to consider **the products already in the store**.
+
+> *"You already have two hoodies displayed on models. For this one, I'd recommend a clean product-only image so your storefront doesn't look repetitive."*
+>
+> *"You have several T-shirts using the same presentation style. I'll use a different model and pose for this one."*
+
+So when J4 sees
+
+```
+Hoodie #1  male model, front-facing
+Hoodie #2  female model, side angle
+Hoodie #3  product-only
+Hoodie #4  male model, hands in pockets
+```
+
+it can make Hoodie #5 deliberately different. **That is the capability. A "generate mockup" button is not.**
+
+## The owner decides
+
+The control the owner sees:
+
+```
+Product presentation
+  ( ) Product only
+  ( ) Model / lifestyle
+  ( ) Let J4 decide
+```
+
+**Let J4 decide** is the path that consults the rest of the storefront.
+
+**J4 recommends; the owner always has final control.** He may argue from storefront consistency, variety, brand style and the existing products — once. If the owner overrides him, he honours it and **does not challenge it again**. Repeated presentation choices become part of the owner's learned preferences, so the recommendations improve rather than the objections repeating.
+
+This is the standing rule in [J4_IDENTITY.md](J4_IDENTITY.md) applied to a specific decision: J4 makes better entrepreneurs, he does not overrule them. An owner who has chosen product-only three times has told him something, and the correct response is a better default, not a fourth argument.
+
+## Supplier-agnostic, and that is the point
+
+**The supplier determines what product and print areas exist. Genesis determines how the finished product is presented to the customer.** These are different questions and must not share a code path.
+
+Printful's mockups are used **where they exist** — they are one source of presentation, not the definition of it. A future supplier, or Genesis's own generation, must be able to provide richer presentations without the storefront noticing. Presentation is a layer with sources behind it.
+
+Tying presentation to Printful's mockup API would architect us into a Printful-only storefront, which is the same mistake as the `FulfillmentConnector` interface exists to prevent on the other side of the chain: *the owner never chooses a provider by name.*
+
+## Explicitly out of scope today
+
+Not authorized to build. Recorded now because the separation above is cheap to honour before products carry images and expensive afterwards.
+
+---
+
+# What presentation costs
+
+**Recorded 2026-08-28, from Sean. Creation Station + Growth Points.**
+
+> **Genesis makes the business easy to build. Growth Points let the owner level it up.**
+
+Product creation and product presentation are **two separate Growth Point actions**, because they are two separate objects — the separation recorded above is what makes this pricing possible at all.
+
+| Action | Cost | When |
+|---|---|---|
+| **Product creation** | **2 GP** | *"Put my logo on a black hoodie and add it to my store."* The product is created and saved as normal. |
+| **Image differentiation** | **1 GP** | Only when the owner accepts J4's offer to differentiate the presentation. |
+| **Manual editing of an existing design** | **free** | Placement, size, rotation, colour, view — every adjustment the owner makes themselves. |
+
+## Declining is free
+
+After the product exists, J4 may proactively offer:
+
+> *"You already have a few products using a similar presentation. Want me to create a different angle, pose, model, or a product-only image?"*
+
+**No costs nothing** and he leaves the product alone. **Yes costs 1 GP** and he creates the differentiated presentation — a different model, angle, pose, environment, or a product-only image.
+
+The owner has final control, and an owner who wants the same presentation anyway gets it without an argument — the standing rule from the presentation section above, which is also what stops a paid offer from becoming a nag.
+
+## The line the price is drawn on
+
+**The Growth Point buys substantive creative generation by J4, never the owner's own adjustments.** Dragging artwork half a centimetre is not a creative act by J4 and must never be metered. Charging for manual editing would price the owner out of the control layer Creation Station exists to be, which is the opposite of what it is for.
+
+## Running out must not break the business
+
+**A store that runs out of Growth Points keeps working.** Its products still exist, still show, still sell. Growth Points buy optimization, differentiation and additional creative work — they are not a licence to have a catalogue.
+
+This is why the metering has to be settled now rather than retrofitted: a differentiation feature built as unlimited and free would either stay free forever or become a removal of something owners already had, and both are worse than pricing it correctly on the first day.
+
+## Supplier-agnostic, again
+
+The presentation system stays a layer with sources behind it. Printful's mockups are today's source; another supplier or Genesis's own creative system is tomorrow's. **The price is attached to the act of differentiating a presentation, not to whichever provider happens to render it** — otherwise the cost model would have to be renegotiated every time a source changes.
+
+## Explicitly out of scope today
+
+Not authorized to build. Recorded so the Design and presentation layers are shaped for it from the start.
+
+---
+
+## Social posts are the next Creation Station surface
+
+Requirements are recorded in [SOCIAL_CREATION.md](SOCIAL_CREATION.md) and are not authorized to build. They belong to the same creation system as everything above: the owner brings content and context, J4 does as much or as little of the writing as they want, and the representation is one thing with two ways in.
