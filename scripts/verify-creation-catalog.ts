@@ -320,11 +320,17 @@ async function main() {
   console.log("\n=== 5. The server-only caller really uses all of it ===\n");
   // ======================================================================
   //
-  // provider.ts cannot be imported here — it is `server-only`, which is correct
-  // and is exactly why the request escaped testing in the first place. So the
-  // claim that it composes these functions rather than hand-rolling the request
-  // again is asserted against its source.
-  const src = codeOnly(readFileSync(join(process.cwd(), "lib", "creation", "provider.ts"), "utf8"));
+  // printfulSupplier.ts cannot be imported here — it is `server-only`, which is
+  // correct and is exactly why the request escaped testing in the first place.
+  // So the claim that it composes these functions rather than hand-rolling the
+  // request again is asserted against its source.
+  //
+  // MOVED FROM provider.ts (2026-08-28). This read provider.ts, which held the
+  // request body until the creation registry split supplier-specific work out
+  // of supplier resolution. These three assertions failed the moment it moved,
+  // which is the suite doing its job — the request composition is what they are
+  // about, and it now lives one file over.
+  const src = codeOnly(readFileSync(join(process.cwd(), "lib", "creation", "printfulSupplier.ts"), "utf8"));
   assert("it builds the URL through printfulUrl", /fetch\(\s*printfulUrl\(/.test(src), src.slice(0, 200));
   assert("and the headers through printfulHeaders", /headers:\s*printfulHeaders\(/.test(src));
   assert("and the failure through printfulFailure", /printfulFailure\(/.test(src));

@@ -1,11 +1,9 @@
 import "server-only";
 
+import type { IntegrationProvider } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { decryptCredentials, encryptCredentials } from "@/lib/integrations/credentials";
-import { supplierRequest } from "@/lib/sourcing/sourcingBudget";
-import { refreshPrintfulToken, type PrintfulCredentials } from "@/lib/integrations/printful";
-import { printfulCreationProvider } from "./printfulCreation";
-import { printfulUrl, printfulHeaders, printfulFailure, isStoreScoped } from "./printfulRequest";
+import { getCreationSupplier } from "./registry";
+import { chooseCreationSupplier, CREATION_SUPPLIER_ORDER } from "./supplierChoice";
 import type { CreationProvider } from "./garment";
 
 // WHICH SUPPLIER CAN HOST A DESIGN, FOR THIS BUSINESS.
@@ -13,17 +11,20 @@ import type { CreationProvider } from "./garment";
 // `server-only`: this reads encrypted supplier credentials, so importing it
 // from a client component is a build error rather than a review comment.
 //
-// ============ ONE PROVIDER TODAY, AND NOT HARD-CODED =====================
+// ============ NOW ACTUALLY NOT HARD-CODED (2026-08-28) ==================
 //
-// Printful is the only connector that answers the creation questions today, and
-// that is a fact about what is connected rather than a decision baked into the
-// Creation Station. Everything upstream is written against CreationProvider, so
-// a second supplier is a second entry here and a mapping file — the same shape
-// lib/fulfillment/registry.ts and lib/sourcing/registry.ts already hold.
+// This file used to say "one provider today, and not hard-coded" directly
+// above a query for `provider: "PRINTFUL"`. Only the first half was true. A
+// second supplier could have been connected, held credentials and implemented
+// every method, and this would still have answered "no supplier".
 //
-// Printify is the obvious second: its catalogue exposes blueprints, print
-// providers, variants and print areas, which is the same set of facts under
-// different names. It is not built, and nothing here pretends it is.
+// It now walks lib/creation/registry.ts. Printful is the only entry, which is a
+// fact about what is built rather than a decision baked in here — and the
+// difference is now structural rather than a promise in a comment.
+//
+// Everything downstream was already agnostic: the Garment carries its own
+// provider, Creation Station reads capabilities off it, and saveDesign.ts
+// records `fulfillmentProvider: garment.provider`.
 
 /**
  * The creation provider a business can design through, or null.
@@ -42,6 +43,15 @@ export interface CreationAccess {
   provider: CreationProvider | null;
   /** The integration row's own status, or null when there is no row at all. */
   status: "CONNECTED" | "NEEDS_ATTENTION" | "FAILED" | "DISCONNECTED" | null;
+  /**
+   * WHICH supplier answered, or null when none did.
+   *
+   * Carried so a caller can name the supplier without guessing at one. Nothing
+   * should read this to branch on behaviour — that is what the provider's own
+   * methods are for — but a screen that wants to say who it is talking to
+   * should say the one that actually answered.
+   */
+  supplier: IntegrationProvider | null;
 }
 
 /**
@@ -66,51 +76,21 @@ export interface CreationAccess {
  * clears the credentials, so there is nothing to build a provider from.
  */
 export async function creationAccessFor(storeId: string): Promise<CreationAccess> {
-  const integration = await prisma.storeIntegration.findUnique({
-    where: { storeId_provider: { storeId, provider: "PRINTFUL" } },
-    select: { id: true, status: true, credentials: true },
-  });
-  if (!integration?.credentials) return { provider: null, status: integration?.status ?? null };
-
-  const provider = printfulCreationProvider(async (scopedStoreId, operation, path) => {
-    // RESOLVED PER CALL, so a token that expires mid-session is refreshed
-    // rather than failing the second request. Same rule the fulfilment
-    // connector already follows.
-    const row = await prisma.storeIntegration.findUnique({
-      where: { storeId_provider: { storeId: scopedStoreId, provider: "PRINTFUL" } },
-    });
-    if (!row?.credentials) throw new Error("Printful is not connected for this store.");
-
-    const stored = decryptCredentials<PrintfulCredentials>(row.credentials);
-    const credentials = await refreshPrintfulToken(stored);
-    if (credentials.accessToken !== stored.accessToken) {
-      await prisma.storeIntegration.update({
-        where: { id: row.id, storeId: scopedStoreId },
-        data: { credentials: encryptCredentials(credentials) },
-      });
-    }
-
-    // THROUGH THE SAME BOUNDARY every other supplier call goes through, so an
-    // unattended run's budget is a real ceiling here too rather than a tally.
-    const response = await supplierRequest({ sourceKey: "printful", operation, storeId: scopedStoreId }, () =>
-      fetch(printfulUrl(path), {
-        // Both the URL and the headers come from printfulRequest.ts, which a
-        // suite can reach. Building them here is what let a missing store
-        // header sit unnoticed until it failed in front of the owner.
-        headers: printfulHeaders(credentials.accessToken, credentials.printfulStoreId, isStoreScoped(path)),
-        signal: AbortSignal.timeout(20_000),
-      }),
-    );
-
-    if (!response.ok) {
-      // THE PROVIDER'S OWN WORDS, NOT JUST A NUMBER. This threw
-      // `Printful creation.catalog failed (400)` and dropped the body.
-      throw new Error(
-        printfulFailure(operation, response.status, await response.text().catch(() => ""), path),
-      );
-    }
-    return response.json();
+  // ONE QUERY FOR EVERY SUPPLIER THAT COULD ANSWER, rather than one per
+  // supplier in a loop. With a single entry the difference is nothing; the
+  // point is that adding suppliers must not add round trips to a page load.
+  const rows = await prisma.storeIntegration.findMany({
+    where: { storeId, provider: { in: CREATION_SUPPLIER_ORDER } },
+    select: { provider: true, status: true, credentials: true },
   });
 
-  return { provider, status: integration.status };
+  // THE DECISION IS MADE BY A PURE FUNCTION, and the credentials do not travel
+  // into it — only whether they exist. See lib/creation/supplierChoice.ts,
+  // which is where this rule is actually tested.
+  const { supplier, status } = chooseCreationSupplier(
+    rows.map((r) => ({ provider: r.provider, status: r.status, hasCredentials: r.credentials !== null })),
+  );
+
+  const entry = getCreationSupplier(supplier);
+  return { provider: entry?.connect() ?? null, status, supplier: entry ? supplier : null };
 }

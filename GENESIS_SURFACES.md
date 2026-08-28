@@ -487,6 +487,50 @@ And the one that matters most: **does this website feel alive?** A handmade copp
 
 **This is a separate research and knowledge problem.** It is not scoped here, should not be estimated here, and must not be started as a side effect of building anything above. It is the difference between *"J4 can edit a website"* and *"J4 is actually good at building websites"* — and we are now at the point where that distinction matters.
 
+### The owner's own social content is website material
+
+**Recorded 2026-08-28, from Sean. Principle and boundary only — not authorized to build.**
+
+**Social content becomes a potential website asset, not merely a row of links to social profiles.** The links are the baseline and they stay; they are not the interesting part. The differentiator is that J4 can use the business's existing content to make the website itself better.
+
+> *"That video you posted showing how you make your copper pieces would be great on your homepage. I think it would add personality and show customers how your products are made."*
+>
+> *"You have a video that would give this section more energy. I recommend using it as a visual or background element."*
+
+The sequence:
+
+```
+connected social content
+  -> J4 understands it
+  -> J4 identifies content worth using
+  -> J4 recommends where it belongs
+  -> the owner approves, or chooses something else
+```
+
+#### Platform-agnostic, and specifically not YouTube-shaped
+
+**A business may have no YouTube channel at all.** They may have ten TikToks showing how the products are made, and that is the content J4 should recognise. TikTok, Instagram, Facebook, X, YouTube, and whatever is supported later — the same architecture, with the source chosen by where the best content actually is and whether that platform's capabilities allow using it.
+
+Building this around video-as-YouTube would be the familiar mistake in a new place: a rule that is true of one supplier, one page, one platform, written as though it were true of the category. The same correction the Creation Station made when `fulfillmentProvider` stopped being the literal `"PRINTFUL"`.
+
+#### A recommendation, not a feed
+
+**J4 must not dump social feeds onto the website, and must not automatically use everything.** Which content earns a place is a design decision, made from the business, the content itself, and the purpose of the page — the same judgement the composition section above describes, with the owner's own material as one more input to it.
+
+#### The direction matters — this is not Social Creation
+
+[SOCIAL_CREATION.md](SOCIAL_CREATION.md) is **locked**, and it points the other way: content the owner is publishing *outward* to the platforms. This reads existing content *inward*, to improve the website.
+
+They will share connectors and they are not the same capability. Worth stating plainly because "we are already connected to their TikTok" is precisely the reasoning that would quietly extend a locked scope — and because the two have different owners of the decision: Social Creation asks the owner what to post, this one asks the owner where something already posted belongs.
+
+#### The principle this serves
+
+> **J4 creates the excellent first website automatically. Then J4 helps the owner evolve it into something uniquely theirs.**
+
+The automatic first website is what gets a business trading. The owner's own photographs and videos are the most direct route from that to something nobody else could have — which is why this belongs to design intelligence rather than to a social integration.
+
+
+
 ---
 
 ## Honest inventory: what exists today

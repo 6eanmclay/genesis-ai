@@ -8,6 +8,7 @@ import { GarmentShelf } from "./GarmentShelf";
 import { CreationPortal } from "./CreationPortal";
 import { SupplierStep } from "./SupplierStep";
 import { getConnector } from "@/lib/integrations/registry";
+import { creationSupplierConfigured, getCreationSuppliers } from "@/lib/creation/registry";
 import { connectExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { creatableById, blanksFor, portalItems } from "@/lib/creation/creatables";
 import type { Blank, BlankImage } from "@/lib/creation/garment";
@@ -185,15 +186,19 @@ export default async function CreationStationPage({
   // uses, so there is one connect path rather than a second that drifts.
   const chosenLabel = kind ? (creatableById(kind)?.label ?? "product") : "product";
 
-  // WHETHER THIS DEPLOYMENT CAN OFFER PRINTFUL AT ALL, asked of the connector
-  // rather than read here, so this page cannot fall out of step with the
-  // variables Printful actually needs. A boolean crosses to the client; the
-  // credentials never do.
+  // WHETHER THIS DEPLOYMENT CAN OFFER ANY PRINT SUPPLIER AT ALL, asked of the
+  // registry rather than read here, so this page cannot fall out of step with
+  // the variables a supplier actually needs. A boolean crosses to the client;
+  // the credentials never do.
   //
   // Without it, an unconfigured deployment shows a Connect button that starts
   // the action, fails, and redirects to the connections screen with an error
   // -- the dead end coming back through the one door left open.
-  const supplierConfigured = getConnector("PRINTFUL").configured?.() ?? true;
+  //
+  // This named PRINTFUL. One supplier is registered today, so the answer is the
+  // same — but it is now the registry's answer, which is the one that stays
+  // right when a second is added. See lib/creation/registry.ts.
+  const supplierConfigured = creationSupplierConfigured();
 
   // WHY THE LAST ATTEMPT FAILED, FROM THE RECORD THAT ALREADY HOLDS IT.
   //
@@ -204,18 +209,28 @@ export default async function CreationStationPage({
   //
   // Only read when a failure actually just came back, so an old attempt from
   // last week cannot decorate a fresh screen.
+  //
+  // WHICH supplier came back failing is read from the callback and matched
+  // against the registry, rather than compared to a literal. The parameter is
+  // the provider's own name, so this is the one place the value legitimately
+  // arrives from outside — what changed is that it is now looked up instead of
+  // only ever recognised when it said PRINTFUL.
   let attemptFailed: string | null = null;
-  if (integrationError?.toUpperCase() === "PRINTFUL") {
+  const failedSupplier = integrationError
+    ? getCreationSuppliers().find((s) => s.provider === integrationError.toUpperCase()) ?? null
+    : null;
+  if (failedSupplier) {
+    const connector = getConnector(failedSupplier.provider);
     const failure = await prisma.executionLog.findFirst({
       where: {
         storeId: store.id,
-        action: connectExecutable(getConnector("PRINTFUL")).action,
+        action: connectExecutable(connector).action,
         status: "FAILED",
       },
       orderBy: { createdAt: "desc" },
       select: { message: true },
     });
-    attemptFailed = failure?.message ?? "Printful didn't finish connecting. Try again.";
+    attemptFailed = failure?.message ?? `${connector.displayName} didn't finish connecting. Try again.`;
   }
 
   if (!provider) {
