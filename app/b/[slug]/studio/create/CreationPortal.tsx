@@ -1,10 +1,30 @@
+// ============ ILLUSTRATED HERE, PHOTOGRAPHED IN THE EDITOR ==============
+//
+// Sean, after seeing both: "The creation carousel should be a Genesis-branded
+// discovery experience, not a supplier catalog... Once the user selects a
+// product and enters the actual design/editor experience, that's where we
+// should switch to the real Printful product photography/blanks."
+//
+// So this room draws. Every object is the same weight, the same light and the
+// same neutral white whatever supplier is connected — which is what makes it a
+// place rather than a grid of whatever Printful happens to photograph. The
+// green is the aura BEHIND the object; the garment itself is never tinted.
+//
+// The real product, its real colours, its real front and back and its real
+// lighting all begin one step later, in the editor. That transition is the
+// point: out of the Genesis world and into the manufacturing one.
+//
+// This is NOT the fallback that used to be here. A fallback apologises for
+// itself — the old copy said "outline drawn by Genesis, your supplier has no
+// image" — and this is the intended thing, so it does not.
+//
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PortalItem } from "@/lib/creation/creatables";
 import { GENESIS_BLACK, GENESIS_GREEN } from "@/lib/brand/palette";
-import { BlankOnColor, usesRealBlank } from "./BlankOnColor";
+import { CreatableArt } from "./CreatableArt";
 
 // THE DOORWAY INTO CREATING.
 //
@@ -242,17 +262,14 @@ export function CreationPortal({
                 "Your supplier doesn't make this one" is only TRUE when the
                 catalogue was read successfully and had nothing matching. That
                 is now the only case it is said in. */}
+            {/* NO CAVEAT ABOUT WHOSE PICTURE THIS IS, because it is no longer
+                standing in for one. The drawing is the intended illustration
+                here — see the note at the top of this file — and saying "drawn
+                by Genesis" about a deliberately Genesis-branded room would be
+                apologising for the design. What still has to be honest is
+                INVENTORY, which is the branch below. */}
             {focused?.available
-              ? usesRealBlank(focused.blankUrl ?? null)
-                ? `${focused.blankCount} to choose from · ${focused.creatable.hint}`
-                : // WHOSE PICTURE THIS IS, said out loud (2026-08-27).
-                  //
-                  // Sean: "don't silently pretend a Genesis drawing is the
-                  // manufacturer's product." The supplier stocks this and can
-                  // make it — they just publish no blank image for it, so what
-                  // is on screen is ours. Both facts belong here, because
-                  // either one alone misleads.
-                  `${focused.blankCount} to choose from · outline drawn by Genesis, your supplier has no image`
+              ? `${focused.blankCount} to choose from · ${focused.creatable.hint}`
               : catalogueUnreadable
                 ? "We couldn't read your supplier's catalogue just now"
                 : hasSupplier
@@ -373,12 +390,7 @@ function ObjectFace({ item, focused }: { item: PortalItem; focused: boolean }) {
             is not. The supplier's real photographs still carry the shelf, one
             step later, where the question is WHICH blank rather than WHAT to
             make — and there a photograph on white inside a card is right. */}
-        <BlankOnColor
-          blankUrl={item.blankUrl ?? null}
-          colorHex={item.blankColorHex ?? null}
-          creatableId={item.creatable.id}
-          className="relative h-[86%] w-[86%]"
-        />
+        <CreatableArt id={item.creatable.id} className="relative h-[86%] w-[86%]" />
       </span>
     </span>
   );

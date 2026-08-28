@@ -150,34 +150,20 @@ export default async function CreationStationPage({
   // supplier photographs where there are any, says plainly where there are
   // none, and the supplier check happens at the step that actually needs one.
   if (!garmentId && !kind) {
-    // ============ THE PORTAL SHOWS THE SUPPLIER'S OWN BLANKS ===========
+    // ============ THE PORTAL DOES NOT CALL THE SUPPLIER ================
     //
-    // Sean: "use the real Printful blank imagery anywhere it is available...
-    // No generated garment should be used when Printful provides the real
-    // blank."
+    // It used to fetch a transparent blank per intention — five requests on
+    // top of the index — so the doorway could show real Printful imagery.
+    // Sean's call after seeing it: the carousel is a Genesis-branded discovery
+    // experience, and the real product begins in the editor.
     //
-    // So each intention fetches the transparent blank of the product that
-    // stands for it — five requests on top of the index, not one per blank in
-    // the catalogue. Everything is fetched together rather than in sequence
-    // because five is well inside Printful's allowance and a portal that takes
-    // five round trips to appear is a portal nobody waits for.
-    //
-    // A failure or a missing blank is NOT hidden: the item keeps a null
-    // blankUrl, the portal draws ours instead, and it says whose it is.
-    const items = provider
-      ? await Promise.all(
-          portalItems(blanks).map(async (item) => {
-            if (!item.representativeProductId) return item;
-            const { images } = await blankImagesFor(provider, store.id, item.representativeProductId);
-            const front = images.find((i) => i.placement === "front") ?? images[0] ?? null;
-            return { ...item, blankUrl: front?.url ?? null, blankColorHex: front?.colorCode ?? null };
-          }),
-        )
-      : portalItems(blanks);
-
+    // That is a better transition AND five fewer requests against a rate limit
+    // this screen has already exhausted once. The index is still read, because
+    // WHAT CAN BE MADE is a fact about the supplier even when the picture is
+    // ours.
     return (
       <CreationPortal
-        items={items}
+        items={portalItems(blanks)}
         basePath={basePath}
         hasSupplier={provider !== null}
         catalogueUnreadable={catalogError !== null}

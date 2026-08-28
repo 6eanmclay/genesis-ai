@@ -289,15 +289,20 @@ export function printfulCreationProvider(
     // its values — because the alternative is another round of guessing at a
     // response only a connected account can see.
     async getBlankImages({ storeId, externalProductId }) {
-      const body = await fetchJson(
-        storeId,
-        "creation.blanks",
-        // TWENTY, not a hundred — this endpoint's own ceiling. See
-        // PRINTFUL_MAX_IMAGE_LIMIT for the 400 that established it.
-        withSellingRegion(
-          `/catalog-products/${externalProductId}/images?limit=${PRINTFUL_MAX_IMAGE_LIMIT}`,
-        ),
-      );
+      // ============ TWENTY IS A PAGE, NOT THE ANSWER (2026-08-27) =======
+      //
+      // Sean: White, Black and Gold fell back to the Genesis outline while
+      // Carolina Blue rendered. That is not a rendering problem, it is
+      // arithmetic. A Gildan 18500 has fourteen colours and two views, so
+      // Printful holds at least twenty-eight images for it — and this asked
+      // for twenty. Which colours survived depended on the order they came in.
+      //
+      // The 400 that set the ceiling said "Limit for this endpoint cannot
+      // exceed 20". Twenty is the most that can be fetched AT ONCE, and I read
+      // it as the most there is. The ceiling was obeyed and the rest of the
+      // catalogue was dropped without a word, which is the same silent
+      // truncation this file has now produced twice.
+      let body: unknown = null;
 
       const found: BlankImage[] = [];
       const seen = new Set<string>();
@@ -357,7 +362,33 @@ export function printfulCreationProvider(
         for (const value of Object.values(obj)) walk(value, nextPlacement, nextCode, nextName);
       };
 
-      walk(body, null, null, null);
+      // Paged until a page adds nothing. Read from what ARRIVED rather than
+      // from a `total` nobody has seen — the paging metadata is one more
+      // documented field this endpoint has not been observed to honour.
+      const MAX_PAGES = 12;
+      let truncated = false;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const before = found.length;
+        body = await fetchJson(
+          storeId,
+          "creation.blanks",
+          withSellingRegion(
+            `/catalog-products/${externalProductId}/images` +
+              `?limit=${PRINTFUL_MAX_IMAGE_LIMIT}&offset=${page * PRINTFUL_MAX_IMAGE_LIMIT}`,
+          ),
+        );
+        walk(body, null, null, null);
+        if (found.length === before) break;
+        if (page === MAX_PAGES - 1) truncated = true;
+      }
+
+      // A CAP THAT IS REACHED IS A FACT, NOT A QUIET STOP. Silently keeping
+      // the first N is exactly the bug above.
+      if (truncated) {
+        throw new Error(
+          `Printful kept returning blank images past ${MAX_PAGES * PRINTFUL_MAX_IMAGE_LIMIT}; refusing to guess where they end.`,
+        );
+      }
 
       if (found.length === 0) {
         // AN EMPTY ANSWER IS REAL — a supplier may publish no blank imagery.

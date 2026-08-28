@@ -335,7 +335,7 @@ async function main() {
     "that is the message Sean was shown");
 
   // ======================================================================
-  console.log("\n=== 6. The portal shows the supplier blank, never a photograph ===\n");
+  console.log("\n=== 6. Illustrated in the doorway, photographed in the editor ===\n");
   // ======================================================================
   //
   // THE REGRESSION THIS EXISTS FOR (2026-08-27). ObjectFace preferred the
@@ -359,15 +359,23 @@ async function main() {
   const portalSrc = codeOnly(
     readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationPortal.tsx"), "utf8")
   );
-  // REVISED, DELIBERATELY (2026-08-27). This asserted the portal rendered no
-  // image element at all, which was right when the only image available was a
-  // catalogue photograph on a white ground. It is wrong now: Printful also
-  // publishes TRANSPARENT blanks, and Sean's rule is that the real supplier
-  // blank wins wherever there is one. The claim that survives is narrower and
-  // truer — never the photograph, always the blank where it exists.
-  assert("the portal goes through the layered blank, not a raw image",
-    !/<img[\s/>]/.test(portalSrc) && /<BlankOnColor\b/.test(portalSrc),
-    "colour behind, transparent blank on top — see BlankOnColor");
+  // REVISED TWICE, AND THIS IS THE SETTLED RULE (2026-08-27).
+  //
+  // First it asserted the portal showed no image at all — right when the only
+  // image available was a catalogue photograph on a white ground. Then it
+  // asserted the portal showed the supplier's transparent blank — right when
+  // the rule was "real blank wherever there is one, everywhere".
+  //
+  // Sean, having seen both: "The creation carousel should be a Genesis-branded
+  // discovery experience, not a supplier catalog... Once the user selects a
+  // product and enters the actual design/editor experience, that's where we
+  // should switch to the real Printful product photography."
+  //
+  // So the line is drawn between the two SCREENS rather than applied to both,
+  // and each side of it is asserted below.
+  assert("the doorway draws, and calls no supplier for a picture",
+    !/<img[\s/>]/.test(portalSrc) && /<CreatableArt\b/.test(portalSrc),
+    "the carousel is a Genesis room, not a grid of whatever Printful photographed");
   // THE CATALOGUE PHOTOGRAPH IS GONE AT THE SOURCE. PortalItem no longer
   // carries one, so there is nothing for the portal to fall back into.
   assert("CONTROL: and there is no catalogue photograph left to prefer",
@@ -389,11 +397,29 @@ async function main() {
     /isolation:\s*"isolate"/.test(blankSrc),
     "multiply against a near-black room erases the garment");
 
-  // WHOSE PICTURE IT IS, SAID OUT LOUD. The drawing is honest as a picture and
-  // silent as a claim; the portal has to speak for it.
-  assert("and the portal says when the drawing is ours, not the supplier's",
-    /drawn by Genesis/.test(portalSrc),
-    "a Genesis outline presented as the manufacturer's product is the failure here");
+  // AND NO APOLOGY FOR IT. The old copy read "outline drawn by Genesis, your
+  // supplier has no image", which was right while the drawing was standing in
+  // for a photograph and is wrong now that it is the intended illustration.
+  assert("CONTROL: and does not apologise for drawing",
+    !/drawn by Genesis/.test(portalSrc),
+    "that caveat existed because the drawing was a fallback; here it is the design");
+
+  // WHAT MUST STILL BE HONEST IS INVENTORY. The picture being ours does not
+  // license the COUNT being ours — "3 to choose from" is a claim about the
+  // supplier either way.
+  assert("the portal still reports the supplier's real count",
+    /blankCount/.test(portalSrc));
+  assert("and still says when the catalogue could not be read",
+    /couldn't read your supplier's catalogue/.test(portalSrc));
+
+  // THE OTHER SIDE OF THE LINE. The editor is where the real product lives,
+  // and an assertion that only banned supplier imagery from the portal would
+  // pass just as well against a Creation Station that had lost it entirely.
+  assert("CONTROL: while the editor still renders the real supplier blank",
+    /<BlankOnColor\b/.test(
+      codeOnly(readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationCanvas.tsx"), "utf8"))
+    ),
+    "real colours, real lighting, real front and back begin one step later");
 
   // AND THE SHELF STILL USES THE REAL ONES. Deliberately the opposite rule:
   // choosing WHICH blank is exactly when a real photograph of that blank is
@@ -449,7 +475,10 @@ async function main() {
     externalProductId: "71",
   });
 
-  eq("one request fetches the blanks", blankPaths.length, 1);
+  // PAGED. Twenty is the most this endpoint returns at once, not the most
+  // there is — see section 14 for the fourteen-colour hoodie that proved it.
+  // A second request that adds nothing is how the end is detected.
+  eq("it pages until a page adds nothing", blankPaths.length, 2);
   assert("against the blank-images endpoint",
     blankPaths[0].startsWith("/catalog-products/71/images?"), blankPaths[0]);
   assert("carrying a selling region, like every other catalogue call",
@@ -1003,6 +1032,136 @@ async function main() {
     "the artwork lands behind the sheet used to add it");
   assert("CONTROL: and the toolbar is controlled so it can be closed",
     /openId=\{openTool\}/.test(toolbarSrc) && /onOpenChange=\{setOpenTool\}/.test(toolbarSrc));
+
+  // ======================================================================
+  console.log("\n=== 14. Fourteen colours do not fit in twenty images ===\n");
+  // ======================================================================
+  //
+  // Sean, on the live build: White, Black and Gold fell back to the Genesis
+  // outline while Carolina Blue rendered as a black hoodie with BLUE
+  // DRAWSTRINGS.
+  //
+  // Those two facts together are the diagnosis, and neither is a compositing
+  // problem. Blue drawstrings on a black garment is precisely what multiply
+  // does — black times blue is black, and the light cords times blue are blue
+  // — so the tint path was running on a blank that was not the chosen colour.
+  // And most colours having no blank at all is arithmetic: a Gildan 18500 has
+  // fourteen colours and two views, which is at least twenty-eight images, and
+  // the request asked for twenty.
+  //
+  // The 400 that set that ceiling said "Limit for this endpoint cannot exceed
+  // 20". Twenty is the most that can be fetched AT ONCE, and I read it as the
+  // most there is.
+  const HOODIE_COLOURS = [
+    ["White", "#ffffff"], ["Black", "#0a0a0a"], ["Carolina Blue", "#7ba4db"],
+    ["Dark Heather", "#47484d"], ["Gold", "#ffd667"], ["Sport Grey", "#9b969c"],
+    ["Forest Green", "#273b33"], ["Maroon", "#5b2b42"], ["Navy", "#263147"],
+    ["Red", "#b31217"], ["Royal", "#274d91"], ["Irish Green", "#00a74a"],
+    ["Light Blue", "#a3b8cb"], ["Light Pink", "#e5bfd2"],
+  ] as const;
+
+  // Printful's real shape: one record per variant, images nested under it, and
+  // twenty per page.
+  const allRecords = HOODIE_COLOURS.flatMap(([name, hex], i) => [
+    {
+      catalog_variant_id: 5000 + i,
+      color: name,
+      color_code: hex,
+      images: [{ placement: "front", url: `https://x.test/${i}-front.png` }],
+    },
+    {
+      catalog_variant_id: 5100 + i,
+      color: name,
+      color_code: hex,
+      images: [{ placement: "back", url: `https://x.test/${i}-back.png` }],
+    },
+  ]);
+  assert("the fixture is bigger than one page",
+    allRecords.length > 20, String(allRecords.length));
+
+  const pagesAsked: string[] = [];
+  const pagedProvider = printfulCreationProvider(async (_s, _o, path) => {
+    pagesAsked.push(path);
+    const offset = Number(new URLSearchParams(path.split("?")[1]).get("offset") ?? 0);
+    return { data: allRecords.slice(offset, offset + 20) };
+  });
+
+  const everyBlank = await pagedProvider.getBlankImages({
+    storeId: "s",
+    externalProductId: "146",
+  });
+
+  assert("more than one page is fetched", pagesAsked.length > 1, String(pagesAsked.length));
+  assert("each page asks for the next offset",
+    pagesAsked.some((pth) => pth.includes("offset=20")), JSON.stringify(pagesAsked));
+  eq("every image arrives, not just the first twenty", everyBlank.length, allRecords.length);
+
+  // ============ AND NOW EVERY COLOUR RESOLVES ========================
+  //
+  // The four Sean tested, by name and by hex, front and back.
+  for (const [name, hex] of [
+    ["White", "#ffffff"], ["Black", "#0a0a0a"],
+    ["Carolina Blue", "#7ba4db"], ["Gold", "#ffd667"],
+  ] as const) {
+    const front = blankFor(everyBlank, "front", hex, name);
+    const back = blankFor(everyBlank, "back", hex, name);
+    assert(`${name} resolves to a real blank`, front.url !== null, JSON.stringify(front));
+    assert(`${name} is NOT tinted`, front.tintWith === null,
+      "a blank that is already the chosen colour must not be painted over");
+    assert(`${name} reports no supplier gap`, front.absence === null, String(front.absence));
+    assert(`${name} has its own back view`,
+      back.url !== null && back.url !== front.url, `${front.url} / ${back.url}`);
+  }
+
+  // ============ THE COLOURS THAT FELL OFF THE FIRST PAGE ==============
+  //
+  // This is the assertion that ties the arithmetic to what Sean saw. Light
+  // Pink is the fourteenth colour, so its images sit past record twenty — it
+  // is reachable ONLY if the second page is fetched. Before paging it had no
+  // blank at all, which is the Genesis outline he got for most of the row.
+  const lateColour = HOODIE_COLOURS[HOODIE_COLOURS.length - 1];
+  const lateIndex = allRecords.findIndex((r) => r.color === lateColour[0]);
+  assert("the last colour's images are past the first page",
+    lateIndex >= 20, `${lateColour[0]} at record ${lateIndex}`);
+  const late = blankFor(everyBlank, "front", lateColour[1], lateColour[0]);
+  assert(`${lateColour[0]} resolves only because the second page was fetched`,
+    late.url !== null && late.absence === null, JSON.stringify(late));
+
+  // And proved the other way: from one page alone it is simply not there.
+  const firstPageOnly = everyBlank.slice(0, 20);
+  eq("CONTROL: from the first page alone it has no blank",
+    blankFor(firstPageOnly, "front", lateColour[1], lateColour[0]).url, null);
+  eq("CONTROL: and is reported as a supplier gap it does not have",
+    blankFor(firstPageOnly, "front", lateColour[1], lateColour[0]).absence, "other-colours");
+
+  // THE EXACT SYMPTOM, ASSERTED SHUT. Carolina Blue must not land on the black
+  // blank — that pairing is the blue drawstrings.
+  const carolina = blankFor(everyBlank, "front", "#7ba4db", "Carolina Blue");
+  const black = blankFor(everyBlank, "front", "#0a0a0a", "Black");
+  assert("CONTROL: Carolina Blue does not resolve to the black blank",
+    carolina.url !== black.url,
+    "black times blue is black; the light drawstrings times blue are blue");
+
+  // AND THE TRUNCATION THAT CAUSED IT CANNOT RETURN SILENTLY. A supplier that
+  // keeps paging forever is an error, not a quiet first-N.
+  let runaway = "";
+  const endless = printfulCreationProvider(async (_s, _o, path) => {
+    const offset = Number(new URLSearchParams(path.split("?")[1]).get("offset") ?? 0);
+    return {
+      data: Array.from({ length: 20 }, (_, k) => ({
+        catalog_variant_id: offset + k,
+        color: `Colour ${offset + k}`,
+        images: [{ placement: "front", url: `https://x.test/endless-${offset + k}.png` }],
+      })),
+    };
+  });
+  try {
+    await endless.getBlankImages({ storeId: "s", externalProductId: "146" });
+  } catch (error) {
+    runaway = error instanceof Error ? error.message : String(error);
+  }
+  assert("CONTROL: endless paging is reported, never silently truncated",
+    /refusing to guess where they end/.test(runaway), runaway || "(returned quietly)");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

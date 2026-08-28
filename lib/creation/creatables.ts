@@ -154,14 +154,11 @@ export interface PortalItem {
   creatable: Creatable;
   /** The blank whose picture stands for this intention, if the supplier has one. */
   representativeProductId: string | null;
-  /**
-   * The supplier's own transparent blank, once fetched. Null means either no
-   * supplier or no blank imagery — which are different, and the portal is told
-   * which by `available` and by whether a supplier is connected at all.
-   */
-  blankUrl?: string | null;
-  /** The colour to paint behind that blank. */
-  blankColorHex?: string | null;
+  // NO SUPPLIER IMAGERY HERE (2026-08-27). The portal carried a blankUrl and a
+  // colour to paint behind it, so the doorway could show real Printful
+  // photography. It draws instead — see the note at the top of CreationPortal
+  // — and leaving the fields on the type would invite somebody to fill them in
+  // again without noticing the decision.
   /** How many blanks the connected supplier has. Zero is a real answer. */
   blankCount: number;
   available: boolean;
