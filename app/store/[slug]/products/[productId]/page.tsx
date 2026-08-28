@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { storefrontRichContent } from "@/lib/storefront/richContent";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -82,7 +83,11 @@ export default async function ProductDetailPage({
 
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const brandIdentity = (store.blueprint as Blueprint | null)?.brandIdentity;
-  const richContent = product.richContent as ProductRichContent | null;
+  // richContent is untyped JSON serving two purposes — marketing copy AND
+  // design provenance — and this page read it as only the first, which took the
+  // storefront down for every product made from a design. Normalised through
+  // one total function now; see lib/storefront/richContent.ts.
+  const richContent = storefrontRichContent(product.richContent);
   const fontsUrl = googleFontsUrl([theme.typography.headingFont, theme.typography.bodyFont]);
 
   const cardRadius = cardRadiusClass(theme);
@@ -179,7 +184,7 @@ export default async function ProductDetailPage({
               </p>
             )}
 
-            {richContent && richContent.keyFeatures.length > 0 && (
+            {richContent.keyFeatures.length > 0 && (
               <div className="mt-8">
                 <h2 className="font-[var(--font-heading)] text-lg font-semibold">
                   Key Features
@@ -192,7 +197,7 @@ export default async function ProductDetailPage({
               </div>
             )}
 
-            {richContent && richContent.benefits.length > 0 && (
+            {richContent.benefits.length > 0 && (
               <div className="mt-6">
                 <h2 className="font-[var(--font-heading)] text-lg font-semibold">Benefits</h2>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--brand-text-secondary)]">
@@ -203,7 +208,7 @@ export default async function ProductDetailPage({
               </div>
             )}
 
-            {richContent && richContent.specifications.length > 0 && (
+            {richContent.specifications.length > 0 && (
               <div className="mt-6">
                 <h2 className="font-[var(--font-heading)] text-lg font-semibold">
                   Specifications
