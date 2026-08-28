@@ -275,6 +275,65 @@ export function colorsOf(garment: Garment): { color: string; colorHex: string | 
 }
 
 /** The sizes available in a colour — which is not always every size. */
+/**
+ * The colours this garment can actually be SHOWN in.
+ *
+ * ============ OFFER WHAT CAN BE RENDERED (2026-08-27) =================
+ *
+ * Sean: "Only show colors that we can actually render correctly... I'd rather
+ * have 8-10 colors that look perfect than 14 colors where some don't work or
+ * load slowly."
+ *
+ * This inverts the problem rather than solving it. Every previous attempt has
+ * been about what to DO when a colour has no blank of its own — tint a neutral
+ * one, tint somebody else's, show an outline and explain. All of those put a
+ * wrong or apologetic garment on screen. Not offering the colour puts nothing
+ * wrong on screen at all.
+ *
+ * A colour is offered when the supplier publishes a blank for it on the view
+ * being designed. That is the only test, and it is the same function the
+ * canvas uses to pick the image — so a colour that appears in the row is one
+ * that has already been proven to resolve.
+ *
+ * ============ AND IF THAT LEAVES NOTHING ==============================
+ *
+ * An empty row is a real answer and a loud one. It means the supplier
+ * published images this code could not attribute to any colour, which is worth
+ * seeing immediately rather than discovering as a garment that will not change.
+ */
+export function renderableColors(
+  garment: Garment,
+  blankImages: BlankImage[],
+  placement: string,
+): { color: string; colorHex: string | null; imageUrl: string | null }[] {
+  const all = colorsOf(garment);
+  // NO BLANKS AT ALL is not the same as none matching. With no supplier
+  // imagery the editor falls back to the drawn outline for every colour, and
+  // every colour is equally showable — removing them all would leave nothing
+  // to choose from for a reason the owner cannot act on.
+  if (blankImages.length === 0) return all;
+
+  // ============ ITS OWN BLANK, OR IT IS NOT OFFERED ==================
+  //
+  // A colour counts only when the supplier publishes a blank FOR IT — an exact
+  // match, needing no tint. A colour that resolves by painting a neutral blank
+  // does not count, and that is the whole lesson of the black hoodie with blue
+  // drawstrings: the "neutral" blank was a black hoodie whose colour this code
+  // had failed to read, and multiply cannot lighten black.
+  //
+  // THE TRADE-OFF, STATED. A supplier who genuinely publishes ONE colour-
+  // neutral blank meant for tinting would be left with no colours here, and
+  // the row would say so. That is the wrong answer for that supplier and the
+  // right one for the only supplier we have — Printful's blanks are per
+  // colour, and treating them as neutral is what produced the bug. When a
+  // supplier who works the other way turns up, this is the line to revisit,
+  // and the empty row is what will point at it.
+  return all.filter((c) => {
+    const resolved = blankFor(blankImages, placement, c.colorHex, c.color);
+    return resolved.url !== null && resolved.tintWith === null;
+  });
+}
+
 export function sizesFor(garment: Garment, color: string): string[] {
   return [...new Set(garment.variants.filter((v) => v.color === color).map((v) => v.size))];
 }

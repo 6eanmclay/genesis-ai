@@ -15,10 +15,10 @@ import {
 } from "@/lib/creation/design";
 import {
   areaFor,
-  colorsOf,
   blankFor,
   designableViews,
   formatCents,
+  renderableColors,
   spinViews,
   productLabel,
   sizesFor,
@@ -79,13 +79,33 @@ export function CreationStation({
   /** Returns null on success, or a message the owner can act on. */
   onAddToStore: (design: ProductDesign) => Promise<string | null>;
 }) {
-  const colors = useMemo(() => colorsOf(garment), [garment]);
+  // WHICH SIDE IS BEING DESIGNED, declared before the colours because it is
+  // now an input to them: a blank can be photographed in ten colours from the
+  // front and four from the back, and the row has to follow.
+  const [placement, setPlacement] = useState<PlacementId>(FRONT);
+
+  // ONLY WHAT CAN BE SHOWN. A colour in this row has already been proven to
+  // resolve to a real supplier blank on the view being designed — see
+  // renderableColors. Offering one that cannot be rendered is what produced a
+  // black hoodie with blue drawstrings.
+  const colors = useMemo(
+    () => renderableColors(garment, blankImages, placement),
+    [garment, blankImages, placement],
+  );
   const [color, setColor] = useState(colors[0]?.color ?? "");
-  const sizes = useMemo(() => sizesFor(garment, color), [garment, color]);
+
+  // A COLOUR THAT STOPPED BEING OFFERED CANNOT STAY SELECTED. Turning the
+  // garment over can change which colours have blanks, and a selection that
+  // survives that is a variant the canvas cannot draw.
+  // A COLOUR THAT IS NO LONGER OFFERED CANNOT STAY SELECTED — but the
+  // correction is READ here rather than written during render. Calling
+  // setColor in the render body is a re-render loop waiting for the moment two
+  // views disagree about which colours exist.
+  const activeColor = colors.some((c) => c.color === color) ? color : (colors[0]?.color ?? "");
+  const sizes = useMemo(() => sizesFor(garment, activeColor), [garment, activeColor]);
   const [size, setSize] = useState(sizes[0] ?? "");
 
-  const variant = variantFor(garment, color, size);
-  const [placement, setPlacement] = useState<PlacementId>(FRONT);
+  const variant = variantFor(garment, activeColor, size);
   const [selected, setSelected] = useState<string | null>(null);
   // Which tool panel is open, held here so adding artwork can close it.
   const [openTool, setOpenTool] = useState<string | null>(null);
@@ -200,7 +220,7 @@ export function CreationStation({
   // publishes per-colour blanks for some products and one transparent blank
   // for the rest, and the per-colour version is the truer picture where it
   // exists.
-  const chosenHex = colors.find((c) => c.color === color)?.colorHex ?? null;
+  const chosenHex = colors.find((c) => c.color === activeColor)?.colorHex ?? null;
 
   // WHAT THIS EXACT VARIANT COSTS FROM THE SUPPLIER. Null when Printful did
   // not price it — said plainly rather than filled in, which is the whole
@@ -231,8 +251,8 @@ export function CreationStation({
   // variant carries both — passing only the hex is what made every colour
   // resolve to the same black hoodie.
   const blank = useMemo(
-    () => blankFor(blankImages, placement, chosenHex, color),
-    [blankImages, placement, chosenHex, color],
+    () => blankFor(blankImages, placement, chosenHex, activeColor),
+    [blankImages, placement, chosenHex, activeColor],
   );
 
   // ============ WHAT EACH TOOL OPENS ==================================
@@ -245,7 +265,9 @@ export function CreationStation({
     <div className="flex flex-col gap-4">
       <div>
         <p className="mb-2 text-[12px] text-zinc-500">
-          {colors.length} colour{colors.length === 1 ? "" : "s"} your supplier makes this in
+          {colors.length === 0
+            ? "None of this blank's colours have a supplier image we can show."
+            : `${colors.length} colour${colors.length === 1 ? "" : "s"} your supplier makes this in`}
         </p>
         <div className="flex flex-wrap gap-2">
           {colors.map((c) => (
@@ -254,7 +276,7 @@ export function CreationStation({
               type="button"
               title={c.color}
               aria-label={c.color}
-              aria-pressed={c.color === color}
+              aria-pressed={c.color === activeColor}
               onClick={() => {
                 setColor(c.color);
                 const next = sizesFor(garment, c.color);
@@ -266,14 +288,14 @@ export function CreationStation({
               style={{ background: c.colorHex ?? "#d4d4d8" }}
               className={[
                 "h-8 w-8 rounded-full border transition",
-                c.color === color
+                c.color === activeColor
                   ? "border-[var(--brand-accent,#6366f1)] ring-2 ring-[var(--brand-accent,#6366f1)]/40"
                   : "border-black/15 dark:border-white/20",
               ].join(" ")}
             />
           ))}
         </div>
-        <p className="mt-2 text-[12px] text-zinc-500">{color}</p>
+        <p className="mt-2 text-[12px] text-zinc-500">{activeColor}</p>
       </div>
 
       <div>
@@ -533,7 +555,7 @@ export function CreationStation({
               {blank.absence === "none"
                 ? "Designing on a Genesis outline — your supplier publishes no blank image for this product."
                 : blank.absence === "other-colours"
-                  ? `Designing on a Genesis outline — your supplier publishes blanks for this hoodie, but not in ${color}.`
+                  ? `Designing on a Genesis outline — your supplier publishes blanks for this hoodie, but not in ${activeColor}.`
                   : `Designing on a Genesis outline — your supplier publishes no blank for the ${placement}.`}{" "}
               The print area and colours are still theirs.
             </p>

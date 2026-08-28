@@ -20,6 +20,7 @@ import {
   spinViews,
   sameColor,
   blankFor,
+  renderableColors,
 } from "@/lib/creation/garment";
 import { portalItems } from "@/lib/creation/creatables";
 
@@ -1162,6 +1163,97 @@ async function main() {
   }
   assert("CONTROL: endless paging is reported, never silently truncated",
     /refusing to guess where they end/.test(runaway), runaway || "(returned quietly)");
+
+  // ======================================================================
+  console.log("\n=== 15. Only colours that can actually be shown ===\n");
+  // ======================================================================
+  //
+  // Sean: "Only show colors that we can actually render correctly... I'd
+  // rather have 8-10 colors that look perfect than 14 colors where some don't
+  // work or load slowly."
+  //
+  // This inverts the problem instead of solving it. Every previous attempt was
+  // about what to DO when a colour has no blank — tint a neutral one, tint
+  // somebody else's, show an outline and explain — and all of them put a wrong
+  // or apologetic garment on screen. Not offering the colour puts nothing
+  // wrong on screen at all.
+  const fourteen: Parameters<typeof renderableColors>[0] = {
+    provider: "PRINTFUL",
+    externalProductId: "146",
+    name: "Unisex Heavy Blend Hoodie | Gildan 18500",
+    type: "HOODIE",
+    brand: "Gildan",
+    description: null,
+    imageUrl: null,
+    variants: HOODIE_COLOURS.map(([name, hex], i) => ({
+      externalVariantId: String(6000 + i),
+      color: name,
+      colorHex: hex,
+      size: "L",
+      imageUrl: null,
+      costInCents: null,
+    })),
+    printAreas: [
+      { placement: "front", width: 12, height: 16, unit: "inches" },
+      { placement: "back", width: 12, height: 16, unit: "inches" },
+    ],
+  };
+
+  // Only four of the fourteen have a front blank.
+  const someBlanks = [
+    { placement: "front", colorCode: "#ffffff", colorName: "White", url: "https://x.test/w.png" },
+    { placement: "front", colorCode: "#0a0a0a", colorName: "Black", url: "https://x.test/b.png" },
+    { placement: "front", colorCode: "#7ba4db", colorName: "Carolina Blue", url: "https://x.test/c.png" },
+    { placement: "front", colorCode: "#ffd667", colorName: "Gold", url: "https://x.test/g.png" },
+    // Back has fewer, which is the case that used to strand a selection.
+    { placement: "back", colorCode: "#ffffff", colorName: "White", url: "https://x.test/wb.png" },
+  ];
+
+  const frontColours = renderableColors(fourteen, someBlanks, "front");
+  eq("only the colours with a front blank are offered",
+    frontColours.map((c) => c.color), ["White", "Black", "Carolina Blue", "Gold"]);
+  eq("CONTROL: not all fourteen", frontColours.length !== fourteen.variants.length, true);
+
+  // AND EVERY OFFERED COLOUR RESOLVES. This is the guarantee the row makes:
+  // a swatch on screen has already been proven to draw.
+  for (const c of frontColours) {
+    const resolved = blankFor(someBlanks, "front", c.colorHex, c.color);
+    assert(`${c.color} is offered AND resolves`, resolved.url !== null, JSON.stringify(resolved));
+    assert(`${c.color} is offered AND needs no tint`, resolved.tintWith === null,
+      "a colour that needs tinting is a colour that cannot be shown correctly");
+  }
+
+  // THE VIEW CHANGES WHICH COLOURS EXIST. Turning the garment over is allowed
+  // to shorten the row, and a selection that survived that would be a variant
+  // the canvas cannot draw.
+  eq("the back offers only what the back has",
+    renderableColors(fourteen, someBlanks, "back").map((c) => c.color), ["White"]);
+
+  // NO IMAGERY AT ALL IS NOT THE SAME AS NONE MATCHING. With no supplier
+  // pictures the editor draws an outline for every colour, so every colour is
+  // equally showable — emptying the row there would remove the choice for a
+  // reason the owner cannot act on.
+  eq("with no supplier imagery every colour stays offered",
+    renderableColors(fourteen, [], "front").length, fourteen.variants.length);
+
+  // AND THE EMPTY ROW SAYS SO. Images that could not be attributed to any
+  // colour leave nothing offerable, and that is worth seeing immediately
+  // rather than as a garment that will not change.
+  const unattributable = [
+    { placement: "front", colorCode: null, colorName: null, url: "https://x.test/one.png" },
+  ];
+  eq("images we cannot attribute leave no colour offerable",
+    renderableColors(fourteen, unattributable, "front").length, 0);
+  assert("and the screen says that plainly",
+    /None of this blank's colours have a supplier image/.test(toolbarSrc),
+    "an empty row with no sentence is a mystery");
+
+  // CONTROL: the selection follows the row rather than being written during
+  // render — setColor in a render body is a loop waiting for two views to
+  // disagree about which colours exist.
+  assert("CONTROL: the active colour is derived, never set while rendering",
+    /const activeColor = colors\.some/.test(toolbarSrc) && !/if \(!offered[\s\S]{0,80}setColor\(/.test(toolbarSrc),
+    "a setState during render is a re-render loop");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
