@@ -3,7 +3,7 @@ import { requireBusinessOrActive, PERMISSIONS } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import { refreshPrintfulToken, type PrintfulCredentials } from "@/lib/integrations/printful";
-import { printfulUrl, printfulHeaders, isStoreScoped, withSellingRegion, PRINTFUL_MAX_IMAGE_LIMIT } from "@/lib/creation/printfulRequest";
+import { printfulUrl, printfulHeaders, isStoreScoped, withSellingRegion } from "@/lib/creation/printfulRequest";
 
 // WHAT PRINTFUL ACTUALLY SENDS BACK — the shape, never the pictures.
 //
@@ -83,25 +83,94 @@ export async function GET(request: NextRequest) {
     decryptCredentials<PrintfulCredentials>(row.credentials),
   );
 
-  // The first two pages only. This is a look at the SHAPE, and two pages is
-  // enough to show both the record layout and whether paging behaves.
-  const pages: unknown[] = [];
-  for (let page = 0; page < 2; page++) {
-    const path = withSellingRegion(
-      `/catalog-products/${productId}/images?limit=${PRINTFUL_MAX_IMAGE_LIMIT}&offset=${page * PRINTFUL_MAX_IMAGE_LIMIT}`,
-    );
+  const get = async (path: string) => {
     const res = await fetch(printfulUrl(path), {
       headers: printfulHeaders(credentials.accessToken, credentials.printfulStoreId, isStoreScoped(path)),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(30_000),
     });
-    const body = await res.json().catch(() => null);
-    pages.push({
-      asked: path,
-      status: res.status,
-      shape: shapeOf(body),
-    });
-    if (!res.ok) break;
+    return { status: res.status, body: (await res.json().catch(() => null)) as unknown };
+  };
+
+  // ============ WHAT THE FIRST TRACE ANSWERED, AND WHAT IT DID NOT =====
+  //
+  // It showed the record shape, and three things fell out of it: the hex is
+  // `primary_hex_color` and not `color_code` (so this code never read one),
+  // the garment file is the SAME for Ash and Carolina Blue, and each record
+  // carries a per-colour `background_color`.
+  //
+  // What it could not show is whether a colour-specific render exists ANYWHERE
+  // — because `images` is an array of over a thousand per variant, and shapeOf
+  // only prints the first. So this pass counts and compares them instead of
+  // describing one.
+  const out: Record<string, unknown> = { product: productId };
+
+  // ---- 1. THE IMAGE RECORDS, COMPARED ACROSS TWO COLOURS -------------
+  const first = await get(
+    withSellingRegion(`/catalog-products/${productId}/images?limit=2&offset=0`),
+  );
+  const variants = ((first.body as { data?: unknown[] } | null)?.data ?? []) as Record<string, unknown>[];
+
+  out.imageRecords = {
+    status: first.status,
+    // Every field on the variant record, so a field name is never guessed again.
+    variantFields: variants[0] ? Object.keys(variants[0]) : [],
+    colours: variants.map((v) => {
+      const images = (Array.isArray(v.images) ? v.images : []) as Record<string, unknown>[];
+      const urls = images
+        .map((im) => (typeof im.image_url === "string" ? im.image_url : null))
+        .filter((u): u is string => u !== null);
+      const distinct = [...new Set(urls)];
+      const front = images.filter((im) => im.placement === "front");
+      return {
+        color: v.color,
+        primary_hex_color: v.primary_hex_color,
+        imageCount: images.length,
+        distinctUrlCount: distinct.length,
+        placements: [...new Set(images.map((im) => im.placement))].slice(0, 12),
+        // Every field on ONE image record.
+        imageFields: images[0] ? Object.keys(images[0]) : [],
+        // A handful of distinct front renders, by their filename and style id.
+        frontSamples: [
+          ...new Map(
+            front.map((im) => [
+              String(im.image_url),
+              {
+                file: String(im.image_url ?? "").split("/").slice(-1)[0],
+                mockup_style_id: im.mockup_style_id,
+                background_color: im.background_color,
+                hasBackgroundImage: Boolean(im.background_image),
+              },
+            ]),
+          ).values(),
+        ].slice(0, 8),
+      };
+    }),
+  };
+
+  // ---- 2. WHETHER ANY FILENAME DIFFERS BETWEEN TWO COLOURS -----------
+  //
+  // The direct answer to "can Printful give us a colour-specific image": if
+  // two colours share every filename, the answer is no at this endpoint.
+  if (variants.length >= 2) {
+    const setOf = (v: Record<string, unknown>) =>
+      new Set(
+        ((Array.isArray(v.images) ? v.images : []) as Record<string, unknown>[])
+          .map((im) => String(im.image_url ?? "")),
+      );
+    const a = setOf(variants[0]);
+    const b = setOf(variants[1]);
+    const onlyInB = [...b].filter((u) => !a.has(u));
+    out.colourSpecificFiles = {
+      comparing: [variants[0]?.color, variants[1]?.color],
+      sharedCount: [...a].filter((u) => b.has(u)).length,
+      differingCount: onlyInB.length,
+      examplesOnlyInSecond: onlyInB.slice(0, 5).map((u) => u.split("/").slice(-1)[0]),
+    };
   }
 
-  return NextResponse.json({ product: productId, pages }, { status: 200 });
+  // ---- 3. MOCKUP STYLES ----------------------------------------------
+  const styles = await get(withSellingRegion(`/catalog-products/${productId}/mockup-styles`));
+  out.mockupStyles = { status: styles.status, shape: shapeOf(styles.body) };
+
+  return NextResponse.json(out, { status: 200 });
 }
