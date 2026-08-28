@@ -12,8 +12,32 @@ import { creationSupplierConfigured, getCreationSuppliers } from "@/lib/creation
 import { connectExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { creatableById, blanksFor, portalItems } from "@/lib/creation/creatables";
 import type { Blank, BlankImage } from "@/lib/creation/garment";
+import type { ProductDesign } from "@/lib/creation/design";
 import type { Asset } from "@/lib/businessModel/entities";
 import { libraryFrom, type LibraryAsset } from "@/lib/creation/assetLibrary";
+import { savedDesignsFor, loadDesignDraft } from "./actions";
+import { SavedDesigns } from "./SavedDesigns";
+
+/**
+ * A saved design the owner came back to, as props for the editor.
+ *
+ * Returns nothing when the draft is gone or belongs to a different blank —
+ * reopening a design onto the wrong garment would silently move artwork
+ * between print areas that are not the same shape.
+ */
+async function reopened(
+  storeId: string,
+  draftId: string,
+): Promise<{ initialDraftId?: string; initialDesign?: ProductDesign; initialName?: string; initialPriceInCents?: number | null }> {
+  const draft = await loadDesignDraft(storeId, draftId);
+  if (!draft) return {};
+  return {
+    initialDraftId: draftId,
+    initialDesign: draft.design,
+    initialName: draft.name,
+    initialPriceInCents: draft.retailPriceInCents,
+  };
+}
 
 // THE CREATION STATION, FOR ONE BUSINESS.
 //
@@ -90,10 +114,10 @@ export default async function CreationStationPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ garment?: string; kind?: string; integration_error?: string }>;
+  searchParams: Promise<{ garment?: string; kind?: string; integration_error?: string; design?: string }>;
 }) {
   const { slug } = await params;
-  const { garment: garmentId, kind, integration_error: integrationError } = await searchParams;
+  const { garment: garmentId, kind, integration_error: integrationError, design: draftId } = await searchParams;
   const { store } = await requireBusinessPage(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const basePath = businessBasePath(slug);
 
@@ -164,13 +188,27 @@ export default async function CreationStationPage({
     // this screen has already exhausted once. The index is still read, because
     // WHAT CAN BE MADE is a fact about the supplier even when the picture is
     // ours.
+    // THE DOORWAY IS WHERE UNFINISHED WORK BELONGS. Somebody arriving at
+    // Creation Station having saved a hoodie last week should see it here,
+    // before they are asked what they want to make — otherwise the only way
+    // back to their own design is to build it again.
+    const saved = await savedDesignsFor(store.id);
+
     return (
-      <CreationPortal
-        items={portalItems(blanks)}
-        basePath={basePath}
-        hasSupplier={provider !== null}
-        catalogueUnreadable={catalogError !== null}
-      />
+      <>
+        <CreationPortal
+          items={portalItems(blanks)}
+          basePath={basePath}
+          hasSupplier={provider !== null}
+          catalogueUnreadable={catalogError !== null}
+        />
+        <SavedDesigns
+          designs={saved}
+          hrefFor={(d) =>
+            `${basePath}/studio/create?garment=${encodeURIComponent(d.externalProductId)}&design=${encodeURIComponent(d.draftId)}`
+          }
+        />
+      </>
     );
   }
 
@@ -285,6 +323,7 @@ export default async function CreationStationPage({
         blanks={await blankImagesFor(provider, store.id, garment.externalProductId)}
         supplierPrices={await supplierPricesFor(provider, store.id, garment.externalProductId)}
         creatableId={kind ?? ""}
+        {...(draftId ? await reopened(store.id, draftId) : {})}
       />
     );
   }

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
+import { randomAssetKey, extensionFor } from "@/lib/businessAssets/uploadKey";
 import { addAssetToLibrary, removeAssetFromLibrary } from "./actions";
 import type { LibraryAsset } from "@/lib/creation/assetLibrary";
 
@@ -48,9 +49,23 @@ export function AddAssetPanel({
       // Straight to Blob, then the record. The same two-step every other
       // upload in Genesis uses — a Server Action body would cap this at a size
       // real artwork exceeds.
-      const blob = await upload(file.name, file, {
+      //
+      // ============ A RANDOM KEY, NOT THE FILENAME (2026-08-28) =========
+      //
+      // This passed `file.name` and no contentType, and it was the ONLY upload
+      // in Genesis that did. The token is issued with addRandomSuffix: false,
+      // so the pathname is taken literally: the second upload of any given
+      // filename is refused, which is why "Try again" with the same file could
+      // never work. The namespace is also global, so one business's "logo.png"
+      // and another's were the same path.
+      //
+      // contentType is now sent explicitly rather than inferred from the
+      // pathname — the token's allowlist is checked against it, and a phone
+      // photo whose name carries no usable extension was being inferred wrong.
+      const blob = await upload(`assets/${randomAssetKey()}.${extensionFor(file)}`, file, {
         access: "public",
         handleUploadUrl: "/api/blob/business-asset-upload",
+        contentType: file.type,
       });
       const result = await addAssetToLibrary(slug, {
         url: blob.url,
@@ -58,8 +73,14 @@ export function AddAssetPanel({
         contentType: file.type,
       });
       setNote(result.ok ? null : (result.error ?? "That upload could not be saved."));
-    } catch {
-      setNote("That upload did not finish. Try again.");
+    } catch (error) {
+      // THE REAL REASON, NOT A SHRUG. This said "That upload did not finish.
+      // Try again." for every possible failure — a refused content type, a
+      // permission problem, a name collision — and sent Sean to report a
+      // generic message that named none of them. Sean, on a different error
+      // path and applying here exactly: "don't hide the error."
+      const said = error instanceof Error ? error.message : String(error);
+      setNote(said ? `That upload did not finish: ${said}` : "That upload did not finish. Try again.");
     } finally {
       setBusy(false);
       if (fileInput.current) fileInput.current.value = "";

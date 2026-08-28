@@ -1487,11 +1487,26 @@ async function main() {
 
   // THE COPY, BEFORE AND AFTER THE CLICK. A button that says "Add to my store"
   // is the claim; saying it only in the confirmation would be too late.
+  // ============ SAVE AND CREATE ARE TWO THINGS (2026-08-28) ===========
+  //
+  // Sean: "Save = save the current design as a design/draft... No product
+  // creation and no Growth Points spent. Create = finalize the design and
+  // actually create the product."
+  //
+  // Save is now the free half and says so. The assertions below are about the
+  // label being honest in BOTH directions: it must not promise a product, and
+  // it must not promise a Create button that does not exist yet either.
   assert("the button says what it does",
-    /Save this design/.test(toolbarSrc) && !/Add to my store/.test(toolbarSrc));
-  assert("and says so before it is pressed",
-    /Creating it with your print supplier is a separate step that is not built yet/.test(toolbarSrc),
+    /Save design/.test(toolbarSrc) && !/Add to my store/.test(toolbarSrc));
+  assert("and says the saving is free and recoverable",
+    /Free, and you can come back to it/.test(toolbarSrc),
     "the promise is made by the label, not by the toast");
+  assert("while still saying the product is not made",
+    // \s+ because JSX wraps the sentence across two source lines.
+    /Creating the product is a separate step that is not\s+built yet/.test(toolbarSrc));
+  assert("CONTROL: and no Create button is offered while it cannot finish",
+    !/Create product/.test(toolbarSrc),
+    "a paid button that cannot complete is the over-advertising this file exists to catch");
   // ============ AND IT NAMES NO SUPPLIER (2026-08-28) =================
   //
   // Sean: "keep the supplier abstraction intact... That way another supplier

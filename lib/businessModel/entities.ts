@@ -316,22 +316,94 @@ export type Asset = z.infer<typeof AssetSchema>;
 // single-asset shape would foreclose composition entirely and force it to
 // arrive as a second system. Follows the xxxIds convention documented at the
 // top of this file, so findRelated already understands it.
+// ONE LAYER OF ARTWORK, EXACTLY AS THE EDITOR HOLDS IT (2026-08-28).
+//
+// Fractions of the print area rather than pixels, because the print area is not
+// the same shape on every side — Printful's hoodie prints front at 2100x2100
+// and back at 1800x2400, measured on 2026-08-28. A design stored in pixels
+// would mean one side or the other.
+const DesignLayerSchema = z.object({
+  id: z.string(),
+  assetUrl: z.string(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  flipX: z.boolean().default(false),
+  flipY: z.boolean().default(false),
+  rotation: z.number().default(0),
+});
+
+// WHAT THE OWNER IS ACTUALLY MAKING, WHEN THEY ARE MAKING A PRODUCT.
+//
+// ============ WHY THIS IS A BLOCK ON Design AND NOT A NEW ENTITY =======
+//
+// Sean: "Save is a design state. Create is product creation." A saved design
+// has to survive the owner leaving, so it needs a record — and the record it
+// needs is the one that already exists. `design` is an entity type, createDesign
+// writes it, and lib/execution/executables/productFromDesign.ts already turns
+// one into a Product. Adding a second design table to hold a second kind of
+// design is exactly the "two creation systems" WORK_STUDIO.md exists to forbid.
+//
+// It is a separate BLOCK rather than new top-level fields because the two
+// shapes genuinely differ today. A composed design is artwork flattened onto
+// ONE Genesis surface. A product design is layers on SEVERAL supplier
+// placements of one catalogue variant. Pretending they are one shape by
+// flattening this into `arrangement` would lose the placements, which are the
+// whole thing being saved.
+//
+// The composition fields below therefore gained defaults: a product design has
+// no honest answer for `surface` or `arrangement`, and inventing one would put
+// a fake key into a closed registry. Exactly one of the two blocks is populated
+// on any given record, and scripts/verify-creation-draft.ts asserts it.
+export const PlacementDesignSchema = z.object({
+  /** Declared by the garment the supplier returned. Never assumed. */
+  provider: z.string(),
+  externalProductId: z.string(),
+  externalVariantId: z.string().nullable(),
+  /** Named, not just referenced, so a saved draft still reads as a thing. */
+  productName: z.string().nullable().default(null),
+  color: z.string().nullable().default(null),
+  size: z.string().nullable().default(null),
+  /** Layers per supplier placement — "front", "back", and whatever else. */
+  placements: z.record(z.string(), z.array(DesignLayerSchema)).default({}),
+  /** The supplier's own areas, frozen, so a reopened draft is not re-derived. */
+  printAreas: z
+    .array(z.object({ placement: z.string(), width: z.number(), height: z.number(), unit: z.string() }))
+    .default([]),
+  retailPriceInCents: z.number().int().nullable().default(null),
+  /**
+   * WHAT BECAME OF IT. Null until the owner presses Create.
+   *
+   * Kept on the draft rather than inferred from a product pointing back, so
+   * "have I already made this?" is one read, and a draft whose product was
+   * deleted still says what happened rather than looking unmade.
+   */
+  productId: z.string().nullable().default(null),
+  /** True only when a supplier has actually accepted it. Never optimistic. */
+  supplierProductCreated: z.boolean().default(false),
+  updatedAt: z.string().nullable().default(null),
+});
+export type PlacementDesign = z.infer<typeof PlacementDesignSchema>;
+
 export const DesignSchema = z.object({
   // The approved assets this was composed from, in arrangement order.
-  assetIds: z.array(z.string()),
+  assetIds: z.array(z.string()).default([]),
   // A key from lib/design/surfaces.ts — never a free string.
-  surface: z.string(),
+  surface: z.string().default(""),
   // "centered" | "grid" | ... — open vocabulary, same discipline as every
   // other categorical field here.
-  arrangement: z.string(),
-  arrangementScale: z.number().nullable(),
+  arrangement: z.string().default(""),
+  arrangementScale: z.number().nullable().default(null),
   // What the composition actually produced. Both real files, both uploaded.
-  printFileUrl: z.string().nullable(),
-  mockupUrl: z.string().nullable(),
+  printFileUrl: z.string().nullable().default(null),
+  mockupUrl: z.string().nullable().default(null),
   // Provenance: what it was made from, so a Product can answer "where did
   // this artwork come from" without guessing.
-  sourceAssetUrls: z.array(z.string()),
+  sourceAssetUrls: z.array(z.string()).default([]),
   createdAt: z.string().nullable().default(null),
+  /** The product-design half. Null on a composed design. See above. */
+  placement: PlacementDesignSchema.nullable().default(null),
 });
 export type Design = z.infer<typeof DesignSchema>;
 

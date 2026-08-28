@@ -5,7 +5,7 @@ import type { Garment, BlankImage } from "@/lib/creation/garment";
 import type { LibraryAsset } from "@/lib/creation/assetLibrary";
 import type { ProductDesign } from "@/lib/creation/design";
 import { CreationStation } from "./CreationStation";
-import { addDesignToStore } from "./actions";
+import { saveDesignDraft } from "./actions";
 
 // THE THIN LAYER BETWEEN THE WORKSPACE AND THE SERVER.
 //
@@ -25,6 +25,10 @@ export function CreationStationClient({
   blanks,
   supplierPrices,
   creatableId,
+  initialDraftId,
+  initialDesign,
+  initialName,
+  initialPriceInCents,
 }: {
   slug: string;
   garment: Garment;
@@ -34,8 +38,13 @@ export function CreationStationClient({
   /** What the supplier charges, in cents, keyed by external variant id. */
   supplierPrices: Record<string, number>;
   creatableId: string;
+  /** Reopening a saved design, when the owner came back to one. */
+  initialDraftId?: string | null;
+  initialDesign?: ProductDesign;
+  initialName?: string;
+  initialPriceInCents?: number | null;
 }) {
-  const [name, setName] = useState(garment.name);
+  const [name, setName] = useState(initialName || garment.name);
   // ============ THE $75 (2026-08-27) ==================================
   //
   // This read the blank's cost off the variant, and Printful's catalog-variants
@@ -50,17 +59,30 @@ export function CreationStationClient({
   const supplierCost =
     garment.variants.map((v) => supplierPrices[v.externalVariantId]).find((c) => c) ?? null;
   const [price, setPrice] = useState(
-    supplierCost === null ? "" : String(Math.max(Math.round((supplierCost * 3) / 100), 1)),
+    // A REOPENED DRAFT KEEPS THE OWNER'S PRICE. Recomputing the suggestion
+    // would quietly overwrite a number they had already decided on.
+    initialPriceInCents != null
+      ? String(Math.round(initialPriceInCents / 100))
+      : supplierCost === null
+        ? ""
+        : String(Math.max(Math.round((supplierCost * 3) / 100), 1)),
   );
 
-  async function handleAdd(design: ProductDesign): Promise<string | null> {
+  // THE DRAFT'S OWN ID, so the second save updates the first rather than
+  // leaving the owner with ten copies of one design. Null until the first save
+  // returns one; carried in state because a draft belongs to this editing
+  // session until the owner leaves.
+  const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
+
+  async function handleSave(design: ProductDesign): Promise<string | null> {
+    // A PRICE IS NOT REQUIRED TO SAVE. It is required to sell, and Create is
+    // where that is checked — refusing to save an unpriced design would be
+    // refusing to keep exactly the work somebody is not finished with.
     const dollars = Number(price);
-    if (!Number.isFinite(dollars) || dollars <= 0) return "Give it a price first.";
-    const result = await addDesignToStore(slug, design, {
-      name,
-      retailPriceInCents: Math.round(dollars * 100),
-    });
-    return result.ok ? null : (result.error ?? "Couldn't add that to your store.");
+    const priced = Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : null;
+    const result = await saveDesignDraft(slug, design, { name, retailPriceInCents: priced, draftId });
+    if (result.ok && result.designId) setDraftId(result.designId);
+    return result.ok ? null : (result.error ?? "Couldn't save that design.");
   }
 
   return (
@@ -93,7 +115,8 @@ export function CreationStationClient({
         blankProblem={blanks.problem}
         supplierPrices={supplierPrices}
         creatableId={creatableId}
-        onAddToStore={handleAdd}
+        onSave={handleSave}
+        initialDesign={initialDesign}
       />
     </div>
   );

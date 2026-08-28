@@ -11,6 +11,10 @@ import { requireStorePermission } from "@/lib/permissions";
 import { usedPlacements, type ProductDesign } from "@/lib/creation/design";
 import { saveDesignAsProduct } from "@/lib/creation/saveDesign";
 import { creationProviderFor } from "@/lib/creation/provider";
+import { persistSyncedRecords } from "@/lib/businessModel/sync";
+import { DesignSchema } from "@/lib/businessModel/entities";
+import { toDraft, toDesign } from "@/lib/creation/designDraft";
+import { randomUUID } from "crypto";
 
 // TURNING A DESIGN INTO SOMETHING THE STORE SELLS.
 //
@@ -96,6 +100,162 @@ export async function addDesignToStore(
   revalidatePath(`/b/${slug}/products`);
   revalidatePath(`/b/${slug}/studio`);
   return { ok: true };
+}
+
+// ============ SAVE IS A DESIGN STATE, NOT A PRODUCT (2026-08-28) ========
+//
+// Sean, after testing the live deployment: "Save = save the current design as a
+// design/draft so the user can leave, come back later, and continue editing it.
+// No product creation and no Growth Points spent... The user should be able to
+// save something 10 times while working on it without paying Growth Points
+// every time."
+//
+// What Save did before was call addDesignToStore, which wrote a PRODUCT row
+// carrying a designSpec blob. The trace found the reason it felt like nothing
+// happened: `designSpec` HAS NO READERS ANYWHERE. Nothing listed it, nothing
+// loaded it, no route reopened it. The design went into a field that is only
+// ever written.
+//
+// A save now writes a `design` BusinessRecord — the entity that already exists,
+// that createDesign writes, and that productFromDesign consumes — so there is
+// one design system with two ways into it rather than two.
+
+/** The source name this Creation Station's drafts are written under. */
+const DRAFT_SOURCE = "genesis_creation";
+
+export interface SaveDraftResult {
+  ok: boolean;
+  error?: string;
+  /** The draft's id, so the next save updates rather than duplicates. */
+  designId?: string;
+}
+
+/**
+ * Save the design the owner is working on. Free, repeatable, recoverable.
+ *
+ * UPSERT BY draftId, which is the whole reason it is a parameter. Ten saves of
+ * one design must leave one draft, not ten — persistSyncedRecords keys on
+ * (storeId, entityType, sourceProvider, externalId), so passing the id back in
+ * updates the same record. The first save has no id and gets one.
+ */
+export async function saveDesignDraft(
+  slug: string,
+  design: ProductDesign,
+  meta: { name: string; retailPriceInCents: number | null; draftId?: string | null },
+): Promise<SaveDraftResult> {
+  const { store, userId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+
+  const provider = await creationProviderFor(store.id);
+  if (!provider) return { ok: false, error: "Connect a print supplier before saving a design." };
+
+  // THE GARMENT IS RE-READ, for the same reason addDesignToStore re-reads it:
+  // the print areas frozen onto a draft have to be the supplier's own.
+  const garment = await provider.getGarment({ storeId: store.id, externalProductId: design.externalProductId });
+  if (!garment) return { ok: false, error: "That blank is no longer available from your supplier." };
+
+  const draftId = meta.draftId || randomUUID();
+
+  // Carried forward so re-saving a draft that has already been created does not
+  // make it look uncreated — which would offer a second paid Create for a
+  // product that already exists.
+  const existing = meta.draftId
+    ? await prisma.businessRecord.findFirst({
+        where: {
+          storeId: store.id,
+          entityType: "design",
+          sourceProvider: DRAFT_SOURCE,
+          externalId: draftId,
+        },
+        select: { data: true },
+      })
+    : null;
+  const previous = existing ? DesignSchema.safeParse(existing.data) : null;
+
+  const data = toDraft(design, {
+    garment,
+    name: meta.name,
+    retailPriceInCents: meta.retailPriceInCents,
+  }, previous?.success ? previous.data.placement : null);
+
+  const result = await persistSyncedRecords(store.id, DRAFT_SOURCE, [
+    { entityType: "design", externalId: draftId, data },
+  ], {
+    // THE OWNER MADE THIS. They positioned every layer themselves, so the
+    // provenance is theirs rather than GENERATED — which is what createDesign
+    // records for a composition J4 produced. The distinction is the same one
+    // J4_BUSINESS_UNDERSTANDING_MODEL.md draws everywhere else.
+    provenance: "OWNER",
+    provenanceDetail: "creation station",
+    statedById: userId,
+    modelExtracted: false,
+  });
+  if (result.errors.length > 0) {
+    return { ok: false, error: "That design could not be saved." };
+  }
+
+  revalidatePath(`/b/${slug}/studio`);
+  return { ok: true, designId: draftId };
+}
+
+/** Every design the owner has saved and not yet turned into a product. */
+export async function savedDesignsFor(storeId: string): Promise<
+  { draftId: string; recordId: string; externalProductId: string; name: string; summary: string; updatedAt: string | null; created: boolean }[]
+> {
+  const rows = await prisma.businessRecord.findMany({
+    where: { storeId, entityType: "design", sourceProvider: DRAFT_SOURCE },
+    select: { id: true, externalId: true, data: true },
+    orderBy: { syncedAt: "desc" },
+    take: 40,
+  });
+
+  const drafts: { draftId: string; recordId: string; externalProductId: string; name: string; summary: string; updatedAt: string | null; created: boolean }[] = [];
+  for (const row of rows) {
+    const parsed = DesignSchema.safeParse(row.data);
+    if (!parsed.success || !parsed.data.placement) continue;
+    const p = parsed.data.placement;
+    drafts.push({
+      draftId: row.externalId ?? row.id,
+      recordId: row.id,
+      // WHICH BLANK IT WAS DESIGNED ON. Carried so reopening can land in the
+      // editor: the create page needs ?garment= to open one at all, and a link
+      // with only ?design= would drop the owner back at the doorway they were
+      // trying to leave.
+      externalProductId: p.externalProductId,
+      name: p.productName ?? "Untitled design",
+      summary: draftSummaryOf(p.color, p.placements),
+      updatedAt: p.updatedAt,
+      created: p.productId !== null,
+    });
+  }
+  return drafts;
+}
+
+/** A saved design, ready to go back into the editor. */
+export async function loadDesignDraft(
+  storeId: string,
+  draftId: string,
+): Promise<{ design: ProductDesign; name: string; retailPriceInCents: number | null } | null> {
+  const row = await prisma.businessRecord.findFirst({
+    where: { storeId, entityType: "design", sourceProvider: DRAFT_SOURCE, externalId: draftId },
+    select: { data: true },
+  });
+  if (!row) return null;
+  const parsed = DesignSchema.safeParse(row.data);
+  if (!parsed.success) return null;
+  const design = toDesign(parsed.data);
+  if (!design) return null;
+  return {
+    design,
+    name: parsed.data.placement?.productName ?? "",
+    retailPriceInCents: parsed.data.placement?.retailPriceInCents ?? null,
+  };
+}
+
+/** The one-line description shown in the saved list. Kept beside its reader. */
+function draftSummaryOf(color: string | null, placements: Record<string, unknown[]>): string {
+  const sides = Object.entries(placements).filter(([, l]) => l.length > 0).map(([k]) => k);
+  const where = sides.length === 0 ? "nothing on it yet" : sides.join(" and ");
+  return `${color ? `${color}, ` : ""}${where}`;
 }
 
 /** What the owner is about to add, for the confirmation line. */

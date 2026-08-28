@@ -523,6 +523,11 @@ export async function createDesign(params: {
   }
 
   const data: Design = {
+    // A COMPOSED design, so the product-design block is empty and says so
+    // (2026-08-28). Exactly one of the two is populated on any record; writing
+    // it explicitly rather than letting a default fill it in keeps that a
+    // statement this file makes rather than an absence somebody has to read.
+    placement: null,
     assetIds: ordered.map((r) => r.id),
     surface: surface.key,
     arrangement: arrangement.kind,

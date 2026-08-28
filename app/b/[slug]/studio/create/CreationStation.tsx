@@ -67,7 +67,8 @@ export function CreationStation({
   blankProblem,
   supplierPrices,
   creatableId,
-  onAddToStore,
+  onSave,
+  initialDesign,
 }: {
   /** The business these assets and actions belong to. */
   slug: string;
@@ -82,7 +83,10 @@ export function CreationStation({
   /** Only used for the drawn fallback when the supplier has no blank. */
   creatableId: string;
   /** Returns null on success, or a message the owner can act on. */
-  onAddToStore: (design: ProductDesign) => Promise<string | null>;
+  /** Save the working design. Free, repeatable, recoverable. */
+  onSave: (design: ProductDesign) => Promise<string | null>;
+  /** A saved design the owner came back to, or undefined for a new one. */
+  initialDesign?: ProductDesign;
 }) {
   // WHICH SIDE IS BEING DESIGNED, declared before the colours because it is
   // now an input to them: a blank can be photographed in ten colours from the
@@ -121,7 +125,11 @@ export function CreationStation({
   const [instruction, setInstruction] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const [design, setDesign] = useState<ProductDesign>(() => emptyDesign(garment.externalProductId));
+  // A REOPENED DRAFT STARTS WHERE IT WAS LEFT. The lazy initialiser runs once,
+  // so this is the design the owner saved, not a blank one they have to rebuild.
+  const [design, setDesign] = useState<ProductDesign>(
+    () => initialDesign ?? emptyDesign(garment.externalProductId),
+  );
 
   // A COUNTER, NOT A TIMESTAMP. Date.now() is impure, and React's own rule
   // against calling it during render is right for a reason that applies here
@@ -204,15 +212,20 @@ export function CreationStation({
     setInstruction("");
   }
 
-  async function addToStore() {
+  // ============ SAVE IS FREE AND REPEATABLE (2026-08-28) ==============
+  //
+  // Sean: "The user should be able to save something 10 times while working on
+  // it without paying Growth Points every time. They pay when they actually
+  // choose to create the product."
+  //
+  // So this saves a DESIGN and charges nothing. It used to write an inactive
+  // Product whose design nothing could reopen, which is why saving felt like it
+  // did not happen.
+  async function saveDesign() {
     setSaving(true);
     try {
-      const error = await onAddToStore(current);
-      setNote(
-        error ??
-          "Saved as a design. It has not been created with your print supplier yet, so it is not on sale — " +
-            "that step is not built.",
-      );
+      const error = await onSave(current);
+      setNote(error ?? "Saved. You can leave and pick this up again from your saved designs.");
     } finally {
       setSaving(false);
     }
@@ -658,19 +671,20 @@ export function CreationStation({
                 action cannot disagree. */}
             <button
               type="button"
-              disabled={problem !== null || saving}
-              onClick={addToStore}
+              disabled={saving}
+              onClick={saveDesign}
               className="w-full rounded-full bg-[var(--brand-accent,#6366f1)] px-5 py-2.5 text-[15px] font-medium text-white transition disabled:opacity-40"
             >
-              {saving ? "Saving…" : "Save this design"}
+              {saving ? "Saving…" : "Save design"}
             </button>
-            {/* WHAT THIS BUTTON DOES, BEFORE IT IS PRESSED. "Add to my store"
-                promised a sellable product; the design never reaches Printful,
-                so nothing could be ordered from it. Saying so here is the
-                difference between a saved design and a product that exists. */}
+            {/* WHAT THIS BUTTON DOES, BEFORE IT IS PRESSED.
+                NOT DISABLED BY designProblem ANY MORE, and that is the point of
+                the split: a half-finished design is exactly the thing somebody
+                needs to save. The completeness rules belong to Create, which
+                makes the product, not to Save, which keeps the work. */}
             <p className="mt-2 text-center text-[12px] text-zinc-500">
-              Saves the design. Creating it with your print supplier is a separate step that is not built yet,
-              so it will not go on sale.
+              Free, and you can come back to it. Creating the product is a separate step that is not
+              built yet — nothing goes on sale until then.
             </p>
             {problem && <p className="mt-2 text-center text-[12px] text-zinc-500">{problem}</p>}
             {!problem && (
