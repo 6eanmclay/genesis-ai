@@ -364,7 +364,26 @@ export const PlacementDesignSchema = z.object({
   /** Named, not just referenced, so a saved draft still reads as a thing. */
   productName: z.string().nullable().default(null),
   color: z.string().nullable().default(null),
+  /**
+   * The supplier's own hex for that colour.
+   *
+   * Frozen alongside the name because the MOCKUP is composed from it — the
+   * blank is a shading layer that gets tinted, so without the hex the product
+   * image cannot be rebuilt as the owner saw it.
+   */
+  colorHex: z.string().nullable().default(null),
   size: z.string().nullable().default(null),
+  /**
+   * The blank image the owner was actually looking at, per placement.
+   *
+   * WHAT THEY PREVIEWED, NOT WHAT WE COULD FIND LATER. Sean: "verify that the
+   * image attached to the Store Product is the actual composition the user
+   * previewed, not a generic supplier image or a newly generated
+   * approximation." Re-resolving a blank at creation time could quietly pick a
+   * different view or a different colourway; recording it makes the mockup a
+   * rebuild of the same picture rather than a fresh interpretation.
+   */
+  blanks: z.record(z.string(), z.string()).default({}),
   /** Layers per supplier placement — "front", "back", and whatever else. */
   placements: z.record(z.string(), z.array(DesignLayerSchema)).default({}),
   /** The supplier's own areas, frozen, so a reopened draft is not re-derived. */

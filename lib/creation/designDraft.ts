@@ -36,6 +36,14 @@ export interface DraftContext {
   name: string;
   /** What they intend to sell it for. Null while they have not said. */
   retailPriceInCents: number | null;
+  /**
+   * The blank image behind each placement, as the owner was seeing it.
+   *
+   * Resolved server-side from the supplier's own images, never sent by the
+   * browser — a client that supplied its own blank would be choosing what the
+   * product photograph shows.
+   */
+  blanks: Record<string, string>;
 }
 
 /**
@@ -67,7 +75,9 @@ export function toDraft(design: ProductDesign, context: DraftContext, previous?:
       externalVariantId: design.externalVariantId,
       productName: name || garment.name,
       color: variant?.color ?? null,
+      colorHex: variant?.colorHex ?? null,
       size: variant?.size ?? null,
+      blanks: context.blanks,
       placements: design.placements,
       printAreas: garment.printAreas,
       retailPriceInCents,

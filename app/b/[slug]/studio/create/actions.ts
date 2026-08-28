@@ -14,7 +14,10 @@ import { creationProviderFor } from "@/lib/creation/provider";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { toDraft, toDesign } from "@/lib/creation/designDraft";
+import { blankFor } from "@/lib/creation/garment";
 import { randomUUID } from "crypto";
+import { execute } from "@/lib/execution/engine";
+import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
 
 // TURNING A DESIGN INTO SOMETHING THE STORE SELLS.
 //
@@ -171,10 +174,26 @@ export async function saveDesignDraft(
     : null;
   const previous = existing ? DesignSchema.safeParse(existing.data) : null;
 
+  // WHICH BLANK EACH SIDE WAS SHOWING, resolved from the supplier's own images
+  // through the same pure function the editor draws with — so the picture the
+  // product ends up with is the picture that was on screen.
+  const variant = garment.variants.find((v) => v.externalVariantId === design.externalVariantId) ?? null;
+  const blankImages = await provider.getBlankImages({
+    storeId: store.id,
+    externalProductId: design.externalProductId,
+  });
+  const blanks: Record<string, string> = {};
+  for (const [placement, layers] of Object.entries(design.placements)) {
+    if (layers.length === 0) continue;
+    const blank = blankFor(blankImages, placement, variant?.colorHex ?? null, variant?.color ?? null);
+    if (blank.url) blanks[placement] = blank.url;
+  }
+
   const data = toDraft(design, {
     garment,
     name: meta.name,
     retailPriceInCents: meta.retailPriceInCents,
+    blanks,
   }, previous?.success ? previous.data.placement : null);
 
   const result = await persistSyncedRecords(store.id, DRAFT_SOURCE, [
@@ -234,7 +253,7 @@ export async function savedDesignsFor(storeId: string): Promise<
 export async function loadDesignDraft(
   storeId: string,
   draftId: string,
-): Promise<{ design: ProductDesign; name: string; retailPriceInCents: number | null } | null> {
+): Promise<{ design: ProductDesign; name: string; retailPriceInCents: number | null; created: boolean } | null> {
   const row = await prisma.businessRecord.findFirst({
     where: { storeId, entityType: "design", sourceProvider: DRAFT_SOURCE, externalId: draftId },
     select: { data: true },
@@ -248,6 +267,8 @@ export async function loadDesignDraft(
     design,
     name: parsed.data.placement?.productName ?? "",
     retailPriceInCents: parsed.data.placement?.retailPriceInCents ?? null,
+    // Reopening something already made must not offer to make it again.
+    created: parsed.data.placement?.productId != null,
   };
 }
 
@@ -256,6 +277,96 @@ function draftSummaryOf(color: string | null, placements: Record<string, unknown
   const sides = Object.entries(placements).filter(([, l]) => l.length > 0).map(([k]) => k);
   const where = sides.length === 0 ? "nothing on it yet" : sides.join(" and ");
   return `${color ? `${color}, ` : ""}${where}`;
+}
+
+// ============ CREATE IS THE COMMITMENT (2026-08-28) =====================
+//
+// Sean: "Create = 2 Growth Points. This is the actual commitment. It must take
+// the saved/current design, create the product with the connected print
+// supplier using the exact variant/color/size and all selected placements, and
+// then make that product available in the owner's Genesis storefront."
+//
+// Everything that makes that true lives in the executable, not here: the
+// supplier call, the read-back that proves the placements exist, the Product
+// row, and the link back to the design. This function's whole job is to save
+// the current state first and then hand the design's id to the engine.
+//
+// THROUGH execute(), which is what makes the 2 points real. The engine checks
+// the balance, deducts on a non-FAILED outcome, and writes the ExecutionLog —
+// so a supplier refusal costs nothing, because the deduction never happens on a
+// failure. Charging here by hand would have to reimplement all three.
+
+export interface CreateProductResult {
+  ok: boolean;
+  error?: string;
+  productId?: string;
+  /** The placements the supplier confirmed it holds. */
+  placements?: string[];
+  message?: string;
+}
+
+/**
+ * Turn the design on screen into a real product.
+ *
+ * SAVES FIRST, ALWAYS. The owner may have moved something since their last
+ * save, and creating a product from a stale draft would put a different design
+ * in the shop than the one they were looking at.
+ */
+export async function createProductFromDesign(
+  slug: string,
+  design: ProductDesign,
+  meta: { name: string; retailPriceInCents: number; draftId?: string | null },
+): Promise<CreateProductResult> {
+  const { store } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+
+  if (!Number.isFinite(meta.retailPriceInCents) || meta.retailPriceInCents <= 0) {
+    return { ok: false, error: "Give it a price before creating the product." };
+  }
+
+  const saved = await saveDesignDraft(slug, design, {
+    name: meta.name,
+    retailPriceInCents: meta.retailPriceInCents,
+    draftId: meta.draftId ?? null,
+  });
+  if (!saved.ok || !saved.designId) {
+    return { ok: false, error: saved.error ?? "That design could not be saved." };
+  }
+
+  // The record id, which is what the executable takes — the draft id is the
+  // externalId the owner's URL carries, and the two are deliberately different
+  // things.
+  const record = await prisma.businessRecord.findFirst({
+    where: {
+      storeId: store.id,
+      entityType: "design",
+      sourceProvider: DRAFT_SOURCE,
+      externalId: saved.designId,
+    },
+    select: { id: true },
+  });
+  if (!record) return { ok: false, error: "That design could not be found after saving." };
+
+  const result = await execute(
+    createProductFromDesignExecutable,
+    { designId: record.id, name: meta.name, priceInCents: meta.retailPriceInCents },
+    { storeId: store.id, actionType: "create_product_from_design" },
+  );
+
+  if (result.status === "FAILED") {
+    // THE SUPPLIER'S OWN WORDS. A refusal here is the most important message in
+    // the whole flow — it is the difference between the owner knowing their
+    // back print was rejected and finding out from a customer.
+    return { ok: false, error: result.message || "That product could not be created." };
+  }
+
+  revalidatePath(`/b/${slug}/products`);
+  revalidatePath(`/b/${slug}/studio`);
+  return {
+    ok: true,
+    productId: result.metadata?.productId,
+    placements: result.metadata?.placements,
+    message: result.message,
+  };
 }
 
 /** What the owner is about to add, for the confirmation line. */

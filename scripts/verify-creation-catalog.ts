@@ -639,8 +639,15 @@ async function main() {
     !/\?\?\s*2500/.test(clientSrc),
     "2500 tripled is the $75 that appeared on every product");
   assert("and an unpriced blank starts with an empty price field",
-    /supplierCost === null \? ""/.test(clientSrc),
+    /supplierCost === null\s*\?\s*""/.test(clientSrc),
     "a number nobody can source is worse than a box that must be filled in");
+  // A REOPENED DRAFT KEEPS THE OWNER'S OWN PRICE (2026-08-28). Recomputing the
+  // suggestion would quietly overwrite a number they had already decided on,
+  // which is the same class of mistake as the $75 above: a figure appearing in
+  // the box that nobody chose.
+  assert("and a reopened draft keeps the price the owner set",
+    /initialPriceInCents != null/.test(clientSrc),
+    "coming back to a design must not re-suggest over a decision already made");
 
   // ======================================================================
   console.log("\n=== 9. Catalogue data stays in the data ===\n");
@@ -1501,12 +1508,27 @@ async function main() {
   assert("and says the saving is free and recoverable",
     /Free, and you can come back to it/.test(toolbarSrc),
     "the promise is made by the label, not by the toast");
-  assert("while still saying the product is not made",
-    // \s+ because JSX wraps the sentence across two source lines.
-    /Creating the product is a separate step that is not\s+built yet/.test(toolbarSrc));
-  assert("CONTROL: and no Create button is offered while it cannot finish",
-    !/Create product/.test(toolbarSrc),
-    "a paid button that cannot complete is the over-advertising this file exists to catch");
+  // ============ AND CREATE IS NOW REAL (2026-08-28) ===================
+  //
+  // The control here used to be that NO Create button existed, because one that
+  // could not finish would be exactly the over-advertising this file exists to
+  // catch. It exists now, so what has to be asserted is different: that it says
+  // what it costs, and that it is gated on the design being makeable when Save
+  // deliberately is not.
+  assert("the paid half says what it costs, before it is pressed",
+    /Create product · 2 points/.test(toolbarSrc),
+    "a button that charges without saying so is the same dishonesty in the other direction");
+  assert("and says the charge only lands if it works",
+    /only if it works/.test(toolbarSrc));
+  assert("CONTROL: Create is gated on the design being makeable",
+    /disabled=\{problem !== null \|\| creating/.test(toolbarSrc),
+    "a half-finished design must be savable and must not reach a supplier");
+  assert("CONTROL: while Save is NOT gated on it",
+    /disabled=\{saving\}/.test(toolbarSrc),
+    "refusing to save an unfinished design refuses exactly the work worth keeping");
+  assert("a design already made offers no second charge",
+    /alreadyCreated === true/.test(toolbarSrc) && /Already a product/.test(toolbarSrc),
+    "reopening a created design and pressing Create again is the one mistake the list invites");
   // ============ AND IT NAMES NO SUPPLIER (2026-08-28) =================
   //
   // Sean: "keep the supplier abstraction intact... That way another supplier

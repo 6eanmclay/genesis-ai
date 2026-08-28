@@ -5,7 +5,7 @@ import type { Garment, BlankImage } from "@/lib/creation/garment";
 import type { LibraryAsset } from "@/lib/creation/assetLibrary";
 import type { ProductDesign } from "@/lib/creation/design";
 import { CreationStation } from "./CreationStation";
-import { saveDesignDraft } from "./actions";
+import { saveDesignDraft, createProductFromDesign } from "./actions";
 
 // THE THIN LAYER BETWEEN THE WORKSPACE AND THE SERVER.
 //
@@ -29,6 +29,7 @@ export function CreationStationClient({
   initialDesign,
   initialName,
   initialPriceInCents,
+  alreadyCreated,
 }: {
   slug: string;
   garment: Garment;
@@ -43,6 +44,8 @@ export function CreationStationClient({
   initialDesign?: ProductDesign;
   initialName?: string;
   initialPriceInCents?: number | null;
+  /** The reopened draft has already been made into a product. */
+  alreadyCreated?: boolean;
 }) {
   const [name, setName] = useState(initialName || garment.name);
   // ============ THE $75 (2026-08-27) ==================================
@@ -73,6 +76,22 @@ export function CreationStationClient({
   // returns one; carried in state because a draft belongs to this editing
   // session until the owner leaves.
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
+  const [created, setCreated] = useState(alreadyCreated === true);
+
+  async function handleCreate(design: ProductDesign): Promise<string | null> {
+    const dollars = Number(price);
+    // A PRICE IS REQUIRED TO SELL, and this is where that is true — Save
+    // deliberately does not ask, because an unpriced design is still work worth
+    // keeping.
+    if (!Number.isFinite(dollars) || dollars <= 0) return "Give it a price first.";
+    const result = await createProductFromDesign(slug, design, {
+      name,
+      retailPriceInCents: Math.round(dollars * 100),
+      draftId,
+    });
+    if (result.ok && result.productId) setCreated(true);
+    return result.ok ? null : (result.error ?? "That product could not be created.");
+  }
 
   async function handleSave(design: ProductDesign): Promise<string | null> {
     // A PRICE IS NOT REQUIRED TO SAVE. It is required to sell, and Create is
@@ -116,6 +135,8 @@ export function CreationStationClient({
         supplierPrices={supplierPrices}
         creatableId={creatableId}
         onSave={handleSave}
+        onCreate={handleCreate}
+        alreadyCreated={created}
         initialDesign={initialDesign}
       />
     </div>

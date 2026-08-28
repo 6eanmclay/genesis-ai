@@ -72,6 +72,9 @@ const design = (over: Partial<ProductDesign> = {}): ProductDesign => ({
   ...over,
 });
 
+/** The blanks the owner was looking at, as the save resolves them. */
+const BLANKS = { front: "https://cdn.test/front.png", back: "https://cdn.test/back.png" };
+
 const DRAFT_SOURCE = "genesis_creation";
 
 async function main() {
@@ -94,7 +97,7 @@ async function main() {
   // ======================================================================
 
   const original = design();
-  const draft = toDraft(original, { garment: garment(), name: "My Hoodie", retailPriceInCents: 5500 });
+  const draft = toDraft(original, { garment: garment(), name: "My Hoodie", retailPriceInCents: 5500, blanks: BLANKS });
 
   assert("the draft parses as a design record", DesignSchema.safeParse(draft).success);
   assert("and is a product design rather than a composition", isPlacementDraft(draft));
@@ -132,7 +135,7 @@ async function main() {
   const draftId = "draft-fixed-id";
   for (let i = 0; i < 10; i++) {
     const moved = design({ placements: { front: [layer({ x: 0.1 * i })] } });
-    const result = await save(toDraft(moved, { garment: garment(), name: "My Hoodie", retailPriceInCents: 5500 }), draftId);
+    const result = await save(toDraft(moved, { garment: garment(), name: "My Hoodie", retailPriceInCents: 5500, blanks: BLANKS }), draftId);
     if (result.errors.length > 0) assert(`save ${i} wrote cleanly`, false, JSON.stringify(result.errors));
   }
 
@@ -163,14 +166,14 @@ async function main() {
   assert("a created draft reports itself created", isCreated(created));
 
   const resaved = toDraft(design({ placements: { front: [layer({ x: 0.42 })] } }),
-    { garment: garment(), name: "My Hoodie", retailPriceInCents: 5500 },
+    { garment: garment(), name: "My Hoodie", retailPriceInCents: 5500, blanks: BLANKS },
     created.placement);
 
   eq("editing and re-saving keeps the product it already made", resaved.placement?.productId, "prod_123");
   eq("and keeps knowing the supplier has it", resaved.placement?.supplierProductCreated, true);
   assert("CONTROL: while still saving the edit", resaved.placement?.placements.front?.[0]?.x === 0.42);
   assert("CONTROL: a fresh draft has made nothing",
-    !isCreated(toDraft(design(), { garment: garment(), name: "n", retailPriceInCents: null })));
+    !isCreated(toDraft(design(), { garment: garment(), name: "n", retailPriceInCents: null, blanks: BLANKS })));
 
   // ======================================================================
   console.log("\n=== 5. CONTROL: a composed design is not a product design ===\n");

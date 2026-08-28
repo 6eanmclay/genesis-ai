@@ -111,6 +111,54 @@ export interface FulfillmentConnector {
     retailPriceInCents: number;
   }): Promise<{ externalProductId: string }>;
 
+  /**
+   * Create a product on an EXACT variant, with artwork on several placements.
+   *
+   * ============ WHY THIS IS NOT createProduct (2026-08-28) =============
+   *
+   * createProduct above takes a `candidate` — something discovery found — and a
+   * single `imageUrl` with nothing saying where it prints. That is right for
+   * the path it serves, where J4 chose the blank. It is wrong for the Creation
+   * Station, where the owner chose the colour and the size themselves and put
+   * artwork on named sides.
+   *
+   * Sean: "Create must take the saved/current design, create the product with
+   * the connected print supplier using the exact variant/color/size and all
+   * selected placements... If the owner puts artwork on front and back, Create
+   * needs to create the actual two-sided product — not silently reduce it to
+   * one placement."
+   *
+   * So the variant is passed rather than searched for, and files are a list
+   * rather than one URL.
+   *
+   * ============ VERIFICATION IS PART OF THE RETURN ====================
+   *
+   * `placements` is what the SUPPLIER says it recorded, read back after the
+   * write — not an echo of what was sent. A creation call that does not throw
+   * is not evidence that a back print exists, and the whole reason this
+   * interface exists is that the back must not be silently dropped. The caller
+   * compares the two and treats a mismatch as a failure.
+   *
+   * OPTIONAL, because a partner may genuinely not support multi-placement
+   * creation. Absent means the Creation Station cannot offer Create through
+   * that partner, which is a true statement to make rather than a reduced
+   * product to create.
+   */
+  createProductWithPlacements?(params: {
+    storeId: string | null;
+    storeDraftId: string | null;
+    name: string;
+    retailPriceInCents: number;
+    /** The supplier's own variant id — the exact colour and size chosen. */
+    externalVariantId: string;
+    /** One print-ready file per placement, named as the supplier names them. */
+    files: { placement: string; url: string }[];
+  }): Promise<{
+    externalProductId: string;
+    /** Placements the supplier confirms it holds, read back after creating. */
+    placements: string[];
+  }>;
+
   // Deliberately a DRAFT order — never confirmed/published from this
   // interface. See lib/fulfillment/printful.ts for the specific mechanism
   // that keeps this safe (Printful's confirm: false / no separate confirm

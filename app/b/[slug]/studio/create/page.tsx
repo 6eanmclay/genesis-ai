@@ -28,7 +28,7 @@ import { SavedDesigns } from "./SavedDesigns";
 async function reopened(
   storeId: string,
   draftId: string,
-): Promise<{ initialDraftId?: string; initialDesign?: ProductDesign; initialName?: string; initialPriceInCents?: number | null }> {
+): Promise<{ initialDraftId?: string; initialDesign?: ProductDesign; initialName?: string; initialPriceInCents?: number | null; alreadyCreated?: boolean }> {
   const draft = await loadDesignDraft(storeId, draftId);
   if (!draft) return {};
   return {
@@ -36,6 +36,7 @@ async function reopened(
     initialDesign: draft.design,
     initialName: draft.name,
     initialPriceInCents: draft.retailPriceInCents,
+    alreadyCreated: draft.created,
   };
 }
 

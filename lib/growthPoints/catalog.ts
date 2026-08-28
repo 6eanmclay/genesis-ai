@@ -43,6 +43,18 @@ const GROWTH_POINT_CATALOG: Partial<Record<GenesisActionType, number>> = {
   update_section_order: 1,
   // 2pt — real creation or a moderate content change.
   create_product: 2,
+  // ============ THE DESIGN PATH COSTS THE SAME (2026-08-28) ==========
+  //
+  // This was ABSENT, which meant free: growthPointCostFor returns null and the
+  // engine only deducts when it returns a number. So turning a design into a
+  // real product — supplier registration included — cost nothing, while typing
+  // one in by hand cost 2.
+  //
+  // Sean, setting the model for Creation Station: "Create = 2 Growth Points.
+  // This is the actual commitment." It is the same commitment whichever way in
+  // the owner took, which is the point of there being one design system with
+  // two ways into it — so it is the same price.
+  create_product_from_design: 2,
   // Storefront Canvas (2026-08-12) — one meaningful improvement to how the
   // storefront looks, regardless of how many internal mutations it took to
   // accomplish. Sean's rule: a Growth Point represents one business

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { PRINT_AREA_BOX } from "@/lib/creation/mockupGeometry";
 import type { DesignLayer, PlacementId, PrintArea, ProductDesign } from "@/lib/creation/design";
 import { layersOn } from "@/lib/creation/design";
 import { BlankOnColor } from "./BlankOnColor";
@@ -172,7 +173,19 @@ export function CreationCanvas({
             // The print area, drawn where the supplier says it is. Positioned
             // over the garment's chest by proportion — a deliberate constant,
             // and the one number here that is presentation rather than data.
-            className="absolute left-1/2 top-[26%] h-[46%] w-[42%] -translate-x-1/2 border border-dashed border-black/25 dark:border-white/30"
+            //
+            // IMPORTED, NOT WRITTEN TWICE (2026-08-28). The server composes the
+            // product's mockup into this same rectangle, and a constant that
+            // decides where artwork sits would, written down in two places,
+            // become a preview and a product photograph that disagree the first
+            // time either is adjusted. See lib/creation/composeMockup.ts.
+            className="absolute border border-dashed border-black/25 dark:border-white/30"
+            style={{
+              left: `${PRINT_AREA_BOX.x * 100}%`,
+              top: `${PRINT_AREA_BOX.y * 100}%`,
+              width: `${PRINT_AREA_BOX.width * 100}%`,
+              height: `${PRINT_AREA_BOX.height * 100}%`,
+            }}
           >
             {/* THE SAFE MARGIN, WHERE THERE IS ONE. A second, tighter guide
                 inside the supplier's printable rectangle: printers cut and

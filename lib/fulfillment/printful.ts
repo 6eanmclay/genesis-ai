@@ -294,6 +294,93 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
     return { externalProductId: String(body.result.id) };
   },
 
+  // ============ CREATING WHAT THE OWNER ACTUALLY DESIGNED (2026-08-28) ==
+  //
+  // v1, deliberately, and the same endpoint createProduct already uses — this
+  // is the API that has been taking real money. What is new is `type` on each
+  // file, which is how a file says WHICH placement it prints on.
+  //
+  // The placement identifiers are not guessed. Traced against the live account
+  // on 2026-08-28, product 146 declares exactly these:
+  //
+  //   front, back, label_outside, sleeve_right, sleeve_left,
+  //   label_inside_dtf, embroidery_wrist_left, embroidery_wrist_right
+  //
+  // and the caller passes strings that came from the supplier's own catalogue,
+  // never words this file invented.
+  //
+  // `files[].type` is the one part that was still a belief rather than a
+  // measurement — the store had no products to read a real files[] from. So it
+  // is not trusted: the product is READ BACK immediately and the placements
+  // Printful reports are returned instead of the ones that were sent. If the
+  // field were wrong, the read-back returns something that does not match and
+  // the caller refuses, rather than a two-sided design quietly becoming
+  // one-sided in somebody's shop.
+  async createProductWithPlacements({ storeId, storeDraftId, name, retailPriceInCents, externalVariantId, files }) {
+    const credentials = await resolveCredentials({ storeId, storeDraftId });
+
+    const res = await printfulFetch("listings", `${PRINTFUL_API_BASE}/store/products`, {
+      method: "POST",
+      headers: authHeaders(credentials, true),
+      body: JSON.stringify({
+        sync_product: { name },
+        sync_variants: [
+          {
+            variant_id: Number(externalVariantId),
+            retail_price: (retailPriceInCents / 100).toFixed(2),
+            files: files.map((file) => ({ type: file.placement, url: file.url })),
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(
+        describeProviderError({
+          provider: "Printful",
+          status: res.status,
+          bodyText: await res.text(),
+          stage: "product creation",
+        })
+      );
+    }
+    const created = (await res.json()) as { result?: { id?: number } };
+    const externalProductId = created.result?.id;
+    if (externalProductId === undefined) {
+      throw new Error("Printful accepted the product but did not say which one it created.");
+    }
+
+    // READ IT BACK. Not optional, and not a nicety: "verified" means
+    // independently confirmed, never that the call did not throw — the rule
+    // ExecutionResult already draws everywhere else.
+    const check = await printfulFetch("listings.read", `${PRINTFUL_API_BASE}/store/products/${externalProductId}`, {
+      headers: authHeaders(credentials, true),
+    });
+    if (!check.ok) {
+      throw new Error(
+        describeProviderError({
+          provider: "Printful",
+          status: check.status,
+          bodyText: await check.text(),
+          stage: "reading back the product it just created",
+        })
+      );
+    }
+    const body = (await check.json()) as {
+      result?: { sync_variants?: { files?: { type?: string }[] }[] };
+    };
+
+    const placements = Array.from(
+      new Set(
+        (body.result?.sync_variants ?? [])
+          .flatMap((variant) => variant.files ?? [])
+          .map((file) => file.type)
+          .filter((type): type is string => typeof type === "string")
+      )
+    );
+
+    return { externalProductId: String(externalProductId), placements };
+  },
+
   async createDraftOrder({ storeId, storeDraftId, candidate, imageUrl, retailPriceInCents }): Promise<FulfillmentOrderResult> {
     const credentials = await resolveCredentials({ storeId, storeDraftId });
     // No `confirm: true` and no follow-up POST /orders/{id}/confirm call —

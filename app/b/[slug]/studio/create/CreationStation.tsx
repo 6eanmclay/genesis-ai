@@ -68,6 +68,8 @@ export function CreationStation({
   supplierPrices,
   creatableId,
   onSave,
+  onCreate,
+  alreadyCreated,
   initialDesign,
 }: {
   /** The business these assets and actions belong to. */
@@ -87,6 +89,10 @@ export function CreationStation({
   onSave: (design: ProductDesign) => Promise<string | null>;
   /** A saved design the owner came back to, or undefined for a new one. */
   initialDesign?: ProductDesign;
+  /** Make the product for real. Costs Growth Points; returns an error or null. */
+  onCreate: (design: ProductDesign) => Promise<string | null>;
+  /** Already a product, so Create must not offer to charge for it twice. */
+  alreadyCreated?: boolean;
 }) {
   // WHICH SIDE IS BEING DESIGNED, declared before the colours because it is
   // now an input to them: a blank can be photographed in ten colours from the
@@ -124,6 +130,7 @@ export function CreationStation({
   const [note, setNote] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
   const [saving, setSaving] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   // A REOPENED DRAFT STARTS WHERE IT WAS LEFT. The lazy initialiser runs once,
   // so this is the design the owner saved, not a blank one they have to rebuild.
@@ -228,6 +235,22 @@ export function CreationStation({
       setNote(error ?? "Saved. You can leave and pick this up again from your saved designs.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // ============ CREATE IS THE COMMITMENT (2026-08-28) ================
+  //
+  // Two Growth Points, the supplier actually makes it, and it goes on sale.
+  // Everything that can refuse it refuses BEFORE anything is charged: the
+  // engine only deducts on a non-FAILED outcome, so a supplier that will not
+  // print the back costs nothing and says so.
+  async function createProduct() {
+    setCreating(true);
+    try {
+      const error = await onCreate(current);
+      setNote(error ?? "Created with your supplier and on sale in your storefront.");
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -683,8 +706,26 @@ export function CreationStation({
                 needs to save. The completeness rules belong to Create, which
                 makes the product, not to Save, which keeps the work. */}
             <p className="mt-2 text-center text-[12px] text-zinc-500">
-              Free, and you can come back to it. Creating the product is a separate step that is not
-              built yet — nothing goes on sale until then.
+              Free, and you can come back to it.
+            </p>
+
+            {/* ============ THE SECOND HALF, AND THE PAID ONE ==========
+                Disabled by designProblem, which Save deliberately is not: a
+                half-finished design is exactly what somebody needs to save, and
+                exactly what must not be sent to a supplier. The same function
+                the server checks, so the button and the action cannot disagree. */}
+            <button
+              type="button"
+              disabled={problem !== null || creating || saving || alreadyCreated === true}
+              onClick={createProduct}
+              className="mt-4 w-full rounded-full border border-black/[.12] px-5 py-2.5 text-[15px] font-medium transition disabled:opacity-40 dark:border-white/[.18]"
+            >
+              {creating ? "Creating…" : alreadyCreated ? "Already a product" : "Create product · 2 points"}
+            </button>
+            <p className="mt-2 text-center text-[12px] text-zinc-500">
+              {alreadyCreated
+                ? "This design has already been made. Reopening it does not charge again."
+                : "Makes it with your print supplier and puts it on sale. Costs 2 Growth Points, and only if it works."}
             </p>
             {problem && <p className="mt-2 text-center text-[12px] text-zinc-500">{problem}</p>}
             {!problem && (
