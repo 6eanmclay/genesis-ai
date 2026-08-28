@@ -41,6 +41,10 @@ export function AddAssetPanel({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [managing, setManaging] = useState(false);
+  // WHICH UPLOAD IS BEING DELETED, or null. A destructive action behind a
+  // sentence, because the control is small and the finger is imprecise —
+  // the same reason the hit area had to grow.
+  const [confirming, setConfirming] = useState<LibraryAsset | null>(null);
 
   async function handleFile(file: File) {
     setBusy(true);
@@ -123,6 +127,52 @@ export function AddAssetPanel({
 
       {note && <p className="text-[12px] text-amber-600 dark:text-amber-400">{note}</p>}
 
+      {/* ============ WHAT DELETING ACTUALLY DOES ======================
+          Sean asked for the distinction to be visible: "Remove from design =
+          takes artwork off the current garment. Delete upload = removes the
+          asset from the user's upload library." And the guarantee that makes
+          the second safe to offer: "Deleting an asset from the library should
+          not unexpectedly destroy artwork already saved in a design."
+
+          It does not, structurally rather than by promise. A saved design
+          stores the artwork's URL, and this writes a date onto the asset
+          record — see lib/creation/assetLibrary.ts, which has no delete in it
+          at all. The sentence below says so because an owner cannot read that
+          file. */}
+      {confirming && (
+        <div className="rounded-xl border border-black/[.10] bg-white p-3 dark:border-white/[.14] dark:bg-zinc-900">
+          <p className="text-[13px] font-medium">Delete this upload?</p>
+          <p className="mt-1 text-[12px] text-zinc-500">
+            This removes it from your uploads. Artwork already saved in a design keeps working.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirming(null)}
+              className="rounded-full px-4 py-2 text-[13px] text-zinc-500 transition hover:bg-black/[.05] dark:hover:bg-white/[.08]"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                const asset = confirming;
+                setConfirming(null);
+                setBusy(true);
+                setNote(null);
+                const result = await removeAssetFromLibrary(slug, asset.id);
+                if (!result.ok) setNote(result.error ?? "That could not be deleted.");
+                setBusy(false);
+              }}
+              className="rounded-full bg-zinc-900 px-4 py-2 text-[13px] font-medium text-white transition disabled:opacity-40 dark:bg-white dark:text-black"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       {assets.length === 0 ? (
         <p className="text-[13px] text-zinc-500">
           Nothing here yet. Upload a logo or a graphic, or add one through J4 — anything either of
@@ -162,20 +212,44 @@ export function AddAssetPanel({
                       toolbox into a file manager, and makes the common action
                       — picking something — sit next to a destructive-looking
                       one. */}
+                  {/* ============ THE X THAT SELECTED INSTEAD (2026-08-28) ===
+                      Sean: "when I tapped the X, Genesis did not delete/remove
+                      the image. It behaved as though I had tapped the image
+                      itself and selected it for the garment."
+
+                      Not DOM bubbling — this is a sibling of the tile, not a
+                      child of it. It was a 20px control sitting HALF OUTSIDE
+                      the tile at -right-1 -top-1, well under the ~44px a finger
+                      actually needs, so a tap aimed at it landed on the large
+                      button underneath and did what that button does.
+
+                      Three fixes, and the first is the one that mattered: a
+                      real touch target. Top-LEFT, away from the ✓ badge it used
+                      to overlap. And stopPropagation with a pointer-down guard
+                      besides — belt and braces, so that if this control is ever
+                      nested inside the tile the bug cannot come back. */}
                   {managing && (
                     <button
                       type="button"
                       disabled={busy}
-                      title={`Remove ${asset.name} from Creation Station`}
-                      onClick={async () => {
-                        setBusy(true);
-                        const result = await removeAssetFromLibrary(slug, asset.id);
-                        if (!result.ok) setNote(result.error ?? "That could not be removed.");
-                        setBusy(false);
+                      aria-label={`Delete ${asset.name}`}
+                      title={`Delete ${asset.name}`}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
                       }}
-                      className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-zinc-900/90 text-[11px] text-white shadow disabled:opacity-40 dark:bg-white/90 dark:text-black"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setConfirming(asset);
+                      }}
+                      className="absolute -left-2 -top-2 z-10 grid h-11 w-11 place-items-center rounded-full text-white"
                     >
-                      ✕
+                      {/* The hit area is the 44px button; the dot is what is
+                          seen. Separating them is what makes a small control
+                          tappable without making it look heavy. */}
+                      <span className="grid h-6 w-6 place-items-center rounded-full bg-zinc-900/90 text-[12px] shadow dark:bg-white/90 dark:text-black">
+                        ✕
+                      </span>
                     </button>
                   )}
                 </div>

@@ -17,6 +17,7 @@ import { toDraft, toDesign } from "@/lib/creation/designDraft";
 import { blankFor } from "@/lib/creation/garment";
 import { randomUUID } from "crypto";
 import { execute } from "@/lib/execution/engine";
+import { growthPointCostFor } from "@/lib/growthPoints/catalog";
 import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
 
 // TURNING A DESIGN INTO SOMETHING THE STORE SELLS.
@@ -216,10 +217,34 @@ export async function saveDesignDraft(
   return { ok: true, designId: draftId };
 }
 
+/** One saved design, as the doorway shows it. */
+export interface SavedDesignRow {
+  draftId: string;
+  recordId: string;
+  externalProductId: string;
+  name: string;
+  summary: string;
+  updatedAt: string | null;
+  created: boolean;
+  /** The first piece of artwork on it, or null for a design with none yet. */
+  thumbnailUrl: string | null;
+  color: string | null;
+  /** Which sides carry work — "front", "back". */
+  sides: string[];
+}
+
+/** The first artwork on a design, front preferred, for the list's thumbnail. */
+function firstArtwork(placements: Record<string, { assetUrl: string }[]>): string | null {
+  const front = placements.front?.[0]?.assetUrl;
+  if (front) return front;
+  for (const layers of Object.values(placements)) {
+    if (layers[0]?.assetUrl) return layers[0].assetUrl;
+  }
+  return null;
+}
+
 /** Every design the owner has saved and not yet turned into a product. */
-export async function savedDesignsFor(storeId: string): Promise<
-  { draftId: string; recordId: string; externalProductId: string; name: string; summary: string; updatedAt: string | null; created: boolean }[]
-> {
+export async function savedDesignsFor(storeId: string): Promise<SavedDesignRow[]> {
   const rows = await prisma.businessRecord.findMany({
     where: { storeId, entityType: "design", sourceProvider: DRAFT_SOURCE },
     select: { id: true, externalId: true, data: true },
@@ -227,7 +252,7 @@ export async function savedDesignsFor(storeId: string): Promise<
     take: 40,
   });
 
-  const drafts: { draftId: string; recordId: string; externalProductId: string; name: string; summary: string; updatedAt: string | null; created: boolean }[] = [];
+  const drafts: SavedDesignRow[] = [];
   for (const row of rows) {
     const parsed = DesignSchema.safeParse(row.data);
     if (!parsed.success || !parsed.data.placement) continue;
@@ -244,6 +269,18 @@ export async function savedDesignsFor(storeId: string): Promise<
       summary: draftSummaryOf(p.color, p.placements),
       updatedAt: p.updatedAt,
       created: p.productId !== null,
+      // ENOUGH TO RECOGNISE IT WITHOUT OPENING IT. Sean asked for a thumbnail,
+      // the garment, the colour, which sides have work on them and when it was
+      // last touched — because a list of names is not something anybody can
+      // pick their own half-finished hoodie out of.
+      //
+      // The thumbnail is the first piece of artwork rather than a rendered
+      // mockup: composing one costs a supplier fetch and an image pass PER SAVE,
+      // and saving has to stay free and instant. The artwork is what the owner
+      // recognises anyway.
+      thumbnailUrl: firstArtwork(p.placements),
+      color: p.color,
+      sides: Object.entries(p.placements).filter(([, l]) => l.length > 0).map(([k]) => k),
     });
   }
   return drafts;
@@ -353,10 +390,14 @@ export async function createProductFromDesign(
   );
 
   if (result.status === "FAILED") {
-    // THE SUPPLIER'S OWN WORDS. A refusal here is the most important message in
-    // the whole flow — it is the difference between the owner knowing their
-    // back print was rejected and finding out from a customer.
-    return { ok: false, error: result.message || "That product could not be created." };
+    // ============ A SENTENCE, NOT A STACK TRACE (2026-08-28) ==========
+    //
+    // Sean: "Don't expose internal function names/errors like
+    // create_product_from_design failed." The engine's message is the
+    // executable's own throw, which is written for a person — but it arrives
+    // without the two things somebody needs first: that they were not charged,
+    // and which part of it stopped.
+    return { ok: false, error: humanFailure(result.message) };
   }
 
   revalidatePath(`/b/${slug}/products`);
@@ -367,6 +408,62 @@ export async function createProductFromDesign(
     placements: result.metadata?.placements,
     message: result.message,
   };
+}
+
+/**
+ * What creating this product would cost, and what the owner has.
+ *
+ * ============ THE PRICE BELONGS IN THE DECISION (2026-08-28) ==========
+ *
+ * Sean: "I don't want Growth Points screaming at the user every time they look
+ * at the Creation Station. Growth Points should feel like the resource used to
+ * grow/level up the business, not like a toll attached to every button."
+ *
+ * So the button says Create product and this is read when they press it —
+ * the cost appears in the confirmation, where it is information someone is
+ * about to act on rather than a label they have to look past all day.
+ *
+ * The cost comes from the same catalogue the engine charges from, so the
+ * sentence shown and the number deducted cannot drift.
+ */
+export async function creationCost(slug: string): Promise<{ cost: number; balance: number }> {
+  const { store } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  const row = await prisma.store.findUnique({
+    where: { id: store.id },
+    select: { growthPointBalance: true },
+  });
+  return {
+    cost: growthPointCostFor("create_product_from_design") ?? 0,
+    balance: row?.growthPointBalance ?? 0,
+  };
+}
+
+/**
+ * The failure, as a person needs to read it.
+ *
+ * Leads with the money, because that is the first question — Growth Points are
+ * deducted only on a non-FAILED outcome, so reaching here means nothing was
+ * charged, and saying so removes the worry before explaining the rest.
+ *
+ * Then WHERE it stopped, in the owner's terms. The stages are the real ones:
+ * composing the artwork, asking the supplier to make it, and confirming the
+ * supplier holds every side. An internal name would tell them nothing they
+ * could act on.
+ */
+function humanFailure(message: string | null | undefined): string {
+  const said = (message ?? "").trim();
+  const stage = /did not record the/i.test(said)
+    ? "Your supplier made the product but did not confirm every side of the design, so we stopped rather than putting a half-printed product in your store."
+    : /supplier|printful|print/i.test(said)
+      ? "We couldn't finish creating the product with your print supplier."
+      : /artwork could not be read|compose/i.test(said)
+        ? "We couldn't prepare the artwork files for your supplier."
+        : "We couldn't create this product.";
+
+  // The supplier's own words are kept when they are specific enough to act on
+  // — a rejected file or an unavailable variant is worth reading verbatim.
+  const detail = said && said.length < 300 ? ` ${said}` : "";
+  return `${stage} Your Growth Points were not used.${detail}`;
 }
 
 /** What the owner is about to add, for the confirmation line. */

@@ -316,7 +316,7 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
   // field were wrong, the read-back returns something that does not match and
   // the caller refuses, rather than a two-sided design quietly becoming
   // one-sided in somebody's shop.
-  async createProductWithPlacements({ storeId, storeDraftId, name, retailPriceInCents, externalVariantId, files }) {
+  async createProductWithPlacements({ storeId, storeDraftId, name, retailPriceInCents, externalVariantIds, files }) {
     const credentials = await resolveCredentials({ storeId, storeDraftId });
 
     const res = await printfulFetch("listings", `${PRINTFUL_API_BASE}/store/products`, {
@@ -324,13 +324,15 @@ export const printfulFulfillmentConnector: FulfillmentConnector = {
       headers: authHeaders(credentials, true),
       body: JSON.stringify({
         sync_product: { name },
-        sync_variants: [
-          {
-            variant_id: Number(externalVariantId),
-            retail_price: (retailPriceInCents / 100).toFixed(2),
-            files: files.map((file) => ({ type: file.placement, url: file.url })),
-          },
-        ],
+        // ONE SYNC VARIANT PER SIZE, all carrying the same artwork. The design
+        // is a property of the colourway, not of the size — so a customer
+        // buying a Small gets the same front and back as one buying a 2XL,
+        // rather than the product existing only in the size it was drawn on.
+        sync_variants: externalVariantIds.map((variantId) => ({
+          variant_id: Number(variantId),
+          retail_price: (retailPriceInCents / 100).toFixed(2),
+          files: files.map((file) => ({ type: file.placement, url: file.url })),
+        })),
       }),
     });
     if (!res.ok) {

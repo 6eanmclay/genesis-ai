@@ -314,6 +314,106 @@ async function main() {
     !/from "sharp"/.test(geometry),
     "a client component importing the composer would bundle sharp");
 
+  // ======================================================================
+  console.log("\n=== 9. The size designed on is not the size sold ===\n");
+  // ======================================================================
+  //
+  // Sean: "The size selected during design is a reference/design variant, not
+  // the only size we sell... Create should still produce one hoodie product
+  // with all supported sizes." The line "front and back · Ash · 2XL" read as a
+  // 2XL product, and it was creating one.
+
+  const printfulSrc = readFileSync(join(process.cwd(), "lib", "fulfillment", "printful.ts"), "utf8");
+  assert("the supplier is asked for every size, not one",
+    /sync_variants: externalVariantIds\.map/.test(printfulSrc),
+    "one sync variant meant a product that existed only in the size it was drawn on");
+
+  const draftSrc = readFileSync(join(process.cwd(), "lib", "creation", "designDraft.ts"), "utf8");
+  assert("the sellable variants are every size of the chosen COLOUR",
+    /garment\.variants\.filter\(\(v\) => v\.color === variant\.color\)/.test(draftSrc),
+    "read off the supplier's own variants rather than a list of sizes written down");
+
+  const stationSrc = readFileSync(
+    join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationStation.tsx"), "utf8");
+  assert("CONTROL: the summary no longer reads as a single-size product",
+    /Designed on \{size\} · made in/.test(stationSrc),
+    "the size belongs in a sentence about the canvas, not in a list of what the product is");
+
+  const execSrc2 = readFileSync(
+    join(process.cwd(), "lib", "execution", "executables", "productFromDesign.ts"), "utf8");
+  assert("and the product records both, so a size picker needs no rebuild",
+    /referenceVariantId: placement\.externalVariantId/.test(execSrc2) &&
+      /sellableVariantIds: placement\.sellableVariantIds/.test(execSrc2));
+
+  // ======================================================================
+  console.log("\n=== 10. The paid button asks before it charges ===\n");
+  // ======================================================================
+  //
+  // Sean: "I don't want Growth Points screaming at the user every time they
+  // look at the Creation Station... The 2 points should only be deducted after
+  // the user explicitly confirms."
+
+  // COMMENTS STRIPPED FOR THIS ONE. The file explains WHY the price came off
+  // the button, so the old label appears in its own explanation — asserting
+  // absence against the raw source fails on the note that records the fix.
+  const stationCode = stationSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert("the button is the business action, with no price on it",
+    /"Create product"/.test(stationCode) && !/Create product · 2 points/.test(stationCode),
+    "a toll attached to every button is not how a growth resource should read");
+  assert("and a confirmation states the cost against the real balance",
+    /Ready to create\?/.test(stationSrc) && /Creating\s*\n?\s*this product costs \{confirm\.cost\}/.test(stationSrc));
+  assert("CONTROL: creating only runs from inside that confirmation",
+    /onClick=\{\(\) => void openConfirm\(\)\}/.test(stationSrc) &&
+      !/onClick=\{createProduct\}\s*\n\s*className="mt-4 w-full/.test(stationSrc),
+    "the outer button must open the question, never do the thing");
+  assert("and it refuses when the balance cannot cover it",
+    /confirm\.balance < confirm\.cost/.test(stationSrc));
+
+  // ======================================================================
+  console.log("\n=== 11. A failure says where it stopped, in words ===\n");
+  // ======================================================================
+
+  const actionsSrc2 = readFileSync(
+    join(process.cwd(), "app", "b", "[slug]", "studio", "create", "actions.ts"), "utf8");
+  assert("the owner is told their points were not used",
+    /Your Growth Points were not used/.test(actionsSrc2),
+    "the first question after a failed paid action is whether it charged");
+  assert("and which stage stopped, in their terms",
+    /couldn't finish creating the product with your print supplier/i.test(actionsSrc2));
+  assert("CONTROL: and an unconfirmed placement is named honestly",
+    /did not confirm every side/i.test(actionsSrc2),
+    "a supplier orphan must not read as a store product that exists");
+
+  // ======================================================================
+  console.log("\n=== 12. Removing artwork and deleting an upload are different ===\n");
+  // ======================================================================
+  //
+  // Sean tapped the X in the asset panel and it selected the image instead. Not
+  // bubbling — a 20px control half outside a large button, so the finger hit
+  // the button. And there was no obvious way to take a placed layer off at all.
+
+  const panelSrc = readFileSync(
+    join(process.cwd(), "app", "b", "[slug]", "studio", "create", "AddAssetPanel.tsx"), "utf8");
+  assert("the delete control is a real touch target",
+    /h-11 w-11/.test(panelSrc),
+    "20px half-outside a big button is why the tap landed on the tile");
+  assert("and it cannot reach the tile's handler",
+    /event\.stopPropagation\(\)/.test(panelSrc));
+  assert("deleting an upload asks first",
+    /Delete this upload\?/.test(panelSrc));
+  assert("and says what it does NOT do",
+    /Artwork already saved in a design keeps working/.test(panelSrc),
+    "the guarantee is structural, but the owner cannot read assetLibrary.ts");
+
+  const canvasSrc2 = readFileSync(
+    join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationCanvas.tsx"), "utf8");
+  assert("artwork on the garment has its own remove control",
+    /Remove this artwork/.test(canvasSrc2),
+    "Remove was three taps away behind Edit");
+  assert("CONTROL: which does not start a drag instead",
+    /onPointerDown=\{\(event\) => \{\s*\n\s*event\.stopPropagation\(\);/.test(canvasSrc2),
+    "without this the gesture is claimed by the move handler and the click never lands");
+
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }

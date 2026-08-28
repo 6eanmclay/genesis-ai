@@ -5,7 +5,7 @@ import type { Garment, BlankImage } from "@/lib/creation/garment";
 import type { LibraryAsset } from "@/lib/creation/assetLibrary";
 import type { ProductDesign } from "@/lib/creation/design";
 import { CreationStation } from "./CreationStation";
-import { saveDesignDraft, createProductFromDesign } from "./actions";
+import { saveDesignDraft, createProductFromDesign, creationCost } from "./actions";
 
 // THE THIN LAYER BETWEEN THE WORKSPACE AND THE SERVER.
 //
@@ -136,6 +136,7 @@ export function CreationStationClient({
         creatableId={creatableId}
         onSave={handleSave}
         onCreate={handleCreate}
+        onCost={() => creationCost(slug)}
         alreadyCreated={created}
         initialDesign={initialDesign}
       />

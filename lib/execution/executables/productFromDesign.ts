@@ -178,7 +178,13 @@ async function createFromPlacementDesign(
     storeDraftId: null,
     name: input.name,
     retailPriceInCents: input.priceInCents,
-    externalVariantId: placement.externalVariantId,
+    // The reference variant first, then every other size of that colour. A
+    // draft saved before sizes were carried has only the reference one, which
+    // is the old behaviour rather than a failure.
+    externalVariantIds:
+      placement.sellableVariantIds.length > 0
+        ? placement.sellableVariantIds
+        : [placement.externalVariantId],
     files,
   });
 
@@ -228,6 +234,14 @@ async function createFromPlacementDesign(
         designId: recordId,
         placements: files.map((f) => f.placement),
         printFileUrls: files.map((f) => f.url),
+        // WHAT A CUSTOMER SHOULD BE ABLE TO CHOOSE. Recorded now, before
+        // anything can read it: Product has no variant model (the schema says
+        // so in its own words), so the storefront cannot offer a size picker
+        // yet. When it can, the supplier's real variants are already here and
+        // no product created today has to be rebuilt to gain them.
+        referenceVariantId: placement.externalVariantId,
+        sellableVariantIds: placement.sellableVariantIds,
+        sellableSizes: placement.sellableSizes,
       },
       ...parcelToProductData(parcel),
     },

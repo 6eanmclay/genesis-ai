@@ -149,8 +149,14 @@ export interface FulfillmentConnector {
     storeDraftId: string | null;
     name: string;
     retailPriceInCents: number;
-    /** The supplier's own variant id — the exact colour and size chosen. */
-    externalVariantId: string;
+    /**
+     * Every variant to create the product in — one colourway, all its sizes.
+     *
+     * A LIST, because the size someone designs against is not the only size
+     * they sell. The reference variant is the first entry; the supplier is
+     * asked for all of them so a customer can eventually choose.
+     */
+    externalVariantIds: string[];
     /** One print-ready file per placement, named as the supplier names them. */
     files: { placement: string; url: string }[];
   }): Promise<{

@@ -40,6 +40,7 @@ export function CreationCanvas({
   safeMargin,
   selectedLayerId,
   onSelect,
+  onRemoveLayer,
   onMove,
   onScale,
 }: {
@@ -59,6 +60,8 @@ export function CreationCanvas({
   safeMargin: number;
   selectedLayerId: string | null;
   onSelect: (layerId: string | null) => void;
+  /** Take this artwork off the design. Never touches the uploaded asset. */
+  onRemoveLayer: (layerId: string) => void;
   /** Deltas as fractions of the print area — the model's own units. */
   onMove: (layerId: string, dx: number, dy: number) => void;
   onScale: (layerId: string, factor: number) => void;
@@ -211,6 +214,7 @@ export function CreationCanvas({
                 selected={layer.id === selectedLayerId}
                 dragging={dragging}
                 onPointerDown={(e) => startDrag(e, layer.id, "move")}
+                onRemove={() => onRemoveLayer(layer.id)}
                 onResizePointerDown={(e) => startDrag(e, layer.id, "resize")}
               />
             ))}
@@ -233,12 +237,14 @@ function LayerBox({
   dragging,
   onPointerDown,
   onResizePointerDown,
+  onRemove,
 }: {
   layer: DesignLayer;
   selected: boolean;
   dragging: boolean;
   onPointerDown: (e: React.PointerEvent) => void;
   onResizePointerDown: (e: React.PointerEvent) => void;
+  onRemove: () => void;
 }) {
   return (
     <div
@@ -285,6 +291,51 @@ function LayerBox({
           }}
           className="rounded-full border border-white bg-[var(--brand-accent,#6366f1)] shadow"
         />
+      )}
+
+      {/* ============ TAKING IT OFF THE GARMENT (2026-08-28) ============
+          Sean: "Once an image is actually placed on the garment, there needs to
+          be an obvious × / Remove control for that layer so users don't have to
+          leave Creation Station and come back just to get rid of something."
+
+          There was a Remove, and it was three taps away: select the layer, open
+          Edit, find it in a row of six. On the layer itself it is one.
+
+          THIS IS NOT THE OTHER ✕. This takes artwork off the design; the one in
+          the Add panel deletes an upload from the library. Different actions,
+          deliberately different places — and this one destroys nothing, since
+          the asset stays exactly where it was.
+
+          onPointerDown stops the drag handler underneath from claiming the
+          gesture: without it, a tap here starts moving the layer and the click
+          never arrives. */}
+      {selected && (
+        <button
+          type="button"
+          aria-label="Remove this artwork"
+          title="Remove this artwork"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            event.preventDefault();
+          }}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+          style={{
+            position: "absolute",
+            left: -22,
+            top: -22,
+            width: 44,
+            height: 44,
+            touchAction: "none",
+          }}
+          className="grid place-items-center"
+        >
+          <span className="grid h-6 w-6 place-items-center rounded-full bg-zinc-900/90 text-[12px] text-white shadow dark:bg-white/90 dark:text-black">
+            ✕
+          </span>
+        </button>
       )}
     </div>
   );

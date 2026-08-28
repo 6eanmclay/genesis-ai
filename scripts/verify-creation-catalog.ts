@@ -1515,11 +1515,21 @@ async function main() {
   // catch. It exists now, so what has to be asserted is different: that it says
   // what it costs, and that it is gated on the design being makeable when Save
   // deliberately is not.
-  assert("the paid half says what it costs, before it is pressed",
-    /Create product · 2 points/.test(toolbarSrc),
-    "a button that charges without saying so is the same dishonesty in the other direction");
-  assert("and says the charge only lands if it works",
-    /only if it works/.test(toolbarSrc));
+  // ============ THE PRICE MOVED INTO THE DECISION (2026-08-28) =======
+  //
+  // This asserted the button read "Create product · 2 points". Sean: "I don't
+  // want Growth Points screaming at the user every time they look at the
+  // Creation Station... not like a toll attached to every button."
+  //
+  // The cost did not disappear — it moved to the confirmation, where it is
+  // something being agreed to rather than a label to look past. So what has to
+  // be true is stricter than before: the button must NOT price itself, and the
+  // question must.
+  assert("the paid half asks before it charges",
+    /Ready to create\?/.test(toolbarSrc),
+    "a paid action that fires on the first tap is the thing this confirmation exists to prevent");
+  assert("and the cost is stated there against a real balance",
+    /confirm\.cost/.test(toolbarSrc) && /confirm\.balance/.test(toolbarSrc));
   assert("CONTROL: Create is gated on the design being makeable",
     /disabled=\{problem !== null \|\| creating/.test(toolbarSrc),
     "a half-finished design must be savable and must not reach a supplier");

@@ -360,7 +360,34 @@ export const PlacementDesignSchema = z.object({
   /** Declared by the garment the supplier returned. Never assumed. */
   provider: z.string(),
   externalProductId: z.string(),
+  /**
+   * THE REFERENCE VARIANT — the exact one the design was laid out against.
+   *
+   * ============ NOT "THE ONLY SIZE WE SELL" (2026-08-28) ==============
+   *
+   * Sean: "The size selected during design is a reference/design variant, not
+   * the only size we sell... if I'm designing an Ash Bella + Canvas 3719 hoodie
+   * and happen to use the 2XL variant to work on the canvas, Create should
+   * still produce one hoodie product with all supported sizes."
+   *
+   * So this stays exact and keeps its old meaning for the canvas: it is the
+   * colourway and size whose blank, print areas and photograph the owner
+   * actually designed against. What changed is that nothing may read it as the
+   * catalogue of what is for sale. That is `sellableVariantIds`.
+   */
   externalVariantId: z.string().nullable(),
+  /**
+   * Every supplier variant this product should be sellable in — the reference
+   * variant's colour, in all the sizes the supplier stocks it in.
+   *
+   * Read off the supplier's own variant list rather than a list of sizes
+   * written down here: "Genesis should use the supplier's actual supported
+   * variants rather than hardcoding sizes." A blank that comes in four sizes
+   * gets four; one that comes in nine gets nine.
+   */
+  sellableVariantIds: z.array(z.string()).default([]),
+  /** Those variants' size names, in the supplier's order, for showing a person. */
+  sellableSizes: z.array(z.string()).default([]),
   /** Named, not just referenced, so a saved draft still reads as a thing. */
   productName: z.string().nullable().default(null),
   color: z.string().nullable().default(null),

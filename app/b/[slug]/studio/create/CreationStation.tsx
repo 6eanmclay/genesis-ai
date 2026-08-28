@@ -69,6 +69,7 @@ export function CreationStation({
   creatableId,
   onSave,
   onCreate,
+  onCost,
   alreadyCreated,
   initialDesign,
 }: {
@@ -91,6 +92,8 @@ export function CreationStation({
   initialDesign?: ProductDesign;
   /** Make the product for real. Costs Growth Points; returns an error or null. */
   onCreate: (design: ProductDesign) => Promise<string | null>;
+  /** What it costs and what they have, read when the confirmation opens. */
+  onCost: () => Promise<{ cost: number; balance: number }>;
   /** Already a product, so Create must not offer to charge for it twice. */
   alreadyCreated?: boolean;
 }) {
@@ -118,6 +121,12 @@ export function CreationStation({
   // views disagree about which colours exist.
   const activeColor = colors.some((c) => c.color === color) ? color : (colors[0]?.color ?? "");
   const sizes = useMemo(() => sizesFor(garment, activeColor), [garment, activeColor]);
+  // EVERY SIZE THIS COLOUR IS STOCKED IN — what the product is created in, as
+  // against `size`, which is only the canvas the design was laid out on. Read
+  // off the supplier's own variants rather than a list of sizes written here.
+  const sellableSizes = sizes;
+  const sizeSummary =
+    sellableSizes.length > 1 ? ` in ${sellableSizes.length} sizes` : "";
   const [size, setSize] = useState(sizes[0] ?? "");
 
   const variant = variantFor(garment, activeColor, size);
@@ -131,6 +140,8 @@ export function CreationStation({
   const [instruction, setInstruction] = useState("");
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
+  // The confirmation, holding the real balance and cost read when it opened.
+  const [confirm, setConfirm] = useState<{ cost: number; balance: number } | null>(null);
 
   // A REOPENED DRAFT STARTS WHERE IT WAS LEFT. The lazy initialiser runs once,
   // so this is the design the owner saved, not a blank one they have to rebuild.
@@ -244,10 +255,18 @@ export function CreationStation({
   // Everything that can refuse it refuses BEFORE anything is charged: the
   // engine only deducts on a non-FAILED outcome, so a supplier that will not
   // print the back costs nothing and says so.
+  // READ WHEN IT OPENS, not held in the page. A balance rendered at page load
+  // is a number that was true earlier; this one was true a moment ago.
+  async function openConfirm() {
+    setNote(null);
+    setConfirm(await onCost());
+  }
+
   async function createProduct() {
     setCreating(true);
     try {
       const error = await onCreate(current);
+      setConfirm(null);
       setNote(error ?? "Created with your supplier and on sale in your storefront.");
     } finally {
       setCreating(false);
@@ -538,6 +557,13 @@ export function CreationStation({
             creatableId={creatableId}
             turning={turning}
             safeMargin={safeMargin}
+            // ONE TAP TO TAKE IT OFF, on the artwork itself. The same operation
+            // the Edit panel's Remove runs, so history and undo behave
+            // identically whichever way it was reached.
+            onRemoveLayer={(layerId) => {
+              run({ kind: "remove", placement, layerId });
+              setSelected(null);
+            }}
             selectedLayerId={selected}
             onSelect={setSelected}
             onMove={(layerId, dx, dy) => setDesign((d) => applyOperation(d, { kind: "move", placement, layerId, dx, dy }))}
@@ -713,25 +739,82 @@ export function CreationStation({
                 Disabled by designProblem, which Save deliberately is not: a
                 half-finished design is exactly what somebody needs to save, and
                 exactly what must not be sent to a supplier. The same function
-                the server checks, so the button and the action cannot disagree. */}
+                the server checks, so the button and the action cannot disagree.
+
+                THE PRICE IS NOT ON THE BUTTON (2026-08-28). It said
+                "Create product · 2 points", and Sean: "I don't want Growth
+                Points screaming at the user every time they look at the
+                Creation Station... not like a toll attached to every button."
+                The cost belongs in the moment of deciding, which is the
+                confirmation below — where it is something being acted on
+                rather than a label to look past all day. */}
             <button
               type="button"
               disabled={problem !== null || creating || saving || alreadyCreated === true}
-              onClick={createProduct}
+              onClick={() => void openConfirm()}
               className="mt-4 w-full rounded-full border border-black/[.12] px-5 py-2.5 text-[15px] font-medium transition disabled:opacity-40 dark:border-white/[.18]"
             >
-              {creating ? "Creating…" : alreadyCreated ? "Already a product" : "Create product · 2 points"}
+              {creating ? "Creating…" : alreadyCreated ? "Already a product" : "Create product"}
             </button>
             <p className="mt-2 text-center text-[12px] text-zinc-500">
               {alreadyCreated
                 ? "This design has already been made. Reopening it does not charge again."
-                : "Makes it with your print supplier and puts it on sale. Costs 2 Growth Points, and only if it works."}
+                : "Makes it with your print supplier and puts it on sale."}
             </p>
+
+            {/* ============ READY TO CREATE? ==========================
+                The business action, with its cost stated once, at the point it
+                is being agreed to. Nothing is created and nothing is charged
+                until this is confirmed. */}
+            {confirm && (
+              <div className="mt-4 rounded-xl border border-black/[.10] bg-white p-4 dark:border-white/[.14] dark:bg-zinc-900">
+                <p className="text-[14px] font-medium">Ready to create?</p>
+                <p className="mt-2 text-[13px] text-zinc-500">
+                  This will create the product with your supplier — {color}
+                  {sizeSummary} — and add it to your store.
+                </p>
+                <p className="mt-2 text-[13px] text-zinc-500">
+                  You have {confirm.balance} Growth {confirm.balance === 1 ? "Point" : "Points"}. Creating
+                  this product costs {confirm.cost}.
+                </p>
+                {confirm.balance < confirm.cost && (
+                  <p className="mt-2 text-[13px] text-amber-600 dark:text-amber-400">
+                    That is more than you have right now.
+                  </p>
+                )}
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirm(null)}
+                    className="rounded-full px-4 py-2 text-[13px] text-zinc-500 transition hover:bg-black/[.05] dark:hover:bg-white/[.08]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={creating || confirm.balance < confirm.cost}
+                    onClick={createProduct}
+                    className="rounded-full bg-[var(--brand-accent,#6366f1)] px-4 py-2 text-[13px] font-medium text-white transition disabled:opacity-40"
+                  >
+                    {creating ? "Creating…" : "Yes, create product"}
+                  </button>
+                </div>
+              </div>
+            )}
             {problem && <p className="mt-2 text-center text-[12px] text-zinc-500">{problem}</p>}
             {!problem && (
               <p className="mt-2 text-center text-[12px] text-zinc-500">
-                {usedPlacements(current).join(" and ")} · {color} · {size}
+                {usedPlacements(current).join(" and ")} · {color}
                 {variant?.costInCents != null && ` · costs $${(variant.costInCents / 100).toFixed(2)}`}
+                {/* THE SIZE IS NOT IN THAT LIST ANY MORE (2026-08-28). It read
+                    "front and back · Ash · 2XL", which Sean read the way anyone
+                    would: as a 2XL product. The size chosen here is the canvas
+                    the design was laid out on, and the product is created in
+                    every size the supplier stocks that colour in. Said
+                    separately, in those words. */}
+                <span className="mt-1 block">
+                  Designed on {size} · made in {sellableSizes.length > 1 ? sellableSizes.join(", ") : size}
+                </span>
               </p>
             )}
           </section>

@@ -58,6 +58,9 @@ export interface DraftContext {
 export function toDraft(design: ProductDesign, context: DraftContext, previous?: PlacementDesign | null): Design {
   const { garment, name, retailPriceInCents } = context;
   const variant = garment.variants.find((v) => v.externalVariantId === design.externalVariantId) ?? null;
+  const sellable = variant
+    ? garment.variants.filter((v) => v.color === variant.color)
+    : [];
 
   return {
     // A product design, so the composition half is empty. See DesignSchema.
@@ -77,6 +80,13 @@ export function toDraft(design: ProductDesign, context: DraftContext, previous?:
       color: variant?.color ?? null,
       colorHex: variant?.colorHex ?? null,
       size: variant?.size ?? null,
+      // EVERY SIZE OF THIS COLOUR, from the supplier's own variant list. The
+      // reference variant above says which one was designed against; these say
+      // what a customer should be able to buy. Matched on colour NAME because
+      // that is what the supplier keys a colourway by — the same field the
+      // blank picker matches on.
+      sellableVariantIds: sellable.map((v) => v.externalVariantId),
+      sellableSizes: sellable.map((v) => v.size),
       blanks: context.blanks,
       placements: design.placements,
       printAreas: garment.printAreas,
