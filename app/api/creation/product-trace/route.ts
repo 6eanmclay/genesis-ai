@@ -72,12 +72,35 @@ function keysOf(value: unknown): string[] {
 }
 
 export async function GET(request: NextRequest) {
+  // ============ THE SLUG IS OPTIONAL, AND THAT IS THE FIX (2026-08-28) ==
+  //
+  // This required ?slug= and Sean opened it with the placeholder still in the
+  // URL. `requireBusiness` could not resolve "<your-business-slug>", threw a
+  // redirect out of a route handler, and the browser showed a blank white page
+  // — which reads exactly like a broken deployment. It cost a production
+  // investigation to find out it was a bad parameter.
+  //
+  // Two corrections. The slug now defaults to the ACTIVE business, so the
+  // common case is a URL with nothing to fill in; and an unresolvable one
+  // answers in JSON instead of redirecting into blankness. A diagnostic
+  // endpoint whose failure mode is an empty page is worse than no endpoint.
   const slug = request.nextUrl.searchParams.get("slug");
-  if (!slug) {
-    return NextResponse.json({ error: "Pass ?slug=<your-business-slug>." }, { status: 400 });
-  }
 
-  const { store } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  let store: { id: string; slug: string };
+  try {
+    const resolved = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug ?? undefined);
+    store = resolved.store;
+  } catch {
+    return NextResponse.json(
+      {
+        error: slug
+          ? `No business matching "${slug}", or you do not have permission to manage its products.`
+          : "No active business. Open a business in Genesis first, or pass ?slug=<the-slug-from-your-address-bar>.",
+        hint: "Your slug is the segment after /b/ when you are inside a business — /b/<slug>/studio.",
+      },
+      { status: 404 },
+    );
+  }
 
   const integration = await prisma.storeIntegration.findUnique({
     where: { storeId_provider: { storeId: store.id, provider: "PRINTFUL" } },
@@ -196,7 +219,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(
     {
       traced: new Date().toISOString(),
-      business: slug,
+      business: store.slug,
       whatThisAnswers: {
         "1_placementField": "detail.files[].files[].type + allKeys — how a file says where it prints",
         "2_identifiers": "placements.availablePlacements — compare these strings to v2's front/back",
