@@ -3,6 +3,7 @@ import { requireBusinessOrActive, PERMISSIONS } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import { PRINTFUL_API_BASE, refreshPrintfulToken, type PrintfulCredentials } from "@/lib/integrations/printful";
+import { printfulUrl, printfulHeaders, isStoreScoped, withSellingRegion } from "@/lib/creation/printfulRequest";
 
 // WHAT PRINTFUL ACTUALLY REQUIRES TO CREATE A PRODUCT — measured, not assumed.
 //
@@ -37,6 +38,31 @@ import { PRINTFUL_API_BASE, refreshPrintfulToken, type PrintfulCredentials } fro
 //      and pixel size per placement — if artwork has to be positioned or sized
 //      to a printfile rather than sent as a bare URL, the design already holds
 //      the numbers and the mapping has to be written against real ones.
+//
+// ============ WHAT THE FIRST RUN MEASURED (cubit-coil, 2026-08-28) =====
+//
+// Product 146, the hoodie. Every request returned 200.
+//
+//   available_placements (v1, EIGHT of them):
+//     front, back, label_outside, sleeve_right, sleeve_left,
+//     label_inside_dtf, embroidery_wrist_left, embroidery_wrist_right
+//
+//   printfiles, per placement, for variant 5530:
+//     front  -> 139   2100 x 2100  150dpi  fit  no-rotate
+//     back   ->   1   1800 x 2400  150dpi  fit  no-rotate
+//     sleeves-> 147    450 x 1800  150dpi
+//     labels ->  90/71 450 x  450  150dpi
+//     wrists -> 396    600 x  900  300dpi
+//
+// THE FINDING THAT WOULD HAVE BEEN ASSUMED WRONG: front and back do not share
+// a canvas. The front is square and the back is 3:4, so artwork positioned
+// identically on both sides does not come out the same. A design model that
+// treats "the print area" as one shape per garment is wrong, and ours does not
+// — placements are per-placement — but the RENDERING has to use the right one
+// per side, and the numbers above are the real ones to use.
+//
+// Question 1 remains open: storeProducts.count was 0, so there was no existing
+// product whose files[] could be read.
 //
 // ============ IT CREATES NOTHING =======================================
 //
@@ -216,6 +242,45 @@ export async function GET(request: NextRequest) {
     firstVariantPrintfiles: (pf?.variant_printfiles ?? [])[0] ?? null,
   };
 
+  // ---- 4. THE SAME QUESTION ASKED OF v2, SO THE COMPARISON IS READ ------
+  //
+  // ============ WHY THIS WAS ADDED AFTER THE FIRST RUN (2026-08-28) =====
+  //
+  // The first trace answered which placement identifiers v1 accepts, and I was
+  // about to conclude that they match the ones Creation Station shows — on the
+  // grounds that `front` and `back` appear in both. That is an inference from
+  // one list, not a comparison of two.
+  //
+  // Creation Station reads placements from v2. Creation happens on v1. If those
+  // two vocabularies ever diverge — a placement v2 calls `embroidery_chest_left`
+  // and v1 calls something else — a design would be built against a name the
+  // creation call cannot use, and the failure would arrive at the supplier
+  // rather than on the screen. So both lists are fetched and diffed here.
+  const v2Path = withSellingRegion(`/catalog-products/${catalogProductId}`);
+  const v2Res = await fetch(printfulUrl(v2Path), {
+    headers: printfulHeaders(credentials.accessToken, credentials.printfulStoreId, isStoreScoped(v2Path)),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!v2Res.ok) notes.push(`v2 ${v2Path} -> ${v2Res.status}`);
+  const v2Body = (await v2Res.json().catch(() => null)) as {
+    data?: { placements?: { placement?: string; technique?: string }[] };
+  } | null;
+
+  const v2Placements = (v2Body?.data?.placements ?? [])
+    .map((p) => p.placement)
+    .filter((p): p is string => typeof p === "string");
+  const v1Placements = Object.keys(pf?.available_placements ?? {});
+
+  const agreement = {
+    v1: v1Placements,
+    v2: v2Placements,
+    inBoth: v1Placements.filter((p) => v2Placements.includes(p)),
+    onlyV1: v1Placements.filter((p) => !v2Placements.includes(p)),
+    // THE DANGEROUS SET. A placement the designer can offer that the creation
+    // call has never heard of is a design that cannot be made.
+    onlyV2_DESIGNABLE_BUT_NOT_CREATABLE: v2Placements.filter((p) => !v1Placements.includes(p)),
+  };
+
   return NextResponse.json(
     {
       traced: new Date().toISOString(),
@@ -224,10 +289,13 @@ export async function GET(request: NextRequest) {
         "1_placementField": "detail.files[].files[].type + allKeys — how a file says where it prints",
         "2_identifiers": "placements.availablePlacements — compare these strings to v2's front/back",
         "3_printfileRequirements": "placements.printfileSpecs — dpi, pixel size, fill mode, rotation",
+        "4_vocabulary": "vocabulary.onlyV2_DESIGNABLE_BUT_NOT_CREATABLE must be empty",
       },
       storeProducts: { count: items.length, listStatus: listed.status, products },
       detail,
       placements: { status: printfiles.status, catalogProductId, ...placementTrace },
+      // Does the vocabulary the designer uses match the one creation accepts?
+      vocabulary: { v2Status: v2Res.status, ...agreement },
       notes: notes.length ? notes : ["every request returned 200"],
       readMeFirst:
         "Nothing was created. If storeProducts.count is 0 there is no existing product to read " +
