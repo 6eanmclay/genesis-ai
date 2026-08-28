@@ -1528,8 +1528,9 @@ async function main() {
   assert("the paid half asks before it charges",
     /Ready to create\?/.test(toolbarSrc),
     "a paid action that fires on the first tap is the thing this confirmation exists to prevent");
-  assert("and the cost is stated there against a real balance",
-    /confirm\.cost/.test(toolbarSrc) && /confirm\.balance/.test(toolbarSrc));
+  assert("and the cost is stated by the one shared confirmation",
+    /GrowthPointConfirm/.test(toolbarSrc),
+    "every metered action asks the same way, or three features ask three ways and a fourth forgets");
   assert("CONTROL: Create is gated on the design being makeable",
     /disabled=\{problem !== null \|\| creating/.test(toolbarSrc),
     "a half-finished design must be savable and must not reach a supplier");

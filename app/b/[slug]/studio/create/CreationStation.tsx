@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { GrowthPointConfirm, type GrowthPointQuote } from "@/app/components/GrowthPointConfirm";
 import {
   FRONT,
   addLayer,
@@ -90,10 +91,13 @@ export function CreationStation({
   onSave: (design: ProductDesign) => Promise<string | null>;
   /** A saved design the owner came back to, or undefined for a new one. */
   initialDesign?: ProductDesign;
-  /** Make the product for real. Costs Growth Points; returns an error or null. */
-  onCreate: (design: ProductDesign) => Promise<string | null>;
-  /** What it costs and what they have, read when the confirmation opens. */
-  onCost: () => Promise<{ cost: number; balance: number }>;
+  /** Make the product for real. Returns the failure, or the spend summary. */
+  onCreate: (
+    design: ProductDesign,
+    dontAskAgain: boolean,
+  ) => Promise<{ error?: string; summary?: string }>;
+  /** Whether to ask, and what it costs. From the global rule, not from here. */
+  onCost: () => Promise<GrowthPointQuote & { mustAsk: boolean }>;
   /** Already a product, so Create must not offer to charge for it twice. */
   alreadyCreated?: boolean;
 }) {
@@ -140,8 +144,8 @@ export function CreationStation({
   const [instruction, setInstruction] = useState("");
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
-  // The confirmation, holding the real balance and cost read when it opened.
-  const [confirm, setConfirm] = useState<{ cost: number; balance: number } | null>(null);
+  // The confirmation, holding the decision read when it opened.
+  const [confirm, setConfirm] = useState<GrowthPointQuote | null>(null);
 
   // A REOPENED DRAFT STARTS WHERE IT WAS LEFT. The lazy initialiser runs once,
   // so this is the design the owner saved, not a blank one they have to rebuild.
@@ -257,17 +261,28 @@ export function CreationStation({
   // print the back costs nothing and says so.
   // READ WHEN IT OPENS, not held in the page. A balance rendered at page load
   // is a number that was true earlier; this one was true a moment ago.
+  //
+  // AND IT MAY NOT OPEN AT ALL. Somebody who asked not to be checked is not
+  // checked — the decision comes from the global rule, so this cannot
+  // accidentally keep asking after they said no, and cannot skip the question
+  // when the rule says it has to be put.
   async function openConfirm() {
     setNote(null);
-    setConfirm(await onCost());
+    const decision = await onCost();
+    if (decision.mustAsk) {
+      setConfirm(decision);
+      return;
+    }
+    await createProduct(false);
   }
 
-  async function createProduct() {
+  async function createProduct(dontAskAgain: boolean) {
     setCreating(true);
     try {
-      const error = await onCreate(current);
+      const result = await onCreate(current, dontAskAgain);
       setConfirm(null);
-      setNote(error ?? "Created with your supplier and on sale in your storefront.");
+      // The accounting, which the preference deliberately does not switch off.
+      setNote(result.error ?? result.summary ?? "Created and on sale in your storefront.");
     } finally {
       setCreating(false);
     }
@@ -762,56 +777,46 @@ export function CreationStation({
                 : "Makes it with your print supplier and puts it on sale."}
             </p>
 
-            {/* ============ READY TO CREATE? ==========================
-                The business action, with its cost stated once, at the point it
-                is being agreed to. Nothing is created and nothing is charged
-                until this is confirmed. */}
+            {/* ============ ONE CONFIRMATION FOR ALL OF GENESIS =======
+                This was a dialog written here. Sean made the rule global:
+                "not something implemented separately for Creation Station,
+                Social, or individual features."
+
+                So the question, the balance, the checkbox and the overrides all
+                live in GrowthPointConfirm, and this supplies only the sentence
+                that is particular to making a product. Social will supply its
+                own sentence and get the same behaviour for free — including the
+                preference, which is the part that would otherwise be
+                reimplemented three times and forgotten once. */}
             {confirm && (
-              <div className="mt-4 rounded-xl border border-black/[.10] bg-white p-4 dark:border-white/[.14] dark:bg-zinc-900">
-                <p className="text-[14px] font-medium">Ready to create?</p>
-                <p className="mt-2 text-[13px] text-zinc-500">
-                  This will create the product with your supplier — {color}
-                  {sizeSummary} — and add it to your store.
-                </p>
-                <p className="mt-2 text-[13px] text-zinc-500">
-                  You have {confirm.balance} Growth {confirm.balance === 1 ? "Point" : "Points"}. Creating
-                  this product costs {confirm.cost}.
-                </p>
-                {confirm.balance < confirm.cost && (
-                  <p className="mt-2 text-[13px] text-amber-600 dark:text-amber-400">
-                    That is more than you have right now.
-                  </p>
-                )}
-                <div className="mt-3 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setConfirm(null)}
-                    className="rounded-full px-4 py-2 text-[13px] text-zinc-500 transition hover:bg-black/[.05] dark:hover:bg-white/[.08]"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={creating || confirm.balance < confirm.cost}
-                    onClick={createProduct}
-                    className="rounded-full bg-[var(--brand-accent,#6366f1)] px-4 py-2 text-[13px] font-medium text-white transition disabled:opacity-40"
-                  >
-                    {creating ? "Creating…" : "Yes, create product"}
-                  </button>
-                </div>
+              <div className="mt-4">
+                <GrowthPointConfirm
+                  quote={confirm}
+                  title="Ready to create?"
+                  description={`This will create the product with your supplier — ${color}${sizeSummary} — and add it to your store.`}
+                  confirmLabel="Yes, create product"
+                  busy={creating}
+                  onCancel={() => setConfirm(null)}
+                  onConfirm={({ dontAskAgain }) => void createProduct(dontAskAgain)}
+                />
               </div>
             )}
+
+            {/* RESTORED (2026-08-28). Replacing the hand-rolled dialog with the
+                shared one took these two with it, because the block being
+                swapped ran to the end of the section. They are the only reason
+                a disabled Create button is understandable rather than
+                mysterious, and the only place the size distinction is stated. */}
             {problem && <p className="mt-2 text-center text-[12px] text-zinc-500">{problem}</p>}
             {!problem && (
               <p className="mt-2 text-center text-[12px] text-zinc-500">
                 {usedPlacements(current).join(" and ")} · {color}
                 {variant?.costInCents != null && ` · costs $${(variant.costInCents / 100).toFixed(2)}`}
-                {/* THE SIZE IS NOT IN THAT LIST ANY MORE (2026-08-28). It read
-                    "front and back · Ash · 2XL", which Sean read the way anyone
-                    would: as a 2XL product. The size chosen here is the canvas
-                    the design was laid out on, and the product is created in
-                    every size the supplier stocks that colour in. Said
-                    separately, in those words. */}
+                {/* THE SIZE IS NOT IN THAT LIST. It read "front and back · Ash ·
+                    2XL", which Sean read the way anyone would: as a 2XL product.
+                    The size chosen here is the canvas the design was laid out
+                    on, and the product is created in every size the supplier
+                    stocks that colour in. Said separately, in those words. */}
                 <span className="mt-1 block">
                   Designed on {size} · made in {sellableSizes.length > 1 ? sellableSizes.join(", ") : size}
                 </span>

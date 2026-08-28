@@ -18,6 +18,12 @@ import { blankFor } from "@/lib/creation/garment";
 import { randomUUID } from "crypto";
 import { execute } from "@/lib/execution/engine";
 import { growthPointCostFor } from "@/lib/growthPoints/catalog";
+import {
+  growthPointDecision,
+  rememberSkipGrowthPointConfirmation,
+  spendSummary,
+  type GrowthPointDecision,
+} from "@/lib/growthPoints/confirmation";
 import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
 
 // TURNING A DESIGN INTO SOMETHING THE STORE SELLS.
@@ -340,6 +346,8 @@ export interface CreateProductResult {
   /** The placements the supplier confirmed it holds. */
   placements?: string[];
   message?: string;
+  /** "Created ✓ · 2 Growth Points used · 22 remaining" — always shown. */
+  summary?: string;
 }
 
 /**
@@ -352,9 +360,19 @@ export interface CreateProductResult {
 export async function createProductFromDesign(
   slug: string,
   design: ProductDesign,
-  meta: { name: string; retailPriceInCents: number; draftId?: string | null },
+  meta: {
+    name: string;
+    retailPriceInCents: number;
+    draftId?: string | null;
+    /** They ticked "don't ask me again" on the confirmation they just answered. */
+    dontAskAgain?: boolean;
+  },
 ): Promise<CreateProductResult> {
-  const { store } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  const { store, userId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  const balanceBefore = (
+    await prisma.store.findUnique({ where: { id: store.id }, select: { growthPointBalance: true } })
+  )?.growthPointBalance ?? 0;
+  const quotedCost = growthPointCostFor("create_product_from_design") ?? 0;
 
   if (!Number.isFinite(meta.retailPriceInCents) || meta.retailPriceInCents <= 0) {
     return { ok: false, error: "Give it a price before creating the product." };
@@ -383,6 +401,13 @@ export async function createProductFromDesign(
   });
   if (!record) return { ok: false, error: "That design could not be found after saving." };
 
+  // WITH THE ACTION, not before it. A confirmation that was cancelled taught us
+  // nothing, and a preference saved on opening the question would outlive a
+  // decision that was never made.
+  if (meta.dontAskAgain && userId) {
+    await rememberSkipGrowthPointConfirmation(userId, quotedCost);
+  }
+
   const result = await execute(
     createProductFromDesignExecutable,
     { designId: record.id, name: meta.name, priceInCents: meta.retailPriceInCents },
@@ -402,40 +427,60 @@ export async function createProductFromDesign(
 
   revalidatePath(`/b/${slug}/products`);
   revalidatePath(`/b/${slug}/studio`);
+
+  // ============ THE ACCOUNTING IS NOT THE QUESTION (2026-08-28) ======
+  //
+  // "The preference means skip recurring cost confirmation, not hide Growth
+  // Point accounting. After successful execution, show a lightweight result
+  // such as 'Posted ✓ · 1 Growth Point used · 23 remaining.'"
+  //
+  // So this is reported whether or not they were asked, and the balance is
+  // re-read AFTER the deduction rather than arithmetic on the number from
+  // before — the engine may cover an action under an unlimited plan, in which
+  // case nothing was spent and the honest line says so.
+  const after = await prisma.store.findUnique({
+    where: { id: store.id },
+    select: { growthPointBalance: true },
+  });
+  // MEASURED, NOT ASSUMED. What actually left the balance — which is zero when
+  // an unlimited plan or an active trial covered the action, and the honest
+  // line then says so rather than claiming points were spent.
+  const spent = Math.max(0, balanceBefore - (after?.growthPointBalance ?? 0));
+
   return {
     ok: true,
     productId: result.metadata?.productId,
     placements: result.metadata?.placements,
     message: result.message,
+    summary: spendSummary({
+      verb: "Created",
+      cost: spent,
+      remaining: after?.growthPointBalance ?? 0,
+    }),
   };
 }
 
 /**
- * What creating this product would cost, and what the owner has.
+ * Whether creating this product should ask first, and what it would cost.
  *
- * ============ THE PRICE BELONGS IN THE DECISION (2026-08-28) ==========
+ * ============ THE RULE IS NOT THIS FEATURE'S (2026-08-28) ============
  *
- * Sean: "I don't want Growth Points screaming at the user every time they look
- * at the Creation Station. Growth Points should feel like the resource used to
- * grow/level up the business, not like a toll attached to every button."
+ * Sean: "This should be a global Genesis behavior for every Growth Point-
+ * consuming action, not something implemented separately for Creation Station,
+ * Social, or individual features."
  *
- * So the button says Create product and this is read when they press it —
- * the cost appears in the confirmation, where it is information someone is
- * about to act on rather than a label they have to look past all day.
- *
- * The cost comes from the same catalogue the engine charges from, so the
- * sentence shown and the number deducted cannot drift.
+ * So this asks lib/growthPoints/confirmation.ts and reports the answer. It
+ * decides nothing itself — not when to ask, not what counts as a material
+ * change, not whether the preference applies. The Creation Station is the first
+ * caller of that rule and deliberately not the owner of it.
  */
-export async function creationCost(slug: string): Promise<{ cost: number; balance: number }> {
-  const { store } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
-  const row = await prisma.store.findUnique({
-    where: { id: store.id },
-    select: { growthPointBalance: true },
+export async function creationCost(slug: string): Promise<GrowthPointDecision> {
+  const { store, userId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  return growthPointDecision({
+    storeId: store.id,
+    userId,
+    actionType: "create_product_from_design",
   });
-  return {
-    cost: growthPointCostFor("create_product_from_design") ?? 0,
-    balance: row?.growthPointBalance ?? 0,
-  };
 }
 
 /**

@@ -78,19 +78,25 @@ export function CreationStationClient({
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
   const [created, setCreated] = useState(alreadyCreated === true);
 
-  async function handleCreate(design: ProductDesign): Promise<string | null> {
+  async function handleCreate(
+    design: ProductDesign,
+    dontAskAgain: boolean,
+  ): Promise<{ error?: string; summary?: string }> {
     const dollars = Number(price);
     // A PRICE IS REQUIRED TO SELL, and this is where that is true — Save
     // deliberately does not ask, because an unpriced design is still work worth
     // keeping.
-    if (!Number.isFinite(dollars) || dollars <= 0) return "Give it a price first.";
+    if (!Number.isFinite(dollars) || dollars <= 0) return { error: "Give it a price first." };
     const result = await createProductFromDesign(slug, design, {
       name,
       retailPriceInCents: Math.round(dollars * 100),
       draftId,
+      dontAskAgain,
     });
     if (result.ok && result.productId) setCreated(true);
-    return result.ok ? null : (result.error ?? "That product could not be created.");
+    return result.ok
+      ? { summary: result.summary }
+      : { error: result.error ?? "That product could not be created." };
   }
 
   async function handleSave(design: ProductDesign): Promise<string | null> {

@@ -51,6 +51,18 @@ model User {
   // issued before this timestamp is refused. Null for accounts that have never
   // reset, which is the same as "no reason to refuse anything".
   passwordChangedAt DateTime?
+  /// "Don't ask me about Growth Points again" — when they said it, and at what
+  /// cost. GLOBAL, not per-feature: Sean's rule covers "every Growth Point-
+  /// consuming action, not something implemented separately for Creation
+  /// Station, Social, or individual features."
+  ///
+  /// The cost is kept beside the timestamp because the preference has a stated
+  /// limit — "Always override the preference if the cost materially changes" —
+  /// and a 1-point action somebody waved through does not authorise a 10-point
+  /// one. Null means they have never opted out, which is true of every account
+  /// that predates this.
+  growthPointConfirmSkippedAt   DateTime?
+  growthPointConfirmSkippedCost Int?
   // WHEN THIS PERSON LAST PROVED THEY ARE STILL THEMSELVES (Security & Trust,
   // 2026-08-22). A live session is not proof: it is what an attacker who
   // phished a password or stole a laptop is already holding. Every

@@ -360,14 +360,29 @@ async function main() {
   assert("the button is the business action, with no price on it",
     /"Create product"/.test(stationCode) && !/Create product · 2 points/.test(stationCode),
     "a toll attached to every button is not how a growth resource should read");
+  // THE CONFIRMATION IS NOT THIS FEATURE'S ANY MORE (2026-08-28). Sean made it
+  // a global rule, so the question lives in one component every metered action
+  // uses and the Creation Station supplies only its own sentence. What is
+  // asserted here is that it DELEGATES — a feature re-rolling its own dialog is
+  // the fragmentation the rule exists to prevent.
   assert("and a confirmation states the cost against the real balance",
-    /Ready to create\?/.test(stationSrc) && /Creating\s*\n?\s*this product costs \{confirm\.cost\}/.test(stationSrc));
+    /GrowthPointConfirm/.test(stationSrc) && /Ready to create\?/.test(stationSrc),
+    "the shared component holds the balance, the cost and the checkbox");
+  const confirmSrc = readFileSync(
+    join(process.cwd(), "app", "components", "GrowthPointConfirm.tsx"), "utf8");
+  assert("the shared question shows what they have and what it costs",
+    /You have \{quote\.balance\}/.test(confirmSrc) && /This costs/.test(confirmSrc));
+  assert("and offers the standing opt-out",
+    /Don&apos;t ask me about Growth Points again/.test(confirmSrc));
   assert("CONTROL: creating only runs from inside that confirmation",
     /onClick=\{\(\) => void openConfirm\(\)\}/.test(stationSrc) &&
       !/onClick=\{createProduct\}\s*\n\s*className="mt-4 w-full/.test(stationSrc),
     "the outer button must open the question, never do the thing");
   assert("and it refuses when the balance cannot cover it",
-    /confirm\.balance < confirm\.cost/.test(stationSrc));
+    /!quote\.affordable/.test(confirmSrc));
+  assert("CONTROL: an owner who opted out is not asked at all",
+    /if \(decision\.mustAsk\)/.test(stationSrc),
+    "the preference has to reach the surface, or it is a setting that does nothing");
 
   // ======================================================================
   console.log("\n=== 11. A failure says where it stopped, in words ===\n");
