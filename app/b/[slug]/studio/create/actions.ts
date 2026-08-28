@@ -159,6 +159,38 @@ export async function addDesignToStore(
 /** The source name this Creation Station's drafts are written under. */
 const DRAFT_SOURCE = "genesis_creation";
 
+// ============ A THROWN SERVER ACTION TELLS THE OWNER NOTHING ===========
+//
+// Next replaces a Server Action's error with "An error occurred in the Server
+// Components render. The specific message is omitted in production builds" and
+// keeps the real one on the server. That is the correct default — a stack trace
+// is not for a customer — but it means every failure in this file arrives as
+// the same sentence, and the owner and I both have to guess.
+//
+// It has cost this session three rounds already: "Store not found" hid behind
+// it, the supplier rate limit hid behind it, and now a save is failing with two
+// layers on one placement and the message says nothing about either.
+//
+// So these actions RETURN their failure instead of throwing it. A returned
+// value is data, crosses to the client intact, and can be shown. The error is
+// still logged server-side by the platform; what changes is that the person
+// looking at the screen can also see it.
+//
+// REDIRECTS MUST STILL PROPAGATE. Next signals navigation by throwing, so
+// catching indiscriminately would swallow a redirect and leave the owner on a
+// page that thinks it failed. Those are re-thrown untouched.
+function isControlFlow(error: unknown): boolean {
+  const digest = (error as { digest?: unknown } | null)?.digest;
+  return typeof digest === "string" && (digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND");
+}
+
+/** The message an owner should see, or a rethrow for Next's own signals. */
+function reportable(error: unknown): string {
+  if (isControlFlow(error)) throw error;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message || "Something went wrong and did not say what.";
+}
+
 export interface SaveDraftResult {
   ok: boolean;
   error?: string;
@@ -188,6 +220,18 @@ export interface SaveDraftResult {
  * updates the same record. The first save has no id and gets one.
  */
 export async function saveDesignDraft(
+  slug: string,
+  design: ProductDesign,
+  meta: { name: string; retailPriceInCents: number | null; draftId?: string | null },
+): Promise<SaveDraftResult> {
+  try {
+    return await saveDesignDraftOrThrow(slug, design, meta);
+  } catch (error) {
+    return { ok: false, error: `That design could not be saved: ${reportable(error)}` };
+  }
+}
+
+async function saveDesignDraftOrThrow(
   slug: string,
   design: ProductDesign,
   meta: { name: string; retailPriceInCents: number | null; draftId?: string | null },
@@ -451,6 +495,29 @@ export async function createProductFromDesign(
     retailPriceInCents: number;
     draftId?: string | null;
     /** They ticked "don't ask me again" on the confirmation they just answered. */
+    dontAskAgain?: boolean;
+  },
+): Promise<CreateProductResult> {
+  try {
+    return await createProductFromDesignOrThrow(slug, design, meta);
+  } catch (error) {
+    // The engine turns a failed RUN into a FAILED result rather than a throw,
+    // so reaching here means something broke before or around it — which still
+    // means nothing was charged, and that is the first thing to say.
+    return {
+      ok: false,
+      error: `We couldn't create this product. Your Growth Points were not used. ${reportable(error)}`,
+    };
+  }
+}
+
+async function createProductFromDesignOrThrow(
+  slug: string,
+  design: ProductDesign,
+  meta: {
+    name: string;
+    retailPriceInCents: number;
+    draftId?: string | null;
     dontAskAgain?: boolean;
   },
 ): Promise<CreateProductResult> {
