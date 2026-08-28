@@ -44,8 +44,6 @@ export interface BlankOnColorProps {
   /** For the drawn fallback, when there is no blank. */
   creatableId: string;
   className?: string;
-  /** Rendered behind everything; the room shows through where the blank does not. */
-  transparent?: boolean;
 }
 
 /**
@@ -56,8 +54,9 @@ export interface BlankOnColorProps {
  * kept its rectangle, painting the room instead of the garment. Silently is
  * the point: a failed mask does not error, it just stops masking.
  */
-function sameOrigin(url: string): string {
-  return `/api/creation/blank?url=${encodeURIComponent(url)}`;
+function sameOrigin(url: string, colorHex: string | null): string {
+  const colour = colorHex ? `&color=${encodeURIComponent(colorHex)}` : "";
+  return `/api/creation/blank?url=${encodeURIComponent(url)}${colour}`;
 }
 
 /** Whether a blank shown for these inputs is the supplier's or ours. */
@@ -70,7 +69,6 @@ export function BlankOnColor({
   colorHex,
   creatableId,
   className,
-  transparent = true,
 }: BlankOnColorProps) {
   if (!usesRealBlank(blankUrl) || blankUrl === null) {
     // NOT the manufacturer's product, and not dressed up as one.
@@ -78,63 +76,29 @@ export function BlankOnColor({
   }
 
   return (
-    // ISOLATED, so the multiply below blends with the colour inside this
-    // group and NOT with whatever the page is painted. Without this the
-    // garment multiplies against the Creation Station's near-black room and
-    // disappears — a blend mode is only ever as good as its backdrop.
-    <span className={`relative block ${className ?? ""}`} style={{ isolation: "isolate" }}>
-      {/* THE COLOUR, BEHIND. Masked to the blank's own alpha so it colours the
-          garment and not the rectangle the image arrives in — without this the
-          fill is a coloured square, which is the exact thing this replaces.
-
-          The mask is the blank itself: where the image is opaque the colour
-          shows, where it is transparent the room does. */}
-      {colorHex ? (
-        <span
-          aria-hidden="true"
-          className="absolute inset-0"
-          style={{
-            backgroundColor: colorHex,
-            // QUOTED. An unquoted url() carrying a query string of
-            // percent-encoded characters is a CSS parse away from being
-            // dropped silently — and a dropped mask does not error, it just
-            // stops masking, which is how the fill kept its rectangle.
-            WebkitMaskImage: `url("${sameOrigin(blankUrl)}")`,
-            maskImage: `url("${sameOrigin(blankUrl)}")`,
-            WebkitMaskSize: "contain",
-            maskSize: "contain",
-            WebkitMaskRepeat: "no-repeat",
-            maskRepeat: "no-repeat",
-            WebkitMaskPosition: "center",
-            maskPosition: "center",
-          }}
-        />
-      ) : null}
-
-      {/* THE BLANK, ON TOP, MULTIPLIED.
-          Multiply is chosen because it is correct for both shapes Printful's
-          blanks could take, and I have not seen a real one:
-
-            - an opaque white garment carrying grey shading — white multiplied
-              by the colour IS the colour, and the greys become its shadows;
-            - shading held in the alpha channel — multiply applies only where
-              the image is opaque, which is the garment.
-
-          Normal compositing is right for the second and wrong for the first:
-          it would paint a white garment whatever colour was chosen, silently,
-          for every product. Multiply cannot fail that way. */}
-      {/* eslint-disable-next-line @next/next/no-img-element -- supplier CDN, no remotePatterns */}
-      <img
-        src={sameOrigin(blankUrl)}
-        alt=""
-        draggable={false}
-        className="relative h-full w-full object-contain"
-        style={colorHex ? { mixBlendMode: "multiply" } : undefined}
-      />
-
-      {/* Nothing is painted where the blank is not: no card, no ground, no
-          rectangle. `transparent` exists so a light surface can opt out. */}
-      {transparent ? null : <span aria-hidden="true" className="absolute inset-0 -z-10 bg-white" />}
-    </span>
+    // ============ ONE IMAGE. THE COMPOSITION HAPPENS ON THE SERVER =======
+    //
+    // This used to be a colour fill masked to the image's alpha with the image
+    // multiplied on top — three CSS mechanisms stacked, and every one of them
+    // wrong for what these files actually are.
+    //
+    // The trace settled it: Printful's blank is a SHADING LAYER. Its
+    // background is opaque white and its garment is about 10% opaque grey. So
+    // masking by alpha selected the background instead of the garment, and
+    // multiplying over a 10%-opaque layer could only tint the few bright
+    // pixels in it — which is precisely why the drawstrings changed colour and
+    // nothing else did.
+    //
+    // /api/creation/blank composes it properly now: the colour goes under the
+    // shading and the opacity is inverted, so what arrives here is the real
+    // Gildan blank, whole, in a colour Printful manufactures, on transparency.
+    // Nothing is left for CSS to do.
+    /* eslint-disable-next-line @next/next/no-img-element -- proxied supplier CDN */
+    <img
+      src={sameOrigin(blankUrl, colorHex)}
+      alt=""
+      draggable={false}
+      className={`${className ?? ""} object-contain`}
+    />
   );
 }

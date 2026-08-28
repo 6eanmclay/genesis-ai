@@ -391,12 +391,21 @@ async function main() {
   );
   assert("the drawn object remains the fallback when there is no blank",
     /<CreatableArt\b/.test(blankSrc) && /usesRealBlank\(/.test(blankSrc));
-  assert("the colour is painted behind, masked to the blank's own shape",
-    /maskImage/.test(blankSrc) && /backgroundColor/.test(blankSrc),
-    "an unmasked fill is a coloured rectangle, which is the thing being removed");
-  assert("and the blend is isolated from the page behind it",
-    /isolation:\s*"isolate"/.test(blankSrc),
-    "multiply against a near-black room erases the garment");
+  // REPLACED BY THE TRACE (2026-08-27). These asserted a CSS mask plus an
+  // isolated multiply — three mechanisms stacked to tint a photograph. The
+  // real file is not a photograph: opaque white background, garment at ~10%
+  // alpha. Masking by alpha selected the background, and multiplying over a
+  // 10%-opaque layer could only reach the few bright pixels in it, which is
+  // why the drawstrings changed colour and the hoodie did not.
+  //
+  // The composition is server-side now, so the client has one image and no
+  // mechanism at all — and that absence is the assertion.
+  assert("the client composes nothing; it shows one image",
+    !/maskImage/.test(blankSrc) && !/mixBlendMode/.test(blankSrc),
+    "every CSS approach here was wrong about what the file is");
+  assert("and asks the server for the garment in a colour",
+    /color=\$\{encodeURIComponent\(colorHex\)\}/.test(blankSrc),
+    "the colour travels to /api/creation/blank, which does the composition");
 
   // AND NO APOLOGY FOR IT. The old copy read "outline drawn by Genesis, your
   // supplier has no image", which was right while the drawing was standing in
@@ -797,10 +806,13 @@ async function main() {
   // SECOND: a blank that IS the chosen colour must not be tinted. It already
   // carries the manufacturer's own lighting; painting behind it is what put a
   // colour on the room.
-  eq("Carolina Blue picks the Carolina Blue blank",
+  eq("Carolina Blue picks the Carolina Blue record",
     blankFor(colourBlanks, "front", "#7ba4db").url, "https://x.test/carolina-front.png");
-  eq("and nothing is painted behind it",
-    blankFor(colourBlanks, "front", "#7ba4db").tintWith, null);
+  // AND CARRIES THE COLOUR TO RENDER IT IN. Printful publishes one base file
+  // per placement and the colour on the record; the garment is composed from
+  // the two. `tintWith` is that colour, not a wash over a finished picture.
+  eq("with the supplier's own colour for that record",
+    blankFor(colourBlanks, "front", "#7ba4db").tintWith, "7BA4DB");
   eq("Black picks the black one", blankFor(colourBlanks, "front", "#0A0A0A").url,
     "https://x.test/black-front.png");
   eq("and the back view picks the back blank",
@@ -848,11 +860,12 @@ async function main() {
   const blankOnColorSrc = codeOnly(
     readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "BlankOnColor.tsx"), "utf8")
   );
-  assert("the mask and the image are served from our own origin",
-    /sameOrigin\(blankUrl\)/.test(blankOnColorSrc) && /api\/creation\/blank/.test(blankOnColorSrc),
-    "a cross-origin mask-image does not error, it just stops masking");
-  assert("CONTROL: and the raw supplier URL is not used for either",
-    !/url\(\$\{blankUrl\}\)/.test(blankOnColorSrc) && !/src=\{blankUrl\}/.test(blankOnColorSrc));
+  assert("the image is served from our own origin",
+    /sameOrigin\(blankUrl, colorHex\)/.test(blankOnColorSrc) && /api\/creation\/blank/.test(blankOnColorSrc),
+    "the composition needs the pixels, which means our own server");
+  assert("CONTROL: and the raw supplier URL is never rendered directly",
+    !/src=\{blankUrl\}/.test(blankOnColorSrc),
+    "the supplier file is a shading layer; shown raw it is a white rectangle");
 
   // THE PROXY REFUSES ANYTHING THAT IS NOT PRINTFUL. An open image proxy is a
   // way to make a server fetch arbitrary URLs, internal ones included.
@@ -943,7 +956,7 @@ async function main() {
   // ============ AND GOLD NOW FINDS THE GOLD ONE ======================
   eq("Gold selects the Gold blank by name",
     blankFor(labelled, "front", null, "Gold").url, "https://x.test/gold.png");
-  eq("with nothing painted behind it",
+  eq("carrying the colour to render it in",
     blankFor(labelled, "front", null, "Gold").tintWith, null);
   eq("Black still selects the black one by hex",
     blankFor(labelled, "front", "#0A0A0A", "Black").url, "https://x.test/black.png");
@@ -1107,8 +1120,8 @@ async function main() {
     const front = blankFor(everyBlank, "front", hex, name);
     const back = blankFor(everyBlank, "back", hex, name);
     assert(`${name} resolves to a real blank`, front.url !== null, JSON.stringify(front));
-    assert(`${name} is NOT tinted`, front.tintWith === null,
-      "a blank that is already the chosen colour must not be painted over");
+    assert(`${name} carries a colour to render with`, front.tintWith !== null,
+      "one base file plus the supplier's colour is how the garment is produced");
     assert(`${name} reports no supplier gap`, front.absence === null, String(front.absence));
     assert(`${name} has its own back view`,
       back.url !== null && back.url !== front.url, `${front.url} / ${back.url}`);
@@ -1219,8 +1232,9 @@ async function main() {
   for (const c of frontColours) {
     const resolved = blankFor(someBlanks, "front", c.colorHex, c.color);
     assert(`${c.color} is offered AND resolves`, resolved.url !== null, JSON.stringify(resolved));
-    assert(`${c.color} is offered AND needs no tint`, resolved.tintWith === null,
-      "a colour that needs tinting is a colour that cannot be shown correctly");
+    assert(`${c.color} is offered AND has a colour to render with`,
+      resolved.tintWith !== null,
+      "both halves are needed: the supplier's base file and its colour");
   }
 
   // THE VIEW CHANGES WHICH COLOURS EXIST. Turning the garment over is allowed
@@ -1239,12 +1253,35 @@ async function main() {
   // AND THE EMPTY ROW SAYS SO. Images that could not be attributed to any
   // colour leave nothing offerable, and that is worth seeing immediately
   // rather than as a garment that will not change.
+  // REVISED BY THE TRACE (2026-08-27). This asserted that images we could not
+  // attribute to a colour left NO colour offerable — right while a colour
+  // needed its own photograph. It is wrong now.
+  //
+  // Printful publishes one base file per placement and it is a shading layer,
+  // so the garment is composed from that file plus a hex. An unattributed
+  // record still gives us the file, and the VARIANT gives us the hex, and both
+  // halves is all rendering needs. Fourteen colours that all render correctly
+  // is the outcome Sean wanted, arrived at from the other direction.
   const unattributable = [
     { placement: "front", colorCode: null, colorName: null, url: "https://x.test/one.png" },
   ];
-  eq("images we cannot attribute leave no colour offerable",
-    renderableColors(fourteen, unattributable, "front").length, 0);
-  assert("and the screen says that plainly",
+  eq("one base file plus the variants' own hexes renders every colour",
+    renderableColors(fourteen, unattributable, "front").length, fourteen.variants.length);
+
+  // THE REAL FILTER NOW: a colour with no hex anywhere cannot be composed, so
+  // it is not offered. That is the only case left where a colour would produce
+  // a garment we could not stand behind.
+  const noHex: typeof fourteen = {
+    ...fourteen,
+    variants: [
+      { externalVariantId: "9001", color: "Mystery", colorHex: null, size: "L", imageUrl: null, costInCents: null },
+      { externalVariantId: "9002", color: "Gold", colorHex: "#ffd667", size: "L", imageUrl: null, costInCents: null },
+    ],
+  };
+  eq("a colour with no hex at all is not offered",
+    renderableColors(noHex, unattributable, "front").map((c) => c.color), ["Gold"]);
+
+  assert("and an empty row still says why",
     /None of this blank's colours have a supplier image/.test(toolbarSrc),
     "an empty row with no sentence is a mystery");
 
@@ -1254,6 +1291,111 @@ async function main() {
   assert("CONTROL: the active colour is derived, never set while rendering",
     /const activeColor = colors\.some/.test(toolbarSrc) && !/if \(!offered[\s\S]{0,80}setColor\(/.test(toolbarSrc),
     "a setState during render is a re-render loop");
+
+  // ======================================================================
+  console.log("\n=== 16. The garment, composed from what Printful sends ===\n");
+  // ======================================================================
+  //
+  // The trace ended four rounds of guessing. Read off the real file —
+  // 05_gildan18500_flat_front_base_whitebg.png, 1000x1000 RGBA:
+  //
+  //   background   opaque white   alpha 255
+  //   garment      grey ~158      alpha ~26
+  //
+  // It is a SHADING LAYER, not a photograph. Every failed approach follows
+  // from that one fact: masking by alpha selected the background rather than
+  // the garment, and multiplying over a 10%-opaque layer could only reach the
+  // few bright pixels in it — the drawstrings. Strings-only was not a near
+  // miss; it was the arithmetic working exactly as written.
+  //
+  // The composition is arithmetic too, and pure, so it is checked here rather
+  // than admired in a screenshot.
+  const compose = (shadeAlpha: number, grey: number, hex: string) => {
+    const a = shadeAlpha / 255;
+    const c = [
+      parseInt(hex.slice(0, 2), 16),
+      parseInt(hex.slice(2, 4), 16),
+      parseInt(hex.slice(4, 6), 16),
+    ];
+    return {
+      rgb: c.map((v) => Math.round(v * (1 - a) + grey * a)),
+      alpha: 255 - shadeAlpha,
+    };
+  };
+
+  // THE BACKGROUND DISAPPEARS. Opaque white in, fully transparent out — this
+  // is what removes the white rectangle without touching the garment.
+  eq("the opaque background becomes transparent", compose(255, 255, "ffd667").alpha, 0);
+
+  // THE GARMENT TAKES THE COLOUR. Barely-opaque shading in, near-solid garment
+  // out, in the colour asked for.
+  const gold = compose(26, 158, "ffd667");
+  assert("the garment becomes solid", gold.alpha > 200, String(gold.alpha));
+  assert("and takes the chosen colour",
+    gold.rgb[0] > 200 && gold.rgb[1] > 160 && gold.rgb[2] < 130, JSON.stringify(gold.rgb));
+
+  // ============ EVERY COLOUR SEAN NAMED, WHOLE-GARMENT =================
+  //
+  // The test that matters: the garment BODY changes, not one bright detail.
+  // Body pixels are the ~10% shading; a drawstring is a brighter, more opaque
+  // pixel. Both must move, and the body must land on the chosen colour.
+  const NAMED: [string, string][] = [
+    ["Black", "0a0a0a"], ["Ash", "dedede"], ["Charcoal", "47484d"],
+    ["Gold", "ffd667"], ["Carolina Blue", "8db7f6"],
+  ];
+  const bodies: string[] = [];
+  for (const [name, hex] of NAMED) {
+    const body = compose(26, 158, hex);          // the hoodie itself
+    const string = compose(90, 210, hex);        // a brighter drawstring pixel
+    const target = [
+      parseInt(hex.slice(0, 2), 16),
+      parseInt(hex.slice(2, 4), 16),
+      parseInt(hex.slice(4, 6), 16),
+    ];
+    // WITHIN REACH OF THE REAL COLOUR. Not equal — the shading darkens it, and
+    // that darkening is the fabric.
+    const distance = Math.max(...body.rgb.map((v, k) => Math.abs(v - target[k])));
+    assert(`${name}: the garment body is that colour`, distance <= 20,
+      `${JSON.stringify(body.rgb)} vs ${JSON.stringify(target)} (off by ${distance})`);
+    assert(`${name}: the body is solid, not a ghost`, body.alpha > 200, String(body.alpha));
+    assert(`${name}: the drawstring follows the garment, not the other way round`,
+      string.alpha > 0 && string.alpha < body.alpha,
+      "strings are a side effect of the render; strings-only is the failure");
+    bodies.push(JSON.stringify(body.rgb));
+  }
+
+  // ============ AND THE FIVE ARE ACTUALLY DIFFERENT ====================
+  //
+  // The regression Sean photographed four times: every colour producing the
+  // same garment. An assertion that only checked each colour in isolation
+  // would have passed against every one of those builds.
+  eq("all five render as different garments", new Set(bodies).size, NAMED.length);
+
+  // CONTROL: the old mechanism, evaluated the same way. Multiply over a
+  // 10%-opaque layer, which is what shipped, leaves the body essentially
+  // untouched — the failure, reproduced arithmetically.
+  const multiplied = (grey: number, alpha: number, hex: string) => {
+    // multiply blends only where the source is opaque; at alpha 26 the result
+    // is 90% backdrop, and the backdrop here is the dark page.
+    const a = alpha / 255;
+    return Math.round(grey * a);
+  };
+  const bodyUnderMultiply = NAMED.map(([, hex]) => multiplied(158, 26, hex));
+  eq("CONTROL: under the old multiply every colour gave the same body",
+    new Set(bodyUnderMultiply).size, 1);
+
+  // ---- the route that does it ----------------------------------------
+  const routeSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "api", "creation", "blank", "route.ts"), "utf8")
+  );
+  assert("the composition lives on the server, where the pixels are",
+    /255 - data\[i \+ 3\]/.test(routeSrc),
+    "inverting the alpha is what drops the white background");
+  assert("and only a real hex is accepted as a colour",
+    /normaliseHex/.test(routeSrc) && /\[0-9a-f\]\{6\}/.test(routeSrc));
+  assert("CONTROL: a colour it cannot compose is refused, not invented",
+    /Could not render that colour/.test(routeSrc),
+    "the caller drops the colour rather than showing a wrong garment");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

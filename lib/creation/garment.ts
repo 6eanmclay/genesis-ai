@@ -234,9 +234,19 @@ export function blankFor(
   // pool stays empty and the absence is named instead.
   if (forPlacement.length === 0) return { url: null, tintWith: null, absence: "other-views" };
 
-  // BY HEX OR BY NAME. Printful labels these by name, and the variant carries
-  // both — matching on only one of them is what made every colour resolve to
-  // the same black hoodie.
+  // ============ ONE BASE FILE, RENDERED PER COLOUR (2026-08-27) ========
+  //
+  // The trace settled what these images are. Printful publishes ONE garment
+  // file per placement — Ash and Carolina Blue both point at
+  // 05_gildan18500_flat_front_base_whitebg.png — and it is not a photograph:
+  // the background is opaque white and the garment is a ~10% opaque shading
+  // layer. The colour is meant to be composed underneath it, and each image
+  // record carries the colour it is for in `background_color`.
+  //
+  // So "find the blank for this colour" is really "find the record for this
+  // colour, and render its base file in that colour". `tintWith` is now the
+  // colour to RENDER WITH, not a wash to lay over a finished picture — see
+  // /api/creation/blank, which does the composition server-side.
   const exact = forPlacement.find(
     (b) =>
       sameColor(b.colorCode, colorHex) ||
@@ -244,13 +254,15 @@ export function blankFor(
         colorName != null &&
         b.colorName.trim().toLowerCase() === colorName.trim().toLowerCase()),
   );
-  // ALREADY THE RIGHT COLOUR. Nothing goes behind it.
-  if (exact) return { url: exact.url, tintWith: null, absence: null };
+  if (exact) {
+    // The colour on the record beats the one passed in: it is the supplier's
+    // own value for this exact render.
+    return { url: exact.url, tintWith: exact.colorCode ?? colorHex, absence: null };
+  }
 
   // NEUTRAL MEANS UNLABELLED — no code AND no name. An image labelled "Black"
   // is not a blank canvas for gold.
   const neutral = forPlacement.find((b) => b.colorCode === null && b.colorName === null);
-  // COLOUR-NEUTRAL: this is the one meant to be painted behind.
   if (neutral) return { url: neutral.url, tintWith: colorHex, absence: null };
 
   // ONLY BLANKS FOR OTHER COLOURS. Showing one and tinting it would put a
@@ -328,9 +340,17 @@ export function renderableColors(
   // colour, and treating them as neutral is what produced the bug. When a
   // supplier who works the other way turns up, this is the line to revisit,
   // and the empty row is what will point at it.
+  // A COLOUR IS OFFERED WHEN WE HAVE BOTH HALVES: the supplier's base file for
+  // this view, and a colour to render it in. That is the whole test now.
+  //
+  // REVISED FROM "no tint allowed" (2026-08-27). That rule was right when a
+  // tint meant washing a finished photograph — the black hoodie with blue
+  // drawstrings. It is wrong now that the trace has shown these files ARE
+  // shading layers with no colour of their own: rendering is not a fallback
+  // here, it is how Printful intends the garment to be produced.
   return all.filter((c) => {
     const resolved = blankFor(blankImages, placement, c.colorHex, c.color);
-    return resolved.url !== null && resolved.tintWith === null;
+    return resolved.url !== null && (resolved.tintWith ?? c.colorHex) !== null;
   });
 }
 

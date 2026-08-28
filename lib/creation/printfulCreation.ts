@@ -328,7 +328,24 @@ export function printfulCreationProvider(
         // string and then testing it against a hex pattern is what threw the
         // names away: "Black" failed the test, became null, and every blank
         // looked colour-neutral.
-        const nextCode = typeof obj.color_code === "string" ? obj.color_code : colorCode;
+        // ============ THE FIELD NAMES, FROM THE RESPONSE ================
+        //
+        // `primary_hex_color` on the variant record, `background_color` on the
+        // image record. NOT `color_code` — that field is on catalog-variants
+        // and does not exist here, so this walker read a hex that was never
+        // sent, on every build, from the beginning.
+        //
+        // background_color wins where present because it belongs to the IMAGE:
+        // it is Printful's own "color defined on the resource", the colour this
+        // particular render is meant to be composed with.
+        const nextCode =
+          typeof obj.background_color === "string"
+            ? obj.background_color
+            : typeof obj.primary_hex_color === "string"
+              ? obj.primary_hex_color
+              : typeof obj.color_code === "string"
+                ? obj.color_code
+                : colorCode;
         const nextName = typeof obj.color === "string" ? obj.color : colorName;
 
         // ANY string that is an image, under any key.
