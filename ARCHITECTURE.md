@@ -105,6 +105,34 @@ Five real phases, in order:
 
 ---
 
+## Standing invariant: every stored file has a declared lifecycle (2026-08-28)
+
+**A blob path with no declared lifecycle is a leak that has not been noticed yet.**
+
+One ordinary month of one account left 306 MB that nothing referenced — 32% of a
+1 GB plan — and Genesis could not have cleaned any of it up, because `del` from
+`@vercel/blob` was imported nowhere in the codebase. Three separate leaks were
+found, and the worst of them is self-worsening: a failed product creation
+strands its print files and mockups, so every failure consumes the quota the
+next attempt needs.
+
+So: **every new blob path declares whether what it writes is a permanent
+customer asset, a derived artefact, or a temporary one, and when it may be
+reclaimed.** Derived assets are reproducible from the design that made them,
+which is what makes a retention policy on them safe; an owner's own upload is
+the one thing Genesis cannot recreate.
+
+Two rules govern any deletion. **The reference scan is schema-driven** — it asks
+`information_schema` for every text and JSON column rather than reading a list
+of tables, because a list falls behind the first time somebody stores a URL
+somewhere new, and does it silently. And **deletion re-checks at the moment of
+deletion**, never trusting a prior report: a report is a photograph, and a file
+that was safe when it was drawn can be load-bearing by the time the delete
+arrives.
+
+Full requirements, the classification table, and the outstanding work:
+[STORAGE.md](STORAGE.md).
+
 ## Standing invariant: the mirrored registry (2026-08-21)
 
 **A hand-maintained registry that mirrors another registry, where the type system appears to enforce the mirror but cannot.** Found three times during the verification sprint, in three unrelated parts of the codebase, always with the same signature: the file documents the mirror, the compiler checks the *shape*, and nothing checks the *membership*.
