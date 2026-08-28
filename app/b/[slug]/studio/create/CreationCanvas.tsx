@@ -27,7 +27,16 @@ import { BlankOnColor } from "./BlankOnColor";
 // dropped the moment somebody dragged past the edge of the garment, which is
 // exactly where they are trying to drag it.
 
-const HANDLE = 14;
+const HANDLE = 20;
+/**
+ * The pressable area around the resize handle.
+ *
+ * Bigger than the handle itself, and deliberately so: the visible dot is small
+ * because it sits on top of the owner's artwork, and a control sized for a
+ * finger would cover the thing being resized. Separating the two is what makes
+ * it both unobtrusive and usable on a phone.
+ */
+const HANDLE_HIT = 44;
 
 export function CreationCanvas({
   design,
@@ -276,21 +285,66 @@ function LayerBox({
         }}
       />
 
+      {/* ============ IT HAS TO LOOK DRAGGABLE (2026-08-28) ============
+          Sean: "Add a visual two-arrow/corner resize indicator on or around
+          that handle so users immediately understand that they can drag it to
+          make the artwork larger or smaller."
+
+          It was a plain dot, which reads as a decoration or a selection marker
+          rather than something to pull. The diagonal double arrow is the
+          affordance people already know from every other piece of software,
+          so it needs no explaining.
+
+          THE TOUCH TARGET IS UNCHANGED. The pressable area stays HANDLE-sized
+          and centred on the corner; the arrow is drawn inside it. Making the
+          icon bigger to make it clearer would have made the artwork harder to
+          see, and making the target smaller to make it neater is the mistake
+          the delete ✕ already taught. */}
       {selected && (
         <span
           onPointerDown={onResizePointerDown}
-          aria-label="Resize"
+          aria-label="Drag to resize"
+          title="Drag to resize"
           style={{
             position: "absolute",
-            right: -HANDLE / 2,
-            bottom: -HANDLE / 2,
-            width: HANDLE,
-            height: HANDLE,
+            // THE PRESSABLE AREA IS 44px, THE DOT IS NOT (2026-08-28). HANDLE
+            // was 14 — a quarter of what a finger needs, and the same mistake
+            // the delete ✕ was just fixed for. Sean asked to keep a 44px-ish
+            // target; it had never been one. The big square is invisible and
+            // centred on the corner, the visible handle sits inside it, so the
+            // artwork is not obscured by a control the size of a thumb.
+            right: -HANDLE_HIT / 2,
+            bottom: -HANDLE_HIT / 2,
+            width: HANDLE_HIT,
+            height: HANDLE_HIT,
             cursor: "nwse-resize",
             touchAction: "none",
           }}
-          className="rounded-full border border-white bg-[var(--brand-accent,#6366f1)] shadow"
-        />
+          className="grid place-items-center"
+        >
+          <span
+            style={{ width: HANDLE, height: HANDLE }}
+            className="grid place-items-center rounded-full border border-white bg-[var(--brand-accent,#6366f1)] shadow"
+          >
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            className="h-3 w-3"
+            fill="none"
+            stroke="white"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            {/* Top-left arrowhead, the shaft, and the bottom-right arrowhead —
+                the standard corner-resize glyph, pointing along the diagonal
+                the drag actually moves in. */}
+            <path d="M9 4H4v5" />
+            <path d="M4 4l16 16" />
+            <path d="M15 20h5v-5" />
+          </svg>
+          </span>
+        </span>
       )}
 
       {/* ============ TAKING IT OFF THE GARMENT (2026-08-28) ============

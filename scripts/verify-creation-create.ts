@@ -429,6 +429,48 @@ async function main() {
     /onPointerDown=\{\(event\) => \{\s*\n\s*event\.stopPropagation\(\);/.test(canvasSrc2),
     "without this the gesture is claimed by the move handler and the click never lands");
 
+  // ======================================================================
+  console.log("\n=== 13. Save cannot be broken by the supplier ===\n");
+  // ======================================================================
+  //
+  // Sean, testing live: "Save design currently looks correct but does not
+  // actually save. Create product currently looks correct but does not
+  // actually complete." One cause for both — Save called getBlankImages, which
+  // pages Printful's /images endpoint, and Create saves first. A rate limit or
+  // a slow answer threw, nothing caught it, and the button just reset.
+  //
+  // Saving is the thing an owner reaches for when they are NOT finished. It
+  // must not depend on a supplier being reachable.
+
+  const actionsSrc3 = readFileSync(
+    join(process.cwd(), "app", "b", "[slug]", "studio", "create", "actions.ts"), "utf8");
+  assert("a supplier failure cannot lose the design",
+    /catch \{[\s\S]{0,600}The supplier could not be read/.test(actionsSrc3),
+    "the blanks are for a future photograph; the design is the work");
+  assert("and repeat saves of one colourway do not call the supplier at all",
+    /alreadyKnown/.test(actionsSrc3),
+    "saving while working has to stay free and instant");
+
+  const stationSrc2 = readFileSync(
+    join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationStation.tsx"), "utf8");
+  assert("CONTROL: and a thrown action is reported rather than swallowed",
+    /catch \(error\) \{[\s\S]{0,200}could not be saved/.test(stationSrc2),
+    "a button that resets with no message is how a lost design looks like a saved one");
+  assert("the same for creating",
+    /Your Growth Points were not used/.test(stationSrc2));
+
+  // ======================================================================
+  console.log("\n=== 14. The resize handle looks like one ===\n");
+  // ======================================================================
+
+  const canvasSrc3 = readFileSync(
+    join(process.cwd(), "app", "b", "[slug]", "studio", "create", "CreationCanvas.tsx"), "utf8");
+  assert("the corner carries a resize arrow, not a bare dot",
+    /Drag to resize/.test(canvasSrc3) && /nwse-resize/.test(canvasSrc3));
+  assert("CONTROL: and the touch target is a finger, not the icon",
+    /HANDLE_HIT = 44/.test(canvasSrc3),
+    "it was 14px — a quarter of what a finger needs, the same mistake as the delete X");
+
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }

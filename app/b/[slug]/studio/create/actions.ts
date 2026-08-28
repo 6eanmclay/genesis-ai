@@ -181,19 +181,57 @@ export async function saveDesignDraft(
     : null;
   const previous = existing ? DesignSchema.safeParse(existing.data) : null;
 
-  // WHICH BLANK EACH SIDE WAS SHOWING, resolved from the supplier's own images
-  // through the same pure function the editor draws with — so the picture the
-  // product ends up with is the picture that was on screen.
+  // WHICH BLANK EACH SIDE WAS SHOWING, so the product's photograph can later be
+  // rebuilt as the owner saw it.
+  //
+  // ============ AND WHY SAVE NO LONGER WAITS ON IT (2026-08-28) ========
+  //
+  // Sean: "Save design currently looks correct but does not actually save.
+  // Create product currently looks correct but does not actually complete."
+  //
+  // One cause, both buttons. This called provider.getBlankImages(), which pages
+  // through Printful's /images endpoint — the heaviest and most rate-limited
+  // call the provider makes, capped at twenty per page and walked until it
+  // ends. A 429 or a slow answer threw, the throw came back through the Server
+  // Action, and nothing caught it: the button reset and the design was gone.
+  // Create failed identically because Create saves first.
+  //
+  // Saving is meant to be free and instant. It is the thing an owner reaches
+  // for when they are NOT finished, so it must not depend on a supplier being
+  // reachable, awake, or under its rate limit.
+  //
+  // So the blanks are now best effort in two ways. Reused from the last save
+  // when the colourway has not changed, which makes the common case — saving
+  // repeatedly while working — cost the supplier nothing at all. And wrapped,
+  // so a failure records no blanks rather than losing the work. What that
+  // costs is a mockup falling back to the print file later, which is visible
+  // and recoverable; what it saves is the design itself.
   const variant = garment.variants.find((v) => v.externalVariantId === design.externalVariantId) ?? null;
-  const blankImages = await provider.getBlankImages({
-    storeId: store.id,
-    externalProductId: design.externalProductId,
-  });
-  const blanks: Record<string, string> = {};
-  for (const [placement, layers] of Object.entries(design.placements)) {
-    if (layers.length === 0) continue;
-    const blank = blankFor(blankImages, placement, variant?.colorHex ?? null, variant?.color ?? null);
-    if (blank.url) blanks[placement] = blank.url;
+  const used = Object.entries(design.placements)
+    .filter(([, layers]) => layers.length > 0)
+    .map(([placement]) => placement);
+
+  const carried = previous?.success ? previous.data.placement : null;
+  const sameColourway = carried?.externalVariantId === design.externalVariantId;
+  const alreadyKnown = sameColourway && used.every((placement) => carried?.blanks[placement]);
+
+  let blanks: Record<string, string> = sameColourway ? { ...(carried?.blanks ?? {}) } : {};
+  if (!alreadyKnown) {
+    try {
+      const blankImages = await provider.getBlankImages({
+        storeId: store.id,
+        externalProductId: design.externalProductId,
+      });
+      for (const placement of used) {
+        const blank = blankFor(blankImages, placement, variant?.colorHex ?? null, variant?.color ?? null);
+        if (blank.url) blanks[placement] = blank.url;
+      }
+    } catch {
+      // The supplier could not be read. The design is still the owner's work
+      // and is still saved; only its future photograph is affected, and that
+      // is recomposed from the draft whenever Create runs.
+      blanks = sameColourway ? { ...(carried?.blanks ?? {}) } : {};
+    }
   }
 
   const data = toDraft(design, {

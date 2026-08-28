@@ -243,11 +243,31 @@ export function CreationStation({
   // So this saves a DESIGN and charges nothing. It used to write an inactive
   // Product whose design nothing could reopen, which is why saving felt like it
   // did not happen.
+  // ============ A THROWN ACTION IS NOT A QUIET ONE (2026-08-28) ======
+  //
+  // Sean: "Save design currently looks correct but does not actually save."
+  //
+  // It looked correct because nothing here caught anything. A Server Action
+  // that throws — a supplier timing out, a rate limit, a bad column — rejected
+  // this promise, the finally reset the button, and no note was ever set. The
+  // owner pressed Save, watched it finish, and lost the design, with the
+  // interface reporting success by saying nothing at all.
+  //
+  // Every one of these now catches and SAYS SO. Same rule the upload learned:
+  // the generic sentence that hides which of five things went wrong is worse
+  // than the ugly one that names it.
+  function said(error: unknown, fallback: string): string {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return message ? `${fallback} ${message}` : fallback;
+  }
+
   async function saveDesign() {
     setSaving(true);
     try {
       const error = await onSave(current);
       setNote(error ?? "Saved. You can leave and pick this up again from your saved designs.");
+    } catch (error) {
+      setNote(said(error, "That design could not be saved."));
     } finally {
       setSaving(false);
     }
@@ -268,12 +288,16 @@ export function CreationStation({
   // when the rule says it has to be put.
   async function openConfirm() {
     setNote(null);
-    const decision = await onCost();
-    if (decision.mustAsk) {
-      setConfirm(decision);
-      return;
+    try {
+      const decision = await onCost();
+      if (decision.mustAsk) {
+        setConfirm(decision);
+        return;
+      }
+      await createProduct(false);
+    } catch (error) {
+      setNote(said(error, "We couldn't start creating this product."));
     }
-    await createProduct(false);
   }
 
   async function createProduct(dontAskAgain: boolean) {
@@ -283,6 +307,12 @@ export function CreationStation({
       setConfirm(null);
       // The accounting, which the preference deliberately does not switch off.
       setNote(result.error ?? result.summary ?? "Created and on sale in your storefront.");
+    } catch (error) {
+      // The engine turns a failed run into a FAILED result rather than a throw,
+      // so reaching here means something broke BEFORE it — which still means
+      // nothing was charged, and the owner should be told that first.
+      setConfirm(null);
+      setNote(said(error, "We couldn't create this product. Your Growth Points were not used."));
     } finally {
       setCreating(false);
     }
