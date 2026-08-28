@@ -776,9 +776,13 @@ export function CreationStation({
                 the split: a half-finished design is exactly the thing somebody
                 needs to save. The completeness rules belong to Create, which
                 makes the product, not to Save, which keeps the work. */}
-            <p className="mt-2 text-center text-[12px] text-zinc-500">
-              Free, and you can come back to it.
-            </p>
+            {/* NOTHING UNDER SAVE (2026-08-28). It said "Free, and you can
+                come back to it." Sean: "Don't advertise the absence of a cost.
+                Just let free actions be free." A label announcing that
+                something is free makes the reader price it, which is the exact
+                mental overhead the Growth Point rules exist to keep out of the
+                workflow — the economy becomes visible only where there is a
+                cost, at the moment of committing to it. */}
 
             {/* ============ THE SECOND HALF, AND THE PAID ONE ==========
                 Disabled by designProblem, which Save deliberately is not: a

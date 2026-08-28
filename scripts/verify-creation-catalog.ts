@@ -1485,6 +1485,22 @@ async function main() {
     readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "actions.ts"), "utf8")
   );
 
+  // ============ A SLUG IS NOT A STORE ID (2026-08-28) ================
+  //
+  // Every action in this file began with requireStorePermission(perm, slug),
+  // and that parameter is a STORE ID. resolveBusiness looked up an id, found
+  // nothing, and refused to fall back to the active business — so saving,
+  // creating, pricing, uploading and removing all threw "Store not found" on
+  // their first line, for everybody, always.
+  //
+  // Both parameters are strings and both are named something plausible, so the
+  // compiler could not tell them apart. This is the check that can.
+  assert("no action here hands a slug to the id-taking permission helper",
+    !/requireStorePermission\([^)]*,\s*slug\s*\)/.test(actionsSrc),
+    "requireBusiness(permission, slug) is the slug-taking one — this cost two rounds of debugging");
+  assert("CONTROL: and the slug-taking helper is actually the one used",
+    /requireBusiness\(PERMISSIONS\.PRODUCTS_MANAGE, slug\)/.test(actionsSrc));
+
   assert("the action delegates the write to something a suite can call",
     /saveDesignAsProduct\(/.test(actionsSrc),
     "see lib/creation/saveDesign.ts — inlining this again makes the save untestable");
@@ -1505,9 +1521,20 @@ async function main() {
   // it must not promise a Create button that does not exist yet either.
   assert("the button says what it does",
     /Save design/.test(toolbarSrc) && !/Add to my store/.test(toolbarSrc));
-  assert("and says the saving is free and recoverable",
-    /Free, and you can come back to it/.test(toolbarSrc),
-    "the promise is made by the label, not by the toast");
+  // ============ DON'T ADVERTISE THE ABSENCE OF A COST (2026-08-28) ====
+  //
+  // This asserted the copy under Save said "Free, and you can come back to it."
+  // Sean: "Don't advertise the absence of a cost. Just let free actions be
+  // free... Users shouldn't have to mentally process a price for something
+  // that doesn't have one."
+  //
+  // So the assertion inverts. A label announcing that something is free makes
+  // the reader price it, which is the overhead the whole Growth Point rule
+  // exists to keep out of the workflow — the economy is visible only where
+  // there is a cost, at the moment of committing to it.
+  assert("CONTROL: Save does not announce that it is free",
+    !/Free,/.test(toolbarSrc),
+    "a free action should simply behave normally");
   // ============ AND CREATE IS NOW REAL (2026-08-28) ===================
   //
   // The control here used to be that NO Create button existed, because one that

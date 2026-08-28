@@ -1,5 +1,31 @@
 "use server";
 
+// ============ "Store not found", every time (2026-08-28) ===============
+//
+// Every action in this file began with
+//
+//     requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug)
+//
+// and that second parameter is a STORE ID, not a slug. resolveBusiness looks
+// up an id, finds nothing for "cubit-coil", and — deliberately, so a caller
+// that named a business never silently gets a different one — refuses to fall
+// back to the active business. requireStorePermission then throws "Store not
+// found".
+//
+// So saving a design, creating a product, reading the cost, adding an upload
+// and removing one all threw on their first line, for everybody, always. It is
+// why Save "looked correct but did not save": the action threw, and until the
+// handlers were given a catch, the button simply reset.
+//
+// It is also the reason the upload never completed. That had a second, real
+// defect — the bare filename — and fixing it did not help, because the record
+// write behind it was throwing here.
+//
+// requireBusiness(permission, slug) is the slug-taking one. Both parameters are
+// strings and both are called something plausible, so nothing in the type
+// system could tell them apart; scripts/verify-creation-catalog.ts now asserts
+// this file never passes a slug to the id-taking helper.
+
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -7,7 +33,7 @@ import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
 import type { Asset } from "@/lib/businessModel/entities";
 import { removedFromLibrary, restoredToLibrary } from "@/lib/creation/assetLibrary";
 import { PERMISSIONS } from "@/lib/permissions";
-import { requireStorePermission } from "@/lib/permissions";
+import { requireBusiness, requireStorePermission } from "@/lib/permissions";
 import { usedPlacements, type ProductDesign } from "@/lib/creation/design";
 import { saveDesignAsProduct } from "@/lib/creation/saveDesign";
 import { creationProviderFor } from "@/lib/creation/provider";
@@ -138,6 +164,19 @@ export interface SaveDraftResult {
   error?: string;
   /** The draft's id, so the next save updates rather than duplicates. */
   designId?: string;
+  /**
+   * The design saved, but something secondary did not.
+   *
+   * ============ SAVED IS NOT THE SAME AS SAVED PERFECTLY ============
+   *
+   * Sean: "I don't want the interface to silently imply success or give me a
+   * generic failure when something more specific is known." Recording the
+   * supplier's blank is best effort, and when it fails the work is still saved
+   * — but saying only "Saved" would hide that the product's photograph will
+   * later fall back to the print file. This is that middle state, which had no
+   * way to be reported at all.
+   */
+  warning?: string;
 }
 
 /**
@@ -153,7 +192,7 @@ export async function saveDesignDraft(
   design: ProductDesign,
   meta: { name: string; retailPriceInCents: number | null; draftId?: string | null },
 ): Promise<SaveDraftResult> {
-  const { store, userId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  const { store, userId } = await requireBusiness(PERMISSIONS.PRODUCTS_MANAGE, slug);
 
   const provider = await creationProviderFor(store.id);
   if (!provider) return { ok: false, error: "Connect a print supplier before saving a design." };
@@ -216,6 +255,7 @@ export async function saveDesignDraft(
   const alreadyKnown = sameColourway && used.every((placement) => carried?.blanks[placement]);
 
   let blanks: Record<string, string> = sameColourway ? { ...(carried?.blanks ?? {}) } : {};
+  let blanksUnavailable = false;
   if (!alreadyKnown) {
     try {
       const blankImages = await provider.getBlankImages({
@@ -229,8 +269,10 @@ export async function saveDesignDraft(
     } catch {
       // The supplier could not be read. The design is still the owner's work
       // and is still saved; only its future photograph is affected, and that
-      // is recomposed from the draft whenever Create runs.
+      // is recomposed from the draft whenever Create runs. REPORTED, not
+      // swallowed — see SaveDraftResult.warning.
       blanks = sameColourway ? { ...(carried?.blanks ?? {}) } : {};
+      blanksUnavailable = used.length > 0;
     }
   }
 
@@ -258,7 +300,13 @@ export async function saveDesignDraft(
   }
 
   revalidatePath(`/b/${slug}/studio`);
-  return { ok: true, designId: draftId };
+  return {
+    ok: true,
+    designId: draftId,
+    warning: blanksUnavailable
+      ? "Your design is saved. We couldn't reach your supplier for the preview image, so the product photo may fall back to the artwork itself."
+      : undefined,
+  };
 }
 
 /** One saved design, as the doorway shows it. */
@@ -406,7 +454,7 @@ export async function createProductFromDesign(
     dontAskAgain?: boolean;
   },
 ): Promise<CreateProductResult> {
-  const { store, userId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  const { store, userId } = await requireBusiness(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const balanceBefore = (
     await prisma.store.findUnique({ where: { id: store.id }, select: { growthPointBalance: true } })
   )?.growthPointBalance ?? 0;
@@ -513,7 +561,7 @@ export async function createProductFromDesign(
  * caller of that rule and deliberately not the owner of it.
  */
 export async function creationCost(slug: string): Promise<GrowthPointDecision> {
-  const { store, userId } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  const { store, userId } = await requireBusiness(PERMISSIONS.PRODUCTS_MANAGE, slug);
   return growthPointDecision({
     storeId: store.id,
     userId,
@@ -580,7 +628,7 @@ export async function addAssetToLibrary(
   slug: string,
   uploaded: { url: string; originalFilename: string; contentType: string },
 ): Promise<{ ok: boolean; error?: string }> {
-  const { store } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  const { store } = await requireBusiness(PERMISSIONS.PRODUCTS_MANAGE, slug);
   if (!uploaded?.url || !uploaded.url.startsWith("https://")) {
     return { ok: false, error: "That upload did not complete." };
   }
@@ -616,7 +664,7 @@ async function setLibraryMembership(
   recordId: string,
   present: boolean,
 ): Promise<{ ok: boolean; error?: string }> {
-  const { store } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  const { store } = await requireBusiness(PERMISSIONS.PRODUCTS_MANAGE, slug);
 
   // SCOPED TO THE BUSINESS, not just to the id. A record id from another store
   // must not resolve here — the same rule every other read of these records

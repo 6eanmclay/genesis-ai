@@ -107,7 +107,10 @@ export function CreationStationClient({
     const priced = Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : null;
     const result = await saveDesignDraft(slug, design, { name, retailPriceInCents: priced, draftId });
     if (result.ok && result.designId) setDraftId(result.designId);
-    return result.ok ? null : (result.error ?? "Couldn't save that design.");
+    // THREE OUTCOMES, NOT TWO. Saved, saved-with-a-caveat, and not saved —
+    // the middle one used to read identically to the first.
+    if (result.ok) return result.warning ?? null;
+    return result.error ?? "Couldn't save that design.";
   }
 
   return (
