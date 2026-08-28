@@ -1454,27 +1454,53 @@ async function main() {
   // Printful; designSpec has no readers anywhere; createDraftOrder sends one
   // file with no placement. So the thing being over-advertised was never the
   // Back tab — it was the button, which said "Add to my store".
+  // ============ THESE THREE ARE NOW RUN, NOT READ (2026-08-28) =========
+  //
+  // active:false, supplierProductCreated:false and the design being stored
+  // complete were asserted here as regular expressions over the action's
+  // source, because the action needed a connected Printful account to reach
+  // and could not be called. scripts/verify-creation-save.ts now executes the
+  // write against a real database and reads the row back, which proves the
+  // same three properties and several this file could not express at all —
+  // that a refusal refuses, and that nothing is written when it does.
+  //
+  // So they are not repeated here. What IS still worth asserting from the
+  // source is the seam itself: the action must keep delegating, because the
+  // day someone inlines the write back into a "use server" file is the day it
+  // stops being testable and quietly goes back to being regular expressions.
   const actionsSrc = codeOnly(
     readFileSync(join(process.cwd(), "app", "b", "[slug]", "studio", "create", "actions.ts"), "utf8")
   );
 
-  assert("a saved design is not put on sale",
-    /active: false/.test(actionsSrc),
-    "an active PRINT_ON_DEMAND product is a promise the supplier has never heard");
-  assert("and records that the supplier does not have it",
-    /supplierProductCreated: false/.test(actionsSrc),
-    "one thing to flip and one thing to read, the day it becomes true");
-  assert("CONTROL: while the design itself is still stored complete",
-    /providerPlacements: placements/.test(actionsSrc) && /placements: design\.placements/.test(actionsSrc),
-    "the point is to stop claiming, not to stop keeping");
+  assert("the action delegates the write to something a suite can call",
+    /saveDesignAsProduct\(/.test(actionsSrc),
+    "see lib/creation/saveDesign.ts — inlining this again makes the save untestable");
+  assert("and still re-reads the garment from the supplier rather than the browser",
+    /provider\.getGarment\(/.test(actionsSrc),
+    "a client that sent its own print areas would be choosing where its design prints");
 
   // THE COPY, BEFORE AND AFTER THE CLICK. A button that says "Add to my store"
   // is the claim; saying it only in the confirmation would be too late.
   assert("the button says what it does",
     /Save this design/.test(toolbarSrc) && !/Add to my store/.test(toolbarSrc));
   assert("and says so before it is pressed",
-    /Creating it with Printful is a separate step that is not built yet/.test(toolbarSrc),
+    /Creating it with your print supplier is a separate step that is not built yet/.test(toolbarSrc),
     "the promise is made by the label, not by the toast");
+  // ============ AND IT NAMES NO SUPPLIER (2026-08-28) =================
+  //
+  // Sean: "keep the supplier abstraction intact... That way another supplier
+  // can expose different capabilities later without us rebuilding the Creation
+  // Station."
+  //
+  // This copy said "created with Printful". True today, and it would have
+  // become a lie the moment a second supplier was connected — the same class of
+  // mistake as the hardcoded fulfillmentProvider that saveDesign.ts now reads
+  // off the garment. Comments are stripped before this runs, so what it checks
+  // is the words an owner actually sees.
+  assert("CONTROL: the owner-facing copy names no supplier at all",
+    !/Printful/.test(toolbarSrc),
+    "a provider name in the interface is a provider name to change when there are two");
+
   assert("CONTROL: and the confirmation no longer claims a store",
     !/Added to your store/.test(toolbarSrc),
     "that sentence was the whole misrepresentation");

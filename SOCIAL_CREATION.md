@@ -58,41 +58,79 @@ Because J4 is connected to all of them, he must understand that **one owner comm
 
 **The owner's writing voice is not a business fact.** It belongs beside the owner, not in the understanding graph that holds what the business is, sells and promises. Mixing them would let a stylistic observation ("they rarely use exclamation marks") sit in the same store as an owner-authoritative claim about the business — see [J4_BUSINESS_UNDERSTANDING_MODEL.md](J4_BUSINESS_UNDERSTANDING_MODEL.md), where provenance is the whole point.
 
-## 4. Review first, trust later
+## 4. One upload, one carousel, one creation
 
-Before publishing, show what J4 intends to post:
+**The same carousel interaction Creation Station already uses.** A single piece of uploaded content becomes **one Social Creation workflow**, not four. The owner swipes through the connected platforms one at a time — Facebook, Instagram, TikTok, X, and whatever is connected next.
 
-```
-Instagram
-  [caption]
+Each platform card carries:
 
-Facebook
-  [caption]
+- a **Post / Don't Post** toggle
+- the **platform-specific caption** J4 wrote for it
+- the **content preview**
+- the ability to **review and edit** that caption
 
-X
-  [caption]
+The captions are generated independently per platform, from the owner's learned voice and that platform's way of communicating. **Never one caption duplicated across four cards.**
 
-TikTok
-  [caption]
-```
-
-The owner can review and edit anything before it goes out. **J4 explains his reasoning where it helps** rather than dumping four captions and waiting.
-
-Once the owner has built confidence:
+At the end of the carousel there are two actions:
 
 ```
-[ ] Don't ask me to review captions anymore
+Post Now          Post Later
 ```
 
-With that on, J4 prepares the platform-specific captions and publishes according to the owner's established preferences. **The owner can always turn the approval requirement back on** — trust granted is not trust surrendered.
+**Post Later** asks for the day and time, and the owner confirms the schedule.
 
-## 5. Growth Points
+### The carousel must extend without redesign
 
-**Creating the post is one Growth Point, regardless of how many platforms it goes to.**
+Adding a fifth platform is a card, not a new workflow. That is the test of whether this is built right: if supporting a new network means reopening the interaction design, the workflow was modelled around the four that existed on the day it was written.
 
-Writing four captions instead of one is J4 doing his job properly, not four purchases. Metering per platform would price the owner away from exactly the behaviour that makes this better than a scheduler.
+## 5. What it costs, and when
 
-## 6. Keep it open to engagement signals
+**One Growth Point, charged exactly once, at the commitment point** — when the owner presses Post Now, or confirms a scheduled post.
+
+**Not charged again when a scheduled post actually publishes.** The lifecycle:
+
+```
+DRAFT  ->  READY  ->  SCHEDULED  ->  PUBLISHED
+```
+
+Once the owner has committed and the Growth Point is allocated, **the creation is paid for**. A later publishing failure must never charge a second one — Genesis retries and recovers instead. The owner bought the creation, not the attempt.
+
+**Four platforms is one charge.** Selecting more platforms must never turn one piece of content into four Growth Point charges. Writing four captions instead of one is J4 doing the job properly, not four purchases — and the carousel, where each platform gets its own card, is exactly where per-card metering would look natural and be wrong.
+
+## 6. Progressive trust
+
+**At first J4 shows his work. As the owner gains confidence, he asks less.** That is the whole shape of this, and it is a shape the owner controls at every point.
+
+Initially the full carousel: the owner chooses platforms, reads the captions, changes what they want. **J4 explains his reasoning where it helps** rather than dumping four captions and waiting for a verdict.
+
+Once they are comfortable, they can save their normal setup:
+
+```
+My usual platforms
+  [x] TikTok
+  [x] Instagram
+  [x] Facebook
+  [x] X
+
+[ ] Don't ask me to review every post
+```
+
+With that enabled, J4 remembers two separate things:
+
+1. **which platforms** the owner normally posts to
+2. **that he may proceed** without caption-by-caption approval
+
+The workflow then collapses to: upload the video, give J4 the concept, J4 writes the platform-specific captions, uses the saved platforms, Post Now or Post Later.
+
+**The carousel still exists and stays reachable.** It stops interrupting; it does not disappear. And the preference is always reversible — the owner can turn review back on whenever they like.
+
+### A saved default is not an instruction
+
+**J4 must recognise the unusual case.** If the saved setup is TikTok, Instagram, Facebook and X, and the owner says *"don't post this one on X"*, the current instruction wins. A default that overrides what someone just said is not a preference, it is a bug.
+
+> **This should feel like J4 learning how the owner normally works, not like the owner permanently giving up control.**
+
+## 7. Keep it open to engagement signals
 
 **Architect so that J4 can eventually learn from performance, not only from captions.** Over time he should be able to tell what kinds of content and messaging actually work for *this* business, from the engagement and history the connected platforms already expose.
 

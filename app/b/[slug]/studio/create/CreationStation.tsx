@@ -210,7 +210,7 @@ export function CreationStation({
       const error = await onAddToStore(current);
       setNote(
         error ??
-          "Saved as a design. It has not been created with Printful yet, so it is not on sale — " +
+          "Saved as a design. It has not been created with your print supplier yet, so it is not on sale — " +
             "that step is not built.",
       );
     } finally {
@@ -669,7 +669,7 @@ export function CreationStation({
                 so nothing could be ordered from it. Saying so here is the
                 difference between a saved design and a product that exists. */}
             <p className="mt-2 text-center text-[12px] text-zinc-500">
-              Saves the design. Creating it with Printful is a separate step that is not built yet,
+              Saves the design. Creating it with your print supplier is a separate step that is not built yet,
               so it will not go on sale.
             </p>
             {problem && <p className="mt-2 text-center text-[12px] text-zinc-500">{problem}</p>}
