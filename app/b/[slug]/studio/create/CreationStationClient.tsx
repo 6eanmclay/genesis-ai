@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Garment, BlankImage } from "@/lib/creation/garment";
+import type { LibraryAsset } from "@/lib/creation/assetLibrary";
 import type { ProductDesign } from "@/lib/creation/design";
 import { CreationStation } from "./CreationStation";
 import { addDesignToStore } from "./actions";
@@ -27,7 +28,7 @@ export function CreationStationClient({
 }: {
   slug: string;
   garment: Garment;
-  assets: { id: string; url: string; name: string }[];
+  assets: LibraryAsset[];
   /** The supplier's blanks, and why there are none if there are none. */
   blanks: { images: BlankImage[]; problem: string | null };
   /** What the supplier charges, in cents, keyed by external variant id. */
@@ -85,6 +86,7 @@ export function CreationStationClient({
       </div>
 
       <CreationStation
+        slug={slug}
         garment={garment}
         assets={assets}
         blankImages={blanks.images}

@@ -259,6 +259,48 @@ export const AssetSchema = z.object({
   generationPrompt: z.string().nullable().default(null),
   aiUsageEventId: z.string().nullable().default(null),
 
+  // ---- The Creation Station library (2026-08-28) ----
+  //
+  // ============ REMEMBERING AND OFFERING ARE DIFFERENT ==================
+  //
+  // Sean: "J4's memory is the business brain. Creation Station is the creative
+  // workspace... Deleting an asset from Creation Station should not
+  // automatically mean deleting J4's underlying memory."
+  //
+  // Two facts about one asset, and they were the same fact until now: the
+  // Creation Station's picker WAS J4's memory, queried for photos. So an owner
+  // tidying their toolbox had no way to do it that did not mean forgetting.
+  //
+  // WHY THIS IS NOT `role`. Role says what an asset is FOR — "brand.logo",
+  // "product.artwork" — and it is a single string. An asset can be the brand
+  // logo AND be in the toolbox, so overloading role would force a choice
+  // between two unrelated truths.
+  //
+  // WHY A TIMESTAMP AND NOT A BOOLEAN. Removal is reversible by construction:
+  // null is available, a date is "the owner took it out, on this day". Nothing
+  // is deleted, J4's record is untouched, and restoring is clearing a field
+  // rather than recreating a row. A boolean would have been the same size and
+  // told us nothing about when.
+  //
+  // Null by default, so every existing asset — generated or uploaded, from
+  // before this field existed — is in the library without a migration.
+  creationLibraryRemovedAt: z.string().nullable().default(null),
+
+  // ---- Does this file actually have transparency? ----
+  //
+  // Sean: "Do not assume that every PNG has transparency... A PNG can have a
+  // completely opaque background."
+  //
+  // A FACT ABOUT THE FILE, read from its alpha channel at ingest — not from
+  // the extension and not from the MIME type, both of which say "png" for a
+  // fully opaque image. Determined once, because it cannot change, and stored
+  // on the asset rather than per product: the same artwork has to behave the
+  // same way on a hoodie, a mug and a tote.
+  //
+  // Null means "not inspected" — an asset ingested before this existed, or one
+  // whose bytes could not be read. Distinct from false, which is a measurement.
+  hasTransparency: z.boolean().nullable().default(null),
+
   createdAt: z.string().nullable().default(null), // ISO date
 });
 export type Asset = z.infer<typeof AssetSchema>;

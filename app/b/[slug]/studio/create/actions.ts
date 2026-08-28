@@ -2,6 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
+import type { Asset } from "@/lib/businessModel/entities";
+import { removedFromLibrary, restoredToLibrary } from "@/lib/creation/assetLibrary";
 import { PERMISSIONS } from "@/lib/permissions";
 import { requireStorePermission } from "@/lib/permissions";
 import { designProblem, toProviderPlacements, usedPlacements, type ProductDesign } from "@/lib/creation/design";
@@ -149,4 +153,94 @@ export async function addDesignToStore(
 export async function describeDesign(design: ProductDesign): Promise<string> {
   const sides = usedPlacements(design);
   return sides.length === 0 ? "nothing yet" : sides.join(" and ");
+}
+
+// ============ THE CREATION STATION'S ASSET LIBRARY (2026-08-28) =========
+//
+// Three actions, and the shape of them is the guarantee. Sean: "Deleting it
+// from the creation library should not accidentally erase something J4 needs
+// to remember about the business."
+//
+// So there is no delete here. Removing writes a date onto the record J4
+// already holds; restoring clears it. Neither touches role, origin,
+// classification, supersession or the file itself, and no code path in this
+// file can remove a BusinessRecord even by mistake — the capability is simply
+// absent rather than guarded.
+
+/**
+ * Bring an uploaded file into the business's assets and its Creation Station.
+ *
+ * REUSES ingestBusinessAsset RATHER THAN WRITING A SECOND STORE. That function
+ * already writes the permanent record, sets origin "uploaded", and now measures
+ * the file's real alpha. An upload made here and an upload made in chat produce
+ * the same asset, which is the point: the library is a lens over J4's memory,
+ * not a parallel collection.
+ */
+export async function addAssetToLibrary(
+  slug: string,
+  uploaded: { url: string; originalFilename: string; contentType: string },
+): Promise<{ ok: boolean; error?: string }> {
+  const { store } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+  if (!uploaded?.url || !uploaded.url.startsWith("https://")) {
+    return { ok: false, error: "That upload did not complete." };
+  }
+
+  await ingestBusinessAsset(store.id, uploaded);
+  revalidatePath(`/b/${slug}/studio/create`);
+  return { ok: true };
+}
+
+/**
+ * Take an asset out of the Creation Station. J4 still remembers it.
+ *
+ * The record is read, one field is set, and it is written back — so anything
+ * else on it survives untouched, including fields added after this was written.
+ */
+export async function removeAssetFromLibrary(
+  slug: string,
+  recordId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  return setLibraryMembership(slug, recordId, false);
+}
+
+/** Put it back. The exact inverse — removal was never destructive. */
+export async function restoreAssetToLibrary(
+  slug: string,
+  recordId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  return setLibraryMembership(slug, recordId, true);
+}
+
+async function setLibraryMembership(
+  slug: string,
+  recordId: string,
+  present: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const { store } = await requireStorePermission(PERMISSIONS.PRODUCTS_MANAGE, slug);
+
+  // SCOPED TO THE BUSINESS, not just to the id. A record id from another store
+  // must not resolve here — the same rule every other read of these records
+  // follows.
+  const record = await prisma.businessRecord.findFirst({
+    where: { id: recordId, storeId: store.id, entityType: "asset" },
+    select: { id: true, data: true },
+  });
+  if (!record) return { ok: false, error: "That asset is not in this business." };
+
+  const asset = record.data as unknown as Asset;
+  const next = present ? restoredToLibrary(asset) : removedFromLibrary(asset);
+
+  // STORE-SCOPED ON THE WRITE, not only on the read (2026-08-28).
+  //
+  // The findFirst above already proved this record belongs to this business,
+  // and updating by id alone would still have been a bare cross-tenant write —
+  // one refactor away from losing the check that made it safe. The tenant
+  // isolation extension refused it, correctly, the first time this ran.
+  await prisma.businessRecord.update({
+    where: { id: record.id, storeId: store.id },
+    data: { data: next as unknown as Prisma.InputJsonValue },
+  });
+
+  revalidatePath(`/b/${slug}/studio/create`);
+  return { ok: true };
 }

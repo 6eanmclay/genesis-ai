@@ -99,6 +99,26 @@ export function BlankOnColor({
       alt=""
       draggable={false}
       className={`${className ?? ""} object-contain`}
+      // ============ SO A BLACK GARMENT IS NOT A BLACK ROOM ==============
+      //
+      // Sean: "when the garment color is Black, the hoodie essentially
+      // disappears against the dark background."
+      //
+      // The composition is not wrong — a black hoodie composes to rgb(25,25,25)
+      // and that is what one looks like. The room is rgb(11,12,14). Fourteen
+      // levels of separation, where Charcoal gets 71 and White gets 234.
+      //
+      // A backdrop cannot fix that: anything light enough to show Black would
+      // swallow Charcoal. What separates any colour from any ground is an EDGE,
+      // and drop-shadow follows the image's own alpha — so this traces the
+      // garment's silhouette rather than drawing a box behind it.
+      //
+      // Two shadows: a tight one for the edge, a wide one for ambient lift.
+      // Invisible against a white garment, which is why it can be unconditional.
+      style={{
+        filter:
+          "drop-shadow(0 0 1px rgba(255,255,255,0.55)) drop-shadow(0 0 16px rgba(255,255,255,0.20))",
+      }}
     />
   );
 }

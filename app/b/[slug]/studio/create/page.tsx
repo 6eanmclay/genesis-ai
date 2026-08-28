@@ -11,6 +11,8 @@ import { getConnector } from "@/lib/integrations/registry";
 import { connectExecutable } from "@/lib/execution/adapters/integrationExecutable";
 import { creatableById, blanksFor, portalItems } from "@/lib/creation/creatables";
 import type { Blank, BlankImage } from "@/lib/creation/garment";
+import type { Asset } from "@/lib/businessModel/entities";
+import { libraryFrom, type LibraryAsset } from "@/lib/creation/assetLibrary";
 
 // THE CREATION STATION, FOR ONE BUSINESS.
 //
@@ -358,22 +360,25 @@ export default async function CreationStationPage({
  * with none is told so in the workspace rather than handed graphics that are
  * not theirs.
  */
-async function artworkFor(storeId: string): Promise<{ id: string; url: string; name: string }[]> {
+async function artworkFor(storeId: string): Promise<LibraryAsset[]> {
   const assets = await prisma.businessRecord.findMany({
     where: { storeId, entityType: "asset" },
     orderBy: { syncedAt: "desc" },
-    take: 24,
+    take: 60,
     select: { id: true, data: true },
   });
 
-  return assets
-    .map((record) => {
-      const data = record.data as { storageUrl?: string; originalFilename?: string; fileType?: string } | null;
-      if (!data?.storageUrl || data.fileType !== "photo") return null;
-      return { id: record.id, url: data.storageUrl, name: data.originalFilename ?? "Artwork" };
-    })
-    .filter((a): a is { id: string; url: string; name: string } => a !== null);
+  // THE LIBRARY IS A VIEW, NOT A SECOND STORE (2026-08-28). Same records J4
+  // remembers; the filtering — images, and not removed by the owner — is the
+  // only difference between the business brain and the creative workspace.
+  // See lib/creation/assetLibrary.ts for why that is a lens rather than a copy.
+  //
+  // The take went from 24 to 60 because removed assets are filtered AFTER the
+  // query: a toolbox someone has tidied should not start losing its oldest
+  // items to a limit spent on things they took out.
+  return libraryFrom(assets as { id: string; data: Asset }[]);
 }
+
 
 function Empty({
   title,

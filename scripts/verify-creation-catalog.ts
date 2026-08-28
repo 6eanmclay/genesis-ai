@@ -901,14 +901,50 @@ async function main() {
   // The tap DID add the artwork. Nothing in the panel changed to say so, and
   // the panel covers the canvas where the result appeared — two silences on
   // top of each other, which read as a dead control.
+  // MOVED, NOT CHANGED (2026-08-28). The Add panel became its own component
+  // when uploading arrived — a file input, an in-flight upload and an error
+  // are client state, and leaving that inside a variable in a render body was
+  // not going to hold. The claims are identical; only the file they live in
+  // moved, so the assertions follow rather than being deleted.
+  // RAW, NOT codeOnly — AND THIS IS WHY (2026-08-28).
+  //
+  // codeOnly strips block comments with /\/\*[\s\S]*?\*\//. This file
+  // contains `accept="image/*"`, so that `/*` opens a comment the helper never
+  // sees the end of until the next `*/` — which deleted 3,291 characters of
+  // real code and failed three assertions about behaviour that was present the
+  // whole time.
+  //
+  // The helper is unchanged: making it string-literal aware means writing a
+  // tokenizer, and every other caller passes it .ts files where `/*` inside a
+  // string does not occur. Named here so the next person to point codeOnly at
+  // JSX knows what it does to an image accept attribute.
+  //
+  // Reading raw costs the guarantee that a match is code rather than prose, so
+  // the patterns below are ones no comment would contain — call expressions
+  // with their arguments, not English.
+  const addPanelSrc = readFileSync(
+    join(process.cwd(), "app", "b", "[slug]", "studio", "create", "AddAssetPanel.tsx"),
+    "utf8",
+  );
   assert("an artwork already on this side is shown as such",
-    /const onGarment = layersOn\(design, placement\)\.some/.test(toolbarSrc),
+    /onGarment\(asset\.url\)/.test(addPanelSrc),
     "the panel gave no sign that a tap had done anything");
   assert("with a visible selected state",
-    /onGarment[\s\S]{0,200}ring-2/.test(toolbarSrc));
+    /used[\s\S]{0,200}ring-2/.test(addPanelSrc));
   assert("CONTROL: and adding still goes through the same handler as before",
-    /onClick=\{\(\) => addArtwork\(asset\)\}/.test(toolbarSrc),
+    /onClick=\{\(\) => onAdd\(asset\)\}/.test(addPanelSrc) &&
+      /onAdd=\{addArtwork\}/.test(toolbarSrc),
     "this was organisation, not a rewrite of what the tap does");
+
+  // ============ AND THE PANEL IS A TOOLBOX, NOT A FILE MANAGER =========
+  //
+  // Sean: "I don't want a complicated file manager... Creation Station should
+  // feel like their creative toolbox."
+  assert("uploading from the device is the first thing offered",
+    /Upload from device/.test(addPanelSrc));
+  assert("and removal says what it actually does",
+    /J4 still remembers it/.test(addPanelSrc),
+    "a control that looks like a bin is a promise about deletion this one does not keep");
 
   // ======================================================================
   console.log("\n=== 12. Blanks labelled by colour NAME ===\n");

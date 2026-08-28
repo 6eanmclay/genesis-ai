@@ -29,6 +29,8 @@ import {
 import { applyOperation, describeOperation, operationsFor, type DesignOperation } from "@/lib/creation/operations";
 import { CreationCanvas } from "./CreationCanvas";
 import { DesignToolbar, ToolIcons } from "./DesignToolbar";
+import { AddAssetPanel } from "./AddAssetPanel";
+import type { LibraryAsset } from "@/lib/creation/assetLibrary";
 
 // THE CREATION STATION.
 //
@@ -58,6 +60,7 @@ interface Asset {
 }
 
 export function CreationStation({
+  slug,
   garment,
   assets,
   blankImages,
@@ -66,8 +69,10 @@ export function CreationStation({
   creatableId,
   onAddToStore,
 }: {
+  /** The business these assets and actions belong to. */
+  slug: string;
   garment: Garment;
-  assets: Asset[];
+  assets: LibraryAsset[];
   /** The supplier's transparent blanks for this product. Empty is a real answer. */
   blankImages: BlankImage[];
   /** Set when the blanks could not be read — which is NOT the same as none. */
@@ -324,47 +329,17 @@ export function CreationStation({
     </div>
   );
 
-  const addPanel =
-    assets.length === 0 ? (
-      <p className="text-[13px] text-zinc-500">
-        Nothing uploaded yet. Add a logo or a graphic in your business assets and it will appear here.
-      </p>
-    ) : (
-      <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-        {assets.map((asset) => {
-          // ALREADY ON THIS SIDE OF THE GARMENT. Without this the panel gave no
-          // sign that a tap had done anything — and because the panel covers
-          // the canvas, the artwork it had just added was not visible either.
-          // Two silences on top of each other read as a dead control.
-          const onGarment = layersOn(design, placement).some((l) => l.assetUrl === asset.url);
-          return (
-            <button
-              key={asset.id}
-              type="button"
-              onClick={() => addArtwork(asset)}
-              title={`Add ${asset.name} to the ${placement}`}
-              className={[
-                "relative aspect-square overflow-hidden rounded-lg border bg-white p-1 transition dark:bg-zinc-900",
-                onGarment
-                  ? "border-[var(--brand-accent,#6366f1)] ring-2 ring-[var(--brand-accent,#6366f1)]/40"
-                  : "border-black/[.10] hover:border-black/30 dark:border-white/[.14]",
-              ].join(" ")}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- Blob-hosted */}
-              <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" />
-              {onGarment && (
-                <span
-                  aria-hidden="true"
-                  className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-accent,#6366f1)] text-[10px] font-semibold text-white"
-                >
-                  ✓
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    );
+  // ADD IS ITS OWN COMPONENT NOW (2026-08-28). Uploading needs client state —
+  // a file input, an in-flight upload, an error — and inlining that here would
+  // put a whole upload lifecycle inside a variable in a render body.
+  const addPanel = (
+    <AddAssetPanel
+      slug={slug}
+      assets={assets}
+      onAdd={addArtwork}
+      onGarment={(url) => layersOn(design, placement).some((l) => l.assetUrl === url)}
+    />
+  );
 
   // ============ PAD: THE MARGIN INSIDE THE PRINT AREA =================
   //

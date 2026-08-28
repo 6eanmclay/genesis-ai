@@ -239,6 +239,14 @@ export async function recordGeneratedAsset(params: {
     supersededByAssetId: null,
     generationPrompt: params.generationPrompt ?? null,
     aiUsageEventId: params.aiUsageEventId ?? null,
+        // In the Creation Station from the moment it exists — a generated asset is
+    // as much the owner's creative material as an uploaded one.
+    creationLibraryRemovedAt: null,
+    // NOT MEASURED HERE. This function records an asset from a URL it was
+    // handed, sometimes during a backfill, and downloading every one of them to
+    // count alpha would turn a metadata write into a network fan-out. Null is
+    // the honest "nobody looked" — distinct from false, which is a measurement.
+    hasTransparency: null,
     createdAt: new Date().toISOString(),
   };
 

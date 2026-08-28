@@ -1,4 +1,5 @@
 import { finalizeUploadedAssetFile } from "./uploadAssetFile";
+import { detectTransparencyAt } from "./transparency";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { prisma } from "@/lib/prisma";
 import type { Asset } from "@/lib/businessModel/entities";
@@ -37,6 +38,24 @@ export async function ingestBusinessAsset(
     supersededByAssetId: null,
     generationPrompt: null,
     aiUsageEventId: null,
+
+    // ---- The Creation Station library (2026-08-28) ----
+    //
+    // An upload is IN the owner's creative workspace from the moment it
+    // arrives — that is the point of uploading it. Removing it later is their
+    // decision and sets this to a date; it never deletes the record.
+    creationLibraryRemovedAt: null,
+
+    // MEASURED, NOT ASSUMED. Read from the file's own alpha channel, because
+    // "png" says nothing about whether anything in it is see-through. Only
+    // images are inspected: a PDF has no alpha and asking costs a download.
+    //
+    // Null when it could not be read, which is a different answer from false
+    // and is why the upload still succeeds either way — an asset that stored
+    // fine must not be rejected because a follow-up read of it did not.
+    hasTransparency:
+      uploadedFile.fileType === "photo" ? await detectTransparencyAt(uploadedFile.url) : null,
+
     createdAt: new Date().toISOString(),
   };
 
