@@ -1,12 +1,50 @@
 # Creation Station → Social Media Post Creation
 
-**Status: REQUIREMENTS ONLY. Nothing here is authorized to build.**
+**Status: SCOPE LOCKED, REQUIREMENTS ONLY. Nothing here is authorized to build.**
 
 Recorded from Sean across 2026-08-27 and 2026-08-28. This exists so the architecture is settled before the first line of it is written — the mistakes it is guarding against are all retrofits.
 
 Creation Station's first surface is product design. Its second is social posts. **The same principle governs both:** the owner chooses how much of the work they want to do, and J4 does the rest without pretending to be them.
 
 ---
+
+## 0. The locked flow
+
+**Scope locked 2026-08-28.** This is the whole of Social Creation v1. The sections after it are the reasoning and the contracts; this is the shape they have to add up to.
+
+```
+1.  The owner uploads a photo or video and says what they are trying to communicate.
+2.  J4 draws on the business, the content itself, and the owner's historical posts.
+3.  J4 proposes PLATFORM-SPECIFIC captions — never one caption copied everywhere.
+4.  Facebook invites conversation. Instagram and TikTok use hashtags where they fit.
+    X follows X's conventions and is not treated as Instagram.
+5.  The owner moves through the carousel, one platform per card, toggling each on or off.
+6.  The owner can review and edit the proposed caption on any card.
+7.  J4 asks for approval at first. Once trusted: "Don't ask me to review captions
+    anymore", plus a saved normal platform combination.
+8.  The owner chooses Post Now, or Post Later with a date and time.
+9.  Growth Points are allocated when the posting job is CONFIRMED — never again when
+    a scheduled post executes.
+10. Saved preferences persist, so the trusted workflow becomes nearly one-click.
+```
+
+**The problem being solved, stated once:** creating and distributing content across connected social platforms, with J4 understanding the business and the owner's established voice. Everything in this file serves that sentence.
+
+## 0.1 The boundary
+
+**Not in scope. Not now, and not as a small addition to something else here:**
+
+- comment management
+- automated replies
+- engagement agents, or anything that acts on the owner's behalf after a post is published
+
+These are a future capability, and they are excluded deliberately rather than merely unbuilt. Each of them is the kind of thing that arrives as "while we are already connected to the platform, we may as well" — which is exactly how a locked scope stops being one.
+
+### Reading engagement is not the same as acting on it
+
+Section 7 keeps the architecture open to **learning from** engagement — what kinds of content actually work for this business. That stays, and it does not cross this boundary.
+
+**The line is between reading and acting.** Reading performance to write a better caption next time is Social Creation doing its job. Replying to a comment, managing a conversation, or answering anyone on the owner's behalf is the excluded capability, whatever it is built on top of. A feature that posts words the owner has not seen, to a person the owner has not chosen, is outside this scope no matter how it is framed.
 
 ## 1. The phase
 
@@ -49,6 +87,14 @@ The accounts are connected, so J4 can read what the owner has already published,
 **The captions should sound like the business owner wrote them, not like generated content.**
 
 **Never call this a clone in the product.** It is J4 *learning the owner's voice*. The word matters: one describes replacing a person, the other describes knowing them, and only one of those is what an owner would want done with their name.
+
+### Historical content is an architectural input, not a nice-to-have
+
+**The owner's existing posts and captions are the input Social Voice is built on.** Sean has now said this twice, which is the signal to write it as a contract rather than an aspiration: the goal is J4 writing in the owner's established voice, *not* generic AI copy, and the only thing standing between those two outcomes is whether the system was built able to read what the owner has already written.
+
+So the voice model takes **historical content as a first-class source**, on the same footing as the description the owner types for a specific post. A design where history is an optional enrichment bolted on later produces generic copy on day one and stays that way, because by then the captions already work well enough for nobody to go back.
+
+Nothing has to read history on the first day it ships. What must be true on the first day is that reading it is not a rewrite.
 
 ### The same person is different on each platform
 
@@ -112,8 +158,10 @@ My usual platforms
   [x] Facebook
   [x] X
 
-[ ] Don't ask me to review every post
+[ ] Don't ask me to review captions anymore
 ```
+
+*(Sean has phrased this both ways — "don't ask me to review every post" and "don't ask me to review captions anymore". One control, one label; the wording is a copy decision, and the second is used throughout this file so that the flow in section 0 and this section cannot drift apart.)*
 
 With that enabled, J4 remembers two separate things:
 
@@ -136,6 +184,8 @@ The workflow then collapses to: upload the video, give J4 the concept, J4 writes
 
 Nothing needs to read those signals today. But a voice model that can only ever ingest caption text would have to be replaced to ingest anything else, and that is the retrofit this section exists to prevent.
 
+**This is reading, not acting** — see the boundary in section 0.1. Learning that short captions outperform long ones for this business is in scope. Replying to the people who engaged is not, and no amount of signal-reading turns into permission to do it.
+
 ---
 
 ## Why this is not a cross-platform scheduler
@@ -147,3 +197,5 @@ The value is not publishing to several platforms at once. Anything can do that.
 ## Explicitly out of scope today
 
 Do not build the social system. Do not extend the current Creation Station work into it. This document is to be read *before* that work is designed, and for no other purpose yet.
+
+**And the scope is locked, which cuts both ways.** Section 0 is the whole of v1 — not a starting point to grow from during implementation, and not a ceiling that justifies dropping any of it. Anything outside it, including everything named in section 0.1, is a separate decision Sean makes deliberately and later. Product creation is the work in flight; this waits.

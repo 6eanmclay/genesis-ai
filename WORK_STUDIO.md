@@ -383,3 +383,5 @@ Not authorized to build. Recorded so the Design and presentation layers are shap
 ## Social posts are the next Creation Station surface
 
 Requirements are recorded in [SOCIAL_CREATION.md](SOCIAL_CREATION.md) and are not authorized to build. They belong to the same creation system as everything above: the owner brings content and context, J4 does as much or as little of the writing as they want, and the representation is one thing with two ways in.
+
+**That scope is LOCKED as of 2026-08-28.** Section 0 of that file is the whole of v1, and section 0.1 names what is excluded — comment management, automated replies, and engagement agents. The exclusions matter here because this is the file someone reads when deciding what Creation Station becomes next: the answer is the ten steps in section 0, and nothing adjacent to them.
