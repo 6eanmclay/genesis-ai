@@ -1,75 +1,131 @@
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 import { requireBusinessOrActive, PERMISSIONS } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import { refreshPrintfulToken, type PrintfulCredentials } from "@/lib/integrations/printful";
-import { printfulUrl, printfulHeaders, isStoreScoped, withSellingRegion } from "@/lib/creation/printfulRequest";
+import {
+  printfulUrl,
+  printfulHeaders,
+  isStoreScoped,
+  withSellingRegion,
+  PRINTFUL_MAX_LIMIT,
+} from "@/lib/creation/printfulRequest";
+import { CREATABLES, creatableById, garmentMatches } from "@/lib/creation/creatables";
 
-// WHAT PRINTFUL ACTUALLY SENDS BACK — the shape, never the pictures.
+// WHAT PRINTFUL SENDS, PER PRODUCT TYPE — measured, not assumed.
 //
 // ============ WHY THIS EXISTS (2026-08-27) ==============================
 //
-// I have now guessed at this endpoint's response shape three times. Each guess
-// was reasonable, each was wrong in a different way, and each cost a round trip
-// through a deploy and a live test:
+// The hoodie took four rounds because I inferred the response shape instead of
+// reading it. What ended it was fetching the actual file and looking at its
+// pixels: opaque white background, garment at ~10% alpha. A shading layer, not
+// a photograph — and every failure followed from not knowing that.
 //
-//   - the URLs were under key names I had picked;
-//   - the empty check only fired for a non-`data` envelope;
-//   - the colour arrived as a NAME, and the parser only accepted a hex.
+// Sean, before touching any other product: "Do not generalize the hoodie
+// solution to other products until the trace proves that they use the same
+// rendering model. In particular, investigate the mug carefully because its
+// rendering/composition may be fundamentally different."
 //
-// The fourth guess is not worth making. Sean asked for exactly this two
-// messages ago — "inspect the actual Printful response and tell me exactly
-// which blank/image record Genesis selects for each one" — and I deferred it
-// twice in favour of another inference. This answers it with the response
-// itself.
+// He is right to single it out. A hoodie is fabric photographed flat; a mug is
+// a glazed cylinder whose printable area WRAPS. There is no reason those share
+// a composition model, and finding out costs one request each.
 //
 // ============ WHAT IT DISCLOSES ========================================
 //
-// STRUCTURE, NOT CONTENT. Key names, how deep they nest, which colour fields
-// are present, how many records and how many images — and image URLs only as
-// their path, because a signed CDN URL is a credential of a sort and this is a
-// diagnostic, not an export. Nothing here is written anywhere; it is read and
-// returned to the owner who asked.
-//
-// Owner-authenticated and scoped to their own connected supplier, like every
-// other read of these credentials.
+// Structure and statistics. Field names, which colour fields are present,
+// declared placements, and an alpha profile of one real image. URLs come back
+// as host and path only — a signed CDN URL is a credential of a sort. Nothing
+// is written; it is read and returned to the owner who asked.
 
-/** Key names and nesting, with values replaced by their shape. */
-function shapeOf(node: unknown, depth = 0): unknown {
-  if (depth > 6) return "…";
-  if (Array.isArray(node)) {
-    return node.length === 0 ? [] : [`array of ${node.length}`, shapeOf(node[0], depth + 1)];
+function hexOrNull(v: unknown): string | null {
+  return typeof v === "string" && /^#?[0-9a-f]{3,8}$/i.test(v.trim()) ? v.trim() : null;
+}
+
+function pathOf(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.pathname}`;
+  } catch {
+    return "<unparseable>";
   }
-  if (node === null || typeof node !== "object") {
-    if (typeof node === "string") {
-      // A URL's PATH is what identifies the asset; the query can carry a
-      // signature, so it does not come back.
-      if (/^https?:\/\//.test(node)) {
-        try {
-          const u = new URL(node);
-          return `<url ${u.hostname}${u.pathname}>`;
-        } catch {
-          return "<url>";
-        }
-      }
-      return node.length > 40 ? `<string ${node.length}>` : node;
+}
+
+/**
+ * What KIND of image this is, from its alpha channel.
+ *
+ * The shapes that behave completely differently when a colour has to be
+ * applied — and the hoodie turned out to be the least obvious of them:
+ *
+ *   shading-layer  background opaque, subject nearly transparent. The colour
+ *                  goes UNDER it and the alpha is inverted to drop the
+ *                  background. This is the Gildan 18500.
+ *   cutout         background transparent, subject opaque. Already a picture
+ *                  of a finished product; recolouring it is not possible.
+ *   flat           everything opaque. A baked image with a background in it.
+ */
+async function profileImage(url: string) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) return { url: pathOf(url), error: `HTTP ${res.status}` };
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  const meta = await sharp(buf).metadata();
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width, height } = info;
+
+  const px = (x: number, y: number) => {
+    const i = (y * width + x) * 4;
+    return { rgb: [data[i], data[i + 1], data[i + 2]], a: data[i + 3] };
+  };
+
+  let opaque = 0;
+  let clear = 0;
+  let partial = 0;
+  let partialGreySum = 0;
+  for (let i = 3; i < data.length; i += 4) {
+    const a = data[i];
+    if (a >= 250) opaque++;
+    else if (a <= 5) clear++;
+    else {
+      partial++;
+      partialGreySum += data[i - 3];
     }
-    return typeof node;
   }
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-    out[k] = shapeOf(v, depth + 1);
-  }
-  return out;
+  const total = opaque + clear + partial;
+
+  const corner = px(2, 2);
+  const centre = px(width >> 1, height >> 1);
+
+  const kind =
+    corner.a >= 250 && centre.a <= 60
+      ? "shading-layer"
+      : corner.a <= 5 && centre.a >= 250
+        ? "cutout"
+        : corner.a >= 250 && centre.a >= 250
+          ? "flat"
+          : "mixed";
+
+  return {
+    url: pathOf(url),
+    format: meta.format,
+    size: `${width}x${height}`,
+    hasAlpha: meta.hasAlpha,
+    corner,
+    centre,
+    pct: {
+      opaque: +((opaque / total) * 100).toFixed(1),
+      transparent: +((clear / total) * 100).toFixed(1),
+      partial: +((partial / total) * 100).toFixed(1),
+    },
+    meanGreyWherePartial: partial ? Math.round(partialGreySum / partial) : null,
+    kind,
+    // THE ONE LINE THAT DECIDES WHETHER ANY OF THE HOODIE WORK TRANSFERS.
+    hoodieRecipeApplies: kind === "shading-layer",
+  };
 }
 
 export async function GET(request: NextRequest) {
-  const productId = request.nextUrl.searchParams.get("product");
-  if (!productId || !/^\d+$/.test(productId)) {
-    return NextResponse.json({ error: "Pass ?product=<printful catalog product id>" }, { status: 400 });
-  }
   const slug = request.nextUrl.searchParams.get("business") ?? undefined;
-
   const { storeId } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
 
   const row = await prisma.storeIntegration.findUnique({
@@ -78,7 +134,6 @@ export async function GET(request: NextRequest) {
   if (!row?.credentials) {
     return NextResponse.json({ error: "Printful is not connected for this business." }, { status: 400 });
   }
-
   const credentials = await refreshPrintfulToken(
     decryptCredentials<PrintfulCredentials>(row.credentials),
   );
@@ -91,86 +146,147 @@ export async function GET(request: NextRequest) {
     return { status: res.status, body: (await res.json().catch(() => null)) as unknown };
   };
 
-  // ============ WHAT THE FIRST TRACE ANSWERED, AND WHAT IT DID NOT =====
-  //
-  // It showed the record shape, and three things fell out of it: the hex is
-  // `primary_hex_color` and not `color_code` (so this code never read one),
-  // the garment file is the SAME for Ash and Carolina Blue, and each record
-  // carries a per-colour `background_color`.
-  //
-  // What it could not show is whether a colour-specific render exists ANYWHERE
-  // — because `images` is an array of over a thousand per variant, and shapeOf
-  // only prints the first. So this pass counts and compares them instead of
-  // describing one.
-  const out: Record<string, unknown> = { product: productId };
+  // A KIND, NOT A CATALOGUE NUMBER. Passing "mug" keeps this usable without
+  // knowing Printful's ids, and uses the same matcher the shelf does.
+  const explicit = request.nextUrl.searchParams.get("product");
+  const kinds = (request.nextUrl.searchParams.get("kinds") ?? "t-shirt,mug,bag,hat")
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
 
-  // ---- 1. THE IMAGE RECORDS, COMPARED ACROSS TWO COLOURS -------------
-  const first = await get(
-    withSellingRegion(`/catalog-products/${productId}/images?limit=2&offset=0`),
-  );
-  const variants = ((first.body as { data?: unknown[] } | null)?.data ?? []) as Record<string, unknown>[];
-
-  out.imageRecords = {
-    status: first.status,
-    // Every field on the variant record, so a field name is never guessed again.
-    variantFields: variants[0] ? Object.keys(variants[0]) : [],
-    colours: variants.map((v) => {
-      const images = (Array.isArray(v.images) ? v.images : []) as Record<string, unknown>[];
-      const urls = images
-        .map((im) => (typeof im.image_url === "string" ? im.image_url : null))
-        .filter((u): u is string => u !== null);
-      const distinct = [...new Set(urls)];
-      const front = images.filter((im) => im.placement === "front");
-      return {
-        color: v.color,
-        primary_hex_color: v.primary_hex_color,
-        imageCount: images.length,
-        distinctUrlCount: distinct.length,
-        placements: [...new Set(images.map((im) => im.placement))].slice(0, 12),
-        // Every field on ONE image record.
-        imageFields: images[0] ? Object.keys(images[0]) : [],
-        // A handful of distinct front renders, by their filename and style id.
-        frontSamples: [
-          ...new Map(
-            front.map((im) => [
-              String(im.image_url),
-              {
-                file: String(im.image_url ?? "").split("/").slice(-1)[0],
-                mockup_style_id: im.mockup_style_id,
-                background_color: im.background_color,
-                hasBackgroundImage: Boolean(im.background_image),
-              },
-            ]),
-          ).values(),
-        ].slice(0, 8),
-      };
-    }),
-  };
-
-  // ---- 2. WHETHER ANY FILENAME DIFFERS BETWEEN TWO COLOURS -----------
-  //
-  // The direct answer to "can Printful give us a colour-specific image": if
-  // two colours share every filename, the answer is no at this endpoint.
-  if (variants.length >= 2) {
-    const setOf = (v: Record<string, unknown>) =>
-      new Set(
-        ((Array.isArray(v.images) ? v.images : []) as Record<string, unknown>[])
-          .map((im) => String(im.image_url ?? "")),
+  let targets: { kind: string; id: string; name: string }[] = [];
+  if (explicit && /^\d+$/.test(explicit)) {
+    targets = [{ kind: "explicit", id: explicit, name: "" }];
+  } else {
+    const index = await get(withSellingRegion(`/catalog-products?limit=${PRINTFUL_MAX_LIMIT}`));
+    const products = ((index.body as { data?: unknown[] } | null)?.data ?? []) as Record<string, unknown>[];
+    for (const kind of kinds) {
+      const creatable = creatableById(kind) ?? CREATABLES.find((c) => c.id === kind);
+      if (!creatable) continue;
+      const hit = products.find((p) =>
+        garmentMatches({ name: String(p.name ?? ""), type: (p.type as string) ?? null }, creatable),
       );
-    const a = setOf(variants[0]);
-    const b = setOf(variants[1]);
-    const onlyInB = [...b].filter((u) => !a.has(u));
-    out.colourSpecificFiles = {
-      comparing: [variants[0]?.color, variants[1]?.color],
-      sharedCount: [...a].filter((u) => b.has(u)).length,
-      differingCount: onlyInB.length,
-      examplesOnlyInSecond: onlyInB.slice(0, 5).map((u) => u.split("/").slice(-1)[0]),
-    };
+      targets.push(
+        hit
+          ? { kind, id: String(hit.id), name: String(hit.name ?? "") }
+          : { kind, id: "", name: "(no product of this kind in the first page of the catalogue)" },
+      );
+    }
   }
 
-  // ---- 3. MOCKUP STYLES ----------------------------------------------
-  const styles = await get(withSellingRegion(`/catalog-products/${productId}/mockup-styles`));
-  out.mockupStyles = { status: styles.status, shape: shapeOf(styles.body) };
+  const findings = [];
+  for (const target of targets) {
+    if (!target.id) {
+      findings.push({ kind: target.kind, product: target, notFound: true });
+      continue;
+    }
 
-  return NextResponse.json(out, { status: 200 });
+    // Q1/Q2: what the supplier declares as printable, and how.
+    const product = await get(withSellingRegion(`/catalog-products/${target.id}`));
+    const productData = ((product.body as { data?: unknown } | null)?.data ?? {}) as Record<string, unknown>;
+    const variants = await get(
+      withSellingRegion(`/catalog-products/${target.id}/catalog-variants?limit=2`),
+    );
+    const variantData = ((variants.body as { data?: unknown[] } | null)?.data ?? []) as Record<string, unknown>[];
+
+    // Q3/Q4/Q5: the images, and what the pixels actually are.
+    const images = await get(withSellingRegion(`/catalog-products/${target.id}/images?limit=2&offset=0`));
+    const imageVariants = ((images.body as { data?: unknown[] } | null)?.data ?? []) as Record<string, unknown>[];
+    const first = imageVariants[0];
+    const imageList = (Array.isArray(first?.images) ? first.images : []) as Record<string, unknown>[];
+    const front = imageList.find((im) => im.placement === "front") ?? imageList[0];
+
+    const filesOf = (v: Record<string, unknown> | undefined) =>
+      new Set(
+        ((Array.isArray(v?.images) ? v!.images : []) as Record<string, unknown>[])
+          .map((im) => String(im.image_url ?? "")),
+      );
+    const a = filesOf(imageVariants[0]);
+    const b = filesOf(imageVariants[1]);
+
+    findings.push({
+      kind: target.kind,
+      product: { id: target.id, name: target.name },
+
+      // Q1 + Q2 — declared placements, and their representation.
+      declaredPlacements: {
+        onProduct: Array.isArray(productData.placements)
+          ? (productData.placements as Record<string, unknown>[]).map((pl) => ({
+              placement: pl.placement,
+              technique: pl.technique,
+            }))
+          : null,
+        // The dimensions live on the VARIANT, which is what printAreas reads.
+        onVariant: Array.isArray(variantData[0]?.placement_dimensions)
+          ? (variantData[0].placement_dimensions as Record<string, unknown>[]).map((d) => ({
+              placement: d.placement,
+              width: d.width,
+              height: d.height,
+            }))
+          : null,
+        // What the images endpoint says exists, which may differ from both.
+        onImages: [...new Set(imageList.map((im) => im.placement))].slice(0, 15),
+      },
+
+      // Q4 — where the colour comes from.
+      colourSources: {
+        variantRecord: {
+          color: variantData[0]?.color ?? null,
+          color_code: hexOrNull(variantData[0]?.color_code),
+        },
+        imageVariantRecord: {
+          color: first?.color ?? null,
+          primary_hex_color: hexOrNull(first?.primary_hex_color),
+          secondary_hex_color: hexOrNull(first?.secondary_hex_color),
+        },
+        imageRecord: {
+          background_color: hexOrNull(front?.background_color),
+          hasBackgroundImage: Boolean(front?.background_image),
+        },
+        imageRecordFields: front ? Object.keys(front) : [],
+      },
+
+      // Q5 — one base asset shared, or one per colour?
+      baseAssetSharing:
+        imageVariants.length >= 2
+          ? {
+              comparing: [imageVariants[0]?.color, imageVariants[1]?.color],
+              sharedFiles: [...a].filter((u) => b.has(u)).length,
+              filesOnlyInSecond: [...b].filter((u) => !a.has(u)).length,
+              verdict:
+                [...b].filter((u) => !a.has(u)).length === 0
+                  ? "same base asset, colour carried as data"
+                  : "different assets per colour",
+            }
+          : null,
+
+      imageCount: imageList.length,
+      distinctFiles: new Set(imageList.map((im) => String(im.image_url ?? ""))).size,
+
+      // Q3 — the composition model, from the pixels.
+      imageProfile:
+        typeof front?.image_url === "string"
+          ? await profileImage(front.image_url as string)
+          : { error: "no front image_url" },
+    });
+  }
+
+  return NextResponse.json(
+    {
+      askedFor: explicit ? [explicit] : kinds,
+      legend: {
+        "imageProfile.kind": {
+          "shading-layer":
+            "background opaque, product nearly transparent. The hoodie model: colour under the shading, alpha inverted.",
+          cutout:
+            "background transparent, product opaque. Already a finished picture — it cannot be recoloured.",
+          flat: "everything opaque. A baked image with its background in it. Needs its own decision.",
+          mixed: "neither — look at corner/centre and the percentages.",
+        },
+        hoodieRecipeApplies: "true means /api/creation/blank composes this product correctly as-is.",
+      },
+      findings,
+    },
+    { status: 200 },
+  );
 }
