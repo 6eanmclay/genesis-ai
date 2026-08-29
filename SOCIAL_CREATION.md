@@ -131,6 +131,8 @@ Adding a fifth platform is a card, not a new workflow. That is the test of wheth
 
 ## 5. What it costs, and when
 
+**SUPERSEDED 2026-08-29 — see section 5a for the current numbers (1 / 2 / +1). The lifecycle and the one-charge principle below still stand.**
+
 **One Growth Point, charged exactly once, at the commitment point** — when the owner presses Post Now, or confirms a scheduled post.
 
 **Not charged again when a scheduled post actually publishes.** The lifecycle:
@@ -142,6 +144,80 @@ DRAFT  ->  READY  ->  SCHEDULED  ->  PUBLISHED
 Once the owner has committed and the Growth Point is allocated, **the creation is paid for**. A later publishing failure must never charge a second one — Genesis retries and recovers instead. The owner bought the creation, not the attempt.
 
 **Four platforms is one charge.** Selecting more platforms must never turn one piece of content into four Growth Point charges. Writing four captions instead of one is J4 doing the job properly, not four purchases — and the carousel, where each platform gets its own card, is exactly where per-card metering would look natural and be wrong.
+
+## 5a. Amplification, and what section 5 above no longer says
+
+**Added 2026-08-29, and it supersedes part of section 5.**
+
+### The investment, corrected
+
+Section 5 says "one Growth Point, charged exactly once". Sean's instruction on
+2026-08-29 replaces the number, not the principle:
+
+| What | Investment |
+|---|---|
+| One platform | **1 Growth Point** |
+| Two, three or four platforms | **2 Growth Points** |
+| Optional Story amplification | **+1 Growth Point** |
+
+**Section 5's actual principle survives intact**: four platforms is still *one
+creation*, not four charges. The fourth platform costs nothing more than the
+second, which is the whole point — choosing everywhere should feel like using
+Genesis properly rather than being metered.
+
+The word is **invest**, never spend, cost, fee or charge. That is not a
+preference for this feature; it is the rule Genesis's own chat prompt already
+enforces — "Growth Points represent an owner investing in their own business,
+not a fee for AI usage" — and `scripts/verify-social-creation.ts` asserts that no
+owner-facing sentence in `lib/social/investment.ts` breaks it.
+
+### The Story amplification is a publisher capability
+
+Sean: *"design the publisher seam so Story amplification is a capability of the
+platform publisher rather than a special-case UI hack."*
+
+So `SocialPublisher` declares `surfaces: readonly ("feed" | "story")[]`, and the
+offer is derived from three facts at once — the platform is **selected**, its
+registered publisher **declares story**, and the account is **connected**. Miss
+any one and the offer is absent. Not disabled, not "coming soon". Absent.
+
+**What the APIs actually allow, verified 2026-08-29:**
+
+| Platform | Story | How |
+|---|---|---|
+| Instagram | Yes | `media_type=STORIES` on the Content Publishing API |
+| Facebook | Yes | `POST /{page-id}/photo_stories`, `/video_stories` |
+| TikTok | **No** | The Content Posting API direct-posts to the profile; there is no Stories endpoint |
+| X | **No** | No Stories product, and no connector in `IntegrationProvider` at all |
+
+Two constraints shape the design and are recorded so nobody rediscovers them:
+
+1. **Facebook forbids reuse.** *"A photo or video uploaded for a story can not
+   have been used in a previously published post."* A story cannot point at the
+   feed post's media — it needs its own uploaded asset. This is why Instagram
+   and Facebook each carry their **own** `storyImageUrl` and there is no shared
+   field on the post.
+2. **A story is a different shape.** A feed post is 1:1; a story is 9:16. So
+   "repost this to your Story" is a **second rendition**, not a copy — Genesis
+   makes the upright version. Calling it a repost understates it by one render.
+
+### The two verification gaps
+
+Both are honest limits of what can be tested today, not unknowns.
+
+**1. The Story offer has never been seen rendering.** Its absence is verified end
+to end in a browser with all four platforms selected. Its *presence* needs a real
+registered publisher that declares `"story"` and a connected account — neither
+exists. The decision function is unit-tested in both directions and a negative
+control proves a hardcoded `storyCapable: true` fails the suite. **Do not add a
+fake publisher or a test-only registration to close this gap**: the absence of
+the offer is the correct production behaviour until a real publisher declares
+the capability and is connected.
+
+**2. The product Continue dropdown has never been seen populated.** `listBlanks`
+runs server-side, so the browser harness always has an empty catalogue and every
+saved design is stranded. Closing it needs the real Printful integration, which
+is currently blocked by `INTEGRATION_ENCRYPTION_KEY` custody (see COMPLIANCE.md).
 
 ## 6. Progressive trust
 

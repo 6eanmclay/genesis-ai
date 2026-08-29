@@ -725,6 +725,20 @@ export const InstagramContentSchema = z.object({
   caption: z.string().default(""),
   /** Without the leading #, so the tag is the data and the # is presentation. */
   hashtags: z.array(z.string()).default([]),
+  /**
+   * THE STORY RENDITION — Instagram's own, never a shared field.
+   *
+   * Sean, 2026-08-29: "Instagram and Facebook should have their own Story
+   * rendition fields... Do not create a generic Story field shared across all
+   * platforms." The same reasoning as the content union itself: a shared
+   * `storyImageUrl` would be one asset two platforms both point at, and
+   * Facebook forbids exactly that (see FacebookContentSchema).
+   *
+   * A FEED POST IS 1:1 AND A STORY IS 9:16, so this is not the same picture
+   * moved sideways — it is a second rendition of the same idea, and null means
+   * it has not been made yet. Instagram publishes it with media_type=STORIES.
+   */
+  storyImageUrl: z.string().nullable().default(null),
 });
 
 /** Facebook earns its place by starting conversations, not by being seen. */
@@ -737,6 +751,19 @@ export const FacebookContentSchema = z.object({
    * accident is not the same as one written to be answered.
    */
   question: z.string().default(""),
+  /**
+   * THE STORY RENDITION — Facebook's own, and it CANNOT be Instagram's.
+   *
+   * Meta's Page Stories API is explicit: "A photo or video uploaded for a story
+   * can not have been used in a previously published post." So a Facebook story
+   * needs its own uploaded asset, distinct from this post's feed media and
+   * distinct from Instagram's story asset. A single shared field would have
+   * quietly violated the one documented constraint of the endpoint that
+   * publishes it.
+   *
+   * Verified 2026-08-29 against developers.facebook.com/docs/page-stories-api.
+   */
+  storyImageUrl: z.string().nullable().default(null),
 });
 
 /** X is one field with a hard limit, and the limit is the format. */
@@ -781,17 +808,57 @@ export type SocialContent = z.infer<typeof SocialContentSchema>;
  * being null is what "in progress" MEANS — the grouping in the Continue panel
  * reads this, exactly as the product side reads `productId`.
  */
-export const SocialPostSchema = z.object({
+/**
+ * One platform this piece is going to, and the writing that belongs to it.
+ *
+ * ============ PUBLISHING STATE IS PER TARGET ==========================
+ *
+ * Instagram can succeed while Facebook fails. A single publishedAt on the post
+ * would make that unrepresentable, and the first real publish would need this
+ * shape anyway — so it is here before it is needed rather than after.
+ */
+export const SocialTargetSchema = z.object({
   /** A platform id from lib/social/platforms.ts. */
   platform: z.string(),
-  /** What the owner calls this post. Null until they name it. */
-  name: z.string().nullable().default(null),
+  /** This platform's own writing. Never shared with another target. */
   content: SocialContentSchema,
-  updatedAt: z.string().nullable().default(null),
-  /** Set the first time this actually reaches the platform. Never today. */
+  /** Set the first time this target actually reaches its platform. */
   publishedAt: z.string().nullable().default(null),
   /** Where it landed, once it has landed. */
   publishedUrl: z.string().nullable().default(null),
+  /** The story rendition's own publish state, for the same reason. */
+  storyPublishedAt: z.string().nullable().default(null),
+});
+export type SocialTarget = z.infer<typeof SocialTargetSchema>;
+
+/**
+ * A social piece being written, for one or more platforms.
+ *
+ * ============ ONE CREATION, NOT FOUR ==================================
+ *
+ * Sean, 2026-08-29: "The four platforms remain one creation, not four separate
+ * charges." So the piece is the unit and the platforms are targets on it — which
+ * is what makes 1 Growth Point for one platform and 2 for several a property of
+ * the record rather than a rule somebody applies at a call site.
+ *
+ * EACH TARGET STILL CARRIES ITS OWN CONTENT. Grouping them into one creation is
+ * a billing and workflow fact, not permission to write once and copy. See
+ * SocialContentSchema.
+ */
+export const SocialPostSchema = z.object({
+  /** What the owner calls this piece. Null until they name it. */
+  name: z.string().nullable().default(null),
+  /** At least one. The order is the order the owner chose them in. */
+  targets: z.array(SocialTargetSchema).min(1),
+  /**
+   * THE STORY AMPLIFICATION, if it was taken.
+   *
+   * A property of the whole piece because it is one +1 investment, not one per
+   * platform. Which targets it actually reaches is decided by capability at
+   * publish time — see lib/social/publisher.ts — never by this flag alone.
+   */
+  amplifyStory: z.boolean().default(false),
+  updatedAt: z.string().nullable().default(null),
 });
 export type SocialPost = z.infer<typeof SocialPostSchema>;
 

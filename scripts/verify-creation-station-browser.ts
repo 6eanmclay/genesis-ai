@@ -69,6 +69,10 @@ async function signIn(page: Page, baseUrl: string, email: string): Promise<void>
   await page.waitForLoadState("domcontentloaded");
 }
 
+function eq2(name: string, actual: unknown, expected: unknown): void {
+  check(name, JSON.stringify(actual), JSON.stringify(expected));
+}
+
 async function main() {
   console.log("Starting a real Next server on a real Postgres. First compile takes a while.\n");
 
@@ -879,12 +883,97 @@ async function main() {
       select: { externalId: true, data: true },
     });
     assert("the draft is a real BusinessRecord", !!stored, "nothing was written");
-    const storedData = stored?.data as { platform?: string; content?: { kind?: string; text?: string } } | null;
-    check("stored under the platform it was written for", storedData?.platform, "x");
-    check("with that platform's own content shape", storedData?.content?.kind, "x");
+    const storedData = stored?.data as {
+      targets?: { platform?: string; content?: { kind?: string; text?: string } }[];
+      amplifyStory?: boolean;
+    } | null;
+    check("stored as one piece with one target", storedData?.targets?.length, 1);
+    check("under the platform it was written for", storedData?.targets?.[0]?.platform, "x");
+    check("with that platform's own content shape", storedData?.targets?.[0]?.content?.kind, "x");
     assert("and the words the owner typed",
-      (storedData?.content?.text ?? "").includes("Copper tensor rings"),
-      JSON.stringify(storedData?.content));
+      (storedData?.targets?.[0]?.content?.text ?? "").includes("Copper tensor rings"),
+      JSON.stringify(storedData?.targets?.[0]?.content));
+    check("and no story was taken, because none was offered", storedData?.amplifyStory, false);
+
+    // ------------------------------------------------------------------
+    console.log("\n3g. A second platform starts empty, and one piece is one investment");
+    //
+    // ============ THE BEHAVIOUR THE WHOLE MODEL EXISTS FOR ==========
+    //
+    // Sean: "never assume one caption can simply be copied across platforms."
+    // If ticking Facebook prefilled it with what was written for X, every shape
+    // in lib/businessModel/entities.ts would be decoration. This is the one
+    // assertion that proves the model is load-bearing rather than decorative.
+
+    // One platform first, and the investment says so.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/social?platform=x`, { waitUntil: "domcontentloaded" });
+    await page.locator('[data-platform-editor="x"] textarea').first().fill("Copper rings, back in stock.");
+    let investment = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("one platform invests one Growth Point",
+      /This will invest 1 Growth Point\b/.test(investment), investment.slice(0, 400));
+
+    // Now add Facebook.
+    await page.locator('button[aria-pressed="false"]', { hasText: /^Facebook$/ }).click();
+    await page.waitForTimeout(300);
+
+    // ITS EDITOR IS ITS OWN, AND IT IS EMPTY.
+    const fbBody = await page.locator('[data-platform-editor="facebook"] textarea').first().inputValue();
+    check("the Facebook editor starts empty", fbBody, "");
+    const xStill = await page.locator('[data-platform-editor="x"] textarea').first().inputValue();
+    assert("and the X post is untouched",
+      xStill.includes("Copper rings, back in stock"), xStill);
+    assert("and Facebook asks its own question, which X never had",
+      await page.locator('[data-platform-editor="facebook"] label', { hasText: /What are you asking them/ }).count() === 1,
+      "each platform's editor is its own");
+
+    // TWO PLATFORMS, ONE CREATION, TWO GROWTH POINTS.
+    investment = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("two platforms invest two Growth Points",
+      /This will invest 2 Growth Points/.test(investment), investment.slice(0, 500));
+    assert("and it is shown as one posting line, not two charges",
+      /Posting to 2 platforms · 2 Growth Points/.test(investment), investment.slice(0, 500));
+
+    // ALL FOUR STILL INVEST TWO. The rule Sean set: the fourth platform costs
+    // nothing more than the second.
+    await page.locator('button[aria-pressed="false"]', { hasText: /^Instagram$/ }).click();
+    await page.locator('button[aria-pressed="false"]', { hasText: /^TikTok$/ }).click();
+    await page.waitForTimeout(300);
+    investment = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("all four platforms still invest two Growth Points",
+      /This will invest 2 Growth Points/.test(investment), investment.slice(0, 500));
+    assert("and the language is invest, never cost or spend",
+      !/\b(cost|spend|fee|charge)\b/i.test(investment), investment.slice(0, 600));
+
+    // ============ AND NO STORY OFFER, ANYWHERE =====================
+    //
+    // Every platform is selected, including both that Meta's API can post
+    // stories to. No publisher is registered, so the offer must not appear —
+    // and must not appear DISABLED either.
+    assert("no Story offer is shown, because no publisher declares it",
+      !/extend your reach|to your Story/i.test(investment), investment.slice(0, 600));
+    check("and there is no disabled story control",
+      await page.locator('input[type="checkbox"]').count(), 0);
+
+    // Saving the four-platform piece writes four targets, each with its own shape.
+    await page.locator('label:has-text("What is this post about") input').fill("Restock, everywhere");
+    await page.locator("button", { hasText: /^Save draft$/ }).click();
+    await page.waitForFunction(() => /Saved\./.test(document.body.innerText), undefined, { timeout: 20_000 });
+
+    const multi = await prisma.businessRecord.findFirst({
+      where: { storeId: store.id, entityType: "socialPost", sourceProvider: "genesis_social" },
+      orderBy: { syncedAt: "desc" },
+      select: { data: true },
+    });
+    const multiData = multi?.data as {
+      targets?: { platform?: string; content?: { kind?: string } }[];
+    } | null;
+    check("one piece, four targets", multiData?.targets?.length, 4);
+    eq2("each target carries its own platform",
+      (multiData?.targets ?? []).map((target) => target.platform).sort(),
+      ["facebook", "instagram", "tiktok", "x"]);
+    assert("and each content shape matches its own platform",
+      (multiData?.targets ?? []).every((target) => target.content?.kind === target.platform),
+      JSON.stringify(multiData?.targets?.map((target) => [target.platform, target.content?.kind])));
 
     // AND IT COMES BACK FROM THE STUDIO CAROUSEL. Leave, return, Continue.
     await page.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
@@ -892,10 +981,15 @@ async function main() {
     // pointer-events is deliberately none — you cannot click the thing behind
     // the thing in front. Arrow keys are how a keyboard reaches it, and they
     // now belong to the focused carousel rather than the window.
+    // PRESS UNTIL IT ARRIVES. Getting to X is navigation, not the assertion —
+    // and a fixed number of presses assumes the first one lands after hydration,
+    // which is a race the test does not need to take.
     const socialStage = page.locator('[role="listbox"]').last();
-    await socialStage.press("ArrowRight");
-    await socialStage.press("ArrowRight");
-    await page.waitForTimeout(600);
+    for (let i = 0; i < 8; i++) {
+      if (await page.locator('[role="option"][aria-selected="true"][aria-label="X"]').count() === 1) break;
+      await socialStage.press("ArrowRight");
+      await page.waitForTimeout(350);
+    }
     check("the social carousel is showing X",
       await page.locator('[role="option"][aria-selected="true"][aria-label="X"]').count(), 1);
 
@@ -915,13 +1009,16 @@ async function main() {
     assert("and says what is in it in that platform's terms",
       /of 280 characters/.test(panel), panel.slice(0, 300));
 
-    await page.locator("#studio-social-panel a").first().click();
+    // BY NAME, NOT BY POSITION. There is more than one draft under X now, and
+    // "the first link" quietly became "the newest piece" — a test that passes or
+    // fails depending on what an earlier section happened to save.
+    await page.locator("#studio-social-panel a", { hasText: /Ring restock/ }).first().click();
     await page.waitForURL(/studio\/social\?platform=x&post=/, { timeout: 20_000 });
     // A CONTROLLED TEXTAREA'S VALUE IS A PROPERTY, NOT TEXT. innerText does not
     // contain it, so the first version of this read the whole page — and found
     // J4's always-mounted Office instead of the post. inputValue reads what is
     // actually in the field.
-    const reopenedText = await page.locator('label:has-text("The post") textarea').inputValue();
+    const reopenedText = await page.locator('[data-platform-editor="x"] textarea').first().inputValue();
     assert("reopening shows the words that were saved",
       /Copper tensor rings are back in stock/.test(reopenedText), reopenedText.slice(0, 200));
     const reopenedName = await page.locator('label:has-text("What is this post about") input').inputValue();

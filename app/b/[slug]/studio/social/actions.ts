@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { SocialPostSchema, type SocialContent } from "@/lib/businessModel/entities";
 import { emptyContent, socialPlatform } from "@/lib/social/platforms";
-import { draftSummary } from "@/lib/social/socialPresentation";
+import { pieceSummary, piecePublishedAt } from "@/lib/social/socialPresentation";
 
 // SAVING A POST THAT IS NOT FINISHED.
 //
@@ -54,9 +54,21 @@ export interface SaveSocialResult {
   error?: string;
 }
 
+/** One platform's writing, as it arrives from the composer. */
+export interface SocialTargetInput {
+  platform: string;
+  content: SocialContent;
+}
+
 export async function saveSocialDraft(
   slug: string,
-  input: { postId?: string | null; platform: string; name: string; content: SocialContent },
+  input: {
+    postId?: string | null;
+    name: string;
+    targets: SocialTargetInput[];
+    /** Whether the owner took the Story amplification. */
+    amplifyStory?: boolean;
+  },
 ): Promise<SaveSocialResult> {
   try {
     return await saveSocialDraftOrThrow(slug, input);
@@ -67,29 +79,46 @@ export async function saveSocialDraft(
 
 async function saveSocialDraftOrThrow(
   slug: string,
-  input: { postId?: string | null; platform: string; name: string; content: SocialContent },
+  input: {
+    postId?: string | null;
+    name: string;
+    targets: SocialTargetInput[];
+    amplifyStory?: boolean;
+  },
 ): Promise<SaveSocialResult> {
   // requireBusiness takes the SLUG. requireStorePermission's second parameter is
   // a store ID, and passing a slug to it made every Creation Station action
   // throw "Store not found" for everyone, always. Guarded by assertion now.
   const { store, userId } = await requireBusiness(PERMISSIONS.PRODUCTS_MANAGE, slug);
 
-  const platform = socialPlatform(input.platform);
-  if (!platform) return { ok: false, error: "That isn't a platform Genesis can write for." };
+  if (input.targets.length === 0) {
+    return { ok: false, error: "Pick at least one platform to post to." };
+  }
 
-  // THE CONTENT MUST BE FOR THE PLATFORM IT CLAIMS. A client could post an X
-  // body under an Instagram platform id; the union makes that unrepresentable
-  // in our own code but says nothing about what arrives over the wire.
-  if (input.content.kind !== platform.id) {
-    return { ok: false, error: "That content doesn't match the platform it was written for." };
+  // EVERY TARGET MUST BE A REAL PLATFORM, AND ITS CONTENT MUST MATCH IT.
+  // The union makes a mismatch unrepresentable in our own code and says nothing
+  // about what arrives over the wire.
+  const seen = new Set<string>();
+  for (const target of input.targets) {
+    const platform = socialPlatform(target.platform);
+    if (!platform) return { ok: false, error: "That isn't a platform Genesis can write for." };
+    if (target.content.kind !== platform.id) {
+      return { ok: false, error: "That content doesn't match the platform it was written for." };
+    }
+    // One target per platform. Two Instagram targets on one piece would make
+    // "posting to 2 platforms" a lie and double-publish to the same account.
+    if (seen.has(platform.id)) {
+      return { ok: false, error: "That platform is already on this post." };
+    }
+    seen.add(platform.id);
   }
 
   const postId = input.postId || randomUUID();
 
-  // PUBLISHED STATE IS CARRIED FORWARD, never re-derived. Re-saving a post that
-  // has been published must not make it look unpublished — the same rule the
-  // design side follows for productId, and for the same reason: the Continue
-  // panel groups on exactly this field.
+  // PUBLISHED STATE IS CARRIED FORWARD PER TARGET, never re-derived. Re-saving a
+  // piece whose Instagram half already posted must not make it look unposted —
+  // the same rule the design side follows for productId, and the reason the
+  // Continue panel can group on it.
   const existing = input.postId
     ? await prisma.businessRecord.findFirst({
         where: {
@@ -102,14 +131,27 @@ async function saveSocialDraftOrThrow(
       })
     : null;
   const previous = existing ? SocialPostSchema.safeParse(existing.data) : null;
+  const previousTargets = previous?.success ? previous.data.targets : [];
+
+  const targets = input.targets.map((target) => {
+    const before = previousTargets.find((p) => p.platform === target.platform);
+    return {
+      platform: target.platform,
+      content: target.content,
+      publishedAt: before?.publishedAt ?? null,
+      publishedUrl: before?.publishedUrl ?? null,
+      storyPublishedAt: before?.storyPublishedAt ?? null,
+    };
+  });
 
   const data = {
-    platform: platform.id,
     name: input.name.trim() || null,
-    content: input.content,
+    targets,
+    // THE FLAG IS RECORDED, NOT ACTED ON. Whether the story actually reaches a
+    // platform is decided by capability at publish time — storyAmplification in
+    // lib/social/publisher.ts — never by this alone.
+    amplifyStory: input.amplifyStory ?? false,
     updatedAt: new Date().toISOString(),
-    publishedAt: previous?.success ? previous.data.publishedAt : null,
-    publishedUrl: previous?.success ? previous.data.publishedUrl : null,
   };
 
   const result = await persistSyncedRecords(
@@ -136,14 +178,16 @@ async function saveSocialDraftOrThrow(
 
 export interface SocialDraftRow {
   postId: string;
-  platform: string;
+  /** Every platform this piece goes to. */
+  platforms: string[];
   name: string;
   summary: string;
   updatedAt: string | null;
+  /** Null until EVERY target has landed — see piecePublishedAt. */
   publishedAt: string | null;
 }
 
-/** Every post the owner has written, newest first. */
+/** Every piece the owner has written, newest first. */
 export async function socialDraftsFor(storeId: string): Promise<SocialDraftRow[]> {
   const rows = await prisma.businessRecord.findMany({
     where: { storeId, entityType: "socialPost", sourceProvider: DRAFT_SOURCE },
@@ -159,24 +203,36 @@ export async function socialDraftsFor(storeId: string): Promise<SocialDraftRow[]
     const post = parsed.data;
     drafts.push({
       postId: row.externalId ?? row.id,
-      platform: post.platform,
-      // A POST IS OFTEN UNNAMED, because naming it is work nobody wants to do
-      // before writing it. The platform stands in rather than "Untitled",
+      platforms: post.targets.map((target) => target.platform),
+      // A PIECE IS OFTEN UNNAMED, because naming it is work nobody wants to do
+      // before writing it. What it is for stands in rather than "Untitled",
       // which says nothing somebody could pick out of a list.
-      name: post.name ?? `${socialPlatform(post.platform)?.label ?? "Post"} draft`,
-      summary: draftSummary(post.content),
+      name: post.name ?? defaultName(post.targets.map((target) => target.platform)),
+      summary: pieceSummary(post.targets, (id) => socialPlatform(id)?.label ?? id),
       updatedAt: post.updatedAt,
-      publishedAt: post.publishedAt,
+      publishedAt: piecePublishedAt(post.targets),
     });
   }
   return drafts;
 }
 
-/** One post, ready to go back into the composer. */
+/** What an unnamed piece is called in a list. */
+function defaultName(platformIds: string[]): string {
+  if (platformIds.length === 1) {
+    return `${socialPlatform(platformIds[0])?.label ?? "Social"} draft`;
+  }
+  return `${platformIds.length}-platform draft`;
+}
+
+/** One piece, ready to go back into the composer. */
 export async function loadSocialDraft(
   storeId: string,
   postId: string,
-): Promise<{ platform: string; name: string; content: SocialContent; publishedAt: string | null } | null> {
+): Promise<{
+  name: string;
+  targets: { platform: string; content: SocialContent }[];
+  amplifyStory: boolean;
+} | null> {
   const row = await prisma.businessRecord.findFirst({
     where: {
       storeId,
@@ -190,16 +246,22 @@ export async function loadSocialDraft(
 
   const parsed = SocialPostSchema.safeParse(row.data);
   if (!parsed.success) return null;
-
   const post = parsed.data;
-  const platform = socialPlatform(post.platform);
-  if (!platform) return null;
 
   // A STORED SHAPE THAT NO LONGER MATCHES ITS PLATFORM opens empty rather than
-  // crashing the workspace. This can only happen if a platform's content shape
-  // changes under existing rows, which is exactly when somebody needs to be
-  // able to open their old draft and see what survived.
-  const content = post.content.kind === platform.id ? post.content : emptyContent(platform.id);
+  // crashing the workspace, and a target naming a platform that no longer
+  // exists is dropped rather than rendering a section with no editor. Both can
+  // only happen after a deliberate change to the registry — which is exactly
+  // when somebody needs to open their old draft and see what survived.
+  const targets = post.targets.flatMap((target) => {
+    const platform = socialPlatform(target.platform);
+    if (!platform) return [];
+    return [{
+      platform: platform.id,
+      content: target.content.kind === platform.id ? target.content : emptyContent(platform.id),
+    }];
+  });
+  if (targets.length === 0) return null;
 
-  return { platform: platform.id, name: post.name ?? "", content, publishedAt: post.publishedAt };
+  return { name: post.name ?? "", targets, amplifyStory: post.amplifyStory };
 }

@@ -139,8 +139,15 @@ export function whatIsMissing(content: SocialContent): string | null {
  * Drafts split into the two states an owner recognises.
  *
  * The mirror of groupSavedWork on the product side, and the same reasoning: the
- * data already draws the line, so nothing new is stored to tell them apart. A
- * post is published or it is not, and `publishedAt` is that fact.
+ * data already draws the line, so nothing new is stored to tell them apart.
+ *
+ * ============ A PIECE IS PUBLISHED WHEN EVERY TARGET IS ================
+ *
+ * Publishing is per target — Instagram can succeed while Facebook fails — so a
+ * piece with three targets and two successes is still unfinished work, and
+ * belongs under "In progress" where somebody will go back to it. Reading "any
+ * target published" as done is how a half-posted piece disappears from the list
+ * that would have let its owner finish it.
  */
 export function groupPosts<T extends { publishedAt: string | null }>(
   posts: T[],
@@ -149,4 +156,76 @@ export function groupPosts<T extends { publishedAt: string | null }>(
     inProgress: posts.filter((p) => p.publishedAt === null),
     published: posts.filter((p) => p.publishedAt !== null),
   };
+}
+
+/**
+ * When a whole piece counts as published: every target has landed, or none has.
+ *
+ * Returns null while any target is still unpublished, which is what groupPosts
+ * reads. Kept separate and pure so the rule has one home.
+ */
+export function piecePublishedAt(
+  targets: { publishedAt: string | null }[],
+): string | null {
+  if (targets.length === 0) return null;
+  const times = targets.map((t) => t.publishedAt);
+  if (times.some((time) => time === null)) return null;
+  // The last one to land is when the piece was finished.
+  return times.filter((time): time is string => time !== null).sort().at(-1) ?? null;
+}
+
+/**
+ * One line describing a whole piece across its platforms.
+ *
+ * A piece going to three platforms has three summaries, and showing all of them
+ * in a list row is unreadable. So the row says how many platforms and then the
+ * state of the one furthest along — enough to recognise it, which is the job.
+ */
+export function pieceSummary(
+  targets: { platform: string; content: SocialContent }[],
+  labelFor: (platformId: string) => string,
+): string {
+  if (targets.length === 0) return "nothing selected yet";
+  if (targets.length === 1) {
+    return `${labelFor(targets[0].platform)} · ${draftSummary(targets[0].content)}`;
+  }
+  const names = targets.map((t) => labelFor(t.platform)).join(", ");
+  return `${targets.length} platforms · ${names}`;
+}
+
+
+/**
+ * Whether to offer the Story amplification, and for which platforms.
+ *
+ * ============ CAPABILITY-DERIVED, NEVER HARDCODED ======================
+ *
+ * Sean, 2026-08-29: "The Story offer must be capability-derived, never
+ * hardcoded. Only offer it when at least one selected platform's registered
+ * publisher declares story capability AND that platform account is actually
+ * connected. If no connected publisher supports Story, show nothing. Do not
+ * show a disabled or fake Story option."
+ *
+ * So both conditions are required and the result is a LIST rather than a
+ * boolean: an owner posting to Instagram, X and TikTok should be told the story
+ * goes to Instagram, not left to assume it goes everywhere.
+ *
+ * TODAY THIS ALWAYS RETURNS AN EMPTY LIST, because no publisher is registered.
+ * That is the honest state, and the reason the caller renders nothing rather
+ * than a disabled control.
+ */
+export interface StoryCapability {
+  platform: { id: string; label: string };
+  storyCapable: boolean;
+  connected: boolean;
+}
+
+export function storyAmplification<T extends StoryCapability>(
+  readiness: T[],
+  selectedPlatformIds: string[],
+): { offered: boolean; platforms: T["platform"][] } {
+  const platforms = readiness
+    .filter((r) => selectedPlatformIds.includes(r.platform.id))
+    .filter((r) => r.storyCapable && r.connected)
+    .map((r) => r.platform);
+  return { offered: platforms.length > 0, platforms };
 }

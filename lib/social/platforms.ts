@@ -112,9 +112,21 @@ export const SOCIAL_PLATFORM_IDS: string[] = SOCIAL_PLATFORMS.map((p) => p.id);
 export function emptyContent(id: SocialContent["kind"]): SocialContent {
   switch (id) {
     case "instagram":
-      return { kind: "instagram", imageBrief: "", imageUrl: null, caption: "", hashtags: [] };
+      return {
+        kind: "instagram",
+        imageBrief: "",
+        imageUrl: null,
+        caption: "",
+        hashtags: [],
+        // Its own rendition, null until one is made. See the schema for why a
+        // 1:1 feed picture is not a 9:16 story.
+        storyImageUrl: null,
+      };
     case "facebook":
-      return { kind: "facebook", body: "", question: "" };
+      // Facebook's story asset must be distinct from anything already
+      // published — Meta forbids reuse — so it is a separate field here even
+      // though Instagram's is spelled the same way.
+      return { kind: "facebook", body: "", question: "", storyImageUrl: null };
     case "x":
       return { kind: "x", text: "" };
     case "tiktok":

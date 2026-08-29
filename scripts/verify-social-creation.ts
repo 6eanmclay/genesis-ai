@@ -11,10 +11,17 @@ import {
   draftSummary,
   groupPosts,
   isReadyToPublish,
+  piecePublishedAt,
   socialDraftHref,
   socialHref,
+  storyAmplification,
   whatIsMissing,
 } from "@/lib/social/socialPresentation";
+import {
+  investedSummary,
+  investmentSummary,
+  socialInvestment,
+} from "@/lib/social/investment";
 
 // THE SOCIAL CREATION FOUNDATION:
 //
@@ -131,18 +138,18 @@ function main(): void {
   // And the action refuses the mismatch outright, which is the line that
   // actually protects the stored row.
   assert("and the save action refuses a platform/content mismatch",
-    /input\.content\.kind !== platform\.id/.test(
+    /target\.content\.kind !== platform\.id/.test(
       read("app", "b", "[slug]", "studio", "social", "actions.ts")),
     "the union is unrepresentable in our code but says nothing about the wire");
 
   // Instagram is visual-first, and that is a rule with teeth: a caption alone
   // is not a post.
   assert("Instagram is not ready on a caption alone",
-    !isReadyToPublish({ kind: "instagram", imageBrief: "a ring", imageUrl: null, caption: "hello", hashtags: [] }));
+    !isReadyToPublish({ kind: "instagram", imageBrief: "a ring", imageUrl: null, caption: "hello", hashtags: [], storyImageUrl: null }));
   assert("and is ready once there is a picture",
-    isReadyToPublish({ kind: "instagram", imageBrief: "a ring", imageUrl: "https://x/i.png", caption: "hello", hashtags: [] }));
+    isReadyToPublish({ kind: "instagram", imageBrief: "a ring", imageUrl: "https://x/i.png", caption: "hello", hashtags: [], storyImageUrl: null }));
   eq("and says which half is missing",
-    whatIsMissing({ kind: "instagram", imageBrief: "", imageUrl: null, caption: "hello", hashtags: [] }),
+    whatIsMissing({ kind: "instagram", imageBrief: "", imageUrl: null, caption: "hello", hashtags: [], storyImageUrl: null }),
     "This needs a picture — Instagram posts are the image first.");
 
   // X's limit is the format.
@@ -169,7 +176,7 @@ function main(): void {
 
   // Facebook earns its place by being answered.
   assert("Facebook needs something to say",
-    !isReadyToPublish({ kind: "facebook", body: "", question: "what do you think?" }));
+    !isReadyToPublish({ kind: "facebook", body: "", question: "what do you think?", storyImageUrl: null }));
 
   // ======================================================================
   console.log("\n=== 3. A draft says what is in it, in its own terms ===\n");
@@ -180,10 +187,10 @@ function main(): void {
   // exists to prevent. So each branch is checked separately.
 
   eq("an empty Instagram draft says the picture is missing",
-    draftSummary({ kind: "instagram", imageBrief: "", imageUrl: null, caption: "", hashtags: [] }),
+    draftSummary({ kind: "instagram", imageBrief: "", imageUrl: null, caption: "", hashtags: [], storyImageUrl: null }),
     "no picture yet");
   eq("a described one says so",
-    draftSummary({ kind: "instagram", imageBrief: "a copper ring", imageUrl: null, caption: "hi", hashtags: ["copper"] }),
+    draftSummary({ kind: "instagram", imageBrief: "a copper ring", imageUrl: null, caption: "hi", hashtags: ["copper"], storyImageUrl: null }),
     "picture described · caption written · 1 tags");
   eq("an empty X draft counts nothing",
     draftSummary({ kind: "x", text: "   " }), "nothing written yet");
@@ -196,7 +203,7 @@ function main(): void {
     ], caption: "" }),
     "hook written · 2 shots");
   eq("a Facebook draft says whether it asks anything",
-    draftSummary({ kind: "facebook", body: "we opened", question: "" }),
+    draftSummary({ kind: "facebook", body: "we opened", question: "", storyImageUrl: null }),
     "post written · no question yet");
 
   // ======================================================================
@@ -227,19 +234,36 @@ function main(): void {
   // A REAL ROW ROUND-TRIPS. The schema is what the database column is validated
   // against, so a shape it cannot parse is a draft nobody can reopen.
   const stored = SocialPostSchema.safeParse({
-    platform: "tiktok",
     name: "Ring close-up",
-    content: { kind: "tiktok", hook: "look", shots: [{ id: "s1", description: "hands", seconds: 3 }], caption: "c" },
+    targets: [
+      { platform: "tiktok", content: { kind: "tiktok", hook: "look", shots: [{ id: "s1", description: "hands", seconds: 3 }], caption: "c" } },
+      { platform: "x", content: { kind: "x", text: "back in stock" } },
+    ],
     updatedAt: "2026-08-28T00:00:00.000Z",
-    publishedAt: null,
-    publishedUrl: null,
   });
-  assert("a saved post parses back out",
+  assert("a saved piece with two targets parses back out",
     stored.success, stored.success ? "" : JSON.stringify(stored.error.issues.slice(0, 2)));
   assert("and publishing fields default to null rather than absent",
-    SocialPostSchema.safeParse({
-      platform: "x", content: { kind: "x", text: "hi" },
-    }).success);
+    stored.success && stored.data.targets.every((target) => target.publishedAt === null),
+    JSON.stringify(stored.success ? stored.data.targets : []));
+  assert("and amplifyStory defaults to false rather than undefined",
+    stored.success && stored.data.amplifyStory === false);
+
+  // A PIECE WITH NO TARGETS IS NOT A PIECE. Sean's costing rule reads the
+  // target count, and a zero-target row would price at zero and render nothing.
+  assert("a piece with no targets is refused",
+    !SocialPostSchema.safeParse({ name: null, targets: [] }).success);
+
+  // THE PIECE IS PUBLISHED ONLY WHEN EVERY TARGET IS. Instagram can land while
+  // Facebook fails, and half-posted work belongs where somebody will finish it.
+  eq("a half-published piece is still in progress",
+    piecePublishedAt([{ publishedAt: "2026-08-28T00:00:00.000Z" }, { publishedAt: null }]), null);
+  eq("and a fully published one reports when it finished",
+    piecePublishedAt([
+      { publishedAt: "2026-08-28T00:00:00.000Z" },
+      { publishedAt: "2026-08-28T09:00:00.000Z" },
+    ]),
+    "2026-08-28T09:00:00.000Z");
 
   // ======================================================================
   console.log("\n=== 5. Nothing pretends to publish ===\n");
@@ -274,6 +298,152 @@ function main(): void {
   assert("and it takes the slug-shaped permission helper",
     /requireBusiness\(/.test(actionsSrc) && !/requireStorePermission\(/.test(actionsSrc),
     "requireStorePermission's second parameter is a store ID — this cost two rounds of debugging");
+
+  // ======================================================================
+  console.log("\n=== 6. One creation, not four charges ===\n");
+  // ======================================================================
+  //
+  // Sean, 2026-08-29: "1 GP = one social platform / 2 GP = multiple platforms /
+  // The four platforms remain one creation, not four separate charges."
+
+  eq("one platform asks for one", socialInvestment({ targetCount: 1, amplifyStory: false }).points, 1);
+  eq("two platforms ask for two", socialInvestment({ targetCount: 2, amplifyStory: false }).points, 2);
+  // THE POINT OF THE RULE: the fourth platform costs nothing more than the
+  // second. Choosing everywhere should feel like using Genesis properly.
+  eq("and all four still ask for two", socialInvestment({ targetCount: 4, amplifyStory: false }).points, 2);
+  eq("nothing selected asks for nothing", socialInvestment({ targetCount: 0, amplifyStory: false }).points, 0);
+
+  eq("the story adds exactly one", socialInvestment({ targetCount: 4, amplifyStory: true }).points, 3);
+  eq("and on a single platform too", socialInvestment({ targetCount: 1, amplifyStory: true }).points, 2);
+  // A story on an empty piece is not a purchase.
+  eq("but never on its own", socialInvestment({ targetCount: 0, amplifyStory: true }).points, 0);
+
+  // THE +1 IS NAMED SEPARATELY, always — Sean: "Make the +1 Story investment
+  // explicit before commitment." A single total leaves somebody working out
+  // what changed when they ticked it.
+  const withStory = socialInvestment({ targetCount: 3, amplifyStory: true });
+  eq("the story is its own line",
+    withStory.lines, ["Posting to 3 platforms · 2 Growth Points", "Story · 1 Growth Point"]);
+  eq("and the parts add up to the total",
+    withStory.postingPoints + withStory.storyPoints, withStory.points);
+
+  const summary = investmentSummary({ investment: withStory, balance: 10 });
+  eq("the commitment sentence invests", summary.total, "This will invest 3 Growth Points");
+  eq("and says what would be left", summary.afterwards, "7 Growth Points left afterwards");
+  eq("one point is singular", socialInvestment({ targetCount: 1, amplifyStory: false }).lines,
+    ["Posting to 1 platform · 1 Growth Point"]);
+
+  // ============ THE WORDS ARE PART OF THE CONTRACT ==================
+  //
+  // Genesis's own prompt rule: "say 'invest'/'investment,' never 'spend'/'cost'
+  // — Growth Points represent an owner investing in their own business, not a
+  // fee for AI usage." Sean restated it for this feature, so it is asserted
+  // rather than trusted to a comment.
+  const everySentence = [
+    summary.total,
+    summary.afterwards,
+    ...summary.lines,
+    investedSummary({ investment: withStory, remaining: 7, platformCount: 3 }),
+  ].join(" ");
+  assert("no owner-facing sentence says cost, spend, fee or charge",
+    !/\b(cost|costs|spend|spent|fee|fees|charge|charged)\b/i.test(everySentence),
+    everySentence);
+  assert("and the completed sentence says invested",
+    /invested/.test(investedSummary({ investment: withStory, remaining: 7, platformCount: 3 })),
+    investedSummary({ investment: withStory, remaining: 7, platformCount: 3 }));
+
+  const investSrc = codeOnly(read("lib", "social", "investment.ts"));
+  assert("CONTROL: the module itself produces no such string",
+    !/["`'][^"`']*\b(spend|cost|fee)\b[^"`']*["`']/i.test(investSrc),
+    "a template literal is where the wrong word gets in");
+
+  // ======================================================================
+  console.log("\n=== 7. The Story offer is capability-derived ===\n");
+  // ======================================================================
+  //
+  // Sean: "Only offer it when at least one selected platform's registered
+  // publisher declares story capability AND that platform account is actually
+  // connected. If no connected publisher supports Story, show nothing. Do not
+  // show a disabled or fake Story option."
+  //
+  // Both halves are required, so both are tested failing on their own.
+
+  const ig = { platform: { id: "instagram", label: "Instagram" }, storyCapable: true, connected: true };
+  const fb = { platform: { id: "facebook", label: "Facebook" }, storyCapable: true, connected: true };
+  const tk = { platform: { id: "tiktok", label: "TikTok" }, storyCapable: false, connected: true };
+  const x = { platform: { id: "x", label: "X" }, storyCapable: false, connected: false };
+
+  assert("capable and connected is offered",
+    storyAmplification([ig, tk, x], ["instagram", "tiktok"]).offered);
+  eq("and names only the platforms that can do it",
+    storyAmplification([ig, fb, tk, x], ["instagram", "facebook", "tiktok"]).platforms.map((p) => p.label),
+    ["Instagram", "Facebook"]);
+
+  // CAPABILITY WITHOUT A CONNECTION IS NOT AN OFFER.
+  assert("capable but not connected offers nothing",
+    !storyAmplification([{ ...ig, connected: false }], ["instagram"]).offered);
+  // AND A CONNECTION WITHOUT CAPABILITY IS NOT ONE EITHER — TikTok's account
+  // can be connected all day; the Content Posting API still has no Stories.
+  assert("connected but not capable offers nothing",
+    !storyAmplification([tk], ["tiktok"]).offered);
+  // AND IT ONLY COUNTS PLATFORMS THIS PIECE IS ACTUALLY GOING TO.
+  assert("a capable platform that is not selected offers nothing",
+    !storyAmplification([ig, tk], ["tiktok"]).offered);
+
+  // ============ WHICH IS WHY, TODAY, IT NEVER APPEARS ===============
+  //
+  // No publisher is registered, so platformReadiness reports storyCapable=false
+  // for all four and the offer cannot be made. This asserts the real wiring
+  // rather than the pure function: a hardcoded `storyCapable: true` anywhere
+  // would fail here.
+  const publisherSrc2 = codeOnly(read("lib", "social", "publisher.ts"));
+  assert("storyCapable is read off the publisher, not asserted",
+    /publisher\?\.surfaces\.includes\("story"\)/.test(publisherSrc2),
+    "a literal true here would offer a story nobody can post");
+  assert("and a publisher declares its own surfaces",
+    /readonly surfaces: readonly PublishSurface\[\]/.test(publisherSrc2));
+
+  const composerSrc2 = codeOnly(read("app", "b", "[slug]", "studio", "social", "SocialComposer.tsx"));
+  assert("CONTROL: the composer renders nothing when the offer is absent",
+    /amplification\.offered &&/.test(composerSrc2),
+    "a disabled or coming-soon control is exactly what was ruled out");
+  assert("and no platform is named as story-capable in the UI",
+    !/instagram.*stories|stories.*instagram/i.test(composerSrc2),
+    "hardcoding which platforms do stories is the hack the seam exists to prevent");
+  // A STALE TICK MUST NOT BUY ANYTHING.
+  assert("and a taken offer that disappears stops counting",
+    /amplifyStory && amplification\.offered/.test(composerSrc2),
+    "deselecting the last capable platform must remove the +1");
+
+  // ======================================================================
+  console.log("\n=== 8. Selecting a second platform never copies the first ===\n");
+  // ======================================================================
+  //
+  // The single most important behaviour in the composer. If adding Facebook
+  // prefilled it with the Instagram caption, every shape in this file would be
+  // decoration.
+
+  assert("adding a platform starts it empty",
+    /emptyContent\(platform\.id\)/.test(composerSrc2),
+    "a copy from another target here would undo the whole content model");
+  eq("and an empty shape carries nothing from anywhere",
+    Object.values(emptyContent("facebook")).filter((v) => typeof v === "string" && v.length > 0),
+    ["facebook"]);
+
+  // AND THE STORY RENDITIONS ARE PER PLATFORM, not one shared field.
+  assert("Instagram has its own story field",
+    "storyImageUrl" in emptyContent("instagram"));
+  assert("Facebook has its own story field",
+    "storyImageUrl" in emptyContent("facebook"));
+  assert("X has none, because X has no stories",
+    !("storyImageUrl" in emptyContent("x")));
+  assert("TikTok has none, because its API has no stories endpoint",
+    !("storyImageUrl" in emptyContent("tiktok")));
+
+  const entitiesSrc = read("lib", "businessModel", "entities.ts");
+  assert("CONTROL: there is no shared story field on the post itself",
+    !/^\s*storyImageUrl/m.test(entitiesSrc.slice(entitiesSrc.indexOf("export const SocialPostSchema"))),
+    "one field two platforms point at would violate Meta's own reuse rule");
 
   console.log(failures === 0 ? `\nAll ${passes} checks passed.` : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

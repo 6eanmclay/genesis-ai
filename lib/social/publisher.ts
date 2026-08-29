@@ -3,6 +3,11 @@ import { prisma } from "@/lib/prisma";
 import type { SocialContent } from "@/lib/businessModel/entities";
 import { SOCIAL_PLATFORMS, socialPlatform, type SocialPlatform } from "./platforms";
 
+// storyAmplification lives in socialPresentation.ts, not here: the selection it
+// reads changes in the browser, and this module is server-only. Re-exported so
+// a server caller does not need to know that.
+export { storyAmplification } from "./socialPresentation";
+
 // WHERE A CONNECTION WILL PLUG IN.
 //
 // ============ THE SEAM, BUILT BEFORE THERE IS ANYTHING TO PLUG =========
@@ -38,18 +43,54 @@ export interface PublishResult {
   externalId: string | null;
 }
 
+/**
+ * Where a piece can land on a platform.
+ *
+ * `feed` is the ordinary post. `story` is the 24-hour surface, and it is a
+ * SEPARATE capability because two of the four platforms cannot do it at all.
+ */
+export type PublishSurface = "feed" | "story";
+
 export interface SocialPublisher {
   /** The platform this publishes to. */
   readonly platformId: string;
 
   /**
+   * ============ WHAT THIS PUBLISHER CAN ACTUALLY DO ==================
+   *
+   * Sean, 2026-08-29: "design the publisher seam so Story amplification is a
+   * capability of the platform publisher rather than a special-case UI hack."
+   *
+   * So the surfaces are declared here, by the thing that would do the work, and
+   * every offer in the interface is derived from this list. Nothing upstream
+   * carries a list of "platforms that support stories" — that list would be a
+   * second registry to keep in sync, and it would be wrong the first time a
+   * platform changed its API.
+   *
+   * VERIFIED 2026-08-29, and only these:
+   *   Instagram — media_type=STORIES on the Content Publishing API.
+   *   Facebook  — POST /{page-id}/photo_stories and /video_stories.
+   *   TikTok    — the Content Posting API direct-posts to the profile. There is
+   *               no Stories endpoint, so a TikTok publisher declares feed only.
+   *   X         — has no Stories product, and no connector at all.
+   *
+   * A publisher must not declare a surface it has not implemented. That is the
+   * whole contract: the owner is offered exactly what can be done.
+   */
+  readonly surfaces: readonly PublishSurface[];
+
+  /**
    * Send it. Throws with a message an owner can read — the same contract every
    * connector in lib/integrations already holds, and the reason failures on the
    * product side became sentences rather than status codes.
+   *
+   * `surface` is passed rather than inferred, and a publisher handed a surface
+   * it does not declare should throw rather than quietly post to the feed.
    */
   publish(input: {
     storeId: string;
     content: SocialContent;
+    surface: PublishSurface;
   }): Promise<PublishResult>;
 }
 
@@ -78,6 +119,15 @@ export interface PlatformReadiness {
   hasPublisher: boolean;
   /** This business has connected the account. */
   connected: boolean;
+  /**
+   * The registered publisher declares it can post a story.
+   *
+   * FALSE WHEN THERE IS NO PUBLISHER, which is every platform today. This is a
+   * fact about code, not about the platform's API: Instagram's API supports
+   * stories, and this stays false until something implements it. Claiming a
+   * capability nobody wrote is exactly what the seam exists to prevent.
+   */
+  storyCapable: boolean;
   /**
    * One sentence for the owner about publishing, or null when it just works.
    * Never a status code, and never silence.
@@ -113,7 +163,8 @@ export async function platformReadiness(storeId: string): Promise<PlatformReadin
       : [];
 
   return SOCIAL_PLATFORMS.map((platform) => {
-    const hasPublisher = publisherFor(platform.id) !== null;
+    const publisher = publisherFor(platform.id);
+    const hasPublisher = publisher !== null;
     const row = platform.publishProvider
       ? rows.find((r) => r.provider === platform.publishProvider)
       : undefined;
@@ -128,7 +179,14 @@ export async function platformReadiness(storeId: string): Promise<PlatformReadin
       blockedReason = `Connect ${platform.label} and Genesis can post this for you.`;
     }
 
-    return { platform, hasPublisher, connected, blockedReason };
+    return {
+      platform,
+      hasPublisher,
+      connected,
+      // DECLARED, NOT ASSUMED. Read off the publisher itself.
+      storyCapable: publisher?.surfaces.includes("story") ?? false,
+      blockedReason,
+    };
   });
 }
 

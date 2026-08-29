@@ -133,8 +133,13 @@ export async function StudioScreen({ slug }: { slug?: string; basePath: string }
   const socialDrafts = await socialDraftsFor(store.id);
   const socialFor: Record<string, typeof socialDrafts> = {};
   for (const draft of socialDrafts) {
-    if (!SOCIAL_PLATFORM_IDS.includes(draft.platform)) continue;
-    (socialFor[draft.platform] ??= []).push(draft);
+    // A PIECE APPEARS UNDER EVERY PLATFORM IT TARGETS. One creation going to
+    // three platforms is findable from all three cards, because somebody
+    // looking for "the Instagram one" does not remember it was also a TikTok.
+    for (const platform of draft.platforms) {
+      if (!SOCIAL_PLATFORM_IDS.includes(platform)) continue;
+      (socialFor[platform] ??= []).push(draft);
+    }
   }
 
   const [assetsByRole, designRows, assetRows] = await Promise.all([

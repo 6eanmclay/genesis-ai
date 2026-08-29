@@ -166,7 +166,7 @@ function DraftGroup({
         {drafts.map((draft) => (
           <li key={draft.postId}>
             <Link
-              href={socialDraftHref(basePath, draft.platform, draft.postId)}
+              href={socialDraftHref(basePath, draft.platforms[0] ?? "", draft.postId)}
               className="flex items-center gap-3 rounded-xl p-2 transition hover:bg-black/[.04] dark:hover:bg-white/[.06]"
             >
               <span className="min-w-0 flex-1">
