@@ -206,6 +206,25 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
             label="Delivered"
             value={order.deliveredAt ? order.deliveredAt.toLocaleDateString() : <NotProvided />}
           />
+          {/* ============ WHAT THE CUSTOMER HAS ACTUALLY BEEN TOLD =====
+              Three separate facts, because they fail separately. A receipt can
+              send while the shipped notice does not, and an owner who can only
+              see one of them cannot tell which of their customers is waiting in
+              silence.
+
+              "Not yet" is amber rather than blank for the reason the shipped
+              row already records: on a deployment with no email configured this
+              is the norm, and the merchant is the only one who can tell them. */}
+          <Field
+            label="Customer sent a receipt"
+            value={
+              order.confirmationSentAt ? (
+                order.confirmationSentAt.toLocaleDateString()
+              ) : (
+                <span className="text-amber-700 dark:text-amber-400">Not yet</span>
+              )
+            }
+          />
           <Field
             label="Customer told it shipped"
             value={
@@ -218,6 +237,34 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
               )
             }
           />
+          {/* Only shown once the fact they describe is true. An order that has
+              not been delivered has nothing to say about a delivery email, and
+              a row reading "Not yet" against an event that has not happened
+              would look like a failure rather than a sequence. */}
+          {order.deliveredAt && (
+            <Field
+              label="Customer told it arrived"
+              value={
+                order.deliveryNotifiedAt ? (
+                  order.deliveryNotifiedAt.toLocaleDateString()
+                ) : (
+                  <span className="text-amber-700 dark:text-amber-400">Not yet</span>
+                )
+              }
+            />
+          )}
+          {order.status === "refunded" && (
+            <Field
+              label="Customer told about the refund"
+              value={
+                order.refundNotifiedAt ? (
+                  order.refundNotifiedAt.toLocaleDateString()
+                ) : (
+                  <span className="text-amber-700 dark:text-amber-400">Not yet</span>
+                )
+              }
+            />
+          )}
         </Section>
       </div>
 

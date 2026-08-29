@@ -87,6 +87,7 @@ const ORDER = {
   selectedShippingCarrier: null,
   selectedShippingService: null,
   selectedShippingEstDays: null,
+  items: [] as { productName: string; quantity: number; subtotalInCents: number }[],
 };
 
 const receipt = buildConfirmationEmail({

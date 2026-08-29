@@ -1324,6 +1324,11 @@ model Order {
   // predating this column, and the honest reading rather than a backfilled
   // claim that somebody was emailed.
   ownerNotifiedAt             DateTime?
+  // The two events that were ingested end to end and told the customer nothing
+  // (2026-08-29). Same claim shape as the three above — see
+  // lib/orders/notificationClaim.ts.
+  deliveryNotifiedAt          DateTime?
+  refundNotifiedAt            DateTime?
   // The claim that stops one shipment being paid for twice (2026-08-20).
   //
   // purchaseShippingLabelExecutable guarded on `trackingNumber` — but that is

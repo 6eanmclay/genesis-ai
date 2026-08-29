@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { notifyCustomerDelivered } from "@/lib/orders/deliveryNotification";
 import { prisma } from "@/lib/prisma";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import type { Shipment } from "@/lib/businessModel/entities";
@@ -103,6 +104,21 @@ export async function applyShipmentUpdate(shipment: Shipment): Promise<DeliveryU
       ...(scanAt ? { lastScanAt: scanAt } : {}),
     },
   });
+
+  // ============ AND THE CUSTOMER IS TOLD (2026-08-29) ================
+  //
+  // Only on the transition. `order.deliveredAt` is what we held BEFORE this
+  // update, so a carrier replaying a delivered scan finds it already set and
+  // sends nothing — and the claim in notifyCustomerDelivered would refuse a
+  // second one anyway. Two guards because this one saves a query and the other
+  // one is the guarantee.
+  //
+  // Awaited, then swallowed: a carrier webhook that 500s gets retried, and
+  // retrying a delivery we have already recorded achieves nothing but noise.
+  // Anything that fails here is picked up by runDueOrderNotifications.
+  if (deliveredAt && !order.deliveredAt) {
+    await notifyCustomerDelivered({ orderId: order.id, storeId: order.storeId }).catch(() => {});
+  }
 
   return { updated: true, orderId: order.id, delivered: shipment.isDelivered };
 }

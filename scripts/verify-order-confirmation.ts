@@ -41,6 +41,10 @@ const ORDER = {
   selectedShippingCarrier: "USPS",
   selectedShippingService: "Priority Mail",
   selectedShippingEstDays: 2,
+  // A single-product checkout writes no OrderItem rows, which is what every
+  // existing assertion below describes. The itemised branch is exercised
+  // separately, in section 7.
+  items: [] as { productName: string; quantity: number; subtotalInCents: number }[],
 };
 const STORE = { name: "Cubit & Coil", currency: "USD" };
 

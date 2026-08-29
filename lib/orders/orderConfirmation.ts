@@ -39,6 +39,25 @@ export interface ConfirmationOrder {
   selectedShippingCarrier: string | null;
   selectedShippingService: string | null;
   selectedShippingEstDays: number | null;
+  /**
+   * WHAT THEY ACTUALLY BOUGHT (2026-08-29).
+   *
+   * `productName` on a multi-item order is "Copper Ring and 2 more" — which is
+   * an honest label and a poor receipt. A customer checking what they were
+   * charged for gets one name and a count.
+   *
+   * The lines have existed since the bag shipped; nothing read them. An order
+   * placed through the single-product checkout has none, and then the summary
+   * line above is the whole truth and this stays empty.
+   */
+  items: ConfirmationLine[];
+}
+
+/** One line of a receipt. */
+export interface ConfirmationLine {
+  productName: string;
+  quantity: number;
+  subtotalInCents: number;
 }
 
 export interface ConfirmationStore {
@@ -79,7 +98,7 @@ export type ConfirmationOutcome =
 export function buildConfirmationEmail(params: {
   order: ConfirmationOrder;
   store: ConfirmationStore;
-}): { to: string; subject: string; html: string } {
+}): { to: string; subject: string; html: string; fromName: string } {
   const { order, store } = params;
   const total = formatMoney(order.amountInCents, store.currency);
 
@@ -95,12 +114,39 @@ export function buildConfirmationEmail(params: {
         }</p>`
       : "";
 
+  // ============ ONE LINE PER THING BOUGHT ==========================
+  //
+  // Only when there is more than one. A single-line order would render a
+  // one-row table under a heading that already said the same thing, and the
+  // summary line below is exactly right for it.
+  //
+  // The total stays the ORDER total from the row itself — never the sum of
+  // these lines. If the two ever disagreed, the number the customer was
+  // actually charged is the one on the order, and recomputing it here would
+  // quietly show them a different figure from their bank statement.
+  const itemLines =
+    order.items.length > 1
+      ? [
+          `<ul>`,
+          ...order.items.map(
+            (line) =>
+              `<li>${line.quantity} × ${line.productName} — ${formatMoney(line.subtotalInCents, store.currency)}</li>`,
+          ),
+          `</ul>`,
+        ].join("")
+      : "";
+
   return {
     to: order.buyerEmail,
     subject: `Your order from ${store.name}`,
+    // The store's own name in front of the address, so the customer sees who
+    // they bought from rather than a platform they have never heard of.
+    fromName: store.name,
     html: [
       `<p>Thank you — ${store.name} has received your order.</p>`,
-      `<p><strong>${order.productName}</strong> — ${total}</p>`,
+      itemLines
+        ? `<p><strong>Your order</strong> — ${total}</p>${itemLines}`
+        : `<p><strong>${order.productName}</strong> — ${total}</p>`,
       shippingLine,
       // The reference a human can quote back. Without it a customer with a
       // problem has nothing to give anyone.
@@ -113,7 +159,13 @@ export function buildConfirmationEmail(params: {
 }
 
 /** Injected in tests, so the decision and payload are provable without sending. */
-export type EmailSender = (input: { to: string; subject: string; html: string }) => Promise<void>;
+export type EmailSender = (input: {
+  to: string;
+  subject: string;
+  html: string;
+  /** The store's display name, when the email is sent on a store's behalf. */
+  fromName?: string;
+}) => Promise<void>;
 
 /**
  * Send the confirmation for an order that has ALREADY COMMITTED — once.
@@ -176,7 +228,16 @@ export async function sendOrderConfirmation(
 
   const order = await prisma.order.findFirst({
     where: { id: orderId, storeId },
-    include: { store: { select: { name: true, currency: true } } },
+    include: {
+      store: { select: { name: true, currency: true } },
+      // Ordered so the receipt reads the same way twice. Without an explicit
+      // order the rows come back however Postgres feels, and a customer
+      // comparing two copies of their own receipt would see them differ.
+      items: {
+        select: { productName: true, quantity: true, subtotalInCents: true },
+        orderBy: { createdAt: "asc" },
+      },
+    },
   });
   if (!order) {
     // Deleted between the claim and the read. Nothing to release.

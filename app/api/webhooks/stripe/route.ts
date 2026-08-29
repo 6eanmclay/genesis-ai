@@ -1,5 +1,6 @@
 import { sendOrderConfirmation } from "@/lib/orders/orderConfirmation";
 import { notifyOwnerOfSale } from "@/lib/orders/notifyOwnerOfSale";
+import { notifyCustomerRefunded } from "@/lib/orders/refundNotification";
 import { isPermanentOrderFailure } from "@/lib/orders/orderFailure";
 import { checkWebhookSecret } from "@/lib/observability/webhookConfig";
 import { reportIssue } from "@/lib/observability/reportIssue";
@@ -607,6 +608,16 @@ export async function POST(request: Request) {
           where: { id: target.id, storeId: target.storeId },
           data: { status: "refunded" },
         });
+        // ============ AND THE CUSTOMER IS TOLD (2026-08-29) ==========
+        //
+        // Inside the status check, so only the transition notifies — a
+        // redelivered charge.refunded finds the order already refunded and
+        // says nothing. After the write, so a refund that failed to record is
+        // never announced.
+        //
+        // Never throws: Stripe would retry the whole event, and the refund is
+        // already applied. A failure here is swept up daily instead.
+        await notifyCustomerRefunded({ orderId: target.id, storeId: target.storeId }).catch(() => {});
       }
     }
   }

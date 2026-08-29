@@ -6,6 +6,7 @@ import { runDueIntelligenceCycles } from "@/lib/intelligence/cycle";
 import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
 import { runDueSourcing } from "@/lib/sourcing/sourcingSchedule";
 import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
+import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
 
 // Phase 3 Milestone 3 — the actual trigger. Secured via Vercel's own
 // documented convention for cron routes: Vercel automatically sends
@@ -24,6 +25,22 @@ export async function GET(request: NextRequest) {
   // Auth-throttle rows outlive their usefulness after WINDOW_MS. Swept here
   // rather than on every login, because the count query is already bounded by
   // occurredAt — stale rows are a storage concern, not a correctness one.
+  // ============ THE NOTIFICATIONS NOBODY REDELIVERED (2026-08-29) =====
+  //
+  // A receipt is the one thing a customer has, and the PayPal path is a browser
+  // redirect nobody retries. This sweeps for orders that are paid with no
+  // confirmation, delivered with no notice, or refunded with no notice — and
+  // sends what is missing.
+  //
+  // Its own stage, caught on its own, for the reason the rest of this route is
+  // built that way: one failing stage must not take the others down.
+  await runDueOrderNotifications().catch((error) => {
+    reportIssue("the order notification sweep failed", error, {
+      subsystem: "email",
+      stage: "cron.orderNotifications",
+    });
+  });
+
   await pruneExpiredAttempts().catch((error) => {
     // Reported too, though it is the one stage here whose own comment calls it
     // a storage concern rather than a correctness one. Four stages reporting
