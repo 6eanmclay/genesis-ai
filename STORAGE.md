@@ -162,7 +162,7 @@ Concretely:
 - **No customer should ever be asked to manage storage manually.** The cleanup that produced this document took two operator-run endpoints, several rounds of evidence, and a scan bug caught by luck. That is not a customer experience.
 - **Cleanup is automatic and continuous**, not a thing somebody remembers to run.
 - **The owner sees usage before it becomes a problem** — `742 MB / 1 GB used`, with a warning well before the ceiling, not a failed Create as the first signal. That is exactly how this surfaced, and it is the wrong way round.
-- **Hitting a limit must degrade honestly**: say what is full, what can be freed, and offer more space. Never a raw provider error in the middle of creating a product.
+- **Hitting a limit must degrade honestly**: say what is full, what can be freed, and offer more space. Never a raw provider error in the middle of creating a product — and never a batch that stops half way, which is what [section 10](#10-the-bulk-upload-that-stopped-at-sixty) records.
 
 ---
 
@@ -248,6 +248,92 @@ for."* Raising the allocation before fixing the waste sells customers the cost
 of our own inefficiency, and buys perhaps a year before the same wall arrives.
 Fixing it first is what makes 5 GB the generous number it should be.
 
+---
+
+## 10. The bulk upload that stopped at sixty
+
+**Status: leading hypothesis. Not confirmed — the evidence that would settle it is listed below and has not been pulled.**
+
+Around 2026-08-21, Sean's mother uploaded about 100 photos through the chat drop
+zone on an Android phone. Roughly **sixty landed and the rest failed**. It
+happened more than once. At the time it looked like it might be specific to her
+account, her files or her device.
+
+### What the partial success rules out
+
+**A clean cutoff after ~60 of 100 is the signature of a capacity ceiling.**
+
+- **Not account or business context.** The most alarming candidate was
+  `resolveBusiness` returning `ambiguous`, which refuses every upload — but that
+  is deterministic for a session, so it would have produced **0 of 100**, not 60.
+  One behavioural fact eliminated the hypothesis that looked worst on paper.
+- **Not the files.** The sixty-first photo is not special.
+- **Not purely network.** A poor connection produces *scattered* failures that
+  retries partially recover, not a hard wall part-way through.
+
+### Why storage exhaustion fits
+
+- The same account measured **954 MB of 1 GB — 93.2%** a week later
+- Creating a product on 2026-08-28 failed with exactly
+  `Vercel Blob: Storage quota exceeded for Hobby plan (1GB maximum)`
+- `assets/` holds 178 files totalling 460 MB — about 2.6 MB each, consistent
+  with phone photos
+- 100 Android photos at 3–5 MB is **300–500 MB**. With roughly 200 MB of
+  headroom, about sixty fit and everything after failed
+- It explains the repeats: each attempt filled a little more and hit the wall
+  sooner
+
+Remaining alternative: **Android browser memory pressure**, which also produces
+partial-then-stop and is not excluded by anything known.
+
+### The evidence that would settle it
+
+```sql
+SELECT date_trunc('minute', "syncedAt") AS minute, count(*)
+FROM "BusinessRecord"
+WHERE "entityType" = 'asset'
+  AND "syncedAt" BETWEEN '2026-08-19' AND '2026-08-23'
+GROUP BY 1 ORDER BY 1;
+```
+
+Roughly sixty rows in a tight burst and then nothing confirms it. In Vercel's
+logs for `/api/blob/business-asset-upload`, the tell is a run of 200s followed by
+a hard switch to failures; in Sentry, `Storage quota exceeded` in that window.
+
+### What it means, and it is the reason this section exists
+
+If confirmed, **it was not her account, her files or her phone. She hit the same
+wall Sean hit a week later** — and was told "some didn't make it" rather than
+"you are out of space."
+
+**The UX failure is as serious as the storage one.** Genesis let somebody upload
+sixty files before discovering the batch could not fit, and then explained it in
+terms that pointed at the files rather than the capacity. Somebody in that
+position reasonably concludes the product is broken, or that their photos are
+wrong.
+
+### Two requirements this adds
+
+**Preflight a batch against remaining capacity.** Before uploading anything,
+compare the batch's approximate size against what is available and say so
+plainly:
+
+> *"This batch needs about 340 MB and you have about 180 MB available."*
+
+The sizes are known in the browser before a single byte is sent. There is no
+excuse for finding out at file sixty-one.
+
+**Stop retrying a hard capacity error.** `withRetry` retries any failure three
+times without inspecting it — its comment reasons that "any failure here really
+is transient", which is true of a dropped connection and false of a quota. So
+the last forty files each failed three times: **roughly 120 pointless
+invocations**, slower for the owner and billed to us, to reach a conclusion that
+was certain at the first one.
+
+A hard capacity limit must degrade honestly and immediately, and it needs to be
+distinguishable from a transient failure at the point the retry decision is
+made. Both belong with the storage work — see [What is left to build](#what-is-left-to-build).
+
 ## What is left to build
 
 **None of this is authorized yet.** Recorded so the work is known, not started.
@@ -271,6 +357,11 @@ Fixing it first is what makes 5 GB the generous number it should be.
 6. **`delete` on the storage interface**, once the policy above exists to guard it.
 7. **Lifecycle declaration required for every blob path** — a new path without one should not pass review.
 8. **Customer-facing usage view**, warnings before the ceiling, and honest degradation at it.
+8a. **Batch preflight** — compare a batch's size against remaining capacity and
+    say so before uploading anything (section 10).
+8b. **Do not retry hard capacity errors** — `withRetry` must distinguish a quota
+    from a dropped connection instead of trying three times either way
+    (section 10).
 9. **Per-plan quota enforcement** for the tiers in section 9.
 10. **A scheduled orphan sweep**, using the same reference scan.
 11. **The tests in section 8**, especially the create/fail loop that asserts bytes do not climb.
