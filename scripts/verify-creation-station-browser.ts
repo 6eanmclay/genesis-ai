@@ -233,7 +233,7 @@ async function main() {
     // the meaning: what is selected, then what it is, then what to do with it,
     // then the least important thing on the screen.
     const ctaBox = await page.locator("button", { hasText: /^Make a / }).first().boundingBox();
-    const dotsBox = await page.locator('[role="listbox"] ~ div span[aria-hidden="true"]').first().boundingBox();
+    const dotsBox = await page.locator("[data-stage-dots] span").first().boundingBox();
     assert("the make button sits above the page indicator",
       !!ctaBox && !!dotsBox && ctaBox.y < dotsBox.y,
       `${JSON.stringify(ctaBox)} vs ${JSON.stringify(dotsBox)}`);
@@ -679,13 +679,40 @@ async function main() {
       check(`${label}: no link points at a route that does not exist`,
         await page.locator('a[href^="/dashboard/studio/create"]').count(), 0);
 
+      // ============ THE IMMERSIVE CAROUSEL, IN A SECTION ==============
+      //
+      // Sean: "I want the Product Creation section to retain the same visual
+      // carousel experience we originally had — the immersive product imagery,
+      // focused center item, surrounding products, swipe/navigation."
+      //
+      // So the shape asserted is the carousel's, not a row of cards: a listbox
+      // with one selected option. Two of them, because Social Creation runs the
+      // same stage rather than a lookalike.
+      const stages = page.locator('[role="listbox"]');
+      check(`${label}: two carousels — products and social`, await stages.count(), 2);
+      check(`${label}: each has exactly one thing in front`,
+        await page.locator('[role="option"][aria-selected="true"]').count(), 2);
+
+      // THE ACTION IS UNDER THE FOCUSED OBJECT, and worded the way Sean asked.
       const createNew = page.locator(`a[href^="/b/${store.slug}/studio/create?kind="]`);
-      assert(`${label}: every product offers Create New`,
-        await createNew.count() >= 5, `${await createNew.count()} cards`);
-      // THE WORDING IS THE REQUIREMENT, not an accident of styling. Sean named
-      // both controls exactly, and "Create new" is not what he asked for.
+      assert(`${label}: the focused product offers Create New`,
+        await createNew.count() >= 1, `${await createNew.count()} links`);
       check(`${label}: and it is worded the way it was asked for`,
-        await page.locator("a", { hasText: /^Create New$/ }).count() >= 5, true);
+        await page.locator("a", { hasText: /^Create New$/ }).count() >= 1, true);
+
+      // ============ THE CHIPS ARE GONE ================================
+      //
+      // Sean listed them by name. Asserting a few of the exact sentences is
+      // what stops them being reintroduced by a later "helpful defaults" pass.
+      for (const chip of [
+        /upload a logo/i,
+        /refine my logo/i,
+        /put my logo on/i,
+        /what would you improve about my store/i,
+        /create a hero section/i,
+      ]) {
+        assert(`${label}: no "${chip.source}" chip`, !chip.test(studio), studio.slice(0, 500));
+      }
 
       // SAVED WORK IS REACHABLE. With no catalogue this design belongs to no
       // card, and the landing must still show it — otherwise a supplier outage
@@ -711,10 +738,18 @@ async function main() {
       // whether or not the row rendered is not an assertion. CreationCardRow
       // returns null when the J4 context is missing, and that silent null is
       // exactly the failure worth catching.
-      assert(`${label}: social cards are real controls`,
-        await page.locator("button", { hasText: /Instagram/ }).count() > 0,
-        studio.slice(0, 600));
-      assert(`${label}: and so are graphics cards`,
+      // SOCIAL IS A CAROUSEL NOW, not four buttons. What must be true is that
+      // the four platforms are its objects and picking one is a real control.
+      for (const platform of ["Instagram", "Facebook", "X", "TikTok"]) {
+        check(`${label}: ${platform} is on the social carousel`,
+          await page.locator(`[role="option"][aria-label="${platform}"]`).count(), 1);
+      }
+      // SOCIAL NOW HAS THE SAME PAIR AS PRODUCT, and Create New goes to a real
+      // workspace rather than only into the conversation.
+      const socialNew = page.locator(`a[href^="/b/${store.slug}/studio/social?platform="]`);
+      assert(`${label}: the focused platform offers Create New`,
+        await socialNew.count() >= 1, `${await socialNew.count()} links`);
+      assert(`${label}: graphics is still reachable`,
         await page.locator("button", { hasText: /Promotional graphic/ }).count() > 0,
         studio.slice(0, 600));
     }
@@ -750,6 +785,224 @@ async function main() {
     const reopenedBody = (await page.locator("body").innerText()).replace(/\s+/g, " ");
     assert("and it is not a not-found page",
       !/404|this page could not be found/i.test(reopenedBody), reopenedBody.slice(0, 300));
+
+    // ------------------------------------------------------------------
+    console.log("\n3e. Social Creation is a workspace, not a chat message");
+    //
+    // ============ THE FOUNDATION, WALKED ============================
+    //
+    // Sean, 2026-08-28: "Build the draft/save/continue foundation now, even if
+    // the real publishing integrations aren't connected yet."
+    //
+    // So this walks it the way somebody would: pick a platform, write the thing
+    // that platform actually needs, save, leave, and come back to it from the
+    // Studio carousel. Every assertion below is about a real row in the
+    // database — nothing here is a fixture.
+
+    for (const [platformId, label] of [
+      ["instagram", "Instagram"],
+      ["facebook", "Facebook"],
+      ["x", "X"],
+      ["tiktok", "TikTok"],
+    ] as const) {
+      await page.goto(`${server.baseUrl}/b/${store.slug}/studio/social?platform=${platformId}`, {
+        waitUntil: "domcontentloaded",
+      });
+      const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+      assert(`${label}: the workspace opens`, new RegExp(label.replace("X", "\\bX\\b")).test(body),
+        body.slice(0, 200));
+      assert(`${label}: and is not a not-found page`,
+        !/404|this page could not be found/i.test(body), body.slice(0, 200));
+
+      // ============ NOTHING PRETENDS TO PUBLISH =====================
+      //
+      // No platform is connected and no publisher is registered. A button that
+      // appeared to post would be the failure this codebase keeps being
+      // corrected for — and the absence must be EXPLAINED, not silent.
+      check(`${label}: offers no publish control`,
+        await page.locator("button", { hasText: /^(Publish|Post)$/ }).count(), 0);
+      assert(`${label}: but says why it cannot post yet`,
+        /can't post them for you yet|isn't switched on yet|Connect /i.test(body),
+        body.slice(0, 400));
+    }
+
+    // ============ FOUR DIFFERENT EDITORS, NOT ONE WITH A DROPDOWN ===
+    //
+    // The clearest possible evidence that a caption is not being reused: the
+    // field each platform asks for first is different, and X's counter exists
+    // nowhere else.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/social?platform=instagram`, { waitUntil: "domcontentloaded" });
+    const igBody = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("Instagram asks about the picture before the words",
+      /What should the picture show/i.test(igBody), igBody.slice(0, 300));
+    assert("and says a caption alone is not a post",
+      /needs a picture/i.test(igBody), igBody.slice(0, 400));
+
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/social?platform=x`, { waitUntil: "domcontentloaded" });
+    const xBody = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("X shows the limit, because the limit is the format",
+      /0 \/ 280/.test(xBody), xBody.slice(0, 300));
+    assert("and Instagram's picture question is nowhere on it",
+      !/What should the picture show/i.test(xBody), xBody.slice(0, 300));
+
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/social?platform=tiktok`, { waitUntil: "domcontentloaded" });
+    const tkBody = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("TikTok asks for a hook and shots",
+      /The hook/i.test(tkBody) && /Shot by shot/i.test(tkBody), tkBody.slice(0, 300));
+
+    // ------------------------------------------------------------------
+    console.log("\n3f. Write it, save it, leave, and continue it");
+
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio/social?platform=x`, { waitUntil: "domcontentloaded" });
+    // SCOPED TO THEIR LABELS, not to DOM order. `textarea.first()` picked J4's
+    // conversation composer — which is ALWAYS MOUNTED on every dashboard page,
+    // merely hidden — so the post saved empty and the assertion that caught it
+    // was reporting a bug in the test, not in the product.
+    await page.locator('label:has-text("What is this post about") input').fill("Ring restock");
+    await page
+      .locator('label:has-text("The post") textarea')
+      .fill("Copper tensor rings are back in stock this week.");
+    await page.locator("button", { hasText: /^Save draft$/ }).click();
+    await page.waitForFunction(() => /Saved\./.test(document.body.innerText), undefined, { timeout: 20_000 });
+
+    // THE URL GAINED THE POST ID, so a refresh reopens the draft rather than a
+    // blank composer.
+    await page.waitForFunction(() => window.location.search.includes("post="), undefined, { timeout: 10_000 });
+    const savedUrl = new URL(page.url());
+    check("saving puts the post in the URL", savedUrl.searchParams.get("platform"), "x");
+    assert("and gives it an id", (savedUrl.searchParams.get("post") ?? "").length > 0, page.url());
+
+    // IT IS A REAL ROW. Read straight from the database rather than trusting
+    // the screen — the whole point of the foundation is that it persists.
+    const stored = await prisma.businessRecord.findFirst({
+      where: { storeId: store.id, entityType: "socialPost", sourceProvider: "genesis_social" },
+      select: { externalId: true, data: true },
+    });
+    assert("the draft is a real BusinessRecord", !!stored, "nothing was written");
+    const storedData = stored?.data as { platform?: string; content?: { kind?: string; text?: string } } | null;
+    check("stored under the platform it was written for", storedData?.platform, "x");
+    check("with that platform's own content shape", storedData?.content?.kind, "x");
+    assert("and the words the owner typed",
+      (storedData?.content?.text ?? "").includes("Copper tensor rings"),
+      JSON.stringify(storedData?.content));
+
+    // AND IT COMES BACK FROM THE STUDIO CAROUSEL. Leave, return, Continue.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
+    // ROTATED, NOT CLICKED. X sits at the BACK of a four-object circle, where
+    // pointer-events is deliberately none — you cannot click the thing behind
+    // the thing in front. Arrow keys are how a keyboard reaches it, and they
+    // now belong to the focused carousel rather than the window.
+    const socialStage = page.locator('[role="listbox"]').last();
+    await socialStage.press("ArrowRight");
+    await socialStage.press("ArrowRight");
+    await page.waitForTimeout(600);
+    check("the social carousel is showing X",
+      await page.locator('[role="option"][aria-selected="true"][aria-label="X"]').count(), 1);
+
+    // AND THE OTHER CAROUSEL DID NOT MOVE WITH IT. Two stages both listening on
+    // the window is the defect this walk found: one arrow key rotated both.
+    check("and the product carousel stayed where it was",
+      await page.locator('[role="option"][aria-selected="true"][aria-label="T-shirt"]').count(), 1);
+    const continueBtn = page.locator("#studio-social-panel");
+    await page.locator("button", { hasText: /^Continue/ }).last().click();
+    await continueBtn.waitFor({ state: "visible", timeout: 10_000 });
+    const panel = (await continueBtn.innerText()).replace(/\s+/g, " ");
+    assert("the saved post is offered under its own platform",
+      /Ring restock/.test(panel), panel.slice(0, 300));
+    assert("and is grouped as in progress, because nothing can publish yet",
+      /In progress/i.test(panel), panel.slice(0, 300));
+    // WHAT IS IN IT, in X's own terms rather than a truncated caption.
+    assert("and says what is in it in that platform's terms",
+      /of 280 characters/.test(panel), panel.slice(0, 300));
+
+    await page.locator("#studio-social-panel a").first().click();
+    await page.waitForURL(/studio\/social\?platform=x&post=/, { timeout: 20_000 });
+    // A CONTROLLED TEXTAREA'S VALUE IS A PROPERTY, NOT TEXT. innerText does not
+    // contain it, so the first version of this read the whole page — and found
+    // J4's always-mounted Office instead of the post. inputValue reads what is
+    // actually in the field.
+    const reopenedText = await page.locator('label:has-text("The post") textarea').inputValue();
+    assert("reopening shows the words that were saved",
+      /Copper tensor rings are back in stock/.test(reopenedText), reopenedText.slice(0, 200));
+    const reopenedName = await page.locator('label:has-text("What is this post about") input').inputValue();
+    check("and the name it was given", reopenedName, "Ring restock");
+
+    // ------------------------------------------------------------------
+    console.log("\n3d. The same room on a phone");
+    //
+    // ============ MOBILE IS NOT A NARROWER DESKTOP ==================
+    //
+    // Sean: "The Product Creation carousel needs to look and behave like the
+    // original immersive carousel on the phone — not just look good on desktop."
+    //
+    // Two things can only be checked at a real width. First, that the page does
+    // not scroll SIDEWAYS: a carousel of absolutely positioned objects at fixed
+    // pixel offsets is exactly the thing that pushes a body wider than the
+    // viewport, and the symptom on a phone is a page that drifts under the
+    // thumb. Second, that the object in front is actually reachable — a stage
+    // that renders but places its focused object off-screen looks fine in a
+    // screenshot and is unusable.
+    // THE SESSION IS REUSED, NOT REPEATED. Signing in a second time is the one
+    // step in this suite that has flaked, and a mobile pass that fails at the
+    // login form tells us nothing about the layout it exists to check.
+    const phone = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3,
+      storageState: await context.storageState(),
+    });
+    const phonePage = await phone.newPage();
+    await phonePage.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
+
+    const overflow = await phonePage.evaluate(() => ({
+      body: document.documentElement.scrollWidth,
+      view: window.innerWidth,
+    }));
+    assert("the page does not scroll sideways on a phone",
+      overflow.body <= overflow.view + 1, `content ${overflow.body}px in a ${overflow.view}px viewport`);
+
+    check("both carousels render on a phone",
+      await phonePage.locator('[role="listbox"]').count(), 2);
+
+    // THE FOCUSED OBJECT IS ON SCREEN AND BIG ENOUGH TO HIT. Not a pixel-perfect
+    // assertion — a real one about whether a thumb can land on it.
+    const front = phonePage.locator('[role="option"][aria-selected="true"]').first();
+    const frontBox = await front.boundingBox();
+    assert("the focused product is actually on screen",
+      !!frontBox && frontBox.x >= -8 && frontBox.x + frontBox.width <= overflow.view + 8,
+      JSON.stringify(frontBox));
+    assert("and is big enough to tap",
+      !!frontBox && frontBox.width >= 120 && frontBox.height >= 120, JSON.stringify(frontBox));
+
+    // AND THE ACTIONS SIT UNDER IT, reachable without a horizontal scroll.
+    const phoneCreate = phonePage.locator("a", { hasText: /^Create New$/ }).first();
+    const createBox = await phoneCreate.boundingBox();
+    assert("Create New is on screen on a phone",
+      !!createBox && createBox.x >= 0 && createBox.x + createBox.width <= overflow.view + 1,
+      JSON.stringify(createBox));
+
+    // THE SWIPE STILL BELONGS TO THE PAGE VERTICALLY. touch-action: pan-y is
+    // what allows a thumb starting on the carousel to scroll the page, and it
+    // is the fix Sean asked for after hunting for "a safe strip to scroll in".
+    const touchEvidence = await phonePage
+      .locator('[role="listbox"]')
+      .first()
+      .evaluate((el) => ({
+        computed: getComputedStyle(el).getPropertyValue("touch-action"),
+        inline: (el as HTMLElement).style.touchAction,
+        attr: el.getAttribute("style") ?? "",
+      }));
+    // BOTH, REPORTED. The computed value came back empty once and a guess about
+    // why would have been exactly the kind of invented root cause this project
+    // has been burned by. The inline value is what our code sets; the computed
+    // value is what the browser will act on. Asserting the inline one and
+    // printing both means a future failure says which of the two moved.
+    assert("a vertical swipe on the carousel still scrolls the page",
+      touchEvidence.inline === "pan-y" || touchEvidence.computed === "pan-y",
+      JSON.stringify(touchEvidence));
+
+    await phone.close();
 
     // The library Sean asked to keep is still on Studio, from both routes.
     await page.goto(`${server.baseUrl}/dashboard/studio`, { waitUntil: "domcontentloaded" });

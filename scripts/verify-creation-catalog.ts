@@ -1739,7 +1739,7 @@ async function main() {
 
   assert("CONTROL: the shelf builds neither URL itself",
     !/studio\/create\?/.test(
-      codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioClothingRow.tsx"), "utf8"))
+      codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioProductCarousel.tsx"), "utf8"))
     ),
     "a second hand-built link is how the two screens drift apart");
 
@@ -1784,14 +1784,14 @@ async function main() {
 
   assert("CONTROL: the panel warns on a design that is already a product",
     /Already a product/.test(
-      codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioClothingRow.tsx"), "utf8"))
+      codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioProductCarousel.tsx"), "utf8"))
     ),
     "reopening a created design and pressing Create again is the mistake this invites");
 
   // THE BUTTON SAYS WHAT SEAN ASKED IT TO SAY. "Continue with" was the first
   // wording and he corrected it: the dropdown explains what is being continued.
   const rowSrc = codeOnly(
-    readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioClothingRow.tsx"), "utf8")
+    readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioProductCarousel.tsx"), "utf8")
   );
   assert("the control is Continue, not Continue with", !/Continue with/.test(rowSrc), "");
   assert("and Create New sits beside it", /Create New/.test(rowSrc), "");

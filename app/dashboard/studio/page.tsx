@@ -5,17 +5,18 @@ import { prisma } from "@/lib/prisma";
 import { currentAssetsByRole } from "@/lib/businessModel/assets";
 import { AssetSchema } from "@/lib/businessModel/entities";
 import { DesignSchema } from "@/lib/businessModel/entities";
-import { SURFACES, surfacesByCategory } from "@/lib/design/surfaces";
-import { StudioActions, type StudioCategory } from "./StudioActions";
-import { CreationCardRow, SOCIAL_CARDS, GRAPHICS_CARDS } from "./StudioCarousels";
-import { StudioClothingRow } from "./StudioClothingRow";
+import { SURFACES } from "@/lib/design/surfaces";
+import { CreationCardRow, GRAPHICS_CARDS } from "./StudioCarousels";
+import { StudioProductCarousel } from "./StudioProductCarousel";
+import { StudioSocialCarousel } from "./StudioSocialCarousel";
+import { socialDraftsFor } from "@/app/b/[slug]/studio/social/actions";
+import { SOCIAL_PLATFORM_IDS } from "@/lib/social/platforms";
 import { SavedDesigns } from "@/app/b/[slug]/studio/create/SavedDesigns";
 import { savedDesignsFor } from "@/app/b/[slug]/studio/create/actions";
 import { creationAccessFor } from "@/lib/creation/provider";
 import { portalItems, savedByCreatable } from "@/lib/creation/creatables";
 import { designHref } from "@/lib/creation/creationPresentation";
 import type { Blank } from "@/lib/creation/garment";
-import { uploadBusinessAssetFromChat } from "../ai-actions";
 
 // The Studio — a creative workshop, not a file manager (2026-08-17).
 //
@@ -53,7 +54,12 @@ import { uploadBusinessAssetFromChat } from "../ai-actions";
 //
 // `basePath` is what every link inside uses, so a page rendered for one business
 // never links into another.
-export async function StudioScreen({ slug, basePath }: { slug?: string; basePath: string }) {
+// `basePath` stays on the signature and is deliberately not read any more: every
+// link on this page is built from `creationBase`, which comes from the store this
+// screen resolved rather than from the route that rendered it. That is what fixed
+// the /dashboard/studio/create 404. Callers still pass it, and removing it from
+// the type would just make the next surface guess.
+export async function StudioScreen({ slug }: { slug?: string; basePath: string }) {
   const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
 
   // ============ THE CREATION STATION IS BUSINESS-SCOPED (2026-08-27) =====
@@ -117,6 +123,20 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
   // they had never saved anything.
   const { byCreatable: savedFor, unmatched: stranded } = savedByCreatable(blanks, savedDesigns);
 
+  // SOCIAL DRAFTS, SORTED ONTO THE PLATFORM THEY WERE WRITTEN FOR.
+  //
+  // The mirror of savedByCreatable, and simpler: a post records its own
+  // platform, so there is no catalogue to join through and nothing can be
+  // stranded by an outage. A draft whose platform is no longer in the registry
+  // is dropped rather than shown under a heading that does not exist — the only
+  // way that happens is a platform being removed, which is a deliberate act.
+  const socialDrafts = await socialDraftsFor(store.id);
+  const socialFor: Record<string, typeof socialDrafts> = {};
+  for (const draft of socialDrafts) {
+    if (!SOCIAL_PLATFORM_IDS.includes(draft.platform)) continue;
+    (socialFor[draft.platform] ??= []).push(draft);
+  }
+
   const [assetsByRole, designRows, assetRows] = await Promise.all([
     declaredRead("presentation", "the studio lists assets by role; it does not reason", () =>
       currentAssetsByRole(store.id)
@@ -155,83 +175,15 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
 
   const earlier = designs.slice(1);
   const assets = Object.entries(assetsByRole);
-  const hasLogo = Boolean(assetsByRole["brand.logo"]);
-
-  // WHAT J4 CAN HELP WITH, grouped and ordered (2026-08-18, second pass).
+  // THE CHIP CATALOGUE THAT USED TO BE BUILT HERE IS GONE (2026-08-28).
   //
-  // BRING YOUR OWN LEADS, on Sean's call: "users need to immediately understand
-  // that they can bring their own creative materials into Studio." A workshop
-  // where the first thing offered is "let me make you one" reads as a
-  // generator; one that opens with "bring what you have" reads as a workshop.
+  // Roughly thirty prefilled sentences were derived on every render — one per
+  // surface, per logo state, per upload role — to feed a wall of buttons Sean
+  // has now taken off this page. The derivation went with them rather than
+  // being left computing something nobody reads.
   //
-  // Product suggestions are DERIVED FROM THE SURFACE REGISTRY, one chip per
-  // garment, never the same surface twice. The first version hardcoded a
-  // t-shirt chip and then appended "the next surface", which produced two
-  // t-shirt chips whenever the last design happened to be a hoodie. A
-  // recommendation list that offers the same action twice is not a list of
-  // options, it is a bug with good manners.
-  // PRODUCTS OPENS INTO THE CATALOGUE, not a handful of chips. Sean: "Products
-  // should open into product categories rather than exposing a handful of
-  // hardcoded recommendations." So the visible chips are the CATEGORIES, and
-  // More reveals real surfaces within them — all read from the registry, so a
-  // new product appears here the day it is added with no change to this file.
-  const catalogue = surfacesByCategory();
-  const productPrimary = hasLogo
-    ? catalogue.slice(0, 3).map((c) => `Put my logo on ${c.surfaces[0].label.toLowerCase()}`)
-    : ["Make me a logo first"];
-  const productMore = hasLogo
-    ? catalogue.flatMap((c) => c.surfaces.slice(1, 3).map((sf) => `Put my logo on a ${sf.label.toLowerCase()}`)).slice(0, 10)
-    : [];
-
-  const categories: StudioCategory[] = [
-    {
-      // Upload chips carry their own label through as the owner's stated
-      // intent, so J4 knows whether it received a logo, a product photo or
-      // lifestyle imagery rather than just "a file".
-      key: "upload",
-      label: "Bring your own",
-      primary: ["Upload a logo", "Upload product photos", "Upload lifestyle photos"],
-      more: ["Upload photos for social", "Upload other business images"],
-      // The owner naming what they are uploading is the whole point of the
-      // chips: ingestBusinessAsset records role null because a chat upload has
-      // nobody saying what it is for, and here somebody has. "Other business
-      // images" carries no role deliberately — they did not say.
-      roles: {
-        "Upload a logo": "logo",
-        "Upload product photos": "product",
-        "Upload lifestyle photos": "lifestyle",
-        "Upload photos for social": "social",
-      },
-    },
-    {
-      key: "logo",
-      label: "Logo",
-      primary: hasLogo
-        ? ["Refine my logo", "Show me different directions"]
-        : ["Make me a logo", "Show me a couple of directions"],
-      more: hasLogo
-        ? ["Make me a new logo", "Make it more minimal", "Make it work better at small sizes"]
-        : ["I already have a logo I want to use"],
-    },
-    {
-      key: "products",
-      label: "Products",
-      primary: productPrimary,
-      more: productMore,
-    },
-    {
-      key: "website",
-      label: "Website",
-      primary: ["What would you improve about my store?", "Create a hero section"],
-      more: ["Build a product section", "Group my products into collections", "Make the storefront feel more premium"],
-    },
-    {
-      key: "graphics",
-      label: "Graphics",
-      primary: ["Create a collage", "Make a promotional graphic"],
-      more: ["Create a product image for my storefront", "Create social content", "Show me a couple of other directions"],
-    },
-  ];
+  // StudioActions.tsx and every capability behind it are untouched. See the
+  // note where the section used to render.
 
   const surfaceLabel = (key: string) => SURFACES[key]?.label ?? key;
 
@@ -320,7 +272,7 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
             title: "Product creation",
             blurb: "Put your artwork on something people can buy.",
             content: (
-              <StudioClothingRow
+              <StudioProductCarousel
                 items={portalItems(blanks)}
                 basePath={creationBase}
                 hasSupplier={creation.provider !== null}
@@ -332,8 +284,8 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
           {
             key: "social",
             title: "Social creation",
-            blurb: "Tell J4 what the post is about and it writes it for the platform.",
-            content: <CreationCardRow cards={SOCIAL_CARDS} />,
+            blurb: "J4 writes it for the platform you pick, not one caption for all of them.",
+            content: <StudioSocialCarousel basePath={creationBase} draftsFor={socialFor} />,
           },
           {
             key: "graphics",
@@ -370,24 +322,26 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
           </section>
         )}
 
-        {/* Real controls now (2026-08-17). Clicking one sends that exact
-            sentence into the conversation; there is no hard-coded design
-            operation behind any of them, which is what keeps this a workshop
-            rather than an editor with a chat box attached. Derived from what
-            exists, so J4 is guiding rather than listing commands. */}
-        <section className="mt-8">
-          {/* SHORTCUTS INTO CREATING, not the description of it. Somebody
-              who knows what they want says it here; somebody who wants to
-              experiment opens the workspace above. Both are creating. */}
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            Or tell J4 what you want
-          </h2>
-          <StudioActions
-            categories={categories}
-            uploadAsset={uploadBusinessAssetFromChat}
-            currentPath={`${basePath}/studio`}
-          />
-        </section>
+        {/* ============ THE CHIPS CAME OFF (2026-08-28) =================
+            Sean: "The old Studio action sections need to come off this page
+            entirely... Do not delete the underlying capabilities. Those are
+            things J4 can suggest or initiate contextually. They should not
+            clutter the primary Studio navigation. Studio should feel like a
+            creation workspace, not a giant list of prompts."
+
+            So roughly thirty prefilled sentences — upload a logo, refine my
+            logo, put my logo on a cap, what would you improve about my store —
+            are no longer rendered here. Every one of them was a way of TELLING
+            J4 something, which is what the conversation is for; a workspace
+            that opens with a wall of prompts is a menu of commands wearing a
+            workshop's name.
+
+            NOTHING WAS DELETED. StudioActions.tsx still exists, still works and
+            still carries the upload-with-a-stated-role behaviour that made the
+            chips worth having — the owner naming what they are uploading is a
+            real fact the chat path cannot supply. It simply is not this page's
+            navigation any more. If those belong anywhere, it is somewhere J4
+            offers them because it noticed a reason to. */}
 
         {/* What J4 has to work with. One row, not a media library — the asset
             library belongs to the Office, and rebuilding it here would make
@@ -399,8 +353,11 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">What J4 can use</h2>
           {assets.length === 0 ? (
             <p className="mt-3 max-w-lg text-[14px] text-zinc-600 dark:text-zinc-400">
-              Nothing designated yet. Upload a logo above, or ask J4 to make you one, and it will be
-              used everywhere your brand shows up.
+              {/* "Upload a logo above" pointed at the chip row, which came off
+                  this page on 2026-08-28. A sentence that directs somebody to a
+                  control that no longer exists is worse than no sentence. */}
+              Nothing designated yet. Ask J4 for a logo, or drop one into the conversation, and it
+              will be used everywhere your brand shows up.
             </p>
           ) : (
             <div className="mt-3 flex flex-wrap gap-3">

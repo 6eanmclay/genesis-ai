@@ -689,6 +689,112 @@ export type BrandVoice = z.infer<typeof BrandVoiceSchema>;
 export const SellingPropositionSchema = z.object({ statement: z.string() });
 export type SellingProposition = z.infer<typeof SellingPropositionSchema>;
 
+// ============ A POST IS SHAPED BY THE PLATFORM IT IS FOR ================
+//
+// Sean, 2026-08-28: "Keep platform-specific content generation separate — never
+// assume one caption can simply be copied across platforms."
+//
+// A single `caption: string` would have made that a convention, and a
+// convention is a thing that holds until somebody is in a hurry. So the content
+// is a DISCRIMINATED UNION and the four shapes genuinely differ: an Instagram
+// post without a picture is not a post, an X post is one field with a hard
+// limit, and a TikTok is a hook and an ordered list of shots.
+//
+// The consequence is the point. There is no assignment that moves an X post's
+// text into an Instagram post, because the compiler asks what the picture is.
+// Copying across platforms is not forbidden by a rule somebody has to remember;
+// it is not expressible.
+//
+// PLATFORM IDS LIVE IN lib/social/platforms.ts and are checked against this
+// union by scripts/verify-social-creation.ts — see the mirrored-registry
+// invariant in ARCHITECTURE.md.
+
+/** Instagram is visual-first: the picture is the post, the caption serves it. */
+export const InstagramContentSchema = z.object({
+  kind: z.literal("instagram"),
+  /**
+   * WHAT THE PICTURE SHOWS, in the owner's words.
+   *
+   * Separate from `imageUrl` on purpose: the brief exists before any image
+   * does, it is what J4 is asked to make one from, and it survives replacing
+   * the image. A draft with a brief and no picture is a real, useful draft.
+   */
+  imageBrief: z.string().default(""),
+  /** The picture itself, once there is one. */
+  imageUrl: z.string().nullable().default(null),
+  caption: z.string().default(""),
+  /** Without the leading #, so the tag is the data and the # is presentation. */
+  hashtags: z.array(z.string()).default([]),
+});
+
+/** Facebook earns its place by starting conversations, not by being seen. */
+export const FacebookContentSchema = z.object({
+  kind: z.literal("facebook"),
+  body: z.string().default(""),
+  /**
+   * The line that invites a reply, kept as its own field rather than trusted to
+   * be the last sentence of the body. A post that ends in a question by
+   * accident is not the same as one written to be answered.
+   */
+  question: z.string().default(""),
+});
+
+/** X is one field with a hard limit, and the limit is the format. */
+export const XContentSchema = z.object({
+  kind: z.literal("x"),
+  text: z.string().default(""),
+});
+
+/** One beat of a TikTok, in order. */
+export const TikTokShotSchema = z.object({
+  id: z.string(),
+  description: z.string().default(""),
+  /** Roughly how long this beat runs. Null while nobody has decided. */
+  seconds: z.number().nullable().default(null),
+});
+
+/** TikTok is a plan before it is a caption: a hook, then what happens. */
+export const TikTokContentSchema = z.object({
+  kind: z.literal("tiktok"),
+  /** The first two seconds. Its own field because it is the whole job. */
+  hook: z.string().default(""),
+  shots: z.array(TikTokShotSchema).default([]),
+  caption: z.string().default(""),
+});
+
+export const SocialContentSchema = z.discriminatedUnion("kind", [
+  InstagramContentSchema,
+  FacebookContentSchema,
+  XContentSchema,
+  TikTokContentSchema,
+]);
+export type SocialContent = z.infer<typeof SocialContentSchema>;
+
+/**
+ * A post being written, for one platform.
+ *
+ * ============ PUBLISHING IS A FIELD THAT IS ALWAYS NULL TODAY ==========
+ *
+ * No platform is connected, so nothing has ever been published and both fields
+ * below are null on every row. They exist now because the alternative is adding
+ * them later to a table that already holds drafts, and because `publishedAt`
+ * being null is what "in progress" MEANS — the grouping in the Continue panel
+ * reads this, exactly as the product side reads `productId`.
+ */
+export const SocialPostSchema = z.object({
+  /** A platform id from lib/social/platforms.ts. */
+  platform: z.string(),
+  /** What the owner calls this post. Null until they name it. */
+  name: z.string().nullable().default(null),
+  content: SocialContentSchema,
+  updatedAt: z.string().nullable().default(null),
+  /** Set the first time this actually reaches the platform. Never today. */
+  publishedAt: z.string().nullable().default(null),
+  /** Where it landed, once it has landed. */
+  publishedUrl: z.string().nullable().default(null),
+});
+export type SocialPost = z.infer<typeof SocialPostSchema>;
+
 export const ENTITY_REGISTRY = {
   contact: { schema: ContactSchema, label: "Contact" },
   transaction: { schema: TransactionSchema, label: "Transaction" },
@@ -703,6 +809,7 @@ export const ENTITY_REGISTRY = {
   asset: { schema: AssetSchema, label: "Asset" },
   design: { schema: DesignSchema, label: "Design" },
   socialAccount: { schema: SocialAccountSchema, label: "Social Account" },
+  socialPost: { schema: SocialPostSchema, label: "Social post" },
   shipment: { schema: ShipmentSchema, label: "Shipment" },
   commitment: { schema: CommitmentSchema, label: "Commitment" },
   offering: { schema: OfferingSchema, label: "Offering" },
