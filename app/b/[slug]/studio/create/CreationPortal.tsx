@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PortalItem } from "@/lib/creation/creatables";
+import { availabilityLine, kindHref } from "@/lib/creation/creationPresentation";
 import { GENESIS_BLACK, GENESIS_GREEN } from "@/lib/brand/palette";
 import { CreatableArt } from "./CreatableArt";
 
@@ -108,8 +109,18 @@ export function CreationPortal({
   function choose(item: PortalItem) {
     // The intention travels, not a product id. Which blank comes next is the
     // page's decision — see its own comment on why that split matters.
-    router.push(`${basePath}/studio/create?kind=${encodeURIComponent(item.creatable.id)}`);
+    //
+    // The URL is built by creationPresentation, not here, so the compact shelf
+    // on the Studio landing cannot drift from the doorway about where a card
+    // goes. Same link, two presentations.
+    router.push(kindHref(basePath, item.creatable.id));
   }
+
+  // WHETHER THE FOCUSED THING CAN BE MADE, and the sentence that says so.
+  // Lifted out of the JSX into the shared rule — the four-branch ternary that
+  // used to sit inline is the one Sean caught lying about an unreadable
+  // catalogue, and it now has exactly one home.
+  const focusedLine = focused ? availabilityLine(focused, { hasSupplier, catalogueUnreadable }) : null;
 
   // ============ HORIZONTAL IS OURS, VERTICAL IS THE PAGE'S ============
   //
@@ -268,13 +279,7 @@ export function CreationPortal({
                 by Genesis" about a deliberately Genesis-branded room would be
                 apologising for the design. What still has to be honest is
                 INVENTORY, which is the branch below. */}
-            {focused?.available
-              ? `${focused.blankCount} to choose from · ${focused.creatable.hint}`
-              : catalogueUnreadable
-                ? "We couldn't read your supplier's catalogue just now"
-                : hasSupplier
-                  ? "Your supplier doesn't make this one"
-                  : focused?.creatable.hint}
+            {focusedLine}
           </p>
 
           <button

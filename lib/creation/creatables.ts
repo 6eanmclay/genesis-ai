@@ -185,3 +185,54 @@ export function portalItems(blanks: PortalSource[]): PortalItem[] {
  * rather than one per blank plus one — see the note on NameAndType.
  */
 export type PortalSource = NameAndType & { externalProductId: string };
+
+/**
+ * Saved designs, sorted onto the creatable each was designed on.
+ *
+ * ============ NO NEW STORAGE MODEL (2026-08-28) ========================
+ *
+ * Sean: "Put the saved work directly into the creation flow for each product...
+ * Reuse what already exists rather than creating another storage model or
+ * duplicate system."
+ *
+ * There is nothing to add. A saved design already records the blank it was
+ * designed on, and a blank already carries the name and type that decide which
+ * creatable it belongs to. So the join is: design -> its blank -> its
+ * creatable, using the SAME matcher the portal counts with. A design cannot
+ * appear under a card the portal would not have offered.
+ *
+ * ============ AND NOTHING MAY DISAPPEAR ================================
+ *
+ * `unmatched` is the load-bearing half. A design whose blank is not in the list
+ * belongs to no card — which happens when the supplier's catalogue could not be
+ * read, and then EVERY saved design is unmatched. Returning only the grouping
+ * would mean a supplier outage silently hid the owner's saved work, and the
+ * screen would look like they had never saved anything.
+ *
+ * The caller is expected to show these somewhere. Generic over the row so this
+ * stays pure and knows nothing about how a design is stored or displayed.
+ */
+export function savedByCreatable<T extends { externalProductId: string }>(
+  blanks: PortalSource[],
+  saved: T[],
+): { byCreatable: Record<string, T[]>; unmatched: T[] } {
+  // Which creatables each blank answers to. A blank matching two is counted
+  // under both, exactly as portalItems counts it under both.
+  const creatablesOf = new Map<string, string[]>();
+  for (const blank of blanks) {
+    const ids = CREATABLES.filter((c) => garmentMatches(blank, c)).map((c) => c.id);
+    if (ids.length > 0) creatablesOf.set(blank.externalProductId, ids);
+  }
+
+  const byCreatable: Record<string, T[]> = {};
+  const unmatched: T[] = [];
+  for (const design of saved) {
+    const ids = creatablesOf.get(design.externalProductId);
+    if (!ids) {
+      unmatched.push(design);
+      continue;
+    }
+    for (const id of ids) (byCreatable[id] ??= []).push(design);
+  }
+  return { byCreatable, unmatched };
+}

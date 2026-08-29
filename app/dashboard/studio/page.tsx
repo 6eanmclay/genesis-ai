@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
 import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
@@ -8,6 +7,14 @@ import { AssetSchema } from "@/lib/businessModel/entities";
 import { DesignSchema } from "@/lib/businessModel/entities";
 import { SURFACES, surfacesByCategory } from "@/lib/design/surfaces";
 import { StudioActions, type StudioCategory } from "./StudioActions";
+import { CreationCardRow, SOCIAL_CARDS, GRAPHICS_CARDS } from "./StudioCarousels";
+import { StudioClothingRow } from "./StudioClothingRow";
+import { SavedDesigns } from "@/app/b/[slug]/studio/create/SavedDesigns";
+import { savedDesignsFor } from "@/app/b/[slug]/studio/create/actions";
+import { creationAccessFor } from "@/lib/creation/provider";
+import { portalItems, savedByCreatable } from "@/lib/creation/creatables";
+import { designHref } from "@/lib/creation/creationPresentation";
+import type { Blank } from "@/lib/creation/garment";
 import { uploadBusinessAssetFromChat } from "../ai-actions";
 
 // The Studio — a creative workshop, not a file manager (2026-08-17).
@@ -64,7 +71,51 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
   // points into the business tree from both routes. That is the migration
   // direction rather than a workaround -- BUSINESS_CONTEXT.md has /dashboard
   // as legacy, and a new surface should not be added to it.
-  const creationHref = `/b/${store.slug}/studio/create`;
+  // ============ THE CAROUSEL NEEDS THE BUSINESS PATH, NOT basePath ======
+  //
+  // basePath is "/dashboard" on the legacy route and there is no
+  // /dashboard/studio/create — the 404 the comment above records. The portal
+  // builds its own links, so it gets the business tree explicitly.
+  const creationBase = `/b/${store.slug}`;
+
+  // ============ REAL SUPPLIER INVENTORY, ON STUDIO ENTRY (2026-08-28) ===
+  //
+  // Sean: "I would rather have the carousel accurately reflect what the user's
+  // connected supplier can actually produce than show products Genesis can't
+  // fulfill. One supplier call on Studio entry is acceptable."
+  //
+  // listBlanks is the cheap one — a single request returning the whole
+  // catalogue index — and it is the same call the Creation Station's doorway
+  // already made. Studio now makes it instead of making the owner tap through
+  // to a second screen to find out what can be made.
+  //
+  // Failure is a REPORTED state, not an empty list: an unreadable catalogue and
+  // a supplier who makes nothing are different facts, and the portal says which
+  // it is rather than showing a blank row.
+  const creation = await creationAccessFor(store.id);
+  let blanks: Blank[] = [];
+  let catalogueUnreadable = false;
+  if (creation.provider) {
+    try {
+      blanks = await creation.provider.listBlanks({ storeId: store.id });
+    } catch {
+      catalogueUnreadable = true;
+    }
+  }
+  const savedDesigns = await savedDesignsFor(store.id);
+
+  // SAVED WORK, SORTED ONTO THE PRODUCT IT WAS MADE ON.
+  //
+  // Sean: "I don't think we need a separate 'Saved Designs' area that users
+  // have to discover. Put the saved work directly into the creation flow for
+  // each product." So the hoodie card offers the unfinished hoodies.
+  //
+  // `stranded` is the half that must not be dropped. A design whose blank is
+  // not in the catalogue belongs to no card — and when the catalogue could not
+  // be read at all, that is EVERY design. Rendering only the grouping would let
+  // a supplier outage hide the owner's saved work and make the screen look like
+  // they had never saved anything.
+  const { byCreatable: savedFor, unmatched: stranded } = savedByCreatable(blanks, savedDesigns);
 
   const [assetsByRole, designRows, assetRows] = await Promise.all([
     declaredRead("presentation", "the studio lists assets by role; it does not reason", () =>
@@ -102,7 +153,6 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
     .map((row) => ({ id: row.id, parsed: DesignSchema.safeParse(row.data) }))
     .flatMap((d) => (d.parsed.success ? [{ id: d.id, ...d.parsed.data }] : []));
 
-  const latest = designs[0] ?? null;
   const earlier = designs.slice(1);
   const assets = Object.entries(assetsByRole);
   const hasLogo = Boolean(assetsByRole["brand.logo"]);
@@ -201,7 +251,7 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
   return (
     <div className="min-h-screen pb-32 text-zinc-900 dark:text-zinc-100">
       <div className="mx-auto max-w-5xl px-5 pt-8 lg:px-8">
-        {/* ============ THE HIERARCHY CHANGED (2026-08-27) ==============
+        {/* ============ THE HIERARCHY CHANGED (2026-08-27, again 08-28) ==
             Sean, after using this on a phone: Studio reads as a menu of things
             J4 can make, and that is too small a description of what this is.
             "Tell J4 what you want and it does the work" makes asking the whole
@@ -209,78 +259,116 @@ export async function StudioScreen({ slug, basePath }: { slug?: string; basePath
             alongside them.
 
             So creating leads, and everything J4 can do is a way into it rather
-            than the definition of it. */}
-        <header>
-          <h1 className="text-[28px] font-semibold tracking-tight">Studio</h1>
-          <p className="mt-1.5 max-w-lg text-[15px] text-zinc-600 dark:text-zinc-400">
-            Where you make things for your business. Design them yourself, with J4 alongside you.
-          </p>
+            than the definition of it. The second pass named the place and the
+            two paths through it — see the header below. */}
+        {/* ============ STUDIO IS THE CREATION EXPERIENCE (2026-08-28) ==
+            Sean: "When I tap Studio, I don't think we should land on the
+            current 'Create something / Nothing on the bench yet' page at all.
+            That page is an unnecessary intermediary... Think of Studio as 'What
+            do you want to make?' — not 'Do you want to enter the place where
+            you can make something?'"
 
-          <Link
-            href={creationHref}
-            className="mt-5 inline-flex items-center gap-2 rounded-full bg-zinc-900 px-5 py-2.5 text-[15px] font-medium text-white transition hover:opacity-90 dark:bg-white dark:text-black"
-          >
-            Create something
-          </Link>
+            So the intermediary is gone: what a person lands on is the things
+            they can make. The immersive carousel at /studio/create is
+            deliberately UNTOUCHED — Sean: "I don't want to sacrifice that
+            experience just to make the Studio landing page work" — and this
+            screen is a second presentation of the same catalogue, not a second
+            copy of it. Where a card links and whether a supplier can make the
+            thing both come from lib/creation/creationPresentation.ts, which the
+            doorway reads too.
+
+            What is NOT changed is anything the carousel opens into. Tapping a
+            card still pushes ?kind=<id> and reaches the same verified editor,
+            with the same composition, flattening, Save and Create underneath
+            it. This is an entry-point change. */}
+        {/* ============ TWO PRIMARY PATHS, BOTH ABOVE THE FOLD ==========
+            Sean: "I don't want the user to have to scroll to discover that
+            Studio does BOTH product creation and social-media creation... I
+            don't want someone to see the first product carousel and assume
+            Studio is only for making merchandise."
+
+            The subtitle carries that on its own, before a single card has been
+            read: it names both paths in one sentence, so the answer to "what is
+            this place for" does not depend on how tall the first row happens to
+            be on somebody's phone. The section headings then make each path
+            unmistakable rather than implied. */}
+        <header>
+          <h1 className="text-[28px] font-semibold tracking-tight">Creation Station</h1>
+          <p className="mt-1.5 max-w-lg text-[15px] text-zinc-600 dark:text-zinc-400">
+            Create products and social content for your business.
+          </p>
         </header>
 
-        {/* THE WORK SURFACE. The most recent creation, large. This is the
-            answer to "what did J4 just make me" and it should be readable from
-            across a room, not a thumbnail in a grid. */}
-        <section className="mt-7">
-          {latest?.mockupUrl ? (
-            /* ============ THE CARD IS THE DOOR (2026-08-27) ==============
-               Sean's own words: seeing the generated hoodie and being able to
-               tap into the full creation experience is far more intuitive than
-               a separate URL nobody knows exists.
-       
-               So the thing on the bench is not a report any more, it is the way
-               in. What it opens is the workspace, where this can be taken
-               apart and rebuilt rather than only asked about. */
-            <Link
-              href={creationHref}
-              className="group block overflow-hidden rounded-2xl border border-black/[.07] bg-white shadow-[0_1px_2px_rgba(0,0,0,.04),0_12px_32px_-12px_rgba(0,0,0,.18)] transition hover:border-black/20 dark:border-white/[.09] dark:bg-[#222226] dark:hover:border-white/30">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={latest.mockupUrl}
-                alt={`${surfaceLabel(latest.surface)} made in Studio`}
-                className="aspect-[4/3] w-full bg-white object-contain dark:bg-[#eeeeef]"
+        {/* ============ THE ORDER IS DATA, NOT LAYOUT (2026-08-28) =======
+            Sean: "The adaptive ordering we discussed should still work later —
+            J4 can put Social first for a business that primarily uses social
+            creation — but regardless of which comes first, both categories
+            should be clearly labeled and visible."
+
+            So the categories are a list that gets rendered in the order it is
+            in, and reordering them later is a change to this array rather than
+            a change to any markup. Each one carries its own heading, so no
+            category can become the unlabelled default just by being first.
+
+            NOT IMPLEMENTED YET, deliberately: the order is fixed here, and
+            nothing reads usage to choose it. What this buys is that adding the
+            adaptive rule later cannot require moving JSX around, which is where
+            a labelled section quietly loses its label. */}
+        {[
+          {
+            key: "product",
+            title: "Product creation",
+            blurb: "Put your artwork on something people can buy.",
+            content: (
+              <StudioClothingRow
+                items={portalItems(blanks)}
+                basePath={creationBase}
+                hasSupplier={creation.provider !== null}
+                catalogueUnreadable={catalogueUnreadable}
+                savedFor={savedFor}
               />
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-black/[.06] px-5 py-3.5 dark:border-white/[.08]">
-                <div className="min-w-0">
-                  <p className="text-[15px] font-medium">{surfaceLabel(latest.surface)}</p>
-                  <p className="text-[13px] text-zinc-500">
-                    Made from {latest.assetIds.length === 1 ? "your logo" : `${latest.assetIds.length} of your assets`}
-                    {latest.printFileUrl ? " · print file ready" : ""}
-                  </p>
-                </div>
-                {/* WHAT TAPPING DOES, said plainly. The old copy -- "ask
-                    J4 to change it" -- described the only thing that used to
-                    be possible, and describing it kept it the only thing. */}
-                <span className="rounded-full bg-black/[.05] px-3 py-1 text-[12px] text-zinc-600 transition group-hover:bg-black/[.09] dark:bg-white/[.08] dark:text-zinc-300 dark:group-hover:bg-white/[.14]">
-                  Open in Creation Station
-                </span>
-              </div>
-            </Link>
-          ) : (
-            // The empty state is an invitation, not a report of absence. The
-            // old one said "No logo yet", which described a missing file and
-            // made this a storage screen.
-            <div className="rounded-2xl border border-dashed border-black/[.12] bg-white/70 px-6 py-14 text-center dark:border-white/[.14] dark:bg-white/[.03]">
-              <p className="text-[17px] font-medium">Nothing on the bench yet</p>
-              <p className="mx-auto mt-2 max-w-md text-[15px] text-zinc-600 dark:text-zinc-400">
-                Start something in the Creation Station, or ask J4 — it already knows your business,
-                so it can start from what you sell and how you present it.
-              </p>
-              <Link
-                href={creationHref}
-                className="mt-5 inline-block rounded-full bg-zinc-900 px-5 py-2.5 text-[15px] font-medium text-white dark:bg-white dark:text-black"
-              >
-                Create something
-              </Link>
-            </div>
-          )}
-        </section>
+            ),
+          },
+          {
+            key: "social",
+            title: "Social creation",
+            blurb: "Tell J4 what the post is about and it writes it for the platform.",
+            content: <CreationCardRow cards={SOCIAL_CARDS} />,
+          },
+          {
+            key: "graphics",
+            title: "Graphics",
+            blurb: "Something to promote, share or print.",
+            content: <CreationCardRow cards={GRAPHICS_CARDS} />,
+          },
+        ].map((section) => (
+          <section key={section.key} className="mt-8">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+              {section.title}
+            </h2>
+            <p className="mt-1 text-[13px] text-zinc-500">{section.blurb}</p>
+            {section.content}
+          </section>
+        ))}
+
+        {stranded.length > 0 && (
+          <section className="mt-9">
+            {/* ============ ONLY WHAT NO CARD COULD CLAIM ================
+                Saved work now lives on the product it was made on, so this is
+                normally empty and renders nothing. It exists for the designs
+                that could not be matched to a card — which is all of them when
+                the supplier's catalogue could not be read.
+
+                That is the whole point of keeping it: without this section, an
+                outage at the supplier would make somebody's saved designs
+                vanish from the screen with no explanation. Reopening one does
+                not need the catalogue, so the work stays reachable. */}
+            <SavedDesigns
+              designs={stranded}
+              hrefFor={(d) => designHref(creationBase, d.externalProductId, d.draftId)}
+            />
+          </section>
+        )}
 
         {/* Real controls now (2026-08-17). Clicking one sends that exact
             sentence into the conversation; there is no hard-coded design

@@ -22,7 +22,14 @@ import {
   blankFor,
   renderableColors,
 } from "@/lib/creation/garment";
-import { portalItems } from "@/lib/creation/creatables";
+import { portalItems, savedByCreatable } from "@/lib/creation/creatables";
+import {
+  availability,
+  availabilityLine,
+  designHref,
+  groupSavedWork,
+  kindHref,
+} from "@/lib/creation/creationPresentation";
 
 // WHAT THE CATALOGUE CALL SENDS, AND WHAT IT SAYS WHEN IT FAILS:
 //
@@ -423,10 +430,27 @@ async function main() {
   // WHAT MUST STILL BE HONEST IS INVENTORY. The picture being ours does not
   // license the COUNT being ours — "3 to choose from" is a claim about the
   // supplier either way.
-  assert("the portal still reports the supplier's real count",
-    /blankCount/.test(portalSrc));
-  assert("and still says when the catalogue could not be read",
-    /couldn't read your supplier's catalogue/.test(portalSrc));
+  //
+  // MOVED, NOT DROPPED (2026-08-28). Both sentences now live in
+  // creationPresentation so the Studio shelf and this doorway cannot disagree
+  // about the same catalogue. The claim being checked is unchanged; where it is
+  // made is not, and an assertion still pointed at the portal would pass only
+  // by finding the words in a comment.
+  const presentationSrc = codeOnly(
+    readFileSync(join(process.cwd(), "lib", "creation", "creationPresentation.ts"), "utf8")
+  );
+  assert("the shelf and the doorway still report the supplier's real count",
+    /blankCount/.test(presentationSrc));
+  assert("and still say when the catalogue could not be read",
+    /couldn't read your supplier's catalogue/.test(presentationSrc));
+  // CALLED IS NOT RENDERED. The first version of this only checked that
+  // availabilityLine appeared somewhere in the file, and it passed while the
+  // portal displayed a hardcoded string beside the unused call — a control that
+  // cannot fail is decoration. What is checked now is the binding reaching the
+  // screen.
+  assert("and the portal renders that rule rather than its own copy",
+    /availabilityLine\(/.test(portalSrc) && /\{focusedLine\}/.test(portalSrc),
+    "a portal writing its own sentence is how two screens start disagreeing");
 
   // THE OTHER SIDE OF THE LINE. The editor is where the real product lives,
   // and an assertion that only banned supplier imagery from the portal would
@@ -1623,6 +1647,154 @@ async function main() {
       codeOnly(readFileSync(join(process.cwd(), "lib", "creation", "garment.ts"), "utf8"))
     ),
     "the supplier decides, not this file");
+
+  // ======================================================================
+  console.log("\n=== 18. Saved work reaches the product it was made on ===\n");
+  // ======================================================================
+  //
+  // Sean, 2026-08-28: "Put the saved work directly into the creation flow for
+  // each product... Reuse what already exists rather than creating another
+  // storage model." So the join runs on data that was already there, and these
+  // checks are about it staying honest at the edges rather than in the middle.
+
+  const shelfBlanks = [
+    { externalProductId: "p-tee", name: "Unisex Staple T-Shirt | Bella + Canvas 3001", type: "T-SHIRT" },
+    { externalProductId: "p-hood", name: "Unisex Heavy Blend Hooded Sweatshirt", type: "HOODIE" },
+  ];
+  const shelfSaved = [
+    { externalProductId: "p-hood", draftId: "d1" },
+    { externalProductId: "p-hood", draftId: "d2" },
+    { externalProductId: "p-tee", draftId: "d3" },
+  ];
+
+  const sorted = savedByCreatable(shelfBlanks, shelfSaved);
+  eq("a saved design lands on the product it was designed on",
+    sorted.byCreatable["hoodie"]?.map((d) => d.draftId), ["d1", "d2"]);
+  eq("and the t-shirt gets its own", sorted.byCreatable["t-shirt"]?.map((d) => d.draftId), ["d3"]);
+  eq("a product with no saved work has no entry at all", sorted.byCreatable["mug"], undefined);
+  eq("nothing is stranded when the catalogue is readable", sorted.unmatched, []);
+
+  // ============ THE CASE THAT LOSES SOMEBODY'S WORK ===================
+  //
+  // When the supplier's catalogue cannot be read the blank list is EMPTY, so
+  // every saved design matches nothing. If the grouping were all the page
+  // rendered, an outage at Printful would silently hide work the owner spent an
+  // evening on, and the screen would look like they had never saved anything.
+  const blind = savedByCreatable([], shelfSaved);
+  eq("an unreadable catalogue groups nothing", Object.keys(blind.byCreatable), []);
+  eq("but strands every design rather than dropping one",
+    blind.unmatched.map((d) => d.draftId), ["d1", "d2", "d3"]);
+
+  const withdrawn = savedByCreatable(shelfBlanks, [{ externalProductId: "p-gone", draftId: "d9" }]);
+  eq("a design on a withdrawn blank is stranded, not lost",
+    withdrawn.unmatched.map((d) => d.draftId), ["d9"]);
+
+  assert("CONTROL: the landing renders what nothing could claim",
+    /designs=\{stranded\}/.test(
+      codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "studio", "page.tsx"), "utf8"))
+    ),
+    "grouping alone would let a supplier outage hide saved work");
+
+  // ======================================================================
+  console.log("\n=== 19. Both presentations say and link the same thing ===\n");
+  // ======================================================================
+  //
+  // The Studio shelf and the immersive doorway are different screens. They are
+  // not allowed to be different FACTS, which is why availability and the two
+  // link builders are pure and shared rather than inline in the portal.
+
+  const shelfItems = portalItems(shelfBlanks);
+  const hoodieItem = shelfItems.find((i) => i.creatable.id === "hoodie");
+  const mugItem = shelfItems.find((i) => i.creatable.id === "mug");
+  assert("the shelf has a hoodie and a mug to reason about", !!hoodieItem && !!mugItem);
+
+  if (hoodieItem && mugItem) {
+    eq("what a supplier makes is counted, not asserted",
+      availability(hoodieItem, { hasSupplier: true, catalogueUnreadable: false }),
+      { available: true, text: "1 to choose from" });
+
+    // The distinction Sean caught the portal getting wrong: an empty list after
+    // a FAILED read is not evidence that the supplier makes none of these.
+    eq("a supplier that makes none of these says so",
+      availability(mugItem, { hasSupplier: true, catalogueUnreadable: false }).text,
+      "Your supplier doesn't make this one");
+    eq("but an unreadable catalogue never claims that",
+      availability(mugItem, { hasSupplier: true, catalogueUnreadable: true }).text,
+      "We couldn't read your supplier's catalogue just now");
+    eq("and with no supplier at all the intention still reads",
+      availability(mugItem, { hasSupplier: false, catalogueUnreadable: false }).text,
+      mugItem.creatable.hint);
+  }
+
+  eq("starting something new carries the intention, not a product",
+    kindHref("/b/acme", "hoodie"), "/b/acme/studio/create?kind=hoodie");
+  // Both parameters, always: ?design= alone drops the owner back at the doorway
+  // they were trying to leave.
+  eq("reopening carries the blank AND the draft",
+    designHref("/b/acme", "p-hood", "d1"),
+    "/b/acme/studio/create?garment=p-hood&design=d1");
+  eq("and anything odd in an id survives the trip",
+    designHref("/b/acme", "p/1", "d&2"),
+    "/b/acme/studio/create?garment=p%2F1&design=d%262");
+
+  assert("CONTROL: the shelf builds neither URL itself",
+    !/studio\/create\?/.test(
+      codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioClothingRow.tsx"), "utf8"))
+    ),
+    "a second hand-built link is how the two screens drift apart");
+
+
+  // ============ ONE SENTENCE, BOTH SCREENS =========================
+  //
+  // Sean wants the card to read "15 to choose from · Small print area, big
+  // presence" — the count and the description together, which is what the
+  // doorway already said. Composing it in one place is what stops the shelf
+  // quietly saying less about the same hat.
+  if (hoodieItem && mugItem) {
+    eq("the count and the description arrive as one line",
+      availabilityLine(hoodieItem, { hasSupplier: true, catalogueUnreadable: false }),
+      "1 to choose from · Heavier, and people keep them");
+
+    // AND A DESCRIPTION IS NOT APPENDED TO BAD NEWS. "Your supplier doesn't
+    // make this one · Lives on a desk for years" reads as a pitch for
+    // something that cannot be bought.
+    eq("but nothing is sold on top of an apology",
+      availabilityLine(mugItem, { hasSupplier: true, catalogueUnreadable: false }),
+      "Your supplier doesn't make this one");
+    eq("and an unreadable catalogue still says only that",
+      availabilityLine(mugItem, { hasSupplier: true, catalogueUnreadable: true }),
+      "We couldn't read your supplier's catalogue just now");
+  }
+
+  // ============ IN PROGRESS AND SAVED ARE TWO THINGS ================
+  //
+  // The Continue panel groups unfinished work separately from designs that
+  // already became products. The line is `created`, which the data already
+  // carries, and every design lands in exactly one group.
+  const work = [
+    { draftId: "w1", created: false },
+    { draftId: "w2", created: true },
+    { draftId: "w3", created: false },
+  ];
+  const grouped = groupSavedWork(work);
+  eq("unfinished work is in progress", grouped.inProgress.map((d) => d.draftId), ["w1", "w3"]);
+  eq("and what became a product is saved", grouped.saved.map((d) => d.draftId), ["w2"]);
+  eq("every design lands in exactly one group",
+    grouped.inProgress.length + grouped.saved.length, work.length);
+
+  assert("CONTROL: the panel warns on a design that is already a product",
+    /Already a product/.test(
+      codeOnly(readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioClothingRow.tsx"), "utf8"))
+    ),
+    "reopening a created design and pressing Create again is the mistake this invites");
+
+  // THE BUTTON SAYS WHAT SEAN ASKED IT TO SAY. "Continue with" was the first
+  // wording and he corrected it: the dropdown explains what is being continued.
+  const rowSrc = codeOnly(
+    readFileSync(join(process.cwd(), "app", "dashboard", "studio", "StudioClothingRow.tsx"), "utf8")
+  );
+  assert("the control is Continue, not Continue with", !/Continue with/.test(rowSrc), "");
+  assert("and Create New sits beside it", /Create New/.test(rowSrc), "");
 
   console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);

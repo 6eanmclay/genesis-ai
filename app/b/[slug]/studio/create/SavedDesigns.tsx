@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { SavedDesignRow } from "./actions";
+import { lastEdited } from "@/lib/creation/creationPresentation";
 
 // FINISH WORKING ON — the unfinished work, at the doorway.
 //
@@ -17,18 +18,9 @@ import type { SavedDesignRow } from "./actions";
 // Still deliberately a list rather than a gallery. Somebody who saved two
 // hoodies last week needs to find one of them, not browse a library.
 
-function when(iso: string | null): string {
-  if (!iso) return "";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const mins = Math.round((Date.now() - then) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return days === 1 ? "yesterday" : `${days}d ago`;
-}
+// HOW LONG AGO now lives in creationPresentation, because the compact shelf
+// on the Studio landing shows the same "when" against the same designs and two
+// copies of a relative-time formatter drift.
 
 export function SavedDesigns({
   designs,
@@ -91,7 +83,7 @@ export function SavedDesigns({
                 >
                   {design.created ? "Already a product" : "In progress"}
                 </span>
-                <span className="block text-[11px] text-zinc-400">{when(design.updatedAt)}</span>
+                <span className="block text-[11px] text-zinc-400">{lastEdited(design.updatedAt)}</span>
               </span>
             </Link>
           </li>

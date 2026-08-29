@@ -17,6 +17,7 @@ import type { Asset } from "@/lib/businessModel/entities";
 import { libraryFrom, type LibraryAsset } from "@/lib/creation/assetLibrary";
 import { savedDesignsFor, loadDesignDraft } from "./actions";
 import { SavedDesigns } from "./SavedDesigns";
+import { designHref } from "@/lib/creation/creationPresentation";
 
 /**
  * A saved design the owner came back to, as props for the editor.
@@ -205,9 +206,7 @@ export default async function CreationStationPage({
         />
         <SavedDesigns
           designs={saved}
-          hrefFor={(d) =>
-            `${basePath}/studio/create?garment=${encodeURIComponent(d.externalProductId)}&design=${encodeURIComponent(d.draftId)}`
-          }
+          hrefFor={(d) => designHref(basePath, d.externalProductId, d.draftId)}
         />
       </>
     );

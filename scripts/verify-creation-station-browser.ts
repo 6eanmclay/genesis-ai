@@ -578,28 +578,65 @@ async function main() {
 
     // ------------------------------------------------------------------
     await canvasPage.close();
-    console.log("\n3. Studio is the way in");
+    console.log("\n3. Studio IS the creation experience");
     //
-    // ============ A HIDDEN URL IS NOT A FEATURE ======================
+    // ============ THE INTERMEDIARY IS GONE (2026-08-28) ==============
     //
-    // Sean, after using Studio on a phone: tapping the product you can see is
-    // far more intuitive than a separate URL nobody knows exists. So Studio
-    // leads with creating, and the thing on the bench is the door.
+    // Sean: "When I tap Studio, I don't think we should land on the current
+    // 'Create something / Nothing on the bench yet' page at all. That page is
+    // an unnecessary intermediary... Think of Studio as 'What do you want to
+    // make?' — not 'Do you want to enter the place where you can make
+    // something?'"
     //
-    // Asserted because an entry point is exactly what gets lost in a later
-    // layout change -- and a Creation Station nobody can reach is a Creation
-    // Station nobody has.
+    // So this section was rewritten rather than extended. It used to assert a
+    // link reading "Create something" and a portal headline on the landing
+    // page; both describe a screen that no longer exists, and an assertion
+    // that outlives the thing it describes is worse than no assertion — it
+    // fails for the right reason once and then gets deleted for the wrong one.
+    //
     // ============ BOTH ROUTES, BECAUSE ONE OF THEM WAS A 404 ==========
     //
     // Studio renders from two places: /b/[slug]/studio and the legacy
     // /dashboard/studio, which is where an account with one business actually
-    // lands. The entry points were built with `${basePath}/studio/create`, and
-    // on the legacy route basePath is "/dashboard" -- so every one of them
-    // pointed at /dashboard/studio/create, which does not exist.
+    // lands. The entry points were once built with `${basePath}/studio/create`,
+    // and on the legacy route basePath is "/dashboard" — so every one of them
+    // pointed at /dashboard/studio/create, which does not exist. The first
+    // suite only ever visited /b/[slug], so it passed while the route a real
+    // person used was broken.
     //
-    // The first suite only ever visited /b/[slug], so it passed while the
-    // route a real person used was broken. Testing one of two paths is how a
-    // 404 ships with a green suite behind it.
+    // ============ WHAT THIS HARNESS CANNOT REACH =====================
+    //
+    // listBlanks runs on the SERVER, so Playwright's request interception
+    // cannot fake a catalogue for it. Every run here has an empty one, which
+    // means the on-card "Continue with" list cannot appear and is covered by
+    // verify-creation-catalog instead. What IS reachable is the more dangerous
+    // half: with no catalogue, every saved design is stranded, and this asserts
+    // the owner can still reach their work.
+
+    // A SAVED DESIGN, SEEDED THE WAY THE ACTION WRITES ONE. Not a fixture
+    // shaped to suit the assertion — the same entityType, sourceProvider and
+    // schema saveDesignDraft persists, so a change to any of them fails here.
+    const draftId = `draft-${stamp}`;
+    await prisma.businessRecord.create({
+      data: {
+        storeId: store.id,
+        entityType: "design",
+        sourceProvider: "genesis_creation",
+        externalId: draftId,
+        data: {
+          placement: {
+            provider: "PRINTFUL",
+            externalProductId: "blank-71",
+            externalVariantId: "v-1",
+            productName: "Half-finished hoodie",
+            color: "Black",
+            placements: { front: [] },
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      },
+    });
+
     for (const [label, studioPath] of [
       ["business route", `/b/${store.slug}/studio`],
       ["legacy route", "/dashboard/studio"],
@@ -607,36 +644,112 @@ async function main() {
       await page.goto(`${server.baseUrl}${studioPath}`, { waitUntil: "domcontentloaded" });
       const studio = (await page.locator("body").innerText()).replace(/\s+/g, " ");
 
-      // THE HREF IS THE BUSINESS-SCOPED ONE FROM BOTH. The Creation Station
-      // resolves one business from the URL; /dashboard resolves the account's
-      // active business, which is a different thing and shared across tabs.
-      const intoStation = page.locator(`a[href="/b/${store.slug}/studio/create"]`);
-      assert(`${label}: Studio offers a way into the Creation Station`,
-        await intoStation.count() > 0, studio.slice(0, 300));
-      assert(`${label}: and says so in words somebody would look for`,
-        /create something/i.test(studio), studio.slice(0, 300));
-      assert(`${label}: no link points at a route that does not exist`,
-        await page.locator('a[href="/dashboard/studio/create"]').count() === 0,
-        "that path has no page and 404s");
+      // ============ IT NAMES ITSELF, AND NAMES BOTH PATHS ============
+      //
+      // Sean: "I don't want someone to see the first product carousel and
+      // assume Studio is only for making merchandise." The heading says what
+      // the place is and the subtitle says both things it does, so neither
+      // depends on how far down a phone can see.
+      assert(`${label}: the place names itself`,
+        /creation station/i.test(studio), studio.slice(0, 400));
+      assert(`${label}: and says it does both`,
+        /products and social content/i.test(studio), studio.slice(0, 400));
 
-      // IT LEADS WITH CREATING rather than describing what J4 can make.
-      assert(`${label}: the page no longer says J4 does the work for you`,
-        !/tell j4 what you want and it does the work/i.test(studio), studio.slice(0, 400));
+      // THE THREE CATEGORIES, EACH LABELLED. Order is deliberately not
+      // asserted — it becomes adaptive later, and a suite that pins today's
+      // order would have to be rewritten to allow the feature it is guarding.
+      // What must hold either way is that every category carries its label.
+      assert(`${label}: product creation is labelled`,
+        /product creation/i.test(studio), studio.slice(0, 400));
+      assert(`${label}: social creation is labelled`,
+        /social creation/i.test(studio), studio.slice(0, 400));
+      assert(`${label}: so are graphics`, /graphics/i.test(studio), studio.slice(0, 400));
 
-      // AND THE LINK GENUINELY ARRIVES AT A PAGE THAT RENDERS. A 200 is not
-      // enough on its own -- Next serves its own 404 page with a 200 in some
-      // configurations -- so the workspace's own words are what is checked.
-      await intoStation.first().click();
-      await page.waitForURL("**/studio/create", { timeout: 30_000 });
-      check(`${label}: it arrives at the Creation Station`,
-        new URL(page.url()).pathname, `/b/${store.slug}/studio/create`);
+      // AND THE PRODUCTS THEMSELVES ARE ON IT, not behind a door.
+      assert(`${label}: the things you can make are named`,
+        /t-shirt/i.test(studio) && /hoodie/i.test(studio), studio.slice(0, 400));
 
-      const landed = (await page.locator("body").innerText()).replace(/\s+/g, " ");
-      assert(`${label}: and the portal actually rendered`,
-        /what do you want to create/i.test(landed), landed.slice(0, 300));
-      assert(`${label}: rather than a not-found page`,
-        !/404|this page could not be found/i.test(landed), landed.slice(0, 300));
+      // THE INTERMEDIARY IS ACTUALLY GONE, not merely bypassed.
+      assert(`${label}: no "create something" doorway remains`,
+        !/create something/i.test(studio), studio.slice(0, 400));
+      assert(`${label}: and nothing says the bench is empty`,
+        !/nothing on the bench yet/i.test(studio), studio.slice(0, 400));
+
+      // EVERY WAY IN IS BUSINESS-SCOPED. The 404 above, asserted shut.
+      check(`${label}: no link points at a route that does not exist`,
+        await page.locator('a[href^="/dashboard/studio/create"]').count(), 0);
+
+      const createNew = page.locator(`a[href^="/b/${store.slug}/studio/create?kind="]`);
+      assert(`${label}: every product offers Create New`,
+        await createNew.count() >= 5, `${await createNew.count()} cards`);
+      // THE WORDING IS THE REQUIREMENT, not an accident of styling. Sean named
+      // both controls exactly, and "Create new" is not what he asked for.
+      check(`${label}: and it is worded the way it was asked for`,
+        await page.locator("a", { hasText: /^Create New$/ }).count() >= 5, true);
+
+      // SAVED WORK IS REACHABLE. With no catalogue this design belongs to no
+      // card, and the landing must still show it — otherwise a supplier outage
+      // silently hides work somebody spent an evening on.
+      const reopen = page.locator(`a[href*="design=${draftId}"]`);
+      assert(`${label}: a saved design is still reachable with no catalogue`,
+        await reopen.count() === 1, `${await reopen.count()} links`);
+      const reopenHref = await reopen.first().getAttribute("href");
+      assert(`${label}: and reopening carries the blank as well as the draft`,
+        !!reopenHref && reopenHref.includes("garment=blank-71"), `${reopenHref}`);
+
+      // ============ NO DEAD ENDS, WHICH WAS THE CONDITION =============
+      //
+      // Sean: "The cards should not lead to dead ends." Social and Graphics
+      // have no dedicated flow built, so they are buttons that put a real
+      // sentence into the real conversation — never links to a page that does
+      // not exist, and never a placeholder anchor.
+      check(`${label}: no placeholder anchors anywhere on Studio`,
+        await page.locator('a[href="#"], a[href=""]').count(), 0);
+      // A BUTTON, NOT THE WORD. The first version of this check fell back to
+      // "Instagram appears somewhere in the page text", which the chips further
+      // down would have satisfied on their own — an assertion that passes
+      // whether or not the row rendered is not an assertion. CreationCardRow
+      // returns null when the J4 context is missing, and that silent null is
+      // exactly the failure worth catching.
+      assert(`${label}: social cards are real controls`,
+        await page.locator("button", { hasText: /Instagram/ }).count() > 0,
+        studio.slice(0, 600));
+      assert(`${label}: and so are graphics cards`,
+        await page.locator("button", { hasText: /Promotional graphic/ }).count() > 0,
+        studio.slice(0, 600));
     }
+
+    // ------------------------------------------------------------------
+    console.log("\n3b. Create new reaches the same editor it always did");
+    //
+    // THE WHOLE POINT OF THE RESTRUCTURE, asserted end to end: this is an
+    // entry-point change, and what it opens into must be unchanged.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
+    await page.locator(`a[href="/b/${store.slug}/studio/create?kind=t-shirt"]`).first().click();
+    await page.waitForURL("**/studio/create?kind=t-shirt", { timeout: 30_000 });
+    check("it arrives at the Creation Station",
+      new URL(page.url()).pathname, `/b/${store.slug}/studio/create`);
+
+    const landed = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("rather than a not-found page",
+      !/404|this page could not be found/i.test(landed), landed.slice(0, 300));
+    // The no-supplier state is the honest one here, and it is the state every
+    // business is in before connecting Printful. What matters is that the
+    // intention arrived and the page answered it.
+    assert("and the page answers the intention it was given",
+      !/what do you want to create/i.test(landed), landed.slice(0, 300));
+
+    // ------------------------------------------------------------------
+    console.log("\n3c. Continuing a saved design opens that design");
+    await page.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
+    await page.locator(`a[href*="design=${draftId}"]`).first().click();
+    await page.waitForURL(`**/studio/create?garment=*design=${draftId}`, { timeout: 30_000 });
+    const reopened = new URL(page.url());
+    check("the blank travels", reopened.searchParams.get("garment"), "blank-71");
+    check("and so does the draft", reopened.searchParams.get("design"), draftId);
+    const reopenedBody = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    assert("and it is not a not-found page",
+      !/404|this page could not be found/i.test(reopenedBody), reopenedBody.slice(0, 300));
 
     // The library Sean asked to keep is still on Studio, from both routes.
     await page.goto(`${server.baseUrl}/dashboard/studio`, { waitUntil: "domcontentloaded" });
@@ -654,9 +767,12 @@ async function main() {
   if (failures === 0) {
     console.log(
       "\nNOT verified here (needs a connected Printful account): the garment shelf,\n" +
-        "real colours and print areas on screen, and adding a designed product to a\n" +
-        "store. The page's no-supplier state IS verified, and it is the state every\n" +
-        "business is in today.\n",
+        "real colours and print areas on screen, adding a designed product to a\n" +
+        "store, and the ON-CARD 'Continue with' list — listBlanks runs on the\n" +
+        "server, so this harness always has an empty catalogue and every saved\n" +
+        "design is stranded. The grouping itself is covered by\n" +
+        "verify-creation-catalog; the stranded path IS verified here, and the\n" +
+        "no-supplier state is what every business is in today.\n",
     );
   }
   process.exit(failures === 0 ? 0 : 1);
