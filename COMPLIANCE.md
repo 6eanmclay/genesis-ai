@@ -50,6 +50,43 @@ on 2026-08-01, and the reason it was reversed is not recorded anywhere. Whether
 to reinstate the gate is Sean's call, and it has been left alone rather than
 quietly changed back.
 
+**The integration encryption key has no backup, and cannot be read back.**
+`INTEGRATION_ENCRYPTION_KEY` is stored in Vercel as a *Sensitive* variable, which
+is write-only by design: `vercel env pull` returns `[SENSITIVE]`, the dashboard
+will not reveal it, and there is no support path to recover it. Searched on
+2026-08-28: it is not in any file on the development machine, and the shell
+history holds the command that generated it (`randomBytes(32).toString("base64")`)
+but not its output.
+
+So the only copy that can decrypt stored integration credentials lives inside
+Vercel's runtime. **If that variable is ever deleted, or the project recreated,
+every stored credential across every store becomes permanently undecryptable** —
+Printful, PayPal, Stripe Connect, QuickBooks, Google Calendar — and every
+connected business has to reconnect from scratch. There is no partial recovery:
+AES-GCM without the key is not a hard problem, it is an impossible one.
+
+This is not a defect in the encryption. Requirement 3 is still met, and the local
+key failing to decrypt production credentials is that design working, and the
+economics-check note further down records the same behaviour. What is missing is
+**custody**: a secret with no second copy is a single point of failure for every
+integration in the product.
+
+To fix, in order:
+
+1. **Retrieve it while it is still retrievable** — from a password manager if it
+   was saved there. It cannot be recovered from Vercel.
+2. **Store it somewhere durable and access-controlled**, with the fact that it is
+   unrecoverable written next to it.
+3. **Then decide on rotation.** Rotating is a real operation, not a config
+   change: every `StoreIntegration.credentials` row must be decrypted with the
+   old key and re-encrypted with the new one in a single migration, or every
+   connection breaks. That work is not scoped and is not urgent; step 2 is.
+
+If step 1 fails — the key is genuinely gone — nothing breaks today, because the
+running production deployment still holds it. The exposure is that the system is
+one deleted environment variable away from a total, unrecoverable loss of every
+integration, and no warning would precede it.
+
 **Reconnections you have to do yourself**, because only the account holder can
 re-authorize:
 
@@ -98,7 +135,7 @@ customers place real orders".
 |---|---|---|---|
 | 1 | OAuth 2.0 where the provider offers it | **Compliant** | 7 connectors; no implicit flow anywhere — see §1 |
 | 2 | CSRF protection on the OAuth callback | **Compliant** | `oauthState.ts`; 13 assertions incl. the original attack |
-| 3 | Credentials encrypted at rest | **Compliant** | `credentials.ts`, AES-GCM via `INTEGRATION_ENCRYPTION_KEY` |
+| 3 | Credentials encrypted at rest | **Compliant** | `credentials.ts`, AES-GCM via `INTEGRATION_ENCRYPTION_KEY` — but the key itself has no backup; see Action Required |
 | 4 | Credentials never reach the browser | **Compliant** | `toStatusView()`; asserted with a planted ciphertext |
 | 5 | Credentials never written to logs or records | **Compliant** | `providerError.ts`; 21 assertions — see §5 |
 | 6 | Token expiry & rotation handled | **Compliant** | `tokenRefresh.ts`; 21 assertions — see §6 |
