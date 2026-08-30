@@ -493,6 +493,7 @@ model Store {
   checkoutDrafts            CheckoutDraft[]
 
   @@index([planId])
+  jobs Job[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -2989,4 +2990,55 @@ model OrderItem {
 
   @@index([orderId])
   @@index([productId])
+}
+
+// WORK THAT SHOULD HAPPEN AND HAS NOT HAPPENED YET.
+//
+// ============ WHY THIS EXISTS (2026-08-30) =============================
+//
+// Everything background ran inside one daily cron tick. Nothing could be
+// scheduled for "in five minutes", nothing survived a crash half way through,
+// and ExecutionLog.retryable was written 75 times and consumed by nobody —
+// the system recorded that an action could be retried and never retried one.
+//
+// This is the spine the rest of it hangs from: sync, webhook processing,
+// outbound actions, notifications, reconciliation, change detection. Each of
+// those currently owns a private, slightly different fragment of "try again
+// later", and each new one would own another.
+//
+// ============ IDEMPOTENCY IS THE WHOLE SAFETY STORY ====================
+//
+// idempotencyKey is unique, so offering the same logical unit of work twice
+// produces one row. Retries are only safe BECAUSE of that: a handler that
+// charges money or places a supplier order must not run twice because the
+// first attempt timed out after it had already succeeded.
+model Job {
+  id             String    @id @default(cuid())
+  /** Which handler runs this. See lib/jobs/registry.ts. */
+  kind           String
+  /** Null for platform-wide work that belongs to no single business. */
+  storeId        String?
+  payload        Json      @default("{}")
+  /** Unique. A second enqueue of the same logical work is a no-op, not a copy. */
+  idempotencyKey String    @unique
+  /** pending | running | done | dead */
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5)
+  /** Not before this. Backoff moves it forward. */
+  runAfter       DateTime  @default(now())
+  /** A claim. A stale one is reclaimable — that is what makes a killed runner recoverable. */
+  lockedAt       DateTime?
+  lockedBy       String?
+  lastError      String?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAfter])
+  @@index([storeId, kind])
+  @@index([kind, status])
+  @@index([status, lockedAt])
 }

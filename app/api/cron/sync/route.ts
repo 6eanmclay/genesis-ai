@@ -8,6 +8,8 @@ import { runDueSourcing } from "@/lib/sourcing/sourcingSchedule";
 import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
 import { sweepAbandonedTemporaries } from "@/lib/storage/temporaryAssets";
+import { drain } from "@/lib/jobs/queue";
+import { HANDLERS } from "@/lib/jobs/registry";
 import {
   attributionSweepEnabled,
   nightlyEnabled,
@@ -45,6 +47,28 @@ export async function GET(request: NextRequest) {
   // the finally."
   //
   // Its own stage and its own catch, like every other stage here.
+  // ============ DUE WORK, BEFORE ANYTHING ELSE ======================
+  //
+  // First on purpose. Everything below is a fixed daily stage; the queue is
+  // where retries, webhook follow-up and anything scheduled for "soon" live, so
+  // it is the part with a deadline. It drains an empty queue today — nothing
+  // enqueues yet — which is exactly what makes it safe to add now rather than
+  // alongside the first thing that needs it.
+  //
+  // Bounded twice: fifty jobs, and a deadline well inside the function's
+  // ceiling. Whatever is left is still due on the next tick, and a job whose
+  // runner is killed mid-handler is reclaimed by the stale-lock path rather
+  // than parked forever.
+  await drain(HANDLERS, {
+    maxJobs: 50,
+    deadline: new Date(Date.now() + 60_000),
+  }).catch((error) => {
+    reportIssue("the job queue drain failed", error, {
+      subsystem: "execution",
+      stage: "cron.jobs",
+    });
+  });
+
   await sweepAbandonedTemporaries().catch((error) => {
     reportIssue("the abandoned temporary-asset sweep failed", error, {
       subsystem: "storage",
