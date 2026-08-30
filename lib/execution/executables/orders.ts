@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { isMoneyGoneForGood } from "@/lib/orders/orderStatus";
 import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable } from "../executable";
@@ -46,8 +47,14 @@ export const toggleOrderFulfilledExecutable: Executable<ToggleFulfilledInput, Or
     // nobody made on purpose. Un-marking one that shipped BEFORE the refund is
     // still allowed below — that is a real sequence (goods sent, money later
     // returned) and the owner may legitimately want to correct the flag.
-    if (nowFulfilled && order.status === "refunded") {
-      throw new Error("This order was refunded — it can't be marked as fulfilled.");
+    // Disputed orders stay fulfillable — see the shipping executable's own
+    // note. Only money that has gone back for good blocks this.
+    if (nowFulfilled && isMoneyGoneForGood(order.status)) {
+      throw new Error(
+        order.status === "charged_back"
+          ? "This order was charged back — it can't be marked as fulfilled."
+          : "This order was refunded — it can't be marked as fulfilled."
+      );
     }
 
     // A PARCEL IN THE POST CANNOT BECOME UNFULFILLED.

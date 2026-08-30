@@ -2,6 +2,7 @@ import { prismaSystem } from "@/lib/prisma";
 import { isEmailConfigured } from "@/lib/email/sendEmail";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { enqueueNotification } from "./notificationJobs";
+import { ORDER_STATUS } from "@/lib/orders/orderStatus";
 import { sendOrderConfirmation, type EmailSender } from "./orderConfirmation";
 import { notifyCustomerDelivered } from "./deliveryNotification";
 import { notifyCustomerRefunded } from "./refundNotification";
@@ -113,7 +114,21 @@ export async function runDueOrderNotifications(
   // — "paid, no confirmation claim, old enough" — is true regardless of how it
   // got that way.
   const unconfirmed = await prismaSystem.order.findMany({
-    where: { confirmationSentAt: null, status: { in: ["paid", "fulfilled"] }, createdAt: { lt: before } },
+    // ============ THE PHANTOM STATUS IS GONE (2026-08-30) ============
+    //
+    // This read `status: { in: ["paid", "fulfilled"] }` and NOTHING has ever
+    // written "fulfilled" to Order.status — fulfilment is its own column and
+    // always was. Harmless, and evidence that a vocabulary nobody owns does not
+    // stay true; found while adding the dispute states. The vocabulary now
+    // lives in lib/orders/orderStatus.ts.
+    //
+    // A DISPUTED ORDER IS DELIBERATELY EXCLUDED. This sweep sends a
+    // confirmation nobody ever sent, and a customer who has just charged the
+    // payment back should not receive their first "thanks for your order" — the
+    // money is with their bank. If the dispute is won the status returns to
+    // paid and the sweep picks it up again, which is the behaviour a derived
+    // filter gives for free.
+    where: { confirmationSentAt: null, status: ORDER_STATUS.PAID, createdAt: { lt: before } },
     select: { id: true, storeId: true },
     orderBy: { createdAt: "asc" },
     take: BATCH,

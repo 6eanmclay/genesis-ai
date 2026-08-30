@@ -25,6 +25,13 @@ what exactly is required, and what happens the moment it exists.
 | **E4** | **Split scheduling cadences.** Every task already declares the interval it actually needs; one daily trigger currently offers all of them one chance a day. | The same plan as E3. | The declared intervals become the real ones. Nothing in `lib/scheduler` changes. |
 | **E5** | **A preview environment with production-shaped data.** | A Vercel Preview environment, and a decision about what data it may hold. **Not** production secrets — `INTEGRATION_ENCRYPTION_KEY` must never be copied there. | Route handlers, checkout and webhooks can be exercised over real HTTP before production is the first place they run. |
 
+## Waiting on a provider-side subscription
+
+| # | What is built | What is required | What happens when it exists |
+|---|---|---|---|
+| **E9** | **Stripe dispute handling** — all five events, the full lifecycle, funds tracked separately from the claim. | The **`charge.dispute.*` events must be enabled on the Stripe webhook endpoint**. Stripe sends only the event types an endpoint subscribes to, and the current endpoint was configured for checkout and refund events. | Nothing in the code changes. Until then a chargeback is recorded verbatim in `WebhookDelivery` and never reaches the handler — the same silence this item was built to end, one layer further out. **This is the single most important line in this file after E1.** |
+| **E10** | **PayPal dispute handling** — not built, deliberately. | Each store's PayPal app must subscribe to `CUSTOMER.DISPUTE.*`. The per-store webhook currently subscribes to refund events only, and whether disputes ever arrive is a per-store configuration this platform does not control. | Handling can then be written against events that actually arrive. Writing it first would be a handler that has never run and cannot be proven — the shape this project treats as worse than an honest absence. |
+
 ## Waiting on a decision only Sean can make
 
 | # | Item | Consequence of leaving it |

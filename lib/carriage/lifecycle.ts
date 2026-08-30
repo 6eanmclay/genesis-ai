@@ -23,7 +23,14 @@
  * created by a completed payment, so an unpaid order has never existed — and a
  * stage that can never occur reads as a real one and quietly misleads.
  */
-export type OrderStage = "paid" | "processing" | "shipped" | "delivered" | "refunded";
+export type OrderStage =
+  | "paid"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "refunded"
+  | "disputed"
+  | "charged_back";
 
 export function stageOf(order: {
   status: string;
@@ -31,7 +38,19 @@ export function stageOf(order: {
   trackingNumber: string | null;
   deliveredAt: Date | null;
 }): OrderStage {
+  // ============ MONEY FIRST, AND WHY (2026-08-30) ===================
+  //
+  // A disputed parcel may well have been delivered; saying "Delivered" while a
+  // bank holds the money describes the parcel and hides the thing the owner
+  // needs to act on. So the money axis is read before the carrier's, and a
+  // dispute outranks delivery for the same reason a refund already did.
+  //
+  // `disputed` is deliberately not `charged_back`: one is money withdrawn over
+  // a claim that may be won, the other is a loss. An owner shipping to win a
+  // dispute needs to be able to tell them apart at a glance.
+  if (order.status === "charged_back") return "charged_back";
   if (order.status === "refunded") return "refunded";
+  if (order.status === "disputed") return "disputed";
   if (order.deliveredAt) return "delivered";
   if (order.trackingNumber) return "shipped";
   if (order.fulfillmentStatus === "fulfilled") return "processing";
@@ -45,4 +64,8 @@ export const STAGE_LABEL: Record<OrderStage, string> = {
   shipped: "On its way",
   delivered: "Delivered",
   refunded: "Refunded",
+  // Owner's terms. "Disputed" is a bank's word; what the owner needs to know is
+  // that the money has been taken while the claim is decided.
+  disputed: "Payment held — disputed",
+  charged_back: "Charged back",
 };

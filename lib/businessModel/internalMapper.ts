@@ -1,5 +1,6 @@
 import type { Order, Product } from "@prisma/client";
 import type { CanonicalRecord } from "./entities";
+import { countsAsRevenue } from "@/lib/orders/orderStatus";
 
 // Phase 3 Milestone 1 (J4 Foundation) — pure functions mapping the store's
 // own already-live Order/Product data into the canonical shape, computed on
@@ -43,7 +44,15 @@ export function mapOrdersToTransactions(
     data: {
       amountInCents: order.amountInCents,
       currency: "usd",
-      type: order.status === "refunded" ? "refund" : "sale",
+      // ============ ONLY MONEY WE ACTUALLY HOLD IS A SALE (2026-08-30) ==
+      //
+      // Was `status === "refunded" ? "refund" : "sale"`, which counted a
+      // disputed and even a charged-back order as revenue — the bank had taken
+      // the money and every report still called it income.
+      //
+      // Reads the CURRENT status rather than remembering a verdict, so a
+      // dispute that is won returns to `paid` and counts again by itself.
+      type: countsAsRevenue(order.status) ? "sale" : "refund",
       date: order.createdAt.toISOString(),
       contactId: internalContactId(order.buyerEmail),
       itemIds: order.productId ? [internalItemId(order.productId)] : [],

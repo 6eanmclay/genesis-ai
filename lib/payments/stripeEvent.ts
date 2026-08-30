@@ -32,6 +32,7 @@ import {
 import { resolveWebhookStore } from "@/lib/orders/webhookStore";
 import { withCorrelation } from "@/lib/observability/correlation";
 import { recordDelivery, markProcessed, markFailed } from "@/lib/webhooks/delivery";
+import { handleDisputeEvent, isDisputeEvent } from "@/lib/payments/stripeDispute";
 import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
 
 // EVERYTHING STRIPE SAYS HAPPENED, AFTER SOMETHING PROVED STRIPE SAID IT.
@@ -670,6 +671,28 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<Response> 
         await notifyCustomerRefunded({ orderId: target.id, storeId: target.storeId }).catch(() => {});
       }
     }
+  }
+
+  // ============ A CHARGEBACK IS NOT A REFUND (2026-08-30) ============
+  //
+  // Last, beside the refund branch it resembles and does not duplicate. A
+  // refund is the business choosing to give money back; a dispute is a bank
+  // taking it, over a claim that may still be won.
+  //
+  // All five dispute events reach one handler, because handling only
+  // `created` would report a bank inquiry as a lost sale and never notice the
+  // money coming back. The rule that decides whether money actually moved
+  // lives in lib/payments/stripeDispute.ts and nowhere else.
+  //
+  // Never throws: a dispute that could not be recorded must not fail the
+  // webhook and have Stripe redeliver the whole event.
+  if (isDisputeEvent(event.type)) {
+    await handleDisputeEvent(event).catch((error) => {
+      reportIssue("a Stripe dispute event could not be recorded", error, {
+        subsystem: "payments",
+        stage: "stripe.dispute",
+      });
+    });
   }
 
   return new Response("OK", { status: 200 });

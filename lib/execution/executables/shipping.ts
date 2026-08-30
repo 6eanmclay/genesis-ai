@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { refusalReason } from "@/lib/orders/orderStatus";
 import type { VerificationOutcome } from "../verification";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { Executable, ExecutionContext } from "../executable";
@@ -64,10 +65,20 @@ export async function purchaseLabelForOrder(
   // Deliberately blocking only a FULL refund (status === "refunded"), which is
   // the only refund this codebase currently models — see the charge.refunded
   // handler's own note on partial refunds.
-  if (order.status === "refunded") {
-    throw new Error(
-      "This order was refunded — buying a label would post the goods at your expense after the customer got their money back."
-    );
+  // ============ DISPUTED ORDERS MAY STILL SHIP (2026-08-30) =========
+  //
+  // Sean: "Disputed orders remain fulfillable. Surface a clear warning/risk
+  // state, but do not block shipping." Posting the goods and submitting proof
+  // of delivery is a legitimate way to WIN a dispute, and refusing it would
+  // remove a real strategy for preventing a loss that has not happened yet.
+  //
+  // `refunded` and `charged_back` are the opposite case and keep the protection
+  // this branch was written for: the money went back and is not coming, so
+  // posting goods is a second loss on top of the first. isMoneyGoneForGood is
+  // the one place that distinction is decided.
+  const refusal = refusalReason(order.status);
+  if (refusal) {
+    throw new Error(refusal);
   }
 
   const toAddress = order.shippingAddress as unknown as OrderShippingAddress | null;

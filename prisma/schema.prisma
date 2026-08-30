@@ -1481,6 +1481,48 @@ model Order {
   // Both are the CLAIM in a claim-then-send: set before the attempt so a
   // concurrent delivery cannot also send, and cleared again if the send fails
   // so a later retry can. See lib/orders/orderConfirmation.ts.
+  // ============ A DISPUTE IS TWO FACTS, NOT ONE (2026-08-30) =========
+  //
+  // Until now a chargeback was invisible: the Stripe route recorded the
+  // delivery, matched no branch, answered 200 and marked it processed. The
+  // order stayed "paid", reporting still counted it as a sale, and the owner
+  // could still buy a label and post the goods for money the bank had already
+  // taken back.
+  //
+  // Two records, because they answer different questions. `status` says where
+  // the MONEY is and moves only on positive evidence that funds moved —
+  // funds_withdrawn and funds_reinstated. These fields say what the card
+  // network currently claims, which includes inquiries that never become a
+  // chargeback and move nothing at all.
+  //
+  // Denormalised onto Order rather than given a table of their own, matching
+  // this model's existing precedent: carrier, trackingNumber and deliveredAt
+  // live here too rather than in a Shipment. One dispute per charge is the
+  // real-world case, and the raw event history is already kept verbatim in
+  // WebhookDelivery for the rare one that is not.
+
+  /** Stripe's own dispute status, verbatim. `warning_*` values are inquiries. */
+  disputeStatus               String?
+  /** When a claim was first seen. Not when money moved. */
+  disputedAt                  DateTime?
+  /** When the claim closed, whatever the outcome. */
+  disputeResolvedAt           DateTime?
+  /** The provider's id for the claim, so a later event finds the same one. */
+  externalDisputeId           String?
+  /** What is being claimed. Not necessarily the whole order. */
+  disputeAmountInCents        Int?
+  /** The network's reason code, verbatim — never our interpretation of it. */
+  disputeReason               String?
+  /**
+   * Positive evidence that money actually left the account.
+   *
+   * The field that separates a bank asking a question from a bank taking the
+   * money. Null through an entire inquiry that closes in the merchant's favour.
+   */
+  disputeFundsWithdrawnAt     DateTime?
+  /** Positive evidence it came back. Set when a dispute is won. */
+  disputeFundsReinstatedAt    DateTime?
+
   confirmationSentAt          DateTime?
   shipmentNotifiedAt          DateTime?
   // The OWNER was told a sale happened (2026-08-22). A fifth state, kept apart
@@ -1598,6 +1640,10 @@ model Order {
   // "Which orders used this promotion" is a question a merchant asks about a
   // campaign, so the foreign key is indexed rather than scanned.
   @@index([appliedPromotionId])
+  // A later dispute event names the claim, not the charge — `closed` and
+  // `funds_reinstated` arrive with the dispute id and must find the same order
+  // the `created` event did.
+  @@index([externalDisputeId])
 }
 
 // The Execution & Verification Engine's history: append-only, never updated.
