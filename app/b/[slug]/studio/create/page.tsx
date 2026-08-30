@@ -27,10 +27,10 @@ import { designHref } from "@/lib/creation/creationPresentation";
  * between print areas that are not the same shape.
  */
 async function reopened(
-  storeId: string,
+  slug: string,
   draftId: string,
 ): Promise<{ initialDraftId?: string; initialDesign?: ProductDesign; initialName?: string; initialPriceInCents?: number | null; alreadyCreated?: boolean }> {
-  const draft = await loadDesignDraft(storeId, draftId);
+  const draft = await loadDesignDraft(draftId, slug);
   if (!draft) return {};
   return {
     initialDraftId: draftId,
@@ -194,7 +194,7 @@ export default async function CreationStationPage({
     // Creation Station having saved a hoodie last week should see it here,
     // before they are asked what they want to make — otherwise the only way
     // back to their own design is to build it again.
-    const saved = await savedDesignsFor(store.id);
+    const saved = await savedDesignsFor(slug);
 
     return (
       <>
@@ -323,7 +323,7 @@ export default async function CreationStationPage({
         blanks={await blankImagesFor(provider, store.id, garment.externalProductId)}
         supplierPrices={await supplierPricesFor(provider, store.id, garment.externalProductId)}
         creatableId={kind ?? ""}
-        {...(draftId ? await reopened(store.id, draftId) : {})}
+        {...(draftId ? await reopened(slug, draftId) : {})}
       />
     );
   }

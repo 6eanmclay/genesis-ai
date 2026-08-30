@@ -31,7 +31,7 @@ export default async function SocialCreationPage({
   const { store } = await requireBusinessPage(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const basePath = businessBasePath(slug);
 
-  const existing = postId ? await loadSocialDraft(store.id, postId) : null;
+  const existing = postId ? await loadSocialDraft(postId, slug) : null;
 
   // A post id that names nothing is a 404 rather than a silently blank new
   // piece: somebody following a stale link should be told, not handed an empty

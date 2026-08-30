@@ -108,7 +108,7 @@ export async function StudioScreen({ slug }: { slug?: string; basePath: string }
       catalogueUnreadable = true;
     }
   }
-  const savedDesigns = await savedDesignsFor(store.id);
+  const savedDesigns = await savedDesignsFor(slug);
 
   // SAVED WORK, SORTED ONTO THE PRODUCT IT WAS MADE ON.
   //
@@ -130,7 +130,7 @@ export async function StudioScreen({ slug }: { slug?: string; basePath: string }
   // stranded by an outage. A draft whose platform is no longer in the registry
   // is dropped rather than shown under a heading that does not exist — the only
   // way that happens is a platform being removed, which is a deliberate act.
-  const socialDrafts = await socialDraftsFor(store.id);
+  const socialDrafts = await socialDraftsFor(slug);
   const socialFor: Record<string, typeof socialDrafts> = {};
   for (const draft of socialDrafts) {
     // A PIECE APPEARS UNDER EVERY PLATFORM IT TARGETS. One creation going to

@@ -2,7 +2,7 @@
 
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
-import { PERMISSIONS, requireBusiness } from "@/lib/permissions";
+import { PERMISSIONS, requireBusiness, requireBusinessOrActive } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { SocialPostSchema, type SocialContent } from "@/lib/businessModel/entities";
@@ -187,10 +187,24 @@ export interface SocialDraftRow {
   publishedAt: string | null;
 }
 
-/** Every piece the owner has written, newest first. */
-export async function socialDraftsFor(storeId: string): Promise<SocialDraftRow[]> {
+/**
+ * Every piece the owner has written, newest first.
+ *
+ * ============ THE STORE ID IS NOT A PARAMETER (2026-08-30) ============
+ *
+ * It used to be, and this returned whatever business the caller named. The
+ * page calling it had checked access; the page is not the boundary. A server
+ * action is a POST endpoint, and an authenticated caller is not an authorised
+ * one — the same lesson Item 8 learned about a layout, one level down.
+ *
+ * The argument is gone rather than validated: the business now comes from
+ * requireBusinessOrActive, so "read that other business" is not a request this
+ * action can be asked to make.
+ */
+export async function socialDraftsFor(slug?: string): Promise<SocialDraftRow[]> {
+  const { store } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const rows = await prisma.businessRecord.findMany({
-    where: { storeId, entityType: "socialPost", sourceProvider: DRAFT_SOURCE },
+    where: { storeId: store.id, entityType: "socialPost", sourceProvider: DRAFT_SOURCE },
     select: { id: true, externalId: true, data: true },
     orderBy: { syncedAt: "desc" },
     take: 60,
@@ -224,18 +238,25 @@ function defaultName(platformIds: string[]): string {
   return `${platformIds.length}-platform draft`;
 }
 
-/** One piece, ready to go back into the composer. */
+/**
+ * One piece, ready to go back into the composer.
+ *
+ * The business comes from the guard — see socialDraftsFor. The post id remains
+ * a parameter and is safe as one because the query stays scoped to the
+ * authorised store: another business's post id finds nothing.
+ */
 export async function loadSocialDraft(
-  storeId: string,
   postId: string,
+  slug?: string,
 ): Promise<{
   name: string;
   targets: { platform: string; content: SocialContent }[];
   amplifyStory: boolean;
 } | null> {
+  const { store } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const row = await prisma.businessRecord.findFirst({
     where: {
-      storeId,
+      storeId: store.id,
       entityType: "socialPost",
       sourceProvider: DRAFT_SOURCE,
       externalId: postId,

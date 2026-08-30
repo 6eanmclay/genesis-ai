@@ -33,7 +33,7 @@ import { ingestBusinessAsset } from "@/lib/businessAssets/ingest";
 import type { Asset } from "@/lib/businessModel/entities";
 import { removedFromLibrary, restoredToLibrary } from "@/lib/creation/assetLibrary";
 import { PERMISSIONS } from "@/lib/permissions";
-import { requireBusiness, requireStorePermission } from "@/lib/permissions";
+import { requireBusiness, requireBusinessOrActive, requireStorePermission } from "@/lib/permissions";
 import { usedPlacements, type ProductDesign } from "@/lib/creation/design";
 import { saveDesignAsProduct } from "@/lib/creation/saveDesign";
 import { creationProviderFor } from "@/lib/creation/provider";
@@ -379,10 +379,26 @@ function firstArtwork(placements: Record<string, { assetUrl: string }[]>): strin
   return null;
 }
 
-/** Every design the owner has saved and not yet turned into a product. */
-export async function savedDesignsFor(storeId: string): Promise<SavedDesignRow[]> {
+/**
+ * Every design the owner has saved and not yet turned into a product.
+ *
+ * ============ THE STORE ID IS NOT A PARAMETER (2026-08-30) ============
+ *
+ * It used to be, and this action returned whatever business the caller named.
+ * A server action is a POST endpoint with a generated id — the page that calls
+ * it having already checked access protects the page, not the action, and an
+ * authenticated user is not the same fact as an authorised one.
+ *
+ * The fix is not a check on the argument. The argument is GONE: the business
+ * comes from requireBusinessOrActive, so there is no longer any way to express
+ * the request "read that other business". A slug still names one, and that
+ * helper is what proves the caller may have it — and records the attempt when
+ * they may not.
+ */
+export async function savedDesignsFor(slug?: string): Promise<SavedDesignRow[]> {
+  const { store } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const rows = await prisma.businessRecord.findMany({
-    where: { storeId, entityType: "design", sourceProvider: DRAFT_SOURCE },
+    where: { storeId: store.id, entityType: "design", sourceProvider: DRAFT_SOURCE },
     select: { id: true, externalId: true, data: true },
     orderBy: { syncedAt: "desc" },
     take: 40,
@@ -422,13 +438,21 @@ export async function savedDesignsFor(storeId: string): Promise<SavedDesignRow[]
   return drafts;
 }
 
-/** A saved design, ready to go back into the editor. */
+/**
+ * A saved design, ready to go back into the editor.
+ *
+ * The business comes from the guard, never the caller — see savedDesignsFor.
+ * The draft id stays a parameter and is safe as one BECAUSE the query is still
+ * scoped to the authorised store: naming another business's draft id finds
+ * nothing rather than returning it.
+ */
 export async function loadDesignDraft(
-  storeId: string,
   draftId: string,
+  slug?: string,
 ): Promise<{ design: ProductDesign; name: string; retailPriceInCents: number | null; created: boolean } | null> {
+  const { store } = await requireBusinessOrActive(PERMISSIONS.PRODUCTS_MANAGE, slug);
   const row = await prisma.businessRecord.findFirst({
-    where: { storeId, entityType: "design", sourceProvider: DRAFT_SOURCE, externalId: draftId },
+    where: { storeId: store.id, entityType: "design", sourceProvider: DRAFT_SOURCE, externalId: draftId },
     select: { data: true },
   });
   if (!row) return null;
