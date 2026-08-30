@@ -1,5 +1,6 @@
 import type { JobHandler } from "./queue";
 import { pruneTelemetry } from "@/lib/telemetry/retention";
+import { notificationJobHandler } from "@/lib/orders/notificationJobs";
 
 // WHICH HANDLER RUNS WHICH KIND.
 //
@@ -38,7 +39,7 @@ import { pruneTelemetry } from "@/lib/telemetry/retention";
  * Adding one here without a handler below is a failing test, which is the
  * point — the alternative is discovering it from a dead-lettered job.
  */
-export const JOB_KINDS = ["noop", "telemetry.prune"] as const;
+export const JOB_KINDS = ["noop", "telemetry.prune", "notification.order"] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -79,4 +80,7 @@ const pruneTelemetryJob: JobHandler = async ({ job }) => {
 export const HANDLERS: Record<string, JobHandler> = {
   noop,
   "telemetry.prune": pruneTelemetryJob,
+  // The sweep's backstop sends. The payment path still notifies inline — a
+  // customer waiting for a confirmation should not wait for a queue.
+  "notification.order": notificationJobHandler,
 };

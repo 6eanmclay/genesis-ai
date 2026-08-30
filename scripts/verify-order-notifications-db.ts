@@ -4,6 +4,8 @@ import { prisma, prismaSystem } from "@/lib/prisma";
 import { notifyCustomerDelivered } from "@/lib/orders/deliveryNotification";
 import { notifyCustomerRefunded } from "@/lib/orders/refundNotification";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
+import { drain } from "@/lib/jobs/queue";
+import { makeNotificationHandler } from "@/lib/orders/notificationJobs";
 
 // THE CLAIMS, AGAINST A REAL DATABASE:
 //
@@ -180,10 +182,24 @@ async function main(): Promise<void> {
     const before = await prisma.order.count({ where: { storeId: store.id, confirmationSentAt: null } });
     const result = await runDueOrderNotifications(new Date(), record);
 
-    assert("the sweep confirmed the order nobody redelivered",
+    // ============ THE SWEEP NOW QUEUES, IT DOES NOT SEND ============
+    //
+    // Item 4 moved the backstop onto the durable queue: sending inline meant a
+    // failure waited a full day for the next tick, because nothing else
+    // retried. The counts are what was ENQUEUED.
+    //
+    // So the test drains, which exercises more than it used to — discovery,
+    // the queue, the handler, and runOnce's exactly-once — rather than one
+    // function call.
+    assert("the sweep queued the order nobody redelivered",
       result.confirmations >= 1, JSON.stringify(result));
-    assert("and told the refunded customer",
+    assert("and queued the refunded customer",
       result.refunds >= 1, JSON.stringify(result));
+
+    // The suite's own handler, carrying the recording sender — a job payload
+    // is JSON and cannot carry a function, and drain() takes its handlers as an
+    // argument precisely so this is possible without a production seam.
+    await drain({ "notification.order": makeNotificationHandler(record) }, { maxJobs: 50 });
 
     const missedNow = await prisma.order.findUniqueOrThrow({
       where: { id: missed.id },

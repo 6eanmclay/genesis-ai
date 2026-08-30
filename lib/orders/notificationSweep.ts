@@ -1,6 +1,7 @@
 import { prismaSystem } from "@/lib/prisma";
 import { isEmailConfigured } from "@/lib/email/sendEmail";
 import { reportIssue } from "@/lib/observability/reportIssue";
+import { enqueueNotification } from "./notificationJobs";
 import { sendOrderConfirmation, type EmailSender } from "./orderConfirmation";
 import { notifyCustomerDelivered } from "./deliveryNotification";
 import { notifyCustomerRefunded } from "./refundNotification";
@@ -62,6 +63,14 @@ const GRACE_MS = 10 * 60 * 1000;
 /** turn a cron into a mail blast, and so one run cannot exhaust a rate limit. */
 const BATCH = 50;
 
+/**
+ * ============ THESE COUNT WHAT WAS QUEUED, NOT WHAT WAS SENT =========
+ *
+ * The sweep discovers due notifications and hands each to the durable queue.
+ * Whether the email actually went is the job's outcome and the outbound
+ * operation's, not the sweep's — and pretending otherwise would report a send
+ * that had not happened yet.
+ */
 export interface SweepResult {
   confirmations: number;
   deliveries: number;
@@ -110,17 +119,12 @@ export async function runDueOrderNotifications(
     take: BATCH,
   });
   for (const order of unconfirmed) {
-    const outcome = await sendOrderConfirmation({ orderId: order.id, storeId: order.storeId }, send).catch(
-      (error: unknown) => {
-        reportIssue(`sweep could not confirm order ${order.id}`, error, {
-          subsystem: "email",
-          stage: "order.sweep.confirmation",
-          storeId: order.storeId,
-        });
-        return { sent: false as const, reason: "send_failed" as const, detail: "" };
-      },
-    );
-    if (outcome.sent) result.confirmations++;
+    // ENQUEUED, NOT SENT. The sweep is the backstop for a notification
+    // the inline path never made; sending here meant a failure waited a
+    // full day for the next tick, because nothing else retried.
+    if (await enqueueNotification({ orderId: order.id, storeId: order.storeId, kind: "confirmation" })) {
+      result.confirmations++;
+    }
   }
 
   // ============ DELIVERED, AND NEVER TOLD ============================
@@ -135,17 +139,12 @@ export async function runDueOrderNotifications(
     take: BATCH,
   });
   for (const order of undelivered) {
-    const outcome = await notifyCustomerDelivered({ orderId: order.id, storeId: order.storeId }, send).catch(
-      (error: unknown) => {
-        reportIssue(`sweep could not send the delivered notice for ${order.id}`, error, {
-          subsystem: "email",
-          stage: "order.sweep.delivered",
-          storeId: order.storeId,
-        });
-        return { sent: false as const, reason: "send_failed" as const, detail: "" };
-      },
-    );
-    if (outcome.sent) result.deliveries++;
+    // ENQUEUED, NOT SENT. The sweep is the backstop for a notification
+    // the inline path never made; sending here meant a failure waited a
+    // full day for the next tick, because nothing else retried.
+    if (await enqueueNotification({ orderId: order.id, storeId: order.storeId, kind: "delivery" })) {
+      result.deliveries++;
+    }
   }
 
   // ============ REFUNDED, AND NEVER TOLD =============================
@@ -156,17 +155,12 @@ export async function runDueOrderNotifications(
     take: BATCH,
   });
   for (const order of unrefunded) {
-    const outcome = await notifyCustomerRefunded({ orderId: order.id, storeId: order.storeId }, send).catch(
-      (error: unknown) => {
-        reportIssue(`sweep could not send the refund notice for ${order.id}`, error, {
-          subsystem: "email",
-          stage: "order.sweep.refund",
-          storeId: order.storeId,
-        });
-        return { sent: false as const, reason: "send_failed" as const, detail: "" };
-      },
-    );
-    if (outcome.sent) result.refunds++;
+    // ENQUEUED, NOT SENT. The sweep is the backstop for a notification
+    // the inline path never made; sending here meant a failure waited a
+    // full day for the next tick, because nothing else retried.
+    if (await enqueueNotification({ orderId: order.id, storeId: order.storeId, kind: "refund" })) {
+      result.refunds++;
+    }
   }
 
   return result;

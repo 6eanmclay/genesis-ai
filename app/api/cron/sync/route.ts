@@ -48,31 +48,6 @@ export async function GET(request: NextRequest) {
   // the finally."
   //
   // Its own stage and its own catch, like every other stage here.
-  // ============ DUE WORK, BEFORE ANYTHING ELSE ======================
-  //
-  // First on purpose. Everything below is a fixed daily stage; the queue is
-  // where retries, webhook follow-up and anything scheduled for "soon" live, so
-  // it is the part with a deadline. It drains an empty queue today — nothing
-  // enqueues yet — which is exactly what makes it safe to add now rather than
-  // alongside the first thing that needs it.
-  //
-  // Bounded twice: fifty jobs, and a deadline well inside the function's
-  // ceiling. Whatever is left is still due on the next tick, and a job whose
-  // runner is killed mid-handler is reclaimed by the stale-lock path rather
-  // than parked forever.
-  // NOT wrapped in a chain of its own. Each job restores the chain of whoever
-  // enqueued it, and a cron-wide id would overwrite that with "the 6am run",
-  // which is the least useful fact available about any of this work.
-  await drain(HANDLERS, {
-    maxJobs: 50,
-    deadline: new Date(Date.now() + 60_000),
-  }).catch((error) => {
-    reportIssue("the job queue drain failed", error, {
-      subsystem: "execution",
-      stage: "cron.jobs",
-    });
-  });
-
   await withCorrelation({ origin: "cron", surface: "temporaryAssets" }, () =>
     sweepAbandonedTemporaries(),
   ).catch((error) => {
@@ -258,6 +233,28 @@ export async function GET(request: NextRequest) {
     });
     stageErrors.push("sourcing");
   }
+
+  // ============ DUE WORK, AFTER EVERY PRODUCER ======================
+  //
+  // Last, and this is a correction. It was first, on the reasoning that the
+  // queue is "the part with a deadline" — which was wrong the moment a stage
+  // above began ENQUEUING. The notification sweep now hands its work to the
+  // queue, and draining before it ran meant everything it queued waited for
+  // tomorrow's tick. On a plan with one cron a day that is a day's delay
+  // introduced by ordering alone.
+  //
+  // Bounded twice: fifty jobs and a deadline well inside the function ceiling.
+  // Whatever is left is still due next tick, and a job whose runner is killed
+  // mid-handler is reclaimed by the stale-lock path rather than parked.
+  await drain(HANDLERS, {
+    maxJobs: 50,
+    deadline: new Date(Date.now() + 60_000),
+  }).catch((error) => {
+    reportIssue("the job queue drain failed", error, {
+      subsystem: "execution",
+      stage: "cron.jobs",
+    });
+  });
 
   return NextResponse.json({
     // A stage that FAILED is reported as failed, not as a stage that found

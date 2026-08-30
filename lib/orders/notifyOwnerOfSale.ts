@@ -3,6 +3,7 @@ import { sendEmail, isEmailConfigured } from "@/lib/email/sendEmail";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { formatMoney } from "@/lib/money";
 import type { EmailSender } from "./orderConfirmation";
+import { runOnce } from "@/lib/outbound/runOnce";
 
 // Telling the OWNER a sale happened (2026-08-22).
 //
@@ -54,8 +55,17 @@ export type OwnerNotificationOutcome =
   | { sent: false; reason: "already_sent" }
   /** No Resend credential. An operator problem, not the owner's. */
   | { sent: false; reason: "email_not_configured" }
-  /** The provider rejected it. The claim is released so a retry can try again. */
+  /** The provider rejected it. Nothing landed, so trying again is safe. */
   | { sent: false; reason: "send_failed"; detail: string }
+  /**
+   * WE DO NOT KNOW WHETHER THE OWNER GOT IT.
+   *
+   * New with the runOnce migration, and it was always the real gap: the old
+   * claim released on a caught failure but NOT on a crash, so a process dying
+   * mid-send left ownerNotifiedAt set forever. The owner was never told and
+   * nothing anywhere said so. That silence now has a name.
+   */
+  | { sent: false; reason: "indeterminate" }
   /** No such order for that store. */
   | { sent: false; reason: "not_found" };
 
@@ -142,53 +152,56 @@ export async function notifyOwnerOfSale(
     return { sent: false, reason: "email_not_configured" };
   }
 
-  const claimed = await prisma.order.updateMany({
-    where: { id: orderId, storeId, ownerNotifiedAt: null },
-    data: { ownerNotifiedAt: new Date() },
-  });
-  if (claimed.count === 0) {
-    // Two different reasons, told apart rather than collapsed: already sent, or
-    // no such order for this store. An operator reading "already notified" for
-    // an order that does not exist would be looking in entirely the wrong place.
-    const exists = await prisma.order.findFirst({ where: { id: orderId, storeId }, select: { id: true } });
-    return exists ? { sent: false, reason: "already_sent" } : { sent: false, reason: "not_found" };
-  }
-
+  // ============ READ FIRST, THEN RUN ONCE ==========================
+  //
+  // The claim column used to be the idempotency and is now the business fact:
+  // "the owner was told, at this time". Exactly-once belongs to runOnce, which
+  // brings the state this could never represent — a crash mid-send left the
+  // column set forever and the owner silently un-notified.
+  //
+  // Mirrors notificationClaim.ts deliberately, as this file always has.
   const order = await prisma.order.findFirst({
     where: { id: orderId, storeId },
     include: { store: { select: { name: true, currency: true, user: { select: { email: true } } } } },
   });
-  if (!order) {
-    // Deleted between the claim and the read. Nothing to release.
-    return { sent: false, reason: "not_found" };
-  }
+  if (!order) return { sent: false, reason: "not_found" };
 
-  // NO "the store has no owner address" BRANCH, deliberately. The first
-  // version had one, and it was defensive code for a state the schema makes
-  // impossible: Store.userId is required and User.email is a required String,
-  // so a committed order always has an owner with an address. A handled case
-  // that cannot occur reads as a real one and is never exercised.
-  //
-  // A blank address is still possible and needs no branch of its own — the
-  // provider rejects it, the catch below releases the claim, and it is reported
-  // as send_failed carrying the provider's own reason. One path, already tested.
-  try {
-    await send(buildOwnerSaleEmail({ order, store: order.store, ownerEmail: order.store.user.email }));
-    return { sent: true };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "unknown error";
-    await prisma.order
-      .update({ where: { id: orderId, storeId }, data: { ownerNotifiedAt: null } })
-      .catch(() => {
-        // If even the release fails the order stays marked and this owner does
-        // not get a second attempt. Reported below either way.
+  const outcome = await runOnce({
+    key: `order-notification:ownerNotifiedAt:${orderId}`,
+    operation: "email.ownerNotifiedAt",
+    storeId,
+    perform: async () => {
+      await send(buildOwnerSaleEmail({ order, store: order.store, ownerEmail: order.store.user.email }));
+      return { result: { sent: true } };
+    },
+  });
+
+  switch (outcome.status) {
+    case "performed":
+      await prisma.order
+        .updateMany({ where: { id: orderId, storeId, ownerNotifiedAt: null }, data: { ownerNotifiedAt: new Date() } })
+        .catch(() => {
+          reportIssue(`owner notification sent for ${orderId} but the claim column could not be written`, null, {
+            subsystem: "email", stage: "order.owner_notification.record", storeId, extra: { orderId },
+          });
+        });
+      return { sent: true };
+
+    case "replayed":
+    case "in_progress":
+      return { sent: false, reason: "already_sent" };
+
+    case "indeterminate":
+      reportIssue(`owner notification for ${orderId} is indeterminate`, null, {
+        subsystem: "email", stage: "order.owner_notification.indeterminate", storeId, extra: { orderId },
       });
-    reportIssue(`owner notification could not be sent for ${orderId}`, error, {
-      subsystem: "email",
-      stage: "order.owner_notification.send",
-      storeId,
-      extra: { orderId, detail },
-    });
-    return { sent: false, reason: "send_failed", detail };
+      return { sent: false, reason: "indeterminate" };
+
+    case "failed":
+      reportIssue(`owner notification could not be sent for ${orderId}`, new Error(outcome.error), {
+        subsystem: "email", stage: "order.owner_notification.send", storeId,
+        extra: { orderId, detail: outcome.error },
+      });
+      return { sent: false, reason: "send_failed", detail: outcome.error };
   }
 }

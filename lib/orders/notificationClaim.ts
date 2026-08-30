@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { isEmailConfigured, sendEmail } from "@/lib/email/sendEmail";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import type { EmailSender } from "./orderConfirmation";
+import { runOnce } from "@/lib/outbound/runOnce";
 
 // TELLING SOMEBODY SOMETHING, EXACTLY ONCE.
 //
@@ -36,7 +37,16 @@ export type NotificationOutcome =
   | { sent: false; reason: "email_not_configured" }
   | { sent: false; reason: "already_sent" }
   | { sent: false; reason: "not_found" }
-  | { sent: false; reason: "send_failed"; detail: string };
+  | { sent: false; reason: "send_failed"; detail: string }
+  /**
+   * WE DO NOT KNOW WHETHER THE CUSTOMER GOT IT.
+   *
+   * New with the runOnce migration, and it was always the real gap: the old
+   * claim released on a caught failure but NOT on a crash, so a process dying
+   * mid-send left the column set forever. The customer was never emailed and
+   * nothing anywhere said so. That silence is now a state with a name.
+   */
+  | { sent: false; reason: "indeterminate" };
 
 export interface ClaimAndSendInput<T> {
   orderId: string;
@@ -62,7 +72,8 @@ export async function claimAndSend<T>(input: ClaimAndSendInput<T>): Promise<Noti
   const { orderId, storeId, claim, load, build, label } = input;
   const send = input.send ?? sendEmail;
 
-  // Configuration is checked BEFORE claiming — see step 1 above.
+  // Configuration is checked BEFORE anything is claimed — see step 1 above.
+  // Unchanged by the migration, and still the first thing that happens.
   if (!isEmailConfigured()) {
     reportIssue(`order ${orderId} — ${label} was not sent because email is not configured`, null, {
       subsystem: "email",
@@ -72,40 +83,74 @@ export async function claimAndSend<T>(input: ClaimAndSendInput<T>): Promise<Noti
     return { sent: false, reason: "email_not_configured" };
   }
 
-  const claimed = await prisma.order.updateMany({
-    where: { id: orderId, storeId, [claim]: null },
-    data: { [claim]: new Date() },
-  });
-  if (claimed.count === 0) {
-    // Nothing was claimed. Two very different reasons, told apart rather than
-    // collapsed: already notified, or no such order for this store at all.
-    const exists = await prisma.order.findFirst({
-      where: { id: orderId, storeId },
-      select: { id: true },
-    });
-    return exists ? { sent: false, reason: "already_sent" } : { sent: false, reason: "not_found" };
-  }
-
+  // ============ THE ORDER IS READ BEFORE THE CLAIM NOW ==============
+  //
+  // It used to be read after, to avoid the work when already notified. The
+  // sweep already filters on the column being null, so that saving was
+  // theoretical — and reading first keeps "no such order" a distinct outcome
+  // rather than something that has to be inferred from a thrown error inside
+  // the send.
   const loaded = await load();
-  if (!loaded) {
-    // Deleted between the claim and the read. Release it: a row that comes
-    // back (it will not) should not be permanently marked.
-    await releaseClaim(orderId, storeId, claim);
-    return { sent: false, reason: "not_found" };
-  }
+  if (!loaded) return { sent: false, reason: "not_found" };
 
-  try {
-    await send(build(loaded));
-    return { sent: true };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "unknown error";
-    await releaseClaim(orderId, storeId, claim);
-    reportIssue(`order ${orderId} — ${label} could not be sent`, error, {
-      subsystem: "email",
-      stage: `order.${claim}.send`,
-      storeId,
-    });
-    return { sent: false, reason: "send_failed", detail };
+  // ============ IDEMPOTENCY MOVED, THE COLUMN DID NOT ===============
+  //
+  // The claim column used to BE the idempotency. It is now the business fact —
+  // "the customer was told, at this time" — which is what the owner-facing
+  // surfaces read it for, and it is written only after a send that really
+  // happened.
+  //
+  // Exactly-once is runOnce's job, and it brings the state the column could
+  // never represent: a crash mid-send is indeterminate rather than silently
+  // claimed forever.
+  const outcome = await runOnce({
+    key: `order-notification:${claim}:${orderId}`,
+    operation: `email.${claim}`,
+    storeId,
+    perform: async () => {
+      await send(build(loaded));
+      // An email has no provider-side object to point at, so there is no
+      // externalRef. Honest null rather than an invented one.
+      return { result: { sent: true } };
+    },
+  });
+
+  switch (outcome.status) {
+    case "performed":
+      await prisma.order
+        .updateMany({ where: { id: orderId, storeId, [claim]: null }, data: { [claim]: new Date() } })
+        .catch(() => {
+          // The email went. Failing to record that is worth reporting and is
+          // not worth telling the caller the send failed — it did not.
+          reportIssue(`order ${orderId} — ${label} sent but the claim column could not be written`, null, {
+            subsystem: "email",
+            stage: `order.${claim}.record`,
+            storeId,
+          });
+        });
+      return { sent: true };
+
+    case "replayed":
+    case "in_progress":
+      // Already sent, or being sent right now by somebody else. The caller's
+      // response to both is identical and always has been.
+      return { sent: false, reason: "already_sent" };
+
+    case "indeterminate":
+      reportIssue(`order ${orderId} — ${label} is indeterminate; the customer may or may not have it`, null, {
+        subsystem: "email",
+        stage: `order.${claim}.indeterminate`,
+        storeId,
+      });
+      return { sent: false, reason: "indeterminate" };
+
+    case "failed":
+      reportIssue(`order ${orderId} — ${label} could not be sent`, new Error(outcome.error), {
+        subsystem: "email",
+        stage: `order.${claim}.send`,
+        storeId,
+      });
+      return { sent: false, reason: "send_failed", detail: outcome.error };
   }
 }
 

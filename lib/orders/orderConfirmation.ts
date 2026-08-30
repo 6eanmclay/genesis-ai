@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { formatMoney } from "@/lib/money";
 import { sendEmail, isEmailConfigured } from "@/lib/email/sendEmail";
 import { reportIssue } from "@/lib/observability/reportIssue";
+import { runOnce } from "@/lib/outbound/runOnce";
 
 // Telling the customer their order exists (2026-08-20).
 //
@@ -74,8 +75,18 @@ export type ConfirmationOutcome =
   | { sent: false; reason: "already_sent" }
   /** No Resend credential. An operator problem, not a customer one. */
   | { sent: false; reason: "email_not_configured" }
-  /** The provider rejected it. The claim is released so a retry can try again. */
+  /** The provider rejected it. Nothing landed, so a retry is safe. */
   | { sent: false; reason: "send_failed"; detail: string }
+  /**
+   * WE DO NOT KNOW WHETHER THE CUSTOMER GOT IT.
+   *
+   * The fourth private idempotency implementation in this codebase, and the one
+   * the migration nearly missed — found by a test asserting the crash case
+   * against the sweep. Like the other three, the old claim released on a CAUGHT
+   * failure but not on a crash: a process dying mid-send left
+   * confirmationSentAt set forever with nobody emailed and nothing saying so.
+   */
+  | { sent: false; reason: "indeterminate" }
   /**
    * No such order for that store — it rolled back, was deleted, or the
    * order/store pair does not match.
@@ -214,18 +225,11 @@ export async function sendOrderConfirmation(
     return { sent: false, reason: "email_not_configured" };
   }
 
-  const claimed = await prisma.order.updateMany({
-    where: { id: orderId, storeId, confirmationSentAt: null },
-    data: { confirmationSentAt: new Date() },
-  });
-  if (claimed.count === 0) {
-    // Nothing was claimed. Two very different reasons, told apart rather than
-    // collapsed: the row exists and was already confirmed, or there is no such
-    // order for this store at all.
-    const exists = await prisma.order.findFirst({ where: { id: orderId, storeId }, select: { id: true } });
-    return exists ? { sent: false, reason: "already_sent" } : { sent: false, reason: "not_found" };
-  }
-
+  // ============ READ FIRST, THEN RUN ONCE ==========================
+  //
+  // The claim column is now the business fact — "the customer was sent their
+  // receipt, at this time" — and exactly-once belongs to runOnce, which can
+  // represent the state a column never could.
   const order = await prisma.order.findFirst({
     where: { id: orderId, storeId },
     include: {
@@ -239,29 +243,44 @@ export async function sendOrderConfirmation(
       },
     },
   });
-  if (!order) {
-    // Deleted between the claim and the read. Nothing to release.
-    return { sent: false, reason: "not_found" };
-  }
+  if (!order) return { sent: false, reason: "not_found" };
 
-  try {
-    await send(buildConfirmationEmail({ order, store: order.store }));
-    return { sent: true };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "unknown error";
-    // Release the claim so a redelivery can try again.
-    await prisma.order
-      .update({ where: { id: orderId, storeId }, data: { confirmationSentAt: null } })
-      .catch(() => {
-        // If even the release fails, the order stays marked and this customer
-        // does not get a second attempt. Reported below either way.
+  const outcome = await runOnce({
+    key: `order-notification:confirmationSentAt:${orderId}`,
+    operation: "email.confirmationSentAt",
+    storeId,
+    perform: async () => {
+      await send(buildConfirmationEmail({ order, store: order.store }));
+      return { result: { sent: true } };
+    },
+  });
+
+  switch (outcome.status) {
+    case "performed":
+      await prisma.order
+        .updateMany({ where: { id: orderId, storeId, confirmationSentAt: null }, data: { confirmationSentAt: new Date() } })
+        .catch(() => {
+          reportIssue(`order ${orderId} was confirmed but the claim column could not be written`, null, {
+            subsystem: "email", stage: "order.confirmation.record", storeId, extra: { orderId },
+          });
+        });
+      return { sent: true };
+
+    case "replayed":
+    case "in_progress":
+      return { sent: false, reason: "already_sent" };
+
+    case "indeterminate":
+      reportIssue(`order confirmation for ${orderId} is indeterminate`, null, {
+        subsystem: "email", stage: "order.confirmation.indeterminate", storeId, extra: { orderId },
       });
-    reportIssue(`order confirmation could not be sent for ${orderId}`, error, {
-      subsystem: "email",
-      stage: "order.confirmation.send",
-      storeId,
-      extra: { orderId, detail },
-    });
-    return { sent: false, reason: "send_failed", detail };
+      return { sent: false, reason: "indeterminate" };
+
+    case "failed":
+      reportIssue(`order confirmation could not be sent for ${orderId}`, new Error(outcome.error), {
+        subsystem: "email", stage: "order.confirmation.send", storeId,
+        extra: { orderId, detail: outcome.error },
+      });
+      return { sent: false, reason: "send_failed", detail: outcome.error };
   }
 }
