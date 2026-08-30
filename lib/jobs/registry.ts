@@ -1,4 +1,5 @@
 import type { JobHandler } from "./queue";
+import { pruneTelemetry } from "@/lib/telemetry/retention";
 
 // WHICH HANDLER RUNS WHICH KIND.
 //
@@ -37,7 +38,7 @@ import type { JobHandler } from "./queue";
  * Adding one here without a handler below is a failing test, which is the
  * point — the alternative is discovering it from a dead-lettered job.
  */
-export const JOB_KINDS = ["noop"] as const;
+export const JOB_KINDS = ["noop", "telemetry.prune"] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -53,6 +54,29 @@ export type JobKind = (typeof JOB_KINDS)[number];
  */
 const noop: JobHandler = async () => {};
 
+/**
+ * Age telemetry out.
+ *
+ * REGISTERED BUT NOT SCHEDULED. Nothing enqueues it, so it never runs — the
+ * kind exists so that enabling retention is a decision about a window rather
+ * than a build, and so the handler is written and tested before the day
+ * somebody needs it in a hurry.
+ *
+ * It touches ProductEvent alone. ExecutionLog, SecuritySignal, the Growth Point
+ * ledger, OutboundOperation, StorageEvent and WebhookDelivery are authoritative
+ * and are never pruned by this — see lib/telemetry/retention.ts.
+ */
+const pruneTelemetryJob: JobHandler = async ({ job }) => {
+  const payload = (job.payload ?? {}) as { retentionDays?: number; apply?: boolean };
+  await pruneTelemetry({
+    retentionDays: payload.retentionDays,
+    // Defaults to a DRY RUN even here. A scheduled job that deletes by default
+    // is one nobody reviewed before it ran.
+    apply: payload.apply === true,
+  });
+};
+
 export const HANDLERS: Record<string, JobHandler> = {
   noop,
+  "telemetry.prune": pruneTelemetryJob,
 };

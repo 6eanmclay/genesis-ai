@@ -1,6 +1,7 @@
 import { prismaSystem } from "@/lib/prisma";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { correlationId } from "@/lib/observability/correlation";
+import { emitAsync } from "@/lib/telemetry/emit";
 
 // THE RECORD OF WHAT A PROVIDER SENT US.
 //
@@ -79,6 +80,12 @@ export async function recordDelivery(input: {
           where: { id: existing.id },
           data: { attempts: { increment: 1 } },
         });
+        emitAsync({
+          name: "webhook.received", actorKind: "provider", storeId: input.storeId,
+          outcome: "success",
+          // A provider stuck in a retry loop is invisible without this.
+          metadata: { provider: input.provider, duplicate: true },
+        });
         return { id: existing.id, duplicate: true };
       }
     }
@@ -102,6 +109,11 @@ export async function recordDelivery(input: {
         attempts: 1,
       },
       select: { id: true },
+    });
+    emitAsync({
+      name: input.signatureValid ? "webhook.received" : "webhook.rejected",
+      actorKind: "provider", storeId: input.storeId, outcome: input.signatureValid ? "success" : "failure",
+      metadata: { provider: input.provider, duplicate: false },
     });
     return { id: row.id, duplicate: false };
   } catch (error) {

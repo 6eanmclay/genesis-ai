@@ -4,6 +4,7 @@ import { prisma, prismaSystem } from "@/lib/prisma";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { resolveAllowance } from "./allowance";
 import { summariseOwnerStorage, type OwnedObject, type OwnerStorage } from "./ownerStorage";
+import { emitAsync } from "@/lib/telemetry/emit";
 
 // THE LEDGER — one row per blob, written before the blob.
 //
@@ -293,6 +294,16 @@ export async function reserveBatch(
           ? ("would_exceed" as const)
           : null;
 
+      if (wouldRefuse) {
+        // EMITTED WHETHER OR NOT IT REFUSED. That is the point: this measures
+        // how often enforcement WOULD fire, on real traffic, before anybody is
+        // told no. Turning it on then stops being a guess.
+        emitAsync({
+          name: "storage.refused", actorKind: "system", storeId,
+          outcome: "failure",
+          metadata: { reason: wouldRefuse, enforced: enforce, batchBytes },
+        });
+      }
       if (wouldRefuse && enforce) {
         return { ok: false as const, reason: wouldRefuse, usage, batchBytes };
       }
@@ -599,6 +610,16 @@ export async function recordActual(
       data: { touchedAt: now },
     });
   }
+
+  emitAsync({
+    name: "storage.recorded", actorKind: "system", storeId: input.storeId,
+    outcome: "success",
+    metadata: {
+      prefix: row.pathname.slice(0, row.pathname.indexOf("/") + 1),
+      lifecycle: row.lifecycle,
+      bytes: input.sizeInBytes,
+    },
+  });
 
   const declared = row.declaredBytes ?? 0;
   const overage = input.sizeInBytes - declared;

@@ -2195,6 +2195,25 @@ model ProductEvent {
   correlationId String?
 
   @@index([correlationId])
+  /**
+   * Which part of Genesis did this — execution, storage, jobs, webhooks,
+   * integrations, creation, business, j4, api.
+   *
+   * SEPARATE FROM `category` on purpose. That column is a product-analytics
+   * taxonomy answering "what was the person doing"; this one answers "which
+   * system acted". Putting both in one column makes both wrong.
+   */
+  subsystem String?
+  /**
+   * Who set it going: user | genesis | system | provider | anonymous.
+   *
+   * userId alone could not tell "J4 did this" from "nobody was signed in",
+   * which are opposite facts about the same null.
+   */
+  actorKind String?
+
+  @@index([subsystem, createdAt])
+  @@index([name, createdAt])
 }
 
 // Phase 3 Milestone 1 (J4 Foundation) — J4's canonical, provider-agnostic

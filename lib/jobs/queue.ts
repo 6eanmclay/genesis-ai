@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { prismaSystem } from "@/lib/prisma";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { correlationId, withCorrelation } from "@/lib/observability/correlation";
+import { emitAsync } from "@/lib/telemetry/emit";
 
 // WORK THAT SURVIVES THE PROCESS THAT WANTED IT DONE.
 //
@@ -298,6 +299,7 @@ export async function drain(
     if (!job) break;
     result.claimed++;
 
+    const startedAt = Date.now();
     const handler = handlers[job.kind];
     if (!handler) {
       // A kind nobody registered. NOT dead-lettered on the spot: the likeliest
@@ -322,10 +324,24 @@ export async function drain(
       );
       await complete(job.id, now);
       result.completed++;
+      // Is queued work draining, and how long does each kind take?
+      emitAsync({
+        name: "job.completed", actorKind: "system", storeId: job.storeId,
+        outcome: "success", durationMs: Date.now() - startedAt,
+        metadata: { kind: job.kind, attempts: job.attempts },
+        attemptKey: job.idempotencyKey,
+      });
     } catch (error) {
       const outcome = await fail(job, error, now);
       if (outcome.retrying) result.retried++;
       else result.deadLettered++;
+      emitAsync({
+        name: outcome.retrying ? "job.failed" : "job.dead_lettered",
+        actorKind: "system", storeId: job.storeId, outcome: "failure",
+        durationMs: Date.now() - startedAt,
+        metadata: { kind: job.kind, attempts: job.attempts, willRetry: outcome.retrying },
+        attemptKey: job.idempotencyKey,
+      });
     }
   }
 

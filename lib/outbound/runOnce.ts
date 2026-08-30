@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prismaSystem } from "@/lib/prisma";
 import { correlationId } from "@/lib/observability/correlation";
 import { reportIssue } from "@/lib/observability/reportIssue";
+import { emitAsync } from "@/lib/telemetry/emit";
 
 // AN EXTERNAL SIDE EFFECT, PERFORMED ONCE.
 //
@@ -113,6 +114,14 @@ export async function runOnce<T>(input: RunOnceInput<T>): Promise<OutboundOutcom
       // THE REPLAY. The stored answer, not a second call — a caller retrying
       // must see what the first attempt produced, or downstream logic branches
       // on a different result than the one that actually took effect.
+      // PROOF IDEMPOTENCY IS WORKING. A retry that correctly did not repeat
+      // an external effect is the single most reassuring event this system can
+      // emit, and it was previously invisible.
+      emitAsync({
+        name: "outbound.replayed", actorKind: "system", storeId: existing.storeId,
+        outcome: "success", metadata: { operation: existing.operation },
+        attemptKey: input.key,
+      });
       return {
         status: "replayed",
         result: existing.result as T,
@@ -148,6 +157,11 @@ export async function runOnce<T>(input: RunOnceInput<T>): Promise<OutboundOutcom
         null,
         { subsystem: "execution", stage: "outbound.indeterminate", storeId: input.storeId ?? undefined },
       );
+      emitAsync({
+        name: "outbound.indeterminate", actorKind: "system", storeId: input.storeId,
+        outcome: "failure", metadata: { operation: existing.operation },
+        attemptKey: input.key,
+      });
       return { status: "indeterminate", key: input.key, operation: existing.operation };
     }
 
@@ -205,6 +219,7 @@ async function perform<T>(
   input: RunOnceInput<T>,
   now: Date,
 ): Promise<OutboundOutcome<T>> {
+  const startedAt = Date.now();
   try {
     const performed = await input.perform();
     await prismaSystem.outboundOperation.update({
@@ -219,6 +234,12 @@ async function perform<T>(
         claimedBy: null,
         lastError: null,
       },
+    });
+    emitAsync({
+      name: "outbound.performed", actorKind: "system", storeId: input.storeId,
+      outcome: "success", durationMs: Date.now() - startedAt,
+      metadata: { operation: input.operation, hasExternalRef: Boolean(performed.externalRef) },
+      attemptKey: input.key,
     });
     return {
       status: "performed",

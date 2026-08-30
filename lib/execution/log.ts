@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { correlationId } from "@/lib/observability/correlation";
 import { CURRENT_EXECUTION_SCHEMA_VERSION, type ExecutionResult } from "./types";
+import { emitAsync } from "@/lib/telemetry/emit";
 
 // The only place ExecutionLog gets written. Append-only, by convention: this
 // file only ever calls .create() — never .update() — so a logical request's
@@ -20,6 +21,27 @@ export async function recordExecution<TMetadata>(
   // ordinary client, so every existing caller is unchanged.
   client: Pick<typeof prisma, "executionLog"> = prisma
 ): Promise<{ id: string }> {
+  // ============ TELEMETRY IS NOT THE AUDIT TRAIL ==================
+  //
+  // The row below is authoritative and stays exactly as it is. This is the
+  // observation beside it: it says an action happened and how it turned out, so
+  // "what is Genesis doing" is answerable without reading ExecutionLog, and it
+  // carries the same correlationId so the two join.
+  emitAsync({
+    name: "execution.completed",
+    actorKind: result.actorType === "USER" ? "user" : result.actorType === "GENESIS" ? "genesis" : "system",
+    storeId: result.storeId,
+    userId: result.actorId,
+    outcome: result.status === "SUCCESS" ? "success" : "failure",
+    attemptKey: result.executionId,
+    metadata: {
+      action: result.action,
+      status: result.status,
+      verified: result.verified,
+      retryable: result.retryable,
+    },
+  });
+
   return client.executionLog.create({
     data: {
       executionId: result.executionId,

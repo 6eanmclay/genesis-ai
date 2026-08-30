@@ -91,8 +91,21 @@ async function main(): Promise<void> {
     // THE WHOLE POINT: one id, asked of five different tables.
     eq("the execution row joins the chain",
       await prismaSystem.executionLog.count({ where: { correlationId: traced } }), 1);
-    eq("the telemetry event joins it",
-      await prismaSystem.productEvent.count({ where: { correlationId: traced } }), 1);
+    // ============ NOT AN EXACT COUNT ANY MORE (2026-08-30) =========
+    //
+    // This asserted exactly one and broke when Item 3 instrumented execution
+    // and outbound — which now emit INSIDE this same chain, so three rows is
+    // correct and one would mean the instrumentation had stopped.
+    //
+    // The property was never "one row". It is that the event this test emitted
+    // is in the chain, and that everything in the chain shares the id.
+    const telemetry = await prismaSystem.productEvent.findMany({
+      where: { correlationId: traced }, select: { name: true, correlationId: true },
+    });
+    assert("the telemetry event joins it",
+      telemetry.some((e) => e.name === "test.event"), JSON.stringify(telemetry.map((e) => e.name)));
+    assert("and everything in the chain shares the id",
+      telemetry.length > 0 && telemetry.every((e) => e.correlationId === traced), `${telemetry.length}`);
     eq("the security signal joins it",
       (await signalsForCorrelation(traced)).length, 1);
     eq("the webhook delivery joins it",
