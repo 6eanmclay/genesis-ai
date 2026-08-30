@@ -52,6 +52,10 @@ export const SIGNAL_KINDS = {
   rateLimited: "ratelimit.tripped",
   /** A tool or execution behaved in a way worth a second look. */
   executionAnomaly: "execution.anomaly",
+  /** A person re-ran a failed delivery. Deliberate, and worth a record. */
+  webhookReplayed: "webhook.replayed",
+  /** Somebody tried to replay a delivery whose signature never verified. */
+  webhookReplayRefused: "webhook.replay_refused",
 } as const;
 
 export type SignalKind = (typeof SIGNAL_KINDS)[keyof typeof SIGNAL_KINDS];
