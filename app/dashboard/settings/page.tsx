@@ -15,6 +15,8 @@ import {
   dismissAttentionCard,
 } from "../ai-actions";
 import { AttentionCardList } from "../AttentionCardList";
+import { storageForOwner } from "@/lib/storage/ledger";
+import { EMPTY_STORAGE_MESSAGE, usageSentence } from "@/lib/storage/ownerStorage";
 
 // Product Vision Phase 1 — business identity (name/tagline/description,
 // brand story/mission/etc., and the update_brand_identity/
@@ -40,9 +42,13 @@ export async function SettingsScreen({ slug, basePath }: { slug?: string; basePa
   const { store } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
-  const [pendingApprovals, dismissedCardIds] = await Promise.all([
+  const [pendingApprovals, dismissedCardIds, storage] = await Promise.all([
     getPendingApprovals(store.id),
     getDismissedCardIds(store.id),
+    // Landed objects belonging to THIS business, and nothing else. No allowance
+    // is read on this path; see lib/storage/ownerStorage.ts for why there is no
+    // denominator to render even if somebody wanted one.
+    storageForOwner(store.id),
   ]);
   const storeContentApprovals = pendingApprovals.filter((a) => a.actionType === "update_store_content");
   const designDirectionApprovals = pendingApprovals.filter(
@@ -149,6 +155,37 @@ export async function SettingsScreen({ slug, basePath }: { slug?: string; basePa
           </div>
         </>
       )}
+
+      {/* ============ STORAGE (2026-08-30) ============================
+            Usage only. No bar, no percentage, no denominator, no mention of a
+            plan — sixteen of sixteen businesses are on no plan, and the
+            allowance the ledger borrows for its own arithmetic is not an
+            entitlement anybody has been granted. See lib/storage/ownerStorage.ts.
+
+            The two categories are the ledger's own lifecycle classes, said in
+            words: what Genesis could recreate, and what it could not. That is
+            the one distinction that means something to the person who owns the
+            files. */}
+      <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">Storage</h2>
+      <div className="mt-3 max-w-md rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+        {storage.empty ? (
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">{EMPTY_STORAGE_MESSAGE}</p>
+        ) : (
+          <>
+            <p className="text-sm text-black dark:text-zinc-50">{usageSentence(storage)}</p>
+            <div className="mt-4 flex flex-col gap-2">
+              {storage.categories.map((category) => (
+                <div key={category.lifecycle} className="flex items-baseline justify-between gap-4">
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">{category.label}</span>
+                  <span className="text-xs tabular-nums text-zinc-500">
+                    {category.fileCount === 1 ? "1 file" : `${category.fileCount} files`} · {category.human}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
 
       {designDirection && Object.values(designDirection).some(Boolean) && (
         <>

@@ -459,6 +459,8 @@ model Store {
   activeForUsers            User[]                     @relation("ActiveBusiness")
   plan                      Plan?                      @relation(fields: [planId], references: [id], onDelete: SetNull)
   products                  Product[]
+  temporaryAssets           TemporaryAsset[]
+  storageObjects            StorageObject[]
   visions                   StoreGeneration[]
   orders                    Order[]
   messages                  StoreMessage[]
@@ -1212,6 +1214,142 @@ enum SourcedProductStatus {
 // showing the correct primary image, with zero migration needed on their
 // side. This table is the new, additional source of truth for ordering
 // and the additional (non-primary) images only.
+// A BLOB THAT DOES NOT BELONG TO ANYBODY YET.
+//
+// ============ WHY A TABLE, AND WHY A NARROW ONE (2026-08-29) ===========
+//
+// STORAGE.md section 5: creation artefacts must be discarded when creation
+// fails, "recoverable by a sweep even when the code that created it never got
+// to run its own cleanup, because the case that leaks is the one that did not
+// reach the finally".
+//
+// So a temporary artefact is a ROW, written before the blob exists. A crash
+// anywhere after that leaves evidence the sweep can act on.
+//
+// THIS TABLE IS DELIBERATELY NOT A GENERAL LEDGER. It holds only artefacts
+// created during one attempt at making something, and the deletion path reads
+// nothing else — so a customer's own upload is not merely protected from
+// deletion, it is not representable in the code that deletes. The general
+// accounting ledger is Slice 2 and is a separate decision.
+model TemporaryAsset {
+  id          String    @id @default(cuid())
+  storeId     String
+  // The blob's public URL, once it has one. Unique so a retry cannot record
+  // the same object twice.
+  url         String?   @unique
+  // The key it was written under. Recorded BEFORE the upload, because a row
+  // with no blob is harmless and a blob with no row is the leak.
+  pathname    String    @unique
+  // Which prefix class this is — "printfile" or "mockup" today. Checked again
+  // at deletion, so a corrupted row cannot reach another prefix.
+  kind        String
+  // What it cost, known from the composed buffer rather than asked of the
+  // provider. Null when the upload never completed.
+  sizeInBytes Int?
+  // Null while temporary. Set once a verified product adopted it, after which
+  // no sweep may touch it.
+  promotedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  // The sweep's own query: unpromoted, old enough.
+  @@index([promotedAt, createdAt])
+  @@index([storeId, promotedAt])
+}
+
+
+// ONE ROW PER BLOB — the accounting truth.
+//
+// ============ WHY THIS EXISTS (Slice 2, 2026-08-29) ====================
+//
+// No blob path contains a store id and no file size was recorded anywhere, so
+// "how much is this business using?" could only be answered by listing every
+// blob in the platform and re-scanning the whole schema for references. Fine
+// for an operator report; useless for a page load, and impossible for a
+// preflight that must answer before an upload starts.
+//
+// The row is written BEFORE the blob. A row with no blob is harmless —
+// reconciliation removes it. A blob with no row is invisible, and invisible is
+// the leak this closes.
+//
+// NOT the deletion-scope table. TemporaryAsset stays that, unchanged from
+// Slice 1, and joins here by pathname.
+model StorageObject {
+  id            String    @id @default(cuid())
+  // The key. Also the join to TemporaryAsset.
+  pathname      String    @unique
+  // Null until the upload returns.
+  url           String?   @unique
+  // NULLABLE ON PURPOSE. "I do not know who owns this" has to be
+  // representable, or the backfill would be forced to guess. 36 of today's 327
+  // blobs are in exactly that state.
+  storeId       String?
+  // owner | unattributed | ambiguous | platform — how the storeId came to be
+  // believed, kept separate from the id itself.
+  attribution   String    @default("unattributed")
+  // permanent | derived | temporary | platform — STORAGE.md §6.
+  lifecycle     String
+  // Stored rather than derived at read time, so per-class sums stay indexed.
+  prefix        String
+  // Which code path made it. With lifecycle this IS the declaration
+  // STORAGE.md item 7 requires of every new blob path.
+  source        String
+  // One upload batch, so it expires, rolls back and reports as one thing.
+  batchId       String?
+  // What the client SAID it would be. Untrusted; holds space only, and is the
+  // hard authorization ceiling for the batch.
+  declaredBytes Int?
+  // What it actually was. Wins over declaredBytes whenever present, always —
+  // never under-recorded to make a number look healthier.
+  sizeInBytes   Int?
+  contentType   String?
+  createdAt     DateTime  @default(now())
+  // Separates "reserved" from "exists". The preflight needs both.
+  uploadedAt    DateTime?
+  // Last activity on this row's batch. Expiry runs from here, not createdAt,
+  // so a hundred photos over a slow connection are not cut off mid-upload.
+  touchedAt     DateTime  @default(now())
+  // When reconciliation last saw it in the provider listing.
+  lastSeenAt    DateTime?
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, uploadedAt])
+  @@index([storeId, uploadedAt, touchedAt])
+  @@index([batchId])
+  @@index([lifecycle, createdAt])
+  @@index([lastSeenAt])
+}
+
+// WHAT HAPPENED TO BYTES THAT ARE NO LONGER HERE. Append-only.
+//
+// Never updated, never deleted. StorageObject has no deletedAt: a row for a
+// blob that is gone is a second thing to reconcile, and reconciliation is the
+// hard part. The history lives here instead.
+model StorageEvent {
+  id          String   @id @default(cuid())
+  // NOT a foreign key. The object it describes is usually gone, and an FK
+  // would either block the delete or cascade the history away with it.
+  pathname    String
+  // As believed at the time.
+  storeId     String?
+  // deleted | reconciled_missing | reconciled_orphan | reattributed |
+  // size_corrected | over_reservation
+  kind        String
+  sizeInBytes Int?
+  lifecycle   String?
+  // creation | reconciliation | owner | sweep — who decided.
+  actor       String
+  // A sentence, not a code.
+  reason      String
+  occurredAt  DateTime @default(now())
+
+  @@index([storeId, occurredAt])
+  @@index([pathname])
+  @@index([kind, occurredAt])
+}
+
 model ProductImage {
   id        String   @id @default(cuid())
   productId String
@@ -2475,6 +2613,11 @@ model Plan {
   // deferred value in this economy; the mechanism is real, this amount
   // just isn't decided yet.
   onboardingAllocation        Int?
+  // STORAGE.md §9, seeded 2026-08-29: Starter 5 GB, Growth 15 GB, Business
+  // Partner 50 GB. DATA rather than a constant so an allowance can change
+  // without a deploy. Nullable only so the column can be added before it is
+  // seeded; every real plan carries one.
+  includedStorageBytes        BigInt?
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 

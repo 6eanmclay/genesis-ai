@@ -37,7 +37,13 @@ export type Subsystem =
   // than borrowing "execution": a sign-in being throttled and a Genesis action
   // failing are different problems, read by different people, and a security
   // failure that hid inside execution noise is one nobody would go looking for.
-  | "security";
+  | "security"
+  // Storage lifecycle (2026-08-29). Its own subsystem rather than borrowing
+  // "execution": a blob that could not be reclaimed is an operator's problem
+  // about capacity, not a merchant's about a failed action — and a leak that
+  // hid inside execution noise is exactly the kind nobody goes looking for
+  // until a Create starts failing on a full account.
+  | "storage";
 
 export interface IssueContext {
   /** Which part of the system, for routing and alerting. */
