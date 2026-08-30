@@ -24,7 +24,7 @@ Creation Station's first surface is product design. Its second is social posts. 
     anymore", plus a saved normal platform combination.
 8.  The owner chooses Post Now, or Post Later with a date and time.
 9.  Growth Points are allocated when the posting job is CONFIRMED — never again when
-    a scheduled post executes.
+    a scheduled post executes. One platform costs 1, several cost 2.
 10. Saved preferences persist, so the trusted workflow becomes nearly one-click.
 ```
 
@@ -131,9 +131,16 @@ Adding a fifth platform is a card, not a new workflow. That is the test of wheth
 
 ## 5. What it costs, and when
 
-**SUPERSEDED 2026-08-29 — see section 5a for the current numbers (1 / 2 / +1). The lifecycle and the one-charge principle below still stand.**
+**Charged exactly once, at the commitment point** — when the owner presses Post Now, or confirms a scheduled post.
 
-**One Growth Point, charged exactly once, at the commitment point** — when the owner presses Post Now, or confirms a scheduled post.
+| What was created | Cost |
+|---|---|
+| A post for **one** platform | **1 Growth Point** |
+| The same content adapted for **several** platforms | **2 Growth Points** |
+
+*Repriced 2026-08-28, superseding the single flat point this section originally locked in `68971c4`.* Multi-platform is worth more because J4 is doing platform-specific adaptation rather than copying one caption everywhere — which is the whole differentiator this document exists to protect. It is 2 rather than 4 for the same reason it was 1 before: **the number of platforms is not the number of purchases.** See [GROWTH_POINTS.md](GROWTH_POINTS.md) for the full economy.
+
+*The optional Story amplification adds **+1 Growth Point**, and is covered in [section 5a](#5a-amplification-and-the-story-add-on) — it postdates this table rather than changing it.*
 
 **Not charged again when a scheduled post actually publishes.** The lifecycle:
 
@@ -143,16 +150,18 @@ DRAFT  ->  READY  ->  SCHEDULED  ->  PUBLISHED
 
 Once the owner has committed and the Growth Point is allocated, **the creation is paid for**. A later publishing failure must never charge a second one — Genesis retries and recovers instead. The owner bought the creation, not the attempt.
 
-**Four platforms is one charge.** Selecting more platforms must never turn one piece of content into four Growth Point charges. Writing four captions instead of one is J4 doing the job properly, not four purchases — and the carousel, where each platform gets its own card, is exactly where per-card metering would look natural and be wrong.
+**Four platforms is still not four charges.** Selecting more platforms must never turn one piece of content into a charge per platform. Writing four captions instead of one is J4 doing the job properly, not four purchases — and the carousel, where each platform gets its own card, is exactly where per-card metering would look natural and be wrong. The repricing above changed the number, not this rule.
 
-## 5a. Amplification, and what section 5 above no longer says
+## 5a. Amplification, and the Story add-on
 
-**Added 2026-08-29, and it supersedes part of section 5.**
+**Added 2026-08-29. It extends section 5 rather than superseding it — the
+posting prices there and the Story price here are one table in two places, and
+[GROWTH_POINTS.md](GROWTH_POINTS.md) is the economy they both belong to.**
 
-### The investment, corrected
+### The investment, in full
 
-Section 5 says "one Growth Point, charged exactly once". Sean's instruction on
-2026-08-29 replaces the number, not the principle:
+Section 5 above carries the posting half — 1 for one platform, 2 for several,
+locked 2026-08-28. This section adds the third row, approved 2026-08-29:
 
 | What | Investment |
 |---|---|
@@ -160,10 +169,10 @@ Section 5 says "one Growth Point, charged exactly once". Sean's instruction on
 | Two, three or four platforms | **2 Growth Points** |
 | Optional Story amplification | **+1 Growth Point** |
 
-**Section 5's actual principle survives intact**: four platforms is still *one
-creation*, not four charges. The fourth platform costs nothing more than the
-second, which is the whole point — choosing everywhere should feel like using
-Genesis properly rather than being metered.
+**Section 5's principle is unchanged**: four platforms is still *one creation*,
+not four charges. The fourth platform costs nothing more than the second, which
+is the whole point — choosing everywhere should feel like using Genesis properly
+rather than being metered.
 
 The word is **invest**, never spend, cost, fee or charge. That is not a
 preference for this feature; it is the rule Genesis's own chat prompt already

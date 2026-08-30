@@ -340,6 +340,8 @@ Not authorized to build. Recorded now because the separation above is cheap to h
 
 **Recorded 2026-08-28, from Sean. Creation Station + Growth Points.**
 
+*The full economy — every locked price, when the cost is disclosed, the per-action opt-out, and what happens when an owner runs short — is now [GROWTH_POINTS.md](GROWTH_POINTS.md). This section stays because it is about the separation of product from presentation, which is what makes two prices possible; the prices themselves live there.*
+
 > **Genesis makes the business easy to build. Growth Points let the owner level it up.**
 
 Product creation and product presentation are **two separate Growth Point actions**, because they are two separate objects — the separation recorded above is what makes this pricing possible at all.
