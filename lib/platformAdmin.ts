@@ -19,16 +19,6 @@ export { isAllowedPlatformAdmin };
 // have. Swappable later for a real column or table behind this one
 // function — see the AI Cost & Usage Infrastructure plan's own open
 // decision #2 — without touching any caller.
-function platformAdminEmails(): Set<string> {
-  const raw = process.env.PLATFORM_ADMIN_EMAILS ?? "";
-  return new Set(
-    raw
-      .split(",")
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
-
 export async function isPlatformAdmin(): Promise<boolean> {
   const session = await auth();
   return isAllowedPlatformAdmin(session?.user?.email, process.env.PLATFORM_ADMIN_EMAILS ?? "");

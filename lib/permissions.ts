@@ -233,6 +233,18 @@ export async function requireBusiness(
 
   const store = await prisma.store.findUnique({ where: { slug } });
   if (!store) {
+    // Matched to its page counterpart above: an unknown slug is recorded as
+    // unresolved rather than denied, because there is no business to attribute
+    // it to and "this does not exist" is a different fact from "not yours".
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzUnresolved,
+      severity: "warning",
+      actorKind: "user",
+      actorId: userId,
+      storeId: null,
+      surface: "requireBusinessAction:no-such-business",
+      detail: { slug, reason: "no business with that slug" },
+    });
     throw new Error("Store not found");
   }
 
@@ -292,13 +304,61 @@ export async function requireBusinessPage(
   }
   const userId = session.user.id;
 
+  // ============ A PAGE REFUSAL IS ALSO A REFUSAL (2026-08-30) =========
+  //
+  // Both action helpers recorded a signal on every denial and both PAGE
+  // helpers recorded none — so the most natural way to probe this platform,
+  // typing another business's slug into the URL, produced nothing at all in
+  // the security stream. The refusal was correct and invisible.
+  //
+  // Recorded before the throw in every branch, because notFound() and
+  // redirect() both throw and anything after them never runs. Awaited for the
+  // same reason requireStorePermission awaits: the request is already ending,
+  // and a function that exits mid-write would drop exactly the signal worth
+  // keeping. recordSignal never throws, so the refusal is unaffected.
   const store = await prisma.store.findUnique({ where: { slug } });
-  if (!store) notFound();
+  if (!store) {
+    // A slug naming nothing. On its own it is a typo; in a run of thirty it is
+    // somebody enumerating, which is a fact only a record can reveal.
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzUnresolved,
+      severity: "warning",
+      actorKind: "user",
+      actorId: userId,
+      storeId: null,
+      surface: "requireBusinessPage:no-such-business",
+      detail: { slug, reason: "no business with that slug" },
+    });
+    notFound();
+  }
 
   const access = await accessTo(userId, store.id);
-  if (!access) notFound();
+  if (!access) {
+    // REACHING A REAL BUSINESS THAT IS NOT YOURS. The answer stays notFound —
+    // telling somebody a business exists but is not theirs is an answer they
+    // did not have — but the attempt is no longer lost with it.
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzDenied,
+      severity: "warning",
+      actorKind: "user",
+      actorId: userId,
+      storeId: store.id,
+      surface: "requireBusinessPage:no-access",
+      detail: { slug, reason: "no membership" },
+    });
+    notFound();
+  }
 
   if (permission && !hasPermission(access.role, permission)) {
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzDenied,
+      severity: "warning",
+      actorKind: "user",
+      actorId: userId,
+      storeId: store.id,
+      surface: `requireBusinessPage:${permission}`,
+      detail: { permission, role: access.role, slug },
+    });
     // Reachable, but not for this section. Send them somewhere in THIS business
     // rather than out of it — bouncing an employee to another business because
     // they lack one permission would be its own context bug.
@@ -371,6 +431,19 @@ export async function requireStorePageAccess(
     redirect("/dashboard");
   }
   if (permission && !hasPermission(resolution.role, permission)) {
+    // The ambient counterpart of the branch above. `ambiguous` and `none` are
+    // NOT recorded here: both are ordinary states of an account with no active
+    // business rather than a refusal, and a signal stream that fires on
+    // somebody's first visit is one nobody reads twice.
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzDenied,
+      severity: "warning",
+      actorKind: "user",
+      actorId: session.user.id,
+      storeId: resolution.store.id,
+      surface: `requireStorePageAccess:${permission}`,
+      detail: { permission, role: resolution.role },
+    });
     redirect("/dashboard");
   }
 
