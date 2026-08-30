@@ -232,10 +232,17 @@ export async function fail(
   job: JobRecord,
   error: unknown,
   now: Date = new Date(),
+  // ============ SOME FAILURES WILL NEVER SUCCEED ==================
+  //
+  // A payload that does not match its schema is not going to start matching on
+  // the fourth attempt. Retrying it burns the backoff, delays real work behind
+  // it, and buries the one useful fact — that something enqueued the wrong
+  // shape — under five identical failures.
+  opts: { permanent?: boolean } = {},
 ): Promise<FailureOutcome> {
   const message = error instanceof Error ? error.message : String(error);
 
-  if (job.attempts >= job.maxAttempts) {
+  if (opts.permanent || job.attempts >= job.maxAttempts) {
     await prismaSystem.job.updateMany({
       where: { id: job.id },
       data: { status: "dead", lockedAt: null, lockedBy: null, lastError: message },
@@ -285,7 +292,24 @@ export interface DrainResult {
  */
 export async function drain(
   handlers: Record<string, JobHandler>,
-  opts: { maxJobs?: number; deadline?: Date; now?: Date; runnerId?: string } = {},
+  opts: {
+    maxJobs?: number;
+    deadline?: Date;
+    now?: Date;
+    runnerId?: string;
+    /**
+     * Per-kind payload validation, run BEFORE the handler.
+     *
+     * `job.payload as SomeType` is an unchecked cast across a JSON boundary —
+     * the enqueuer and the handler can be different deploys, and nothing made
+     * them agree. A payload that fails is dead-lettered immediately rather than
+     * retried, because it will never become valid.
+     *
+     * Optional: a caller that passes none keeps the previous behaviour, which
+     * keeps every existing suite honest rather than silently changed.
+     */
+    validate?: (kind: string, payload: unknown) => { ok: true } | { ok: false; error: string };
+  } = {},
 ): Promise<DrainResult> {
   const now = opts.now ?? new Date();
   const runnerId = opts.runnerId ?? randomUUID();
@@ -312,6 +336,18 @@ export async function drain(
       if (outcome.retrying) result.retried++;
       else result.deadLettered++;
       continue;
+    }
+
+    if (opts.validate) {
+      const verdict = opts.validate(job.kind, job.payload);
+      if (!verdict.ok) {
+        const outcome = await fail(job, new Error(`invalid payload: ${verdict.error}`), now, {
+          permanent: true,
+        });
+        if (outcome.retrying) result.retried++;
+        else result.deadLettered++;
+        continue;
+      }
     }
 
     try {

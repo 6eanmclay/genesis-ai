@@ -30,6 +30,9 @@ import {
   type RecoveredLines,
 } from "@/lib/bag/orderLines";
 import { resolveWebhookStore } from "@/lib/orders/webhookStore";
+import { withCorrelation } from "@/lib/observability/correlation";
+import { recordDelivery, markProcessed, markFailed } from "@/lib/webhooks/delivery";
+import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -68,9 +71,56 @@ async function recordCheckoutProblem(
 }
 
 
-export async function POST(request: Request) {
+// ============ THE SURROUND, NOT THE HANDLER (2026-08-30) ============
+//
+// This route keeps every line of its money logic. What it gains is what it
+// never had: a correlation chain, a verbatim record of what Stripe sent,
+// duplicate detection on the event id, and a security signal when somebody
+// posts an unsigned payload at the endpoint.
+//
+// It is deliberately NOT on lib/webhooks/pipeline.ts's receiveWebhook the way
+// the EasyPost route now is. Doing that means extracting six hundred lines of
+// order creation and payment reconciliation into a connector, which is a
+// money-path refactor with no demonstrated need — and the pieces the pipeline
+// composes are available individually, which is what this uses. Recorded as a
+// known asymmetry with a reason rather than left to look like an oversight.
+export async function POST(request: Request): Promise<Response> {
   const body = await request.text();
-  const signature = request.headers.get("stripe-signature");
+  const headers = request.headers;
+  return withCorrelation({ origin: "webhook", surface: "STRIPE" }, async () => {
+    // ============ THE OUTCOME IS KNOWN OUT HERE, NOT IN THERE =======
+    //
+    // The first version of this marked the delivery processed immediately after
+    // the signature verified — which recorded RECEIPT and called it HANDLING.
+    // A delivery whose order creation then failed would have read "processed"
+    // in the health report, which is the audit trail telling a lie about the
+    // one thing it exists to be honest about.
+    //
+    // The handler has two success returns and five hundred lines between them,
+    // so the id is carried out through a holder rather than extracted — the
+    // alternative is a money-path refactor to fix a bookkeeping bug.
+    const tracked: { deliveryId: string | null } = { deliveryId: null };
+    try {
+      const response = await handleStripeWebhook(body, headers, tracked);
+      if (response.status >= 200 && response.status < 300) {
+        await markProcessed(tracked.deliveryId);
+      } else {
+        await markFailed(tracked.deliveryId, new Error(`handler returned ${response.status}`));
+      }
+      return response;
+    } catch (error) {
+      await markFailed(tracked.deliveryId, error);
+      throw error;
+    }
+  });
+}
+
+async function handleStripeWebhook(
+  body: string,
+  headers: Headers,
+  tracked: { deliveryId: string | null },
+): Promise<Response> {
+  const signature = headers.get("stripe-signature");
 
   // Read per request, not at module load: a config check that runs once when
   // the lambda cold-starts cannot report anything useful, and the value can
@@ -88,6 +138,11 @@ export async function POST(request: Request) {
   }
 
   if (!signature) {
+    await recordDelivery({ provider: "STRIPE", rawBody: body, signatureValid: false });
+    await recordSignal({
+      kind: SIGNAL_KINDS.webhookUnsigned, severity: "warning", actorKind: "provider",
+      surface: "webhook:STRIPE", detail: { provider: "STRIPE", reason: "no signature header" },
+    });
     return new Response("Missing signature", { status: 400 });
   }
 
@@ -95,8 +150,26 @@ export async function POST(request: Request) {
   try {
     event = stripe.webhooks.constructEvent(body, signature, configured.secret);
   } catch {
+    // WRITTEN DOWN, NOT DROPPED. One is noise; a burst is a rotated secret
+    // nobody updated, or somebody probing the endpoint.
+    await recordDelivery({ provider: "STRIPE", rawBody: body, signatureValid: false });
+    await recordSignal({
+      kind: SIGNAL_KINDS.webhookUnsigned, severity: "warning", actorKind: "provider",
+      surface: "webhook:STRIPE", detail: { provider: "STRIPE", reason: "signature did not verify" },
+    });
     return new Response("Invalid signature", { status: 400 });
   }
+
+  // Recorded before anything acts on it, verbatim, with Stripe's own event id
+  // so a redelivery is a recognisable fact rather than a second unit of work.
+  const delivery = await recordDelivery({
+    provider: "STRIPE",
+    rawBody: body,
+    signatureValid: true,
+    externalEventId: event.id,
+  });
+  // Handed back to POST, which is the only place that knows how this ended.
+  tracked.deliveryId = delivery?.id ?? null;
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;

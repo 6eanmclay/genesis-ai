@@ -11,6 +11,9 @@ import { reportIssue } from "@/lib/observability/reportIssue";
 import { recordExecution } from "@/lib/execution/log";
 import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
+import { withCorrelation } from "@/lib/observability/correlation";
+import { recordDelivery, markProcessed, markFailed } from "@/lib/webhooks/delivery";
+import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
 
 // PayPal refunds — the counterpart to the Stripe rail's charge.refunded.
 //
@@ -79,11 +82,43 @@ export function refundedCents(resource: PaypalRefundResource): number | null {
   return toCents(resource.seller_payable_breakdown?.total_refunded_amount?.value) ?? toCents(resource.amount?.value);
 }
 
+// ============ THE SURROUND, NOT THE HANDLER (2026-08-30) ============
+//
+// Same asymmetry as the Stripe route, for the same reason: this one reconciles
+// refunds against real money, so its handler stays exactly where it is and
+// gains only what it was missing — correlation, a verbatim record, duplicate
+// detection, and a signal when an unsigned payload arrives. The EasyPost route
+// is fully on lib/webhooks/pipeline.ts because its handler moves no money.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ storeId: string }> }
-) {
+): Promise<Response> {
   const { storeId } = await params;
+  return withCorrelation({ origin: "webhook", surface: "PAYPAL" }, async () => {
+    // Same correction as the Stripe route: marking a delivery processed the
+    // moment its signature verified recorded RECEIPT and called it HANDLING,
+    // so a refund that failed to reconcile still read "processed".
+    const tracked: { deliveryId: string | null } = { deliveryId: null };
+    try {
+      const response = await handlePaypalWebhook(request, storeId, tracked);
+      if (response.status >= 200 && response.status < 300) {
+        await markProcessed(tracked.deliveryId, storeId);
+      } else {
+        await markFailed(tracked.deliveryId, new Error(`handler returned ${response.status}`));
+      }
+      return response;
+    } catch (error) {
+      await markFailed(tracked.deliveryId, error);
+      throw error;
+    }
+  });
+}
+
+async function handlePaypalWebhook(
+  request: NextRequest,
+  storeId: string,
+  tracked: { deliveryId: string | null },
+): Promise<Response> {
 
   // Read once, as text. The signature covers these exact bytes.
   const rawBody = await request.text();
@@ -138,8 +173,36 @@ export async function POST(
   if (!verified) {
     // Permanent. Nothing about retrying an unverifiable delivery makes it
     // verifiable, and this is the only branch that should ever say 400.
+    // WRITTEN DOWN, NOT DROPPED. Anyone can post to any store's URL — the
+    // signature is the proof — so a burst of failures here is exactly the
+    // shape worth being able to see.
+    await recordDelivery({ provider: "PAYPAL", rawBody, signatureValid: false, storeId });
+    await recordSignal({
+      kind: SIGNAL_KINDS.webhookUnsigned, severity: "warning", actorKind: "provider",
+      storeId, surface: "webhook:PAYPAL", detail: { provider: "PAYPAL", storeId },
+    });
     return new Response("Invalid signature", { status: 400 });
   }
+
+  // Recorded verbatim, before anything acts on it, with PayPal's own event id
+  // so a redelivery is recognisable rather than a second unit of work.
+  const delivery = await recordDelivery({
+    provider: "PAYPAL",
+    rawBody,
+    signatureValid: true,
+    storeId,
+    externalEventId: (() => {
+      try {
+        const parsed = JSON.parse(rawBody) as { id?: unknown };
+        return typeof parsed.id === "string" ? parsed.id : null;
+      } catch {
+        // Verified but unparseable. A fabricated id would make two different
+        // deliveries look like one retry, so null is the honest answer.
+        return null;
+      }
+    })(),
+  });
+  tracked.deliveryId = delivery?.id ?? null;
 
   // Everything below this line is trusted. Nothing above it was.
   let event: { event_type?: string; create_time?: string; resource?: PaypalRefundResource };

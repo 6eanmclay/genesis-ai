@@ -10,7 +10,7 @@ import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
 import { sweepAbandonedTemporaries } from "@/lib/storage/temporaryAssets";
 import { drain } from "@/lib/jobs/queue";
 import { withCorrelation } from "@/lib/observability/correlation";
-import { HANDLERS } from "@/lib/jobs/registry";
+import { HANDLERS, validateJobPayload } from "@/lib/jobs/registry";
 import {
   attributionSweepEnabled,
   nightlyEnabled,
@@ -249,6 +249,7 @@ export async function GET(request: NextRequest) {
   await drain(HANDLERS, {
     maxJobs: 50,
     deadline: new Date(Date.now() + 60_000),
+    validate: validateJobPayload,
   }).catch((error) => {
     reportIssue("the job queue drain failed", error, {
       subsystem: "execution",

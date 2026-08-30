@@ -6,6 +6,7 @@ import type { ConnectResult, IntegrationConnector, SyncedRecord } from "./types"
 import type { Shipment } from "@/lib/businessModel/entities";
 import { toStatusView } from "./types";
 import { encryptCredentials, decryptCredentials } from "./credentials";
+import { easypostWebhooks } from "./easypostWebhook";
 
 // Priority 2 (shipping, 2026-08-09) — "USPS/shipping integration so a paid
 // order can go all the way through fulfillment, label/tracking" (Sean).
@@ -304,4 +305,13 @@ export const easypostConnector: IntegrationConnector = {
       })
     );
   },
+
+  // ============ THE FIRST CONNECTOR TO DECLARE THIS (2026-08-30) ====
+  //
+  // IntegrationWebhooks existed for months with no implementation; every live
+  // handler was a one-off route that bypassed it. The contract lives in
+  // easypostWebhook.ts — how EasyPost signs, what its payload means — while
+  // everything generic stays in lib/webhooks/pipeline.ts. Adding the next
+  // provider is writing that file, not this one.
+  webhooks: easypostWebhooks,
 };

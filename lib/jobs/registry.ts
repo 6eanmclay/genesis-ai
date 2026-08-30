@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { JobHandler } from "./queue";
 import { pruneTelemetry } from "@/lib/telemetry/retention";
 import { notificationJobHandler } from "@/lib/orders/notificationJobs";
@@ -76,6 +77,47 @@ const pruneTelemetryJob: JobHandler = async ({ job }) => {
     apply: payload.apply === true,
   });
 };
+
+// ============ THE PAYLOAD BOUNDARY (2026-08-30) ====================
+//
+// `job.payload as NotificationPayload` was an unchecked cast across a JSON
+// boundary. The enqueuer and the handler can be different deploys and nothing
+// made them agree, so a renamed field would reach the handler as undefined and
+// fail somewhere unrelated — or worse, not fail at all.
+//
+// A kind with no schema is allowed and means "this payload is not read".
+// `noop` genuinely does not read one; declaring an empty object for it would
+// be ceremony rather than a check.
+export const JOB_SCHEMAS: Partial<Record<JobKind, z.ZodTypeAny>> = {
+  "telemetry.prune": z.object({
+    retentionDays: z.number().int().positive().optional(),
+    apply: z.boolean().optional(),
+  }),
+  "notification.order": z.object({
+    orderId: z.string().min(1),
+    storeId: z.string().min(1),
+    kind: z.enum(["confirmation", "delivery", "refund", "ownerSale"]),
+  }),
+};
+
+/**
+ * What drain() is handed to check a payload before a handler sees it.
+ *
+ * An unknown kind passes: the queue already reports and retries those
+ * separately, and failing them here would report the same problem twice under
+ * two different names.
+ */
+export function validateJobPayload(
+  kind: string,
+  payload: unknown,
+): { ok: true } | { ok: false; error: string } {
+  const schema = JOB_SCHEMAS[kind as JobKind];
+  if (!schema) return { ok: true };
+  const parsed = schema.safeParse(payload);
+  return parsed.success
+    ? { ok: true }
+    : { ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ") };
+}
 
 export const HANDLERS: Record<string, JobHandler> = {
   noop,

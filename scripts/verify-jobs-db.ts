@@ -14,7 +14,7 @@ import {
   type JobHandler,
   type JobRecord,
 } from "@/lib/jobs/queue";
-import { JOB_KINDS, HANDLERS } from "@/lib/jobs/registry";
+import { JOB_KINDS, HANDLERS, validateJobPayload } from "@/lib/jobs/registry";
 
 // THE JOB QUEUE, AGAINST A REAL DATABASE:
 //
@@ -268,6 +268,59 @@ async function main(): Promise<void> {
     const row = await prismaSystem.job.findUnique({ where: { idempotencyKey: key("unknown") } });
     eq("with the reason recorded", row?.status, "pending");
     assert("naming the missing handler", (row?.lastError ?? "").includes("not-a-real-kind"), row?.lastError ?? "");
+  }
+
+  console.log("\n--- a payload that does not match its schema is dead-lettered at once ---\n");
+  {
+    // ============ WHY IMMEDIATELY, NOT AFTER FIVE TRIES ============
+    //
+    // A payload that fails validation will not start passing on the fourth
+    // attempt. Retrying burns the backoff, delays real work behind it, and
+    // buries the one useful fact — something enqueued the wrong shape — under
+    // five identical failures.
+    let handlerRan = 0;
+    await enqueue({
+      kind: "notification.order",
+      idempotencyKey: key("bad-payload"),
+      storeId: store.id,
+      payload: { orderId: "", kind: "not-a-kind" },
+    });
+    const badResult = await drain(
+      { "notification.order": async () => { handlerRan++; } },
+      { maxJobs: 10, validate: validateJobPayload },
+    );
+    eq("the handler never saw it", handlerRan, 0);
+    eq("and it went straight to the dead letter", badResult.deadLettered, 1);
+    const badRow = await prismaSystem.job.findUnique({ where: { idempotencyKey: key("bad-payload") } });
+    eq("with only one attempt spent", badRow?.attempts, 1);
+    eq("marked dead", badRow?.status, "dead");
+    assert("and the reason names the field", (badRow?.lastError ?? "").includes("kind"), badRow?.lastError ?? "");
+  }
+
+  console.log("\n--- a valid payload passes through untouched ---\n");
+  {
+    let ran = 0;
+    await enqueue({
+      kind: "notification.order",
+      idempotencyKey: key("good-payload"),
+      storeId: store.id,
+      payload: { orderId: "ord_1", storeId: store.id, kind: "confirmation" },
+    });
+    await drain(
+      { "notification.order": async () => { ran++; } },
+      { maxJobs: 10, validate: validateJobPayload },
+    );
+    eq("the handler ran", ran, 1);
+  }
+
+  console.log("\n--- a kind with no schema is not blocked by validation ---\n");
+  {
+    // `noop` genuinely does not read a payload; declaring an empty schema for
+    // it would be ceremony rather than a check.
+    let ran = 0;
+    await enqueue({ kind: "noop", idempotencyKey: key("unschemad"), storeId: store.id, payload: { anything: true } });
+    await drain({ noop: async () => { ran++; } }, { maxJobs: 10, validate: validateJobPayload });
+    eq("it still runs", ran, 1);
   }
 
   console.log("\n--- an operator can see the queue ---\n");

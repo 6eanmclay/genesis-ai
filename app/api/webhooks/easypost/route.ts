@@ -1,93 +1,60 @@
-import { carriageProviderFor } from "@/lib/carriage/registry";
-import {
-  isValidEasyPostSignature,
-  applyShipmentUpdate,
-  reportIngestionFailure,
-} from "@/lib/carriage/delivery";
+import { getConnectorByName } from "@/lib/integrations/registry";
+import { receiveWebhook } from "@/lib/webhooks/pipeline";
 
 // WHERE A CARRIER TELLS US THE PARCEL MOVED.
 //
-// The ingestion that never existed. mapTrackerToShipment could always turn a
-// carrier tracker into a canonical Shipment, and nothing ever called it — so
-// "did it arrive" was unanswerable and the order lifecycle stopped at
-// "shipped" forever.
+// ============ NOW A THIN ADAPTER (2026-08-30) =========================
 //
-// SIGNATURE FIRST, ALWAYS. This endpoint is public: anything on the internet
-// can POST to it. Without verification, marking somebody's order delivered
-// would be a curl command away — which is worse than not having the feature,
-// because the owner would believe it.
+// Everything this route used to do itself is in two places that are not it:
+// the PROVIDER CONTRACT — how EasyPost signs, what its payload means — is
+// lib/integrations/easypostWebhook.ts, and the DELIVERY SYSTEM — correlation,
+// the verbatim record, duplicate detection, the unsigned-payload signal — is
+// lib/webhooks/pipeline.ts.
 //
-// ALWAYS 200 ONCE VERIFIED, even when the payload is useless to us. A carrier
-// that receives an error retries, and retrying a tracker for an order that is
-// not ours achieves nothing but noise and eventual webhook suspension. The
-// distinction this route draws is between "we could not authenticate you"
-// (refuse, loudly) and "we authenticated you and there was nothing to do"
-// (accept, quietly).
+// What is left here is the URL. That is the point: adding the next provider
+// means writing its contract, not another route that reimplements recording.
+//
+// The behaviour it always had is preserved exactly. Signature first, because
+// this endpoint is public and marking somebody's order delivered would
+// otherwise be a curl command away. And always 200 once verified, even when
+// the payload is useless to us — a carrier that receives an error retries, and
+// retrying a tracker for an order that is not ours achieves nothing but noise
+// and eventual webhook suspension.
 
-export async function POST(request: Request) {
-  const secret = process.env.EASYPOST_WEBHOOK_SECRET;
-
-  // No secret configured means no request can be authenticated, and accepting
-  // unauthenticated delivery updates is strictly worse than accepting none.
-  // 503 rather than 500: this is a configuration state, not a crash.
-  if (!secret) {
+export async function POST(request: Request): Promise<Response> {
+  const connector = getConnectorByName("EASYPOST");
+  if (!connector.webhooks) {
     return new Response("Carrier webhooks are not configured", { status: 503 });
   }
 
-  // The RAW body, read before any parsing. The signature covers the exact
-  // bytes sent, so re-serialising parsed JSON would produce a different string
-  // and every legitimate request would fail verification.
+  // The RAW body, read before any parsing. The signature covers the exact bytes
+  // sent, so re-serialising parsed JSON would fail every legitimate request.
   const rawBody = await request.text();
+  const headers = request.headers;
 
-  if (!isValidEasyPostSignature({
+  const outcome = await receiveWebhook({
+    provider: "EASYPOST",
     rawBody,
-    header: request.headers.get("x-hmac-signature"),
-    secret,
-  })) {
+    verify: async () => {
+      const verification = await connector.webhooks!.verify(rawBody, headers);
+      return {
+        ok: verification.ok,
+        eventId: verification.eventId ?? null,
+        error: verification.error,
+      };
+    },
+    // EasyPost is configured platform-wide rather than per-store, so there is
+    // no store to resolve before the handler; it matches the tracker to an
+    // order itself.
+    handle: async () => connector.webhooks!.handle("", rawBody),
+  });
+
+  if (outcome.status === "rejected") {
     return new Response("Invalid signature", { status: 401 });
   }
 
-  let payload: { description?: string; result?: unknown };
-  try {
-    payload = JSON.parse(rawBody);
-  } catch (error) {
-    // Verified as genuinely from the carrier, yet unparseable. Reported,
-    // because that is a real anomaly worth an operator seeing, and accepted,
-    // because a retry would deliver the same bytes.
-    reportIngestionFailure(error, { stage: "parse" });
-    return new Response("ok", { status: 200 });
-  }
-
-  // EasyPost sends every event type to one endpoint. Tracker updates are the
-  // only kind this milestone consumes; the rest are acknowledged and ignored
-  // rather than treated as errors.
-  if (typeof payload.description !== "string" || !payload.description.startsWith("tracker.")) {
-    return new Response("ok", { status: 200 });
-  }
-
-  const provider = carriageProviderFor("EASYPOST");
-  if (!provider?.toShipment) {
-    reportIngestionFailure(new Error("no carriage provider could map this payload"), {
-      description: payload.description,
-    });
-    return new Response("ok", { status: 200 });
-  }
-
-  try {
-    // The provider owns the vocabulary. This route never inspects a carrier
-    // status string itself — that is what made the mapper worth reusing rather
-    // than reimplementing here.
-    const shipment = provider.toShipment(payload.result, null);
-    const outcome = await applyShipmentUpdate(shipment);
-
-    if (!outcome.updated && outcome.reason === "no_matching_order") {
-      // Genuinely common and not a problem: one EasyPost account can carry
-      // parcels this platform did not create.
-      return new Response("ok", { status: 200 });
-    }
-  } catch (error) {
-    reportIngestionFailure(error, { description: payload.description });
-  }
-
+  // A verified delivery is always accepted, including one whose handler threw:
+  // the handler reports its own failures and a carrier retry would deliver the
+  // same bytes to the same outcome.
   return new Response("ok", { status: 200 });
 }
