@@ -494,6 +494,7 @@ model Store {
 
   @@index([planId])
   jobs Job[]
+  webhookDeliveries WebhookDelivery[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -3041,4 +3042,47 @@ model Job {
   @@index([storeId, kind])
   @@index([kind, status])
   @@index([status, lockedAt])
+}
+
+// EVERY WEBHOOK THIS PLATFORM HAS EVER BEEN HANDED.
+//
+// ============ WHY (2026-08-30) ========================================
+//
+// A delivery was verified, handled, and forgotten. No record that it arrived,
+// so no answer to "did the provider ever send that", no replay of one that
+// failed, and no way to notice a duplicate or an out-of-order pair.
+//
+// The framework already declares an IntegrationWebhooks contract and NO
+// CONNECTOR IMPLEMENTS IT — the three live handlers (Stripe, PayPal, EasyPost)
+// are one-off routes that bypass it entirely. Connections month adds providers
+// that all deliver webhooks; this is the record they share.
+//
+// The raw body is kept verbatim, because a parsed copy would be our reading of
+// the delivery rather than the delivery, and a replay has to start from what
+// the provider actually sent.
+model WebhookDelivery {
+  id              String    @id @default(cuid())
+  provider        String
+  /** The provider's own event id, when it offers one. */
+  externalEventId String?
+  /** Null when the signature failed or the account matched no business. */
+  storeId         String?
+  /** received | processed | failed | rejected */
+  status          String    @default("received")
+  /** False is recorded, not dropped — a burst of them is a misconfigured secret or an attack. */
+  signatureValid  Boolean
+  payload         String
+  headers         Json?
+  error           String?
+  attempts        Int       @default(0)
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  /** NULLs are distinct in Postgres, so a provider with no event id is unconstrained. */
+  @@unique([provider, externalEventId])
+  @@index([provider, receivedAt])
+  @@index([status, receivedAt])
+  @@index([storeId, receivedAt])
 }

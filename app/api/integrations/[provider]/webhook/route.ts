@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { unstable_rethrow } from "next/navigation";
 import { prismaSystem } from "@/lib/prisma";
+import { recordDelivery, markProcessed, markFailed } from "@/lib/webhooks/delivery";
 import { getConnectorByName } from "@/lib/integrations/registry";
 
 // Phase 0 — one webhook route for every provider that supports them.
@@ -57,6 +58,15 @@ export async function POST(
   }
 
   if (!verification.ok) {
+    // WRITTEN DOWN, NOT DROPPED. One bad signature is noise; a burst is a
+    // rotated secret nobody updated, or somebody probing the endpoint — and
+    // neither is visible if the only trace is a 400 in a log that rolls over.
+    await recordDelivery({
+      provider,
+      rawBody,
+      signatureValid: false,
+      externalEventId: verification.eventId ?? null,
+    });
     return new NextResponse("Invalid signature", { status: 400 });
   }
 
@@ -84,15 +94,36 @@ export async function POST(
     return NextResponse.json({ received: true, applied: false });
   }
 
+  // Recorded BEFORE the handler runs, so a delivery that crashes the handler is
+  // still on file. Handling itself is unchanged and still inline — making these
+  // side effects asynchronous is a behavioural decision, not something an audit
+  // trail should smuggle in.
+  const delivery = await recordDelivery({
+    provider,
+    rawBody,
+    signatureValid: true,
+    externalEventId: verification.eventId ?? null,
+    storeId: integration.storeId,
+  });
+
   try {
     await connector.webhooks.handle(integration.storeId, rawBody);
+    await markProcessed(delivery?.id ?? null, integration.storeId);
   } catch (error) {
     unstable_rethrow(error);
+    await markFailed(delivery?.id ?? null, error);
     console.error(`[integrations/${provider}/webhook] handler failed`, error);
     // 500 so the provider retries — the handler is idempotent by construction,
     // so a retry is safe and a dropped event is not.
     return new NextResponse("Handler failed", { status: 500 });
   }
 
-  return NextResponse.json({ received: true, applied: true, eventId: verification.eventId ?? null });
+  return NextResponse.json({
+    received: true,
+    applied: true,
+    eventId: verification.eventId ?? null,
+    // A provider retrying an event we already hold is a recognisable fact
+    // rather than a second unit of work.
+    duplicate: delivery?.duplicate ?? false,
+  });
 }
