@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { JobHandler } from "./queue";
 import { pruneTelemetry } from "@/lib/telemetry/retention";
+import { pruneSignals } from "@/lib/security/retention";
 import { notificationJobHandler } from "@/lib/orders/notificationJobs";
 
 // WHICH HANDLER RUNS WHICH KIND.
@@ -40,7 +41,7 @@ import { notificationJobHandler } from "@/lib/orders/notificationJobs";
  * Adding one here without a handler below is a failing test, which is the
  * point — the alternative is discovering it from a dead-lettered job.
  */
-export const JOB_KINDS = ["noop", "telemetry.prune", "notification.order"] as const;
+export const JOB_KINDS = ["noop", "telemetry.prune", "security.prune", "notification.order"] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -78,6 +79,23 @@ const pruneTelemetryJob: JobHandler = async ({ job }) => {
   });
 };
 
+/**
+ * Delete security signals past their horizon.
+ *
+ * In the queue for the same reason telemetry pruning is: a bounded deletion
+ * that can genuinely fail halfway and wants a retry with backoff. The policy —
+ * which is the interesting part, and differs sharply per kind — lives in
+ * lib/security/retention.ts and not here.
+ *
+ * Defaults to a DRY RUN, like its telemetry counterpart. A scheduled job that
+ * deletes evidence by default is one nobody reviewed before it ran, and this
+ * one deletes evidence.
+ */
+const pruneSignalsJob: JobHandler = async ({ job }) => {
+  const payload = (job.payload ?? {}) as { apply?: boolean; maxPerRun?: number };
+  await pruneSignals({ apply: payload.apply === true, maxPerRun: payload.maxPerRun });
+};
+
 // ============ THE PAYLOAD BOUNDARY (2026-08-30) ====================
 //
 // `job.payload as NotificationPayload` was an unchecked cast across a JSON
@@ -92,6 +110,10 @@ export const JOB_SCHEMAS: Partial<Record<JobKind, z.ZodTypeAny>> = {
   "telemetry.prune": z.object({
     retentionDays: z.number().int().positive().optional(),
     apply: z.boolean().optional(),
+  }),
+  "security.prune": z.object({
+    apply: z.boolean().optional(),
+    maxPerRun: z.number().int().positive().max(50_000).optional(),
   }),
   "notification.order": z.object({
     orderId: z.string().min(1),
@@ -122,6 +144,7 @@ export function validateJobPayload(
 export const HANDLERS: Record<string, JobHandler> = {
   noop,
   "telemetry.prune": pruneTelemetryJob,
+  "security.prune": pruneSignalsJob,
   // The sweep's backstop sends. The payment path still notifies inline — a
   // customer waiting for a confirmation should not wait for a queue.
   "notification.order": notificationJobHandler,

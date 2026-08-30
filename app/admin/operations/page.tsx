@@ -87,7 +87,10 @@ export default async function OperationsPage({
     <main className="mx-auto max-w-6xl px-6 py-10">
       <div className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Operations</h1>
-        <Link href="/admin" className="text-xs text-zinc-500 underline dark:text-zinc-400">AI cost &amp; usage</Link>
+        <div className="flex gap-3">
+          <Link href="/admin/security" className="text-xs text-zinc-500 underline dark:text-zinc-400">Security</Link>
+          <Link href="/admin" className="text-xs text-zinc-500 underline dark:text-zinc-400">AI cost &amp; usage</Link>
+        </div>
       </div>
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
         Generated {when(health.generatedAt)} · reads live, never cached
@@ -347,14 +350,21 @@ export default async function OperationsPage({
         )}
       </Section>
 
-      <Section title="Security signals" note="Observed and counted here. Enforcement lives with the systems themselves, never on this page.">
+      <Section title="Security signals"
+        note="Observed and counted here. Enforcement lives with the systems themselves, never on this page. Each count opens the full stream.">
         {health.security.length === 0 ? (
           <Empty>No signals in the window.</Empty>
         ) : (
           <ul className="space-y-1 text-sm">
             {health.security.map((s) => (
               <li key={`${s.kind}-${s.severity}`} className={s.severity === "critical" ? "text-rose-700 dark:text-rose-400" : "text-zinc-600 dark:text-zinc-300"}>
-                <span className="tabular-nums font-semibold">{s.count}</span> × {s.kind}
+                {/* ============ THE TALLY IS THE DOORWAY (2026-08-30) ====
+                    A count is the reason to start looking and no use for
+                    looking. Each one now opens /admin/security filtered to it,
+                    where the same read layer answers who, where and when. */}
+                <Link href={`/admin/security?kind=${encodeURIComponent(s.kind)}&severity=${encodeURIComponent(s.severity)}`} className="underline">
+                  <span className="tabular-nums font-semibold">{s.count}</span> × {s.kind}
+                </Link>
                 <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">{s.severity} · last {when(s.lastSeenAt)}</span>
               </li>
             ))}

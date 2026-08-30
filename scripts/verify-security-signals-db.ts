@@ -66,8 +66,22 @@ async function main(): Promise<void> {
     const anon = await readSignals({ kinds: [SIGNAL_KINDS.authzDenied] });
     const anonymous = anon.find((s) => s.actorKind === "anonymous");
     assert("an actor with no user at all is recordable", !!anonymous, "anonymous actor missing");
-    eq("with its address kept for forensics", anonymous?.ipAddress, "203.0.113.7");
+    // ============ THE ADDRESS IS OPT-IN NOW (2026-08-30) ==========
+    //
+    // This asserted the address came back by default, and it deliberately no
+    // longer does. It is still RECORDED for forensics — that half is unchanged
+    // and asserted below — but reading it is a separate act, because most
+    // reading of this stream is counting and filtering, and an address is
+    // personal data about somebody who has usually done nothing wrong.
+    eq("its address is not handed out by default", anonymous?.ipAddress, null);
     eq("and no user invented for it", anonymous?.actorId, null);
+
+    // Still there, and still reachable by a caller that says so.
+    const withAddress = await readSignals({
+      kinds: [SIGNAL_KINDS.authzDenied], includeAddress: true,
+    });
+    eq("but it is kept, and returned when explicitly asked for",
+      withAddress.find((s) => s.actorKind === "anonymous")?.ipAddress, "203.0.113.7");
 
     const kinds = (await readSignals({ limit: 100 })).map((s) => s.actorKind);
     for (const k of ["anonymous", "system", "provider", "genesis"]) {

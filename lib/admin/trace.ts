@@ -1,4 +1,5 @@
 import { prismaSystem } from "@/lib/prisma";
+import { signalsForCorrelation } from "@/lib/security/signals";
 
 // EVERYTHING THAT HAPPENED BECAUSE OF ONE THING.
 //
@@ -101,12 +102,17 @@ export async function traceFor(correlationId: string, limitPerSource = 200): Pro
         storeId: true, lastError: true, idempotencyKey: true,
       },
     }),
-    prismaSystem.securitySignal.findMany({
-      where: { correlationId },
-      orderBy: { occurredAt: "asc" },
-      take: limitPerSource,
-      select: { occurredAt: true, kind: true, severity: true, actorKind: true, storeId: true, surface: true },
-    }),
+    // ============ THROUGH THE READ LAYER, NOT AROUND IT (2026-08-30) ==
+    //
+    // This was its own findMany. lib/security/signals.ts is now the one place
+    // that decides what a reader of this stream may see — addresses withheld
+    // unless asked for, detail redacted, limits capped — and a second query
+    // here would have been a second answer to that, exempt from every rule the
+    // read layer enforces.
+    //
+    // Ordered newest-first by the read layer and reversed below, because a
+    // trace reads forwards.
+    signalsForCorrelation(correlationId),
     prismaSystem.productEvent.findMany({
       where: { correlationId },
       orderBy: { createdAt: "asc" },

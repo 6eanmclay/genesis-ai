@@ -140,12 +140,46 @@ export async function recordSignal(input: SignalInput): Promise<void> {
 
 export interface SignalQuery {
   since?: Date;
+  /** The far end of the window. An investigation is usually a range. */
+  until?: Date;
   kinds?: string[];
   severities?: Severity[];
   storeId?: string;
   actorId?: string;
+  actorKind?: ActorKind;
+  /** The route, action or job. Prefix-matched, so "http:" finds every boundary. */
+  surface?: string;
   correlationId?: string;
   limit?: number;
+  /**
+   * Continue after this row.
+   *
+   * ============ WHY A CURSOR AND NOT AN OFFSET (2026-08-30) ========
+   *
+   * The stream is append-heavy: signals arrive while somebody is reading. An
+   * offset shifts under new rows, so page two silently repeats or skips
+   * entries — and the entries it skips are the newest, which during an incident
+   * are the ones being looked for.
+   *
+   * The cursor is the id of the last row seen, and paging walks strictly
+   * backwards in time from it. It stays correct however many rows arrive.
+   */
+  after?: string;
+  /**
+   * Include the caller's address.
+   *
+   * OFF BY DEFAULT, like userAgent. An address is personal data about somebody
+   * who has usually done nothing wrong, and most reading of this stream —
+   * counting, filtering, spotting a shape — does not need one. A caller that
+   * genuinely needs it asks, and the asking is the record that they did.
+   */
+  includeAddress?: boolean;
+}
+
+export interface SignalPage {
+  rows: SignalRow[];
+  /** Pass as `after` to continue. Null when the end has been reached. */
+  nextCursor: string | null;
 }
 
 export interface SignalRow {
@@ -179,23 +213,108 @@ export interface SignalRow {
  * given a narrower function later, deliberately.
  */
 export async function readSignals(query: SignalQuery = {}): Promise<SignalRow[]> {
-  return prismaSystem.securitySignal.findMany({
+  return (await readSignalPage(query)).rows;
+}
+
+/** The largest page anybody may ask for, however loudly. */
+export const MAX_PAGE = 500;
+
+/**
+ * One page of the stream, with a cursor for the next.
+ *
+ * ============ WHAT NEVER COMES BACK ==============================
+ *
+ * `userAgent`, always — recorded for forensics, high-cardinality noise for
+ * reasoning. `ipAddress` unless explicitly asked for. And `detail` only after
+ * redaction, because it is the one free-form field: everything writing to it
+ * today puts field NAMES and counts there, and "today" is not a guarantee
+ * about a caller somebody adds next month.
+ */
+export async function readSignalPage(query: SignalQuery = {}): Promise<SignalPage> {
+  const limit = Math.min(Math.max(query.limit ?? 100, 1), MAX_PAGE);
+
+  // The cursor is an id; paging walks backwards from the row it names. Prisma's
+  // own cursor handles the tie-breaking that a bare `occurredAt < x` would get
+  // wrong when two signals share a millisecond — which, on a burst of refusals
+  // from one script, is exactly what happens.
+  const rows = await prismaSystem.securitySignal.findMany({
     where: {
-      ...(query.since ? { occurredAt: { gte: query.since } } : {}),
+      ...(query.since || query.until
+        ? {
+            occurredAt: {
+              ...(query.since ? { gte: query.since } : {}),
+              ...(query.until ? { lte: query.until } : {}),
+            },
+          }
+        : {}),
       ...(query.kinds?.length ? { kind: { in: query.kinds } } : {}),
       ...(query.severities?.length ? { severity: { in: query.severities } } : {}),
       ...(query.storeId ? { storeId: query.storeId } : {}),
       ...(query.actorId ? { actorId: query.actorId } : {}),
+      ...(query.actorKind ? { actorKind: query.actorKind } : {}),
+      ...(query.surface ? { surface: { startsWith: query.surface } } : {}),
       ...(query.correlationId ? { correlationId: query.correlationId } : {}),
     },
-    orderBy: { occurredAt: "desc" },
-    take: Math.min(query.limit ?? 200, 1000),
+    orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    ...(query.after ? { cursor: { id: query.after }, skip: 1 } : {}),
     select: {
       id: true, correlationId: true, kind: true, severity: true, actorKind: true,
       actorId: true, storeId: true, surface: true, ipAddress: true, detail: true,
       occurredAt: true,
     },
   });
+
+  // One more than asked for is how "is there another page" is answered without
+  // a second count query over a table that is being written to.
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  return {
+    rows: page.map((row) => ({
+      ...row,
+      ipAddress: query.includeAddress ? row.ipAddress : null,
+      detail: redactDetail(row.detail),
+    })),
+    nextCursor: hasMore ? page[page.length - 1].id : null,
+  };
+}
+
+/** Keys whose VALUE must never leave this stream, whatever put them there. */
+const SENSITIVE_KEY = /token|secret|password|passwd|authorization|cookie|apikey|api_key|credential|signature|bearer|card|cvv|ssn/i;
+
+/** Any single value longer than this is a payload, not a fact about one. */
+const MAX_VALUE_LENGTH = 500;
+
+/**
+ * Make a detail object safe to hand to a reader.
+ *
+ * ============ WHY THIS EXISTS AT WRITE-TIME'S EXPENSE ============
+ *
+ * Everything writing a signal today puts field names, counts and reasons in
+ * `detail` — never a value — and the boundary suite asserts exactly that by
+ * sending a password through and proving it never lands. But `detail` is typed
+ * as an open record, and the assertion covers the callers that exist.
+ *
+ * This is the second half of that guarantee, on the read side, where it
+ * protects against the caller nobody has written yet. Belt and braces, and the
+ * braces are the ones tested.
+ */
+export function redactDetail(detail: unknown): unknown {
+  if (detail === null || detail === undefined) return detail;
+  if (Array.isArray(detail)) return detail.map(redactDetail);
+  if (typeof detail === "string") {
+    return detail.length > MAX_VALUE_LENGTH ? `${detail.slice(0, MAX_VALUE_LENGTH)}…[truncated]` : detail;
+  }
+  if (typeof detail !== "object") return detail;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(detail as Record<string, unknown>)) {
+    // The KEY is kept. Knowing a token was involved is useful; knowing which is
+    // a liability, and the difference is the whole point.
+    out[key] = SENSITIVE_KEY.test(key) ? "[redacted]" : redactDetail(value);
+  }
+  return out;
 }
 
 export interface SignalTally {
@@ -227,5 +346,11 @@ export async function tallySignals(since: Date): Promise<SignalTally[]> {
  * different businesses."
  */
 export async function signalsForCorrelation(id: string): Promise<SignalRow[]> {
-  return readSignals({ correlationId: id, limit: 1000 });
+  // MAX_PAGE, not more. This asked for a thousand before the page cap existed;
+  // saying so plainly beats asking for a number that is silently reduced.
+  //
+  // Five hundred security signals under one correlation id is already
+  // pathological — it means one request was refused hundreds of times — and a
+  // trace that shows the first five hundred of those has told the story.
+  return readSignals({ correlationId: id, limit: MAX_PAGE });
 }

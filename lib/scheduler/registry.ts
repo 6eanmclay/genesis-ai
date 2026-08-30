@@ -307,6 +307,35 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
   },
 
   {
+    key: "security.prune",
+    lane: "maintenance",
+    purpose: "Enqueue the pass that drops security signals past their horizon.",
+    // Enqueues rather than deletes, exactly like telemetry.prune above and for
+    // the same reason: a bounded deletion that can fail halfway wants the
+    // queue's retry, and this task's whole job is to produce the work.
+    //
+    // Keyed by the day, so a frequent trigger produces one prune per day rather
+    // than one per tick.
+    everyMs: DAY,
+    enabled: always,
+    budgetMs: 5_000,
+    run: async () => {
+      const day = new Date().toISOString().slice(0, 10);
+      const created = await enqueue({
+        kind: "security.prune",
+        idempotencyKey: `security.prune:${day}`,
+        // ============ APPLY IS DELIBERATELY ABSENT (2026-08-30) ====
+        //
+        // So the handler's dry-run default stands. This deletes EVIDENCE, and
+        // switching it on is a decision to make once the footprint has been
+        // looked at — recorded in EXTERNAL_BLOCKERS.md rather than defaulted to.
+        payload: {},
+      });
+      return { enqueued: created !== null, day };
+    },
+  },
+
+  {
     key: "ops.alerts",
     lane: "maintenance",
     purpose: "Look for anything that needs a person, and say it once.",

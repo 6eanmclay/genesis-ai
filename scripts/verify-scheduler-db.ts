@@ -314,10 +314,13 @@ async function main(): Promise<void> {
     //
     //   telemetry.prune  the producer the inventory found missing — a registered
     //                    job kind with a handler that nothing enqueued.
+    //   security.prune   added 2026-08-30. The security stream had no retention
+    //                    at all and grew for ever, and its horizons differ
+    //                    sharply by what a signal is for.
     //   ops.alerts       added 2026-08-30. needsAttention() and its scheduler
     //                    counterpart already computed the right answers and had
     //                    one caller each: a page somebody had to open.
-    const ADDED = ["telemetry.prune", "ops.alerts"];
+    const ADDED = ["telemetry.prune", "security.prune", "ops.alerts"];
     eq("one task was added, deliberately and by name",
       SCHEDULED_TASKS.map((t) => t.key).filter((k) => !RESPONSIBILITIES.some(([, key]) => key === k)),
       ADDED);
