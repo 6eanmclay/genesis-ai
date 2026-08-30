@@ -2,6 +2,7 @@ import { HANDLERS, validateJobPayload } from "@/lib/jobs/registry";
 import { drain } from "@/lib/jobs/queue";
 import { enqueue } from "@/lib/jobs/queue";
 import { releaseStaleReplays } from "@/lib/webhooks/replay";
+import { runAlertSweep } from "@/lib/observability/alerts";
 import { sweepAbandonedTemporaries } from "@/lib/storage/temporaryAssets";
 import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
@@ -303,6 +304,32 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
       });
       return { enqueued: created !== null, day };
     },
+  },
+
+  {
+    key: "ops.alerts",
+    lane: "maintenance",
+    purpose: "Look for anything that needs a person, and say it once.",
+    // ============ THE TASK THAT WATCHES THE OTHERS (2026-08-30) =====
+    //
+    // Hourly, which is a deliberate compromise: often enough that a dead letter
+    // does not sit unseen all day, rare enough that it costs nothing. The
+    // cooldown inside the sweep is what actually decides how often anybody
+    // HEARS anything, and that is six hours per distinct finding.
+    //
+    // Maintenance rather than timely, because a finding is already true by the
+    // time this runs — being told twenty minutes later changes nothing, and the
+    // timely lane is for work a customer is waiting on.
+    //
+    // AND IT REPORTS ON THE SCHEDULER THAT RUNS IT. That looks circular and is
+    // not: a scheduler which has stopped entirely cannot report itself, which is
+    // exactly why schedulerHealth measures absence rather than presence. This
+    // catches the tasks that stopped; nothing inside a stopped process can
+    // catch the process.
+    everyMs: HOUR,
+    enabled: always,
+    budgetMs: 30_000,
+    run: () => runAlertSweep(),
   },
 
   // ------------------------------------------------------------- outbound

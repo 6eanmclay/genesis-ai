@@ -37,7 +37,7 @@ what exactly is required, and what happens the moment it exists.
 | # | Item | Consequence of leaving it |
 |---|---|---|
 | **E6** | **The migration gate.** Every push to `master` migrates production with no review step; reversed 2026-08-13 and open since. | A wrong schema change reaches production automatically, and the only rollback for a destructive migration is a restore whose viability nobody has tested. |
-| **E7** | **Where an operational alert should go.** `needsAttention()` computes it; nothing carries it. | Every failure the observability work made visible still requires somebody to open a page. Deliberately not chosen by me — see item 4 of the locked order. |
+| **E7** | ~~Where an operational alert should go~~ — **partly closed 2026-08-30.** The audit found the premise was wrong: a destination already exists. Sentry is wired, its DSN is set in production, `reportIssue` redacts and sends to it, and thirty-three modules already use it. What was missing was that EXCEPTIONS reach Sentry while this platform's real failures — a dead letter, an unknown outcome, a task that stopped — are conditions found by asking, not thrown. `ops.alerts` now asks hourly and reports each distinct finding once every six hours. **What is still yours to decide**: whether Sentry is where you want to be told, or whether these should also reach email (needs E1) or a chat webhook (needs a URL from you and about an hour of work). Nothing is blocked on that decision; it changes the destination, not the detection. |
 | **E8** | **A live end-to-end payment test.** | The money path has never moved real money under this code. |
 
 ## Needs a migration and a decision about existing data

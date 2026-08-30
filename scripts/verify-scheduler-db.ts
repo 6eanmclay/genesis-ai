@@ -308,12 +308,16 @@ async function main(): Promise<void> {
     for (const [fn, key] of RESPONSIBILITIES) {
       assert(`${fn} still runs, as ${key}`, !!taskByKey(key) && src.includes(`${fn}(`), key);
     }
-    // EXACTLY ONE THING WAS ADDED, and it is named rather than absorbed into a
-    // count. telemetry.prune is the producer the inventory found missing — a
-    // registered job kind with a handler that nothing anywhere enqueued. A
-    // refactor is allowed to add something; it is not allowed to add something
-    // quietly, and a bare length check would have hidden either.
-    const ADDED = ["telemetry.prune"];
+    // WHAT WAS ADDED IS NAMED, never absorbed into a count. A refactor is
+    // allowed to add something; it is not allowed to add something quietly, and
+    // a bare length check would hide either.
+    //
+    //   telemetry.prune  the producer the inventory found missing — a registered
+    //                    job kind with a handler that nothing enqueued.
+    //   ops.alerts       added 2026-08-30. needsAttention() and its scheduler
+    //                    counterpart already computed the right answers and had
+    //                    one caller each: a page somebody had to open.
+    const ADDED = ["telemetry.prune", "ops.alerts"];
     eq("one task was added, deliberately and by name",
       SCHEDULED_TASKS.map((t) => t.key).filter((k) => !RESPONSIBILITIES.some(([, key]) => key === k)),
       ADDED);
