@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { accessTo, resolveBusiness } from "@/lib/businessContext";
 import type { ApprovalRequest, Prisma, Store, StoreRole } from "@prisma/client";
+import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
 
 // Canonical permission names — call sites always use PERMISSIONS.X, never a
 // raw string, so the list can grow without scattered typo-prone literals.
@@ -142,12 +143,49 @@ export async function requireStorePermission(
     throw new Error("Choose which business this is for before continuing — open /choose-business.");
   }
   if (resolution.kind === "none") {
+    // ============ THE BRANCH THE FIRST TEST FOUND (2026-08-30) =====
+    //
+    // Instrumenting only the hasPermission check missed this one entirely: an
+    // account with no membership never reaches a role comparison, it fails
+    // here. That is also the more interesting shape — somebody with no access
+    // at all reaching for a business is a different fact from a member
+    // exceeding their role, and the two deserve different kinds.
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzUnresolved,
+      severity: "warning",
+      actorKind: "user",
+      actorId: userId,
+      storeId: storeId ?? null,
+      surface: `requireStorePermission:${permission}`,
+      detail: { permission, reason: "no business resolved for this account" },
+    });
     throw new Error("Store not found");
   }
 
   const { store, role } = resolution;
 
   if (!hasPermission(role, permission)) {
+    // ============ A REFUSAL NOBODY COULD SEE (2026-08-30) ==========
+    //
+    // Thirteen sites in this codebase refuse an action, and until now not one
+    // of them left a trace. A single denial is ordinary — somebody clicked
+    // something their role does not cover. A pattern of them is the clearest
+    // privilege-escalation signal the platform has, and it was being thrown
+    // away.
+    //
+    // Awaited rather than fired and forgotten: this path is already failing, so
+    // one insert costs nothing anybody is waiting on, and a serverless function
+    // that exits mid-write would lose exactly the signal worth keeping.
+    // recordSignal never throws, so the refusal below is unaffected either way.
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzDenied,
+      severity: "warning",
+      actorKind: "user",
+      actorId: userId,
+      storeId: store.id,
+      surface: `requireStorePermission:${permission}`,
+      detail: { permission, role },
+    });
     throw new Error("You don't have permission to do this.");
   }
 
@@ -202,9 +240,35 @@ export async function requireBusiness(
   // Deliberately the same message as a missing business. Telling somebody a
   // business exists but is not theirs is an answer they did not have before.
   if (!access) {
+    // THE CROSS-STORE ATTEMPT. The message stays deliberately identical to a
+    // missing business — telling somebody a business exists but is not theirs
+    // is an answer they did not have before — but the attempt is now recorded,
+    // because "this account tried four businesses it has no access to" is a
+    // fact somebody should be able to learn.
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzDenied,
+      severity: "warning",
+      actorKind: "user",
+      actorId: userId,
+      storeId: store.id,
+      surface: "requireBusinessAction:no-access",
+      detail: { slug, reason: "no membership" },
+    });
     throw new Error("Store not found");
   }
   if (!hasPermission(access.role, permission)) {
+    await recordSignal({
+      kind: SIGNAL_KINDS.authzDenied,
+      severity: "warning",
+      actorKind: "user",
+      actorId: userId,
+      storeId: store.id,
+      // Reaching a business BY NAME and being refused is the more interesting
+      // of the two shapes: the person chose this business rather than landing
+      // in it, so the surface says which path they took.
+      surface: `requireBusinessAction:${permission}`,
+      detail: { permission, role: access.role, slug },
+    });
     throw new Error("You don't have permission to do this.");
   }
 

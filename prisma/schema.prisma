@@ -3086,3 +3086,39 @@ model WebhookDelivery {
   @@index([status, receivedAt])
   @@index([storeId, receivedAt])
 }
+
+// WHAT A SECURITY LAYER WOULD READ — see the migration for the full reasoning.
+//
+// SecurityEvent is an account-activity log with a REQUIRED userId and no
+// storeId. It cannot describe an unauthenticated attacker, a cross-store
+// attempt, an authorization denial or a system actor. This is the separate
+// stream that can, and separate is the point: security intelligence reads it
+// and holds nothing else.
+//
+// APPEND ONLY, and no foreign keys — a signal about a deleted store must
+// survive the store, and a delete must never cascade evidence away.
+model SecuritySignal {
+  id            String   @id @default(cuid())
+  /** Ties this to the ExecutionLog, ProductEvent and Job rows of the same work. */
+  correlationId String?
+  /** Dot-namespaced: authz.denied, isolation.violation, webhook.unsigned. */
+  kind          String
+  /** info | warning | critical */
+  severity      String   @default("info")
+  /** user | system | genesis | anonymous | provider */
+  actorKind     String
+  actorId       String?
+  storeId       String?
+  /** The route, action, tool or job this happened in. */
+  surface       String?
+  ipAddress     String?
+  userAgent     String?
+  detail        Json?
+  occurredAt    DateTime @default(now())
+
+  @@index([kind, occurredAt])
+  @@index([severity, occurredAt])
+  @@index([storeId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([correlationId])
+}

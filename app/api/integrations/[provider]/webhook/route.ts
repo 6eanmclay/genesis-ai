@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { unstable_rethrow } from "next/navigation";
 import { prismaSystem } from "@/lib/prisma";
 import { recordDelivery, markProcessed, markFailed } from "@/lib/webhooks/delivery";
+import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
 import { getConnectorByName } from "@/lib/integrations/registry";
 
 // Phase 0 — one webhook route for every provider that supports them.
@@ -66,6 +67,16 @@ export async function POST(
       rawBody,
       signatureValid: false,
       externalEventId: verification.eventId ?? null,
+    });
+    // Two records, on purpose. The delivery table is the forensic copy of what
+    // arrived; the signal is what a security layer subscribes to. One is
+    // evidence, the other is a stream, and joining them is the correlation id.
+    await recordSignal({
+      kind: SIGNAL_KINDS.webhookUnsigned,
+      severity: "warning",
+      actorKind: "provider",
+      surface: `webhook:${provider}`,
+      detail: { provider, bytes: rawBody.length },
     });
     return new NextResponse("Invalid signature", { status: 400 });
   }

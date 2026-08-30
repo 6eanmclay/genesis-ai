@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
 
 // Track 0 (Operational Foundations) — structural tenant isolation.
 // Defense-in-depth, not the primary authorization mechanism: the real gate
@@ -245,6 +246,26 @@ export function withTenantIsolation<T extends PrismaClient>(client: T) {
 
           const where = (args as { where?: unknown } | undefined)?.where;
           if (!hasValidScope(where, scopeKeys)) {
+            // ============ THE VIOLATION IS NOW RECORDED (2026-08-30) ===
+            //
+            // This threw into the void. A query reaching across businesses is
+            // the single most serious thing this codebase can do wrong, and the
+            // only trace was an exception somebody might see in a log.
+            //
+            // Fire-and-forget rather than awaited: this extension sits in the
+            // hot path of every guarded query, and the throw below must not
+            // wait on a write. recordSignal never rejects, so the floating
+            // promise cannot become an unhandled rejection.
+            void recordSignal({
+              kind: SIGNAL_KINDS.isolationViolation,
+              // CRITICAL, not warning. Unlike a permission denial, this one
+              // should be impossible — reaching it means a query was written
+              // without a scope, not that somebody clicked the wrong thing.
+              severity: "critical",
+              actorKind: "system",
+              surface: `${model}.${operation}`,
+              detail: { model, operation, expectedScopeKeys: scopeKeys },
+            });
             throw new Error(
               `Tenant isolation: ${model}.${operation} was called without a store-scoping filter in its ` +
                 `where clause (expected one of: ${scopeKeys.join(", ")}, or a nested "store" relation filter). ` +
