@@ -495,6 +495,7 @@ model Store {
   @@index([planId])
   jobs Job[]
   webhookDeliveries WebhookDelivery[]
+  outboundOperations OutboundOperation[]
 }
 
 // The owner is still just Store.userId (unchanged) — this table is only for
@@ -3156,5 +3157,45 @@ model SecuritySignal {
   @@index([severity, occurredAt])
   @@index([storeId, occurredAt])
   @@index([actorId, occurredAt])
+  @@index([correlationId])
+}
+
+// ONE EXTERNAL SIDE EFFECT, PERFORMED ONCE — see the migration for the full note.
+//
+// The durable job queue made retries real, and retries without this place a
+// second supplier order when the first attempt timed out after succeeding.
+//
+// The key is NOT proof. A row is claimed before the provider is called, so a
+// process dying mid-call leaves `indeterminate`: we do not know whether the
+// provider acted. That state is never auto-retried — retrying may duplicate and
+// abandoning may lose — and is resolved by asking the provider, or by a person.
+// `externalRef` is what proof actually looks like.
+model OutboundOperation {
+  id             String    @id @default(cuid())
+  /** Describes WHAT is to be done, never when it was asked. Unique. */
+  idempotencyKey String    @unique
+  /** "printful.createOrder" — groups operations and selects a reconciler. */
+  operation      String
+  storeId        String?
+  correlationId  String?
+  /** in_progress | succeeded | failed | indeterminate */
+  status         String    @default("in_progress")
+  attempts       Int       @default(0)
+  /** The provider's own id. This, not our key, is evidence the thing exists. */
+  externalRef    String?
+  /** What the first successful call returned, so a replay returns the same. */
+  result         Json?
+  lastError      String?
+  claimedAt      DateTime?
+  claimedBy      String?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([status, claimedAt])
+  @@index([operation, status])
+  @@index([storeId, createdAt])
   @@index([correlationId])
 }
