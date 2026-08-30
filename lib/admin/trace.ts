@@ -222,3 +222,93 @@ export async function recentTraces(limit = 25): Promise<
   const seen = new Set<string>();
   return rows.filter((r) => (seen.has(r.correlationId) ? false : (seen.add(r.correlationId), true))).slice(0, limit);
 }
+
+/**
+ * Find a chain from something an operator actually has in their hand.
+ *
+ * ============ SEARCH, NOT A FEED (2026-08-30) =========================
+ *
+ * recentTraces is failure-focused on purpose, and widening it to include
+ * successes would turn the one list an operator opens during an incident into
+ * an activity stream where the interesting row is buried under a thousand
+ * healthy ones. So successful chains are reachable, but only ON PURPOSE.
+ *
+ * The distinction is that this REQUIRES A TERM. An empty query returns nothing
+ * rather than everything — the difference between a lookup and a feed is
+ * exactly that a lookup makes you say what you are looking for.
+ *
+ * ============ WHAT SOMEBODY ACTUALLY HAS ==============================
+ *
+ * Almost never the correlation id — that is the thing they are trying to find.
+ * What a support conversation supplies is one of the identifiers a person or a
+ * provider can see, so all five are searched:
+ *
+ *   the correlation id     when it came from another trace or a log line
+ *   an execution id        from the owner-facing activity record
+ *   a provider reference   a Stripe charge, an EasyPost tracker
+ *   an external event id   from the provider's own dashboard
+ *   an idempotency key     when reasoning about a duplicate
+ *
+ * Successful and failed alike: once you have named a specific thing, hiding its
+ * chain because it worked is just withholding the answer.
+ */
+export async function findTraces(query: string, limit = 20): Promise<
+  { correlationId: string; at: Date; label: string; source: TraceSource; matchedOn: string }[]
+> {
+  const term = query.trim();
+  // AN EMPTY SEARCH IS NOT A SEARCH.
+  //
+  // ============ BUT THIS IS NOT WHAT MAKES IT ONE (2026-08-30) =========
+  //
+  // Sabotage removed this floor and the suite stayed green, correctly: every
+  // clause below matches EXACTLY, so a short or empty term already finds
+  // nothing. What keeps this a lookup rather than a feed is the exact matching,
+  // and that break — loosening one clause to `contains` — does turn it red.
+  //
+  // The floor is kept for a smaller, real reason: it saves five pointless
+  // queries on an empty form submission. Stated plainly rather than credited
+  // with a protection it does not provide.
+  if (term.length < 6) return [];
+
+  const [byCorrelation, byExecution, byOutbound, byDelivery, byJob] = await Promise.all([
+    prismaSystem.executionLog.findMany({
+      where: { correlationId: term },
+      orderBy: { createdAt: "desc" }, take: limit,
+      select: { correlationId: true, createdAt: true, action: true },
+    }),
+    prismaSystem.executionLog.findMany({
+      where: { executionId: term, correlationId: { not: null } },
+      orderBy: { createdAt: "desc" }, take: limit,
+      select: { correlationId: true, createdAt: true, action: true },
+    }),
+    prismaSystem.outboundOperation.findMany({
+      where: {
+        correlationId: { not: null },
+        OR: [{ externalRef: term }, { idempotencyKey: term }],
+      },
+      orderBy: { createdAt: "desc" }, take: limit,
+      select: { correlationId: true, createdAt: true, operation: true },
+    }),
+    prismaSystem.webhookDelivery.findMany({
+      where: { correlationId: { not: null }, externalEventId: term },
+      orderBy: { receivedAt: "desc" }, take: limit,
+      select: { correlationId: true, receivedAt: true, provider: true },
+    }),
+    prismaSystem.job.findMany({
+      where: { correlationId: { not: null }, idempotencyKey: term },
+      orderBy: { createdAt: "desc" }, take: limit,
+      select: { correlationId: true, createdAt: true, kind: true },
+    }),
+  ]);
+
+  const rows = [
+    ...byCorrelation.map((e) => ({ correlationId: e.correlationId!, at: e.createdAt, label: e.action, source: "execution" as const, matchedOn: "correlation id" })),
+    ...byExecution.map((e) => ({ correlationId: e.correlationId!, at: e.createdAt, label: e.action, source: "execution" as const, matchedOn: "execution id" })),
+    ...byOutbound.map((o) => ({ correlationId: o.correlationId!, at: o.createdAt, label: o.operation, source: "outbound" as const, matchedOn: "provider reference or key" })),
+    ...byDelivery.map((d) => ({ correlationId: d.correlationId!, at: d.receivedAt, label: d.provider, source: "webhook" as const, matchedOn: "provider event id" })),
+    ...byJob.map((j) => ({ correlationId: j.correlationId!, at: j.createdAt, label: j.kind, source: "job" as const, matchedOn: "idempotency key" })),
+  ].sort((a, b) => b.at.getTime() - a.at.getTime());
+
+  const seen = new Set<string>();
+  return rows.filter((r) => (seen.has(r.correlationId) ? false : (seen.add(r.correlationId), true))).slice(0, limit);
+}

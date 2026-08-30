@@ -219,13 +219,25 @@ export async function deliveryHealth(since?: Date): Promise<DeliveryHealth[]> {
  * not a thing a report should be able to do by being read.
  */
 export async function replayableDeliveries(
-  provider: string,
+  provider?: string,
   limit = 50,
-): Promise<{ id: string; externalEventId: string | null; payload: string; error: string | null; receivedAt: Date }[]> {
+): Promise<{
+  id: string; provider: string; externalEventId: string | null; payload: string;
+  error: string | null; receivedAt: Date; signatureValid: boolean;
+  storeId: string | null; correlationId: string | null; attempts: number;
+}[]> {
+  // PROVIDER IS OPTIONAL so the operator surface can ask the same question
+  // across every provider at once. Widening this beat writing a second
+  // findMany in the page: two answers to "what can be replayed" would agree
+  // until the day one of them learned about a new status and the other did not.
   return prismaSystem.webhookDelivery.findMany({
-    where: { provider, status: "failed" },
+    where: { status: "failed", ...(provider ? { provider } : {}) },
     orderBy: { receivedAt: "desc" },
     take: limit,
-    select: { id: true, externalEventId: true, payload: true, error: true, receivedAt: true },
+    select: {
+      id: true, provider: true, externalEventId: true, payload: true,
+      error: true, receivedAt: true, signatureValid: true, storeId: true,
+      correlationId: true, attempts: true,
+    },
   });
 }

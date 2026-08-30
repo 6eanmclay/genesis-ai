@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   totalCostToday,
   totalCostThisMonth,
@@ -75,7 +76,13 @@ export default async function AdminHomePage() {
 
   return (
     <main className="mx-auto max-w-4xl px-8 py-16">
-      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">AI Cost &amp; Usage</h1>
+      <div className="flex items-baseline justify-between">
+        <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">AI Cost &amp; Usage</h1>
+        {/* This page is about spend. Operations is about whether anything is
+            broken — a different question, and the one somebody arrives with
+            during an incident, so it has to be reachable from here. */}
+        <Link href="/admin/operations" className="text-xs text-zinc-500 underline dark:text-zinc-400">Operations</Link>
+      </div>
       <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
         Internal — Genesis team only. Feature/intent figures below cover the last 30 days.
       </p>

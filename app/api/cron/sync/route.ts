@@ -9,6 +9,7 @@ import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
 import { sweepAbandonedTemporaries } from "@/lib/storage/temporaryAssets";
 import { drain } from "@/lib/jobs/queue";
+import { releaseStaleReplays } from "@/lib/webhooks/replay";
 import { withCorrelation } from "@/lib/observability/correlation";
 import { HANDLERS, validateJobPayload } from "@/lib/jobs/registry";
 import {
@@ -48,6 +49,28 @@ export async function GET(request: NextRequest) {
   // the finally."
   //
   // Its own stage and its own catch, like every other stage here.
+  // ============ STALE REPLAY CLAIMS (2026-08-30) ====================
+  //
+  // A replay claims a delivery before running it, so a process that dies mid-
+  // replay leaves it in `replaying`: not failed, so nothing may replay it, and
+  // not processed, so it never happened. Without a sweep that is a permanent
+  // stall waiting on somebody remembering to run a cleanup by hand.
+  //
+  // It goes HERE rather than into the job queue, and that is deliberate. The
+  // queue is for work that can fail and want retrying; this is an idempotent
+  // recompute over a time window — the same shape as the abandoned-temporary
+  // sweep it sits beside, and the same shape as pruneExpiredAttempts. A failure
+  // means the next run releases the same claims plus any new ones, so a second
+  // retry mechanism would add state without adding recovery.
+  await withCorrelation({ origin: "cron", surface: "staleReplays" }, () =>
+    releaseStaleReplays(),
+  ).catch((error) => {
+    reportIssue("the stale webhook-replay sweep failed", error, {
+      subsystem: "integrations",
+      stage: "cron.staleReplays",
+    });
+  });
+
   await withCorrelation({ origin: "cron", surface: "temporaryAssets" }, () =>
     sweepAbandonedTemporaries(),
   ).catch((error) => {
