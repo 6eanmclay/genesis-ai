@@ -14,6 +14,7 @@ import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { withCorrelation } from "@/lib/observability/correlation";
 import { recordDelivery, markProcessed, markFailed } from "@/lib/webhooks/delivery";
 import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
+import { handlePaypalEvent } from "@/lib/payments/paypalEvent";
 
 // PayPal refunds — the counterpart to the Stripe rail's charge.refunded.
 //
@@ -41,54 +42,7 @@ import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
 // shared shape at the cost of the guarantee that actually matters here.
 
 /** How long after a refund a missing order is still plausibly in flight. */
-const COMMIT_RACE_WINDOW_MS = 10 * 60 * 1000;
 
-interface PaypalRefundResource {
-  id?: string;
-  status?: string;
-  amount?: { value?: string; currency_code?: string };
-  seller_payable_breakdown?: { total_refunded_amount?: { value?: string } };
-  links?: { rel?: string; href?: string }[];
-  capture_id?: string;
-}
-
-/**
- * Which capture was refunded? — PayPal's refund resource does not carry the
- * capture id as a field, it carries a link up to it. Parsed rather than assumed,
- * with `capture_id` accepted too because some payload shapes do include it.
- */
-export function paypalCaptureIdFromRefund(resource: PaypalRefundResource): string | null {
-  if (resource.capture_id) return resource.capture_id;
-  const up = resource.links?.find((l) => l.rel === "up" && l.href?.includes("/payments/captures/"));
-  const id = up?.href?.split("/payments/captures/")[1]?.split(/[/?#]/)[0];
-  return id && id.length > 0 ? id : null;
-}
-
-function toCents(value: string | undefined): number | null {
-  if (typeof value !== "string" || value.trim() === "") return null;
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
-}
-
-/**
- * How much of this order has now been refunded, in cents.
- *
- * `total_refunded_amount` is cumulative and is what makes a second partial
- * refund that completes the total read as a full one; `amount` is just this
- * refund. Preferring the cumulative figure is the difference between two halves
- * adding up and two halves each looking partial forever.
- */
-export function refundedCents(resource: PaypalRefundResource): number | null {
-  return toCents(resource.seller_payable_breakdown?.total_refunded_amount?.value) ?? toCents(resource.amount?.value);
-}
-
-// ============ THE SURROUND, NOT THE HANDLER (2026-08-30) ============
-//
-// Same asymmetry as the Stripe route, for the same reason: this one reconciles
-// refunds against real money, so its handler stays exactly where it is and
-// gains only what it was missing — correlation, a verbatim record, duplicate
-// detection, and a signal when an unsigned payload arrives. The EasyPost route
-// is fully on lib/webhooks/pipeline.ts because its handler moves no money.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ storeId: string }> }
@@ -205,92 +159,15 @@ async function handlePaypalWebhook(
   tracked.deliveryId = delivery?.id ?? null;
 
   // Everything below this line is trusted. Nothing above it was.
-  let event: { event_type?: string; create_time?: string; resource?: PaypalRefundResource };
-  try {
-    event = JSON.parse(rawBody);
-  } catch {
-    return new Response("Malformed event", { status: 400 });
-  }
 
-  if (event.event_type !== "PAYMENT.CAPTURE.REFUNDED" && event.event_type !== "PAYMENT.CAPTURE.REVERSED") {
-    // Subscribed to nothing else, but a merchant editing the subscription in
-    // PayPal could send more. Acknowledged, not retried.
-    return new Response("OK", { status: 200 });
-  }
-
-  const resource = event.resource ?? {};
-  const captureId = paypalCaptureIdFromRefund(resource);
-  if (!captureId) {
-    reportIssue(`a verified PayPal refund named no capture`, null, {
-      subsystem: "payments",
-      stage: "paypal.webhook.capture_id",
-      storeId,
-      extra: { eventType: event.event_type },
-    });
-    // Retrying an identical payload cannot produce a capture id.
-    return new Response("OK", { status: 200 });
-  }
-
-  // Scoped to the store the signature just proved this event belongs to, so a
-  // verified refund can only ever touch that store's own orders.
-  const order = await prisma.order.findFirst({
-    where: { storeId, paymentProvider: "PAYPAL", externalPaymentId: captureId },
-    select: { id: true, amountInCents: true, status: true },
-  });
-
-  if (!order) {
-    // THE COMMIT RACE. The capture route writes the order after PayPal has taken
-    // the money, so a refund issued moments later can genuinely arrive first.
-    // Inside that window a retry is the fix; outside it, nothing is coming and
-    // retrying for three days only delays somebody looking at it.
-    const createdAt = event.create_time ? Date.parse(event.create_time) : Number.NaN;
-    const age = Number.isFinite(createdAt) ? Date.now() - createdAt : Number.POSITIVE_INFINITY;
-    if (age < COMMIT_RACE_WINDOW_MS) {
-      return new Response("Order not recorded yet", { status: 503 });
-    }
-
-    await recordExecution({
-      executionId: randomUUID(),
-      action: EXECUTION_ACTIONS.CHECKOUT_PAYPAL_REFUND_UNAPPLIED,
-      status: "FAILED",
-      verified: false,
-      message: `PayPal refunded capture ${captureId}, but no order in this store matches it. Reconcile this in PayPal — the money has left your account.`,
-      retryable: false,
-      actorType: "USER",
-      actorId: null,
-      storeId,
-      storeDraftId: null,
-      schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
-      timestamp: new Date(),
-      metadata: { captureId, eventType: event.event_type },
-    }).catch((error: unknown) => {
-      reportIssue(`could not record an unapplied PayPal refund for ${captureId}`, error, {
-        subsystem: "payments",
-        stage: "paypal.webhook.persist",
-        storeId,
-        extra: { captureId },
-      });
-    });
-    return new Response("OK", { status: 200 });
-  }
-
-  // Only a genuinely FULL refund flips status, matching the Stripe rail exactly.
-  // A partial refund does not change what the owner still has to ship, and
-  // relabelling a substantially-paid order "refunded" would mislead them.
-  // Partial refunds remain a named, deliberate gap — see COMPLIANCE.md's
-  // close-out, where they are a product decision rather than a defect.
-  const refunded = refundedCents(resource);
-  if (refunded === null || refunded < order.amountInCents) {
-    return new Response("OK", { status: 200 });
-  }
-
-  // Claim-then-act rather than the Stripe rail's check-then-act: PayPal
-  // redelivers, and two deliveries racing here would otherwise both read "paid"
-  // and both write. The conditional update makes the second a genuine no-op.
-  await prisma.order.updateMany({
-    where: { id: order.id, storeId, status: { not: "refunded" } },
-    data: { status: "refunded" },
-  });
-
-  return new Response("OK", { status: 200 });
+  // ============ THE LINE WHERE TRUST BEGINS ======================
+  //
+  // The half below used to continue inline, which meant a legitimately
+  // received refund could never be replayed: PayPal verification is a live
+  // API call against a transmission id and timestamp, so it cannot be
+  // repeated from a stored body at all. It now lives in
+  // lib/payments/paypalEvent.ts with two callers — this route, which has
+  // just verified, and replay, which refuses any delivery whose signature
+  // did not verify when it arrived.
+  return handlePaypalEvent(rawBody, storeId);
 }

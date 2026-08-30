@@ -260,13 +260,25 @@ async function main(): Promise<void> {
 
   console.log("\n--- replay handlers claim only what they can actually do ---\n");
   {
-    const { replayableProviders } = await import("@/lib/webhooks/replayHandlers");
+    const { replayHandlers, replayableProviders } = await import("@/lib/webhooks/replayHandlers");
     const providers = replayableProviders();
-    // Honest scope. Claiming Stripe here would draw a button that always fails,
-    // because handleStripeWebhook cannot run without a live signature.
-    eq("only EasyPost is claimed replayable today", providers, ["EASYPOST"]);
-    assert("and Stripe is not", !providers.includes("STRIPE"));
-    assert("nor PayPal", !providers.includes("PAYPAL"));
+
+    // ============ THIS USED TO SAY "EASYPOST ONLY" (2026-08-30) =====
+    //
+    // And it was right to. Claiming Stripe before Rank 4 would have drawn a
+    // button that always failed, because verification and handling were one
+    // function and a stored signature is expired by definition.
+    //
+    // Rank 4 split them, so the claim is now true for all three. The assertion
+    // keeps its original job — a provider may only be listed here if it can
+    // ACTUALLY be replayed — and the list simply grew.
+    eq("all three providers can now be replayed", providers, ["EASYPOST", "PAYPAL", "STRIPE"]);
+
+    // A claim is only honest if something is behind it.
+    const handlers = replayHandlers();
+    for (const provider of providers) {
+      assert(`${provider} has a handler behind the claim`, typeof handlers[provider] === "function");
+    }
   }
 
   console.log(`\n${failures} failed, ${passes} passed\n`);
