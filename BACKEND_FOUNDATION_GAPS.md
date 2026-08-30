@@ -72,6 +72,14 @@ originally said, so the record is the record rather than the report being it.
 
 ---
 
+## Requires paid infrastructure
+
+| # | Item |
+|---|---|
+| **22** | **The durable queue's only runner is a daily cron.** `/api/cron/tick` is built, authorized, lane-scoped to `queue` and `timely`, and proven by `verify-scheduler-db` — and deliberately absent from `vercel.json`, because a second cron entry needs a paid Vercel plan and a paid requirement must not be faked locally. Until it is switched on, a job enqueued just after the daily tick waits nearly 24 hours, which includes a customer's order confirmation. **Turning it on is one line**: `{ "path": "/api/cron/tick", "schedule": "*/2 * * * *" }`. No task, handler or library changes. The suite asserts both that the trigger exists and that it is NOT scheduled, so this cannot drift into "we forgot". |
+
+---
+
 ## Blocked until Connections credentials
 
 | # | Limitation |
@@ -96,6 +104,9 @@ discriminate.
 | **The storage reservation lock** | Recorded in `lib/storage/ledger.ts` since 2026-08-29. |
 | **Two lines in `isAllowedPlatformAdmin` are redundant** | Removing `.filter(Boolean)` alone, or the empty-allowlist return alone, changes no result — the empty-email return already refuses the only input a blank entry could match. Both are kept as belt-and-braces and neither can be independently proven; removing *both* the empty-email return and the filter admits anybody through a trailing comma, and that combination *is* caught. Recorded in the file. |
 | **The `findTraces` length floor proves nothing** | Sabotage removed it and the suite stayed green, correctly: exact matching already makes a short term find nothing. It is kept to avoid five pointless queries on an empty submission, not credited as the thing that keeps a lookup from being a feed. |
+| **`ScheduledTaskRun` has no retention** | It grows forever. A stuck `running` row blocks nothing — due-ness reads `succeeded` — so this is table growth rather than a stall, and it wants the same treatment `telemetry.prune` now gets rather than a second mechanism. Opened 2026-08-30 with the scheduler. |
+| **Nothing tells a person the scheduler stopped** | `/admin/operations` reports overdue, stuck and failing tasks, and reporting it on a page somebody has to open is not an alert. This is the same absence the inventory records platform-wide: there is no alerting path of any kind. |
+| **The intelligence skip-list is gone** | The old route ran connector syncs and intelligence cycles in one invocation and deduplicated by passing `skipStoreIds`. As independent tasks there is no "just now" to deduplicate against, so deduplication comes from `runDueIntelligenceCycles` selecting only stores with new activity. That is believed sufficient and is a behaviour change, stated rather than slipped in — worth watching the first time both tasks run against real stores. |
 | **Nobody has clicked the replay button** | The action's guard is asserted against its source, and `replayDelivery` is proven by `verify-replay-db`. What has never happened is a browser POST to the generated action id — including the unauthorized one. Proving that refusal end to end needs a running server and two real sessions. |
 | **No email has ever been sent** | There is no `RESEND_API_KEY`. Every notification path is exercised against an injected sender. |
 

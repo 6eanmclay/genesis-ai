@@ -15,6 +15,15 @@ import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 // cycle-run model exists; /admin reports AI cost only. So "is the BI engine
 // running?" had no answer that did not involve tailing runtime logs and hoping.
 //
+// ============ HALF OF THAT IS NO LONGER TRUE (2026-08-30) ==========
+//
+// ScheduledTaskRun now persists every scheduled run, so "did the scheduler
+// fire, and did the intelligence task succeed" IS answerable, on
+// /admin/operations. What this route still uniquely answers is the layer
+// beneath: which STORES the engine has consumed up to, from the cursors the
+// engine writes anyway. A task succeeding says the pass ran; it does not say a
+// particular business was reached.
+//
 // Nothing new is written to make this answerable. Every field below is read
 // from rows the engine ALREADY writes as part of doing its job:
 //

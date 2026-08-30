@@ -3051,6 +3051,61 @@ model OrderItem {
 // produces one row. Retries are only safe BECAUSE of that: a handler that
 // charges money or places a supplier order must not run twice because the
 // first attempt timed out after it had already succeeded.
+// EVERY TIME A SCHEDULED TASK RAN, AND WHAT CAME OF IT.
+//
+// ============ THE TRIGGER WAS THE SCHEDULE (2026-08-30) ================
+//
+// Eleven responsibilities hung off one daily HTTP request, and their cadence
+// was the cadence of that request. A weekly sweep was "weekly" because the
+// handler asked `getUTCDay() === 0`; everything else was "daily" because the
+// request was. Nothing anywhere recorded that a run had happened, so a cron
+// that simply never fired was indistinguishable from one where every task
+// found nothing to do.
+//
+// This table separates the two. A task is due because of what this table says
+// about when it last succeeded — never because of which trigger woke the
+// process. That is the whole point: the same code is correct whether it is
+// invoked once a day or once a minute, so turning on real schedules later is
+// configuration rather than a redesign.
+//
+// ============ WHY A ROW PER RUN, NOT A CURSOR =========================
+//
+// A single lastRunAt column would answer "when" and nothing else. Operators
+// need "did it run, did it work, how long did it take, and what did it do" —
+// and a task that has been failing every night for a week is a different fact
+// from one that has not run at all, which a cursor cannot express.
+model ScheduledTaskRun {
+  id      String @id @default(cuid())
+  /** A key from lib/scheduler/registry.ts. Never a free string. */
+  taskKey String
+
+  /** running | succeeded | failed | skipped */
+  outcome String @default("running")
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+
+  /** Why a run was skipped, or how it failed. Null on a clean success. */
+  detail String?
+
+  /** Which trigger woke it — so a task's cadence can be read against its lane. */
+  trigger String?
+
+  /** Ties the run to everything it produced. Same contract as Job. */
+  correlationId String?
+
+  /**
+   * DUE-NESS IS COMPUTED FROM THIS INDEX.
+   *
+   * The newest succeeded row for a key decides whether the task runs, so this
+   * index is on the read path of every trigger, not merely a reporting one.
+   */
+  @@index([taskKey, outcome, startedAt])
+  @@index([startedAt])
+  @@index([correlationId])
+}
+
 model Job {
   id             String    @id @default(cuid())
   /** Which handler runs this. See lib/jobs/registry.ts. */

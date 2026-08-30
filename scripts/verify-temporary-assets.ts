@@ -1,3 +1,4 @@
+import { taskByKey } from "@/lib/scheduler/registry";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -132,22 +133,31 @@ function main(): void {
     /prismaSystem\.temporaryAsset\.findMany/.test(temp),
     "a cron carries no session; the deletion is still narrow");
 
-  const cron = codeOnly(read("app", "api", "cron", "sync", "route.ts"));
-  assert("and it is wired into the daily cron",
-    /sweepAbandonedTemporaries\(\)/.test(cron), "");
-  assert("as its own catch, so one failing stage does not take the others down",
-    // ============ THE PROPERTY, NOT THE SYNTAX (2026-08-30) ==========
-    //
-    // This read `sweepAbandonedTemporaries().catch(` and broke the day the call
-    // was wrapped in withCorrelation — while the property it names stayed
-    // perfectly true, because the catch simply moved onto the wrapper. A test
-    // that fails when working code is refactored around it is testing the
-    // spelling.
-    //
-    // What must hold is that the sweep sits inside its own catch, whatever is
-    // between them.
-    /sweepAbandonedTemporaries\([\s\S]{0,200}?\.catch\(/.test(cron),
-    "the sweep must be guarded by its own catch");
+  // ============ THE PROPERTY MOVED HOUSE (2026-08-30) ================
+  //
+  // These read the cron route's source for `sweepAbandonedTemporaries()` and
+  // for a `.catch(` after it. Both broke when the scheduling layer landed, and
+  // both were right about WHAT must hold and wrong about WHERE.
+  //
+  // That is the second time. The comment this replaces already recorded the
+  // first — a regex that broke when the call was wrapped in withCorrelation
+  // while the property stayed perfectly true — and concluded that a test which
+  // fails when working code is refactored around it is testing the spelling.
+  // Asserting against a route that no longer decides anything is the same
+  // mistake at a larger scale.
+  //
+  // So it asks the registry, which is now the one place that says what Genesis
+  // runs on a schedule. Dropping the task fails this; renaming it fails this;
+  // and per-task failure isolation is a property of the runner, proven and
+  // sabotaged once in verify-scheduler-db rather than restated here.
+  const swept = taskByKey("storage.temporaryAssets");
+  assert("and it is scheduled, not left to somebody remembering",
+    !!swept, "storage.temporaryAssets is not in the scheduler registry");
+  assert("switched on", !!swept?.enabled(), "");
+  assert("with an interval of its own rather than a trigger's cadence",
+    (swept?.everyMs ?? 0) > 0, "");
+  assert("and it is the real sweep that runs",
+    /sweepAbandonedTemporaries\(\)/.test(codeOnly(read("lib", "scheduler", "registry.ts"))), "");
 
   // A blob that is already gone is a success. Anything else keeps the row so
   // the next sweep tries again rather than losing track of a live blob.

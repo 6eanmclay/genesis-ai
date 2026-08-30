@@ -231,16 +231,31 @@ async function main(): Promise<void> {
   console.log("\n--- the stale-replay sweep is scheduled, not remembered ---\n");
   {
     // Gap 19. A claim released only when somebody remembers to run a script is
-    // a stall waiting to happen, so this asserts the wiring exists.
-    const cron = readFileSync("app/api/cron/sync/route.ts", "utf8");
-    assert("the cron calls releaseStaleReplays", /releaseStaleReplays\(\)/.test(cron));
-    assert("and imports it from the one implementation",
-      /import \{ releaseStaleReplays \} from "@\/lib\/webhooks\/replay"/.test(cron));
-    assert("under a correlation id like its neighbours",
-      /withCorrelation\(\{[^}]*surface: "staleReplays"[^}]*\}[\s\S]{0,120}releaseStaleReplays/.test(cron));
-    // A failure here must not take the rest of the cron down with it.
-    assert("and a failure is caught",
-      /releaseStaleReplays\(\),?\s*\)\.catch\(/.test(cron));
+    // a stall waiting to happen, so this asserts the sweep really is scheduled.
+    //
+    // ============ IT ASKS THE REGISTRY NOW (2026-08-30) ============
+    //
+    // These four read app/api/cron/sync/route.ts for the call, its correlation
+    // wrapper and its catch, and all four broke when the scheduling layer
+    // landed — every one right about what must hold and wrong about where. The
+    // route no longer decides anything, so asserting against it was asserting
+    // the spelling of an implementation detail.
+    //
+    // lib/scheduler/registry.ts is the one place that now states what Genesis
+    // runs on a schedule. Removing or renaming the task fails this. The
+    // correlation id and the per-task catch became properties of the runner,
+    // proven once and sabotaged in verify-scheduler-db rather than restated in
+    // every suite that cares about a task.
+    const { taskByKey } = await import("@/lib/scheduler/registry");
+    const task = taskByKey("webhooks.releaseStaleReplays");
+    assert("the sweep is a scheduled task", !!task, "not in the scheduler registry");
+    assert("switched on", !!task?.enabled());
+    assert("wanting to run at least daily",
+      (task?.everyMs ?? Infinity) <= 24 * 60 * 60 * 1000, `${task?.everyMs}`);
+    const registry = readFileSync("lib/scheduler/registry.ts", "utf8");
+    assert("and it is the one implementation that runs",
+      /releaseStaleReplays\(\)/.test(registry) &&
+      /from "@\/lib\/webhooks\/replay"/.test(registry));
   }
 
   console.log("\n--- replay handlers claim only what they can actually do ---\n");

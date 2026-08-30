@@ -146,6 +146,12 @@ async function main(): Promise<void> {
       webhooks: { health: [{ provider: "x", received: 10, processed: 10, failed: 0, rejected: 0, lastReceivedAt: new Date() }], replayable: 0 },
       security: [{ kind: "authz.denied", severity: "warning", count: 3, lastSeenAt: new Date() }],
       telemetry: { total: 5000, oldest: new Date(), byName: [] },
+      // A scheduler doing its job: enabled, recently succeeded, nothing stuck.
+      scheduler: [{
+        key: "queue.drain", lane: "queue" as const, purpose: "drain", enabled: true,
+        everyMs: 120_000, lastSuccessAt: new Date(), lastOutcome: "succeeded",
+        lastDurationMs: 12, overdueByMs: null, stuckSince: null,
+      }],
     };
     // BUSY IS NOT BROKEN. Nine hundred completed jobs, pending work and routine
     // denials are a working platform, and flagging them is how a health check
@@ -162,6 +168,27 @@ async function main(): Promise<void> {
     eq("a replayable delivery speaks", needsAttention({
       ...quiet, webhooks: { ...quiet.webhooks, replayable: 1 },
     }).length, 1);
+    // ============ THE SCHEDULER'S OWN THREE (2026-08-30) ==========
+    //
+    // Added when scheduled-task health joined this page. A cron that stops
+    // firing is the failure everything else here cannot report, because
+    // everything else describes work that happened.
+    eq("an overdue task speaks", needsAttention({
+      ...quiet, scheduler: [{ ...quiet.scheduler[0], overdueByMs: 90_000 }],
+    }).length, 1);
+    eq("a task that started and never finished speaks", needsAttention({
+      ...quiet, scheduler: [{ ...quiet.scheduler[0], stuckSince: new Date() }],
+    }).length, 1);
+    eq("a task that failed its last run speaks", needsAttention({
+      ...quiet, scheduler: [{ ...quiet.scheduler[0], lastOutcome: "failed" }],
+    }).length, 1);
+    // AND THE ONE THAT MUST STAY SILENT. Storage reconciliation is switched off
+    // on purpose; a page that complains about it every hour is one nobody reads.
+    eq("a deliberately disabled task says nothing", needsAttention({
+      ...quiet,
+      scheduler: [{ ...quiet.scheduler[0], enabled: false, lastSuccessAt: null, lastOutcome: null }],
+    }), []);
+
     eq("and a critical signal speaks", needsAttention({
       ...quiet, security: [{ kind: "isolation.violation", severity: "critical", count: 1, lastSeenAt: new Date() }],
     }).length, 1);

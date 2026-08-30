@@ -54,6 +54,15 @@ function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Intervals read as words here; milliseconds are for the registry, not a person. */
+function humanInterval(ms: number): string {
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
 const when = (d: Date | string | null) => (d ? new Date(d).toISOString().replace("T", " ").slice(0, 19) : "—");
 
 export default async function OperationsPage({
@@ -134,6 +143,46 @@ export default async function OperationsPage({
             </table>
           </div>
         )}
+      </Section>
+
+      {/* ============ THE ONLY SECTION ABOUT WORK THAT DID NOT HAPPEN ====
+          Everything else on this page describes something the platform did.
+          A scheduler that silently stops produces no rows anywhere, which is
+          why its health is asserted rather than inferred. */}
+      <Section title="Scheduled tasks"
+        note="Each task states the interval it needs. Today one daily trigger offers every lane a chance — a gap that is infrastructure, not design.">
+        <div className="overflow-x-auto rounded-xl border border-black/[.08] bg-white dark:border-white/[.1] dark:bg-zinc-950">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <tr><th className="p-3">Task</th><th className="p-3">Lane</th><th className="p-3">Wants</th><th className="p-3">Last success</th><th className="p-3">Last run</th><th className="p-3">State</th></tr>
+            </thead>
+            <tbody>
+              {health.scheduler.map((task) => {
+                const late = task.overdueByMs !== null || !!task.stuckSince || task.lastOutcome === "failed";
+                return (
+                  <tr key={task.key} className="border-t border-black/[.06] dark:border-white/[.08]">
+                    <td className="p-3 text-black dark:text-zinc-100" title={task.purpose}>{task.key}</td>
+                    <td className="p-3 text-xs uppercase tracking-wide text-zinc-400">{task.lane}</td>
+                    <td className="p-3 tabular-nums text-zinc-500 dark:text-zinc-400">{humanInterval(task.everyMs)}</td>
+                    <td className="p-3 tabular-nums text-zinc-500 dark:text-zinc-400">{task.lastSuccessAt ? when(task.lastSuccessAt) : "never"}</td>
+                    <td className="p-3 text-zinc-500 dark:text-zinc-400">
+                      {task.lastOutcome ?? "—"}{task.lastDurationMs != null ? ` · ${task.lastDurationMs}ms` : ""}
+                    </td>
+                    <td className={`p-3 text-xs ${late ? "text-rose-700 dark:text-rose-400" : "text-zinc-500 dark:text-zinc-400"}`}>
+                      {/* A task that is off is not a problem. Saying so plainly
+                          keeps the red text meaning something. */}
+                      {!task.enabled ? "off by decision"
+                        : task.stuckSince ? `started ${when(task.stuckSince)}, never finished`
+                        : task.overdueByMs !== null ? `overdue by ${humanInterval(task.overdueByMs)}`
+                        : task.lastOutcome === "failed" ? "failed last run"
+                        : "on schedule"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Section>
 
       <Section title="Failed webhook deliveries"

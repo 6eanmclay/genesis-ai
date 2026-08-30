@@ -4,6 +4,7 @@ import { deliveryHealth } from "@/lib/webhooks/delivery";
 import { indeterminateOperations } from "@/lib/outbound/runOnce";
 import { tallySignals } from "@/lib/security/signals";
 import { telemetryFootprint } from "@/lib/telemetry/retention";
+import { schedulerHealth, schedulerNeedsAttention } from "@/lib/scheduler/health";
 
 // WHAT THE PLATFORM IS DOING, FOR THE PERSON WHO OPERATES IT.
 //
@@ -23,6 +24,7 @@ import { telemetryFootprint } from "@/lib/telemetry/retention";
 // Not everything. Four questions, in the order somebody asks them when
 // something is wrong:
 //
+//   is the scheduler even running?           scheduled task health
 //   is work flowing, or piling up?           queue depth, dead letters
 //   is anything stuck that nobody can see?   indeterminate operations
 //   are providers reaching us, and signed?   delivery health
@@ -65,6 +67,17 @@ export interface PlatformHealth {
   };
   security: Awaited<ReturnType<typeof tallySignals>>;
   telemetry: Awaited<ReturnType<typeof telemetryFootprint>>;
+  /**
+   * Whether the scheduled layer is alive.
+   *
+   * ============ THE FAILURE THAT USED TO BE INVISIBLE (2026-08-30) ===
+   *
+   * A cron that stopped firing and a cron where every task found nothing to do
+   * produced identical evidence: none. Everything else on this page describes
+   * work that HAPPENED; this is the only entry that can report work that
+   * silently did not.
+   */
+  scheduler: Awaited<ReturnType<typeof schedulerHealth>>;
 }
 
 /** How long a running job may hold its claim before it is worth looking at. */
@@ -91,6 +104,8 @@ export async function platformHealth(since?: Date): Promise<PlatformHealth> {
       telemetryFootprint(),
     ]);
 
+  const scheduler = await schedulerHealth();
+
   return {
     generatedAt: new Date().toISOString(),
     queue: { depth, deadLetters, stalled },
@@ -98,6 +113,7 @@ export async function platformHealth(since?: Date): Promise<PlatformHealth> {
     webhooks: { health, replayable },
     security,
     telemetry,
+    scheduler,
   };
 }
 
@@ -122,6 +138,10 @@ export function needsAttention(health: PlatformHealth): string[] {
   if (health.webhooks.replayable > 0) {
     reasons.push(`${health.webhooks.replayable} webhook deliver(ies) failed and awaiting replay`);
   }
+  // The scheduler speaks for itself — overdue, stuck, or failing — and stays
+  // silent about a task that is deliberately switched off.
+  reasons.push(...schedulerNeedsAttention(health.scheduler));
+
   const critical = health.security.filter((s) => s.severity === "critical");
   if (critical.length > 0) {
     reasons.push(`${critical.reduce((n, s) => n + s.count, 0)} critical security signal(s)`);
