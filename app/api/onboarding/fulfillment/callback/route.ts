@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { validateQuery, queryToken } from "@/lib/http/guard";
 import { auth } from "@/auth";
 import { completeOAuthHandoff } from "@/lib/integrations/oauthState";
 import { prisma } from "@/lib/prisma";
@@ -26,11 +28,39 @@ import type { OnboardingState } from "@/lib/onboarding/types";
 // when the draft-phase connect flow starts (app/onboarding/actions.ts).
 // Only PRINTFUL is implemented today; the `provider` segment exists so a
 // second fulfillment connector doesn't need a second route.
+/**
+ * What an OAuth return may carry.
+ *
+ * Every field optional: a provider that refuses sends `error` and no `code`,
+ * and the verification below is what decides whether the combination is usable.
+ * This only bounds what arrives.
+ */
+const CallbackQuery = z
+  .object({
+    state: queryToken(2048).optional(),
+    code: queryToken(4096).optional(),
+    error: queryToken(256).optional(),
+  })
+  // Providers append their own extras. Ignored, never refused.
+  .passthrough();
+
 export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams;
-  const state = searchParams.get("state");
-  const code = searchParams.get("code");
-  const oauthError = searchParams.get("error");
+  // ============ BOUNDS, NOT AUTHORIZATION (2026-08-30) =============
+  //
+  // completeOAuthHandoff below verifies the signature, nonce, provider, expiry
+  // and session user, and that remains the control — nothing here weakens or
+  // duplicates it. What was missing is a LENGTH: `code` is handed to a
+  // provider's token exchange and `state` to a signature check, and a callback
+  // is the one place an unauthenticated stranger can put text into a URL that a
+  // signed-in owner will click.
+  //
+  // A malformed one is treated exactly as a missing state already was — it
+  // falls through to the verification below with nothing, which redirects with
+  // the route's own flash parameter. The flow is untouched.
+  const checked = await validateQuery(request, { surface: "onboarding.fulfillmentCallback", schema: CallbackQuery });
+  const state = checked.ok ? checked.value.state ?? null : null;
+  const code = checked.ok ? checked.value.code ?? null : null;
+  const oauthError = checked.ok ? checked.value.error ?? null : "invalid_request";
 
   // Redirects back into the guided flow, not /dashboard — the owner
   // resumes exactly where they left off (see app/onboarding/business/).

@@ -56,6 +56,20 @@ export const SIGNAL_KINDS = {
   webhookReplayed: "webhook.replayed",
   /** Somebody tried to replay a delivery whose signature never verified. */
   webhookReplayRefused: "webhook.replay_refused",
+  /**
+   * A request was refused at the public boundary — too large, not JSON, or the
+   * wrong shape.
+   *
+   * ============ ITS OWN KIND, NOT ratelimit.tripped (2026-08-30) ======
+   *
+   * The first draft of the boundary guard recorded these as rate limiting,
+   * which would have made `ratelimit.tripped` useless for the thing it names:
+   * a hundred malformed requests and a hundred throttled ones are different
+   * facts, and an operator looking for an attack needs to tell them apart.
+   *
+   * Never carries the body. The reason and the field NAMES, never their values.
+   */
+  boundaryRejected: "http.rejected",
 } as const;
 
 export type SignalKind = (typeof SIGNAL_KINDS)[keyof typeof SIGNAL_KINDS];

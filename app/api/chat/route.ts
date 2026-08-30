@@ -1,3 +1,4 @@
+import { checkRateLimit } from "@/lib/http/rateLimit";
 import { withJ4CopyRules } from "@/lib/j4CopyRules";
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
@@ -152,6 +153,34 @@ export async function POST(request: Request) {
   const userMessage = body?.message?.trim();
   if (!userMessage) {
     return new Response(JSON.stringify({ type: "error", message: "Empty message." }), { status: 400 });
+  }
+
+  // ============ A CEILING IS NOT A RATE (2026-08-30) ================
+  //
+  // lib/genesisModel.ts already refuses to spend beyond a daily token ceiling
+  // per scope, which is real cost control and the reason this endpoint is not
+  // on the P0 list. What a ceiling cannot do is stop a caller reaching it in
+  // ninety seconds, holding many streaming functions open at once and
+  // exhausting the day's budget for a business before its owner has typed
+  // anything.
+  //
+  // A message is bounded too. Nothing capped its length, and a very long one is
+  // both expensive and a way to push everything else out of the model's context.
+  if (userMessage.length > 8000) {
+    return new Response(
+      JSON.stringify({ type: "error", message: "That message is too long to send in one go." }),
+      { status: 413 },
+    );
+  }
+  const limited = await checkRateLimit(
+    [{ kind: "chat:user", value: userId, max: 120, windowMs: 60 * 60 * 1000 }],
+    { surface: "chat", actorId: userId },
+  );
+  if (!limited.allowed) {
+    return new Response(
+      JSON.stringify({ type: "error", message: "That is a lot of messages at once — give it a moment." }),
+      { status: 429, headers: limited.retryAfterSeconds ? { "retry-after": String(limited.retryAfterSeconds) } : undefined },
+    );
   }
 
   // THE BUSINESS THIS TURN IS ABOUT, TAKEN FROM THE REQUEST (2026-08-21,

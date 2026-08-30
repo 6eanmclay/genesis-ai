@@ -4,6 +4,21 @@ import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { z } from "zod";
+import { validateQuery, queryToken } from "@/lib/http/guard";
+
+/** What PayPal actually sends back, bounded. */
+const PaypalReturnQuery = z
+  .object({
+    // PayPal order ids are short alphanumeric strings.
+    token: queryToken(128),
+    // A store slug, which lib/slugify.ts keeps to lowercase words and hyphens.
+    slug: z.string().min(1).max(128).regex(/^[a-z0-9-]+$/, "not a store address"),
+  })
+  // PayPal appends its own extras (PayerID and friends); unknown keys are
+  // ignored rather than refused, because a provider adding a parameter must
+  // never break a customer's checkout.
+  .passthrough();
 import { parsePaypalCustomId } from "@/lib/promotions/checkoutDiscount";
 import { parseDraftCustomId, loadDraft, draftTotalMismatch } from "@/lib/bag/checkoutDraft";
 import {
@@ -77,13 +92,24 @@ export async function GET(request: NextRequest) {
     if (reference) url.searchParams.set("ref", reference);
     return url;
   };
-  const searchParams = request.nextUrl.searchParams;
-  const token = searchParams.get("token"); // PayPal order id
-  const slug = searchParams.get("slug");
-
-  if (!token || !slug) {
+  // ============ BOUNDED, AND THE FLOW IS UNCHANGED (2026-08-30) =====
+  //
+  // The token is single-use and the capture below is idempotent — that is what
+  // makes this safe, and none of it is touched. What was missing is a bound:
+  // `token` reaches a PayPal API call and `slug` a database lookup, and neither
+  // had a length or a character class.
+  //
+  // A malformed callback takes the route's OWN existing answer, an unexplained
+  // redirect to the storefront root, because a buyer landing mid-purchase needs
+  // somewhere that works rather than a 400.
+  const checked = await validateQuery(request, {
+    surface: "checkout.paypalReturn",
+    schema: PaypalReturnQuery,
+  });
+  if (!checked.ok) {
     return NextResponse.redirect(new URL("/", request.url));
   }
+  const { token, slug } = checked.value;
 
   const store = await prisma.store.findUnique({ where: { slug } });
   if (!store) {

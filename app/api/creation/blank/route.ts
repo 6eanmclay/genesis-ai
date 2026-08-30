@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit } from "@/lib/http/rateLimit";
+import { clientIp, addressLabel } from "@/lib/http/clientIp";
 import sharp from "sharp";
 
 // THE SUPPLIER'S BLANK, SERVED FROM OUR OWN ORIGIN.
@@ -45,6 +47,28 @@ export function normaliseHex(raw: string | null): string | null {
 }
 
 export async function GET(request: NextRequest) {
+  // ============ UNAUTHENTICATED, SO IT IS RATE LIMITED (2026-08-30) ==
+  //
+  // The host allow-list and the https requirement below stop this being a
+  // general-purpose fetcher pointed wherever a caller likes — that part was
+  // already right. What neither stops is VOLUME: anybody on the internet could
+  // make this server fetch Printful images as fast as it can, spending our
+  // bandwidth and our rate budget with the supplier.
+  //
+  // Deliberately generous. This is a legitimate image proxy for a design canvas
+  // that loads many blanks per screen, so the limit is set to stop a script
+  // rather than to meter a real session.
+  const limited = await checkRateLimit(
+    [{ kind: "blank:ip", value: addressLabel(clientIp(request.headers)), max: 600, windowMs: 10 * 60 * 1000 }],
+    { surface: "creation.blank" },
+  );
+  if (!limited.allowed) {
+    return new NextResponse("Too many requests", {
+      status: 429,
+      headers: limited.retryAfterSeconds ? { "retry-after": String(limited.retryAfterSeconds) } : undefined,
+    });
+  }
+
   const raw = request.nextUrl.searchParams.get("url");
   if (!raw) return new NextResponse("Missing url", { status: 400 });
 

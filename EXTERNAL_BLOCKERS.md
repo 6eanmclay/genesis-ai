@@ -40,6 +40,12 @@ what exactly is required, and what happens the moment it exists.
 | **E7** | **Where an operational alert should go.** `needsAttention()` computes it; nothing carries it. | Every failure the observability work made visible still requires somebody to open a page. Deliberately not chosen by me — see item 4 of the locked order. |
 | **E8** | **A live end-to-end payment test.** | The money path has never moved real money under this code. |
 
+## Needs a migration and a decision about existing data
+
+| # | Item | Exact behaviour today | What a safe migration requires |
+|---|---|---|---|
+| **E11** | **Email is unique but not normalised.** | `User.email` is `@unique`, and nothing lowercases it on either side. Registration stores the address exactly as typed; `auth.ts` looks a user up with `findUnique({ where: { email } })` using the credential exactly as typed. So `Sean@example.com` and `sean@example.com` are two separate accounts, each of which can only be signed into with the capitalisation its owner originally used. Nobody is locked out today — the two sides agree, because neither normalises. | Three steps, in this order, and the middle one is a product decision rather than an engineering task. **(1) Measure**: count existing rows that collide case-insensitively, which is a read-only query and can be run at any time. **(2) Decide** what happens to each collision — merge two accounts and their stores, orders and Growth Points; keep the older and disable the newer; or contact both owners. There is no safe default, which is why this is not being chosen here. **(3) Migrate**: normalise on write and on lookup **in the same deploy**, backfill existing rows, and add a case-insensitive unique index. Doing the write side alone locks out every existing mixed-case user, which is exactly what a first attempt at this during Item 3 would have done and why it was reverted before it shipped. |
+
 ## Blocked by Connections (recorded here, out of scope by instruction)
 
 Social publishing and its OAuth apps; the eleven connector webhooks; any proof a

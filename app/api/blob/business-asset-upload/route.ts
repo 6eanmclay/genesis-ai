@@ -1,6 +1,7 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { checkRateLimit } from "@/lib/http/rateLimit";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { resolveBusiness } from "@/lib/businessContext";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
@@ -19,6 +20,32 @@ import { recordCompletedClientUpload, reserveForClientUpload } from "@/lib/stora
 // (app/dashboard/ai-actions.ts) already enforces for the record-creation
 // half of the flow.
 export async function POST(request: Request): Promise<NextResponse> {
+  // ============ MINTING AN UPLOAD TOKEN IS THE COST (2026-08-30) ====
+  //
+  // The real authorization runs inside onBeforeGenerateToken below and stays
+  // there — it is the only place that knows which store an upload belongs to.
+  // This is about VOLUME: every successful call mints a token that authorises a
+  // write to blob storage, and storage is billed. A signed-in owner could ask
+  // for tokens far faster than they could ever upload files.
+  //
+  // Keyed on the account, because that is who the storage is billed to. Set
+  // well above a real gallery upload — ten images at a time is normal, six
+  // hundred an hour is not.
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+  }
+  const limited = await checkRateLimit(
+    [{ kind: "blobAsset:user", value: session.user.id!, max: 600, windowMs: 60 * 60 * 1000 }],
+    { surface: "blob.businessAsset", actorId: session.user.id },
+  );
+  if (!limited.allowed) {
+    return NextResponse.json(
+      { error: "That is too many uploads for now. Try again shortly." },
+      { status: 429 },
+    );
+  }
+
   const body = (await request.json()) as HandleUploadBody;
 
   try {

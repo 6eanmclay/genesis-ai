@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateStoreDraftForApi } from "@/app/dashboard/ai-actions";
+import { auth } from "@/auth";
+import { checkRateLimit } from "@/lib/http/rateLimit";
 
 // What CreateStoreForm.tsx's client-driven progress UI actually calls —
 // see generateStoreDraftCore's own comment in ai-actions.ts for why this
@@ -13,6 +15,32 @@ import { generateStoreDraftForApi } from "@/app/dashboard/ai-actions";
 // inside generateStoreDraftForApi (a plain, safe-to-export function that
 // independently re-derives identity from auth() — see its comment).
 export async function POST(request: Request) {
+  // ============ A LIMIT, NOT VALIDATION (2026-08-30) ================
+  //
+  // Authorization and the shape of this form are both settled inside
+  // generateStoreDraftForApi, which re-derives identity from auth() and is the
+  // authority on what a draft needs — validating the form again here would be a
+  // second answer to one question.
+  //
+  // What nothing answered is cost. Every call is a model generation that runs
+  // for around a hundred seconds, and lib/genesisModel.ts's daily token ceiling
+  // caps the spend per day rather than the rate. A signed-in caller could start
+  // them in a loop and hold that many functions open at once.
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+  const limited = await checkRateLimit(
+    [{ kind: "storeDraft:user", value: session.user.id!, max: 20, windowMs: 60 * 60 * 1000 }],
+    { surface: "generateStoreDraft", actorId: session.user.id },
+  );
+  if (!limited.allowed) {
+    return NextResponse.json(
+      { error: "That is too many generations for now. Try again shortly." },
+      { status: 429, headers: limited.retryAfterSeconds ? { "retry-after": String(limited.retryAfterSeconds) } : undefined },
+    );
+  }
+
   const formData = await request.formData();
   const result = await generateStoreDraftForApi(formData);
 

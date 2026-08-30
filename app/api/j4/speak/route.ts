@@ -3,6 +3,10 @@ import { auth } from "@/auth";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { resolveBusiness } from "@/lib/businessContext";
 import { openJ4VoiceOutputSession } from "@/lib/voice/j4VoiceOutput";
+import { z } from "zod";
+import { guard } from "@/lib/http/guard";
+
+const SpeakBody = z.object({ text: z.string().min(1).max(20_000) });
 
 // J4 Voice Output (2026-08-08) — "Add voice playback for J4 responses...
 // Play/Pause/Resume and preferably seek/scrub controls" (Sean). Real,
@@ -40,8 +44,27 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const resolved = resolution;
 
-  const body = (await request.json().catch(() => null)) as { text?: string } | null;
-  const text = body?.text?.trim();
+  // ============ A LIMIT, NOT MORE VALIDATION (2026-08-30) ===========
+  //
+  // This endpoint was already the best-guarded on the platform: authenticated,
+  // business resolved, permission checked, and a real 4000-character ceiling on
+  // the text. What it had no answer for was VOLUME — every call is a paid
+  // synthesis request, and an authenticated owner could make them in a loop.
+  //
+  // Keyed on the person rather than the address: the cost follows the account,
+  // and an office behind one router should not share a speech budget.
+  const checked = await guard(request, {
+    surface: "j4.speak",
+    // The 4000-character ceiling below is the real rule; this only stops a body
+    // arriving that is too large to be worth reading.
+    maxBytes: 16 * 1024,
+    schema: SpeakBody,
+    actorId: session.user.id,
+    limits: () => [{ kind: "speak:user", value: session.user.id!, max: 60, windowMs: 60 * 60 * 1000 }],
+  });
+  if (!checked.ok) return checked.response;
+
+  const text = checked.body.text.trim();
   if (!text) {
     return NextResponse.json({ error: "No text to speak." }, { status: 400 });
   }

@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { validateQuery, queryToken } from "@/lib/http/guard";
 import { unstable_rethrow } from "next/navigation";
 import { auth } from "@/auth";
 import { completeOAuthHandoff, oauthStateFailureMessage, safeReturnTo } from "@/lib/integrations/oauthState";
@@ -20,19 +22,49 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
 // One generic callback route for every OAuth-style provider — it doesn't
 // know anything about Stripe specifically. `state` carries the storeId
 // through the provider's redirect (set when the connect flow started).
+/**
+ * What an OAuth return may carry.
+ *
+ * Every field optional: a provider that refuses sends `error` and no `code`,
+ * and the verification below is what decides whether the combination is usable.
+ * This only bounds what arrives.
+ */
+const CallbackQuery = z
+  .object({
+    state: queryToken(2048).optional(),
+    code: queryToken(4096).optional(),
+    error: queryToken(256).optional(),
+    // QuickBooks alone sends this; every other provider never does.
+    realmId: queryToken(128).optional(),
+  })
+  // Providers append their own extras. Ignored, never refused.
+  .passthrough();
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ provider: string }> }
 ) {
   const { provider } = await params;
-  const searchParams = request.nextUrl.searchParams;
-  const state = searchParams.get("state");
-  const code = searchParams.get("code");
-  const oauthError = searchParams.get("error");
+  // ============ BOUNDS, NOT AUTHORIZATION (2026-08-30) =============
+  //
+  // completeOAuthHandoff below verifies the signature, nonce, provider, expiry
+  // and session user, and that remains the control — nothing here weakens or
+  // duplicates it. What was missing is a LENGTH: `code` is handed to a
+  // provider's token exchange and `state` to a signature check, and a callback
+  // is the one place an unauthenticated stranger can put text into a URL that a
+  // signed-in owner will click.
+  //
+  // A malformed one is treated exactly as a missing state already was — it
+  // falls through to the verification below with nothing, which redirects with
+  // the route's own flash parameter. The flow is untouched.
+  const checked = await validateQuery(request, { surface: "integrations.callback", schema: CallbackQuery });
+  const state = checked.ok ? checked.value.state ?? null : null;
+  const code = checked.ok ? checked.value.code ?? null : null;
+  const oauthError = checked.ok ? checked.value.error ?? null : "invalid_request";
   // QuickBooks' own callback includes realmId (its company id) alongside
   // code — the one real per-provider extra param this generic route needs
   // to pass through. Every other provider simply never sends it.
-  const realmId = searchParams.get("realmId");
+  const realmId = checked.ok ? checked.value.realmId ?? null : null;
 
   // Every outcome lands on the page that owns this provider, not bare
   // Home — that's where the explanation (this route's own flash param,
