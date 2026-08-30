@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { prismaSystem } from "@/lib/prisma";
 import { reportIssue } from "@/lib/observability/reportIssue";
+import { correlationId, withCorrelation } from "@/lib/observability/correlation";
 
 // WORK THAT SURVIVES THE PROCESS THAT WANTED IT DONE.
 //
@@ -49,6 +50,8 @@ export interface JobRecord {
   idempotencyKey: string;
   attempts: number;
   maxAttempts: number;
+  /** The chain this work belongs to, captured when it was enqueued. */
+  correlationId: string | null;
 }
 
 /** How long a claim is honoured before another runner may take the work. */
@@ -92,6 +95,8 @@ export async function enqueue(input: {
   /** Earliest this may run. Defaults to now. */
   runAfter?: Date;
   maxAttempts?: number;
+  /** Overrides the ambient chain, for a caller that knows better. */
+  correlationId?: string | null;
 }): Promise<EnqueueOutcome> {
   const existing = await prismaSystem.job.findUnique({
     where: { idempotencyKey: input.idempotencyKey },
@@ -106,6 +111,15 @@ export async function enqueue(input: {
         storeId: input.storeId ?? null,
         payload: (input.payload ?? {}) as object,
         idempotencyKey: input.idempotencyKey,
+        // ============ THE CHAIN HAS TO SURVIVE THE QUEUE ==========
+        //
+        // An AsyncLocalStorage scope does not outlive the request that opened
+        // it, so a job that only inherited it at enqueue time would run with
+        // nothing. Persisting it on the row is what lets the handler re-enter
+        // the SAME chain minutes later — without this the trace breaks at
+        // exactly the interesting boundary, where a request hands work to a
+        // background runner.
+        correlationId: input.correlationId ?? correlationId(),
         runAfter: input.runAfter ?? new Date(),
         maxAttempts: input.maxAttempts ?? 5,
       },
@@ -157,7 +171,7 @@ export async function claimNext(runnerId: string, now: Date = new Date()): Promi
     },
     orderBy: { runAfter: "asc" },
     take: 10,
-    select: { id: true, kind: true, storeId: true, payload: true, idempotencyKey: true, attempts: true, maxAttempts: true, status: true },
+    select: { id: true, kind: true, storeId: true, payload: true, idempotencyKey: true, attempts: true, maxAttempts: true, status: true, correlationId: true },
   });
 
   for (const candidate of candidates) {
@@ -185,6 +199,7 @@ export async function claimNext(runnerId: string, now: Date = new Date()): Promi
         // The row now holds attempts + 1; report what this attempt is.
         attempts: candidate.attempts + 1,
         maxAttempts: candidate.maxAttempts,
+        correlationId: candidate.correlationId,
       };
     }
   }
@@ -298,7 +313,13 @@ export async function drain(
     }
 
     try {
-      await handler({ job, now });
+      // Re-entering the chain the enqueuer was in. Everything the handler
+      // writes — an execution row, telemetry, a security signal — joins the
+      // story that asked for this work rather than starting a new one.
+      await withCorrelation(
+        { origin: "job", surface: job.kind, id: job.correlationId ?? undefined },
+        () => handler({ job, now }),
+      );
       await complete(job.id, now);
       result.completed++;
     } catch (error) {

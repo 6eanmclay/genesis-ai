@@ -9,6 +9,7 @@ import { ACTION_SECTIONS, GENESIS_ACTIONS, type GenesisActionType } from "./gene
 import { CURRENT_EXECUTION_SCHEMA_VERSION, type ActorType, type ExecutionResult, type ExecutionStatus } from "./types";
 import { recordExecution } from "./log";
 import { checkGrowthPointBalance, deductGrowthPoints } from "@/lib/growthPoints/ledger";
+import { withCorrelation } from "@/lib/observability/correlation";
 
 interface ExecuteOptions {
   storeId?: string;
@@ -98,6 +99,29 @@ export async function execute<TInput, TMetadata>(
   opts: ExecuteOptions = {}
 ): Promise<ExecutionResult<TMetadata>> {
   const executionId = opts.executionId ?? randomUUID();
+
+  // ============ THE CHAIN STARTS HERE IF IT HAS NOT ALREADY ==========
+  //
+  // A request or a job usually opens one, and this joins it — withCorrelation
+  // reuses an outer id rather than minting a new one, so a nested call cannot
+  // cut the trace in half.
+  //
+  // When nothing opened one — a server action reached directly, a script — this
+  // seeds it from the executionId. That is deliberate rather than arbitrary:
+  // the two then agree for the standalone case, so an ExecutionLog row can be
+  // found by either key and neither is a second thing to remember.
+  return withCorrelation(
+    { origin: "execution", surface: executable.action, id: executionId },
+    () => executeInner(executable, input, opts, executionId),
+  );
+}
+
+async function executeInner<TInput, TMetadata>(
+  executable: Executable<TInput, TMetadata>,
+  input: TInput,
+  opts: ExecuteOptions,
+  executionId: string
+): Promise<ExecutionResult<TMetadata>> {
   const actorType: ActorType = opts.actorType ?? "USER";
 
   let ctx: ExecutionContext;

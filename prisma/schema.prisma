@@ -1634,6 +1634,15 @@ model ExecutionLog {
   @@index([storeId, createdAt])
   @@index([storeId, action])
   @@index([executionId])
+  /**
+   * Ties this row to everything else one unit of work produced.
+   *
+   * Null on anything written before 2026-08-30, and never backfilled — a
+   * fabricated causal claim in an evidence table is worse than an absent one.
+   */
+  correlationId String?
+
+  @@index([correlationId])
 }
 
 // PH-07 Layer 3 — Genesis-generated recommendations, cached so the dashboard
@@ -2176,6 +2185,15 @@ model ProductEvent {
   @@index([sessionInstanceId, createdAt])
   @@index([attemptKey])
   @@index([storeId, createdAt])
+  /**
+   * Ties this row to everything else one unit of work produced.
+   *
+   * Null on anything written before 2026-08-30, and never backfilled — a
+   * fabricated causal claim in an evidence table is worse than an absent one.
+   */
+  correlationId String?
+
+  @@index([correlationId])
 }
 
 // Phase 3 Milestone 1 (J4 Foundation) — J4's canonical, provider-agnostic
@@ -3042,6 +3060,15 @@ model Job {
   @@index([storeId, kind])
   @@index([kind, status])
   @@index([status, lockedAt])
+  /**
+   * Ties this row to everything else one unit of work produced.
+   *
+   * Null on anything written before 2026-08-30, and never backfilled — a
+   * fabricated causal claim in an evidence table is worse than an absent one.
+   */
+  correlationId String?
+
+  @@index([correlationId])
 }
 
 // EVERY WEBHOOK THIS PLATFORM HAS EVER BEEN HANDED.
@@ -3085,6 +3112,15 @@ model WebhookDelivery {
   @@index([provider, receivedAt])
   @@index([status, receivedAt])
   @@index([storeId, receivedAt])
+  /**
+   * Ties this row to everything else one unit of work produced.
+   *
+   * Null on anything written before 2026-08-30, and never backfilled — a
+   * fabricated causal claim in an evidence table is worse than an absent one.
+   */
+  correlationId String?
+
+  @@index([correlationId])
 }
 
 // WHAT A SECURITY LAYER WOULD READ — see the migration for the full reasoning.

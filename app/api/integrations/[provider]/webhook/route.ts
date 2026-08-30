@@ -3,6 +3,7 @@ import { unstable_rethrow } from "next/navigation";
 import { prismaSystem } from "@/lib/prisma";
 import { recordDelivery, markProcessed, markFailed } from "@/lib/webhooks/delivery";
 import { recordSignal, SIGNAL_KINDS } from "@/lib/security/signals";
+import { withCorrelation } from "@/lib/observability/correlation";
 import { getConnectorByName } from "@/lib/integrations/registry";
 
 // Phase 0 — one webhook route for every provider that supports them.
@@ -47,9 +48,30 @@ export async function POST(
 
   const rawBody = await request.text();
 
+  // ============ THE DELIVERY IS THE START OF A CHAIN ================
+  //
+  // Everything below — the delivery row, a rejected-signature signal, the
+  // handler's writes, any job it enqueues and the execution that job later
+  // runs — shares one id from here. That is what turns "a webhook arrived" and
+  // "an order updated" from two facts near each other in time into one story.
+  return withCorrelation({ origin: "webhook", surface: provider }, () =>
+    handleDelivery(provider, connector, rawBody, request.headers),
+  );
+}
+
+async function handleDelivery(
+  provider: string,
+  connector: NonNullable<ReturnType<typeof getConnectorByName>>,
+  rawBody: string,
+  headers: Headers,
+): Promise<NextResponse> {
+  if (!connector.webhooks) {
+    return new NextResponse("This provider does not deliver webhooks", { status: 404 });
+  }
+
   let verification;
   try {
-    verification = await connector.webhooks.verify(rawBody, request.headers);
+    verification = await connector.webhooks.verify(rawBody, headers);
   } catch (error) {
     unstable_rethrow(error);
     // A verifier that throws on a hostile payload is itself a defect, but it

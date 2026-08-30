@@ -1,5 +1,6 @@
 import { prismaSystem } from "@/lib/prisma";
 import { reportIssue } from "@/lib/observability/reportIssue";
+import { correlationId } from "@/lib/observability/correlation";
 
 // THE RECORD OF WHAT A PROVIDER SENT US.
 //
@@ -85,6 +86,9 @@ export async function recordDelivery(input: {
     const row = await prismaSystem.webhookDelivery.create({
       data: {
         provider: input.provider,
+        // A delivery, the job it enqueues and the execution that job runs are
+        // one chain — the provider's retry of the same event joins it too.
+        correlationId: correlationId(),
         externalEventId: input.externalEventId ?? null,
         storeId: input.storeId ?? null,
         status,

@@ -136,7 +136,18 @@ function main(): void {
   assert("and it is wired into the daily cron",
     /sweepAbandonedTemporaries\(\)/.test(cron), "");
   assert("as its own catch, so one failing stage does not take the others down",
-    /sweepAbandonedTemporaries\(\)\.catch\(/.test(cron), "");
+    // ============ THE PROPERTY, NOT THE SYNTAX (2026-08-30) ==========
+    //
+    // This read `sweepAbandonedTemporaries().catch(` and broke the day the call
+    // was wrapped in withCorrelation — while the property it names stayed
+    // perfectly true, because the catch simply moved onto the wrapper. A test
+    // that fails when working code is refactored around it is testing the
+    // spelling.
+    //
+    // What must hold is that the sweep sits inside its own catch, whatever is
+    // between them.
+    /sweepAbandonedTemporaries\([\s\S]{0,200}?\.catch\(/.test(cron),
+    "the sweep must be guarded by its own catch");
 
   // A blob that is already gone is a success. Anything else keeps the row so
   // the next sweep tries again rather than losing track of a live blob.

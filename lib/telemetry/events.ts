@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { correlationId } from "@/lib/observability/correlation";
 
 // Family-beta behavioral/friction instrumentation (v20) — the one generic,
 // append-only writer every instrumentation call site uses. See
@@ -40,6 +41,11 @@ export async function logProductEvent(input: LogProductEventInput): Promise<void
   try {
     await prisma.productEvent.create({
       data: {
+        // sessionInstanceId and attemptKey stay exactly as they are — they
+        // answer "which browser session" and "which retry of this attempt".
+        // The correlation id answers a third question neither could: what else
+        // happened because of this.
+        correlationId: correlationId(),
         userId: input.userId ?? null,
         storeId: input.storeId ?? null,
         storeDraftId: input.storeDraftId ?? null,

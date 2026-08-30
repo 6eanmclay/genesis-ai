@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { correlationId } from "@/lib/observability/correlation";
 import { CURRENT_EXECUTION_SCHEMA_VERSION, type ExecutionResult } from "./types";
 
 // The only place ExecutionLog gets written. Append-only, by convention: this
@@ -22,6 +23,11 @@ export async function recordExecution<TMetadata>(
   return client.executionLog.create({
     data: {
       executionId: result.executionId,
+      // The ambient chain, so an execution triggered by a request joins that
+      // request's story rather than starting a second one. Null outside any
+      // scope — a script or a test has no chain to join, and inventing one
+      // would be a causal claim nobody made.
+      correlationId: correlationId(),
       storeId: result.storeId,
       storeDraftId: result.storeDraftId,
       action: result.action,

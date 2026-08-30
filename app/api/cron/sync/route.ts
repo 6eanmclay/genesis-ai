@@ -9,6 +9,7 @@ import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
 import { sweepAbandonedTemporaries } from "@/lib/storage/temporaryAssets";
 import { drain } from "@/lib/jobs/queue";
+import { withCorrelation } from "@/lib/observability/correlation";
 import { HANDLERS } from "@/lib/jobs/registry";
 import {
   attributionSweepEnabled,
@@ -59,6 +60,9 @@ export async function GET(request: NextRequest) {
   // ceiling. Whatever is left is still due on the next tick, and a job whose
   // runner is killed mid-handler is reclaimed by the stale-lock path rather
   // than parked forever.
+  // NOT wrapped in a chain of its own. Each job restores the chain of whoever
+  // enqueued it, and a cron-wide id would overwrite that with "the 6am run",
+  // which is the least useful fact available about any of this work.
   await drain(HANDLERS, {
     maxJobs: 50,
     deadline: new Date(Date.now() + 60_000),
@@ -69,7 +73,9 @@ export async function GET(request: NextRequest) {
     });
   });
 
-  await sweepAbandonedTemporaries().catch((error) => {
+  await withCorrelation({ origin: "cron", surface: "temporaryAssets" }, () =>
+    sweepAbandonedTemporaries(),
+  ).catch((error) => {
     reportIssue("the abandoned temporary-asset sweep failed", error, {
       subsystem: "storage",
       stage: "cron.temporaryAssets",
