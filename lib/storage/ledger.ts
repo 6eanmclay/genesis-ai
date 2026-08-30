@@ -612,6 +612,9 @@ export async function recordActual(
     lifecycle: row.lifecycle,
     actor: "creation",
     reason: `landed ${input.sizeInBytes} bytes against a reservation of ${declared}`,
+    // What was authorised, and what actually arrived.
+    previousBytes: declared,
+    providerBytes: input.sizeInBytes,
   });
 
   if (isReproducible(row.lifecycle)) {
@@ -638,6 +641,16 @@ export async function recordEvent(event: {
   lifecycle?: string | null;
   actor: string;
   reason: string;
+  // ============ THE CORRECTION, AS DATA (2026-08-30) ================
+  //
+  // `reason` still says what happened in a sentence. These say it in columns,
+  // because an operator asking "when did this store's usage change and by how
+  // much" should be writing a query rather than parsing English. See the
+  // per-kind table on the model.
+  previousBytes?: number | null;
+  providerBytes?: number | null;
+  previousStoreId?: string | null;
+  previousAttribution?: string | null;
 }): Promise<void> {
   await prismaSystem.storageEvent.create({
     data: {
@@ -648,6 +661,10 @@ export async function recordEvent(event: {
       lifecycle: event.lifecycle ?? null,
       actor: event.actor,
       reason: event.reason,
+      previousBytes: event.previousBytes ?? null,
+      providerBytes: event.providerBytes ?? null,
+      previousStoreId: event.previousStoreId ?? null,
+      previousAttribution: event.previousAttribution ?? null,
     },
   });
 }
@@ -666,7 +683,12 @@ export async function deleteObject(
   const remove = opts.deleteBlob ?? ((url: string) => del(url));
   const row = await prismaSystem.storageObject.findUnique({
     where: { pathname: target.pathname },
-    select: { id: true, url: true, storeId: true, sizeInBytes: true, lifecycle: true, pathname: true },
+    select: {
+      id: true, url: true, storeId: true, sizeInBytes: true, lifecycle: true, pathname: true,
+      // Read because the event must carry it — after the delete there is
+      // nowhere left to learn who this belonged to.
+      attribution: true,
+    },
   });
   if (!row) return false;
   // A caller that named a store must match it. A null store means the caller is
@@ -697,6 +719,9 @@ export async function deleteObject(
     lifecycle: row.lifecycle,
     actor: opts.actor,
     reason: opts.reason,
+    // The row is about to stop existing. Its ownership survives here.
+    previousStoreId: row.storeId,
+    previousAttribution: row.attribution,
   });
   await prismaSystem.storageObject.delete({ where: { id: row.id } });
   return true;

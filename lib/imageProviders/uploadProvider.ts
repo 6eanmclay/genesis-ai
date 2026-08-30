@@ -1,6 +1,13 @@
 import { put } from "@vercel/blob";
 import { randomUUID } from "crypto";
 import type { ImageSourceResult } from "./types";
+import {
+  recordActual,
+  recordUnattributed,
+  releaseReservation,
+  reserveOne,
+  StorageRefusedError,
+} from "@/lib/storage/ledger";
 
 // The manual path — deliberately NOT part of resolveProductImage's
 // try-in-sequence chain (generated -> stock). There's no prompt to
@@ -34,7 +41,17 @@ export const ALLOWED_CONTENT_TYPES: Record<string, string> = {
   "image/webp": "webp",
 };
 
-export async function uploadProductImageFile(file: File): Promise<ImageSourceResult> {
+/**
+ * @param storeId The business this file belongs to, or null when there is not
+ *   one yet. REQUIRED AND EXPLICIT rather than optional: its only caller today
+ *   is onboarding's pre-launch artwork upload, which genuinely runs before a
+ *   Store row exists, and a parameter that could be forgotten would make the
+ *   next caller's missing attribution silent. Passing null is a statement.
+ */
+export async function uploadProductImageFile(
+  file: File,
+  storeId: string | null,
+): Promise<ImageSourceResult> {
   const extension = ALLOWED_CONTENT_TYPES[file.type];
   if (!extension) {
     throw new Error("Please upload a PNG, JPEG, or WebP image.");
@@ -43,11 +60,48 @@ export async function uploadProductImageFile(file: File): Promise<ImageSourceRes
     throw new Error("Image is too large — please upload a file under 20MB.");
   }
 
-  const { url } = await put(`products/${randomUUID()}.${extension}`, file, {
-    access: "public",
-    contentType: file.type,
-    addRandomSuffix: false,
-  });
+  const pathname = `products/${randomUUID()}.${extension}`;
+  // file.size is the real byte count, known before the upload — so this is a
+  // reservation for exactly what will land, not a ceiling.
+  let reservationId: string | null = null;
+  if (storeId) {
+    const reservation = await reserveOne(storeId, {
+      name: pathname.slice("products/".length),
+      prefix: "products/",
+      source: "image.upload",
+      declaredBytes: file.size,
+      contentType: file.type,
+    });
+    if (!reservation.ok) throw new StorageRefusedError(reservation.reason, reservation.usage.allowanceBytes);
+    reservationId = reservation.reservations[0].id;
+  }
 
-  return { url, provider: "upload" };
+  try {
+    const { url } = await put(pathname, file, {
+      access: "public",
+      contentType: file.type,
+      addRandomSuffix: false,
+    });
+    if (storeId && reservationId) {
+      await recordActual({ id: reservationId, storeId, url, sizeInBytes: file.size, contentType: file.type });
+    } else {
+      await recordUnattributed({
+        pathname,
+        url,
+        sizeInBytes: file.size,
+        source: "image.upload.prestore",
+        contentType: file.type,
+      });
+    }
+    return { url, provider: "upload" };
+  } catch (error) {
+    // ============ A FAILED PERMANENT UPLOAD STAYS ACCOUNTED FOR ======
+    //
+    // The reservation is released because no bytes landed, so holding space for
+    // them would be wrong. What is NOT done is swallowing the failure: it is
+    // rethrown, so the owner is told their photo did not upload rather than
+    // finding a product with no picture later.
+    if (storeId && reservationId) await releaseReservation(reservationId, storeId);
+    throw error;
+  }
 }

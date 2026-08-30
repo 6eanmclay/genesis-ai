@@ -7,6 +7,13 @@ import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
 import { runDueSourcing } from "@/lib/sourcing/sourcingSchedule";
 import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
+import { sweepAbandonedTemporaries } from "@/lib/storage/temporaryAssets";
+import {
+  attributionSweepEnabled,
+  nightlyEnabled,
+  runAttributionSweep,
+  runNightlyReconciliation,
+} from "@/lib/storage/reconcile";
 
 // Phase 3 Milestone 3 — the actual trigger. Secured via Vercel's own
 // documented convention for cron routes: Vercel automatically sends
@@ -25,6 +32,79 @@ export async function GET(request: NextRequest) {
   // Auth-throttle rows outlive their usefulness after WINDOW_MS. Swept here
   // rather than on every login, because the count query is already bounded by
   // occurredAt — stale rows are a storage concern, not a correctness one.
+  // ============ WHAT A CRASH LEFT BEHIND (2026-08-29) ================
+  //
+  // Creating a product uploads print files and mockups before it calls the
+  // supplier. A caught failure discards them inline; this is for the failure
+  // that was never caught — a process killed between two uploads, a deploy
+  // mid-creation, a timeout that took the function with it.
+  //
+  // STORAGE.md section 5 requires exactly this: "a temporary asset must be
+  // recoverable by a sweep even when the code that created it never got to run
+  // its own cleanup, because the case that leaks is the one that did not reach
+  // the finally."
+  //
+  // Its own stage and its own catch, like every other stage here.
+  await sweepAbandonedTemporaries().catch((error) => {
+    reportIssue("the abandoned temporary-asset sweep failed", error, {
+      subsystem: "storage",
+      stage: "cron.temporaryAssets",
+    });
+  });
+
+  // ============ STORAGE RECONCILIATION — ORCHESTRATION ONLY ==========
+  //
+  // Every decision lives in lib/storage/reconcile.ts. This calls it, catches
+  // its own failure like every other stage, and knows nothing about presence,
+  // sizes, orphans or attribution.
+  //
+  // BOTH ARE DARK. Sean, 2026-08-30: "do not schedule or enable the cron until
+  // the ledger write paths and reconciliation code are actually deployed.
+  // Production is currently on 605faed; reconciliation must not be activated
+  // against that code gap." Production has no ledger writes, so every blob it
+  // writes lands unclaimed — a first run would report the deploy gap as a pile
+  // of orphans, and a monitor whose opening report is all false alarms is one
+  // nobody reads again.
+  //
+  // The nightly pass is cheap: one provider listing, one ledger read, a few
+  // indexed queries. The weekly sweep reads 279 text and JSON columns with
+  // regexp_matches, which is why it is not here every night.
+  if (nightlyEnabled()) {
+    await runNightlyReconciliation({
+      listObjects: async () => {
+        const { vercelBlobStorage } = await import("@/lib/storage/vercelBlob");
+        const listing = await vercelBlobStorage.list();
+        return {
+          objects: listing.objects.map((o) => ({ pathname: o.pathname, url: o.url, size: o.size })),
+          truncated: listing.truncated,
+        };
+      },
+      apply: true,
+    }).catch((error) => {
+      reportIssue("nightly storage reconciliation failed", error, {
+        subsystem: "storage",
+        stage: "cron.reconcile",
+      });
+    });
+  }
+
+  // Weekly, and gated on the day as well as the flag — the cron itself runs
+  // daily, so the cadence lives here rather than in a second Vercel schedule
+  // nobody would remember exists beside the first.
+  if (attributionSweepEnabled() && new Date().getUTCDay() === 0) {
+    await (async () => {
+      const { vercelBlobStorage } = await import("@/lib/storage/vercelBlob");
+      const listing = await vercelBlobStorage.list();
+      const hosts = [...new Set(listing.objects.map((o) => new URL(o.url).host))];
+      return runAttributionSweep({ hosts, apply: true });
+    })().catch((error) => {
+      reportIssue("the weekly attribution sweep failed", error, {
+        subsystem: "storage",
+        stage: "cron.attributionSweep",
+      });
+    });
+  }
+
   // ============ THE NOTIFICATIONS NOBODY REDELIVERED (2026-08-29) =====
   //
   // A receipt is the one thing a customer has, and the PayPal path is a browser

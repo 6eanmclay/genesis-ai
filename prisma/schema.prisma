@@ -1341,9 +1341,34 @@ model StorageEvent {
   lifecycle   String?
   // creation | reconciliation | owner | sweep — who decided.
   actor       String
-  // A sentence, not a code.
+  // A sentence, not a code. Still written, and no longer the only record —
+  // everything an operator needs to query is in the four columns below.
   reason      String
   occurredAt  DateTime @default(now())
+
+  // ============ WHAT THE CORRECTION REPLACED (2026-08-30) ==============
+  //
+  // sizeInBytes above means something different per kind: the blob's size for
+  // an orphan, the row's last known size for a missing blob, the NEW size for
+  // a correction. That polymorphism is what forced an operator back into the
+  // prose to work out which. These say so explicitly instead.
+  //
+  //   size_corrected      previousBytes = recorded, providerBytes = observed
+  //   over_reservation    previousBytes = reserved, providerBytes = landed
+  //   reconciled_orphan   providerBytes = the blob's size; no ledger value
+  //   reconciled_missing  previous store + attribution, so the removed row is
+  //                       reconstructable; no provider value, it was absent
+  //   reattributed        previous store + attribution
+  //   deleted             previous store + attribution
+
+  /** What the row said before this event changed it. */
+  previousBytes       Int?
+  /** What the provider was observed to say, when it was consulted. */
+  providerBytes       Int?
+  /** Who the row said owned it, before. */
+  previousStoreId     String?
+  /** owner | unattributed | ambiguous, before. */
+  previousAttribution String?
 
   @@index([storeId, occurredAt])
   @@index([pathname])

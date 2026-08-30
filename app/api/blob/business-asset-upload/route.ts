@@ -5,6 +5,7 @@ import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { resolveBusiness } from "@/lib/businessContext";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/businessAssets/uploadAssetFile";
 import { ALLOWED_VOICE_MEMO_CONTENT_TYPES, MAX_VOICE_MEMO_BYTES } from "@/lib/voice/voiceMemoFile";
+import { recordCompletedClientUpload, reserveForClientUpload } from "@/lib/storage/clientUploads";
 
 // Beta 1 bug #2 (2026-08-06) — issues short-lived Vercel Blob client tokens
 // so the browser can PUT a business-asset file straight to Blob storage,
@@ -24,7 +25,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const jsonResponse = await handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async () => {
+      onBeforeGenerateToken: async (pathname) => {
         const session = await auth();
         if (!session?.user) {
           throw new Error("Not authenticated.");
@@ -41,6 +42,22 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (resolution.kind === "none" || !hasPermission(resolution.role, PERMISSIONS.GENESIS_CHAT)) {
           throw new Error("You don't have permission to do this.");
         }
+        // ============ THE LEDGER RESERVATION (Slice 3) ==============
+        //
+        // Before the token, so before any byte. The store is the one this
+        // route already resolved and authorised above — the reservation
+        // inherits the existing ownership boundary rather than introducing a
+        // second, weaker one, and a request that fails the checks above never
+        // reaches here to reserve anything.
+        const { maximumSizeInBytes, tokenPayload } = await reserveForClientUpload({
+          storeId: resolution.storeId,
+          pathname,
+          kind: {
+            source: "asset.clientUpload",
+            maximumSizeInBytes: Math.max(MAX_UPLOAD_BYTES, MAX_VOICE_MEMO_BYTES),
+          },
+        });
+
         return {
           // J4 Voice Memos — this one token-issuing endpoint now covers
           // both real upload kinds (photo/document and voice memo); the
@@ -48,9 +65,16 @@ export async function POST(request: Request): Promise<NextResponse> {
           // server-side at record-creation time (finalizeUploadedAssetFile
           // / uploadVoiceMemo), same defense-in-depth this already had.
           allowedContentTypes: [...Object.keys(ALLOWED_CONTENT_TYPES), ...Object.keys(ALLOWED_VOICE_MEMO_CONTENT_TYPES)],
-          maximumSizeInBytes: Math.max(MAX_UPLOAD_BYTES, MAX_VOICE_MEMO_BYTES),
+          // The same figure the reservation holds, handed to the provider so
+          // the ceiling is enforced on bytes it refuses to accept rather than
+          // on bytes that already landed.
+          maximumSizeInBytes,
           addRandomSuffix: false,
+          tokenPayload,
         };
+      },
+      onUploadCompleted: async ({ blob }) => {
+        await recordCompletedClientUpload(blob);
       },
     });
     return NextResponse.json(jsonResponse);

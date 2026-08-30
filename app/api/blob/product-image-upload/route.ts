@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { resolveBusiness } from "@/lib/businessContext";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES } from "@/lib/imageProviders/uploadProvider";
+import { recordCompletedClientUpload, reserveForClientUpload } from "@/lib/storage/clientUploads";
 
 // Product media upload fix (2026-08-08) — same real fix as
 // app/api/blob/business-asset-upload/route.ts's own, applied to product
@@ -30,7 +31,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const jsonResponse = await handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async () => {
+      onBeforeGenerateToken: async (pathname) => {
         const session = await auth();
         if (!session?.user) {
           throw new Error("Not authenticated.");
@@ -47,11 +48,27 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (resolution.kind === "none" || !hasPermission(resolution.role, PERMISSIONS.PRODUCTS_MANAGE)) {
           throw new Error("You don't have permission to do this.");
         }
+        // ============ THE LEDGER RESERVATION (Slice 3) ==============
+        //
+        // Same mechanism as the business-asset route, through the same shared
+        // functions — one accounting path, not two that agree today. The store
+        // is the one already resolved and authorised above, so the reservation
+        // cannot reach a business this request was not allowed to touch.
+        const { maximumSizeInBytes, tokenPayload } = await reserveForClientUpload({
+          storeId: resolution.storeId,
+          pathname,
+          kind: { source: "product.clientUpload", maximumSizeInBytes: MAX_UPLOAD_BYTES },
+        });
+
         return {
           allowedContentTypes: Object.keys(ALLOWED_CONTENT_TYPES),
-          maximumSizeInBytes: MAX_UPLOAD_BYTES,
+          maximumSizeInBytes,
           addRandomSuffix: false,
+          tokenPayload,
         };
+      },
+      onUploadCompleted: async ({ blob }) => {
+        await recordCompletedClientUpload(blob);
       },
     });
     return NextResponse.json(jsonResponse);

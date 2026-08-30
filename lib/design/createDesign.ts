@@ -2,6 +2,7 @@ import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { recordActual, reserveOne } from "@/lib/storage/ledger";
 import { persistSyncedRecords } from "@/lib/businessModel/sync";
 import { DesignSchema, type Design } from "@/lib/businessModel/entities";
 import { GeneratedImageProvider } from "@/lib/imageProviders/generatedImageProvider";
@@ -430,10 +431,40 @@ async function composeMockup(printFile: Buffer, base: Buffer, surface: Surface):
     .toBuffer();
 }
 
-async function upload(buffer: Buffer, name: string): Promise<string> {
-  const blob = await put(`designs/${randomUUID()}-${name}.png`, buffer, {
+/**
+ * Reserve, upload, record — Slice 2.
+ *
+ * The buffer exists before the upload does, so the exact size is known and the
+ * store's remaining capacity is checked without writing anything. A design is
+ * `derived`: reproducible from its sources, which is what makes refusing (and,
+ * on the overage path, reclaiming) safe.
+ */
+async function upload(storeId: string, buffer: Buffer, name: string): Promise<string> {
+  const key = `${randomUUID()}-${name}.png`;
+  const reservation = await reserveOne(storeId, {
+    name: key,
+    prefix: "designs/",
+    source: "design.composition",
+    declaredBytes: buffer.length,
+    contentType: "image/png",
+  });
+  if (!reservation.ok) {
+    throw new Error(
+      reservation.reason === "over_allocated"
+        ? "This business is over its storage allowance. Free some space and try again."
+        : "There isn't enough storage left to save this design.",
+    );
+  }
+
+  const blob = await put(reservation.reservations[0].pathname, buffer, {
     access: "public",
     contentType: "image/png",
+  });
+  await recordActual({
+    id: reservation.reservations[0].id,
+    storeId,
+    url: blob.url,
+    sizeInBytes: buffer.length,
   });
   return blob.url;
 }
@@ -513,12 +544,12 @@ export async function createDesign(params: {
   let printFileUrl: string;
   let mockupUrl: string;
   if (surface.kind === "section") {
-    printFileUrl = await upload(composed, `${surface.key}-composition`);
+    printFileUrl = await upload(params.storeId, composed, `${surface.key}-composition`);
     mockupUrl = printFileUrl;
   } else {
     [printFileUrl, mockupUrl] = await Promise.all([
-      upload(printFile, `${surface.key}-print`),
-      upload(mockup, `${surface.key}-mockup`),
+      upload(params.storeId, printFile, `${surface.key}-print`),
+      upload(params.storeId, mockup, `${surface.key}-mockup`),
     ]);
   }
 

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { computeImageCost } from "@/lib/aiPricing";
 import { businessIntentFor } from "@/lib/businessIntent";
 import { growthCreditValueFor } from "@/lib/growthCreditCatalog";
+import { recordActual, recordUnattributed, releaseReservation, reserveOne } from "@/lib/storage/ledger";
 import type { ImageProvider, ImageSourceRequest, ImageSourceResult } from "./types";
 
 // Genesis's primary product-image source (per explicit direction: Genesis
@@ -104,14 +105,64 @@ export const GeneratedImageProvider: ImageProvider = {
     // an unrelated storage error.
     const aiUsageEventId = await recordImageUsage(request, Date.now() - startedAt);
 
+    // ============ THE LEDGER, BEFORE THE BLOB (Slice 3) ================
+    //
+    // storeId was never missing here — it has always been on request.scope,
+    // which is spread straight into the AiUsageEvent row a few lines above.
+    // Nothing new is threaded through the call chain; the context this needed
+    // was already being carried past it.
+    //
+    // The union is the real subtlety. GenesisModelScope is { storeId } OR
+    // { userId } OR an anonymous token, and onboarding generates imagery from
+    // { userId } before a Store exists. Both cases get a ledger row; only the
+    // first gets a reservation, because only the first has an allowance to
+    // reserve against. See recordUnattributed for why that is not a guess.
+    const bytes = Buffer.from(b64, "base64");
+    const storeId = "storeId" in request.scope ? request.scope.storeId : null;
+    const pathname = `products/${randomUUID()}.png`;
+
+    let reservationId: string | null = null;
+    if (storeId) {
+      const reservation = await reserveOne(storeId, {
+        name: pathname.slice("products/".length),
+        prefix: "products/",
+        source: "image.generated",
+        // Known exactly: the bytes are already in hand before the upload.
+        declaredBytes: bytes.length,
+        contentType: "image/png",
+      });
+      if (!reservation.ok) {
+        // Only reachable with enforcement on. Degrades to null like every other
+        // failure in this provider, so resolveProductImage falls through rather
+        // than crashing a chat turn — the convention this file opens with.
+        return null;
+      }
+      reservationId = reservation.reservations[0].id;
+    }
+
     try {
-      const { url } = await put(`products/${randomUUID()}.png`, Buffer.from(b64, "base64"), {
+      const { url } = await put(pathname, bytes, {
         access: "public",
         contentType: "image/png",
         addRandomSuffix: false,
       });
+      if (storeId && reservationId) {
+        await recordActual({ id: reservationId, storeId, url, sizeInBytes: bytes.length, contentType: "image/png" });
+      } else {
+        await recordUnattributed({
+          pathname,
+          url,
+          sizeInBytes: bytes.length,
+          source: "image.generated.prestore",
+          contentType: "image/png",
+        });
+      }
       return { url, provider: "generated", generationPrompt: request.prompt, aiUsageEventId };
     } catch {
+      // The upload failed, so no bytes exist. Release the reservation rather
+      // than leaving it to expire — a held reservation for an upload that will
+      // never happen is space nobody can use and nobody can explain.
+      if (storeId && reservationId) await releaseReservation(reservationId, storeId);
       return null;
     }
   },

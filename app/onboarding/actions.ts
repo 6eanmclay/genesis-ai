@@ -616,7 +616,7 @@ export async function submitUploadedArtwork(formData: FormData): Promise<{ state
   // Real, already-proven upload path — same validation (PNG/JPEG/WebP,
   // 20MB max) and same Vercel Blob upload app/dashboard/actions.ts's
   // uploadProductImage already uses for a live store's own product photos.
-  const sourced = await uploadProductImageFile(file);
+  const sourced = await uploadProductImageFile(file, null);
 
   const outcome = await callGenesisModel(
     {

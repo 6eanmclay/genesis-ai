@@ -9,6 +9,13 @@ import { SURFACES } from "@/lib/design/surfaces";
 import type { Executable } from "../executable";
 import { EXECUTION_ACTIONS } from "../actions";
 import { put } from "@vercel/blob";
+import { recordActual, reserveOne } from "@/lib/storage/ledger";
+import {
+  discardTemporaries,
+  markTemporaryUploaded,
+  promoteTemporaries,
+  recordTemporary,
+} from "@/lib/storage/temporaryAssets";
 import { randomUUID } from "crypto";
 import { composePrintFile } from "@/lib/creation/composePrintFile";
 import { composeMockup } from "@/lib/creation/composeMockup";
@@ -110,180 +117,298 @@ async function createFromPlacementDesign(
   // against ITS OWN canvas: front and back are not the same shape.
   const areas = new Map(placement.printAreas.map((a) => [a.placement, a]));
   const files: { placement: string; url: string }[] = [];
-  for (const [side, layers] of sides) {
-    const area = areas.get(side);
-    if (!area) throw new Error(`Your supplier no longer prints on the ${side}.`);
-    const composed = await composePrintFile(layers, canvasFor(area), fetchArtwork);
-    const blob = await put(`printfiles/${randomUUID()}-${side}.png`, composed, {
-      access: "public",
-      contentType: "image/png",
-    });
-    files.push({ placement: side, url: blob.url });
-  }
 
-  // ---- and one PICTURE per placement, which is a different thing -------
+  // ============ EVERY BLOB FROM HERE IS TEMPORARY UNTIL IT IS NOT =====
   //
-  // ============ WHY THE PRINT FILE IS NOT THE PRODUCT PHOTO (2026-08-28) =
+  // STORAGE.md section 5. This function uploads two to four composed images and
+  // only THEN calls the supplier — so a refusal, an unconfirmed placement, a
+  // timeout or a crash after this point used to strand all of them. Every
+  // failed creation made the next one likelier to fail, which is why the
+  // document calls it a correctness bug rather than a storage feature.
   //
-  // Sean, after a created product arrived showing "Photos (0/10), No image":
-  // "The product created from Creation Station should arrive in the store with
-  // the correct generated product image(s), including the front/back design
-  // that was actually created... the actual composition the user previewed, not
-  // a generic supplier image or a newly generated approximation."
-  //
-  // A print file is artwork alone on transparency — correct for a printer,
-  // useless as a storefront photograph. So each side is ALSO composed as a
-  // mockup: the supplier's own blank, tinted to the colour the owner chose,
-  // with the artwork laid into the same print-area rectangle at the same
-  // fractions the canvas drew it at.
-  //
-  // The blank and the hex come off the DRAFT, recorded when the owner was
-  // looking at them, so this rebuilds that picture rather than re-deriving one
-  // that might differ. Where a draft predates that recording there is nothing
-  // honest to compose from, and the product is created without a mockup rather
-  // than with an invented one.
-  const mockups: { placement: string; url: string }[] = [];
-  if (placement.colorHex) {
+  // The ids are collected as they are claimed, so the catch below knows exactly
+  // what this attempt created — and nothing else.
+  const temporaries: string[] = [];
+  try {
     for (const [side, layers] of sides) {
-      const blankUrl = placement.blanks[side];
-      if (!blankUrl) continue;
-      try {
-        const image = await composeMockup({
-          blank: await fetchArtwork(blankUrl),
-          colorHex: placement.colorHex,
-          layers,
-          fetchImage: fetchArtwork,
-        });
-        const blob = await put(`mockups/${randomUUID()}-${side}.png`, image, {
-          access: "public",
-          contentType: "image/png",
-        });
-        mockups.push({ placement: side, url: blob.url });
-      } catch {
-        // NON-FATAL, DELIBERATELY. A supplier CDN that will not answer is not a
-        // reason to refuse a product the supplier has already agreed to make.
-        // The product is created either way; what varies is whether it arrives
-        // with its photograph, and that is visible rather than silent.
+      const area = areas.get(side);
+      if (!area) throw new Error(`Your supplier no longer prints on the ${side}.`);
+      const composed = await composePrintFile(layers, canvasFor(area), fetchArtwork);
+      // RECORDED BEFORE IT EXISTS. A row with no blob is harmless; a blob with
+      // no row is invisible, and invisible is the leak. The key comes back from
+      // the record so this cannot claim one name and upload to another.
+      // ============ RESERVE, UPLOAD, RECORD (Slice 2) =================
+      //
+      // The buffer is already composed, so the exact size is known BEFORE the
+      // upload — layer 3 of the ceiling. A store with no room is refused here
+      // rather than discovering it after the bytes have landed.
+      const name = `${randomUUID()}-${side}.png`;
+      const reservation = await reserveOne(ctx.storeId, {
+        name,
+        prefix: "printfiles/",
+        source: "creation.printfile",
+        declaredBytes: composed.length,
+        contentType: "image/png",
+      });
+      if (!reservation.ok) {
+        throw new Error(
+          reservation.reason === "over_allocated"
+            ? "This business is over its storage allowance. Free some space and try again."
+            : "There isn't enough storage left for this product's print files.",
+        );
+      }
+
+      // The temporary claim uses the SAME key, which is how the two tables
+      // join. Slice 1 is unchanged; it simply has a ledger row beside it now.
+      const claim = await recordTemporary({
+        storeId: ctx.storeId,
+        kind: "printfile",
+        name,
+      });
+      temporaries.push(claim.id);
+      const blob = await put(claim.pathname, composed, {
+        access: "public",
+        contentType: "image/png",
+      });
+      await markTemporaryUploaded({
+        id: claim.id,
+        storeId: ctx.storeId,
+        url: blob.url,
+        // Known from the buffer rather than asked of the provider.
+        sizeInBytes: composed.length,
+      });
+      // sizeInBytes becomes authoritative here. It is the same figure the
+      // reservation used, so no overage is possible on this path — the ledger
+      // still records the real number rather than assuming it.
+      await recordActual({
+        id: reservation.reservations[0].id,
+        storeId: ctx.storeId,
+        url: blob.url,
+        sizeInBytes: composed.length,
+      });
+      files.push({ placement: side, url: blob.url });
+    }
+
+    // ---- and one PICTURE per placement, which is a different thing -------
+    //
+    // ============ WHY THE PRINT FILE IS NOT THE PRODUCT PHOTO (2026-08-28) =
+    //
+    // Sean, after a created product arrived showing "Photos (0/10), No image":
+    // "The product created from Creation Station should arrive in the store with
+    // the correct generated product image(s), including the front/back design
+    // that was actually created... the actual composition the user previewed, not
+    // a generic supplier image or a newly generated approximation."
+    //
+    // A print file is artwork alone on transparency — correct for a printer,
+    // useless as a storefront photograph. So each side is ALSO composed as a
+    // mockup: the supplier's own blank, tinted to the colour the owner chose,
+    // with the artwork laid into the same print-area rectangle at the same
+    // fractions the canvas drew it at.
+    //
+    // The blank and the hex come off the DRAFT, recorded when the owner was
+    // looking at them, so this rebuilds that picture rather than re-deriving one
+    // that might differ. Where a draft predates that recording there is nothing
+    // honest to compose from, and the product is created without a mockup rather
+    // than with an invented one.
+    const mockups: { placement: string; url: string }[] = [];
+    if (placement.colorHex) {
+      for (const [side, layers] of sides) {
+        const blankUrl = placement.blanks[side];
+        if (!blankUrl) continue;
+        try {
+          const image = await composeMockup({
+            blank: await fetchArtwork(blankUrl),
+            colorHex: placement.colorHex,
+            layers,
+            fetchImage: fetchArtwork,
+          });
+          const name = `${randomUUID()}-${side}.png`;
+          const reservation = await reserveOne(ctx.storeId, {
+            name,
+            prefix: "mockups/",
+            source: "creation.mockup",
+            declaredBytes: image.length,
+            contentType: "image/png",
+          });
+          // NON-FATAL, like everything else in this loop. A mockup that cannot
+          // be stored means a product without its photograph, which the
+          // surrounding catch already treats as acceptable — it must never
+          // refuse a product the supplier has already agreed to make.
+          if (!reservation.ok) throw new Error("no storage available for this mockup");
+
+          const claim = await recordTemporary({
+            storeId: ctx.storeId,
+            kind: "mockup",
+            name,
+          });
+          temporaries.push(claim.id);
+          const blob = await put(claim.pathname, image, {
+            access: "public",
+            contentType: "image/png",
+          });
+          await markTemporaryUploaded({
+            id: claim.id,
+            storeId: ctx.storeId,
+            url: blob.url,
+            sizeInBytes: image.length,
+          });
+          await recordActual({
+            id: reservation.reservations[0].id,
+            storeId: ctx.storeId,
+            url: blob.url,
+            sizeInBytes: image.length,
+          });
+          mockups.push({ placement: side, url: blob.url });
+        } catch {
+          // NON-FATAL, DELIBERATELY. A supplier CDN that will not answer is not a
+          // reason to refuse a product the supplier has already agreed to make.
+          // The product is created either way; what varies is whether it arrives
+          // with its photograph, and that is visible rather than silent.
+        }
       }
     }
-  }
 
-  // Front first where there is one, because that is the picture a customer
-  // sees on a card. Otherwise the order the owner designed in.
-  mockups.sort((a, b) => (a.placement === "front" ? -1 : b.placement === "front" ? 1 : 0));
+    // Front first where there is one, because that is the picture a customer
+    // sees on a card. Otherwise the order the owner designed in.
+    mockups.sort((a, b) => (a.placement === "front" ? -1 : b.placement === "front" ? 1 : 0));
 
-  // ---- the supplier, and then the supplier again ----------------------
-  const created = await connector.createProductWithPlacements({
-    storeId: ctx.storeId,
-    storeDraftId: null,
-    name: input.name,
-    retailPriceInCents: input.priceInCents,
-    // The reference variant first, then every other size of that colour. A
-    // draft saved before sizes were carried has only the reference one, which
-    // is the old behaviour rather than a failure.
-    externalVariantIds:
-      placement.sellableVariantIds.length > 0
-        ? placement.sellableVariantIds
-        : [placement.externalVariantId],
-    files,
-  });
-
-  // WHAT WAS ASKED FOR, AGAINST WHAT THE SUPPLIER SAYS IT HAS. This is the
-  // check that stops a two-sided design becoming a one-sided product.
-  const missing = files.map((f) => f.placement).filter((p) => !created.placements.includes(p));
-  if (missing.length > 0) {
-    throw new Error(
-      `Your supplier created the product but did not record the ${missing.join(" or ")} print. ` +
-        `It confirmed: ${created.placements.join(", ") || "nothing"}. Nothing has been put on sale.`,
-    );
-  }
-
-  // ---- only now does Genesis have a product ---------------------------
-  const productCount = await prisma.product.count({ where: { storeId: ctx.storeId } });
-  const parcel = await partnerParcelFor({
-    provider: connector.provider,
-    storeId: ctx.storeId,
-    storeDraftId: null,
-    externalProductId: created.externalProductId,
-    externalVariantId: placement.externalVariantId,
-  });
-
-  const product = await prisma.product.create({
-    data: {
+    // ---- the supplier, and then the supplier again ----------------------
+    const created = await connector.createProductWithPlacements({
       storeId: ctx.storeId,
+      storeDraftId: null,
       name: input.name,
-      description: input.description ?? "",
-      priceInCents: input.priceInCents,
-      position: productCount,
-      // THE MOCKUP, which is what a customer looks at. Falls back to the print
-      // file only when no mockup could be composed — a picture of the artwork
-      // is a poor product photo, but it beats the empty tile that sent Sean
-      // looking for where the image had been lost.
-      imageUrl: mockups[0]?.url ?? files[0]?.url ?? null,
-      // ON SALE. This is the whole difference between Save and Create -- the
-      // supplier has confirmed it holds every placement, so it can be made.
-      active: true,
-      sourceKind: "PRINT_ON_DEMAND",
+      retailPriceInCents: input.priceInCents,
+      // The reference variant first, then every other size of that colour. A
+      // draft saved before sizes were carried has only the reference one, which
+      // is the old behaviour rather than a failure.
+      externalVariantIds:
+        placement.sellableVariantIds.length > 0
+          ? placement.sellableVariantIds
+          : [placement.externalVariantId],
+      files,
+    });
+
+    // WHAT WAS ASKED FOR, AGAINST WHAT THE SUPPLIER SAYS IT HAS. This is the
+    // check that stops a two-sided design becoming a one-sided product.
+    const missing = files.map((f) => f.placement).filter((p) => !created.placements.includes(p));
+    if (missing.length > 0) {
+      throw new Error(
+        `Your supplier created the product but did not record the ${missing.join(" or ")} print. ` +
+          `It confirmed: ${created.placements.join(", ") || "nothing"}. Nothing has been put on sale.`,
+      );
+    }
+
+    // ---- only now does Genesis have a product ---------------------------
+    const productCount = await prisma.product.count({ where: { storeId: ctx.storeId } });
+    const parcel = await partnerParcelFor({
+      provider: connector.provider,
+      storeId: ctx.storeId,
+      storeDraftId: null,
       externalProductId: created.externalProductId,
       externalVariantId: placement.externalVariantId,
-      fulfillmentProvider: connector.provider,
-      sourceKey: connector.provider.toLowerCase(),
-      richContent: {
-        // THE RELATIONSHIP KEPT. Sean: "Creating a product should preserve the
-        // relationship to the design so J4 knows what happened."
-        designId: recordId,
-        placements: files.map((f) => f.placement),
-        printFileUrls: files.map((f) => f.url),
-        // WHAT A CUSTOMER SHOULD BE ABLE TO CHOOSE. Recorded now, before
-        // anything can read it: Product has no variant model (the schema says
-        // so in its own words), so the storefront cannot offer a size picker
-        // yet. When it can, the supplier's real variants are already here and
-        // no product created today has to be rebuilt to gain them.
-        referenceVariantId: placement.externalVariantId,
-        sellableVariantIds: placement.sellableVariantIds,
-        sellableSizes: placement.sellableSizes,
-      },
-      ...parcelToProductData(parcel),
-    },
-  });
+    });
 
-  // ============ THE GALLERY COUNTS ProductImage ROWS ==================
-  //
-  // "Photos (0/10)" is `ordered.length` in ProductImageGallery, and ordered is
-  // built from ProductImage rows. lib/creation/saveDesign.ts set the scalar
-  // imageUrl and wrote NO ProductImage at all, so the gallery was empty however
-  // that column was filled. Both are written here, and the scalar column and
-  // the table must not disagree — the same rule every other product-creating
-  // path in this codebase follows.
-  const gallery = mockups.length > 0 ? mockups : files;
-  await prisma.productImage.createMany({
-    data: gallery.map((image, index) => ({
-      productId: product.id,
-      url: image.url,
-      position: index,
-    })),
-  });
-
-  // The draft now knows what became of it, so reopening it cannot offer a
-  // second paid Create for a product that already exists.
-  await prisma.businessRecord.updateMany({
-    where: { id: recordId, storeId: ctx.storeId },
-    data: {
+    const product = await prisma.product.create({
       data: {
-        ...design,
-        placement: { ...placement, productId: product.id, supplierProductCreated: true },
+        storeId: ctx.storeId,
+        name: input.name,
+        description: input.description ?? "",
+        priceInCents: input.priceInCents,
+        position: productCount,
+        // THE MOCKUP, which is what a customer looks at. Falls back to the print
+        // file only when no mockup could be composed — a picture of the artwork
+        // is a poor product photo, but it beats the empty tile that sent Sean
+        // looking for where the image had been lost.
+        imageUrl: mockups[0]?.url ?? files[0]?.url ?? null,
+        // ON SALE. This is the whole difference between Save and Create -- the
+        // supplier has confirmed it holds every placement, so it can be made.
+        active: true,
+        sourceKind: "PRINT_ON_DEMAND",
+        externalProductId: created.externalProductId,
+        externalVariantId: placement.externalVariantId,
+        fulfillmentProvider: connector.provider,
+        sourceKey: connector.provider.toLowerCase(),
+        richContent: {
+          // THE RELATIONSHIP KEPT. Sean: "Creating a product should preserve the
+          // relationship to the design so J4 knows what happened."
+          designId: recordId,
+          placements: files.map((f) => f.placement),
+          printFileUrls: files.map((f) => f.url),
+          // WHAT A CUSTOMER SHOULD BE ABLE TO CHOOSE. Recorded now, before
+          // anything can read it: Product has no variant model (the schema says
+          // so in its own words), so the storefront cannot offer a size picker
+          // yet. When it can, the supplier's real variants are already here and
+          // no product created today has to be rebuilt to gain them.
+          referenceVariantId: placement.externalVariantId,
+          sellableVariantIds: placement.sellableVariantIds,
+          sellableSizes: placement.sellableSizes,
+        },
+        ...parcelToProductData(parcel),
       },
-    },
-  });
+    });
 
-  return {
-    productId: product.id,
-    designId: recordId,
-    externalProductId: created.externalProductId,
-    registeredWithProvider: true,
-    placements: created.placements,
-    mockupCount: mockups.length,
-  };
+    // ============ THE GALLERY COUNTS ProductImage ROWS ==================
+    //
+    // "Photos (0/10)" is `ordered.length` in ProductImageGallery, and ordered is
+    // built from ProductImage rows. lib/creation/saveDesign.ts set the scalar
+    // imageUrl and wrote NO ProductImage at all, so the gallery was empty however
+    // that column was filled. Both are written here, and the scalar column and
+    // the table must not disagree — the same rule every other product-creating
+    // path in this codebase follows.
+    const gallery = mockups.length > 0 ? mockups : files;
+    await prisma.productImage.createMany({
+      data: gallery.map((image, index) => ({
+        productId: product.id,
+        url: image.url,
+        position: index,
+      })),
+    });
+
+      // The draft now knows what became of it, so reopening it cannot offer a
+      // second paid Create for a product that already exists.
+      await prisma.businessRecord.updateMany({
+        where: { id: recordId, storeId: ctx.storeId },
+        data: {
+          data: {
+            ...design,
+            placement: { ...placement, productId: product.id, supplierProductCreated: true },
+          },
+        },
+      });
+
+    // ============ ONLY NOW ARE THEY THE PRODUCT'S ====================
+    //
+    // Promoted AFTER the ProductImage rows and richContent that reference them
+    // exist, so a promoted asset is always one something else already points
+    // at. Promoting before the product was written would leave an unreferenced
+    // blob that no sweep may touch — the worst of both.
+    await promoteTemporaries(ctx.storeId, temporaries);
+
+    return {
+      productId: product.id,
+      designId: recordId,
+      externalProductId: created.externalProductId,
+      registeredWithProvider: true,
+      placements: created.placements,
+      mockupCount: mockups.length,
+    };
+  } catch (error) {
+    // ============ THE ATTEMPT FAILED. TAKE THE BLOBS BACK ============
+    //
+    // Every throw between the first upload and the promotion lands here: a
+    // supplier refusal, a placement it would not confirm, a timeout, a failed
+    // write. The design always survives — only artefacts of this attempt go.
+    //
+    // The original error is re-thrown untouched. The engine turns it into a
+    // FAILED run and the owner sees the sentence it already saw; nothing about
+    // this changes what Create looks like from the outside.
+    //
+    // discardTemporaries never throws, so a cleanup problem cannot replace a
+    // clear supplier message with a confusing one — and what it misses, the
+    // sweep reclaims within the hour.
+    await discardTemporaries(ctx.storeId, temporaries);
+    throw error;
+  }
 }
 
 // Approval with a real consequence (2026-08-17).
