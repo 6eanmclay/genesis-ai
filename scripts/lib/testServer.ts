@@ -116,7 +116,48 @@ async function assertServerUsesTestDatabase(baseUrl: string, db: RealPostgres, s
   }
 }
 
+/**
+ * Env vars a lane runner sets so child suites SHARE one server.
+ *
+ * ============ WHY SHARING MATTERS (2026-08-30) ====================
+ *
+ * `next dev` takes the better part of a minute to become ready, and fifteen
+ * suites already start their own. Run one after another that is a quarter of an
+ * hour of startup before a single assertion — which is how a lane stops being
+ * run.
+ *
+ * A runner starts one server, sets these, and every suite it spawns reuses it.
+ * A suite run on its own sees no variables and starts its own exactly as
+ * before, so nothing that exists today changes.
+ */
+export const SHARED_SERVER_URL = "GENESIS_HARNESS_BASE_URL";
+export const SHARED_SERVER_DB = "GENESIS_HARNESS_DATABASE_URL";
+
 export async function startTestServer(options: { timeoutMs?: number } = {}): Promise<TestServer> {
+  // ============ REUSE, WHEN A RUNNER PROVIDED ONE ================
+  //
+  // The safety guard is NOT skipped: the shared server was proven to be on the
+  // test database when the runner started it, and this connects to that same
+  // database by the url the runner passed. A suite can no more reach production
+  // this way than it could on its own.
+  const sharedUrl = process.env[SHARED_SERVER_URL];
+  const sharedDb = process.env[SHARED_SERVER_DB];
+  if (sharedUrl && sharedDb) {
+    const { connectRealPostgres } = await import("./realPostgres");
+    const db = await connectRealPostgres(sharedDb);
+    return {
+      baseUrl: sharedUrl,
+      db,
+      // Closing a SHARED server is the runner's job. A suite that killed it
+      // would take the rest of the lane down with it.
+      close: async () => { await db.close(); },
+    };
+  }
+
+  return startOwnServer(options);
+}
+
+async function startOwnServer(options: { timeoutMs?: number } = {}): Promise<TestServer> {
   // A REAL Postgres, not PGlite: a Next server opens a connection pool, and
   // PGlite drops the connection the moment a second one appears.
   const db = await startRealPostgres();

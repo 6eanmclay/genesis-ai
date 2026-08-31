@@ -47,6 +47,17 @@ what exactly is required, and what happens the moment it exists.
 |---|---|---|---|
 | **E11** | **Email is unique but not normalised.** | `User.email` is `@unique`, and nothing lowercases it on either side. Registration stores the address exactly as typed; `auth.ts` looks a user up with `findUnique({ where: { email } })` using the credential exactly as typed. So `Sean@example.com` and `sean@example.com` are two separate accounts, each of which can only be signed into with the capitalisation its owner originally used. Nobody is locked out today — the two sides agree, because neither normalises. | Three steps, in this order, and the middle one is a product decision rather than an engineering task. **(1) Measure**: count existing rows that collide case-insensitively, which is a read-only query and can be run at any time. **(2) Decide** what happens to each collision — merge two accounts and their stores, orders and Growth Points; keep the older and disable the newer; or contact both owners. There is no safe default, which is why this is not being chosen here. **(3) Migrate**: normalise on write and on lookup **in the same deploy**, backfill existing rows, and add a case-insensitive unique index. Doing the write side alone locks out every existing mixed-case user, which is exactly what a first attempt at this during Item 3 would have done and why it was reverted before it shipped. |
 
+## Genuinely unprovable locally, whatever we build
+
+Recorded so nobody spends a day trying. These are not decisions and not work —
+they are facts about what a laptop can observe.
+
+| # | Item | Why no harness closes it |
+|---|---|---|
+| **E13** | **No real provider has ever signed a request.** | Every signature in every suite is generated locally with a secret we chose. `verify-order-webhook-live` signs with Stripe's own SDK, which is stronger than a hand-rolled HMAC and still proves only that our code agrees with our own signing. Closing it needs a live account sending a live event — which is Connections. |
+| **E14** | **PayPal's webhook verification has never run.** | It is a live API call against a transmission id, a certificate URL and a merchant's credentials. The handler it guards is now well covered; the verification in front of it cannot be exercised at all without PayPal. |
+| **E15** | **No server action has been invoked over HTTP.** | An action is addressed by a build-specific id in a `Next-Action` header. Reconstructing it would couple a suite to a private Next detail that changes between versions, so a test built on it fails on an upgrade for no reason. The guards are proven at the function layer and the pages over HTTP. **Not external, and not work** — listed because it is the one boundary no lane reaches, and the honest answer is that it should stay unreached. |
+
 ## Blocked by Connections (recorded here, out of scope by instruction)
 
 Social publishing and its OAuth apps; the eleven connector webhooks; any proof a

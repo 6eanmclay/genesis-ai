@@ -127,3 +127,62 @@ export function needsDatabase(file: string): boolean {
   if (file === "verify-briefing-grounding-live.ts") return false;
   return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
 }
+
+// ============ THE HTTP LANE (2026-08-30) ==============================
+//
+// Sixteen suites drive a real Next server and nothing ran them together — each
+// was a separate command somebody had to remember. `next dev` takes most of a
+// minute to become ready, so running them one after another meant a quarter of
+// an hour of startup before a single assertion, which is how a lane stops being
+// run at all.
+//
+// So they share one server, and which of them CAN is derived from the source
+// rather than listed. suiteLanes learned that lesson once already: a
+// hand-maintained list of exclusions was missing an entry for a day and a suite
+// ran in the wrong lane, passing by luck until it failed for a reason that had
+// nothing to do with what it was testing.
+//
+// Three properties decide it, and each is visible in the file:
+//
+//   browser   imports Playwright. Its own thing — slower, and it needs a
+//             browser binary that may not be installed.
+//   own       calls db.reset(). A shared database is shared, and one suite
+//             wiping it mid-lane would fail every other one in ways that look
+//             like real defects.
+//   shared    everything else that starts a server.
+
+export type HttpLane = "shared" | "own" | "browser";
+
+export function httpLane(file: string): HttpLane | null {
+  if (file === "run-http-suites.ts") return null;
+  const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+  if (!/startTestServer/.test(source)) return null;
+  if (/playwright|chromium/.test(source)) return "browser";
+  // Reset is refused against a shared database, so a suite that needs one is
+  // given a server of its own rather than being made to work without it.
+  if (/\.reset\(\)/.test(source)) return "own";
+
+  // ============ A SUITE THAT CONFIGURES THE SERVER (2026-08-30) ====
+  //
+  // Found by running the lane: verify-carriage-webhook-live sets
+  // EASYPOST_WEBHOOK_SECRET in its own process and relies on the server it
+  // spawns inheriting it. Against a SHARED server — started by the runner,
+  // without that variable — every signed webhook it sent came back 401, and the
+  // suite reported fourteen failures about carrier tracking that had nothing to
+  // do with carrier tracking.
+  //
+  // A suite that configures the server cannot share one. Detected rather than
+  // listed, for the same reason everything else here is.
+  //
+  // BEFORE the import, specifically. Every suite touches process.env somewhere;
+  // what makes one unable to share is setting a variable that the server it is
+  // about to spawn will inherit. An assignment after the import is ordinary
+  // test setup and says nothing about the server — treating it as if it did
+  // moved three suites onto their own servers for no reason, which is a real
+  // cost paid for a rule that was not the rule.
+  const configures = /^\s*process\.env\.[A-Z_0-9]+\s*=/m.exec(source);
+  const importsServer = source.indexOf("startTestServer");
+  if (configures && configures.index < importsServer) return "own";
+
+  return "shared";
+}

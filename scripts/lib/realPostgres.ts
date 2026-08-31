@@ -150,3 +150,36 @@ export async function startRealPostgres(): Promise<RealPostgres> {
     },
   };
 }
+
+/**
+ * Connect to a Postgres somebody else started.
+ *
+ * ============ FOR A SHARED LANE, NOT FOR PRODUCTION ==================
+ *
+ * A lane runner starts one server and one database and hands the url to every
+ * suite it spawns; this is how those suites reach it. It starts nothing, owns
+ * nothing, and its `close` disconnects rather than shutting anything down —
+ * killing a database the rest of the lane is using would be a strange way to
+ * finish a test.
+ *
+ * `reset` deliberately throws. A shared database is shared: one suite wiping it
+ * mid-lane would fail every other suite in ways that look like real defects and
+ * take an afternoon to trace back. A suite that genuinely needs a clean
+ * database must run on its own server, which it gets simply by not being given
+ * the shared one.
+ */
+export async function connectRealPostgres(url: string): Promise<RealPostgres> {
+  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+  return {
+    url,
+    prisma,
+    async reset() {
+      throw new Error(
+        "reset() is refused on a shared harness database. Run this suite on its own server instead.",
+      );
+    },
+    async close() {
+      await prisma.$disconnect().catch(() => {});
+    },
+  };
+}
