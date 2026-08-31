@@ -156,6 +156,18 @@ export type HttpLane = "shared" | "own" | "browser";
 export function httpLane(file: string): HttpLane | null {
   if (file === "run-http-suites.ts") return null;
   const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+  // ============ A SERVER, SPECIFICALLY (2026-08-30) ================
+  //
+  // This briefly also matched startRealPostgres, on the reasoning that a suite
+  // needing real infrastructure belongs in the same lane. It was over-reach:
+  // sixty-two existing "live" suites bring their own real Postgres, so the lane
+  // went from five suites to sixty-five and one that had been passing began to
+  // fail. Reverted rather than argued with.
+  //
+  // That did surface something real, recorded as its own gap: those sixty-two
+  // suites are excluded from the database lane because they bring their own
+  // database, and no runner picks them up. They are orphans. Giving them a lane
+  // is worth doing and is not this item.
   if (!/startTestServer/.test(source)) return null;
   if (/playwright|chromium/.test(source)) return "browser";
   // Reset is refused against a shared database, so a suite that needs one is

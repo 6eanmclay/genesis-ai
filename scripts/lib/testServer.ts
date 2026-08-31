@@ -97,17 +97,35 @@ async function assertServerUsesTestDatabase(baseUrl: string, db: RealPostgres, s
     data: { storeId: store.id, provider: "STRIPE", status: "CONNECTED", externalAccountId: slug },
   });
 
-  const response = await fetch(`${baseUrl}/api/cron/status`, {
-    headers: { authorization: `Bearer ${HARNESS_CRON_SECRET}` },
-  });
-  const body = (await response.json().catch(() => ({}))) as { integrations?: { storeId: string }[] };
-  const sawCanary = response.ok && (body.integrations ?? []).some((i) => i.storeId === store.id);
+  // ============ THE ROUTE MAY NOT BE COMPILED YET (2026-08-30) ======
+  //
+  // waitForServer only proves the server answers SOMETHING; `next dev` compiles
+  // each route on first request, and a route it has not reached yet can answer
+  // 404 rather than compiling in time. That surfaced as a suite failing with
+  // "GET /api/cron/status 404" — the safety guard refusing, not because the
+  // database was wrong but because the route was not ready.
+  //
+  // Retried, never relaxed. The canary must still be SEEN; this only gives the
+  // compiler time to produce the route that would show it. A server genuinely
+  // on the wrong database fails every attempt and still refuses below.
+  let response: Response | null = null;
+  let body: { integrations?: { storeId: string }[] } = {};
+  let sawCanary = false;
+  for (let attempt = 0; attempt < 10 && !sawCanary; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1000));
+    response = await fetch(`${baseUrl}/api/cron/status`, {
+      headers: { authorization: `Bearer ${HARNESS_CRON_SECRET}` },
+    }).catch(() => null);
+    if (!response) continue;
+    body = (await response.json().catch(() => ({}))) as { integrations?: { storeId: string }[] };
+    sawCanary = response.ok && (body.integrations ?? []).some((i) => i.storeId === store.id);
+  }
 
   if (!sawCanary) {
     throw new Error(
       [
         "REFUSING TO RUN: the test server is not using the test database.",
-        `A canary integration was created in the harness and /api/cron/status answered ${response.status} without it.`,
+        `A canary integration was created in the harness and /api/cron/status answered ${response?.status ?? "nothing"} without it, after ten attempts.`,
         "",
         "That means DATABASE_URL was overridden — almost certainly by a .env file — and",
         "posting webhooks at this server could write orders into a real merchant's database.",

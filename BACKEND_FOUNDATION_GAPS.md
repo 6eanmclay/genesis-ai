@@ -72,6 +72,14 @@ originally said, so the record is the record rather than the report being it.
 
 ---
 
+## Found while building, not yet scheduled
+
+| # | Item |
+|---|---|
+| **23** | **Sixty-two verification suites have no runner.** They import `startRealPostgres`, which excludes them from the database lane (they bring their own database) — and the HTTP lane requires a server, which they do not start. So they run only when somebody names one by hand. Discovered 2026-08-30 while adding the concurrency proofs, by briefly widening the HTTP lane to include them: the lane went from five suites to sixty-five, took eleven minutes, and one previously-passing suite failed. Widening was the wrong fix and was reverted. The right one is a third runner for real-Postgres-without-a-server suites, run on its own cadence. |
+
+---
+
 ## Requires paid infrastructure
 
 | # | Item |
@@ -95,13 +103,19 @@ originally said, so the record is the record rather than the report being it.
 Recorded rather than papered over. Each was attempted and could not be made to
 discriminate.
 
+**Four of these were closed on 2026-08-30.** They were never properties of the
+code — they were properties of PGlite, which serialises concurrent clients. A
+real PostgreSQL with a real connection pool had been in this repository since
+August; nothing needed building to use it.
+
 | Limitation | Why |
 |---|---|
 | **Stripe / PayPal route-level execution** | They are Next route handlers needing a running server. `tsc` passes and the changes are a wrapper plus inserts, which is not the same as verified. |
-| **Concurrent duplicate webhook deliveries** of one event id | The pooled harness serialises them. |
-| **Two runners racing for one job** | Same — `verify-jobs-db` passes with the claim guard removed, and says so in the file. |
-| **Two callers racing `runOnce` on one key** | Same. The unique index handles it and the collision path is written, but the collision could not be forced. |
-| **The storage reservation lock** | Recorded in `lib/storage/ledger.ts` since 2026-08-29. |
+| ~~Concurrent duplicate webhook deliveries~~ | **PROVEN 2026-08-30** on real PostgreSQL — and it found a defect. The unique index kept one row and handed the seven losing callers `null`, so the route recorded no delivery id, `markProcessed` did nothing, and a handled event sat at `received` for ever. `recordDelivery` now treats losing that race as the ordinary duplicate it is. |
+| ~~Two runners racing for one job~~ | **PROVEN 2026-08-30.** Twelve rounds, eight racers, exactly one claim every time. Removing the condition from the claim produces "8 runners claimed it". |
+| ~~Two callers racing `runOnce` on one key~~ | **PROVEN 2026-08-30.** The external effect happens once; making the loser perform anyway produces "the effect happened 8 times". |
+| **The Growth Point conditional update cannot be independently proven** | The invariant holds — twelve rounds of eight racers against a balance covering exactly one, and the balance never went negative. But removing the conditional `WHERE` changes nothing observable: the read and the plan are inside the transaction, the row lock serialises the racers, and the second transaction sees the committed balance and refuses before any second charge is attempted. Belt-and-braces beneath a transaction that already refuses. Kept, and recorded rather than deleted because a test could not see it. |
+| **The storage reservation lock** | Recorded in `lib/storage/ledger.ts` since 2026-08-29. Not covered by the concurrency suite — the storage path is a different shape and was not in scope for this item. |
 | **Two lines in `isAllowedPlatformAdmin` are redundant** | Removing `.filter(Boolean)` alone, or the empty-allowlist return alone, changes no result — the empty-email return already refuses the only input a blank entry could match. Both are kept as belt-and-braces and neither can be independently proven; removing *both* the empty-email return and the filter admits anybody through a trailing comma, and that combination *is* caught. Recorded in the file. |
 | **The `findTraces` length floor proves nothing** | Sabotage removed it and the suite stayed green, correctly: exact matching already makes a short term find nothing. It is kept to avoid five pointless queries on an empty submission, not credited as the thing that keeps a lookup from being a feed. |
 | **`ScheduledTaskRun` has no retention** | It grows forever. A stuck `running` row blocks nothing — due-ness reads `succeeded` — so this is table growth rather than a stall, and it wants the same treatment `telemetry.prune` now gets rather than a second mechanism. Opened 2026-08-30 with the scheduler. |

@@ -15,7 +15,14 @@ Both runners must go through `scripts/run-unelevated.ps1` on Windows —
 PostgreSQL refuses to start under an administrator account, and that refusal is
 correct.
 
-## The four kinds of evidence
+## The five kinds of evidence
+
+**Proven under real concurrency.** Several PostgreSQL backends served the same
+race at once — asserted by asking Postgres for its own backend pids before
+trusting anything else in the suite. The job claim, the `runOnce` claim and
+webhook delivery deduplication. This is the strongest category and the newest:
+until 2026-08-30 the database lane ran on PGlite, which serialises concurrent
+clients, so none of it could be shown at all.
 
 **Proven by real HTTP execution.** A request crossed a socket to a running
 server and the answer was asserted. The per-store authorization boundary, the

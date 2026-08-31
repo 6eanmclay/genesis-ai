@@ -117,6 +117,50 @@ export async function recordDelivery(input: {
     });
     return { id: row.id, duplicate: false };
   } catch (error) {
+    // ============ THE RACE A UNIQUE INDEX ONLY HALF SOLVES (2026-08-30) ==
+    //
+    // Found by scripts/verify-concurrency-live.ts on real Postgres, where eight
+    // simultaneous deliveries of one event id left SEVEN callers holding null.
+    //
+    // The lookup above is check-then-act. Two concurrent deliveries of the same
+    // event both find nothing and both insert; the index correctly keeps one
+    // row, and the loser used to fall into this catch and be handed null. That
+    // is not a harmless failure: the route stores the returned id in `tracked`
+    // and marks the outcome with it, so a null meant markProcessed did nothing
+    // and the delivery sat at `received` for ever — while its handler had
+    // already run. A processed event, permanently recorded as merely arrived.
+    //
+    // The index is doing its job. What was missing is that losing a race to it
+    // is a NORMAL outcome — the same fact the lookup above reports as a
+    // duplicate — and the loser needs the winner's id, not an error.
+    if (isUniqueViolation(error) && input.externalEventId) {
+      const winner = await prismaSystem.webhookDelivery
+        .findUnique({
+          where: {
+            provider_externalEventId: {
+              provider: input.provider,
+              externalEventId: input.externalEventId,
+            },
+          },
+          select: { id: true },
+        })
+        .catch(() => null);
+
+      if (winner) {
+        // Counted, exactly as the non-racing duplicate path counts it, so
+        // "this arrived four times" stays answerable however the four arrived.
+        await prismaSystem.webhookDelivery
+          .update({ where: { id: winner.id }, data: { attempts: { increment: 1 } } })
+          .catch(() => {});
+        emitAsync({
+          name: "webhook.received", actorKind: "provider", storeId: input.storeId,
+          outcome: "success",
+          metadata: { provider: input.provider, duplicate: true },
+        });
+        return { id: winner.id, duplicate: true };
+      }
+    }
+
     reportIssue(`could not record a ${input.provider} webhook delivery`, error, {
       subsystem: "integrations",
       stage: "webhook.record",
@@ -124,6 +168,21 @@ export async function recordDelivery(input: {
     });
     return null;
   }
+}
+
+/**
+ * A unique-constraint violation, whatever shape the driver reports it in.
+ *
+ * Checked by code rather than by message: P2002 is Prisma's own contract and
+ * survives a driver change, where matching on the words of an error does not.
+ */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
 }
 
 /** The handler finished. */

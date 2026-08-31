@@ -44,6 +44,23 @@ import { httpLane, type HttpLane } from "./lib/suiteLanes";
 
 const ARGS = process.argv.slice(2);
 const INCLUDE_BROWSER = ARGS.includes("--browser");
+
+// ============ ISOLATION BY DEFAULT (2026-08-30) =======================
+//
+// Sharing one server was the original point of this runner, and measuring it
+// changed my mind. It saves about twenty seconds across five suites, and it
+// cost two false failures to find out why: verify-carriage-webhook-live
+// configures the server through its own environment, and verify-checkout-e2e
+// reported "36 passed, 0 failed" and then crashed on exit with a libuv
+// double-close, because a shared process ends up with two Prisma clients
+// against one database.
+//
+// A lane that reports a passing suite as failed is worse than a slow one — it
+// is the exact false-failure-against-good-code problem this repository has been
+// bitten by before. So every suite gets its own server unless somebody asks,
+// and the sharing machinery stays for when there are fifty suites and the
+// saving is minutes rather than seconds.
+const SHARE_SERVER = ARGS.includes("--share");
 const FILTERS = ARGS.filter((a) => !a.startsWith("--"));
 
 interface Suite {
@@ -100,8 +117,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  const shared = suites.filter((s) => s.lane === "shared");
-  const solo = suites.filter((s) => s.lane !== "shared");
+  const shared = SHARE_SERVER ? suites.filter((s) => s.lane === "shared") : [];
+  const solo = suites.filter((s) => !shared.includes(s));
 
   console.log(
     `${suites.length} suite(s) need a server: ${shared.length} can share one, ${solo.length} need their own.\n`,
