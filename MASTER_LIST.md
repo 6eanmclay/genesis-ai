@@ -52,6 +52,68 @@ Ordered by value. Items already in the locked sequence are marked.
 
 ---
 
+## Reassessment, 2026-09-01 — after real orders
+
+The ranking above was written before Genesis had a paying customer. It is kept
+for its audit of what was already built, and superseded for priority.
+
+**The finding that outranks every item below**: fifty commits sit ahead of
+`master` and none of it is deployed. Every screen this session built — the order
+detail that shows what is in the box, the packing slip, search, tracking
+correction, the waiting-customer card — is invisible to the merchant it was
+built for. No amount of further building changes that.
+
+### Already built. Do not rebuild.
+
+The merchant loop, end to end, except where marked:
+
+| | |
+|---|---|
+| Customer buys | Stripe and PayPal checkout, bag and single-product |
+| Genesis records it | Order + OrderItem, one payment can only ever become one order |
+| Merchant knows | waiting-customer attention card, operational-failure cards. **Email built and dark** |
+| Merchant fulfils | order detail with every line item, money breakdown, history, packing slip, order search, tracking entry AND correction. **Label purchase needs EasyPost** |
+| Customer is told | four notification kinds, claim-based idempotency, durable retry. **All dark without Resend** |
+| Merchant tracks what happened | order history, execution log, `financialsForStore()`. **No financials screen** |
+
+Also built and not to be rebuilt: account closure, retention, the job queue,
+webhook delivery + replay, security signals, correlation ids, the scheduler
+registry, the isolation guard's schema cross-check, and restore verification.
+
+### Still missing, and buildable now
+
+| Rank | Item | Why |
+|---|---|---|
+| **P0** | **Stripe financials screen** | The data layer is built and proven (`6b318a9`) and nothing renders it. "When do I actually get paid" is a question a real merchant has weekly and Genesis cannot answer on screen. Must use `financialsForStore()` and `FinancialsProvider`. |
+| **P1** | **Telemetry gaps (item 32)** | Three declared events have never fired. Small, and an honesty gap in the thing that reports honesty. |
+| **P2** | **Business data layer (item 24)** | Real, but its value is mostly to J4, which is deferred. |
+| **P2** | **Owner-friendly explanations (item 41)** | Same — improves J4's voice, and J4 is not the constraint today. |
+| **P2** | **Provider swappability (item 29)** | Refactoring behind a seam that already works with one provider. Speculative until there is a second. |
+
+### Blocked externally
+
+`EXTERNAL_BLOCKERS.md` is authoritative. The ones that gate merchant-visible
+work: **E6** the migration gate (a decision, not work), **E19/E19a** Resend and
+the reserved-TLD guard that must ship with it, **E20** live Stripe verification,
+**E21** an observed provider outage, **E18** tax. Plus EasyPost for labels and
+every social API.
+
+### Premature, deliberately
+
+Affiliates (link → order → commission is buildable; seven orders is not a
+traffic problem), social connections and revenue analytics, J4 business
+intelligence over commerce data this thin, and Stripe Instant Payouts.
+
+### The philosophy, recorded because it was not written down anywhere
+
+Sean, 2026-09-01: Genesis takes **no percentage** of a merchant's revenue and
+**does not sell their data**. Checked before writing this — it appears nowhere
+in the repository except as an unrelated note about a measurement model having
+no percentage field. It belongs with the frozen principles rather than in a
+backlog, and any pricing, affiliate or analytics work has to be read against it.
+
+---
+
 ## Queued by Sean, 2026-09-01 — not forgotten, not started
 
 Named explicitly so none of it drifts off the list. Nothing here begins until
