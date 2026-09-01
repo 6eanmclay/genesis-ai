@@ -256,7 +256,62 @@ async function main() {
       await prisma.order.update({ where: { id: order.id }, data: { shipmentNotifiedAt: null } });
     }
 
-    console.log("\n7. The order cannot be opened through a different business");
+    console.log("\n7. Finding the order, and the sheet that goes in the box");
+    {
+      // ============ THE WORKFLOW, END TO END ====================
+      //
+      // Sean's own words: find an order, open it, get the packing slip, and
+      // check the customer, address, products and quantities are right. Done
+      // as a person does it — typing into the search box and clicking through
+      // — rather than by calling the functions underneath.
+      await page.goto(`${server.baseUrl}/b/${store.slug}/orders`, { waitUntil: "domcontentloaded" });
+      const search = page.getByLabel("Search orders");
+      await search.waitFor({ state: "visible", timeout: 60_000 });
+
+      // The name a merchant reads off an email, typed the way people type it.
+      await search.fill("gabriel");
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await page.waitForURL(/[?&]q=gabriel/, { timeout: 30_000 });
+
+      const found = page.locator(`a[href$="/orders/${order.id}"]`).first();
+      await found.waitFor({ state: "visible", timeout: 30_000 });
+      assert("searching a customer's name finds the order", await found.isVisible());
+
+      await found.click();
+      await page.waitForURL(new RegExp(`/orders/${order.id}$`), { timeout: 20_000 });
+      const slipLink = page.getByRole("link", { name: /Packing slip/i }).first();
+      await slipLink.waitFor({ state: "visible", timeout: 30_000 });
+      assert("the order offers a packing slip", await slipLink.isVisible());
+
+      await slipLink.click();
+      await page.waitForURL(/packing-slip$/, { timeout: 20_000 });
+      await page.getByText("Packing slip", { exact: false }).first()
+        .waitFor({ state: "visible", timeout: 60_000 });
+      const slip = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+
+      assert("it names the customer", /Gabriel Mendies/.test(slip), slip.slice(0, 300));
+      assert("with the street", /7090 SW 68th Ave/.test(slip));
+      assert("the city, state and postcode",
+        /Portland/.test(slip) && /\bOR\b/.test(slip) && /97223/.test(slip));
+      assert("the order number", slip.includes(order.id), slip.slice(0, 300));
+      assert("BOTH products", /Double Sacred Cubit Copper Tensor Ring Necklace/.test(slip));
+      assert("and the bracelet", /Hand-Wound Copper Tensor Ring Cuff Bracelet/.test(slip));
+
+      // ============ AND NOT THE PAYMENT DETAIL ==================
+      //
+      // This sheet goes in a box that travels to somebody's house. The order
+      // screen has the payment references and is behind a login; this must not
+      // carry them out of the building.
+      assert("the Stripe payment reference is NOT on it",
+        !new RegExp(`pi_${stamp}`).test(slip), slip.slice(0, 400));
+      assert("nor the checkout reference", !new RegExp(`cs_live_${stamp}`).test(slip));
+      assert("nor the buyer's email", !/gabriel@example\.test/.test(slip));
+      assert("nor the payment provider", !/STRIPE/i.test(slip));
+
+      await page.screenshot({ path: `${SHOTS}/order-05-packing-slip.png`, fullPage: true });
+    }
+
+    console.log("\n8. The order cannot be opened through a different business");
 
     // ============ THE SAME PERSON, THE WRONG BUSINESS =============
     //

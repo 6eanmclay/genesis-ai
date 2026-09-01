@@ -18,11 +18,14 @@ export default async function BusinessOrdersPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ integration_error?: string; integration_connected?: string }>;
+  searchParams: Promise<{ integration_error?: string; integration_connected?: string; q?: string }>;
 }) {
   const { slug } = await params;
-  const { integration_error: integrationError, integration_connected: integrationConnected } =
-    await searchParams;
+  const {
+    integration_error: integrationError,
+    integration_connected: integrationConnected,
+    q: query,
+  } = await searchParams;
   const { store, role } = await requireBusinessPage(PERMISSIONS.ORDERS_VIEW, slug);
 
   return (
@@ -33,6 +36,7 @@ export default async function BusinessOrdersPage({
       slug={slug}
       integrationError={integrationError}
       integrationConnected={integrationConnected}
+      query={query}
     />
   );
 }

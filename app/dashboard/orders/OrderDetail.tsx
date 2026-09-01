@@ -158,6 +158,18 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
         {order.fulfillmentStatus === "fulfilled" ? " · fulfilled" : " · awaiting fulfilment"}
       </p>
 
+      {/* The sheet that goes in the box. Beside the order rather than buried in
+          the fulfilment section: printing it is the first thing somebody does
+          when they sit down to pack, not a step within shipping. */}
+      {canManage && (
+        <Link
+          href={`${basePath}/orders/${order.id}/packing-slip`}
+          className="mt-3 inline-block rounded-full border border-black/[.08] px-3.5 py-1.5 text-xs font-medium text-black hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-50 dark:hover:bg-white/[.05]"
+        >
+          Packing slip
+        </Link>
+      )}
+
       <div className="mt-6 grid max-w-3xl grid-cols-1 gap-4 sm:grid-cols-2">
         <Section title="Customer">
           <Field label="Email" value={order.buyerEmail} />

@@ -10,10 +10,13 @@ import { OrdersWorkspace } from "./OrdersWorkspace";
 export default async function OrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ integration_error?: string; integration_connected?: string }>;
+  searchParams: Promise<{ integration_error?: string; integration_connected?: string; q?: string }>;
 }) {
-  const { integration_error: integrationError, integration_connected: integrationConnected } =
-    await searchParams;
+  const {
+    integration_error: integrationError,
+    integration_connected: integrationConnected,
+    q: query,
+  } = await searchParams;
   const { store, role } = await requireStorePageAccess(PERMISSIONS.ORDERS_VIEW);
 
   return (
@@ -23,6 +26,7 @@ export default async function OrdersPage({
       basePath={LEGACY_BUSINESS_BASE}
       integrationError={integrationError}
       integrationConnected={integrationConnected}
+      query={query}
     />
   );
 }

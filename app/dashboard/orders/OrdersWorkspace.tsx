@@ -8,6 +8,7 @@ import { getPreviousBriefingAnchor, getChangeSetSince } from "@/lib/dashboard/ge
 import { getOrderSummary } from "@/lib/dashboard/whatHappened";
 import { OrderSummaryCard } from "../OrderSummaryCard";
 import { OrdersList, type OrderRow } from "../OrdersList";
+import { searchOrders } from "@/lib/orders/orderSearch";
 import { SubmitButton } from "../SubmitButton";
 import { submitUspsCredentials, disconnectUsps, recheckUsps, saveReturnAddress } from "../actions";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
@@ -59,6 +60,8 @@ export interface OrdersWorkspaceProps {
   slug?: string;
   integrationError?: string;
   integrationConnected?: string;
+  /** What the merchant typed into the search box, when they typed anything. */
+  query?: string;
 }
 
 export async function OrdersWorkspace({
@@ -68,6 +71,7 @@ export async function OrdersWorkspace({
   slug,
   integrationError,
   integrationConnected,
+  query,
 }: OrdersWorkspaceProps) {
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
   const canManage = hasPermission(role, PERMISSIONS.ORDERS_MANAGE);
@@ -85,10 +89,22 @@ export async function OrdersWorkspace({
   // instead. getChangeSetSince computes revenue, so a caller without the
   // permission is never given the change-set at all rather than being handed it
   // and trusted to look away.
+  // Run first, because the listing query below is narrowed by what it finds.
+  // Store-scoped inside searchOrders — storeId is a required parameter there,
+  // not a filter this call could forget.
+  const searchResult = query?.trim() ? await searchOrders(store.id, query) : null;
+  const matchingIds = searchResult ? searchResult.hits.map((h) => h.id) : null;
+
   const [summary, rawOrders, uspsIntegration, changeSet] = await Promise.all([
     getOrderSummary(store.id, { includeRevenue: canViewRevenue }),
     prisma.order.findMany({
-      where: { storeId: store.id },
+      // ============ THE SAME LIST, NARROWED ====================
+      //
+      // A search filters the rows this list already renders rather than
+      // producing a second kind of row somewhere else. The search decides
+      // WHICH orders; OrdersList still decides how an order looks, so a
+      // result and a listing can never drift apart.
+      where: matchingIds ? { storeId: store.id, id: { in: matchingIds } } : { storeId: store.id },
       orderBy: { createdAt: "desc" },
       take: 100,
       select: {
@@ -382,9 +398,51 @@ export async function OrdersWorkspace({
         </div>
       )}
 
-      <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-        All orders
+      {/* ============ FINDING ONE ORDER (2026-09-01) =================
+          The list shows the hundred most recent and had no way to search,
+          which is fine at seven orders and useless at seven hundred. A GET
+          form rather than a client component: the query lives in the URL, so
+          a search is linkable, survives a reload, and needs no JavaScript to
+          work — which matters on a phone in a stockroom. */}
+      <form method="get" className="mt-10 flex flex-wrap items-center gap-2">
+        {/* The business route carries no slug in the query string; it is in
+            the path. Nothing else needs preserving across a search. */}
+        <input
+          type="search"
+          name="q"
+          defaultValue={query ?? ""}
+          placeholder="Search by name, email, product, order id or tracking"
+          aria-label="Search orders"
+          className="min-w-[18rem] flex-1 rounded-full border border-black/[.08] bg-transparent px-4 py-1.5 text-sm text-black placeholder:text-zinc-400 dark:border-white/[.145] dark:text-zinc-50"
+        />
+        <button
+          type="submit"
+          className="rounded-full bg-black px-4 py-1.5 text-xs font-medium text-white dark:bg-zinc-50 dark:text-black"
+        >
+          Search
+        </button>
+        {searchResult && (
+          <a href={basePath + "/orders"} className="text-xs text-zinc-500 underline">
+            Clear
+          </a>
+        )}
+      </form>
+
+      <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
+        {searchResult
+          ? `${searchResult.hits.length}${searchResult.more ? "+" : ""} matching ${
+              searchResult.hits.length === 1 ? "order" : "orders"
+            }`
+          : "All orders"}
       </h2>
+      {searchResult && searchResult.hits.length === 0 && (
+        // Names what was searched for. "No results" leaves somebody wondering
+        // whether the search ran at all.
+        <p className="mt-2 text-sm text-zinc-500">
+          Nothing matches &ldquo;{searchResult.query}&rdquo;. Try a customer&rsquo;s name, their
+          email, a product, an order id, or a tracking number.
+        </p>
+      )}
       <OrdersList
         orders={orders}
         currency={store.currency}
