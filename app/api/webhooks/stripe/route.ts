@@ -124,6 +124,34 @@ async function handleStripeWebhook(
   // Handed back to POST, which is the only place that knows how this ended.
   tracked.deliveryId = delivery?.id ?? null;
 
+  // ============ RECORDED, OR NOT ACTED ON AT ALL (2026-09-01) =====
+  //
+  // recordDelivery returns null when it could not write — it reports and
+  // swallows, which is right for a helper and wrong to ignore here. This line
+  // used to be the whole handling of that: the id became null and the handler
+  // ran anyway, so an event could be ACTED ON with nothing recording that it
+  // arrived. That is precisely the invariant the comment above claims, and it
+  // was not enforced.
+  //
+  // It is reachable. A partial deploy where WebhookDelivery does not exist yet,
+  // a lock on that one table, or a lost race whose winner lookup also fails,
+  // all produce a null while the rest of the database works perfectly well —
+  // and the handler would then create the order, return 200, and mark nothing.
+  // markProcessed(null) is a no-op, so the audit trail would have no memory of
+  // an event that moved real money.
+  //
+  // 500, so Stripe retries. It holds failed events for days and redelivers, so
+  // the cost of refusing is a delayed order; the cost of proceeding is an order
+  // whose arrival nothing can evidence and which replay can never reach.
+  if (!delivery) {
+    reportIssue(
+      "a Stripe webhook could not be recorded, so it was not handled",
+      new Error("recordDelivery returned null"),
+      { subsystem: "payments", stage: "stripe.webhook.unrecorded" },
+    );
+    return new Response("Could not record delivery", { status: 500 });
+  }
+
   // ============ THE LINE WHERE TRUST BEGINS ======================
   //
   // Above: nothing is trusted. Below: it is Stripe's word, proven.

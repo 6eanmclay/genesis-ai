@@ -158,6 +158,29 @@ async function handlePaypalWebhook(
   });
   tracked.deliveryId = delivery?.id ?? null;
 
+  // ============ RECORDED, OR NOT ACTED ON AT ALL (2026-09-01) =====
+  //
+  // The same hole the Stripe rail had, found in the same sweep and fixed the
+  // same way — recordDelivery returns null when it could not write, and this
+  // line used to be the whole handling of that. The handler ran anyway, so a
+  // refund could be processed with nothing recording that PayPal ever told us.
+  //
+  // It matters MORE here. PayPal verification is a live API call against a
+  // transmission id and timestamp, so a delivery that was never recorded can
+  // never be replayed from a stored body — this route is the only chance the
+  // event gets. Acting without a record means an event that cannot be
+  // reconstructed afterwards by any means.
+  //
+  // 500, so PayPal retries.
+  if (!delivery) {
+    reportIssue(
+      "a PayPal webhook could not be recorded, so it was not handled",
+      new Error("recordDelivery returned null"),
+      { subsystem: "payments", stage: "paypal.webhook.unrecorded", storeId },
+    );
+    return new Response("Could not record delivery", { status: 500 });
+  }
+
   // Everything below this line is trusted. Nothing above it was.
 
   // ============ THE LINE WHERE TRUST BEGINS ======================
