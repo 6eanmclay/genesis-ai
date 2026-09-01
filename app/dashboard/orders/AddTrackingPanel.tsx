@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { attachTrackingNumber } from "@/app/dashboard/actions";
+import { attachTrackingNumber, correctTrackingNumber } from "@/app/dashboard/actions";
 
 // ADDING A TRACKING NUMBER, BY HAND OR BY CAMERA.
 //
@@ -32,7 +32,24 @@ interface BarcodeDetectorConstructor {
 /** Shipping labels are Code 128 in practice; the rest are cheap to allow. */
 const LABEL_FORMATS = ["code_128", "code_39", "codabar", "itf", "data_matrix", "qr_code"];
 
-export function AddTrackingPanel({ orderId }: { orderId: string }) {
+export function AddTrackingPanel({
+  orderId,
+  // ============ ADDING AND CORRECTING, ONE PANEL (2026-09-01) ========
+  //
+  // The scanner, the validation and the carrier list are identical for both,
+  // and duplicating them would mean fixing every future camera quirk twice.
+  // What differs is which server action runs and what the button says — and
+  // the action is the thing that carries the real difference, because
+  // correcting has three refusals that adding does not.
+  //
+  // Defaulted to false so every existing call site keeps its exact behaviour.
+  correcting = false,
+  currentTrackingNumber,
+}: {
+  orderId: string;
+  correcting?: boolean;
+  currentTrackingNumber?: string | null;
+}) {
   const [trackingNumber, setTrackingNumber] = useState("");
   const [carrier, setCarrier] = useState("USPS");
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -139,7 +156,9 @@ export function AddTrackingPanel({ orderId }: { orderId: string }) {
   function submit() {
     setResult(null);
     startTransition(async () => {
-      const outcome = await attachTrackingNumber(orderId, trackingNumber, carrier);
+      const outcome = correcting
+        ? await correctTrackingNumber(orderId, trackingNumber, carrier)
+        : await attachTrackingNumber(orderId, trackingNumber, carrier);
       setResult(
         outcome.ok ? { ok: true, text: outcome.message } : { ok: false, text: outcome.error }
       );
@@ -189,7 +208,13 @@ export function AddTrackingPanel({ orderId }: { orderId: string }) {
               onClick={submit}
               className="rounded-full bg-black px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
             >
-              {isPending ? "Adding..." : "Add tracking number"}
+              {isPending
+                ? correcting
+                  ? "Correcting..."
+                  : "Adding..."
+                : correcting
+                  ? "Replace tracking number"
+                  : "Add tracking number"}
             </button>
             {/* Absent, not disabled, where the browser cannot do it — see the
                 note at the top of this file. */}

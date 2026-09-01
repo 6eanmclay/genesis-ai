@@ -200,7 +200,63 @@ async function main() {
     await page.screenshot({ path: `${SHOTS}/order-02-detail.png`, fullPage: true });
 
     // ------------------------------------------------------------------
-    console.log("\n6. The order cannot be opened through a different business");
+    console.log("\n6. A tracking number typed wrong can be corrected");
+    {
+      // ============ THE AFFORDANCE, NOT JUST THE ACTION ==========
+      //
+      // correctTracking is proven at the function layer with its three
+      // refusals. What only a browser can answer is whether a merchant can
+      // REACH it — the number used to render read-only with no way to fix it,
+      // which was the whole complaint.
+      const TYPO = "9400111899223817200002";
+      const GOOD = "9400111899223817200001";
+      await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          trackingNumber: TYPO,
+          carrier: "USPS",
+          trackingUrl: `https://tools.usps.com/go/TrackConfirmAction?tLabels=${TYPO}`,
+        },
+      });
+      await page.reload({ waitUntil: "domcontentloaded" });
+
+      const summary = page.getByText("Correct this tracking number", { exact: false }).first();
+      await summary.waitFor({ state: "visible", timeout: 60_000 });
+      assert("the order offers a way to correct it", await summary.isVisible());
+
+      await summary.click();
+      const field = page.locator('input[placeholder*="racking"], input[name*="racking"]').first();
+      await field.waitFor({ state: "visible", timeout: 30_000 });
+      await field.fill(GOOD);
+      await page.getByRole("button", { name: /Replace tracking number/i }).first().click();
+
+      await page
+        .waitForFunction((good) => document.body.innerText.includes(good), GOOD, { timeout: 30_000 })
+        .catch(() => {});
+      const corrected = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      assert("the number really changed in the database", corrected.trackingNumber === GOOD,
+        String(corrected.trackingNumber));
+      assert("and the tracking link followed it",
+        (corrected.trackingUrl ?? "").includes(GOOD), String(corrected.trackingUrl));
+      await page.screenshot({ path: `${SHOTS}/order-04-corrected.png`, fullPage: true });
+
+      // ============ AND IT DISAPPEARS ONCE SOMEBODY RELIES ON IT ==
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { shipmentNotifiedAt: new Date() },
+      });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.getByText("Total paid").waitFor({ state: "visible", timeout: 60_000 });
+      const afterNotified = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+      assert("once the customer has been told, the correction is not offered",
+        !/Correct this tracking number/i.test(afterNotified),
+        "a control that can only fail must not be shown");
+
+      // Put it back so the cross-business check below is unaffected.
+      await prisma.order.update({ where: { id: order.id }, data: { shipmentNotifiedAt: null } });
+    }
+
+    console.log("\n7. The order cannot be opened through a different business");
 
     // ============ THE SAME PERSON, THE WRONG BUSINESS =============
     //

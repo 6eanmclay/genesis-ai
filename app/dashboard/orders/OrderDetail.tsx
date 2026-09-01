@@ -376,6 +376,27 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
                   )
                 }
               />
+              {/* ============ A TYPO IS FIXABLE UNTIL SOMEBODY RELIES ON IT
+                  (2026-09-01). A hand-typed number used to be permanent the
+                  moment it was saved — shown read-only with no way to correct
+                  it, so a transposed digit stayed wrong for ever.
+
+                  Offered only while a correction is actually allowed. A number
+                  the customer has been sent, or one a bought label carries,
+                  is refused by the executable anyway; showing a control that
+                  can only fail would be worse than showing none. */}
+              {canManage && !order.labelUrl && !order.shipmentNotifiedAt && (
+                <details className="border-t border-black/[.04] pt-2 dark:border-white/[.06]">
+                  <summary className="cursor-pointer list-none text-xs text-zinc-500 underline">
+                    Typed it wrong? Correct this tracking number
+                  </summary>
+                  <AddTrackingPanel
+                    orderId={order.id}
+                    correcting
+                    currentTrackingNumber={order.trackingNumber}
+                  />
+                </details>
+              )}
               {order.labelUrl && (
                 <Field
                   label="Label"
