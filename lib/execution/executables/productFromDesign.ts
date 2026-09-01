@@ -18,6 +18,7 @@ import {
 } from "@/lib/storage/temporaryAssets";
 import { randomUUID } from "crypto";
 import { composePrintFile } from "@/lib/creation/composePrintFile";
+import { emitAsync } from "@/lib/telemetry/emit";
 import { composeMockup } from "@/lib/creation/composeMockup";
 import type { Design } from "@/lib/businessModel/entities";
 import type { ExecutionContext } from "../executable";
@@ -384,6 +385,39 @@ async function createFromPlacementDesign(
     // blob that no sweep may touch — the worst of both.
     await promoteTemporaries(ctx.storeId, temporaries);
 
+    // ============ THE END OF THE FUNNEL, SAID OUT LOUD (2026-09-01) ====
+    //
+    // `creation.product_created` was declared and never emitted, so the one
+    // number the Creation Station funnel exists to produce — how many designs
+    // actually became products a supplier will make — could not be read.
+    //
+    // Emitted HERE rather than at the executable's return, because this is the
+    // point past which the supplier holds the product: it has confirmed every
+    // placement, the row is written, and the artwork it prints from is
+    // promoted. A throw anywhere above takes the blobs back and never reaches
+    // this line, which is the behaviour the event needs — a refused product
+    // must not be counted as a created one.
+    emitAsync({
+      name: "creation.product_created",
+      // The owner spent Growth Points on this. J4 executes it, but nobody
+      // reaches this path without a person choosing to.
+      actorKind: "user",
+      storeId: ctx.storeId,
+      userId: ctx.userId,
+      outcome: "success",
+      // Groups this with the saves that preceded it, which carry the same
+      // draft id — so the funnel from first save to created product is one
+      // key rather than a join nobody can make.
+      attemptKey: recordId,
+      metadata: {
+        supplier: connector.provider,
+        // What a customer will be able to choose once Product has a variant
+        // model — the supplier's own sellable list, not the one reference
+        // variant the product row points at.
+        variantCount: placement.sellableVariantIds?.length ?? 0,
+      },
+    });
+
     return {
       productId: product.id,
       designId: recordId,
@@ -604,6 +638,35 @@ export const createProductFromDesignExecutable: Executable<
               // writing zeroes. See lib/fulfillment/parcel.ts.
               ...parcelToProductData(parcel),
             },
+          });
+
+          // ============ AND ONLY IF ONE ACCEPTED IT (2026-09-01) =====
+          //
+          // The composed path reaches a Product whether or not a supplier is
+          // connected, and the registration above is deliberately non-fatal —
+          // so a product can exist here with no supplier behind it at all.
+          //
+          // This event says "a design became a real product AT A SUPPLIER",
+          // and that is the whole of what it says. Emitting it for a composed
+          // product nobody can manufacture would put a row in the table
+          // meaning something the taxonomy does not declare, which is the
+          // failure mode the registry was built to prevent. So it fires
+          // inside the branch where a connector actually returned an
+          // externalProductId, and the composed-with-no-supplier case emits
+          // nothing rather than something untrue.
+          //
+          // variantCount is omitted, not zeroed: this path knows one
+          // reference variant and has no sellable list, and emit() drops
+          // undefined keys. An absent count reads as "not known here"; a 0
+          // would read as "the supplier offers none".
+          emitAsync({
+            name: "creation.product_created",
+            actorKind: "user",
+            storeId: ctx.storeId,
+            userId: ctx.userId,
+            outcome: "success",
+            attemptKey: record.id,
+            metadata: { supplier: connector.provider },
           });
         } catch {
           // Non-fatal by design. See the note above.

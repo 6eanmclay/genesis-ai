@@ -38,7 +38,7 @@ Ordered by value. Items already in the locked sequence are marked.
 
 | # | Item | Note |
 |---|---|---|
-| **32** | Telemetry audit and instrumentation | **Locked item.** 11 subsystems declared, 5 instrumented; 3 declared events never emitted. Known and measured. |
+| ~~**32**~~ | Telemetry audit and instrumentation | **DONE 2026-09-01.** All three now fire: `webhook.processed` from the two functions every delivery ends through, `creation.product_created` only where a supplier actually accepted the product, `creation.design_saved` on success AND failure — without both, a failed save is indistinguishable from an abandoned one, which is the distinction it was declared to make. Guarded by a source sweep so a fifteenth declared-and-dead event fails on the commit that declares it. |
 | **21, 22, 23** | Safer fulfilment controls, reversible fulfilment, clearer order state | Pure owner-facing work over data that already exists. Folds naturally into locked item 5 (owner-facing failure recovery). |
 | **18** | Clickable order details from Commerce | The detail page exists; the list does not link to it consistently. Small. |
 | **28** | Graceful degradation | Partly built and **entirely unproven**. Nothing tests that Genesis keeps serving with the model unavailable, Stripe unreachable, or blob storage down. A failure-injection suite is buildable now and would be genuinely new evidence. |
@@ -85,7 +85,7 @@ registry, the isolation guard's schema cross-check, and restore verification.
 | Rank | Item | Why |
 |---|---|---|
 | ~~P0~~ | ~~Stripe financials screen~~ | **BUILT 2026-09-01.** `/b/[slug]/finances` and the legacy route, on `financialsForStore()` and `FinancialsProvider` as required. Read-only: no Stripe write, no Stripe SDK import. The healthy state stays E20 — provable only against a live account. |
-| **P1** | **Telemetry gaps (item 32)** | Three declared events have never fired. Small, and an honesty gap in the thing that reports honesty. |
+| ~~**P1**~~ | ~~Telemetry gaps (item 32)~~ | **CLOSED 2026-09-01** (39 checks, 9 sabotage breaks). |
 | **P2** | **Business data layer (item 24)** | Real, but its value is mostly to J4, which is deferred. |
 | **P2** | **Owner-friendly explanations (item 41)** | Same — improves J4's voice, and J4 is not the constraint today. |
 | **P2** | **Provider swappability (item 29)** | Refactoring behind a seam that already works with one provider. Speculative until there is a second. |

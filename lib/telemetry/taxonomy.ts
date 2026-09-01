@@ -16,6 +16,17 @@
 // A correction to an earlier note in this milestone: `journey` was called dead
 // and is not — it has 20 rows. Only `performance` is.
 //
+// ============ AND THE THREE THAT HAD NO CODE AT ALL (2026-09-01) =======
+//
+// A later sweep asked the other direction of the same question — not "which
+// declared events have no rows" but "which have no EMIT SITE" — and found
+// three: `webhook.processed`, `creation.product_created`, `creation.design_saved`.
+// Declarations with nothing behind them, which is why they had no rows.
+//
+// All three are wired now. The sweep is `scripts/verify-telemetry-gaps-db.ts`
+// and it runs on every commit, so this cannot recur silently: an event added
+// below without an emit site fails that suite immediately.
+//
 // ============ WHY A REGISTRY AND NOT FREE STRINGS =====================
 //
 // `logProductEvent` takes any string. That is how a system ends up with

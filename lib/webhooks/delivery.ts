@@ -83,6 +83,9 @@ export async function recordDelivery(input: {
         emitAsync({
           name: "webhook.received", actorKind: "provider", storeId: input.storeId,
           outcome: "success",
+          // The delivery being retried, not this attempt — so the redelivery,
+          // the original arrival and the eventual processed row are one group.
+          attemptKey: existing.id,
           // A provider stuck in a retry loop is invisible without this.
           metadata: { provider: input.provider, duplicate: true },
         });
@@ -113,6 +116,7 @@ export async function recordDelivery(input: {
     emitAsync({
       name: input.signatureValid ? "webhook.received" : "webhook.rejected",
       actorKind: "provider", storeId: input.storeId, outcome: input.signatureValid ? "success" : "failure",
+      attemptKey: row.id,
       metadata: { provider: input.provider, duplicate: false },
     });
     return { id: row.id, duplicate: false };
@@ -185,11 +189,31 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+// ============ WHY THE `webhook.processed` EMIT IS HERE (2026-09-01) =====
+//
+// The taxonomy declared this event and nothing ever fired it, so Genesis could
+// count webhooks ARRIVING and never count them FINISHING — which is precisely
+// the number the event's own purpose exists to produce: "the gap between
+// received and processed is the leak."
+//
+// It goes in these two functions rather than at their seven call sites (two
+// payment routes, the integrations route, the pipeline, the replayer, and the
+// two event modules). A list of call sites is a list that drifts: the eighth
+// route added next month would be silently unmeasured, and the leak the event
+// exists to find would hide in the instrument. Every path that ends a delivery
+// already goes through here.
+//
+// PROVIDER IS READ BACK OFF THE ROW, not taken as a parameter. Neither function
+// is told which provider it is finishing, and adding an argument would let a
+// caller label a Stripe delivery "paypal" and make the per-provider counts
+// quietly wrong. The update returns it, so the label comes from the same row
+// whose status just changed.
+
 /** The handler finished. */
 export async function markProcessed(id: string | null, storeId?: string | null): Promise<void> {
   if (!id) return;
   try {
-    await prismaSystem.webhookDelivery.update({
+    const row = await prismaSystem.webhookDelivery.update({
       where: { id },
       data: {
         status: "processed",
@@ -197,6 +221,21 @@ export async function markProcessed(id: string | null, storeId?: string | null):
         error: null,
         ...(storeId ? { storeId } : {}),
       },
+      select: { provider: true, storeId: true, receivedAt: true },
+    });
+    emitAsync({
+      name: "webhook.processed",
+      actorKind: "system",
+      storeId: row.storeId,
+      outcome: "success",
+      // Arrival to completion. The delivery's own receivedAt rather than a
+      // clock started in this function, which would measure the update.
+      durationMs: Date.now() - row.receivedAt.getTime(),
+      // The delivery id, so a received row and its processed row are one thing
+      // and a replay months later joins to the same key rather than looking
+      // like a second arrival.
+      attemptKey: id,
+      metadata: { provider: row.provider, ok: true },
     });
   } catch (error) {
     reportIssue("could not mark a webhook delivery processed", error, {
@@ -210,12 +249,29 @@ export async function markProcessed(id: string | null, storeId?: string | null):
 export async function markFailed(id: string | null, error: unknown): Promise<void> {
   if (!id) return;
   try {
-    await prismaSystem.webhookDelivery.update({
+    const row = await prismaSystem.webhookDelivery.update({
       where: { id },
       data: {
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
       },
+      select: { provider: true, storeId: true, receivedAt: true },
+    });
+    emitAsync({
+      name: "webhook.processed",
+      actorKind: "system",
+      storeId: row.storeId,
+      // The handler RAN and did not finish. That is the "or did not" half of
+      // the event's purpose, and it is a different fact from never having been
+      // marked at all — which stays absent, because nothing happened to record.
+      outcome: "failure",
+      durationMs: Date.now() - row.receivedAt.getTime(),
+      attemptKey: id,
+      // NOT the error message. `metadata` is allowlisted per event and this
+      // event declares `ok`; a provider's error text is unbounded and can
+      // carry a payload fragment. The message is already on the row, which is
+      // the authoritative place for it.
+      metadata: { provider: row.provider, ok: false },
     });
   } catch (writeError) {
     reportIssue("could not mark a webhook delivery failed", writeError, {

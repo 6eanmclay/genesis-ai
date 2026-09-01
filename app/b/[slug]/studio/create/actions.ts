@@ -51,6 +51,7 @@ import {
   type GrowthPointDecision,
 } from "@/lib/growthPoints/confirmation";
 import { createProductFromDesignExecutable } from "@/lib/execution/executables/productFromDesign";
+import { emitAsync } from "@/lib/telemetry/emit";
 
 // TURNING A DESIGN INTO SOMETHING THE STORE SELLS.
 //
@@ -224,27 +225,69 @@ export async function saveDesignDraft(
   design: ProductDesign,
   meta: { name: string; retailPriceInCents: number | null; draftId?: string | null },
 ): Promise<SaveDraftResult> {
+  // ============ WHY THE EMIT IS OUT HERE (2026-09-01) ==================
+  //
+  // `creation.design_saved` was declared and never fired, so nothing could tell
+  // an owner who gave up from an owner whose Save did not work — which is the
+  // whole of the event's stated purpose ("distinguishes abandonment from
+  // failure"). That distinction only exists if BOTH outcomes are recorded:
+  // firing on success alone makes a failed save indistinguishable from a design
+  // nobody ever saved, which is the thing it was declared to separate.
+  //
+  // So this wrapper — the one place every Save passes through, whether it
+  // returns an error, throws, or works — does the emitting, and the inner
+  // function hands back the store it resolved so a failure is still attributed
+  // to a business. surfaceCount is counted off the design that was PASSED IN
+  // rather than off anything the save produced, so a save that wrote nothing
+  // still reports how much work was at stake.
+  const started = Date.now();
+  const surfaceCount = Object.values(design.placements).filter((l) => l.length > 0).length;
+  let storeId: string | null = null;
+  let result: SaveDraftResult;
   try {
-    return await saveDesignDraftOrThrow(slug, design, meta);
+    const attempt = await saveDesignDraftOrThrow(slug, design, meta);
+    storeId = attempt.storeId;
+    result = attempt.result;
   } catch (error) {
-    return { ok: false, error: `That design could not be saved: ${reportable(error)}` };
+    result = { ok: false, error: `That design could not be saved: ${reportable(error)}` };
   }
+  emitAsync({
+    name: "creation.design_saved",
+    // The owner pressed Save. Not "genesis" even on the Create path, which
+    // saves first: a person still chose to preserve this.
+    actorKind: "user",
+    storeId,
+    outcome: result.ok ? "success" : "failure",
+    durationMs: Date.now() - started,
+    // The draft id when there is one, so repeated saves of one design while an
+    // owner works are visibly the same design rather than many.
+    attemptKey: result.designId ?? meta.draftId ?? null,
+    metadata: { surfaceCount },
+  });
+  return result;
+}
+
+/** What the inner save knows that the emit above needs: the store, and the answer. */
+interface SaveDraftAttempt {
+  result: SaveDraftResult;
+  /** Resolved by requireBusiness, so it is present even when the save then fails. */
+  storeId: string;
 }
 
 async function saveDesignDraftOrThrow(
   slug: string,
   design: ProductDesign,
   meta: { name: string; retailPriceInCents: number | null; draftId?: string | null },
-): Promise<SaveDraftResult> {
+): Promise<SaveDraftAttempt> {
   const { store, userId } = await requireBusiness(PERMISSIONS.PRODUCTS_MANAGE, slug);
 
   const provider = await creationProviderFor(store.id);
-  if (!provider) return { ok: false, error: "Connect a print supplier before saving a design." };
+  if (!provider) return { storeId: store.id, result: { ok: false, error: "Connect a print supplier before saving a design." } };
 
   // THE GARMENT IS RE-READ, for the same reason addDesignToStore re-reads it:
   // the print areas frozen onto a draft have to be the supplier's own.
   const garment = await provider.getGarment({ storeId: store.id, externalProductId: design.externalProductId });
-  if (!garment) return { ok: false, error: "That blank is no longer available from your supplier." };
+  if (!garment) return { storeId: store.id, result: { ok: false, error: "That blank is no longer available from your supplier." } };
 
   const draftId = meta.draftId || randomUUID();
 
@@ -340,16 +383,19 @@ async function saveDesignDraftOrThrow(
     modelExtracted: false,
   });
   if (result.errors.length > 0) {
-    return { ok: false, error: "That design could not be saved." };
+    return { storeId: store.id, result: { ok: false, error: "That design could not be saved." } };
   }
 
   revalidatePath(`/b/${slug}/studio`);
   return {
-    ok: true,
-    designId: draftId,
-    warning: blanksUnavailable
-      ? "Your design is saved. We couldn't reach your supplier for the preview image, so the product photo may fall back to the artwork itself."
-      : undefined,
+    storeId: store.id,
+    result: {
+      ok: true,
+      designId: draftId,
+      warning: blanksUnavailable
+        ? "Your design is saved. We couldn't reach your supplier for the preview image, so the product photo may fall back to the artwork itself."
+        : undefined,
+    },
   };
 }
 
