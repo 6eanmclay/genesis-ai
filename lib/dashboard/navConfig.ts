@@ -207,6 +207,25 @@ export const STOREFRONT_SECTIONS: NavSection[] = [
 // list look symmetrical.
 export const COMMERCE_SECTIONS: NavSection[] = [
   { key: "orders", label: "Orders", href: "/dashboard/orders", permission: "orders:view" },
+  // ============ SECOND, BECAUSE THE STRIP SCROLLS (2026-09-01) =====
+  //
+  // This was last, after Revenue. On a 390px phone that put its left edge at
+  // x=598 — two hundred pixels beyond the screen, in a strip that scrolls
+  // horizontally and shows no sign that it does. The link was correct, the
+  // route was deployed, and the merchant it was built for could not find it.
+  //
+  // Second rather than merely earlier: for somebody with real orders, "did I
+  // get paid" is the question that follows "what did I sell", ahead of what
+  // they could sell next or which promotion is running.
+  //
+  // ============ AND IT IS NOT "REVENUE" ==========================
+  //
+  // Revenue is what customers paid — Genesis's own orders, analysed. Money is
+  // what Stripe is holding and what has reached the bank, which is days later
+  // and a different number. Two entries because they answer two questions, and
+  // folding payouts under Revenue would be the exact blurring the screen
+  // itself exists to prevent.
+  { key: "finances", label: "Money", href: "/dashboard/finances", permission: "revenue:view" },
   { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
   // What you COULD sell, next to what you do. Deliberately its own section
   // rather than a tab inside Products: one is the shelf as it stands and the
@@ -218,14 +237,6 @@ export const COMMERCE_SECTIONS: NavSection[] = [
   { key: "promotions", label: "Promotions", href: "/dashboard/promotions", permission: "products:manage" },
   { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
   { key: "analytics", label: "Revenue", href: "/dashboard/analytics", permission: "analytics:view" },
-  // ============ REVENUE AND MONEY ARE NOT THE SAME QUESTION =======
-  //
-  // "Revenue" is what customers paid — Genesis's own orders, analysed. "Money"
-  // is what Stripe is holding and what has actually reached the bank, which is
-  // days later and a different number. Two entries because they answer two
-  // questions, and folding payouts under Revenue would be the exact blurring
-  // the screen itself exists to prevent.
-  { key: "finances", label: "Money", href: "/dashboard/finances", permission: "revenue:view" },
 ];
 
 /** @deprecated superseded by COMMERCE_SECTIONS; kept until callers move. */

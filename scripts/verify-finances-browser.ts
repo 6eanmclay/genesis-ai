@@ -168,6 +168,50 @@ async function main() {
     assert("the nav offers Money", /Money/.test(nav), nav.slice(0, 300));
     assert("and still offers Revenue separately", /Revenue/.test(nav), nav.slice(0, 300));
 
+    // ------------------------------------------------------------------
+    console.log("\n6. And a merchant on a phone can actually reach it");
+    {
+      // ============ IN THE DOM IS NOT ON THE SCREEN ==============
+      //
+      // The check above passed at 1280px on the day this shipped, and Sean
+      // still could not find Money on his phone. The link was present, its
+      // href was correctly rebased, and Playwright called it "visible" —
+      // because it IS rendered. Its left edge was at x=598 in a 390px
+      // viewport: two hundred pixels off the side of a strip that scrolls
+      // horizontally and gives no sign that it does.
+      //
+      // So this asserts geometry rather than presence. A nav item a merchant
+      // has to discover by guessing that a strip scrolls is not navigation.
+      // The SAME session, in a phone-sized window. Signing in a second time
+      // meets the auth attempt throttle — which is the throttle working — and
+      // this needs a viewport, not another login.
+      const phone = await browser!.newContext({
+        viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+        storageState: await context.storageState(),
+      });
+      const small = await phone.newPage();
+      await small.goto(`${server.baseUrl}/b/${bare.slug}/orders`, { waitUntil: "domcontentloaded" });
+      await small.waitForLoadState("networkidle").catch(() => {});
+
+      const money = small.getByRole("link", { name: "Money", exact: true }).first();
+      await money.waitFor({ state: "visible", timeout: 30_000 });
+      const box = await money.boundingBox();
+      assert("Money has a position on a phone screen", box !== null);
+      assert("and it is inside the viewport, not past the edge of a scrolling strip",
+        !!box && box.x >= 0 && box.x + box.width <= 390,
+        `x=${box?.x} width=${box?.width} — viewport is 390px`);
+
+      // And it goes where it should, from the business route.
+      await money.click();
+      await small.waitForURL(/\/finances$/, { timeout: 30_000 });
+      assert("tapping it opens Finances for this business",
+        small.url().includes(`/b/${bare.slug}/finances`), small.url());
+      await small.locator('[data-screen="finances"]').waitFor({ state: "visible", timeout: 60_000 });
+      assert("and the screen renders there", await small.locator('[data-screen="finances"]').isVisible());
+      await small.screenshot({ path: `${SHOTS}/finances-04-phone-nav.png`, fullPage: false });
+      await phone.close();
+    }
+
     console.log(`\n${failures} failed, ${passes} passed`);
     console.log("\nNOT PROVEN HERE: a healthy Stripe account with real balances and");
     console.log("payouts. That needs a live connected account and stays E20.\n");
