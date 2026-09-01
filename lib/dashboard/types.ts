@@ -38,7 +38,12 @@ export type AttentionKind =
   | "stale-pending"
   | "integration-issue"
   | "state-issue"
-  | "unsellable-store";
+  | "unsellable-store"
+  // The machinery failing at somebody (2026-08-31). A dead-lettered job, a
+  // stalled one, an external operation with an unknown outcome, or a provider
+  // delivery that could not be processed — all of which were computed for the
+  // operator and never attributed to the business they happened to.
+  | "operational-failure";
 
 export interface AttentionItem {
   id: string;

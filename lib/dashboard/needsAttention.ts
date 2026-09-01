@@ -3,6 +3,7 @@ import type { AttentionItem } from "./types";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { connectionHealthOf } from "@/lib/integrations/connectionHealth";
 import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
+import { getOperationalIssues } from "./operationalIssues";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -319,10 +320,15 @@ export async function getAttentionItems(
   storeId: string,
   currentStateParams: Parameters<typeof getStateIssues>[0]
 ): Promise<{ recentOutcomes: AttentionItem[]; currentState: AttentionItem[] }> {
-  const [recentFailures, staleExecutions, integrationIssues] = await Promise.all([
+  const [recentFailures, staleExecutions, integrationIssues, operationalIssues] = await Promise.all([
     getRecentNegativeOutcomes(storeId),
     getStaleExecutions(storeId),
     getIntegrationIssues(storeId),
+    // The machinery failing at this business (2026-08-31). Folded into the same
+    // list as everything else rather than given its own zone: an owner should
+    // not have to learn a second place to look for bad news, and a dead
+    // notification job is the same kind of fact as a broken connection.
+    getOperationalIssues(storeId),
   ]);
 
   const unsellableStoreIssue = getUnsellableStoreIssue(currentStateParams);
@@ -331,6 +337,7 @@ export async function getAttentionItems(
     ...recentFailures,
     ...staleExecutions,
     ...integrationIssues,
+    ...operationalIssues,
     ...(unsellableStoreIssue ? [unsellableStoreIssue] : []),
   ].sort((a, b) => (b.occurredAt?.getTime() ?? 0) - (a.occurredAt?.getTime() ?? 0));
 

@@ -168,6 +168,26 @@ export function AttentionCard({
               </form>
             )}
 
+            {/* WHERE TO GO AND FIX IT (2026-08-31).
+                needsAttention.ts has computed this destination for five kinds
+                of issue since it was written, and nothing ever rendered it —
+                so "your Stripe connection needs attention" arrived with no way
+                to reach the screen that reconnects it, and the operational
+                failures added alongside this would have had the same problem.
+
+                Beside "Have J4 take care of it" rather than instead of it:
+                handing the problem to J4 and going to look yourself are both
+                real answers, and which one an owner wants depends on the
+                problem rather than on us. */}
+            {card.kind === "issue" && card.actionHref && (
+              <Link
+                href={card.actionHref}
+                className="self-center text-xs font-medium text-[#2563eb] underline"
+              >
+                Go there
+              </Link>
+            )}
+
             {hasExpandableDetail && (
               <details className="group" open={highlighted || undefined}>
                 <summary className="cursor-pointer list-none text-xs text-zinc-500 underline">

@@ -81,7 +81,7 @@ export interface PlatformHealth {
 }
 
 /** How long a running job may hold its claim before it is worth looking at. */
-const STALL_MS = 15 * 60 * 1000;
+export const STALL_MS = 15 * 60 * 1000;
 
 export async function platformHealth(since?: Date): Promise<PlatformHealth> {
   const window = since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);

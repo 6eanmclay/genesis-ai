@@ -89,6 +89,8 @@ export interface ProposalAttentionCard extends AttentionCardCommon {
 export interface IssueAttentionCard extends AttentionCardCommon {
   kind: "issue";
   message: string;
+  /** Where the owner goes to do something about it, when there is such a place. */
+  actionHref?: string;
   // Notice dedup (2026-08-09) — set only when this card consolidates 2+
   // real, separately-logged occurrences sharing identical message text.
   // See dedupeAttentionItemsByMessage's own comment (lib/dashboard/
@@ -418,6 +420,14 @@ export function buildAttentionCards(params: {
       message: item.message,
       count: item.count,
       groupedItems: item.groupedItems,
+      // ============ COMPUTED SINCE FOREVER, RENDERED NEVER ==========
+      //
+      // needsAttention.ts sets actionHref in five places and nothing read it.
+      // So "your Stripe connection needs attention" arrived with no way to
+      // reach the screen that fixes it, and the function that works out WHICH
+      // screen — including a comment weighing up the least wrong destination
+      // for a provider with none — had never once affected what an owner saw.
+      actionHref: item.actionHref,
     });
   }
 
