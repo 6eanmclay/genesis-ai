@@ -163,7 +163,7 @@ async function main() {
         externalOrderId: "ext-123",
         shippingAddress: { name: "A Buyer", line1: "1 High St", city: "Hartlepool", postalCode: "TS24", country: "GB" },
       },
-      store: { name: "Copper & Coil", currency: "GBP" },
+      store: { name: "Copper & Coil", currency: "GBP", slug: "test-store" },
       ownerEmail: "owner@notify.test",
     });
     check("the subject names the product", email.subject.includes("Tensor Ring"), email.subject);
@@ -185,7 +185,7 @@ async function main() {
         id: "o2", productName: "Gift card", quantity: 1, amountInCents: 2_000,
         buyerEmail: "b@test", externalOrderId: "ext-2", shippingAddress: null,
       },
-      store: { name: "Copper & Coil", currency: "USD" },
+      store: { name: "Copper & Coil", currency: "USD", slug: "test-store" },
       ownerEmail: "owner@notify.test",
     });
     check("an order with no address shows no shipping line", !digital.html.includes("Ship to:"), digital.html);

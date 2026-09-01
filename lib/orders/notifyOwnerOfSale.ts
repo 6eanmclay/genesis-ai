@@ -4,6 +4,7 @@ import { reportIssue } from "@/lib/observability/reportIssue";
 import { formatMoney } from "@/lib/money";
 import type { EmailSender } from "./orderConfirmation";
 import { runOnce } from "@/lib/outbound/runOnce";
+import { orderUrl } from "@/lib/email/origin";
 
 // Telling the OWNER a sale happened (2026-08-22).
 //
@@ -47,6 +48,8 @@ export interface SaleNotificationOrder {
 export interface SaleNotificationStore {
   name: string;
   currency: string;
+  /** Needed for the link to the order — the route names the business. */
+  slug: string;
 }
 
 export type OwnerNotificationOutcome =
@@ -87,6 +90,7 @@ export function buildOwnerSaleEmail(params: {
 }): { to: string; subject: string; html: string } {
   const { order, store, ownerEmail } = params;
   const total = money(order.amountInCents, store.currency);
+  const link = orderUrl(store.slug, order.id);
   const quantity = order.quantity > 1 ? ` &times;${order.quantity}` : "";
 
   // The address is shown only when one was actually captured. A digital order,
@@ -112,6 +116,18 @@ export function buildOwnerSaleEmail(params: {
       `<p>Customer: ${order.buyerEmail}</p>`,
       addressLine,
       `<p>Order reference: ${order.externalOrderId}</p>`,
+      // ============ THE WAY BACK INTO GENESIS (2026-09-01) ==========
+      //
+      // The email carried the provider's own reference and nothing that opened
+      // the order. An owner reading "New order" on a phone had to remember
+      // where Genesis lives, sign in, find Orders, and match a cs_live_ string
+      // by eye — for the one email whose entire purpose is "go and deal with
+      // this".
+      //
+      // Omitted rather than guessed when no origin is configured: a link that
+      // 404s in a sale notification teaches an owner not to trust the next one.
+      // See lib/email/origin.ts.
+      link ? `<p><a href="${link}">Open this order in Genesis</a></p>` : "",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -162,7 +178,7 @@ export async function notifyOwnerOfSale(
   // Mirrors notificationClaim.ts deliberately, as this file always has.
   const order = await prisma.order.findFirst({
     where: { id: orderId, storeId },
-    include: { store: { select: { name: true, currency: true, user: { select: { email: true } } } } },
+    include: { store: { select: { name: true, currency: true, slug: true, user: { select: { email: true } } } } },
   });
   if (!order) return { sent: false, reason: "not_found" };
 

@@ -28,11 +28,30 @@ import { notifyCustomerRefunded } from "./refundNotification";
 //
 // ============ WHAT IT DELIBERATELY DOES NOT DO =========================
 //
-// It does not touch shipmentNotifiedAt or ownerNotifiedAt. Both are claimed
-// inside an execution the owner initiated, and both already report to the owner
-// on the screen when they fail. Sweeping them would mean deciding, unattended,
-// that a label bought yesterday should email a customer today — a judgement
-// this has no business making.
+// It does not touch shipmentNotifiedAt. That claim is made inside an execution
+// the owner initiated, it already reports to the owner on screen when it fails,
+// and sweeping it would mean deciding, unattended, that a label bought
+// yesterday should email a customer today — a judgement this has no business
+// making.
+//
+// ============ ownerNotifiedAt WAS ON THAT LIST, AND SHOULD NOT HAVE BEEN
+//
+// Corrected 2026-09-01. It was excluded alongside shipmentNotifiedAt on the
+// same two grounds, and neither of them is true of it:
+//
+//   "claimed inside an execution the owner initiated" — a sale is initiated by
+//   a CUSTOMER. The claim is made inside the Stripe webhook or the PayPal
+//   return route, neither of which the owner is present for.
+//
+//   "already reports to the owner on screen when it fails" — the owner cannot
+//   see a failure to tell them something they do not yet know happened. That is
+//   the entire condition being notified about.
+//
+// The consequence was real: notifyOwnerOfSale was called inline and nothing
+// enqueued `ownerSale` or looked for a null claim, so a process that died
+// between recording an order and sending the email lost the merchant's
+// notification permanently. The three CUSTOMER notifications all had the retry
+// this one lacked, and the merchant is the person who has work to do.
 //
 // ============ AND IT RUNS ONCE A DAY ===================================
 //
@@ -76,6 +95,16 @@ export interface SweepResult {
   confirmations: number;
   deliveries: number;
   refunds: number;
+  /**
+   * Merchant new-sale notices queued.
+   *
+   * Counted separately from the three above, not folded into a total: those
+   * are transactional emails to a CUSTOMER about their money, and this is a
+   * working notice to the MERCHANT about their shop. They fail for different
+   * reasons, they matter to different people, and a single number would hide
+   * the case that matters most — customers all told, merchant told nothing.
+   */
+  ownerSales: number;
   /** True when nothing was attempted because email is not configured. */
   skipped: boolean;
 }
@@ -95,7 +124,7 @@ export async function runDueOrderNotifications(
   // passes nothing and the real sender is used.
   send?: EmailSender,
 ): Promise<SweepResult> {
-  const empty: SweepResult = { confirmations: 0, deliveries: 0, refunds: 0, skipped: false };
+  const empty: SweepResult = { confirmations: 0, deliveries: 0, refunds: 0, ownerSales: 0, skipped: false };
 
   // CHECKED ONCE, HERE. Every individual notification checks too and would
   // report its own line — on a platform with no email configured that is one
@@ -175,6 +204,42 @@ export async function runDueOrderNotifications(
     // full day for the next tick, because nothing else retried.
     if (await enqueueNotification({ orderId: order.id, storeId: order.storeId, kind: "refund" })) {
       result.refunds++;
+    }
+  }
+
+  // ============ SOLD, AND THE MERCHANT NEVER TOLD ====================
+  //
+  // Added 2026-09-01, and it is a different KIND of notification from the
+  // three above rather than a fourth of the same thing. Those tell a CUSTOMER
+  // what happened to their money. This tells the MERCHANT that they have work
+  // to do, and it is the one notification whose absence means an order sits
+  // unshipped while nobody knows it exists.
+  //
+  // notifyOwnerOfSale has existed since 2026-08-22, with its own claim column,
+  // its own runOnce key and correct idempotency. What it never had was a
+  // backstop: it was called inline from the Stripe handler and the PayPal
+  // return route, and nothing anywhere enqueued `ownerSale` or looked for
+  // orders with `ownerNotifiedAt` still null. A process that died between
+  // recording the order and sending the email lost the merchant's notification
+  // permanently, and the three CUSTOMER notifications all had the retry this
+  // one lacked.
+  //
+  // Same GRACE_MS as the confirmation sweep, and for the same reason: the
+  // inline path is given time to do its job before the backstop assumes it
+  // did not.
+  const unannounced = await prismaSystem.order.findMany({
+    // PAID only. An order whose money is disputed or refunded is not a sale to
+    // celebrate at somebody, and if a dispute is won the status returns to paid
+    // and this picks it up — the same derived-filter behaviour the confirmation
+    // sweep relies on rather than a status list of its own.
+    where: { ownerNotifiedAt: null, status: ORDER_STATUS.PAID, createdAt: { lt: before } },
+    select: { id: true, storeId: true },
+    orderBy: { createdAt: "asc" },
+    take: BATCH,
+  });
+  for (const order of unannounced) {
+    if (await enqueueNotification({ orderId: order.id, storeId: order.storeId, kind: "ownerSale" })) {
+      result.ownerSales++;
     }
   }
 

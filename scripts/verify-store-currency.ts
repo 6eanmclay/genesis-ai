@@ -102,7 +102,7 @@ console.log("\n=== 3. What the owner is shown, in the money they take ===\n");
 // ============================================================================
 const notice = buildOwnerSaleEmail({
   order: ORDER,
-  store: { name: "Cubit and Coil", currency: "GBP" },
+  store: { name: "Cubit and Coil", currency: "GBP", slug: "test-store" },
   ownerEmail: "owner@test.local",
 });
 assert("the sale notification quotes pounds", notice.subject.includes("£85.00"), notice.subject);

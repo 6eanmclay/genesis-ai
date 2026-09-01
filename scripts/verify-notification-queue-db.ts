@@ -57,6 +57,20 @@ async function main(): Promise<void> {
         externalOrderId: `cs_${randomUUID()}`,
         status: "paid",
         createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+        // ============ THE MERCHANT HAS ALREADY BEEN TOLD (2026-09-01)
+        //
+        // This suite is about the CUSTOMER's confirmation — that the sweep
+        // queues rather than sends, that a failure retries, that nothing
+        // duplicates. When the merchant's new-sale notice gained its own
+        // backstop, every fixture here started queuing a second job too and
+        // the send counters doubled: "sent once" saw two, because two
+        // different people were being written to about one order.
+        //
+        // Declared on the fixture rather than filtered in the assertions. The
+        // orders this suite reasons about are ones whose owner already knows,
+        // which keeps each assertion about exactly one notification path — and
+        // the merchant path has a suite of its own.
+        ownerNotifiedAt: new Date(),
         ...over,
       },
     });

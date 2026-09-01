@@ -238,7 +238,9 @@ async function main(): Promise<void> {
     delete process.env.RESEND_API_KEY;
     const skipped = await runDueOrderNotifications(new Date(), record);
     eq("with no email configured the sweep skips rather than churns",
-      skipped, { confirmations: 0, deliveries: 0, refunds: 0, skipped: true });
+      // ownerSales joined this shape on 2026-09-01, when the merchant's own
+      // new-sale notice gained the backstop the three customer notices had.
+      skipped, { confirmations: 0, deliveries: 0, refunds: 0, ownerSales: 0, skipped: true });
     process.env.RESEND_API_KEY = "harness-not-a-real-key";
   }
 
