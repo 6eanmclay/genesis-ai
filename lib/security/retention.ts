@@ -77,6 +77,9 @@ export function retentionClassOf(kind: string, severity: string): RetentionClass
       return "INCIDENT";
     case SIGNAL_KINDS.webhookReplayed:
     case SIGNAL_KINDS.webhookReplayRefused:
+    // A closure is the record that somebody's data was erased on request. It
+    // is the evidence the erasure happened, and it outlives the data itself.
+    case SIGNAL_KINDS.accountClosed:
       return "ACT";
     case SIGNAL_KINDS.authzDenied:
     case SIGNAL_KINDS.authzUnresolved:

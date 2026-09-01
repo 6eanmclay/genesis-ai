@@ -70,6 +70,15 @@ export const SIGNAL_KINDS = {
    * Never carries the body. The reason and the field NAMES, never their values.
    */
   boundaryRejected: "http.rejected",
+  /**
+   * An account was closed and its personal data anonymised.
+   *
+   * Deliberate, irreversible, and performed on a person's behalf, so it belongs
+   * on the same stream as a replay rather than in an application log. Carries
+   * the user id and the counts; never the email, the name, or anything else
+   * the closure just erased.
+   */
+  accountClosed: "account.closed",
 } as const;
 
 export type SignalKind = (typeof SIGNAL_KINDS)[keyof typeof SIGNAL_KINDS];

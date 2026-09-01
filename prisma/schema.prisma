@@ -83,6 +83,25 @@ model User {
   // one as enabled would lock somebody out with a code they never verified.
   totpEnabledAt     DateTime?
   recoveryCodes     RecoveryCode[]
+  // ============ ACCOUNT CLOSURE, NOT ROW DELETION (2026-08-30) =======
+  //
+  // The row survives. `prisma.user.delete()` would cascade to Store and from
+  // there to Order — every financial record and every customer's transaction in
+  // every business this person owns. That is the schema's default today, and it
+  // is exactly what must never happen: Sean, 2026-08-30, "do not erase the
+  // financial/order record wholesale."
+  //
+  // So closure ANONYMISES. The personal fields above are overwritten, the
+  // credentials are deleted outright, and the row stays so that every foreign
+  // key pointing at it still resolves. A business keeps its orders; the person
+  // stops being identifiable by them.
+  //
+  // These two columns are what makes the operation idempotent and auditable: a
+  // second run sees `closedAt` and does nothing, and the reason is recorded
+  // rather than inferred from a name that now reads "deleted-account".
+  closedAt          DateTime?
+  closureReason     String?
+
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
