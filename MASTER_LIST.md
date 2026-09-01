@@ -1,0 +1,96 @@
+# The master list, mapped against what exists
+
+**Assessed 2026-08-30 against `292c5b0`.** Forty-seven items, checked against the
+repository rather than against memory — because item 42 of the list is "don't
+rebuild things that already exist", and this session has already found that
+warning to be well earned four separate times.
+
+Four verdicts, and the split is the point:
+
+| | Count | Meaning |
+|---|---|---|
+| **Already built** | 9 | Exists now. Rebuilding it would be the mistake item 42 names. |
+| **Buildable in this window** | 11 | No Connections, no credential, no paid infrastructure, no open product decision. |
+| **Blocked by Connections** | 18 | Needs a provider account, an OAuth registration, or an API we cannot call. |
+| **Needs a decision or is a large feature** | 9 | Real work, but it needs scoping or a decision from Sean first. |
+
+---
+
+## Already built — do not rebuild
+
+| # | Item | Where it lives |
+|---|---|---|
+| **30** | J4 cannot bypass Genesis's controls | Every guard runs outside the model. `lib/permissions.ts`, `lib/execution/` verification, `runOnce`, the boundary guard. J4 proposes; deterministic code authorizes and executes. |
+| **31** | Independent cybersecurity layer, infrastructure first | `lib/security/signals.ts` is a separate stream from `SecurityEvent`, written by deterministic infrastructure and read by nothing that reasons. Retention, a filtered read layer and `/admin/security` shipped this session. **No model chosen, deliberately.** |
+| **33** | Security/telemetry correlation | `lib/observability/correlation.ts` puts one id on six tables; `lib/admin/trace.ts` assembles them; `/admin/operations` renders it. |
+| **44** | J4 is not the authority over money | Already structural. The dispute handler, `runOnce`, the Growth Point ledger and every payment path are deterministic code J4 cannot reach. |
+| **45** | External AI is not a single point of failure | Partly. `genesisModelFailureMessage` degrades honestly per failure kind and the message is saved rather than lost. See item 28 below for what is *not* proven. |
+| **19** | Order detail page | `app/dashboard/orders/OrderDetail.tsx`, 339 lines, reached from `/b/[slug]/orders/[orderId]`. Customer, items, payment, shipping, fulfilment all present. |
+| **20** | Order timeline | Substantially there — the detail page reads `deliveredAt`, `fulfilledAt`, refund and dispute state. What is missing is presentation, not data. |
+| **47** | Reversibility | `lib/execution/executables/orders.ts` already supports marking fulfilled and un-fulfilling, with guards. Disputes, refunds and charge-backs got full lifecycle treatment this session. |
+| **27** | Scheduled business analysis | `lib/scheduler/registry.ts` runs `intelligence.cycles` and `ops.alerts`; `lib/intelligence/` detects change and notifies. |
+
+---
+
+## Buildable now — no Connections, no credential, no decision
+
+Ordered by value. Items already in the locked sequence are marked.
+
+| # | Item | Note |
+|---|---|---|
+| **32** | Telemetry audit and instrumentation | **Locked item.** 11 subsystems declared, 5 instrumented; 3 declared events never emitted. Known and measured. |
+| **21, 22, 23** | Safer fulfilment controls, reversible fulfilment, clearer order state | Pure owner-facing work over data that already exists. Folds naturally into locked item 5 (owner-facing failure recovery). |
+| **18** | Clickable order details from Commerce | The detail page exists; the list does not link to it consistently. Small. |
+| **28** | Graceful degradation | Partly built and **entirely unproven**. Nothing tests that Genesis keeps serving with the model unavailable, Stripe unreachable, or blob storage down. A failure-injection suite is buildable now and would be genuinely new evidence. |
+| **29** | No single intelligence-provider dependency | `lib/genesisModel.ts` is already the one seam. Making the provider swappable behind it is refactoring we control. |
+| **11, 14, 15** | Affiliate infrastructure, attribution, commission lifecycle | **Buildable without Connections.** A `Referral` model already exists for Growth Point signups; affiliates are a different, larger model. Needs a product decision on payout mechanics (see below) but the *link → visit → order → commission* chain is ours. |
+| **16** | Refund/dispute commission reversal | Depends on 15, and the dispute lifecycle it must hook into shipped this session. |
+| **24** | Unified business data layer | `lib/businessModel/` already maps orders, products, customers and transactions into one canonical shape. Extending it is ours. |
+| **41** | Owner-friendly explanations | Prompt and presentation work, no external dependency. |
+| **43, 46** | Never invent provider capabilities; never confuse analytics with revenue | Not features — **standing rules**. Best enforced as assertions in the suites that would otherwise fabricate, the way `connection-truthfulness` already does. |
+| **25** | Revenue attribution | The *direct* and *affiliate* halves are buildable now. The social half is Connections. |
+
+---
+
+## Blocked by Connections
+
+Items **3, 4, 5, 6, 34, 35, 36, 37** (social metrics, cross-platform comparison,
+social revenue, total social value, the connection framework itself, social API
+connections, richer social integrations, provider capability awareness) and
+**8, 9** (Stripe payout management and Instant Payouts — these need a live
+connected account and Stripe's payout APIs).
+
+Also **2, 7, 26, 38, 39, 40** in their *full* form: J4 analysing "the entire
+business" is only as good as the data connected to it, and today that is the
+store's own commerce. The engine exists; the inputs do not.
+
+`EXTERNAL_BLOCKERS.md` remains the authoritative list of what unblocks each.
+
+---
+
+## Needs a decision or scoping first
+
+| # | Item | What is unresolved |
+|---|---|---|
+| **12, 13** | External and Genesis-user affiliates | Whether an affiliate needs an account, what identity they get, and how they are paid. Payout mechanics are a money decision, not an engineering one. |
+| **17** | Affiliate performance intelligence | Depends on 11–16 existing first. |
+| **10** | Unified financial intelligence | Needs the payout and fee data that only a connected Stripe account provides. |
+| **9** | Instant Payouts | Explicitly must use Stripe's own mechanism — correct, and it needs the account. |
+| **42** | Don't rebuild what exists | **Not a task.** It is a working practice, and the audit at the top of this document is what honouring it looks like. |
+
+---
+
+## What this changes about the locked order
+
+Nothing is removed. Three master-list items fold into work already sequenced:
+
+- **21, 22, 23, 18** join **locked item 5** (owner-facing failure recovery) —
+  same surface, same data, same session.
+- **32** *is* **locked item 6**.
+- **28** (graceful degradation, unproven) is a genuinely new candidate and the
+  strongest addition the master list makes: it is buildable now, needs nothing
+  external, and would prove a property the whole architecture claims.
+
+The affiliate cluster (11, 14, 15, 16) is the largest buildable-now item on the
+list and the one that most deserves its own sequenced slot — after the current
+locked items, and after a short decision on payout mechanics.
