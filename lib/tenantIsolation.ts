@@ -75,6 +75,36 @@ const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
   // negation and relation-filter bypasses closed below still apply to it.
   storeMember: ["storeId", "userId"],
   storeIntegration: ["storeId"],
+
+  // ============ SEVEN MODELS THE MAP HAD NEVER BEEN TOLD ABOUT =========
+  //
+  // Added 2026-08-31 by the fetch-then-authorize sweep. Every one carries a
+  // storeId and every one was missing here, so the guard silently did not
+  // cover them — and nothing in the repository would ever have said so,
+  // because a hand-written mirror of the schema has no way to notice the
+  // schema moving.
+  //
+  // Nothing was leaking. All but one call site already passed a storeId, and
+  // most of these tables are reached through `prismaSystem`, which bypasses
+  // this guard by design. The defect was the silence: seven models sat
+  // outside a protection everybody would have said covered them, and the
+  // eighth would have too.
+  //
+  // `scripts/verify-tenant-isolation-db.ts` now derives the store-scoped
+  // models from schema.prisma and fails when one is absent from this map
+  // without an explicit exemption, so this cannot drift again — the same rule
+  // ARCHITECTURE.md applies to every registry that mirrors another.
+  //
+  // storeId is nullable on six of the seven (a job or a delivery may belong to
+  // no business). That does not weaken the entry: the guard asks whether the
+  // FILTER names a business, not whether the column can be null.
+  job: ["storeId"],
+  outboundOperation: ["storeId"],
+  securitySignal: ["storeId"],
+  storageEvent: ["storeId"],
+  storageObject: ["storeId"],
+  temporaryAsset: ["storeId"],
+  webhookDelivery: ["storeId"],
   storeMessage: ["storeId"],
   product: ["storeId"],
   newsletterSignup: ["storeId"],

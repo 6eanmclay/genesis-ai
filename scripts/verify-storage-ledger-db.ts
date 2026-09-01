@@ -277,7 +277,7 @@ async function main(): Promise<void> {
     derivedOutcome, { ok: false, action: "rolled_back", overage: 8000 });
   assert("its blob was deleted", deleted.includes(`https://blob/d-${stamp}`), deleted.join(","));
   eq("and its row is gone",
-    await prisma.storageObject.count({ where: { pathname: `printfiles/d-${stamp}-front.png` } }), 0);
+    await prisma.storageObject.count({ where: { storeId: store.id, pathname: `printfiles/d-${stamp}-front.png` } }), 0);
 
   // A PERMANENT asset is the owner's. It is never deleted.
   const permanent = await reserveBatch(store.id, [

@@ -107,8 +107,8 @@ async function main(): Promise<void> {
   eq("and the row survives", await liveFor(store.id), 1);
 
   // NOR MAY THE SWEEP, however old it gets.
-  await prisma.temporaryAsset.update({
-    where: { id: claim.id },
+  await prisma.temporaryAsset.updateMany({
+    where: { id: claim.id, storeId: store.id },
     data: { createdAt: new Date(Date.now() - 10 * ABANDONED_AFTER_MS) },
   });
   const sweepPromoted = await sweepAbandonedTemporaries(new Date(), ABANDONED_AFTER_MS, recordingDeleter);

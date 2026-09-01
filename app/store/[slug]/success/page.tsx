@@ -62,7 +62,22 @@ export default async function CheckoutSuccessPage({
     // PayPal's flow captures synchronously and passes our own Order.id
     // (see app/api/checkout/paypal/return/route.ts), so no external API
     // call is needed here — the order is already in our own database.
-    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    // ============ THE SLUG IN THE URL IS THE SCOPE (2026-08-31) =====
+    //
+    // This is a PUBLIC page and `order_id` is a query parameter, so the id
+    // arrives from whoever typed the URL. Looked up by id alone it returned
+    // any order on the platform, and this page then printed what was bought
+    // and for how much — another shop's product name and another customer's
+    // amount, on a page that never checked they had anything to do with each
+    // other.
+    //
+    // The business was already resolved from the slug a few lines up for the
+    // currency. Nothing needed fetching; the filter simply had to use it.
+    // Scoped, a stranger's id finds nothing and the page falls through to the
+    // same generic thank-you it shows when the id is missing entirely.
+    const order = store
+      ? await prisma.order.findFirst({ where: { id: orderId, storeId: store.id } })
+      : null;
     if (order) {
       amountInCents = order.amountInCents;
       productName = order.productName;

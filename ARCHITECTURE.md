@@ -148,6 +148,7 @@ Full requirements, the classification table, and the outstanding work:
 | `DEPARTURE_PRIORITY` (`lib/onboarding/initialDesignRestraint.ts`) → `Presentation` + `Composition` | A dial missing from the list compares `undefined` to `undefined`, is never a departure, and is therefore never charged against the first-storefront budget — which still reports four while five dials sit off baseline |
 | `GROWTH_POINT_PURCHASE_CATALOG` (`lib/growthPoints/purchaseCatalog.ts`) → `PACKAGES` (`scripts/provision-pricing.ts`) | The price an owner is shown is not the price Stripe charges. This one is money |
 | `FIELD_LABELS` + `HIDDEN_DIFF_KEYS` → every action's `inputSchema` | An approval card renders the machine's own camelCase field name at the owner, because the lookup is `FIELD_LABELS[key] ?? key` |
+| `TENANT_SCOPED_MODELS` (`lib/tenantIsolation.ts`) → every model in `schema.prisma` with a `storeId` | **Found 2026-08-31.** The map had fallen SEVEN models behind the schema — `job`, `outboundOperation`, `securitySignal`, `storageEvent`, `storageObject`, `temporaryAsset`, `webhookDelivery`. A model missing from it is silently exempt from the isolation guard: an unscoped `updateMany` or `findMany` on it is simply allowed, and no test, type or review step says so. Nothing was leaking — all but one call site already passed a `storeId` — but the protection everybody would have said covered those tables did not, and the next model added would have been exempt too. Cross-checked now by `scripts/verify-fetch-then-authorize-db.ts` |
 | `COGNITIVE_OUTPUT_KIND_LABEL` → the kinds actually written | ActivityFeed's fallback renders the raw kind string at a merchant. Already happened once: "insight" was real and unlabelled |
 | `PROPOSABLE_ACTION_TYPES` → `ProposedActionSchema` (both in `lib/intelligence/cognitiveLayer.ts`) | Two spellings of the same seven actions. An action the schema can emit but the list omits is one Genesis proposes with no price in `growthPointCosts` — and the prompt's own rule is "an actionType absent from growthPointCosts has no real price yet, never invent one" |
 | `RECORD_PROVENANCE` (`lib/businessModel/provenance.ts`) → the `RecordProvenance` Prisma enum | A kind of source the database can store and the runtime cannot name, or the reverse. Either way a fact's origin renders as nothing, or a label lookup returns undefined next to somebody's logo — and provenance exists precisely so J4 does not overstate where a claim came from |
@@ -323,6 +324,14 @@ The bar is **Storefront · Studio · (J4 · Office) · Commerce · Account**, an
 
 **And the constraint that outranks all of it: blue marks J4 and nothing else.** No room's identity may depend on hue — "a room that glows blue steals the one signal the owner has learned to read." `scripts/verify-rooms.ts` fails on any room ground that is not neutral, and on any two rooms that share one.
 
+
+## Fetch-then-authorize: safe only when something authorizes afterwards (2026-08-31)
+
+This codebase deliberately and widely fetches a record by bare id and *then* authorizes against whatever business it turns out to belong to — `editProduct`, `toggleProductActive`, `deleteProduct`, `attachTrackingNumber`, `toggleOrderFulfilled`, `approvalAccessibleTo`. That is correct, and a sweep must not "fix" it. The lookup exists to learn which business owns the record so that `execute()` can re-verify the caller against **that** business, which is the business that owns the resource being acted upon. `lib/tenantIsolation.ts` leaves `findUnique`/`findFirst` unguarded for exactly this reason.
+
+What makes it correct is the second half. Every one of the 34 executables declares a real `requiredPermission`, so none can take `executeInner`'s unauthorized `else` branch; and where an action does not go through `execute()`, it performs the check itself (`task.storeId !== store.id`, `draft.userId !== session.user.id`, `accessTo(userId, approval.storeId)`).
+
+**The rule**: an unscoped lookup by caller-supplied id is safe if and only if an authorization follows it that names the fetched record's own business. Where nothing follows, the shape is a bare read of anybody's row. The full-repository sweep on 2026-08-31 found exactly one such place — `app/store/[slug]/success/page.tsx`, a public page that read `order_id` from the query string, ignored the `[slug]` it was rendered under, and printed the product name and amount of any order on the platform.
 
 ## Permissions & Roles
 

@@ -605,8 +605,14 @@ export async function recordActual(
     },
   });
   if (row.batchId) {
+    // storeId alongside the batch id (2026-08-31). A batch id is random and
+    // in practice belongs to one business, but "in practice" is what the
+    // isolation guard exists to stop relying on — this was the one
+    // updateMany on a tenant model in the whole codebase with no business in
+    // its filter, and it only escaped the guard because storageObject was
+    // missing from its model map.
     await prisma.storageObject.updateMany({
-      where: { batchId: row.batchId, uploadedAt: null },
+      where: { batchId: row.batchId, storeId: input.storeId, uploadedAt: null },
       data: { touchedAt: now },
     });
   }
