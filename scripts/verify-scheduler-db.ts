@@ -320,10 +320,14 @@ async function main(): Promise<void> {
     //   ops.alerts       added 2026-08-30. needsAttention() and its scheduler
     //                    counterpart already computed the right answers and had
     //                    one caller each: a page somebody had to open.
-    const ADDED = ["telemetry.prune", "security.prune", "ops.alerts"];
-    eq("one task was added, deliberately and by name",
-      SCHEDULED_TASKS.map((t) => t.key).filter((k) => !RESPONSIBILITIES.some(([, key]) => key === k)),
-      ADDED);
+    const ADDED = ["telemetry.prune", "security.prune", "retention.sweep", "ops.alerts"];
+    // Sorted on both sides: this is about WHICH tasks were added, not the order
+    // they happen to be declared in. A failure that only says "the same list in
+    // a different order" is noise standing in front of the assertion that
+    // matters — that nothing appeared without being named.
+    eq("what was added is named, and nothing else appeared",
+      SCHEDULED_TASKS.map((t) => t.key).filter((k) => !RESPONSIBILITIES.some(([, key]) => key === k)).sort(),
+      [...ADDED].sort());
     eq("and nothing else appeared",
       SCHEDULED_TASKS.length, RESPONSIBILITIES.length + ADDED.length);
 

@@ -259,8 +259,15 @@ async function main(): Promise<void> {
     // one decision agree until the day they do not, and the drifted one is the
     // one nobody is reading.
     const { execSync } = await import("node:child_process");
+    // ============ NAMING IT IS NOT READING IT (2026-08-30) =======
+    //
+    // lib/config/registry.ts describes every environment variable this platform
+    // uses, so it mentions this one by name — which is the opposite of a second
+    // implementation. The invariant is that one module DECIDES who is an
+    // administrator, and a catalogue entry decides nothing.
     const readers = execSync('git grep -l "PLATFORM_ADMIN_EMAILS" -- lib app', { encoding: "utf8" })
-      .split("\n").filter(Boolean);
+      .split("\n").filter(Boolean)
+      .filter((f) => !f.startsWith("lib/config/"));
     eq("exactly one module reads the platform-admin allowlist", readers, ["lib/platformAdmin.ts"]);
 
     const adminSrc = readFileSync("lib/platformAdmin.ts", "utf8");

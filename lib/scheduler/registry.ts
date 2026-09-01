@@ -307,6 +307,28 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
   },
 
   {
+    key: "retention.sweep",
+    lane: "maintenance",
+    purpose: "Enqueue the pass that clears old webhook payloads and operational rows.",
+    // The same producer shape as the other two prunes, and the same deliberate
+    // omission: no apply flag, so the handler's dry-run default stands. This
+    // one clears CUSTOMER DATA — the bodies of handled provider deliveries —
+    // and switching it on is a decision recorded in EXTERNAL_BLOCKERS.md.
+    everyMs: DAY,
+    enabled: always,
+    budgetMs: 10_000,
+    run: async () => {
+      const day = new Date().toISOString().slice(0, 10);
+      const created = await enqueue({
+        kind: "retention.sweep",
+        idempotencyKey: `retention.sweep:${day}`,
+        payload: {},
+      });
+      return { enqueued: created !== null, day };
+    },
+  },
+
+  {
     key: "security.prune",
     lane: "maintenance",
     purpose: "Enqueue the pass that drops security signals past their horizon.",

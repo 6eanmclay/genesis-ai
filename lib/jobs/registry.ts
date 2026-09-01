@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { JobHandler } from "./queue";
 import { pruneTelemetry } from "@/lib/telemetry/retention";
 import { pruneSignals } from "@/lib/security/retention";
+import { runRetentionSweep } from "@/lib/retention/sweep";
 import { notificationJobHandler } from "@/lib/orders/notificationJobs";
 
 // WHICH HANDLER RUNS WHICH KIND.
@@ -41,7 +42,7 @@ import { notificationJobHandler } from "@/lib/orders/notificationJobs";
  * Adding one here without a handler below is a failing test, which is the
  * point — the alternative is discovering it from a dead-lettered job.
  */
-export const JOB_KINDS = ["noop", "telemetry.prune", "security.prune", "notification.order"] as const;
+export const JOB_KINDS = ["noop", "telemetry.prune", "security.prune", "retention.sweep", "notification.order"] as const;
 
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -96,6 +97,18 @@ const pruneSignalsJob: JobHandler = async ({ job }) => {
   await pruneSignals({ apply: payload.apply === true, maxPerRun: payload.maxPerRun });
 };
 
+/**
+ * Apply the retention policy across the tables that grow without limit.
+ *
+ * Queued for the same reason the other two prunes are: a bounded deletion that
+ * can fail halfway and wants a retry. Dry by default, and this one clears
+ * customer data — the payloads of handled webhook deliveries.
+ */
+const retentionSweepJob: JobHandler = async ({ job }) => {
+  const payload = (job.payload ?? {}) as { apply?: boolean; maxPerRun?: number };
+  await runRetentionSweep({ apply: payload.apply === true, maxPerRun: payload.maxPerRun });
+};
+
 // ============ THE PAYLOAD BOUNDARY (2026-08-30) ====================
 //
 // `job.payload as NotificationPayload` was an unchecked cast across a JSON
@@ -110,6 +123,10 @@ export const JOB_SCHEMAS: Partial<Record<JobKind, z.ZodTypeAny>> = {
   "telemetry.prune": z.object({
     retentionDays: z.number().int().positive().optional(),
     apply: z.boolean().optional(),
+  }),
+  "retention.sweep": z.object({
+    apply: z.boolean().optional(),
+    maxPerRun: z.number().int().positive().max(50_000).optional(),
   }),
   "security.prune": z.object({
     apply: z.boolean().optional(),
@@ -145,6 +162,7 @@ export const HANDLERS: Record<string, JobHandler> = {
   noop,
   "telemetry.prune": pruneTelemetryJob,
   "security.prune": pruneSignalsJob,
+  "retention.sweep": retentionSweepJob,
   // The sweep's backstop sends. The payment path still notifies inline — a
   // customer waiting for a confirmation should not wait for a queue.
   "notification.order": notificationJobHandler,
