@@ -35,9 +35,23 @@ Vercel, not assumed:
 in* is now an explicit, stored fact rather than a recency guess (§49), and the
 domain was already store-scoped throughout (§48). What remains is putting the
 business in the URL so a link can address one and two tabs can hold two: a route
-migration across 28 screens, plus lifting `StoreDraft.userId`'s unique constraint
-so an account can create a second business while a first is still in onboarding.
-Not blocking correctness today; blocking the switcher.
+migration across 28 screens. Not blocking correctness today; blocking the
+switcher.
+
+**Corrected 2026-09-01.** This sentence used to end "plus lifting
+`StoreDraft.userId`'s unique constraint", which contradicted
+`BUSINESS_CONTEXT.md`'s Phase B — where that belief was tested and found wrong.
+Confirming a draft deletes it, so an account already creates a business,
+confirms it, and creates another; that is proven against real Postgres in
+`verify-business-context-live.ts` §11. The constraint blocks only two businesses
+being created *at the same time*, which nobody has asked for.
+
+It stays, deliberately. Lifting it would turn every
+`findUnique({ where: { userId } })` on a draft into "the draft this user is
+currently working on", whose obvious implementation is *the most recent one* —
+the exact recency guess Phase 0 removed. If simultaneous creation is ever
+wanted, the fix is an explicit active-draft pointer shaped like
+`User.activeStoreId`, not an ordering.
 
 **A decision, not a credential: should the migration gate come back?**
 `20260820060000_product_sourcing` is **already applied to production** — not by
@@ -2165,10 +2179,13 @@ each call site names. The URL carries no business, so two tabs on two businesses
 are impossible and a link cannot address one.
 
 That is the next step, and it is deliberately not taken here: a route migration
-across 28 screens plus a real onboarding change (`StoreDraft.userId` is unique,
-so an account can only have one business *being created* at a time). None of it
-is required for correctness today; all of it is required before a business
-switcher is worth building.
+across 28 screens. None of it is required for correctness today; all of it is
+required before a business switcher is worth building.
+
+`StoreDraft.userId` being unique is **not** part of that work, though this
+paragraph once implied it was. It blocks only two businesses being created at
+the same time — not owning several, which already works — and it is staying.
+See the correction at the top of this document.
 
 ---
 

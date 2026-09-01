@@ -120,6 +120,22 @@ model User {
   passwordResetTokens        PasswordResetToken[]
   securityEvents             SecurityEvent[]
   userSessions               UserSession[]
+
+  // ============ AN INDEX THE SCHEMA NEVER KNEW IT HAD (2026-09-01) ====
+  //
+  // 20260820070000_active_business created "User_activeStoreId_idx" and this
+  // model never declared it, so every database that has run these migrations
+  // — production included — carried an index Prisma did not know about.
+  //
+  // That is not cosmetic. The next `prisma migrate dev` would have generated a
+  // migration to DROP it, quietly removing an index added on purpose for the
+  // lookup this column exists to serve. Declaring it is how the schema stops
+  // disagreeing with the database, and Prisma's default name for it is exactly
+  // the name the migration wrote, so nothing has to change in any database.
+  //
+  // Found by scripts/verify-restore.ts, which replays every migration onto an
+  // empty Postgres and asks Prisma whether the result matches this file.
+  @@index([activeStoreId])
 }
 
 model Account {
@@ -1194,7 +1210,20 @@ model SupplierEconomics {
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
-  @@unique([storeId, sourceKey, externalProductId, externalVariantId])
+  // The name is pinned to what the database really has (2026-09-01).
+  //
+  // The migration asked for
+  // "SupplierEconomics_storeId_sourceKey_externalProductId_extern_key", which
+  // is 64 bytes; Postgres truncates identifiers at 63 and dropped the final
+  // character. Prisma now computes a different 63-byte truncation ending
+  // "_exter_key", so `migrate diff` reported this as drift on every database
+  // that has ever run these migrations, production included.
+  //
+  // Mapped rather than renamed: a rename would be a migration against a live
+  // database to change a string nothing reads. Pinning it makes this file
+  // describe what is actually there, which is the direction that costs
+  // nothing. Found by scripts/verify-restore.ts.
+  @@unique([storeId, sourceKey, externalProductId, externalVariantId], map: "SupplierEconomics_storeId_sourceKey_externalProductId_extern_ke")
   @@index([storeId, sourceKey])
 }
 

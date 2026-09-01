@@ -9,7 +9,8 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "migrate:deploy": "node scripts/migrate-deploy.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "verify:restore": "tsx scripts/verify-restore.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",

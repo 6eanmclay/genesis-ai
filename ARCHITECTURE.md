@@ -781,7 +781,15 @@ Prisma 7 with the driver-adapter pattern (`@prisma/adapter-pg`'s `PrismaPg`, con
 
 Most AI-generated content lives in `Json` columns (`Store.blueprint`, `Product.richContent`, etc.) rather than fully normalized tables — a deliberate choice verified to pay off: the entire brand-model expansion and the entire presentation-styling system were added with **zero Prisma migrations**, because the content shape could evolve inside existing Json columns. Migrations were only needed for genuinely new *relational* concepts (roles, integrations, newsletter signups) — a useful signal for where to draw that line on future schema decisions.
 
-**Production migrations are a deliberate, manual step, not part of the build.** `prisma migrate deploy` used to run automatically inside `package.json`'s `build` script on every push to `master` — no review gate between a schema change and it landing on the real production database. Removed 2026-08-01; see `DEPLOYMENT.md` for the actual runbook (`npm run migrate:deploy`, run by hand against production, before the dependent code deploys). Production Postgres is Neon (`Launch` plan) with automatic point-in-time recovery — up to 7 days, on by default — which is a real safety net but doesn't replace having a gate before a migration lands.
+**Production migrations ARE part of the build. There is no gate.** Corrected 2026-09-01 — this paragraph said the opposite, and had said it since 2026-08-13.
+
+`package.json`'s `build` script is `node scripts/migrate-deploy.mjs && next build`. The first half runs `prisma migrate deploy` against whatever `DATABASE_URL` is set, and `scripts/migrate-deploy.mjs` contains no environment check of any kind — so **every push that triggers a build applies every pending migration to production, with no review step**. This is stated correctly a few hundred lines above, under *The rule*, which is what made this the worst kind of documentation error: the same document disagreed with itself, and the wrong half was the reassuring one.
+
+The gate did exist. It was removed on 2026-08-01, reinstated, and reversed again on 2026-08-13; this paragraph was written during the window when it was true and never updated. `DEPLOYMENT.md` carries the same correction with the build log that settles it, and `EXTERNAL_BLOCKERS.md` E6 tracks whether the gate comes back as a decision that is Sean's to make.
+
+**The safe order in `DEPLOYMENT.md` is still the right procedure** — write the migration, read the generated SQL, apply it deliberately, then deploy the dependent code. What changed is that following it is now a discipline rather than something the tooling enforces.
+
+Production Postgres is Neon (`Launch` plan) with automatic point-in-time recovery — up to 7 days, on by default. That is a real safety net for *recovering* from a bad migration and not a substitute for a gate that stops one landing. It is also, until `npm run verify:restore` is run against a real branch, a safety net **nobody has tested**.
 
 ---
 
