@@ -140,7 +140,10 @@ export const CONFIG: ConfigEntry[] = [
     purpose: "Whether storage limits are enforced.",
     absence: "Off. Usage is recorded and nothing is refused — the current deliberate state." },
   { name: "STORAGE_RECONCILE", group: "storage", requirement: "optional", secret: false,
-    purpose: "Whether nightly storage reconciliation runs.",
+    purpose:
+      "Whether nightly storage reconciliation runs, and whether it may write. " +
+      "Three values, deliberately: unset is off, \"on\" runs it read-only so its " +
+      "findings can be read before they are trusted, and \"apply\" lets it correct.",
     absence: "Off, deliberately, until the ledger write paths are deployed." },
   { name: "STORAGE_ATTRIBUTION_SWEEP", group: "storage", requirement: "optional", secret: false,
     purpose: "Whether the weekly attribution sweep runs.",

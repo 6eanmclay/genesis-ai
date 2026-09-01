@@ -12,6 +12,7 @@ import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
 import { runDueSourcing } from "@/lib/sourcing/sourcingSchedule";
 import {
   attributionSweepEnabled,
+  nightlyApplies,
   nightlyEnabled,
   runAttributionSweep,
   runNightlyReconciliation,
@@ -221,7 +222,14 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
             truncated: listing.truncated,
           };
         },
-        apply: true,
+        // ============ REPORTS BEFORE IT CORRECTS (2026-09-01) ====
+        //
+        // Was a hard-coded `true`, so the act of enabling this task would
+        // have taken it from never having run to writing to production on
+        // its first pass. STORAGE_RECONCILE=on now runs it read-only and
+        // STORAGE_RECONCILE=apply lets it act — the same look-first shape
+        // the retention sweep and the security prune already have.
+        apply: nightlyApplies(),
       });
     },
   },

@@ -68,8 +68,45 @@ export const REFUSE_TO_DELETE: BlobDeleter = async (url: string) => {
 /** How long a row with no blob is given before it is believed to be absent. */
 export const GRACE_MS = 60 * 60 * 1000;
 
+// ============ SWITCHING IT ON AND LETTING IT WRITE ARE TWO THINGS ======
+//
+// Added 2026-09-01, preparing this branch for its first deploy. The task was
+// enabled by one variable and hard-coded `apply: true`, so the single act of
+// turning it on would have taken it straight from never having run to writing
+// to production on its first pass — against a ledger whose write paths had not
+// been live long enough for anyone to know what it would find.
+//
+// Nothing was unsafe about the run itself, and it is worth being precise about
+// that rather than implying otherwise: a truncated listing is refused before
+// any write, blob deletion is impossible by construction, and the only rows it
+// removes are ones whose blob the provider no longer lists after a grace
+// period, each with a StorageEvent recording enough to reconstruct it.
+//
+// What was missing was the ability to LOOK FIRST. Every other destructive
+// scheduled task in this codebase defaults to a dry run and needs an explicit
+// second signal to act — the retention sweep and the security prune both do —
+// and this one could not be watched before it was trusted.
+//
+//   unset    the task does not run at all
+//   "on"     it runs, classifies, and reports — writing nothing
+//   "apply"  it runs and corrects
+//
+// The middle state is the one that did not exist.
+
+/** Whether the nightly pass runs at all. */
 export function nightlyEnabled(): boolean {
-  return process.env.STORAGE_RECONCILE === "on";
+  return process.env.STORAGE_RECONCILE === "on" || process.env.STORAGE_RECONCILE === "apply";
+}
+
+/**
+ * Whether it may write.
+ *
+ * Deliberately a different value rather than a second variable: two variables
+ * make a state where one says on and the other says apply, and somebody has to
+ * decide what that means. One variable with three values has no such state.
+ */
+export function nightlyApplies(): boolean {
+  return process.env.STORAGE_RECONCILE === "apply";
 }
 export function attributionSweepEnabled(): boolean {
   return process.env.STORAGE_ATTRIBUTION_SWEEP === "on";

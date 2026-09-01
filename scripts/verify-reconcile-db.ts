@@ -3,6 +3,7 @@ import { prisma, prismaSystem } from "@/lib/prisma";
 import {
   runNightlyReconciliation,
   runAttributionSweep,
+  nightlyApplies,
   nightlyEnabled,
   attributionSweepEnabled,
   GRACE_MS,
@@ -77,6 +78,40 @@ async function main(): Promise<void> {
   console.log("\n--- both passes are dark by default ---\n");
   assert("the nightly flag is off", nightlyEnabled() === false, `${process.env.STORAGE_RECONCILE}`);
   assert("the weekly flag is off", attributionSweepEnabled() === false, `${process.env.STORAGE_ATTRIBUTION_SWEEP}`);
+
+  console.log("\n--- and switching it on is not the same as letting it write ---\n");
+  {
+    // ============ THE MIDDLE STATE THAT DID NOT EXIST (2026-09-01) ==
+    //
+    // The task was one flag and a hard-coded `apply: true`, so enabling it took
+    // it from never having run to writing to production on its first pass.
+    // Three values now, and the middle one is the whole point: it can be
+    // watched before it is trusted, the same way the retention sweep and the
+    // security prune already can be.
+    const original = process.env.STORAGE_RECONCILE;
+    try {
+      delete process.env.STORAGE_RECONCILE;
+      assert("unset means the task does not run at all", nightlyEnabled() === false);
+      assert("and certainly does not write", nightlyApplies() === false);
+
+      process.env.STORAGE_RECONCILE = "on";
+      assert('"on" runs it', nightlyEnabled() === true);
+      assert("and it writes nothing", nightlyApplies() === false);
+
+      process.env.STORAGE_RECONCILE = "apply";
+      assert('"apply" runs it', nightlyEnabled() === true);
+      assert("and lets it correct", nightlyApplies() === true);
+
+      // A typo must be off, not on. Anything but the two known words means the
+      // task stays dark rather than guessing what was meant.
+      process.env.STORAGE_RECONCILE = "true";
+      assert("an unrecognised value is off, not on", nightlyEnabled() === false);
+      assert("and does not write", nightlyApplies() === false);
+    } finally {
+      if (original === undefined) delete process.env.STORAGE_RECONCILE;
+      else process.env.STORAGE_RECONCILE = original;
+    }
+  }
 
   // =========================================================================
   console.log("\n--- FIX 1: reconciliation cannot delete a blob ---\n");
