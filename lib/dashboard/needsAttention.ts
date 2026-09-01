@@ -4,6 +4,7 @@ import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { connectionHealthOf } from "@/lib/integrations/connectionHealth";
 import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
 import { getOperationalIssues } from "./operationalIssues";
+import { getWaitingCustomerIssues } from "./waitingCustomers";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -320,7 +321,7 @@ export async function getAttentionItems(
   storeId: string,
   currentStateParams: Parameters<typeof getStateIssues>[0]
 ): Promise<{ recentOutcomes: AttentionItem[]; currentState: AttentionItem[] }> {
-  const [recentFailures, staleExecutions, integrationIssues, operationalIssues] = await Promise.all([
+  const [recentFailures, staleExecutions, integrationIssues, operationalIssues, waitingCustomers] = await Promise.all([
     getRecentNegativeOutcomes(storeId),
     getStaleExecutions(storeId),
     getIntegrationIssues(storeId),
@@ -329,6 +330,11 @@ export async function getAttentionItems(
     // not have to learn a second place to look for bad news, and a dead
     // notification job is the same kind of fact as a broken connection.
     getOperationalIssues(storeId),
+    // Reuses lib/businessModel/obligations.ts rather than counting orders
+    // again — that module already keeps "money arrived", "money went back",
+    // "the owner acknowledged it" and "a label was bought" apart, and a second
+    // count here would be a second chance to conflate them.
+    getWaitingCustomerIssues(storeId),
   ]);
 
   const unsellableStoreIssue = getUnsellableStoreIssue(currentStateParams);
@@ -338,6 +344,7 @@ export async function getAttentionItems(
     ...staleExecutions,
     ...integrationIssues,
     ...operationalIssues,
+    ...waitingCustomers,
     ...(unsellableStoreIssue ? [unsellableStoreIssue] : []),
   ].sort((a, b) => (b.occurredAt?.getTime() ?? 0) - (a.occurredAt?.getTime() ?? 0));
 

@@ -43,7 +43,11 @@ export type AttentionKind =
   // stalled one, an external operation with an unknown outcome, or a provider
   // delivery that could not be processed — all of which were computed for the
   // operator and never attributed to the business they happened to.
-  | "operational-failure";
+  | "operational-failure"
+  // Somebody has paid and is waiting for their parcel (2026-09-01). The
+  // opposite of every other state issue, which are all reasons a shop CANNOT
+  // sell — this one exists because it did.
+  | "waiting-customer";
 
 export interface AttentionItem {
   id: string;
