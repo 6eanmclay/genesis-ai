@@ -21,6 +21,7 @@ import {
 } from "@/lib/execution/executables/products";
 import { toggleOrderFulfilledExecutable } from "@/lib/execution/executables/orders";
 import { attachTrackingExecutable } from "@/lib/execution/executables/attachTracking";
+import { correctTrackingExecutable } from "@/lib/execution/executables/correctTracking";
 import { purchaseShippingLabelExecutable } from "@/lib/execution/executables/shipping";
 import {
   addProductImagesExecutable,
@@ -384,6 +385,39 @@ export async function attachTrackingNumber(
 
   const result = await execute(
     attachTrackingExecutable,
+    { orderId, trackingNumber, carrier },
+    { storeId: order.storeId }
+  );
+  revalidatePath("/dashboard/orders");
+  return result.status === "SUCCESS"
+    ? { ok: true, message: result.message }
+    : { ok: false, error: result.message };
+}
+
+/**
+ * Correct a tracking number that was typed wrong.
+ *
+ * Same fetch-then-authorize shape as its siblings: the lookup exists only to
+ * learn which store owns the order, so execute() re-verifies the caller's
+ * permission against THAT store. The executable then re-reads it store-scoped
+ * and applies the three refusals — see correctTracking.ts.
+ *
+ * Returns rather than redirects, for the same reason attachTrackingNumber
+ * does: the result carries a sentence the merchant has to read.
+ */
+export async function correctTrackingNumber(
+  orderId: string,
+  trackingNumber: string,
+  carrier?: string
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { storeId: true },
+  });
+  if (!order) return { ok: false, error: "Order not found" };
+
+  const result = await execute(
+    correctTrackingExecutable,
     { orderId, trackingNumber, carrier },
     { storeId: order.storeId }
   );

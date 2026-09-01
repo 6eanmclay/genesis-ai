@@ -24,6 +24,9 @@ export const EXECUTION_ACTIONS = {
   ORDER_TOGGLE_FULFILLED: "order.toggle_fulfilled",
   ORDER_PURCHASE_SHIPPING_LABEL: "order.purchase_shipping_label",
   ORDER_ATTACH_TRACKING: "order.attach_tracking",
+  // Correcting a number already recorded. Its own verb because replacing is
+  // a different act from adding — see correctTracking.ts.
+  ORDER_CORRECT_TRACKING: "order.correct_tracking",
   INTEGRATION_STRIPE_CONNECT: "integration.stripe.connect",
   INTEGRATION_STRIPE_VERIFY: "integration.stripe.verify",
   INTEGRATION_PAYPAL_CONNECT: "integration.paypal.connect",
