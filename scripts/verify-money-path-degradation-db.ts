@@ -1,3 +1,15 @@
+// ============ THE server-only SHIM (2026-09-01) =======================
+//
+// This suite imports app/store/[slug]/actions.ts, which now reaches
+// lib/attribution/visit.ts to resolve where a checkout came from -- and that
+// module is `server-only`, a package Next provides and plain tsx does not.
+//
+// Nothing about the suite's meaning changes. `server-only` has no runtime
+// behaviour whatsoever; its entire job is to be unresolvable in a CLIENT
+// bundle so that importing a server module from client code fails the build.
+// See scripts/lib/allowServerOnly.ts for why stubbing its resolution is not a
+// test seam.
+import "@/scripts/lib/allowServerOnly";
 import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import { prisma, prismaSystem } from "@/lib/prisma";
 import { recordDelivery, markProcessed, markFailed } from "@/lib/webhooks/delivery";

@@ -103,6 +103,8 @@ const TENANT_SCOPED_MODELS: Readonly<Record<string, readonly string[]>> = {
   securitySignal: ["storeId"],
   storageEvent: ["storeId"],
   storageObject: ["storeId"],
+  storeTrafficDay: ["storeId"],
+  storeVisit: ["storeId"],
   temporaryAsset: ["storeId"],
   webhookDelivery: ["storeId"],
   storeMessage: ["storeId"],

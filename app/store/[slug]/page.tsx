@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { productSupportsLiveShipping } from "@/lib/shipping/checkoutShipping";
 import { parseCheckoutProblem, checkoutProblemNotice } from "@/lib/orders/checkoutOutcome";
 import { auth } from "@/auth";
+import { recordVisit } from "@/lib/attribution/visit";
 import { getStoreRole } from "@/lib/permissions";
 import { subscribeToNewsletter } from "./actions";
 import { addProductToBag } from "./bagActions";
@@ -183,6 +184,24 @@ export default async function StorefrontPage({
   if (!store.published && !viewerRole) {
     notFound();
   }
+
+  // ============ WHERE THIS VISITOR CAME FROM (2026-09-01) =============
+  //
+  // Recorded HERE rather than in proxy.ts, whose own documentation says it may
+  // be deployed to a CDN and must not rely on shared modules — so it mints the
+  // cookie and this does the work with a database in front of it.
+  //
+  // AFTER the notFound guards, deliberately: a request for a store that does
+  // not exist, or an unpublished one a stranger cannot see, is not a visit to
+  // anything. Recording it would put traffic against a shop nobody reached.
+  //
+  // Never awaited for correctness and it cannot throw — see recordVisit. A
+  // storefront must not fail to sell because analytics failed.
+  await recordVisit({
+    storeId: store.id,
+    storeSlug: store.slug,
+    landingPath: `/store/${store.slug}`,
+  });
 
   const products = await prisma.product.findMany({
     where: { storeId: store.id, active: true },

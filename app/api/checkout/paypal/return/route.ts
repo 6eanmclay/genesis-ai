@@ -301,11 +301,33 @@ export async function GET(request: NextRequest) {
     // order; line items are NEVER guessed.
     let bagLines: RecoveredLines | null = null;
     let bagMismatch: { draft: number; settled: number } | null = null;
+    // WHERE THIS SALE CAME FROM, carried out of the draft (2026-09-01). Both
+    // rails do this identically -- a merchant's traffic report must not depend
+    // on which payment button the customer pressed.
+    let attribution: {
+      kind: string | null; source: string | null; campaign: string | null;
+      evidence: string | null; visitId: string | null;
+    } | null = null;
     if (draftRef.draftId) {
       const draft = await loadDraft(store.id, draftRef.draftId);
       if (draft) {
         bagLines = linesFromDraft(draft.lines);
         bagMismatch = draftTotalMismatch(draft.totalInCents, amountInCents);
+        attribution = {
+          kind: draft.attributionKind,
+          source: draft.attributionSource,
+          campaign: draft.attributionCampaign,
+          evidence: draft.attributionEvidence,
+          // Store-scoped, for the reason the promotion lookup is: a stored id
+          // is not proof the row still exists, and a visit id must never link
+          // an order to another business's traffic.
+          visitId: draft.attributionVisitId
+            ? (await prisma.storeVisit.findFirst({
+                where: { id: draft.attributionVisitId, storeId: store.id },
+                select: { id: true },
+              }))?.id ?? null
+            : null,
+        };
       } else {
         // PayPal's own items, sent at list price with `sku` carrying the
         // product id — which is what lets a recovered line relink to a real
@@ -406,6 +428,12 @@ export async function GET(request: NextRequest) {
           appliedPromotionLabel: appliedPromotion?.label ?? undefined,
           appliedPromotionCode: appliedPromotion?.code ?? undefined,
           appliedPromotionKind: appliedPromotion?.kind ?? undefined,
+          // Copies, not references. See the Stripe rail for the full reasoning.
+          attributionKind: attribution?.kind ?? undefined,
+          attributionSource: attribution?.source ?? undefined,
+          attributionCampaign: attribution?.campaign ?? undefined,
+          attributionEvidence: attribution?.evidence ?? undefined,
+          attributionVisitId: attribution?.visitId ?? undefined,
         },
       });
 

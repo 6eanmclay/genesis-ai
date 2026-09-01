@@ -100,6 +100,24 @@ export interface CreateDraftParams {
     service: string | null;
     rateId: string | null;
   } | null;
+  /**
+   * WHERE THIS SALE CAME FROM, if a visit is in progress (2026-09-01).
+   *
+   * A PARAMETER, not read from cookies in here, for the same reason the garment
+   * is a parameter to saveDesignAsProduct: this function has to be callable by
+   * a suite with no request around it. The caller — which does have a request —
+   * resolves it through attributionForCheckout.
+   *
+   * Null is a real and ordinary answer. An order with no attribution is honest;
+   * an order attributed to a guess is the thing this subsystem exists to avoid.
+   */
+  attribution?: {
+    attributionKind: string;
+    attributionSource: string | null;
+    attributionCampaign: string | null;
+    attributionEvidence: string;
+    attributionVisitId: string;
+  } | null;
   now?: Date;
 }
 
@@ -135,6 +153,13 @@ export async function createCheckoutDraft(params: CreateDraftParams): Promise<st
       selectedShippingCarrier: params.shipping?.carrier ?? null,
       selectedShippingService: params.shipping?.service ?? null,
       selectedShippingRateId: params.shipping?.rateId ?? null,
+      // FROZEN HERE, so from this point attribution no longer depends on a
+      // cookie surviving a cross-site redirect back from a payment provider.
+      attributionKind: params.attribution?.attributionKind ?? null,
+      attributionSource: params.attribution?.attributionSource ?? null,
+      attributionCampaign: params.attribution?.attributionCampaign ?? null,
+      attributionEvidence: params.attribution?.attributionEvidence ?? null,
+      attributionVisitId: params.attribution?.attributionVisitId ?? null,
       expiresAt: new Date(now.getTime() + DRAFT_TTL_HOURS * 60 * 60 * 1000),
     },
     select: { id: true },
@@ -183,6 +208,12 @@ export interface LoadedDraft {
   selectedShippingService: string | null;
   selectedShippingRateId: string | null;
   orderId: string | null;
+  /** Frozen at checkout. Null on every draft written before 2026-09-01. */
+  attributionKind: string | null;
+  attributionSource: string | null;
+  attributionCampaign: string | null;
+  attributionEvidence: string | null;
+  attributionVisitId: string | null;
 }
 
 /**
@@ -217,6 +248,11 @@ export async function loadDraft(storeId: string, draftId: string | null | undefi
     selectedShippingService: row.selectedShippingService,
     selectedShippingRateId: row.selectedShippingRateId,
     orderId: row.orderId,
+    attributionKind: row.attributionKind,
+    attributionSource: row.attributionSource,
+    attributionCampaign: row.attributionCampaign,
+    attributionEvidence: row.attributionEvidence,
+    attributionVisitId: row.attributionVisitId,
   };
 }
 

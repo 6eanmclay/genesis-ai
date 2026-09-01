@@ -3,6 +3,7 @@
 import { redirect, unstable_rethrow } from "next/navigation";
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
+import { attributionForCheckout } from "@/lib/attribution/visit";
 import { quoteShippingForProduct, type DestinationAddress, type ShippingOption } from "@/lib/shipping/rates";
 import { confirmSelectedRate, toCheckoutMetadata, type SelectedShipping } from "@/lib/shipping/checkoutShipping";
 import { verifyShippingAddress } from "@/lib/shipping/verifyAddress";
@@ -570,10 +571,18 @@ export async function checkoutFromBag(
     }
 
     // Frozen here, and never recomputed downstream.
+    //
+    // WHERE THEY CAME FROM, FROZEN WITH THE PRICE (2026-09-01). Resolved here
+    // rather than inside createCheckoutDraft because only an action has the
+    // request's cookies; the draft takes it as a parameter so a suite can call
+    // it with no request at all. Null when there is no visit, which is an
+    // ordinary answer and never a guess.
+    const attribution = await attributionForCheckout({ storeId: store.id, storeSlug: slug });
     const draftId = await createCheckoutDraft({
       storeId: store.id,
       lines: resolved.lines,
       pricing: resolved.pricing,
+      attribution,
     });
     const lines = freezeLines(resolved.lines, resolved.pricing);
 

@@ -334,10 +334,41 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<Response> 
       let bagMismatch: { draft: number; settled: number } | null = null;
       let writtenOrderId: string | null = null;
 
+      // WHERE THIS SALE CAME FROM, carried out of the draft (2026-09-01).
+      // Declared beside the other carry-forwards rather than read again later:
+      // the draft is loaded once, on the path that has one, and an order
+      // recovered from Stripe's own line items genuinely has no attribution.
+      let attribution: {
+        kind: string | null; source: string | null; campaign: string | null;
+        evidence: string | null; visitId: string | null;
+      } | null = null;
+
       if (draftId) {
         const draft = await loadDraft(storeId, draftId);
         if (draft) {
           bagLines = linesFromDraft(draft.lines);
+          attribution = {
+            kind: draft.attributionKind,
+            source: draft.attributionSource,
+            campaign: draft.attributionCampaign,
+            evidence: draft.attributionEvidence,
+            // ============ VERIFIED AGAINST THIS STORE ================
+            //
+            // Same shape as the promotion lookup above and for the same
+            // reason: a stored id is not proof the row still exists, and raw
+            // visits are pruned at twelve months while orders are kept for
+            // ever. Store-scoped so a visit id can never link an order to
+            // another business's traffic.
+            //
+            // Losing the pointer costs nothing that matters -- the four fields
+            // beside it are frozen copies that stand entirely on their own.
+            visitId: draft.attributionVisitId
+              ? (await prisma.storeVisit.findFirst({
+                  where: { id: draft.attributionVisitId, storeId },
+                  select: { id: true },
+                }))?.id ?? null
+              : null,
+          };
           // Recorded, never reconciled. Silently trusting either number is how
           // a wrong charge becomes invisible.
           bagMismatch = draftTotalMismatch(draft.totalInCents, session.amount_total);
@@ -498,6 +529,23 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<Response> 
             appliedPromotionLabel: discountFacts.promotionLabel ?? undefined,
             appliedPromotionCode: discountFacts.promotionCode ?? undefined,
             appliedPromotionKind: discountFacts.promotionKind ?? undefined,
+            // ============ WHERE THIS SALE CAME FROM (2026-09-01) =====
+            //
+            // Copies, off the draft that was frozen when the customer began
+            // checking out. Unconditional for the same reason the promotion
+            // label is: they are copies, not references, and an order from
+            // thirteen months ago must still say where it came from after the
+            // raw visit has been pruned.
+            //
+            // `attributionVisitId` is the one pointer, and it is verified
+            // against THIS store below before it is written — a draft is
+            // already store-scoped, but a visit id is the kind of value that
+            // must never be trusted for looking well-formed.
+            attributionKind: attribution?.kind ?? undefined,
+            attributionSource: attribution?.source ?? undefined,
+            attributionCampaign: attribution?.campaign ?? undefined,
+            attributionEvidence: attribution?.evidence ?? undefined,
+            attributionVisitId: attribution?.visitId ?? undefined,
           },
         });
 

@@ -47,8 +47,21 @@ export const EXPORT_COVERAGE: SectionPolicy[] = [
   { model: "ExecutionLog", disposition: "included" },
   { model: "SourcedProduct", disposition: "included" },
   { model: "StorageObject", disposition: "included" },
+  // The merchant's own traffic history, in the form that outlives the raw
+  // records it was counted from: how many visits arrived, from where, per day.
+  // This is business intelligence they own and would expect to take with them.
+  { model: "StoreTrafficDay", disposition: "included" },
 
   // ---- excluded: derived, internal, or somebody else's --------------------
+  {
+    model: "StoreVisit",
+    disposition: "excluded",
+    reason:
+      "One row per browsing session, keyed by an opaque token that identifies nobody. It is " +
+      "pruned at twelve months and the durable answer it produces is exported instead: " +
+      "StoreTrafficDay carries the counts by source and day, and every order carries the " +
+      "source it came from. Exporting the raw sessions would add volume and no business fact.",
+  },
   {
     model: "StoreIntegration",
     disposition: "excluded",

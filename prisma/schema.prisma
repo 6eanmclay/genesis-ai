@@ -526,6 +526,8 @@ model Store {
   conversations             Conversation[]
   promotions                Promotion[]
   checkoutDrafts            CheckoutDraft[]
+  storeVisits               StoreVisit[]
+  storeTrafficDays          StoreTrafficDay[]
 
   @@index([planId])
   jobs Job[]
@@ -1455,6 +1457,22 @@ model NewsletterSignup {
 // one. Composite-unique rather than a bare unique on externalOrderId, so
 // two providers' ids can never collide.
 model Order {
+  /// WHERE THIS SALE CAME FROM, FROZEN (2026-09-01).
+  ///
+  /// COPIES, not a foreign key, and the reason is written in stripeEvent.ts's
+  /// own words about the promotion link: a merchant who deletes the referenced
+  /// row between a customer paying and the webhook arriving makes order.create
+  /// violate the constraint, and "the ENTIRE order is lost -- money taken,
+  /// nothing recorded". Raw visits are pruned at 12 months; an order from
+  /// thirteen months ago must still say where it came from.
+  ///
+  /// `attributionVisitId` is a nullable, store-verified pointer beside them for
+  /// as long as the visit exists. Losing it costs nothing that matters.
+  attributionKind     String?
+  attributionSource   String?
+  attributionCampaign String?
+  attributionEvidence String?
+  attributionVisitId  String?
   id                          String               @id @default(cuid())
   storeId                     String
   productId                   String?
@@ -1692,6 +1710,8 @@ model Order {
   // `funds_reinstated` arrive with the dispute id and must find the same order
   // the `created` event did.
   @@index([externalDisputeId])
+  /// Revenue by source is the question this milestone exists to answer.
+  @@index([storeId, attributionSource])
 }
 
 // The Execution & Verification Engine's history: append-only, never updated.
@@ -2992,7 +3012,141 @@ model PromotionProduct {
 // PayPal's purchase_units[].items[], Stripe's line_items — so a lost or expired
 // draft can still be recovered from the provider's own account of what it
 // charged. See Order.lineItemSource for the three tiers.
+// WHAT ONE CUSTOMER WAS QUOTED, AT ONE MOMENT (2026-08-26).
+//
+// NOT A CART. Browsing writes nothing at all — a bag is a cookie of product ids
+// and quantities, for anonymous visitors and signed-in ones alike. This row
+// appears only when somebody clicks Continue to payment, and it exists for one
+// reason: neither payment provider can carry a bag back to us.
+//
+//   PayPal gives us ONE 127-character custom_id. storeId and productId alone
+//   already spend 51 of it. Four products would not fit.
+//   Stripe's metadata is roomier but caps a bag at an arbitrary size and does
+//   nothing for the other rail.
+//
+// So both rails carry this row's id instead, and the shape is identical for
+// both — the same fix that made pricing one function rather than two.
+//
+// IMMUTABLE ONCE PAYMENT STARTS. The lines and totals here are the contract:
+// what the customer agreed to and what the provider charged. A merchant editing
+// a price, or a promotion expiring, while somebody is on PayPal must not change
+// what the order records afterwards, because the money has already moved at the
+// figure frozen here.
+//
+// AND IT IS NOT THE ONLY RECORD. Both providers also receive real line items —
+// PayPal's purchase_units[].items[], Stripe's line_items — so a lost or expired
+// draft can still be recovered from the provider's own account of what it
+// charged. See Order.lineItemSource for the three tiers.
+/// ONE BROWSING SESSION ON ONE STOREFRONT, AND WHERE IT CAME FROM.
+///
+/// THE SOURCE OF TRUTH FOR TRAFFIC, deliberately not ProductEvent. Telemetry is
+/// pruned at 90 days and its own taxonomy says it "is never the source of
+/// truth" — and revenue by source is a business fact a merchant will spend
+/// money on. See lib/attribution/classify.ts for how a source is decided.
+///
+/// NOT A PERSON. `visitToken` is an opaque random value in a per-store cookie.
+/// No IP address, no user agent, no fingerprint, no cross-store identifier.
+model StoreVisit {
+  id      String @id @default(cuid())
+  storeId String
+
+  /// Opaque, per-store, from the visit cookie. Identifies a browsing session so
+  /// a purchase can be joined to its source. Never a name or an account.
+  visitToken String
+
+  /// explicit_tracking | observed_referral | direct_unknown
+  attributionKind String
+
+  /// The referrer HOST, or the explicit source token. Null for direct/unknown.
+  /// Never a full URL: a referring URL carries the path and query of somebody
+  /// else's page, and the host is what answers the business question.
+  source String?
+
+  /// An explicit campaign identifier, when a link supplied one.
+  campaign String?
+
+  /// WHY this source was attributed — "Referer host", "ref parameter", "no
+  /// Referer header". The kind says what class of evidence; this says what the
+  /// evidence actually was, so the Business Map can explain itself.
+  evidence String
+
+  /// Where they landed. Path only, for the same reason source is host only.
+  landingPath String
+
+  /// Which products this visit actually looked at. Capped in code; a bounded
+  /// list rather than a second table, because this is not an analytics product.
+  viewedProductIds String[] @default([])
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// A refresh is the same visit. This is what makes recording idempotent.
+  @@unique([storeId, visitToken])
+  @@index([storeId, firstSeenAt])
+  @@index([storeId, attributionKind])
+  @@index([storeId, source])
+}
+
+/// TRAFFIC THAT OUTLIVES THE VISITS IT WAS COUNTED FROM.
+///
+/// Sean: "Longer-lived business facts/aggregates derived from the raw visits
+/// should be treated separately from raw visitor telemetry."
+///
+/// Raw StoreVisit rows are pruned at 12 months. Orders keep their own frozen
+/// attribution for ever, so revenue by source survives on its own — what would
+/// NOT survive is the visit COUNT, and without it there is no conversion rate
+/// and no revenue per visitor. So the prune rolls up into here before it
+/// deletes anything, in the same call: the destructive step cannot run without
+/// the preserving one.
+model StoreTrafficDay {
+  id      String @id @default(cuid())
+  storeId String
+
+  /// Midnight UTC of the day being summarised.
+  day DateTime
+
+  attributionKind String
+
+  /// The source, or EMPTY STRING for direct/unknown.
+  ///
+  /// Not nullable, unlike StoreVisit.source, and the reason is Postgres rather
+  /// than meaning: nulls are distinct in a unique index, so a nullable column
+  /// here would insert a new row for the direct count on every rollup instead
+  /// of updating the one that exists. `NULLS NOT DISTINCT` would fix it and
+  /// Prisma cannot declare it, which would leave the schema and the migration
+  /// disagreeing. The empty string is unambiguous beside attributionKind.
+  source String @default("")
+
+  /// How many distinct visits arrived that day from that source.
+  visits Int @default(0)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// One row per store, day, kind and source. Re-running the rollup updates
+  /// rather than duplicating.
+  @@unique([storeId, day, attributionKind, source])
+  @@index([storeId, day])
+}
+
 model CheckoutDraft {
+  /// WHERE THIS SALE CAME FROM, FROZEN (2026-09-01).
+  ///
+  /// COPIES, not a foreign key, and the reason is written in stripeEvent.ts's
+  /// own words about the promotion link: a merchant who deletes the referenced
+  /// row between a customer paying and the webhook arriving makes order.create
+  /// violate the constraint, and "the ENTIRE order is lost -- money taken,
+  /// nothing recorded". Raw visits are pruned at 12 months; an order from
+  /// thirteen months ago must still say where it came from.
+  ///
+  /// `attributionVisitId` is a nullable, store-verified pointer beside them for
+  /// as long as the visit exists. Losing it costs nothing that matters.
+  attributionKind     String?
+  attributionSource   String?
+  attributionCampaign String?
+  attributionEvidence String?
+  attributionVisitId  String?
   id      String @id @default(cuid())
   storeId String
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { storefrontRichContent } from "@/lib/storefront/richContent";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { recordVisit, recordProductView } from "@/lib/attribution/visit";
 import { prisma } from "@/lib/prisma";
 import { Price, SaleName } from "../../Price";
 import { BagBar } from "../../BagBar";
@@ -70,6 +71,22 @@ export default async function ProductDetailPage({
   if (!product) {
     notFound();
   }
+
+  // ============ THE PRODUCT LINK IN THE CHAIN (2026-09-01) ===========
+  //
+  // Source -> Visit -> PRODUCT -> Checkout -> Order -> Revenue. A visitor may
+  // land straight here from a shared link, so the visit is recorded first --
+  // this page is as much an arrival as the shop front is, and its referrer is
+  // the one that matters when somebody posts a single product.
+  //
+  // After the guards, for the same reason as the listing page: a product that
+  // does not exist, or a shop that is not published, was not visited.
+  const visit = await recordVisit({
+    storeId: store.id,
+    storeSlug: store.slug,
+    landingPath: `/store/${store.slug}/products/${product.id}`,
+  });
+  if (visit) await recordProductView({ visitId: visit.id, storeId: store.id, productId: product.id });
 
   const canAcceptPayments = await canStoreAcceptPayments(store.id);
 
