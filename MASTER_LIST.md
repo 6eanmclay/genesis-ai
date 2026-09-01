@@ -52,6 +52,26 @@ Ordered by value. Items already in the locked sequence are marked.
 
 ---
 
+## Queued by Sean, 2026-09-01 — not forgotten, not started
+
+Named explicitly so none of it drifts off the list. Nothing here begins until
+the Connections phase is entered deliberately.
+
+| Item | State | Note |
+|---|---|---|
+| **Merchant Stripe financials/payout UI** | **Required follow-up.** The data layer is built and proven (`6b318a9`). | Must use `financialsForStore()` and the `FinancialsProvider` architecture. Sean: "Do not build it as a parallel Stripe system." |
+| **Live Stripe verification** | **E20, outstanding.** | One read against a real connected account. Sean: do not modify the Stripe account or payout settings during development. |
+| **EasyPost shipping/label connection** | Connections. | Buying postage inside Genesis. The manual tracking path works today, including correction. |
+| **Merchant new-sale email via Resend** | Built, dark. E19. | Backstop, idempotency and the order link all shipped; nothing sends without a provider. |
+| **Customer transactional email** | Built, dark. E19. | Confirmation, shipping, delivery, refund. Separate events from the merchant notice. |
+| **Reserved-TLD guard** | **E19a — required BEFORE email goes live.** | Four production stores have `@example.test` owners that would hard-bounce on day one. |
+| **Affiliates** | Buildable, deliberately deferred. | Link → visit → order → commission is ours; payout mechanics need a decision. Premature at this order volume. |
+| **Social connections, revenue and analytics** | Connections. | |
+| **J4 business intelligence** | Deferred. | The engine exists; the data is thin. |
+| **Checkout / order / fulfilment improvements** | Partly shipped. | Order detail, line items, money breakdown, history and tracking correction are live. Packing slip, order search and bulk fulfilment remain. |
+
+---
+
 ## Blocked by Connections
 
 Items **3, 4, 5, 6, 34, 35, 36, 37** (social metrics, cross-platform comparison,
