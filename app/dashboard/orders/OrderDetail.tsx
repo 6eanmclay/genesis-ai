@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import { formatMoney } from "@/lib/money";
+import { orderMoney } from "@/lib/orders/orderMoney";
 import { DEFAULT_THEME, type Theme, themeCssVars } from "@/lib/theme";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
 import type { StoreRole } from "@prisma/client";
@@ -82,6 +83,15 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
       store: { select: { currency: true, theme: true, returnAddress: true } },
       // The parcel the merchant should not have to retype — see BuyLabelForm.
       product: { select: { weightOz: true, lengthIn: true, widthIn: true, heightIn: true } },
+      // ============ WHAT IS ACTUALLY IN THE BOX (2026-08-31) ==========
+      //
+      // The row's own productName is a SUMMARY: a two-product order reads
+      // "Hand-Wound Copper Tensor Ring Cuff Bracelet and 1 more". This page
+      // showed exactly that and nothing else, so an owner packing a real order
+      // could not see the second item — a necklace, in the live order that
+      // prompted this. Unshippable from this screen, which is the one screen
+      // that exists to ship from.
+      items: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!order) notFound();
@@ -99,6 +109,35 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
   const address = order.shippingAddress as ShippingAddress | null;
   const returnAddress = order.store.returnAddress as unknown as StoreReturnAddress | null;
   const canViewRevenue = hasPermission(role, PERMISSIONS.REVENUE_VIEW);
+  const items = order.items;
+
+  // The arithmetic lives in lib/orders/orderMoney.ts, imported by this page AND
+  // by its suite. It was inline here, and the suite kept a copy — so breaking
+  // this page's version left the suite green, which is the seam that replaces
+  // what it tests. See that file's own comment.
+  const { subtotal, discount, promotionLabel } = orderMoney(order, items);
+
+  // ============ WHAT HAPPENED TO THIS ORDER, IN ORDER ==============
+  //
+  // Built from the timestamps the row already carries rather than from a new
+  // table. Every entry is a column that is either set or not — nothing here is
+  // inferred, and an event with no timestamp simply does not appear, which is
+  // why "paid" and "delivered" can both be absent without the list lying.
+  const timeline = [
+    { at: order.createdAt, what: "Order placed and paid" },
+    { at: order.confirmationSentAt, what: "Receipt emailed to the customer" },
+    { at: order.fulfilledAt, what: "Marked fulfilled by the owner" },
+    { at: order.labelClaimedAt, what: "Shipping label bought" },
+    { at: order.shipmentNotifiedAt, what: "Customer told it shipped" },
+    { at: order.lastScanAt, what: "Last carrier scan" },
+    { at: order.deliveredAt, what: "Delivered" },
+    { at: order.disputedAt, what: "Payment disputed" },
+    { at: order.disputeFundsWithdrawnAt, what: "Funds withdrawn by the bank" },
+    { at: order.disputeFundsReinstatedAt, what: "Funds returned" },
+    { at: order.disputeResolvedAt, what: "Dispute closed" },
+  ]
+    .filter((entry): entry is { at: Date; what: string } => entry.at instanceof Date)
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
   const canManage = hasPermission(role, PERMISSIONS.ORDERS_MANAGE);
   // Strict, exactly as the Orders list is: only a verified-working connection
   // counts, because this gates an action that spends real postage.
@@ -174,10 +213,51 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
           )}
         </Section>
 
-        <Section title="Items">
-          <Field label={order.productName} value={`× ${order.quantity}`} />
-          {canViewRevenue && <Field label="Item total" value={formatMoney(order.amountInCents, currency)} />}
-          {canViewRevenue && (
+        <Section title="What to pack">
+          {/* ============ EVERY LINE, NOT A SUMMARY (2026-08-31) =======
+              order.productName is "…and 1 more" on a multi-product order, and
+              that summary was all this page showed. The real lines live in
+              OrderItem and have since bags existed; nothing rendered them.
+
+              Older orders have no OrderItem rows at all — every order written
+              before bags carries its single product on the row itself. Those
+              fall through to the row, which for them is the complete truth
+              rather than a summary. */}
+          {items.length > 0 ? (
+            items.map((item) => (
+              <Field
+                key={item.id}
+                label={`${item.productName} × ${item.quantity}`}
+                value={canViewRevenue ? formatMoney(item.subtotalInCents, currency) : null}
+              />
+            ))
+          ) : (
+            <Field
+              label={`${order.productName} × ${order.quantity}`}
+              value={canViewRevenue ? formatMoney(order.amountInCents, currency) : null}
+            />
+          )}
+        </Section>
+
+        {canViewRevenue && (
+          <Section title="What was paid">
+            {/* ============ THE ARITHMETIC, SHOWN (2026-08-31) =========
+                An owner reconciling against Stripe needs the total to be
+                explicable, and this page previously showed one number.
+
+                Derived from the line items when there are any, because on the
+                live orders the ORDER-level listSubtotalInCents and
+                discountInCents are null while every item carries its own — so
+                reading only the columns would print "no discount" over an
+                order that really had one. The columns win when they are set;
+                the items answer when they are not. */}
+            <Field label="Subtotal" value={subtotal !== null ? formatMoney(subtotal, currency) : <NotProvided />} />
+            {discount !== null && discount > 0 && (
+              <Field
+                label={promotionLabel ? `Discount (${promotionLabel})` : "Discount"}
+                value={`− ${formatMoney(discount, currency)}`}
+              />
+            )}
             <Field
               label="Shipping charged"
               value={
@@ -188,13 +268,24 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
                 )
               }
             />
-          )}
-          {canViewRevenue && order.shippingCostInCents !== null && (
-            // What postage actually cost, which is not the same number as what
-            // the customer was charged for it.
-            <Field label="Postage cost" value={formatMoney(order.shippingCostInCents, currency)} />
-          )}
-        </Section>
+            {/* ============ TAX IS NOT RECORDED ANYWHERE =============
+                Not omitted, and not invented. No column on Order, OrderItem or
+                anywhere else in the schema holds a tax amount, and checkout
+                never asked Stripe for one. Printing "—" would read as "no tax
+                was charged", which is a different claim and one this platform
+                cannot make. It says where the answer really is instead. */}
+            <Field
+              label="Tax"
+              value={<span className="text-zinc-500">Not recorded — check Stripe</span>}
+            />
+            <Field label="Total paid" value={<strong>{formatMoney(order.amountInCents, currency)}</strong>} />
+            {order.shippingCostInCents !== null && (
+              // What postage actually cost, which is not the same number as
+              // what the customer was charged for it.
+              <Field label="Postage cost to you" value={formatMoney(order.shippingCostInCents, currency)} />
+            )}
+          </Section>
+        )}
 
         <Section title="Fulfilment">
           <Field label="State" value={order.fulfillmentStatus} />
@@ -332,6 +423,66 @@ export async function OrderDetail({ orderId, storeId, role, basePath }: OrderDet
           ) : (
             <p className="py-2 text-xs text-zinc-500">No tracking yet.</p>
           )}
+        </Section>
+
+        {/* ============ A DISPUTE, ONLY WHEN THERE IS ONE (2026-08-31) ===
+            Rendered only if the card network has actually said something. An
+            always-present "Disputes: none" row on every healthy order is noise
+            that teaches an owner to stop reading this page.
+
+            The two facts stay apart, exactly as the schema keeps them: what is
+            CLAIMED (disputeStatus, which includes inquiries that move no money)
+            and whether money actually MOVED (the withdrawn/reinstated stamps).
+            Collapsing them would tell a merchant they had lost funds over a
+            question the bank merely asked. */}
+        {order.disputeStatus && (
+          <Section title="Dispute">
+            <Field label="Claim" value={order.disputeStatus} />
+            <Field label="Reason given" value={order.disputeReason ?? <NotProvided />} />
+            <Field
+              label="Amount claimed"
+              value={
+                order.disputeAmountInCents !== null ? (
+                  formatMoney(order.disputeAmountInCents, currency)
+                ) : (
+                  <NotProvided />
+                )
+              }
+            />
+            <Field
+              label="Money actually moved"
+              value={
+                order.disputeFundsWithdrawnAt ? (
+                  order.disputeFundsReinstatedAt ? (
+                    <span className="text-emerald-700 dark:text-emerald-400">
+                      Withdrawn, then returned
+                    </span>
+                  ) : (
+                    <span className="text-amber-700 dark:text-amber-400">
+                      Withdrawn {order.disputeFundsWithdrawnAt.toLocaleDateString()}
+                    </span>
+                  )
+                ) : (
+                  "No — the claim has not taken funds"
+                )
+              }
+            />
+          </Section>
+        )}
+
+        {/* ============ WHAT HAPPENED, IN ORDER ======================
+            The same timestamps shown as fields above, read as a sequence. Two
+            different questions — "is it shipped?" and "what has happened to
+            this order?" — and the second one had no answer anywhere. */}
+        <Section title="History">
+          <ol className="flex flex-col gap-1.5">
+            {timeline.map((entry) => (
+              <li key={`${entry.what}-${entry.at.toISOString()}`} className="flex flex-wrap justify-between gap-2">
+                <span className="text-xs text-black dark:text-zinc-50">{entry.what}</span>
+                <span className="text-xs text-zinc-500">{entry.at.toLocaleString()}</span>
+              </li>
+            ))}
+          </ol>
         </Section>
       </div>
     </div>
