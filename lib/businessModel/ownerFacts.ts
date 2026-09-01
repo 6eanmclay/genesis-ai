@@ -3,6 +3,7 @@ import { stateFact } from "./statements";
 import { currentFacts } from "./factLifecycle";
 import type { CanonicalRecord } from "./entities";
 import type { SingletonFactType } from "./factLifecycle";
+import type { RecordProvenance } from "@prisma/client";
 
 // THE OWNER'S OWN ANSWERS TO THE TWO QUESTIONS ONBOARDING ASKS.
 //
@@ -210,6 +211,84 @@ export async function recordOwnerFacts(params: {
  * storefront should SAY — and substituting one for the other is the exact
  * confusion these records were added to end.
  */
+/**
+ * One singleton fact, with where it came from still attached.
+ *
+ * ============ THE LABEL THE READ LAYER USED TO THROW AWAY (2026-09-01) ==
+ *
+ * `CanonicalRecord` has carried `provenance` since 2026-08-22 and
+ * `readOwnerFacts` returned bare strings, so every consumer — the business
+ * profile, marketing generation, the brand-identity context behind approvals,
+ * the analytics screen — received a fact with no idea whether the owner said
+ * it or J4 concluded it.
+ *
+ * That is not hypothetical. In production ALL 48 brand-claim rows are
+ * INFERENCE, promoted from the generated blueprint on 2026-08-25. A function
+ * named `readOwnerFacts` currently returns no owner facts of those four types
+ * anywhere — and nothing downstream could tell.
+ *
+ * Sean, approving the Business Map milestone: "The database already knows the
+ * distinction between owner-provided information and J4 inference; the
+ * application layer currently throws that distinction away... Treat provenance
+ * preservation as a required part of the J4 Business Map foundation, not
+ * optional UI metadata."
+ */
+export interface FactWithProvenance {
+  statement: string;
+  /** Null on rows written before the column existed — an honest unknown. */
+  provenance: RecordProvenance | null;
+  provenanceDetail: string | null;
+  /** The row itself, so a map node can point at something real. */
+  recordId: string;
+  statedAt: Date | null;
+}
+
+export type OwnerFactsWithProvenance = Record<SingletonFactType, FactWithProvenance | null>;
+
+/**
+ * The same six facts, with their provenance intact.
+ *
+ * `readOwnerFacts` is now a projection of this rather than a second reader, so
+ * the two can never select a different record and disagree about what the
+ * current statement is.
+ */
+export async function readOwnerFactsWithProvenance(
+  storeId: string
+): Promise<OwnerFactsWithProvenance> {
+  const [offering, intent, targetAudience, brandPersonality, brandVoice, sellingProposition] =
+    await Promise.all([
+      currentFacts(storeId, "offering"),
+      currentFacts(storeId, "intent"),
+      currentFacts(storeId, "targetAudience"),
+      currentFacts(storeId, "brandPersonality"),
+      currentFacts(storeId, "brandVoice"),
+      currentFacts(storeId, "sellingProposition"),
+    ]);
+  return {
+    offering: factOf(offering),
+    intent: factOf(intent),
+    targetAudience: factOf(targetAudience),
+    brandPersonality: factOf(brandPersonality),
+    brandVoice: factOf(brandVoice),
+    sellingProposition: factOf(sellingProposition),
+  };
+}
+
+/** The newest current record's payload AND its origin. Same selection as statementOf. */
+function factOf(records: CanonicalRecord<SingletonFactType>[]): FactWithProvenance | null {
+  const newest = newestOf(records);
+  if (!newest) return null;
+  const statement = newest.data.statement.trim();
+  if (statement.length === 0) return null;
+  return {
+    statement,
+    provenance: newest.provenance,
+    provenanceDetail: newest.provenanceDetail,
+    recordId: newest.id,
+    statedAt: newest.statedAt ?? null,
+  };
+}
+
 export async function readOwnerFacts(storeId: string): Promise<{
   offering: string | null;
   intent: string | null;
@@ -226,22 +305,23 @@ export async function readOwnerFacts(storeId: string): Promise<{
   // blueprint.brandIdentity, a blob where nothing could tell an audience the
   // owner stated from one a model invented during onboarding — and the
   // proactive layer read it either way.
-  const [offering, intent, targetAudience, brandPersonality, brandVoice, sellingProposition] =
-    await Promise.all([
-      currentFacts(storeId, "offering"),
-      currentFacts(storeId, "intent"),
-      currentFacts(storeId, "targetAudience"),
-      currentFacts(storeId, "brandPersonality"),
-      currentFacts(storeId, "brandVoice"),
-      currentFacts(storeId, "sellingProposition"),
-    ]);
+  //
+  // ============ UNCHANGED IN SHAPE, ON PURPOSE (2026-09-01) ===========
+  //
+  // Now a projection of readOwnerFactsWithProvenance rather than a second
+  // reader. Every existing consumer gets byte-identical output — Sean's
+  // condition was that they "don't accidentally become less honest when this
+  // is corrected", and the way to guarantee that is to not change what they
+  // receive at all. Consumers that SHOULD distinguish call the provenance
+  // reader deliberately; nothing is silently re-labelled underneath one.
+  const facts = await readOwnerFactsWithProvenance(storeId);
   return {
-    offering: statementOf(offering),
-    intent: statementOf(intent),
-    targetAudience: statementOf(targetAudience),
-    brandPersonality: statementOf(brandPersonality),
-    brandVoice: statementOf(brandVoice),
-    sellingProposition: statementOf(sellingProposition),
+    offering: facts.offering?.statement ?? null,
+    intent: facts.intent?.statement ?? null,
+    targetAudience: facts.targetAudience?.statement ?? null,
+    brandPersonality: facts.brandPersonality?.statement ?? null,
+    brandVoice: facts.brandVoice?.statement ?? null,
+    sellingProposition: facts.sellingProposition?.statement ?? null,
   };
 }
 
@@ -253,17 +333,30 @@ export async function readOwnerFacts(storeId: string): Promise<{
  * those ids existed, or by a future second writer, would show up here. Taking
  * the most recently stated is the only answer that can be right.
  */
-function statementOf(
+function newestOf(
   // ANY SINGLETON OWNER FACT. All six carry the same one-field payload — the
   // fact IS the statement — so one reader serves them rather than six.
   records: CanonicalRecord<SingletonFactType>[]
-): string | null {
+): CanonicalRecord<SingletonFactType> | null {
   if (records.length === 0) return null;
-  const newest = records.reduce((a, b) => {
+  return records.reduce((a, b) => {
     const at = a.statedAt?.getTime() ?? a.syncedAt.getTime();
     const bt = b.statedAt?.getTime() ?? b.syncedAt.getTime();
     return bt > at ? b : a;
   });
+}
+
+/**
+ * THE SELECTION LIVES IN ONE PLACE.
+ *
+ * `statementOf` and `factOf` both answer "which of these current records is
+ * the live one", and two copies of that reduce would be two chances to
+ * disagree — the statement saying one thing and its provenance describing a
+ * different row. Exactly the mirrored-registry shape, at function scale.
+ */
+function statementOf(records: CanonicalRecord<SingletonFactType>[]): string | null {
+  const newest = newestOf(records);
+  if (!newest) return null;
   const statement = newest.data.statement.trim();
   return statement.length > 0 ? statement : null;
 }
