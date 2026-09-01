@@ -1,4 +1,5 @@
 import { PERMISSIONS, requireStorePageAccess } from "@/lib/permissions";
+import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { Finances } from "./Finances";
 
 // The legacy route, resolving the account's ACTIVE business.
@@ -9,5 +10,5 @@ import { Finances } from "./Finances";
 // sibling produces.
 export default async function FinancesPage() {
   const { store } = await requireStorePageAccess(PERMISSIONS.REVENUE_VIEW);
-  return <Finances store={store} />;
+  return <Finances store={store} basePath={LEGACY_BUSINESS_BASE} />;
 }

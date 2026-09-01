@@ -116,7 +116,11 @@ export const NAV_SECTIONS: NavSection[] = [
   // the architecture always put them: an owner meets a customer by way of an
   // order, and revenue is what orders mean.
   { key: "marketing", label: "Marketing", href: "/dashboard/marketing", permission: "store:manage" },
-  { key: "payments", label: "Payments", href: "/dashboard/payments", permission: "payments:manage" },
+  // Payments MOVED to COMMERCE_SECTIONS on 2026-09-01 and is deliberately not
+  // here any more. Sean: "I don't want payment connections buried in Settings."
+  // How a merchant gets paid belongs beside orders, money and payouts, not in a
+  // sheet of things you configure once. Listed in one place only — a nav entry
+  // in two rooms is two answers to "where does this live".
   // Phase 3 Milestone 2 — connecting third-party business software.
   // Deliberately separate from Payments: Payments is "how you get paid,"
   // already shipped and stable; Connections covers everything else
@@ -226,6 +230,17 @@ export const COMMERCE_SECTIONS: NavSection[] = [
   // folding payouts under Revenue would be the exact blurring the screen
   // itself exists to prevent.
   { key: "finances", label: "Money", href: "/dashboard/finances", permission: "revenue:view" },
+  // ============ AND HOW THE MONEY ARRIVES AT ALL ==================
+  //
+  // Moved out of the account area on 2026-09-01. It sat below the fold with
+  // Marketing and Connections — things you configure once — and it is not one
+  // of those: a broken payment connection stops a shop selling, which is an
+  // Orders-and-Money problem, not a settings problem.
+  //
+  // Third, after Money, because the reading order is what happened to the money
+  // and then whether the pipe carrying it still works. Its own permission is
+  // unchanged: managing a payment provider is not something REVENUE_VIEW earns.
+  { key: "payments", label: "Payments", href: "/dashboard/payments", permission: "payments:manage" },
   { key: "products", label: "Products", href: "/dashboard/products", permission: "products:manage" },
   // What you COULD sell, next to what you do. Deliberately its own section
   // rather than a tab inside Products: one is the shelf as it stands and the

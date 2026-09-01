@@ -209,6 +209,53 @@ async function main() {
       await small.locator('[data-screen="finances"]').waitFor({ state: "visible", timeout: 60_000 });
       assert("and the screen renders there", await small.locator('[data-screen="finances"]').isVisible());
       await small.screenshot({ path: `${SHOTS}/finances-04-phone-nav.png`, fullPage: false });
+
+      // ============ AND PAYMENTS IS BESIDE IT ==================
+      //
+      // Moved out of the account sheet into Commerce. It has to clear the same
+      // bar Money just did: on the screen, not merely in the strip.
+      const payments = small.getByRole("link", { name: "Payments", exact: true }).first();
+      await payments.waitFor({ state: "visible", timeout: 30_000 });
+      const payBox = await payments.boundingBox();
+      assert("Payments is in Commerce and on the phone screen too",
+        !!payBox && payBox.x >= 0 && payBox.x + payBox.width <= 390,
+        `x=${payBox?.x} width=${payBox?.width}`);
+
+      // ============ AND THE WAY OUT TO STRIPE ==================
+      //
+      // A merchant needs Stripe most when Genesis cannot reach it, so the
+      // management action is checked where the screen is showing an error.
+      await small.goto(`${server.baseUrl}/b/${stripe.slug}/finances`, { waitUntil: "domcontentloaded" });
+      await small.locator('[data-screen="finances"]').waitFor({ state: "visible", timeout: 60_000 });
+      const manage = small.locator('[data-testid="manage-in-stripe"]');
+      if ((await manage.count()) > 0) {
+        const href = await manage.getAttribute("href");
+        assert("Manage in Stripe points at Stripe's own dashboard",
+          !!href && href.startsWith("https://dashboard.stripe.com/"), String(href));
+        assert("and carries no account id or credential",
+          !!href && !/acct_|sk_|rk_|\?/.test(href), String(href));
+      } else {
+        // The identity block only renders when Stripe answered. With an
+        // unreachable account the screen shows the error state instead, which
+        // is correct — recorded rather than asserted away.
+        assert("the unreachable state shows an error rather than a management block",
+          /missing rather than zero/i.test(
+            (await small.locator('[data-screen="finances"]').innerText()).replace(/\s+/g, " "),
+          ));
+      }
+
+      // Money and Payments point at each other.
+      await small.goto(`${server.baseUrl}/b/${bare.slug}/finances`, { waitUntil: "domcontentloaded" });
+      await small.locator('[data-screen="finances"]').waitFor({ state: "visible", timeout: 60_000 });
+      assert("Money offers a way to Payments",
+        (await small.locator('[data-screen="finances"] a[href$="/payments"]').count()) > 0);
+
+      await small.goto(`${server.baseUrl}/b/${bare.slug}/payments`, { waitUntil: "domcontentloaded" });
+      await small.getByText("Connect a payment provider", { exact: false }).first()
+        .waitFor({ state: "visible", timeout: 60_000 });
+      assert("and Payments offers a way to Money",
+        (await small.locator('a[href$="/finances"]').count()) > 0);
+
       await phone.close();
     }
 

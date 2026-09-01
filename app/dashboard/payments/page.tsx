@@ -228,6 +228,18 @@ export async function PaymentsScreen({
       <p className="mt-1 max-w-md text-sm text-zinc-500">
         Connect a payment provider to receive payments directly from your customers.
       </p>
+      {/* ============ PAYMENTS AND MONEY ARE NEIGHBOURS (2026-09-01) ==
+          This page is about whether the PIPE works. Money is about what came
+          through it — balances, fees, payouts, and where they landed. Somebody
+          checking a connection here is usually one question away from the
+          other, and the two screens now sit beside each other in Commerce. */}
+      <p className="mt-2 max-w-md text-sm text-zinc-500">
+        To see balances, fees and payouts, go to{" "}
+        <a href={`${basePath}/finances`} className="text-[#2563eb] underline">
+          Money
+        </a>
+        .
+      </p>
 
       {showContinueToLaunch && (
         <div className="mt-4 max-w-md rounded-lg border border-violet-200 bg-violet-50 p-4 text-sm dark:border-violet-900/40 dark:bg-violet-950/30">

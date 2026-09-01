@@ -1,4 +1,5 @@
 import { PERMISSIONS, requireBusinessPage } from "@/lib/permissions";
+import { businessBasePath } from "@/lib/dashboard/navConfig";
 import { Finances } from "@/app/dashboard/finances/Finances";
 
 // Money for the business named in the URL.
@@ -14,5 +15,5 @@ export default async function BusinessFinancesPage({
 }) {
   const { slug } = await params;
   const { store } = await requireBusinessPage(PERMISSIONS.REVENUE_VIEW, slug);
-  return <Finances store={store} />;
+  return <Finances store={store} basePath={businessBasePath(slug)} />;
 }

@@ -5,6 +5,7 @@ import {
   nextPayoutSentence, scheduleSentence, toneFor, unavailableSentence,
 } from "@/lib/payments/financials/presentation";
 import { DEFAULT_THEME, type Theme, themeCssVars } from "@/lib/theme";
+import { STRIPE_MANAGEMENT_LINKS } from "@/lib/payments/financials/stripeLinks";
 
 // WHAT STRIPE HOLDS, AND WHAT HAS REACHED THE BANK.
 //
@@ -28,6 +29,14 @@ import { DEFAULT_THEME, type Theme, themeCssVars } from "@/lib/theme";
 
 interface FinancesProps {
   store: Store;
+  /**
+   * "/dashboard" or "/b/<slug>".
+   *
+   * Required rather than defaulted, matching OrderDetail: a default would let a
+   * call site that was never updated keep producing legacy links silently,
+   * which is the exact shape of bug that parameter exists to close.
+   */
+  basePath: string;
 }
 
 function Section({ title, subtitle, children }: {
@@ -57,7 +66,7 @@ const TONE_CLASS: Record<string, string> = {
   failed: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
 };
 
-export async function Finances({ store }: FinancesProps) {
+export async function Finances({ store, basePath }: FinancesProps) {
   // Store-scoped by construction: financialsForStore reads the connected
   // account id from THIS store's own integration row, so there is no account
   // id for anything on this page to supply or substitute.
@@ -77,7 +86,11 @@ export async function Finances({ store }: FinancesProps) {
           </p>
           {financials.reason === "not_connected" && (
             <a
-              href="/dashboard/payments"
+              // Rebased, not hard-coded. This said "/dashboard/payments",
+              // so a merchant on /b/<slug>/finances was thrown to the legacy
+              // base — which resolves whichever business the ACCOUNT last made
+              // active, not the one they were looking at. Caught by the suite.
+              href={`${basePath}/payments`}
               className="mt-3 inline-block rounded-full bg-[#2563eb] px-3.5 py-1.5 text-xs font-medium text-white"
             >
               Connect a payment provider
@@ -112,6 +125,46 @@ export async function Finances({ store }: FinancesProps) {
             label="Can receive payouts"
             value={identity.payoutsEnabled ? "Yes" : <span className="text-red-700 dark:text-red-400">No</span>}
           />
+
+          {/* ============ THE WAY OUT TO STRIPE (2026-09-01) ==========
+              Directly beneath the identity, deliberately: a merchant about to
+              change a bank account should be able to see WHICH account they
+              are about to change first. Sean has more than one Stripe login,
+              and the id above is how he tells them apart — the plain dashboard
+              paths cannot do that for him, so the identity does.
+
+              Not a login link. accounts.createLoginLink is Express-only, per
+              the SDK's own doc comment, and Genesis connects Standard
+              accounts — see lib/payments/financials/stripeLinks.ts. */}
+          <div className="mt-3 border-t border-black/[.04] pt-3 dark:border-white/[.06]">
+            <a
+              href={STRIPE_MANAGEMENT_LINKS[0].url}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="manage-in-stripe"
+              className="inline-block rounded-full bg-[#635bff] px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
+            >
+              Manage in Stripe ↗
+            </a>
+            <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+              Signed in to more than one Stripe account? Check it matches{" "}
+              <span className="font-mono">{identity.externalAccountId}</span> above.
+            </p>
+            <ul className="mt-2 flex flex-col gap-1">
+              {STRIPE_MANAGEMENT_LINKS.slice(1).map((link) => (
+                <li key={link.url}>
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-[#2563eb] underline"
+                  >
+                    {link.label} ↗
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
         </Section>
 
         <Section
@@ -200,17 +253,17 @@ export async function Finances({ store }: FinancesProps) {
           payout all move real money and all have consequences Stripe explains
           better than a second copy of its forms would. Genesis shows the
           facts and hands over for the actions. */}
+      {/* ============ MONEY AND PAYMENTS ARE NEIGHBOURS ==============
+          Money is what HAPPENED to the money. Payments is whether the
+          connection carrying it still works. Two questions, and somebody who
+          finds a wrong answer here usually needs the other one next. */}
       <p className="mt-4 max-w-4xl text-xs text-zinc-500">
-        Payout settings, bank details and instant payouts are managed in{" "}
-        <a
-          href="https://dashboard.stripe.com/settings/payouts"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline"
-        >
-          your Stripe dashboard
+        Genesis never changes anything at Stripe. To check the connection itself,
+        see{" "}
+        <a href={`${basePath}/payments`} className="text-[#2563eb] underline">
+          Payments
         </a>
-        . Genesis never changes them.
+        .
       </p>
     </div>
   );

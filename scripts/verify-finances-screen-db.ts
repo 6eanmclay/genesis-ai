@@ -6,6 +6,7 @@ import {
   nextPayoutSentence, scheduleSentence, toneFor, unavailableSentence,
 } from "@/lib/payments/financials/presentation";
 import type { PayoutRecord } from "@/lib/payments/financials/types";
+import { STRIPE_MANAGEMENT_LINKS, canMintLoginLink } from "@/lib/payments/financials/stripeLinks";
 import { readFileSync } from "node:fs";
 
 // WHAT THE MONEY SCREEN SAYS:
@@ -186,6 +187,79 @@ async function main(): Promise<void> {
     }
   }
 
+  console.log("\n--- management is handed to Stripe, not recreated ---\n");
+  {
+    // ============ CHECKED AGAINST THE SDK, NOT ASSUMED =========
+    //
+    // accounts.createLoginLink exists, and the SDK's own doc comment says it
+    // works only for Express Dashboard accounts. Genesis connects Standard
+    // accounts, so a one-click login link is not available and nothing calls
+    // for one. Asserted against the installed SDK so this stays true only for
+    // as long as Stripe says it is.
+    const sdk = readFileSync("node_modules/stripe/cjs/resources/Accounts.d.ts", "utf8");
+    assert("the SDK still restricts login links to Express",
+      /login links for accounts that use the \[Express Dashboard\]/.test(sdk),
+      "Stripe changed the rule — re-read this decision");
+    eq("so Genesis cannot mint one for a Standard account", canMintLoginLink("standard"), false);
+    eq("nor for a Custom account", canMintLoginLink("custom"), false);
+    eq("only Express, which Genesis does not connect", canMintLoginLink("express"), true);
+
+    const layer = ["stripeLinks.ts", "stripeFinancials.ts", "index.ts", "presentation.ts"]
+      .map((f) => readFileSync(`lib/payments/financials/${f}`, "utf8"))
+      .join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "");
+    assert("and no code calls createLoginLink", !/createLoginLink/.test(layer));
+
+    // Every link is a real Stripe destination, over https, with nothing
+    // sensitive smuggled into the URL.
+    for (const link of STRIPE_MANAGEMENT_LINKS) {
+      assert(`"${link.label}" points at Stripe`,
+        link.url.startsWith("https://dashboard.stripe.com/"), link.url);
+      assert("  and carries no account id, secret or query string",
+        !/acct_|sk_|rk_|\?|=/.test(link.url), link.url);
+      assert("  and says why Genesis does not do it itself", link.because.length > 40);
+    }
+    assert("the first link is the one a payout screen needs",
+      /payouts/.test(STRIPE_MANAGEMENT_LINKS[0].url), STRIPE_MANAGEMENT_LINKS[0].url);
+    assert("and business information is reachable too",
+      STRIPE_MANAGEMENT_LINKS.some((l) => /settings\/account/.test(l.url)));
+  }
+
+  console.log("\n--- Money and Payments are distinct, and point at each other ---\n");
+  {
+    // COMMENTS STRIPPED FIRST. The check below failed on this file's own
+    // explanation of what the link USED to say — the fifth time in this
+    // codebase that an assertion matched prose instead of code.
+    const strip = (s: string) =>
+      s.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "")
+       .replace(/^[ 	]*\/\/.*$/gm, "");
+    const money = strip(readFileSync("app/dashboard/finances/Finances.tsx", "utf8"));
+    const payments = strip(readFileSync("app/dashboard/payments/page.tsx", "utf8"));
+    assert("Money links to Payments", /\$\{basePath\}\/payments/.test(money));
+    assert("Payments links to Money", /\$\{basePath\}\/finances/.test(payments));
+    // Rebased, not hard-coded: a link on a business route must stay on it.
+    assert("and neither hard-codes the legacy base",
+      !/"\/dashboard\/payments"/.test(money) && !/"\/dashboard\/finances"/.test(payments));
+
+    // One nav entry each, in one room. Sean: "Do not duplicate the Payments
+    // page in two places" — a nav entry in two rooms is two answers to the
+    // question of where something lives.
+    const nav = readFileSync("lib/dashboard/navConfig.ts", "utf8");
+    eq("Payments is declared exactly once", (nav.match(/key: "payments"/g) ?? []).length, 1);
+    eq("and Money exactly once", (nav.match(/key: "finances"/g) ?? []).length, 1);
+    // Anchored on the DECLARATION, not the first mention: "COMMERCE_SECTIONS"
+    // appears in a comment a hundred lines earlier, and slicing from there read
+    // NAV_SECTIONS instead and reported the room tabs as the commerce order.
+    const commerce = nav.slice(
+      nav.indexOf("export const COMMERCE_SECTIONS"),
+      nav.indexOf("export const ORDERS_SECTIONS"),
+    );
+    const order = [...commerce.matchAll(/label: "([^"]+)"/g)].map((m) => m[1]);
+    eq("Commerce reads in the order that was asked for", order,
+      ["Orders", "Money", "Payments", "Products", "What you could sell", "Promotions", "Customers", "Revenue"]);
+  }
+
   console.log("\n--- the screen reads, and only reads ---\n");
   {
     const screen = readFileSync("app/dashboard/finances/Finances.tsx", "utf8");
@@ -203,8 +277,12 @@ async function main(): Promise<void> {
     assert("nor construct a client", !/new Stripe\(/.test(code));
     assert("nor writes to the database", !/prisma\.\w+\.(create|update|delete|upsert)/.test(code));
     assert("nor calls any Stripe write", !/\.(create|update|cancel|reverse)\(/.test(code));
+    // The URLs themselves moved to stripeLinks.ts, where they are asserted
+    // above. What matters here is that the screen RENDERS them.
     assert("it hands payout settings back to Stripe",
-      /dashboard\.stripe\.com/.test(screen), "no link out for the actions Stripe owns");
+      /STRIPE_MANAGEMENT_LINKS/.test(screen), "no link out for the actions Stripe owns");
+    assert("and offers a Manage in Stripe action",
+      /manage-in-stripe/.test(screen), "no management affordance");
 
     // Both routes gate on a real permission.
     for (const route of ["app/dashboard/finances/page.tsx", "app/b/[slug]/finances/page.tsx"]) {
