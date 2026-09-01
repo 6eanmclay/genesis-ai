@@ -28,9 +28,20 @@ import { runOnce } from "@/lib/outbound/runOnce";
 
 let failures = 0;
 let passes = 0;
+// ============ FAILURES SURVIVE THE RUNNER'S TRUNCATION =============
+//
+// run-db-suites.ts keeps only each suite's TAIL when it runs the whole lane,
+// so a failure two hundred lines up is reported as "3 failed" with no way to
+// learn which three. Collected here and reprinted at the very end, where the
+// tail always reaches — the difference between diagnosing a cross-suite
+// interaction and guessing at one.
+const failed: string[] = [];
 function assert(name: string, ok: boolean, detail = ""): void {
   if (ok) passes++;
-  else failures++;
+  else {
+    failures++;
+    failed.push(`${name}${detail ? `  — ${detail}` : ""}`);
+  }
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${!ok && detail ? `  — ${detail}` : ""}`);
 }
 function eq(name: string, actual: unknown, expected: unknown): void {
@@ -102,8 +113,33 @@ async function main(): Promise<void> {
     const before = await prismaSystem.productEvent.count();
 
     // Jobs: enqueue and drain for real.
+    //
+    // ============ DRAIN UNTIL OUR OWN JOB IS DONE (2026-09-01) =====
+    //
+    // This was a single drain of at most five jobs, which quietly depended on
+    // how many OTHER jobs happened to be queued. The lane shares one database,
+    // so any suite that leaves work behind pushes this suite's own job past the
+    // cap — and the three assertions below then fail, reporting "the queue does
+    // not emit telemetry" when the truth is that the queue never got to it.
+    //
+    // That is exactly what happened when a new suite joined the lane. Nothing
+    // about the assertion was wrong; its precondition was.
+    //
+    // Bounded rather than unbounded, and it stops as soon as the job it cares
+    // about is finished, so it neither runs forever nor drains a queue it has
+    // no business draining.
     await enqueue({ kind: "noop", idempotencyKey: `tel-job-${stamp}`, storeId: store.id });
-    await drain(HANDLERS, { maxJobs: 5 });
+    for (let round = 0; round < 10; round++) {
+      const drained = await drain(HANDLERS, { maxJobs: 5 });
+      const ours = await prismaSystem.job.findFirst({
+        where: { idempotencyKey: `tel-job-${stamp}` },
+        select: { status: true },
+      });
+      if (ours?.status === "done" || ours?.status === "dead") break;
+      // Nothing left to claim and ours is still not finished: another round
+      // would do nothing, so stop rather than spin.
+      if (drained.claimed === 0) break;
+    }
 
     // Outbound: perform, then replay.
     await runOnce({
@@ -267,6 +303,7 @@ async function main(): Promise<void> {
       afterRun >= beforeRun, `${beforeRun} -> ${afterRun}`);
   }
 
+  for (const name of failed) console.log(`FAILED: ${name}`);
   console.log(`\n${failures} failed, ${passes} passed\n`);
   await prismaSystem.$disconnect();
   process.exitCode = failures === 0 ? 0 : 1;
