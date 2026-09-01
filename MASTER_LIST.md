@@ -84,7 +84,7 @@ registry, the isolation guard's schema cross-check, and restore verification.
 
 | Rank | Item | Why |
 |---|---|---|
-| **P0** | **Stripe financials screen** | The data layer is built and proven (`6b318a9`) and nothing renders it. "When do I actually get paid" is a question a real merchant has weekly and Genesis cannot answer on screen. Must use `financialsForStore()` and `FinancialsProvider`. |
+| ~~P0~~ | ~~Stripe financials screen~~ | **BUILT 2026-09-01.** `/b/[slug]/finances` and the legacy route, on `financialsForStore()` and `FinancialsProvider` as required. Read-only: no Stripe write, no Stripe SDK import. The healthy state stays E20 — provable only against a live account. |
 | **P1** | **Telemetry gaps (item 32)** | Three declared events have never fired. Small, and an honesty gap in the thing that reports honesty. |
 | **P2** | **Business data layer (item 24)** | Real, but its value is mostly to J4, which is deferred. |
 | **P2** | **Owner-friendly explanations (item 41)** | Same — improves J4's voice, and J4 is not the constraint today. |

@@ -218,6 +218,14 @@ export const COMMERCE_SECTIONS: NavSection[] = [
   { key: "promotions", label: "Promotions", href: "/dashboard/promotions", permission: "products:manage" },
   { key: "customers", label: "Customers", href: "/dashboard/customers", permission: "orders:view" },
   { key: "analytics", label: "Revenue", href: "/dashboard/analytics", permission: "analytics:view" },
+  // ============ REVENUE AND MONEY ARE NOT THE SAME QUESTION =======
+  //
+  // "Revenue" is what customers paid — Genesis's own orders, analysed. "Money"
+  // is what Stripe is holding and what has actually reached the bank, which is
+  // days later and a different number. Two entries because they answer two
+  // questions, and folding payouts under Revenue would be the exact blurring
+  // the screen itself exists to prevent.
+  { key: "finances", label: "Money", href: "/dashboard/finances", permission: "revenue:view" },
 ];
 
 /** @deprecated superseded by COMMERCE_SECTIONS; kept until callers move. */
