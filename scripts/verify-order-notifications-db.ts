@@ -4,6 +4,8 @@ import { prisma, prismaSystem } from "@/lib/prisma";
 import { notifyCustomerDelivered } from "@/lib/orders/deliveryNotification";
 import { notifyCustomerRefunded } from "@/lib/orders/refundNotification";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
+import { notifyOwnerOfSale } from "@/lib/orders/notifyOwnerOfSale";
+import { sendOrderConfirmation } from "@/lib/orders/orderConfirmation";
 import { reservedTldOf, sendEmail, UndeliverableAddressError } from "@/lib/email/sendEmail";
 import { drain } from "@/lib/jobs/queue";
 import { makeNotificationHandler } from "@/lib/orders/notificationJobs";
@@ -356,6 +358,90 @@ async function main(): Promise<void> {
       where: { id: untold.id }, select: { confirmationSentAt: true },
     });
     eq("and the order is not falsely claimed as confirmed", stillUntold.confirmationSentAt, null);
+    // ==================================================================
+    console.log("\n=== 8. The inline path is gated, and gated BEFORE it claims ===\n");
+    // ==================================================================
+    //
+    // Sean asked for this specifically. The horizon added in section 6
+    // narrows what the BACKSTOP may reach back to; it must not have touched
+    // the path that sends a receipt at the moment of purchase, because that
+    // path is what guarantees every future customer hears something.
+    //
+    // The order of the two checks is the whole point. Claiming first would
+    // mark an order confirmed on a platform that cannot send anything, and
+    // the claim column is the one thing the order screen reads to decide
+    // whether to tell the owner their customer is still waiting.
+    const unconfiguredKey = process.env.RESEND_API_KEY;
+    const unconfiguredHorizon = process.env.EMAIL_NOTIFICATIONS_START_AT;
+    delete process.env.RESEND_API_KEY;
+
+    const wouldBeSold = await makeOrder({ createdAt: new Date(Date.now() - 60 * 60 * 1000) });
+    const inlineConfirm = await sendOrderConfirmation(
+      { orderId: wouldBeSold.id, storeId: store.id },
+      record
+    );
+    eq("the inline confirmation refuses when email is not configured",
+      inlineConfirm, { sent: false, reason: "email_not_configured" });
+
+    const inlineOwner = await notifyOwnerOfSale({ orderId: wouldBeSold.id, storeId: store.id }, record);
+    eq("and so does the merchant's own new-sale notice",
+      inlineOwner.sent, false);
+
+    // THE OTHER THREE NOTIFIERS TOO. sendOrderConfirmation and
+    // notifyOwnerOfSale each own their gate; the delivered, refunded and
+    // shipped notices share claimAndSend, so a gate removed THERE is a
+    // different regression and the two above would not notice it. Sabotage
+    // caught exactly that: cutting the check out of notificationClaim.ts left
+    // this suite green until these two lines existed.
+    const deliveredOrder = await makeOrder({ deliveredAt: new Date() });
+    const inlineDelivered = await notifyCustomerDelivered(
+      { orderId: deliveredOrder.id, storeId: store.id },
+      record
+    );
+    eq("the shared claim helper refuses when email is not configured",
+      inlineDelivered, { sent: false, reason: "email_not_configured" });
+    const deliveredUnclaimed = await prisma.order.findUniqueOrThrow({
+      where: { id: deliveredOrder.id },
+      select: { deliveryNotifiedAt: true },
+    });
+    eq("and it did not claim the order either", deliveredUnclaimed.deliveryNotifiedAt, null);
+
+    const unclaimed = await prisma.order.findUniqueOrThrow({
+      where: { id: wouldBeSold.id },
+      select: { confirmationSentAt: true, ownerNotifiedAt: true },
+    });
+    eq("and NEITHER claimed the order on the way out",
+      unclaimed, { confirmationSentAt: null, ownerNotifiedAt: null });
+
+    // AND THE HORIZON IS NOT THE INLINE PATH'S BUSINESS. With email
+    // configured and NO horizon at all — the exact state production will be
+    // in the moment Resend is switched on — an inline send still works. If
+    // this ever fails, the backstop's guard has leaked into the path that
+    // must never be gated by it.
+    process.env.RESEND_API_KEY = "harness-not-a-real-key";
+    delete process.env.EMAIL_NOTIFICATIONS_START_AT;
+
+    const liveSale = await makeOrder();
+    const sentBefore = sent.length;
+    const inlineWithNoHorizon = await sendOrderConfirmation(
+      { orderId: liveSale.id, storeId: store.id },
+      record
+    );
+    eq("a purchase still gets its receipt with no horizon set",
+      inlineWithNoHorizon, { sent: true });
+    eq("and the customer really was written to", sent.length, sentBefore + 1);
+
+    const claimed = await prisma.order.findUniqueOrThrow({
+      where: { id: liveSale.id },
+      select: { confirmationSentAt: true },
+    });
+    assert("and the claim is recorded, truthfully this time",
+      claimed.confirmationSentAt !== null, "");
+
+    if (unconfiguredKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = unconfiguredKey;
+    if (unconfiguredHorizon === undefined) delete process.env.EMAIL_NOTIFICATIONS_START_AT;
+    else process.env.EMAIL_NOTIFICATIONS_START_AT = unconfiguredHorizon;
   }
 
   console.log(failures === 0 ? `\nAll ${passes} checks passed.` : `\n${failures} check(s) failed.`);

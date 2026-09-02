@@ -997,6 +997,65 @@ rows are wrong — most are or were right. It is that nothing can ever make them
 right again**, so whichever become false stay on screen indefinitely, and two
 already have.
 
+
+### Confirmed against production 2026-09-02, with ids
+
+Re-read immediately before writing this, so the ids and the current state
+are the live ones rather than remembered ones. All six are still ACTIVE.
+
+| # | id | Business | dedupeKey | Verdict |
+|---|---|---|---|---|
+| 1 | `cms3lzik9000404i9zfh4zc84` | `cofoundr` | `cms3icnnk000b04jvqdi9te1r` | **False** |
+| 2 | `cms4uxz4l000704jphbps8ax2` | `socks-galore` | `cms4qy0wx000604la5uvuyh92` | **False** |
+| 3 | `cms3ht0ol000804l7c0rn40io` | `cubit-coil` | `missing_seo_metadata` | **False** |
+| 4 | `cms3ht0ol000704l7d4spfuhz` | `cubit-coil` | `missing_hero_copy` | **False** |
+| 5 | `cms54hrsk000404l7b1kx47ju` | `cofoundr` | `missing_product_images` | **Still true — leave ACTIVE** |
+| 6 | (socks-galore) | `socks-galore` | `usp_performance_missing_from_hero` | **Needs one decision — see below** |
+
+**Rows 3 and 4 are more decisively false than first reported.** Their
+summaries describe a *different business*: the SEO one says "a rust-removal
+brand" and the hero one names "IronClean". `cubit-coil` sells hand-wound
+copper tensor rings. These are not stale claims about fields that have since
+been filled — they are about a business that no longer exists at this store.
+
+### Row 6, and the one decision it actually needs
+
+Reading the store rather than the observation changes the verdict. This is
+not ambiguous about whether the observation is *accurate* — it is accurate,
+and the store's own copy is what proves it:
+
+- **`brandIdentity.brandStory`, the owner's own words**: "We build ours
+  around **performance fibers**, clean silhouettes, and a fit that holds all
+  day... a considered basic, **engineered** to look sharp and feel better."
+- **`description`**: "built on **smart fibers**... **engineered** to look
+  sharp and feel better."
+- **The hero, which says none of that**: "Socks made for staying in." /
+  "warm, well-made pairs for cold floors and slow evenings."
+
+So the hero really does omit a USP the brand identity really does claim. The
+pending `update_hero` proposal (`cms66nn9g000504kvk28o4dwu`) offers exactly
+that fix: "Warm socks, engineered to last."
+
+**But the catalogue sides with the hero.** All four products — Hearthstone
+Wool Crew, Cabin Cable Boot Sock, Ember Slipper Sock, Homestead Everyday Trio
+— are cozy-framed, and none mentions performance. Two EXECUTED approvals from
+28 July already carry the topicKeys `brand_copy_catalog_mismatch` and
+`seo_title_catalog_mismatch`, so a previous review found this same tension
+from the other direction and acted on it.
+
+**The smallest explicit decision, and the only one needed:** is
+`socks-galore` a *performance* sock brand or a *cozy* one? Everything else
+follows mechanically.
+
+- **Performance** → the observation is TRUE, it stays ACTIVE, and the pending
+  `update_hero` proposal is the answer to it.
+- **Cozy** → the brand story is the thing that is out of date, the
+  observation is FALSE, it can be retired with rows 1–4, and the pending
+  `update_hero` proposal should be rejected rather than approved.
+
+Nothing is retired either way until that is answered. The store is
+`published: false`, so nothing is being shown to a customer while it waits.
+
 ### The exact operation
 
 `scripts/resolve-legacy-observations.ts`, written and **not run**. It takes an
