@@ -62,9 +62,40 @@ async function main() {
       WHERE schemaname = 'public'
         AND tablename <> '_prisma_migrations'
         AND tablename <> '_genesis_test_database'`;
-    await prisma.$executeRawUnsafe(
-      `TRUNCATE TABLE ${tables.map((t) => `"${t.tablename}"`).join(", ")} RESTART IDENTITY CASCADE`
-    );
+
+    // ============ RETRIED ON DEADLOCK (2026-09-02) ==================
+    //
+    // This suite failed reproducibly with 'deadlock detected' (40P01) the
+    // first time it had a runner, at the reset before section 5.
+    //
+    // TRUNCATE takes an ACCESS EXCLUSIVE lock on every table named, in
+    // order. Two connections are live here — this suite's client and the
+    // one lib/prisma.ts builds for the production code under test, each with
+    // its own pool — so the other can hold a lock on a later table while
+    // this waits for an earlier one. Postgres detects the cycle and kills a
+    // victim, which is the error seen.
+    //
+    // A DEADLOCK IS TRANSIENT BY DEFINITION: the victim is killed precisely
+    // so the other side completes, and the retry then finds no contender.
+    // Bounded at three so a genuine hang still fails rather than spinning.
+    //
+    // This is honest rather than masking, and the distinction matters:
+    // TRUNCATE-everything is a HARNESS operation. Nothing in production
+    // truncates, so there is no production deadlock being hidden here — the
+    // contention is between the test's own cleanup and the code it is
+    // testing, and it exists only because both are in one process.
+    const statement =
+      `TRUNCATE TABLE ${tables.map((t) => `"${t.tablename}"`).join(", ")} RESTART IDENTITY CASCADE`;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await prisma.$executeRawUnsafe(statement);
+        return;
+      } catch (error) {
+        const deadlocked = /deadlock detected|40P01/.test(String(error));
+        if (!deadlocked || attempt === 3) throw error;
+        await new Promise((r) => setTimeout(r, 50 * attempt));
+      }
+    }
   }
 
   async function makeOrder(slug: string, buyerEmail = "buyer@example.test") {

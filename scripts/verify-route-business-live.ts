@@ -243,16 +243,40 @@ async function main() {
     "app/dashboard/settings/page.tsx",
     "app/dashboard/website/page.tsx",
   ];
+  // A SCREEN MAY LEGITIMATELY RENDER NO LIST (2026-09-02).
+  //
+  // website/page.tsx stopped rendering one deliberately — its own comment
+  // quotes the instruction: the notices 'should be part of the Genesis
+  // welcome/arrival experience, not buried at the bottom of a particular
+  // business page', and they are explicitly not duplicated there. This loop
+  // required every screen in the list to render at least one, so a screen
+  // that correctly stopped read as a failure.
+  //
+  // The property was never 'every screen shows cards'. It is that EVERY LIST
+  // THAT EXISTS carries the business, so dismissing one targets the right
+  // business. That is what is asserted per screen now.
+  //
+  // AND IT CANNOT GO VACUOUS. Allowing zero lists per screen would pass a
+  // set where every screen quietly lost its list, so the count across all of
+  // them is asserted to be non-zero afterwards — the whole check failing
+  // silently is exactly the shape this suite exists to prevent.
+  let listsAcrossScreens = 0;
   for (const screen of SCREENS) {
     const text = source(screen);
     const lists = (text.match(/<AttentionCardList/g) ?? []).length;
     const passes = (text.match(/slug=\{slug\}/g) ?? []).length;
+    listsAcrossScreens += lists;
     assert(
-      `${screen.split("/").slice(-2).join("/")} passes the business to every card list`,
-      lists > 0 && passes >= lists,
+      `${screen.split("/").slice(-2).join("/")} passes the business to every card list it renders`,
+      passes >= lists,
       `${lists} list(s), ${passes} slug prop(s)`
     );
   }
+  assert(
+    "and the screens between them still render some",
+    listsAcrossScreens > 0,
+    "zero lists anywhere would make every assertion above true and meaningless"
+  );
 
   // AND NOBODY HARDCODES THE LEGACY PATH. HomeWorkspace pinned
   // currentPath="/dashboard" while rendering a business page, so the

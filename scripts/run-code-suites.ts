@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { readdirSync } from "fs";
-import { isCodeOnly, isCodeOnlyWithLiveModel, SCRIPTS_DIR } from "./lib/suiteLanes";
+import { isCodeOnly, isCodeOnlyWithLiveModel, unclaimedSuites, SCRIPTS_DIR } from "./lib/suiteLanes";
 
 // THE THIRD LANE: suites that need nothing at all.
 //
@@ -80,6 +80,19 @@ async function main() {
   // Held back by default because they fail on the ACCOUNT rather than on the
   // code, and a lane whose red is usually somebody else s billing is a lane
   // people stop reading.
+  // WARNS RATHER THAN REFUSES, unlike run-pg-suites.ts. That lane IS the
+  // complement, so an unclaimed suite means its own definition is broken and
+  // continuing would be dishonest. Here it means somebody else's lane has a
+  // gap — worth shouting about, not worth refusing to run 96 suites over.
+  const unclaimed = unclaimedSuites();
+  if (unclaimed.length > 0) {
+    console.warn(
+      "WARNING: " + unclaimed.length + " verify-* suite(s) belong to no lane: " +
+        unclaimed.join(", ") +
+        "\n  Add each to a lane in scripts/lib/suiteLanes.ts, or to PERMANENTLY_EXCLUDED.\n"
+    );
+  }
+
   const withLive = process.argv.includes("--with-live");
   const only = process.argv.filter((a) => !a.startsWith("--"))[2] ?? null;
 

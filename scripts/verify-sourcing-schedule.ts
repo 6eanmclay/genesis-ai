@@ -220,21 +220,46 @@ async function main() {
       );
       check("an authorised one runs", response.status, 200);
 
+      // THE ROUTE NO LONGER OWNS THE STAGES (2026-09-02).
+      //
+      // These four assertions read a per-stage response shape — a `sourcing`
+      // object listing every store it reached — that the cron route stopped
+      // producing when the scheduler took over in 838fe95. The route now runs
+      // runDueTasks and reports task outcomes: ran, failed, skipped, deferred.
+      //
+      // Verified before repointing: runDueSourcing itself is unchanged and
+      // still returns SourcingRunReport with per-store summaries and
+      // stoppedBecause — and the sections above this one drive it directly and
+      // assert exactly that. What moved is who calls it, so what belongs here
+      // is that the route still reaches it.
+      //
+      // AND THAT IT IS DELIBERATELY OFF. sourcing.discovery is registered with
+      // `enabled: sourcingDiscoveryEnabled`, which reads
+      // SOURCING_DISCOVERY_ENABLED — Sean's Slice 1 decision was that discovery
+      // stays disabled. So the honest assertion is that the task is registered
+      // and SKIPPED, not that it ran: a green 'it ran' here would mean the gate
+      // had come off without anybody deciding it.
       const body = (await response.json()) as {
-        stageErrors: string[];
-        sourcing: { stoppedBecause: string; stores: { storeId: string; discovery: string }[] } | null;
+        ran: { key: string }[];
+        failed: { key: string; error: string }[];
+        skipped: { key: string; why: string }[];
       };
-      // THE STAGE RAN, AND REACHED THIS STORE.
-      assert("the sourcing stage reported", body.sourcing !== null, JSON.stringify(body).slice(0, 200));
-      check("and it reached the store", body.sourcing?.stores.map((r) => r.storeId), [store.id]);
-      // It says WHAT happened rather than only that it ran.
-      assert("saying what happened to it",
-        typeof body.sourcing?.stores[0]?.discovery === "string", JSON.stringify(body.sourcing?.stores[0]));
-      check("and why the pass ended", body.sourcing?.stoppedBecause, "completed");
-      // And it is isolated like every other stage: a failure here would be
-      // named, not a 500 that silently loses the four before it.
-      assert("no stage reported a failure", body.stageErrors.length === 0,
-        JSON.stringify(body.stageErrors));
+      const named = [...body.ran, ...body.failed, ...body.skipped].map((o) => o.key);
+      assert("the scheduler reached sourcing.discovery",
+        named.includes("sourcing.discovery"), JSON.stringify(body).slice(0, 300));
+      // THE REASON, NOT JUST THE FACT. Sabotage caught this: asserting only
+      // that it was skipped passed whether the reason was "not enabled" or
+      // "not due", so flipping the gate on left this green. The gate is the
+      // property under test, so the gate is what is read.
+      assert("and it is skipped BECAUSE discovery is deliberately disabled",
+        body.skipped.some((o) => o.key === "sourcing.discovery" && o.why === "not enabled"),
+        JSON.stringify(body.skipped));
+      assert("no task failed",
+        body.failed.length === 0, JSON.stringify(body.failed));
+      void store;
+      // Isolation is the scheduler's now, and it is asserted three lines up as
+      // body.failed being empty — stageErrors was the old route's field and
+      // went with it.
     }
   } finally {
     await prisma.$disconnect().catch(() => {});

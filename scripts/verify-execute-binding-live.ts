@@ -83,6 +83,27 @@ async function main() {
       });
       return { message: `wrote to ${ctx.storeId}`, metadata: { storeId: ctx.storeId } };
     },
+    // ADDED 2026-09-02, and its absence is why this suite failed.
+    //
+    // The verification-hardening milestone made verify() required on every
+    // executable, and execute() calls it on any SUCCESS outcome. This fake
+    // executable predates that and casts itself through `as never`, so the
+    // compiler could not say so — execute() threw calling a method that was
+    // not there, the catch turned it into FAILED, and the write it had
+    // already done stayed on disk. The suite's own next assertion, that the
+    // product exists, passed while the one above it said the run failed.
+    //
+    // READS BACK WHAT IT WROTE, which is what the milestone asks of every
+    // real executable rather than a stub that returns ok.
+    async verify(input: { name: string }, ctx: { storeId: string }) {
+      const written = await prisma.product.findFirst({
+        where: { storeId: ctx.storeId, name: input.name },
+        select: { id: true },
+      });
+      return written
+        ? { ok: true as const }
+        : { ok: false as const, reason: `no product named ${input.name} in ${ctx.storeId}` };
+    },
   };
 
   // ==========================================================================

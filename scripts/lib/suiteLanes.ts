@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 
 // WHICH LANE A VERIFICATION SUITE BELONGS IN.
@@ -287,4 +287,70 @@ export function isCodeOnlyWithLiveModel(file: string): boolean {
   if (/startRealPostgres/.test(source)) return false;
   if (DATABASE_BACKED.test(source)) return false;
   return LIVE_MODEL_CLIENT.test(source);
+}
+
+/**
+ * Suites no runner can ever own, by name, with the reason each is here.
+ *
+ * A permanent exclusion is a real thing and there is exactly one: a suite
+ * that needs a Next server somebody started by hand. It is NOT the same as
+ * 'belongs to another lane' — everything else is decided by asking.
+ */
+export const PERMANENTLY_EXCLUDED: Record<string, string> = {
+  "verify-stripe-webhook-e2e.ts":
+    "POSTs to a running Next server this repository deliberately does not start for it: npm run dev, then run it by name",
+};
+
+/**
+ * The fourth lane: a suite that brings its own database and no server.
+ *
+ * ============ DEFINED AS THE COMPLEMENT, ON PURPOSE ================
+ *
+ * The obvious definition is /startRealPostgres/, which is how
+ * BACKEND_FOUNDATION_GAPS.md item 23 described these suites and how the
+ * three lanes above already exclude them. Written that way this lane would
+ * have silently omitted verify-ledger-live.ts, which brings its own database
+ * through startTestDatabase instead — a suite excluded from the shared
+ * runner BY NAME for exactly that reason, and therefore invisible to a
+ * marker that only knows the other helper.
+ *
+ * So this asks what NOTHING ELSE CLAIMS. A suite arriving with a third way
+ * of getting a database lands here automatically rather than falling
+ * through every test and disappearing, which is the failure this whole
+ * exercise exists to end: a suite nothing runs, and nothing saying so.
+ *
+ * unclaimedSuites() below is the assertion that keeps it honest.
+ */
+export function ownDatabaseLane(file: string): boolean {
+  if (file.startsWith("run-")) return false;
+  if (Object.hasOwn(PERMANENTLY_EXCLUDED, file)) return false;
+  if (httpLane(file) !== null) return false;
+  if (needsDatabase(file)) return false;
+  if (isCodeOnly(file)) return false;
+  if (isCodeOnlyWithLiveModel(file)) return false;
+  return true;
+}
+
+/**
+ * Every verify-* file that no lane claims and nothing excludes by name.
+ *
+ * MUST BE EMPTY, and every runner asserts it before doing anything. This is
+ * the guard the four lanes did not have: for months a suite could be written
+ * that matched no lane's test, and the only symptom was that it never ran.
+ * That is how 167 of 284 suites came to be unexecuted without anybody
+ * choosing it.
+ */
+export function unclaimedSuites(): string[] {
+  return readdirSync(SCRIPTS_DIR)
+    .filter((f) => f.startsWith("verify-") && f.endsWith(".ts"))
+    .filter(
+      (f) =>
+        httpLane(f) === null &&
+        !needsDatabase(f) &&
+        !isCodeOnly(f) &&
+        !isCodeOnlyWithLiveModel(f) &&
+        !ownDatabaseLane(f) &&
+        !Object.hasOwn(PERMANENTLY_EXCLUDED, f)
+    )
+    .sort();
 }

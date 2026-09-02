@@ -224,8 +224,35 @@ async function main() {
       lastProcessedSequence: busyMax._max.sequence!,
     },
   });
+  // THE AGE REASON IS REMOVED FIRST (2026-09-02), so this measures the one
+  // it is about. Slice 1 made elapsed time a second, independent reason for
+  // a store to be due: a store whose lastIntelligenceAt is null is due
+  // however caught-up its cursor is. That is deliberate and approved, and it
+  // meant this assertion — written when events were the only reason — was
+  // reading the age reason and calling it the event reason.
+  //
+  // Stamping a recent evaluation isolates the property under test rather
+  // than loosening it: catching the cursor up removes the EVENT reason.
+  await prisma.store.update({
+    where: { id: busy.id },
+    data: { lastIntelligenceAt: new Date() },
+  });
   const afterCursor = await getStoresDueForIntelligence(50);
   assert("a caught-up store drops out", !afterCursor.includes(busy.id));
+
+  // AND THE CONTROL, so this cannot pass because selection stopped working:
+  // put the age reason back and it returns.
+  await prisma.store.update({
+    where: { id: busy.id },
+    data: { lastIntelligenceAt: null },
+  });
+  assert("but elapsed time alone brings it back",
+    (await getStoresDueForIntelligence(50)).includes(busy.id),
+    "a business whose data has not moved is still re-evaluated daily");
+  await prisma.store.update({
+    where: { id: busy.id },
+    data: { lastIntelligenceAt: new Date() },
+  });
   assert("while the one still behind stays", afterCursor.includes(quiet.id));
 
   // ==========================================================================
@@ -259,11 +286,29 @@ async function main() {
   assert("every selected store produced a summary",
     [first.id, second.id, third.id].every((id) => reported.has(id)),
     "one throw must not abandon the stores behind it");
-  assert("a failed pass is reported as failed, not as an empty success",
-    summaries.filter((s) => [first.id, second.id, third.id].includes(s.storeId)).every((s) => s.ok === false),
-    "the provider is unreachable in this environment, and that is said plainly");
-  check("a failed pass claims no insights",
-    summaries.filter((s) => s.storeId === first.id).map((s) => s.insights), [0]);
+  // THE PREMISE OF THIS PAIR WAS REMOVED ON PURPOSE (2026-09-02).
+  //
+  // Both assertions relied on the deterministic cycle failing because no
+  // model provider is reachable here. Slice 1b took the AI review out of
+  // this cycle and gave it its own scheduled task precisely so that a cheap
+  // deterministic evaluation no longer pays for an expensive one — so the
+  // pass now COMPLETES without a provider, and 'unplug the provider' stopped
+  // being a way to produce a failed pass.
+  //
+  // Rewriting them to assert ok === false would have meant asserting a
+  // failure this design deliberately no longer has. The guarantee itself —
+  // a failed pass is named as failed and never reads as an empty success —
+  // is proven properly next door in verify-bi-production-readiness.ts, with
+  // INJECTED failing stages and a control, which is stronger than an
+  // environmental accident ever was.
+  //
+  // What belongs here is what this environment can actually show:
+  assert("a deterministic pass completes with no provider reachable",
+    summaries.filter((s) => [first.id, second.id, third.id].includes(s.storeId)).every((s) => s.ok === true),
+    JSON.stringify(summaries.map((s) => ({ id: s.storeId, ok: s.ok, failed: s.failedStages })))),
+  assert("and every stage of it ran",
+    summaries.filter((s) => [first.id, second.id, third.id].includes(s.storeId)).every((s) => s.failedStages.length === 0),
+    "a stage that needs a provider would show up here as a named failure");
 
   // WHAT A FAILED PASS ACTUALLY LEAVES BEHIND. The cursor belongs to the
   // Insight Engine, and computeInsights advances it once it has processed its

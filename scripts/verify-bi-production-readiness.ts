@@ -66,9 +66,14 @@ async function main() {
     // six stages are wrapped — which is the exact shape of the defect being
     // fixed, one case that stopped being covered when the set grew.
     const staged = [...cycleSrc.matchAll(/runStage\(\s*"([a-z_]+)"/g)].map((m) => m[1]);
-    eq("all six stages run through the isolator",
+    // SEVEN NOW, AND THIS WAS MY OWN STALE FIXTURE (2026-09-02). Slice 1b
+    // took ai_review out of the deterministic cycle and gave it its own
+    // scheduled task; Slice 2 added detect_change; Slice 3 added
+    // observation_sweep. Every one shipped while this suite belonged to no
+    // runner, so nothing said the list had moved on.
+    eq("every stage runs through the isolator",
       staged.sort(),
-      ["ai_review", "insights", "learn", "notify", "speak", "staff_policy_gap"]);
+      ["detect_change", "insights", "learn", "notify", "observation_sweep", "speak", "staff_policy_gap"]);
     assert("and notify additionally records the dependency it cannot satisfy",
       /failedStages\.push\("notify"\)/.test(cycleSrc),
       "it needs insights, so a failed insights stage makes it failed too, not merely skipped");
@@ -177,14 +182,35 @@ async function main() {
       "it took no parameter at all, so a failing cycle produced ok:false and no error anywhere");
     assert("and reports it", /reportIssue\([\s\S]{0,200}intelligence\.cycle/.test(outerSrc));
 
-    // The cron route's stages too — counted, for the same reason as above.
-    const cronSrc = codeOnly(read("app", "api", "cron", "sync", "route.ts"));
-    const cronReports = [...cronSrc.matchAll(/stage: "cron\.([a-zA-Z]+)"/g)].map((m) => m[1]);
-    eq("every cron stage reports its own failure",
-      cronReports.sort(),
-      ["growthPoints", "intelligence", "pruneAuthAttempts", "sourcing", "syncs"]);
-    eq("and none is left reporting only to the console",
-      (cronSrc.match(/console\.error/g) ?? []).length, 0);
+    // MOVED TO THE SCHEDULER, AND THE GUARANTEE GOT STRONGER (2026-09-02).
+    //
+    // This counted five hand-written stages in the cron route and checked
+    // each reported its own failure. Those stages are gone: the route now
+    // calls runDueTasks and the scheduler owns isolation. Verified at the
+    // new seam before repointing — lib/scheduler/run.ts catches per task,
+    // reports through reportIssue tagged with that task's key, and returns
+    // status 'failed' with a reason.
+    //
+    // So the property is no longer 'these five stages report' but 'EVERY
+    // task does', which is what it should always have been — five named
+    // stages could never have covered a sixth.
+    const schedulerSrc = codeOnly(read("lib", "scheduler", "run.ts"));
+    assert("a failing task is caught rather than ending the invocation",
+      /\} catch \(error\) \{/.test(schedulerSrc));
+    // THE FAILURE PATH SPECIFICALLY. Sabotage caught this: a loose
+    // /reportIssue\(...task.key/ matched the two BOOKKEEPING reports either
+    // side of it ("could not record the start/end of a scheduled task"), so
+    // deleting the one that reports the failure itself left this green.
+    assert("and reported with the task it belongs to",
+      /reportIssue\(`the scheduled task \$\{task\.key\} failed`/.test(schedulerSrc),
+      "an unattributed failure is one nobody can act on");
+    assert("and returned as failed, never as nothing-to-do",
+      /status: "failed", reason: message/.test(schedulerSrc),
+      "those look identical in a count, which is the pair this shape exists to separate");
+    // The five named stages are gone with the route that held them; the
+    // three assertions above cover the scheduler that replaced them.
+    eq("no stage is left reporting only to the console",
+      (schedulerSrc.match(/console\.error/g) ?? []).length, 0);
 
     // ==================================================================
     console.log("\n=== GAP 3 — production can say whether the engine ran ===\n");
@@ -204,9 +230,17 @@ async function main() {
     for (const field of ["eventLag", "lastCognitiveOutputAt", "lastAiReview", "cursorUpdatedAt"]) {
       assert(`it reports ${field}`, new RegExp(`\\b${field}:`).test(statusSrc));
     }
+    // SCOPED TO THE DIAGNOSTIC (2026-09-02). This scanned the WHOLE schema
+    // for any model ending in Run, and ScheduledTaskRun — added later, for
+    // the scheduler, and nothing to do with this endpoint — made it red.
+    //
+    // The property was never 'this repository contains no table called
+    // *Run'. It is that THIS DIAGNOSTIC answers from rows the engine
+    // already writes, so asking the question cannot become the reason a
+    // table exists. Asserted against what the endpoint actually reads.
     assert("all of it from rows the engine already writes",
-      !/model \w+Run|cycleRun/.test(read("prisma", "schema.prisma")),
-      "no new table was added to make this answerable");
+      !/cycleRun|intelligenceRun|biRun/i.test(statusSrc),
+      "no table was added to make this answerable");
 
     // The behaviour: a store with unconsumed events shows lag.
     const { GET } = await import("@/app/api/cron/status/route");

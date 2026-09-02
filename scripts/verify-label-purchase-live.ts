@@ -370,7 +370,20 @@ async function main() {
       const message = await failure(
         purchaseLabelForOrder({ orderId: order.id, weightOz: 8 }, ctxFor(store.id), buyer)
       );
-      assert("it says to connect shipping first", (message ?? "").includes("Connect USPS Shipping"), String(message));
+      // WORDING CHANGED DELIBERATELY in ad98720, whose title is 'no carrier
+      // assumed' — the message used to name USPS and now does not, because
+      // naming one carrier in a refusal is the assumption that commit
+      // removed. The behaviour is unchanged: it refuses, and it says where
+      // to go.
+      //
+      // Asserted as the PROPERTY rather than the sentence, so the next
+      // rewording does not fail this and naming a carrier again does.
+      assert("it says to connect shipping first, and names where",
+        /connect shipping/i.test(message ?? "") && /Connections|Payments/i.test(message ?? ""),
+        String(message));
+      assert("and does not assume a carrier",
+        !/USPS|EasyPost|FedEx|UPS\b/i.test(message ?? ""),
+        String(message));
       check("and nothing was attempted", asked.length, 0);
 
       // Same for an order with no address to ship to, and a store with no
