@@ -88,6 +88,25 @@ async function settle(page: Page): Promise<void> {
     .catch(() => {});
 }
 
+/**
+ * Wait for the map to finish moving.
+ *
+ * ENTERING A BRANCH STARTS THREE ANIMATIONS AT ONCE: the world's transform
+ * (460ms) and opacity (320ms), the orb's glide up its column (420ms), and the
+ * entity layer's fade-in (300ms after a 140ms delay). `waitForSelector` on the
+ * carousel returns as soon as it is in the DOM, which is the FIRST frame of
+ * all of that.
+ *
+ * Measuring or photographing then measures something mid-flight. It has caught
+ * this suite out three times — a scale that read 1, an orb whose box was still
+ * near the centre, and a screenshot of an apparently empty stage — every one a
+ * false report about correct code. So the wait is named, explained once, and
+ * used at every entry rather than rediscovered as a bare timeout.
+ */
+async function settleMap(pg: Page): Promise<void> {
+  await pg.waitForTimeout(700);
+}
+
 /** The world's actual scale factor, read off the rendered transform. */
 async function worldScale(page: Page): Promise<number> {
   return page.evaluate(() => {
@@ -277,7 +296,7 @@ async function main() {
     });
 
     await page.getByRole("button", { name: /^Commerce,/ }).click();
-    await page.waitForTimeout(600);
+    await settleMap(page);
 
     assert("entering a branch does not re-create the orb",
       await page.evaluate(() =>
@@ -418,6 +437,7 @@ async function main() {
       // want to immediately see the actual things inside it."
       await page.getByRole("button", { name: /^Commerce,/ }).click();
       await page.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
+      await settleMap(page);
 
       const cards = page.locator('[data-testid="entity-card"]');
       const count = await cards.count();
@@ -514,10 +534,7 @@ async function main() {
       await page.waitForTimeout(400);
       await page.getByRole("button", { name: /^Creation,/ }).click();
       await page.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
-      // THE CAROUSEL EXISTS BEFORE THE ORB HAS FINISHED MOVING. Measuring
-      // either one on the first frame measures them mid-flight — which is what
-      // this block did, and what the overlap assertion correctly caught.
-      await page.waitForTimeout(700);
+      await settleMap(page);
 
       const lookbook = page.locator('[data-testid="entity-card"]').filter({ hasText: "Spring lookbook" });
       assert("the asset is on the map", (await lookbook.count()) === 1);
@@ -568,15 +585,28 @@ async function main() {
       await page.getByRole("button", { name: "Whole business" }).click();
       await page.waitForTimeout(400);
       await page.getByRole("button", { name: /^Customers,/ }).click();
-      await page.waitForTimeout(600);
+      await settleMap(page);
       const customers = page.locator('[data-testid="entity-card"]');
       if ((await customers.count()) > 0) {
         const text = await customers.first().innerText();
-        // A CUSTOMER WHO GAVE NO NAME IS TITLED BY THEIR EMAIL, because that
-        // is the only identity the business has for them, it is the owner's
-        // own record, and it is what the Customers screen already shows. What
-        // privacy means here is that NOTHING IS PILED ON: no phone, no
-        // address, no order history sitting open on a landing screen.
+        // NO EMAIL ANYWHERE ON THE LANDING SCREEN. The fixture's customer is
+        // order-derived and has no name, which is exactly the case that used
+        // to be titled by their address.
+        const title = (await customers.first().locator("h3").innerText()).trim();
+        assert("a customer with no name is called Customer", title === "Customer", title);
+        assert("their email is not on the card at all",
+          !/@example\.test/.test(text), text.slice(0, 200));
+        // AND NOT IN THE MARKUP EITHER, which a visible-text check would miss:
+        // the record id is `internal:contact:<email>`.
+        const markup = await customers.first().evaluate((el) => el.outerHTML);
+        assert("nor hidden in the card's own markup",
+          !markup.includes("@example.test"),
+          markup.slice(0, 240));
+        // AND NOTHING IS PILED ON BESIDE IT: no phone, no address, no order
+        // history sitting open on a landing screen. The map surfaces what J4
+        // knows about the business; the customer's own detail record is where
+        // their contact information is actually useful.
+        //
         // A DIGIT RUN IS NOT A PHONE NUMBER. The first version of this check
         // matched the timestamp inside the fixture's own email address, which
         // is the classic assertion that fails for a reason unrelated to the
@@ -595,7 +625,7 @@ async function main() {
       await page.getByRole("button", { name: "Whole business" }).click();
       await page.waitForTimeout(400);
       await page.getByRole("button", { name: /^Goals,/ }).click();
-      await page.waitForTimeout(600);
+      await settleMap(page);
       assert("an empty branch says it is empty rather than showing nothing",
         (await page.locator('[data-testid="entity-empty"]').count()) === 1);
       const emptyText = await page.locator('[data-testid="entity-empty"]').innerText();
@@ -610,6 +640,7 @@ async function main() {
       // ---- X is X ------------------------------------------------------
       await page.getByRole("button", { name: /^Social,/ }).click();
       await page.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
+      await settleMap(page);
       const xCard = page.locator('[data-testid="entity-card"]').filter({ hasText: "X" }).first();
       const xText = await xCard.innerText();
       assert("X says Genesis cannot connect it",
@@ -698,10 +729,7 @@ async function main() {
     const s0 = await worldScale(small);
     await small.getByRole("button", { name: /^Commerce,/ }).click();
     await small.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
-    // THE CAROUSEL IS IN THE DOM BEFORE THE TRANSITION FINISHES. Reading the
-    // world's transform or the orb's box on the first frame measures them
-    // mid-flight — the desktop block waits for exactly this reason.
-    await small.waitForTimeout(700);
+    await settleMap(small);
     assert("tapping a branch zooms on a phone", (await worldScale(small)) > s0 + 0.15,
       `${s0} -> ${await worldScale(small)}`);
 
@@ -788,6 +816,7 @@ async function main() {
       const before = await worldScale(p2);
       await p2.getByRole("button", { name: /^Commerce,/ }).click();
       await p2.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
+      await settleMap(p2);
       assert("and still zooms", (await worldScale(p2)) > before + 0.15,
         `${before} -> ${await worldScale(p2)}`);
       assert("the carousel is reachable with motion reduced",

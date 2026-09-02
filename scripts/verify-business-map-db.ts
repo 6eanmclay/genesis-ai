@@ -4,6 +4,7 @@ import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { readOwnerFacts, readOwnerFactsWithProvenance } from "@/lib/businessModel/ownerFacts";
 import {
   businessMap, certaintyOf, MAP_DOMAINS, DOMAIN_LABEL, MAP_EDGE_KINDS,
+  ANONYMOUS_CUSTOMER_LABEL,
   type MapDomainKey,
 } from "@/lib/businessModel/businessMap";
 import { CATEGORY_DOMAIN, connectableServices, whatItAdds } from "@/lib/businessModel/connectionDomains";
@@ -796,6 +797,53 @@ async function main(): Promise<void> {
     assert("and it is not their email address",
       !JSON.stringify(dana.facts).includes("@example.test"),
       JSON.stringify(dana.facts));
+    // ---- and a customer who gave NO name is not titled by their email ----
+    //
+    // Sean (2026-09-02): "I don't want an email address exposed on the
+    // Business Map landing screen just because a customer doesn't have a
+    // name." It was never a decision — an order-derived contact has
+    // `name: null`, `labelOf` fell through to `record.id`, and that id is
+    // `internal:contact:<email>`.
+    const { store: anon } = await makeStore();
+    const anonProduct = await prismaSystem.product.create({
+      data: { storeId: anon.id, name: "Ring", description: "d", priceInCents: 1000, active: true },
+    });
+    await prismaSystem.order.create({
+      data: {
+        storeId: anon.id, productName: "Ring", quantity: 1, amountInCents: 1000,
+        buyerEmail: `anon-${stamp}@example.test`, paymentProvider: "STRIPE",
+        externalOrderId: `cs_anon_${stamp}`, status: "paid", productId: anonProduct.id,
+      },
+    });
+    const anonMap = await mapFor(anon.id, anon.slug);
+    const anonCustomers = entitiesFor(anonMap.domains.find((d) => d.key === "customers")!);
+    assert("an order-derived customer reaches the map", anonCustomers.length > 0,
+      String(anonCustomers.length));
+    for (const c of anonCustomers) {
+      eq("a customer with no name is called Customer", c.label, ANONYMOUS_CUSTOMER_LABEL);
+      assert("never their email address", !c.label.includes("@"), c.label);
+      // THE ID IS THE EMAIL. Everything the card renders is checked, not just
+      // the title, because that is how the address arrived in the first place.
+      assert("and no rendered field carries it either",
+        !JSON.stringify({ label: c.label, detail: c.detail, facts: c.facts, kind: c.kind })
+          .includes("@example.test"),
+        JSON.stringify({ label: c.label, detail: c.detail, facts: c.facts }));
+    }
+
+    // ---- a name that IS an email is not a name ---------------------------
+    const { store: emailNamed } = await makeStore();
+    await prismaSystem.businessRecord.create({
+      data: {
+        storeId: emailNamed.id, entityType: "contact", externalId: `contact-en-${stamp}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        data: { name: `typed-${stamp}@example.test`, email: `typed-${stamp}@example.test`, roles: ["customer"] },
+      },
+    });
+    const enMap = await mapFor(emailNamed.id, emailNamed.slug);
+    const enCustomers = entitiesFor(enMap.domains.find((d) => d.key === "customers")!);
+    eq("a contact whose name is an address is still called Customer",
+      enCustomers[0]?.label, ANONYMOUS_CUSTOMER_LABEL);
+
     // A CUSTOMER WHO GAVE A NAME IS TITLED BY IT. One who gave only an email
     // is titled by that, because it is the only identity the business has for
     // them and it is the owner's own record — the browser suite covers that

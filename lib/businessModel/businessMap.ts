@@ -385,7 +385,7 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
     // privacy." What they have spent with this business is the owner's own
     // commercial record; the rest of what Genesis holds about a person does
     // not belong on a card that sits open on a landing screen.
-    add(node("customers", `contact:${contact.id}`, labelOf(contact), certaintyOf(contact.provenance), {
+    add(node("customers", `contact:${contact.id}`, customerLabelOf(contact), certaintyOf(contact.provenance), {
       detail: "Customer",
       kind: "Customer",
       provenance: contact.provenance,
@@ -586,6 +586,49 @@ function knownOf(pairs: [string, unknown][]): { label: string; value: string }[]
     kept.push({ label, value });
   }
   return kept;
+}
+
+/**
+ * What a customer is called on the map when they never gave a name.
+ *
+ * ============ WHY NOT THEIR EMAIL (2026-09-02) ========================
+ *
+ * Sean: "I don't want an email address exposed on the Business Map landing
+ * screen just because a customer doesn't have a name... The Business Map is
+ * becoming the visual representation of everything J4 knows about the
+ * business. We should be intentional about what information gets surfaced at
+ * each level."
+ *
+ * It was never a decision to show it — it was an accident of the id scheme.
+ * An order-derived contact has `name: null`, so `labelOf` fell through to
+ * `record.id`, and `internalContactId` builds that id as
+ * `internal:contact:<email>`. The address arrived on the landing screen by way
+ * of a primary key.
+ *
+ * ============ AND WHY NOT "Customer #1234" ============================
+ *
+ * He allowed a numbered form "if we have a safe non-email identifier". We do
+ * not: Genesis has no customer numbering, and these records are keyed by email
+ * precisely because there is nothing else. A number derived from a cuid or
+ * from a position in this list would look like an identifier the owner could
+ * look up somewhere, and would be one J4 invented. So the plain word, and the
+ * spend beside it, which is real.
+ */
+export const ANONYMOUS_CUSTOMER_LABEL = "Customer";
+
+/**
+ * A person's own name, or nothing that identifies them.
+ *
+ * The `@` guard matters: some contact rows carry the address in `name` as
+ * well, so trusting `name` alone would put it back on the card by another
+ * route.
+ */
+function customerLabelOf(contact: { id: string; data: Record<string, unknown> }): string {
+  const name = contact.data.name;
+  if (typeof name === "string" && name.trim().length > 0 && !name.includes("@")) {
+    return name.trim();
+  }
+  return ANONYMOUS_CUSTOMER_LABEL;
 }
 
 /** A record's own best label, without inventing one. */

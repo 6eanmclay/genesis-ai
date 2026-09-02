@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Certainty } from "@/lib/businessModel/businessMap";
+import { ANONYMOUS_CUSTOMER_LABEL, type Certainty } from "@/lib/businessModel/businessMap";
 import type { MapEntity } from "@/lib/businessModel/mapEntities";
 import { useJ4Ask } from "./J4AskContext";
 import type { DomainDestination } from "./BusinessMapCanvas";
@@ -55,6 +55,18 @@ function certaintyColor(c: Certainty): string {
  * tools can find it. No record id, which an owner would see and could not read.
  */
 function askText(entity: MapEntity, domainLabel: string): string {
+  // A CUSTOMER WITH NO NAME IS CALLED "Customer", so asking J4 about the
+  // "customer Customer" would be asking about nobody. The question is framed
+  // instead by the one commercial fact the card already shows, which J4's own
+  // tools can resolve — without putting a contact detail back on the screen
+  // that the label was changed to keep off it.
+  if (entity.label === ANONYMOUS_CUSTOMER_LABEL) {
+    const spend = entity.facts.find((f) => f.label === "Spent with you");
+    if (spend) {
+      return `Tell me what you know about the customer who has spent ${spend.value} with me, and what you would do about it.`;
+    }
+    return `Tell me what you know about my customers, and what you would do about them.`;
+  }
   const what = entity.kind ? `${entity.kind.toLowerCase()} "${entity.label}"` : `"${entity.label}"`;
   return `Tell me what you know about the ${what} in ${domainLabel.toLowerCase()}, and what you would do about it.`;
 }
@@ -79,7 +91,10 @@ function Card({
   return (
     <article
       data-testid="entity-card"
-      data-entity-id={entity.id}
+      // NO RECORD ID IN THE MARKUP. `internalContactId` builds a contact's id
+      // as `internal:contact:<email>`, so echoing it into an attribute would
+      // put the address back on the landing screen — invisible, but present in
+      // the page. Nothing read this; it was mine, for debugging.
       // PORTRAIT ON A PHONE, LANDSCAPE ON A DESKTOP. A desktop stage is wide
       // and short, so stacking a photograph above the text left the facts
       // nowhere to go; side by side, the same card has half again as much
