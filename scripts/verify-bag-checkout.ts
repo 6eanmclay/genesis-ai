@@ -230,7 +230,15 @@ assert("which charges only what the draft quoted",
   /Refusing to charge \$\{asked\} for a bag quoted at/.test(actions),
   "checked before the request leaves, not discovered in a settlement report");
 
-const stripeHook = read("app", "api", "webhooks", "stripe", "route.ts");
+// MOVED, NOT LOST (2026-09-02). These four assertions read the Stripe webhook
+// ROUTE, and the whole of that handler now lives in lib/payments/stripeEvent.ts
+// — the route delegates. Every one of the six patterns below was found intact
+// in the new home before this line was repointed, so the behaviour never
+// changed; the assertion simply went on reading a file the logic had left.
+//
+// This is the cost of a source assertion, and the reason one has to actually
+// RUN. Nothing caught it for as long as this suite belonged to no lane.
+const stripeHook = read("lib", "payments", "stripeEvent.ts");
 assert("the webhook only takes the bag path when there IS a draft",
   /const draftId = session\.metadata\?\.checkoutDraftId/.test(stripeHook) &&
     /bagLines \? primaryProductId\(bagLines\) : \(product\?\.id \?\? null\)/.test(stripeHook),

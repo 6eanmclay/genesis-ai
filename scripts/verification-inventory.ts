@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { needsDatabase } from "./lib/suiteLanes";
+import { isCodeOnly, needsDatabase } from "./lib/suiteLanes";
 
 // THE VERIFICATION INVENTORY — one authoritative answer to "what do we actually run?"
 //
@@ -30,6 +30,7 @@ const SCRIPTS = join(process.cwd(), "scripts");
 
 export type Lane =
   | "shared-runner"       // run-db-suites.ts runs it
+  | "code-runner"         // run-code-suites.ts runs it — needs no infrastructure at all
   | "own-infrastructure"  // brings its own Postgres or Next server
   | "standalone"          // no database; runs anywhere, cheaply
   | "excluded-named";     // deliberately excluded, by name, with a reason
@@ -111,9 +112,16 @@ function classify(file: string, source: string): SuiteFacts {
   } else if (databaseBacked) {
     lane = "excluded-named";
     excludedBecause = "database-backed, but named as an exclusion in run-db-suites.ts";
+  } else if (isCodeOnly(file)) {
+    // GAINED A RUNNER 2026-09-02 (gap 23). These needed no
+    // infrastructure and nothing executed them; run-code-suites.ts now
+    // does, on the same derived-not-listed basis as the other lanes.
+    // Asking isCodeOnly rather than re-deciding here, for the reason
+    // stated above needsDatabase.
+    lane = "code-runner";
   } else {
     lane = "standalone";
-    excludedBecause = "no database; the shared runner only claims database-backed suites";
+    excludedBecause = "no database and no code-only lane; run it by name";
   }
 
   return {
@@ -175,7 +183,13 @@ function report(all: SuiteFacts[]): void {
   }
 
   console.log("\n--- WHAT NO LANE RUNS AUTOMATICALLY ---\n");
-  const unrun = all.filter((s) => s.lane !== "shared-runner");
+  // THREE LANES HAVE RUNNERS NOW, not one. Counting only shared-runner
+  // reported 167 suites as unrun on the day 106 of them started running,
+  // which is exactly the disagreement this file's own comment about
+  // needsDatabase warns against — just one level up, in the arithmetic
+  // rather than in the classification.
+  const RUN_BY_A_LANE = new Set(["shared-runner", "code-runner"]);
+  const unrun = all.filter((s) => !RUN_BY_A_LANE.has(s.lane));
   console.log(`  ${unrun.length} of ${all.length} suites run only when somebody chooses to run them.`);
   console.log("  That is not a defect to fix by forcing them together — it is a fact");
   console.log("  this report exists to keep visible.\n");

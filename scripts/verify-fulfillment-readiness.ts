@@ -63,8 +63,13 @@ assert("nor for one that already has tracking",
 
 console.log("\n=== CONTROL: the working path is untouched ===\n");
 
-assert("the Buy Label form still renders when it can",
-  /canManage && canBuyLabel && order\.shippingAddress && !order\.trackingNumber && \(\s*<BuyLabelForm/.test(list));
+// UPDATED 2026-09-02. The condition gained `order.shippedBy === "OWNER"`,
+// deliberately: buying postage for a partner-fulfilled order would produce
+// a label for a box in somebody else's warehouse. That is a STRONGER
+// guarantee than this assertion was written against, so the new clause is
+// pinned rather than the assertion loosened to accommodate it.
+assert("the Buy Label form still renders when it can, and only for an order the owner ships",
+  /canManage && order\.shippedBy === "OWNER" && canBuyLabel && order\.shippingAddress && !order\.trackingNumber && \(\s*<BuyLabelForm/.test(list));
 assert("and canBuyLabel still requires a working provider AND an address",
   /canBuyLabel = Boolean\(uspsWorking && returnAddress\)/.test(workspace),
   "this milestone explains the blocked state; it does not loosen it");
@@ -75,8 +80,15 @@ console.log("\n=== The parcel is not retyped ===\n");
 // the label form asked for the weight on every order anyway. The executable and
 // the server action both already accepted all four; only the form never offered
 // them and nothing ever filled them in.
+// UPDATED 2026-09-02. The select was reformatted across several lines and
+// gained sourceKind; all four parcel fields are still read. Asserted field
+// by field so it survives formatting but still fails if any one of them
+// stops being selected — which is the property that matters, since a
+// missing dimension is silently un-prefillable.
 assert("the order query reads the product's parcel",
-  /product: \{ select: \{ weightOz: true, lengthIn: true, widthIn: true, heightIn: true \} \}/.test(workspace),
+  /product: \{\s*select: \{/.test(workspace) &&
+    ["weightOz", "lengthIn", "widthIn", "heightIn"].every((f) =>
+      new RegExp(f + ": true").test(workspace)),
   "otherwise there is nothing to pre-fill from");
 
 for (const field of ["weightOz", "lengthIn", "widthIn", "heightIn"]) {
@@ -110,8 +122,18 @@ assert("gated on a working connection AND both addresses",
 assert("and says which of those is missing when it cannot",
   /Add your ship-from address on the Orders page/.test(detail) &&
     /Shipping isn't connected yet/.test(detail));
+// UPDATED 2026-09-02, and the guarantee is unchanged — the assertion was
+// comparing against the wrong element. OrderDetail now renders
+// AddTrackingPanel TWICE: once with `correcting` for an order that already
+// has a number, in a different branch entirely, and once as the fallback
+// under the Buy Label form. indexOf found the correction panel first and
+// reported the fallback as being above the primary path, which it is not.
+//
+// Compared against the FALLBACK usage specifically, so the ordering
+// property is still pinned and a real regression still fails it.
+const fallbackPanel = detail.indexOf("<AddTrackingPanel orderId={order.id} />");
 assert("manual tracking is offered as the fallback, below it",
-  detail.indexOf("<BuyLabelForm") < detail.indexOf("<AddTrackingPanel"),
+  fallbackPanel > 0 && detail.indexOf("<BuyLabelForm") < fallbackPanel,
   "order on the page says which is primary without a word of explanation");
 assert("and is introduced as such",
   /Already bought postage elsewhere/.test(detail));

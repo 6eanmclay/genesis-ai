@@ -154,17 +154,3 @@ export async function claimAndSend<T>(input: ClaimAndSendInput<T>): Promise<Noti
   }
 }
 
-/**
- * Give the claim back so something can try again.
- *
- * Swallows its own failure deliberately: if even the release fails, the order
- * stays marked and this customer gets no second attempt — which is bad, and is
- * exactly why the caller reports the original failure either way. Throwing here
- * would replace a missing email with a failed webhook, and the webhook is the
- * thing that must not fail.
- */
-async function releaseClaim(orderId: string, storeId: string, claim: NotificationClaim): Promise<void> {
-  await prisma.order
-    .update({ where: { id: orderId, storeId }, data: { [claim]: null } })
-    .catch(() => {});
-}

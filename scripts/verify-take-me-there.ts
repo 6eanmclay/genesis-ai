@@ -49,12 +49,18 @@ function assert(label: string, ok: boolean, detail = ""): void {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  — ${detail}` : ""}`);
 }
 
-const source = readFileSync("app/api/chat/route.ts", "utf8");
+// MOVED, NOT LOST (2026-09-02). The destination map left the chat route
+// for lib/execution/toolHandlers.ts and is now exported as
+// NAV_DESTINATIONS. Nothing about it changed — the Office is still
+// deliberately absent, and the assertions below still read the real
+// declaration rather than an import, because what they check is that the
+// DECLARED map matches the schema's enum.
+const source = readFileSync("lib/execution/toolHandlers.ts", "utf8");
 
 /** The destination map as the route actually declares it. */
 function destinationsFromRoute(): Record<string, { href: string; label: string }> {
   const block = source.slice(
-    source.indexOf("const DESTINATIONS: Record<string, { href: string; label: string }> = {")
+    source.indexOf("export const NAV_DESTINATIONS: Record<string, { href: string; label: string }> = {")
   );
   const body = block.slice(block.indexOf("{", block.indexOf("= {")) + 1, block.indexOf("};"));
   const out: Record<string, { href: string; label: string }> = {};

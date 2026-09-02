@@ -84,6 +84,18 @@ export const TOOL_POLICY: Record<string, ToolPolicy> = {
   request_image_change: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   request_product_removal: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   request_product_content_change: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
+  // ADDED 2026-09-02. request_sale has been in the tool catalog with a real
+  // handler since the promotions milestone and never had a policy — and
+  // mayInvokeTool fails CLOSED, so every invocation was refused as
+  // "unknown_tool". Not an authorization hole; the opposite. The tool was
+  // offered to the model, described in detail, and could not be used by
+  // anybody. Found by verify-tool-policy.ts the day it first had a runner,
+  // alongside the same milestone's missing section, workspace and labels.
+  //
+  // STORE_MANAGE and mutating, matching the three request_* tools above it:
+  // it proposes a real promotion for approval, which is the same shape and
+  // the same blast radius as proposing a product change.
+  request_sale: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   approve_pending_changes: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   edit_store_content: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   manage_business_asset: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },

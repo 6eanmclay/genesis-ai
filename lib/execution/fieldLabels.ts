@@ -28,6 +28,26 @@ export const FIELD_LABELS: Record<string, string> = {
   // create_product (a proposed product's name) — kept generic rather than
   // "Business Name" so it reads correctly for both, since FIELD_LABELS is a
   // flat, action-agnostic map by design (see the generic diff renderer).
+  // ---- promotions (added 2026-09-02) ------------------------------
+  //
+  // create_promotion and update_promotion have been registered and
+  // executable since the promotions milestone, and not one of their fields
+  // had a label — so an approval card offered the owner
+  // "discountType" and "amountOffInCents" as headings. Found by
+  // verify-field-labels.ts the day it first had a runner, alongside the
+  // same actions' missing nav section and missing workspace.
+  //
+  // amountOffInCents keeps the *InCents suffix deliberately: formatDiffValue
+  // renders any such field as real currency, so the raw integer never
+  // reaches the card.
+  code: "Discount Code",
+  discountType: "Discount Type",
+  percentOff: "Percent Off",
+  amountOffInCents: "Amount Off",
+  scope: "Applies To",
+  active: "Active",
+  startsAt: "Starts",
+  endsAt: "Ends",
   name: "Name",
   tagline: "Tagline",
   description: "Description",
@@ -108,6 +128,18 @@ export function formatDiffValue(key: string, value: unknown): string {
 // scripts/verify-field-labels.ts are untouched.
 export const HIDDEN_DIFF_KEYS = new Set([
   "productId",
+  // Promotions, 2026-09-02. Same category and the same reason as
+  // productId above: which promotion to act on, and which products it
+  // covers, are identifiers rather than the change being approved.
+  //
+  // productIds is hidden RATHER THAN LABELLED because labelling it would
+  // put a list of cuids on an approval card under a friendly heading,
+  // which is worse than the raw key it replaced — an internal identifier
+  // must never become human-facing. Resolving those ids to product NAMES
+  // on the card is a real improvement and a design decision, not a label
+  // fix; recorded rather than smuggled in here.
+  "promotionId",
+  "productIds",
   "designId",
   "goalRecordId",
   "challengeRecordId",

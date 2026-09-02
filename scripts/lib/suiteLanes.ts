@@ -20,6 +20,15 @@ import { join } from "path";
 
 export const SCRIPTS_DIR = join(process.cwd(), "scripts");
 
+/**
+ * Reaching for Prisma at all. ONE definition, because two lane functions now
+ * ask the same question and a second copy is how they would come to disagree
+ * — which is the whole reason this module exists.
+ */
+/** Constructs a real model client, so it calls out and can fail on billing. */
+const LIVE_MODEL_CLIENT = /from "@anthropic-ai\/sdk"|new Anthropic\(/;
+const DATABASE_BACKED = /from "@\/lib\/prisma"|prismaSystem|prisma\./;
+
 export function needsDatabase(file: string): boolean {
   const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
   if (file === "run-db-suites.ts") return false;
@@ -125,7 +134,7 @@ export function needsDatabase(file: string): boolean {
   if (file === "verify-change-detection-live.ts") return false;
   if (file === "verify-ai-usage-live.ts") return false;
   if (file === "verify-briefing-grounding-live.ts") return false;
-  return /from "@\/lib\/prisma"|prismaSystem|prisma\./.test(source);
+  return DATABASE_BACKED.test(source);
 }
 
 // ============ THE HTTP LANE (2026-08-30) ==============================
@@ -197,4 +206,85 @@ export function httpLane(file: string): HttpLane | null {
   if (configures && configures.index < importsServer) return "own";
 
   return "shared";
+}
+
+/**
+ * A suite that needs no infrastructure at all: no server, no database of
+ * any kind. Pure functions and source assertions.
+ *
+ * ============ WHY THIS EXISTS (2026-09-02, gap 23) ==================
+ *
+ * BACKEND_FOUNDATION_GAPS.md recorded that sixty-one suites bring their own
+ * Postgres and so belong to no runner. Asking the two lane functions above
+ * for every verify-* file found that, and something the gap did not record:
+ * ANOTHER 106 SUITES NEED NOTHING AT ALL and were equally unrun. Those are
+ * the cheap ones — milliseconds each, no infrastructure to arrange — and
+ * nothing had executed them since they were written.
+ *
+ * That mattered beyond tidiness. Every 'full regression' claim made in this
+ * repository has meant 'the two lanes that have runners', which is 117 of
+ * 284 suites. Naming this lane is what makes that sentence true.
+ *
+ * DERIVED, NOT LISTED. Same rule as the two above: a suite joins this lane
+ * by being neither of the others and reaching for no real Postgres, so a
+ * new pure suite is picked up the day it is written rather than when
+ * somebody remembers to add it.
+ */
+export function isCodeOnly(file: string): boolean {
+  if (file.startsWith("run-")) return false;
+  if (httpLane(file) !== null) return false;
+  if (needsDatabase(file)) return false;
+  const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+  // Brings its own Postgres — real work, but a different runner's problem.
+  // Tracked as gap 23's other half.
+  if (/startRealPostgres/.test(source)) return false;
+  // ============ NAMED EXCLUSIONS ARE NOT CODE-ONLY ================
+  //
+  // needsDatabase returns false for two different reasons: a suite genuinely
+  // needs no database, or it is database-backed and EXCLUDED BY NAME above for
+  // an environmental reason. Treating the second as code-only put
+  // verify-stripe-webhook-e2e.ts in this lane, where it failed with
+  // ECONNREFUSED — a suite excluded for needing a running server does not stop
+  // needing one because a different runner picked it up.
+  //
+  // So the source is asked directly, the same test needsDatabase ends on: a
+  // suite that reaches for Prisma at all belongs to the database lane or to
+  // its exclusions, never here.
+  if (DATABASE_BACKED.test(source)) return false;
+  // ============ A LIVE MODEL IS INFRASTRUCTURE TOO ================
+  //
+  // Seven suites construct a real Anthropic client and call it. They need no
+  // database and no server, so every other test here says code-only — and
+  // they fail with "credit balance is too low", which is a fact about the
+  // account rather than about the code. Two of them were in this lane s first
+  // run and read as defects until the error was read properly.
+  //
+  // CONSTRUCTING THE CLIENT is the test, not the ANTHROPIC_API_KEY marker
+  // verification-inventory.ts uses for its own broader question. That marker
+  // also matches verify-order-notifications.ts, which sets a FAKE key and
+  // injects a recorder rather than sending anything — excluding it would lose
+  // a suite that runs perfectly well here.
+  //
+  // THE LIMIT: a suite that reaches a live service INDIRECTLY, through a lib
+  // that constructs the client for it, is not detected. That fails loudly
+  // with a provider error rather than passing silently, which is the
+  // survivable direction, and --with-live below is how the seven are run
+  // deliberately when there is credit.
+  if (LIVE_MODEL_CLIENT.test(source)) return false;
+  return true;
+}
+
+/**
+ * The same lane, but the suites held back for constructing a real model
+ * client. run-code-suites.ts --with-live runs these deliberately, when there
+ * is credit to spend on them.
+ */
+export function isCodeOnlyWithLiveModel(file: string): boolean {
+  if (file.startsWith("run-")) return false;
+  if (httpLane(file) !== null) return false;
+  if (needsDatabase(file)) return false;
+  const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+  if (/startRealPostgres/.test(source)) return false;
+  if (DATABASE_BACKED.test(source)) return false;
+  return LIVE_MODEL_CLIENT.test(source);
 }

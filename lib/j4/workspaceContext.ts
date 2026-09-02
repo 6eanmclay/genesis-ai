@@ -63,6 +63,26 @@ const WORKSPACES = {
     label: "What you could sell",
     showing: "products Genesis suggests the business could add, which are not in the catalog yet",
   },
+  "/dashboard/finances": {
+    // Added 2026-09-02, found the same way as Promotions below and by the
+    // same suite. The nav has called this Money since the merchant
+    // financials work; J4 knew no such place, so being sent here was being
+    // sent somewhere it could not describe.
+    label: "Money",
+    showing: "what the business has earned and what has been paid out to it",
+  },
+  "/dashboard/access": {
+    label: "Access",
+    showing: "who can get into this business and what each of them is allowed to do",
+  },
+  "/dashboard/promotions": {
+    // Added 2026-09-02, the same omission as Studio and Catalog before it, and
+    // found the same way — by a suite that finally had a runner. J4 can create
+    // and update a promotion, so it has to know what the owner is looking at
+    // when it sends them here.
+    label: "Promotions",
+    showing: "the discounts and offers this business is running, and the codes customers enter",
+  },
   "/dashboard/customers": {
     label: "Customers",
     showing: "the customer list and what each customer has bought",

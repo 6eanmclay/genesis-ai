@@ -1036,6 +1036,14 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },
   update_product: { key: "products", label: "Products", href: "/dashboard/products" },
   create_product: { key: "products", label: "Products", href: "/dashboard/products" },
+  // ADDED 2026-09-02. Both actions have been registered and executable since
+  // the promotions milestone shipped, and neither had a section — so a pending
+  // promotion decision raised no badge on the nav item that owns it, and any
+  // deep link to it had nowhere to go. Found by verify-action-sections.ts on
+  // the day it first had a runner; the Promotions nav section it points at has
+  // existed the whole time.
+  create_promotion: { key: "promotions", label: "Promotions", href: "/dashboard/promotions" },
+  update_promotion: { key: "promotions", label: "Promotions", href: "/dashboard/promotions" },
   delete_product: { key: "products", label: "Products", href: "/dashboard/products" },
   update_theme: { key: "website", label: "Storefront", href: "/dashboard/website" },
   update_homepage_content: { key: "website", label: "Storefront", href: "/dashboard/website" },
