@@ -967,6 +967,68 @@ One business never remembers another's conversation, including concurrently.
 
 ---
 
+## 21. The six unresolvable observations, classified (2026-09-02)
+
+Sean, E21: do not automatically delete; classify each as demonstrably false,
+still true, or ambiguous; prepare the exact one-time operation; say which rows
+need approval. **Nothing here has been mutated.**
+
+### Why they cannot resolve themselves
+
+`resolveMissingObservations` scopes every retraction with
+`dedupeKey: { startsWith: <prefix> }`. A row written before its producer had a
+prefix is owned by no producer, so nothing will ever retract it. Eight such
+rows exist; six are ACTIVE. Neither shape can be created again — both producers
+now always prefix — so this is a bounded legacy condition, not a class of bug.
+
+### The six
+
+| # | Business | dedupeKey | Verdict | Evidence |
+|---|---|---|---|---|
+| 1 | `cofoundr` | `cms3icnnk000b04jvqdi9te1r` | **Demonstrably false** | "Starting opportunistic business review — still pending since 7/27". The underlying `ExecutionLog` is still PENDING, and its action is `genesis.recommendations.generate` — added to `AWAITING_A_HUMAN` *after* this row was written, precisely because `recordGenesisExecution` mints a fresh `executionId` per call so the row can never be paired with its own completion. The codebase has already ruled this is not a stall. |
+| 2 | `socks-galore` | `cms4qy0wx000604la5uvuyh92` | **Demonstrably false** | Identical shape, 7/28. Same ruling. |
+| 3 | `cubit-coil` | `missing_seo_metadata` | **Demonstrably false** | Claims no SEO title or meta description. `blueprint.marketingAssets.seoTitle` reads "Cubit & Coil \| Hand-Wound Copper Tensor Rings" and `seoMetaDescription` is populated — and that title is what the live storefront serves today. |
+| 4 | `cubit-coil` | `missing_hero_copy` | **Demonstrably false** | Claims "hero headline and subheadline are both empty". They are "Wound by hand, measured by cubit" and "Handmade copper tensor rings for meditation, sacred geometry, and intentional living." |
+| 5 | `cofoundr` | `missing_product_images` | **STILL TRUE** | Claims Spark, Launch, Operate and Scale have no images. Checked: all four still have `imageUrl` null, 35 days on. (A fifth product, Logo Tee, does have one — the claim names the four and is accurate about them.) |
+| 6 | `socks-galore` | `usp_performance_missing_from_hero` | **Ambiguous** | Claims the hero leans on cozy warmth while the stated USP is performance. The hero does read as cozy — "Socks made for staying in." / "warm, well-made pairs for cold floors and slow evenings" — so the *observation* is accurate; whether performance is still this business's positioning is an editorial judgment only the owner can settle. There is also a live PENDING `update_hero` proposal carrying this exact topicKey, so the finding is not orphaned. |
+
+Four false, one true, one ambiguous. **The point of E21 was never that these
+rows are wrong — most are or were right. It is that nothing can ever make them
+right again**, so whichever become false stay on screen indefinitely, and two
+already have.
+
+### The exact operation
+
+`scripts/resolve-legacy-observations.ts`, written and **not run**. It takes an
+env file and **one** observation id, is a dry run unless given `--apply`, and
+sets exactly the two fields ordinary resolution sets — `status: "RESOLVED"` and
+`resolvedAt` — under a conditional `updateMany` so a concurrent resolution wins
+rather than being stamped over.
+
+It **resolves, never deletes**: every other model here supersedes by status, and
+the record that J4 once believed this is history the Learn stage reasons over.
+It **refuses a prefixed dedupeKey outright**, so it cannot be pointed at a
+healthy row whose own producer would have retracted it. There is no `--all` and
+no prefix mode, deliberately — six rows across three businesses is six
+decisions, and a bulk mode is exactly how the one that is still true would go
+with the rest.
+
+### What needs Sean, and what it needs from him
+
+- **Rows 1–4 (demonstrably false)** — approval to run the script once per row.
+  These are the straightforward ones and the evidence is above.
+- **Row 5 (`missing_product_images`, still true)** — **do not resolve yet.**
+  Resolving a true finding hides it. The right order is to let the current
+  prefixed producer raise it again as `ai_review:missing_product_images`, then
+  retire the legacy duplicate; retiring it first leaves a window where a real
+  problem is invisible. Needs a decision on that sequencing, not just approval.
+- **Row 6 (`usp_performance_missing_from_hero`, ambiguous)** — needs Sean's
+  judgment rather than approval: is performance still how `socks-galore` is
+  positioned? If yes the finding stands and the pending `update_hero` proposal
+  is the answer to it; if no, it can be retired with the other four.
+
+---
+
 ## 20. Cursor-aware pruning, designed and not built (2026-09-02)
 
 `lib/retention/policy.ts` gives `businessEvent` a `decide` verdict whose `needs`
