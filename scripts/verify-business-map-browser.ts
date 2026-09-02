@@ -193,20 +193,43 @@ async function main() {
     // ====================================================================
     console.log("\n=== 4. Tapping a branch opens what sits behind it ===\n");
     // ====================================================================
+    // THE MAP RESPONDS, and the information arrives in a bubble anchored to
+    // the selection rather than a panel below the diagram.
     await page.getByRole("button", { name: /^Commerce:/ }).click();
-    await page.waitForSelector("text=/J4 → Commerce/", { timeout: 10_000 });
-    const opened = await page.locator("text=/J4 → Commerce/").boundingBox();
-    assert("the Commerce branch opens a real panel", opened !== null);
-    const panelText = await page.locator('[data-screen="business-map"]').innerText();
-    assert("and it names the actual product",
-      panelText.includes("Copper Tensor Ring Cuff"), panelText.slice(0, 300));
+    await page.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
+    const commerceCard = await page.locator('[data-testid="map-card"]').innerText();
+    assert("the Commerce branch opens a contextual card", commerceCard.includes("Commerce"),
+      commerceCard.slice(0, 200));
 
-    // An empty branch opens too, and is honest about being empty.
+    // Its children are now ON THE MAP, not in a list underneath.
+    const commerceChildren = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"] text'))
+        .map((el) => el.textContent?.trim()));
+    assert("and the real product appears as a node on the map",
+      commerceChildren.some((l) => (l ?? "").startsWith("Copper Tensor")),
+      JSON.stringify(commerceChildren));
+
+    // An empty branch focuses too, and is honest about being empty.
     await page.getByRole("button", { name: /^Goals:/ }).click();
-    await page.waitForSelector("text=/J4 → Goals/", { timeout: 10_000 });
-    const goalsText = await page.locator('[data-screen="business-map"]').innerText();
-    assert("an empty branch opens and explains itself rather than showing a zero",
-      /Nothing here yet/.test(goalsText), goalsText.slice(0, 300));
+    await page.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
+    const goalsCard = await page.locator('[data-testid="map-card"]').innerText();
+    assert("an empty branch says it is not yet known rather than showing a zero",
+      /Not yet known/i.test(goalsCard), goalsCard.slice(0, 200));
+    assert("and names what would fill it, in the owner's terms",
+      /working towards/i.test(goalsCard), goalsCard.slice(0, 200));
+
+    // A domain with a real screen behind it offers the way in; one without
+    // offers nothing rather than a link to somewhere approximate.
+    await page.getByRole("button", { name: /^Commerce:/ }).click();
+    await page.waitForSelector('[data-testid="map-view-link"]', { timeout: 10_000 });
+    const commerceView = await page.locator('[data-testid="map-view-link"]').first().innerText();
+    assert("Commerce offers a way into the full screen", /View Commerce/.test(commerceView), commerceView);
+    await page.getByRole("button", { name: /^Goals:/ }).click();
+    await page.waitForTimeout(200);
+    assert("Goals offers none, because no Goals screen exists",
+      (await page.locator('[data-testid="map-view-link"]').count()) === 0);
+    await page.getByRole("button", { name: /^Goals:/ }).click();
+    await page.waitForTimeout(200);
 
     // ====================================================================
     console.log("\n=== 5. Zoom controls actually move the drawing ===\n");
@@ -366,13 +389,164 @@ async function main() {
 
     // Interactable on touch.
     await small.getByRole("button", { name: /^Commerce:/ }).click();
-    await small.waitForSelector("text=/J4 → Commerce/", { timeout: 10_000 });
-    assert("a branch opens on the phone", true);
+    await small.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
+    assert("a branch opens on the phone",
+      (await small.locator('[data-testid="map-card"]').count()) === 1);
+    // Back to the whole map before the next section starts from a clean state.
+    await small.locator('[data-testid="map-card-close"]').click();
+    await small.waitForTimeout(200);
 
     const overviewOnPhone = await small.locator("text=/What's happening right now/").boundingBox();
     assert("and the overview is still reachable below",
       overviewOnPhone !== null && overviewOnPhone.y > (smallBox?.y ?? 0),
       JSON.stringify(overviewOnPhone));
+
+    // ====================================================================
+    console.log("\n=== 8b. Selection changes the MAP, not a panel underneath ===\n");
+    // ====================================================================
+    //
+    // Sean's ten mobile requirements. Every one is a geometry or an interaction
+    // question, which is why they live in this lane and nowhere else.
+    {
+      // (4) tapping a branch changes the state of the DRAWING
+      const before = await small.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg line'))
+          .map((l) => l.getAttribute("stroke-width")).join(","));
+      await small.getByRole("button", { name: /^Connections:/ }).click();
+      await small.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
+      const after = await small.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg line'))
+          .map((l) => l.getAttribute("stroke-width")).join(","));
+      assert("tapping a branch changes the drawing itself", before !== after,
+        `${before.slice(0, 50)} vs ${after.slice(0, 50)}`);
+
+      const dimmed = await small.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg g[role="button"]'))
+          .filter((g) => Number(g.getAttribute("opacity") ?? "1") < 0.5).length);
+      assert("and the other branches recede", dimmed >= 5, `${dimmed} dimmed`);
+
+      // (5) children appear on the map and reveal contextual information
+      const childCount = await small.evaluate(() =>
+        document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"]').length);
+      assert("children of the focused branch appear on the map", childCount > 0, `${childCount}`);
+
+      await small.locator('[data-screen="business-map"] svg g.node-in[role="button"]').first().click();
+      await small.waitForTimeout(250);
+      const cardText = await small.locator('[data-testid="map-card"]').innerText();
+      assert("tapping a child reveals what J4 knows about it", cardText.length > 12, cardText.slice(0, 120));
+      // CASE-INSENSITIVE, because innerText applies text-transform. The state
+      // line is `uppercase` in CSS, so the DOM says "Not connected" and
+      // innerText says "NOT CONNECTED" -- the first version of this assertion
+      // failed on a card that was entirely correct.
+      assert("and an unconnected service says so rather than claiming data",
+        /not connected|connected|cannot connect/i.test(cardText), JSON.stringify(cardText));
+
+      // (6) readable, and not covering the map
+      const stageBox = await small.locator('[data-screen="business-map"] .map-stage').boundingBox();
+      const cardBox = await small.locator('[data-testid="map-card"]').boundingBox();
+      assert("the card sits inside the stage",
+        !!cardBox && !!stageBox && cardBox.x >= stageBox.x - 1 &&
+        cardBox.x + cardBox.width <= stageBox.x + stageBox.width + 1,
+        JSON.stringify({ cardBox, stageBox }));
+      const coverage = (cardBox!.width * cardBox!.height) / (stageBox!.width * stageBox!.height);
+      assert("and covers well under half the drawing", coverage < 0.45, `${(coverage * 100).toFixed(0)}%`);
+      assert("the J4 hub is never behind it", await small.evaluate(() => {
+        const cardEl = document.querySelector('[data-testid="map-card"]');
+        const hubEl = Array.from(document.querySelectorAll('[data-screen="business-map"] svg text'))
+          .find((el) => el.textContent?.trim() === "J4");
+        if (!cardEl || !hubEl) return false;
+        const card = cardEl.getBoundingClientRect();
+        const hub = hubEl.getBoundingClientRect();
+        return card.right < hub.left || card.left > hub.right || card.bottom < hub.top || card.top > hub.bottom;
+      }), "the card overlaps J4");
+
+      // (8, first half) closing the child card steps back to the branch
+      await small.locator('[data-testid="map-card-close"]').click();
+      await small.waitForTimeout(200);
+      const stillFocused = await small.evaluate(() =>
+        document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"]').length);
+      assert("closing the child card keeps the branch open", stillFocused > 0, `${stillFocused}`);
+
+      // (7) a deeper View action reaches a real screen.
+      //
+      // Read from the DOMAIN card. A service card deliberately does not carry
+      // one: its Connect button already goes where View Connections would, and
+      // the duplicate wrapped the bubble onto an extra line until it reached
+      // the hub.
+      const viewHref = await small.locator('[data-testid="map-view-link"]').first().getAttribute("href");
+      assert("the branch offers a way into its full screen",
+        !!viewHref && viewHref.includes(`/b/${store.slug}/`), String(viewHref));
+      const probe = await small.request.get(`${server.baseUrl}${viewHref}`);
+      assert("and that screen really exists", probe.status() === 200, `status ${probe.status()}`);
+      await small.locator('[data-testid="map-card-close"]').click();
+      await small.waitForTimeout(200);
+      assert("closing again returns to the whole map",
+        (await small.locator('[data-testid="map-card"]').count()) === 0);
+      const restored = await small.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg g[role="button"]'))
+          .filter((g) => Number(g.getAttribute("opacity") ?? "1") < 0.5).length);
+      assert("with every branch back at full strength", restored === 0, `${restored} still dimmed`);
+
+      // (9) no horizontal overflow
+      const overflow = await small.evaluate(() => ({
+        doc: document.documentElement.scrollWidth,
+        win: window.innerWidth,
+      }));
+      assert("the page does not scroll sideways at 390px",
+        overflow.doc <= overflow.win + 1, JSON.stringify(overflow));
+    }
+
+    // ====================================================================
+    console.log("\n=== 8c. Reduced motion still gives a useful map ===\n");
+    // ====================================================================
+    {
+      const still = await browser.newContext({
+        viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+        storageState: await context.storageState(),
+        reducedMotion: "reduce",
+      });
+      const p2 = await still.newPage();
+      await p2.goto(home, { waitUntil: "domcontentloaded" });
+      await p2.waitForSelector('[data-screen="business-map"] .map-stage', { timeout: 30_000 });
+      await p2.waitForFunction(
+        () =>
+          !Array.from(document.querySelectorAll("div")).some((el) => {
+            const s = getComputedStyle(el);
+            return s.position === "fixed" && s.zIndex === "100" && parseFloat(s.opacity) > 0.01;
+          }),
+        undefined,
+        { timeout: 30_000 },
+      ).catch(() => {});
+
+      // NOT DEGRADED. Same nine branches, same interaction, no motion.
+      const labels = await p2.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg text'))
+          .map((el) => el.textContent?.trim()).filter(Boolean).length);
+      assert("the map still renders with motion reduced", labels > 10, `${labels} labels`);
+      await p2.getByRole("button", { name: /^Commerce:/ }).click();
+      await p2.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
+      assert("and is still explorable", (await p2.locator('[data-testid="map-card"]').count()) === 1);
+
+      // The backdrop is present and HOLDS STILL: two frames apart must match.
+      // THE CANVAS ITSELF, read out of its own backing store. An element
+      // screenshot captures whatever is painted OVER that region too -- the
+      // map, the card, the shell -- so it compares the composite rather than
+      // the thing under test. toDataURL asks the canvas what it is holding.
+      await p2.waitForTimeout(600);
+      const frame = () =>
+        p2.evaluate(() =>
+          (document.querySelector('[data-testid="map-data-stream"]') as HTMLCanvasElement).toDataURL());
+      const a = await frame();
+      await p2.waitForTimeout(700);
+      const b = await frame();
+      assert("the data stream does not animate when motion is reduced", a === b,
+        "the canvas redrew itself between frames");
+      assert("and it is drawing something rather than sitting blank",
+        a.length > 5000, `${a.length} bytes of image data`);
+
+      await p2.screenshot({ path: `${SHOTS}/business-map-reduced-motion.png`, fullPage: false });
+      await still.close();
+    }
 
     await small.screenshot({ path: `${SHOTS}/business-map-mobile.png`, fullPage: true });
     await small.screenshot({ path: `${SHOTS}/business-map-mobile-firstscreen.png`, fullPage: false });

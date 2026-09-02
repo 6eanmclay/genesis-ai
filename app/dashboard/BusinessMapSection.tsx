@@ -5,7 +5,9 @@ import { connectableServices, whatItAdds } from "@/lib/businessModel/connectionD
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { signupFor } from "@/lib/businessModel/signupDestinations";
-import { BusinessMapCanvas } from "./BusinessMapCanvas";
+import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
+import { BusinessMapCanvas, type MapService, type DomainDestination } from "./BusinessMapCanvas";
+import type { MapDomainKey } from "@/lib/businessModel/businessMap";
 
 // THE FRONT DOOR, ASSEMBLED.
 //
@@ -56,7 +58,42 @@ export async function BusinessMapSection({
   ]);
 
   const map = businessMap({ understanding, facts, slug: storeSlug, designCount });
-  const services = connectableServices(integrations.map((i) => i.provider));
+
+  // ============ WHAT EACH SERVICE BRINGS, IN THE CATALOGUE'S OWN WORDS ===
+  //
+  // Sean: "The exact copy should be based on capabilities that actually exist
+  // or are explicitly planned. Do not claim data J4 cannot currently access."
+  //
+  // So the description is read off CONNECTOR_CATALOG rather than written here.
+  // Those lines were authored per provider and already carry their own limits —
+  // TikTok's says outright that audience demographics are not available through
+  // its standard API. A list invented in this file would lose that.
+  const descriptions = new Map(CONNECTOR_CATALOG.map((e) => [e.id, e.description]));
+  const services: MapService[] = connectableServices(integrations.map((i) => i.provider)).map(
+    (s) => ({
+      ...s,
+      description: descriptions.get(s.id) ?? "",
+      signupUrl: signupFor(s.id, s.available)?.url ?? null,
+    }),
+  );
+
+  // ============ WHERE A BRANCH GOES WHEN THERE IS A REAL SCREEN =========
+  //
+  // Sean: "Every meaningful node/domain should have a way to go deeper when a
+  // full screen already exists." The operative clause is the last one — a
+  // domain with no screen behind it gets no button rather than a link to
+  // somewhere approximate. Goals and Learned have none today, and saying so by
+  // omission is more honest than sending an owner to a page that will not
+  // answer them.
+  const destinations: Partial<Record<MapDomainKey, DomainDestination>> = {
+    business: { label: "View Identity", href: `${basePath}/brand` },
+    commerce: { label: "View Commerce", href: `${basePath}/orders` },
+    customers: { label: "View Customers", href: `${basePath}/customers` },
+    financials: { label: "View Money", href: `${basePath}/finances` },
+    social: { label: "View Social", href: `${basePath}/studio/social` },
+    creation: { label: "View Studio", href: `${basePath}/studio` },
+    connections: { label: "View Connections", href: `${basePath}/connections` },
+  };
 
   const known = map.domains.filter((d) => d.certainty !== "unknown").length;
 
@@ -76,7 +113,7 @@ export async function BusinessMapSection({
       </p>
 
       <div className="mt-4">
-        <BusinessMapCanvas map={map} />
+        <BusinessMapCanvas map={map} services={services} destinations={destinations} />
       </div>
 
       {/* ---- what a connection would add ------------------------------------
