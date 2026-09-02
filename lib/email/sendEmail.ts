@@ -71,11 +71,78 @@ export function displayNameFor(rawName: string): string | null {
   return `"${escaped}"`;
 }
 
+/**
+ * An address that can never receive mail, refused before it costs us anything.
+ *
+ * ============ WHY THIS SHIPS BEFORE THE FIRST REAL SEND =============
+ *
+ * Sean, 2026-09-01, on E19a. Four of the seven orders in production belong
+ * to beta-test stores whose buyer and owner addresses end in
+ * @example.test. RFC 2606 reserves .test, .example, .invalid and
+ * .localhost precisely so they can never resolve, so every one of those is
+ * a guaranteed hard bounce — and they would be among the first messages a
+ * brand-new sending domain ever produced. Bounce rate is the primary
+ * signal a mailbox provider judges a new domain on, and roughly half the
+ * first batch bouncing is how a domain starts its life in a spam folder.
+ *
+ * REFUSED, NOT QUIETLY MARKED SENT. This throws, so the caller's claim is
+ * never written and the order screen keeps saying the customer has not
+ * been told — which is true. Sean was explicit: do not mark those test
+ * owners as notified falsely. Whether those four test stores are deleted
+ * is a separate decision and nothing here deletes anything.
+ */
+export class UndeliverableAddressError extends Error {
+  constructor(readonly address: string, readonly tld: string) {
+    super(
+      `.${tld} is a reserved domain that can never receive mail (RFC 2606), so ` +
+        `nothing was sent to this address.`
+    );
+    this.name = "UndeliverableAddressError";
+  }
+}
+
+/**
+ * The four RFC 2606 / RFC 6761 reserved names. Deliberately a closed list
+ * of what is reserved BY STANDARD, not a guess at what looks like a test
+ * address: refusing anything that merely contains "test" would refuse real
+ * customers at real domains.
+ */
+const RESERVED_TLDS: ReadonlySet<string> = new Set([
+  "test",
+  "example",
+  "invalid",
+  "localhost",
+]);
+
+/**
+ * The reserved TLD an address ends in, or null when it is deliverable as
+ * far as this check is concerned. Exported so the distinction is directly
+ * testable without an email provider existing.
+ */
+export function reservedTldOf(address: string): string | null {
+  const at = address.lastIndexOf("@");
+  if (at < 0) return null;
+  const domain = address.slice(at + 1).trim().toLowerCase().replace(/\.$/, "");
+  const dot = domain.lastIndexOf(".");
+  // A bare domain with no dot at all is its own last label — "user@localhost".
+  const tld = dot < 0 ? domain : domain.slice(dot + 1);
+  return RESERVED_TLDS.has(tld) ? tld : null;
+}
+
 export async function sendEmail(input: SendEmailInput): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.EMAIL_FROM_ADDRESS;
   if (!apiKey || !fromAddress) {
     throw new EmailNotConfiguredError();
+  }
+
+  // BEFORE THE PROVIDER IS EVEN CONSTRUCTED. A reserved address is not a
+  // send that failed, it is a send that must never be attempted — the
+  // bounce it would earn is charged to our sending reputation, not to the
+  // caller.
+  const reserved = reservedTldOf(input.to);
+  if (reserved) {
+    throw new UndeliverableAddressError(input.to, reserved);
   }
 
   // THE ADDRESS IS ALWAYS OURS. Only the name in front of it changes, so a

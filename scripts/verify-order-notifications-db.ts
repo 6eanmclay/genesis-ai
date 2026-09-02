@@ -4,6 +4,7 @@ import { prisma, prismaSystem } from "@/lib/prisma";
 import { notifyCustomerDelivered } from "@/lib/orders/deliveryNotification";
 import { notifyCustomerRefunded } from "@/lib/orders/refundNotification";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
+import { reservedTldOf, sendEmail, UndeliverableAddressError } from "@/lib/email/sendEmail";
 import { drain } from "@/lib/jobs/queue";
 import { makeNotificationHandler } from "@/lib/orders/notificationJobs";
 
@@ -43,6 +44,11 @@ async function main(): Promise<void> {
   // values are never used: every call injects its own sender.
   process.env.RESEND_API_KEY = "harness-not-a-real-key";
   process.env.EMAIL_FROM_ADDRESS = "orders@harness.test";
+  // AND THE BACKSTOP MUST BE AUTHORISED TO REACH BACK (2026-09-02).
+  // Configured to send and authorised to sweep history are two separate
+  // switches now; without this the sweep correctly does nothing, which is
+  // asserted directly in section 6 rather than assumed here.
+  process.env.EMAIL_NOTIFICATIONS_START_AT = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   await requireTestDatabase(prismaSystem);
 
@@ -240,8 +246,116 @@ async function main(): Promise<void> {
     eq("with no email configured the sweep skips rather than churns",
       // ownerSales joined this shape on 2026-09-01, when the merchant's own
       // new-sale notice gained the backstop the three customer notices had.
-      skipped, { confirmations: 0, deliveries: 0, refunds: 0, ownerSales: 0, skipped: true });
+      skipped, { confirmations: 0, deliveries: 0, refunds: 0, ownerSales: 0, skipped: true,
+        skipReason: "email_not_configured" });
     process.env.RESEND_API_KEY = "harness-not-a-real-key";
+
+    // ==================================================================
+    console.log("\n=== 6. The backstop has a beginning ===\n");
+    // ==================================================================
+    //
+    // Measured in production 2026-09-02 and this is what it protects
+    // against: seven paid orders with no confirmation claim and no owner
+    // claim, zero OutboundOperation rows for any order-notification key,
+    // and orders.notifications live and succeeding three times a day by
+    // doing nothing. Setting RESEND_API_KEY alone would have made the next
+    // tick enqueue all seven, some six weeks old, to three real customers.
+
+    const horizon = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const beforeHorizon = await makeOrder({
+      createdAt: new Date(horizon.getTime() - 40 * 24 * 60 * 60 * 1000),
+    });
+    const afterHorizon = await makeOrder({
+      createdAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+
+    process.env.EMAIL_NOTIFICATIONS_START_AT = horizon.toISOString();
+    const bounded = await runDueOrderNotifications(new Date(), record);
+    await drain({ "notification.order": makeNotificationHandler(record) }, { maxJobs: 50 });
+
+    const oldOne = await prisma.order.findUniqueOrThrow({
+      where: { id: beforeHorizon.id }, select: { confirmationSentAt: true, ownerNotifiedAt: true },
+    });
+    eq("an order from before the horizon is never swept", oldOne.confirmationSentAt, null);
+    eq("and its owner is not told either, six weeks late", oldOne.ownerNotifiedAt, null);
+
+    // THE CONTROL. Without it the assertion above passes for a sweep that
+    // has simply stopped working, which is the failure this whole change
+    // could most easily become.
+    const newOne = await prisma.order.findUniqueOrThrow({
+      where: { id: afterHorizon.id }, select: { confirmationSentAt: true },
+    });
+    assert("an order from after the horizon still gets its receipt",
+      newOne.confirmationSentAt !== null, JSON.stringify(bounded));
+
+    // ============ AND NO HORIZON MEANS NOTHING, NOT EVERYTHING =====
+    delete process.env.EMAIL_NOTIFICATIONS_START_AT;
+    const unset = await runDueOrderNotifications(new Date(), record);
+    eq("with no horizon the sweep reaches back for nothing at all",
+      unset, { confirmations: 0, deliveries: 0, refunds: 0, ownerSales: 0, skipped: true,
+        skipReason: "no_horizon" });
+
+    // A TYPO MUST NOT BECOME THE BEGINNING OF TIME. An unparseable date
+    // resolving to 1970 would sweep everything, which is the exact accident
+    // this exists to stop — so it fails closed, the same as unset.
+    process.env.EMAIL_NOTIFICATIONS_START_AT = "yesterday please";
+    const nonsense = await runDueOrderNotifications(new Date(), record);
+    eq("an unparseable horizon fails closed rather than open",
+      nonsense.skipReason, "no_horizon");
+
+    // And the pre-horizon order is STILL untouched after all of that.
+    const stillOld = await prisma.order.findUniqueOrThrow({
+      where: { id: beforeHorizon.id }, select: { confirmationSentAt: true },
+    });
+    eq("nothing along the way quietly swept the old order", stillOld.confirmationSentAt, null);
+
+    process.env.EMAIL_NOTIFICATIONS_START_AT = horizon.toISOString();
+
+    // ==================================================================
+    console.log("\n=== 7. An address that can never receive mail ===\n");
+    // ==================================================================
+    //
+    // E19a. Four of the seven production orders are @example.test, reserved
+    // by RFC 2606 and guaranteed to hard-bounce. They would be among the
+    // first messages a brand-new sending domain ever produced.
+
+    eq("a reserved test address is recognised", reservedTldOf("buyer@example.test"), "test");
+    eq("so is .invalid", reservedTldOf("a@b.invalid"), "invalid");
+    eq("so is .example", reservedTldOf("a@b.example"), "example");
+    eq("so is a bare localhost with no dot at all", reservedTldOf("a@localhost"), "localhost");
+    eq("and a trailing-dot FQDN does not slip past", reservedTldOf("a@b.test."), "test");
+
+    // THE OPPOSITE CASE, which is the one that would lose real customers.
+    // Three real buyers are waiting on this path.
+    eq("a real address is not refused", reservedTldOf("sarah@gmail.com"), null);
+    eq("nor is a domain that merely contains the word test",
+      reservedTldOf("buyer@testkitchen.co.uk"), null);
+    eq("nor a .co.uk that ends in a real TLD", reservedTldOf("a@b.example.com"), null);
+
+    // REFUSED, NOT QUIETLY MARKED SENT. Sean was explicit: do not mark
+    // those test owners as notified falsely. So the real sendEmail is used
+    // here rather than the recording sender — it is the only assertion in
+    // this suite that must reach the production function, because the
+    // refusal IS the behaviour, and it throws before any provider is built.
+    let refused: unknown = null;
+    try {
+      await sendEmail({ to: "buyer@example.test", subject: "s", html: "<p>h</p>" });
+    } catch (error) {
+      refused = error;
+    }
+    assert("sending to a reserved address throws rather than bouncing",
+      refused instanceof UndeliverableAddressError, String(refused));
+
+    const untold = await makeOrder({
+      buyerEmail: "beta@example.test",
+      createdAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+    await runDueOrderNotifications(new Date(), sendEmail);
+    await drain({ "notification.order": makeNotificationHandler(sendEmail) }, { maxJobs: 50 });
+    const stillUntold = await prisma.order.findUniqueOrThrow({
+      where: { id: untold.id }, select: { confirmationSentAt: true },
+    });
+    eq("and the order is not falsely claimed as confirmed", stillUntold.confirmationSentAt, null);
   }
 
   console.log(failures === 0 ? `\nAll ${passes} checks passed.` : `\n${failures} check(s) failed.`);

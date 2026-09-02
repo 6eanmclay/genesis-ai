@@ -80,6 +80,13 @@ async function main(): Promise<void> {
   const priorKey = process.env.RESEND_API_KEY;
   const priorFrom = process.env.EMAIL_FROM_ADDRESS;
   process.env.RESEND_API_KEY = "re_test_key";
+  // AND THE BACKSTOP MUST BE AUTHORISED TO REACH BACK (2026-09-02).
+  // Turning email on no longer authorises the sweep to sweep history —
+  // EMAIL_NOTIFICATIONS_START_AT is a second, independent switch, and
+  // without it the sweep correctly reaches back for nothing. Set generously
+  // here so these fixtures' own orders are inside it; the horizon's own
+  // behaviour is asserted in verify-order-notifications-db.ts section 6.
+  process.env.EMAIL_NOTIFICATIONS_START_AT = new Date(0).toISOString();
   process.env.EMAIL_FROM_ADDRESS = "genesis@example.test";
 
   console.log("\n--- the sweep queues; it no longer sends ---\n");

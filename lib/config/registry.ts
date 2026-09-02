@@ -131,6 +131,16 @@ export const CONFIG: ConfigEntry[] = [
   { name: "EMAIL_FROM_ADDRESS", group: "email", requirement: "production", secret: false,
     purpose: "The address those emails come from.",
     absence: "Sending is disabled even with an API key." },
+  { name: "EMAIL_NOTIFICATIONS_START_AT", group: "email", requirement: "optional", secret: false,
+    purpose:
+      "The instant from which the order-notification backstop may notice an unnotified " +
+      "order. An ISO timestamp. Set it to the moment email goes live, so the sweep " +
+      "catches what the inline send missed minutes ago and never replays history.",
+    absence:
+      "The backstop sends nothing retroactively — deliberately fail-closed, and " +
+      "deliberately a second switch, so turning email on cannot by itself replay every " +
+      "order this platform has ever taken. Inline confirmations at purchase time are " +
+      "unaffected and still send." },
 
   // ---- storage -----------------------------------------------------------
   { readBySdk: true, name: "BLOB_READ_WRITE_TOKEN", group: "storage", requirement: "production", secret: true,

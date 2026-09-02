@@ -49,8 +49,9 @@ what exactly is required, and what happens the moment it exists.
 | **E18** | **Tax is not recorded on an order, anywhere.** No column on `Order`, `OrderItem` or any other model holds a tax amount, and checkout never asks Stripe for one. The order detail screen says "Not recorded — check Stripe" rather than printing a zero, because a zero is a claim that no tax was charged and this platform cannot make it. | **What is required from you**: whether Genesis should collect tax at all. If yes, that is Stripe Tax (a setting on your account plus `automatic_tax` on the session) and a column to store `total_details.amount_tax` — a real piece of work, not a display fix. If no, the current wording is already correct and this line can close. Either way it is an accounting decision rather than an engineering one, which is why nothing was guessed. |
 | **E19** | **No customer OR merchant has ever received an email from Genesis.** Confirmed against the live database: `confirmationSentAt` is null on every order ever placed, and so is `ownerNotifiedAt`. `isEmailConfigured()` is false without `RESEND_API_KEY` and `EMAIL_FROM_ADDRESS`, so `sendEmail` refuses honestly rather than pretending — the machinery is correct and has never had a key. | Two people have paid and neither has had a receipt; the merchant has never been told a sale happened either. **These are two separate required events** — a customer's transactional confirmation and a merchant's new-sale notice — with separate claim columns, separate queue keys and separate sweeps, so configuring email switches on both rather than one standing in for the other. **What is required from you**: a Resend account and a verified sending domain, on a dedicated subdomain. Until then the order screen's amber "Not yet" rows are the only channel, and the merchant is the only one who can tell a buyer anything. **Corrected 2026-09-02 — this entry had the consequence backwards.** It said the sweep had already enqueued a job per order, spending the keys, so the existing orders would *not* be announced retroactively. Checked against the live database: **there are no notification `Job` rows at all** — the only jobs that have ever run are `telemetry.prune`, `retention.sweep` and `security.prune`. `runDueOrderNotifications` checks `isEmailConfigured()` **before** it reads any order (`lib/orders/notificationSweep.ts:132`) and returns `skipped: true` without enqueuing anything, so no key has ever been claimed. The real consequence is the opposite one and it is a decision, not a side effect: **the first sweep after Resend is configured will send all seven at once**, including the 19 July order, six weeks late, and the two real customers who paid $29.99 and $47.83. **What is required from you**: whether those seven are announced retroactively, announced with wording that acknowledges the delay, or marked as handled outside the system and left unsent. Four of them are the `@example.test` addresses E19a already refuses, so the live blast is three messages, two of them to real buyers. |
 | **E19a** | **The reserved-domain guard, required BEFORE email goes live.** Four of the seven orders in production belong to beta-test stores whose owner addresses end in `@example.test`. `.test` is reserved by RFC 2606 and can never receive mail, so those four are guaranteed hard bounces — and they would be among the first messages a brand-new sending domain ever produced, roughly a 57% bounce rate on day one. Bounce rate is the primary reputation signal. | **Sean, 2026-09-01**: implement a guard that refuses delivery to reserved TLDs (`.test`, `.invalid`, `.example`, `.localhost`) before email goes live. **Do NOT mark those test owners as notified falsely** — the claim column stays truthful. Whether the four test stores are ultimately deleted is a separate cleanup decision and nothing deletes them automatically. Domains are being acquired around the 21st–23rd; Resend is configured then, and this guard ships with it. |
-| **E20** | **What should happen to a proposal nobody ever decided.** Audited 2026-09-02 against the live database: **48 proposals sit at `PENDING_APPROVAL` across 13 businesses**; 4 are more than 30 days old, 23 are 14–29 days old, and the oldest is 36 days. Nothing expires them and nothing ages them out — there is no staleness concept on `ApprovalRequest` at all. Two facts make that more than untidiness. **First, approving one applies a frozen payload.** `performApproveGenesisAction` hands `approval.input` to `execute()` verbatim and never re-reads the store, so approving a month-old proposal applies a plan written against a store that may no longer exist in that form. This is live and demonstrable today: `paypal-test-books` has a pending `placeholder_store_identity` proposal captured when its name, tagline and description were all empty strings — the store has since been given a real identity ("PayPal Test Books" / "Bookkeeping that finally makes sense" / a full description), and approving that card would overwrite all three on the grounds of a placeholder that is no longer there. **Second, the check that would prevent it already exists.** Every one of the 33 action definitions has `getCurrentValues(context)`, and it is the same function whose output was frozen into `previousValues` when the proposal was made — so "has the store moved since?" is one call and one comparison, at a site that already assembles the context (`buildActionContext`, `lib/execution/genesisAutonomy.ts:132`). It is used today only to reverse an executed action, never to guard one. | An owner's own work can be silently overwritten by a proposal they left sitting, and the longer they leave it the more likely that becomes. **What is required from you** is only what a drifted proposal should DO, because "apply it silently" is the one answer I will not choose on your behalf. My recommendation: at approval time compare `getCurrentValues` against the frozen `previousValues`; when they differ, refuse the execution and tell the owner what changed, rather than expiring proposals on a timer — age is a proxy, drift is the actual condition, and a 6-day-old proposal can overwrite yesterday's edit just as easily as a 36-day-old one. The alternatives are (a) expire at N days and accept that recent overwrites still happen, (b) show the drift on the card and let the owner approve anyway, or (c) both: refuse, and offer to re-propose against the store as it is now. Nothing is built until you pick. Two smaller findings need no decision and are noted here only so they are not lost: `supersedePendingApproval` **deletes** the old row (`deleteMany`) where every other model in this codebase supersedes by status, so `ApprovalRequest`'s documented `SUPERSEDED` state is never written and that history is destroyed while `EXECUTED` and `REJECTED` history is kept; and `GenesisObservation.approvalRequestId` is an unenforced pointer that deletion can dangle — checked, and every dereference today re-reads the row and handles its absence, so this is a latent hazard rather than a live defect. |
-| **E21** | **Six observations on screen that nothing can ever retract.** Audited 2026-09-02 against the live database. `resolveMissingObservations` scopes every retraction with `dedupeKey: { startsWith: <prefix> }`, so a `GenesisObservation` written before its producer had a prefix is owned by no producer and can never be resolved. Eight such rows exist; **six are still ACTIVE**, the oldest last confirmed 36 days ago, across `cubit-coil`, `cofoundr` and `socks-galore`. Two are keyed on a bare `ExecutionLog` cuid and read "Starting opportunistic business review — still pending since 7/27"; their underlying action is `genesis.recommendations.generate`, which was later added to `AWAITING_A_HUMAN` precisely because it can never be paired with its own completion — so those two are false by our own later ruling. The other four are pre-`ai_review:` findings. **They are not uniformly wrong, and that is the point**: `cubit-coil`'s `missing_seo_metadata` is false (`blueprint.marketingAssets.seoTitle` is set, and it is what the live storefront serves), while `cofoundr`'s `missing_product_images` is still perfectly true — Spark, Launch, Operate and Scale all still have no image. Neither row shape can be created again; both producers now always prefix. Full detail in `BI_ENGINE.md` §19. | Whichever of the six become false will stay on screen forever, and two already have. The defect is not that the rows are wrong but that nothing can make them right again. **What is required from you**: approval to run a one-off correction that marks those six RESOLVED, after which the current producers re-raise whatever is still true under a properly prefixed key — `cofoundr`'s missing product images would come straight back, correctly, and be resolvable this time. It is six rows on three businesses and it is a **production data change**, which is why it is here and not done. The alternative — permanent code teaching the resolver to adopt a row shape that can never occur again — is the worse answer and is not recommended. |
+| ~~**E22**~~ | **DECIDED AND IMPLEMENTED 2026-09-02.** Sean chose the recommended rule: refuse a proposal whose underlying current values have changed, explain what changed, and no timer. Built as `driftFor`/`explainDrift` in `lib/execution/approvalDrift.ts`, consulted by BOTH approval paths — the single card and the one-click 'approve all', which called `execute()` directly and would otherwise have skipped it entirely. The refusal happens before the row is claimed, so nothing is mutated and the proposal stays decidable; the owner is told in the conversation, because the dashboard button redirects and a refusal with nowhere to appear is an invisible one. 39 checks and 8 sabotages, all red. Original entry follows. **What should happen to a proposal nobody ever decided.** Audited 2026-09-02 against the live database: **48 proposals sit at `PENDING_APPROVAL` across 13 businesses**; 4 are more than 30 days old, 23 are 14–29 days old, and the oldest is 36 days. Nothing expires them and nothing ages them out — there is no staleness concept on `ApprovalRequest` at all. Two facts make that more than untidiness. **First, approving one applies a frozen payload.** `performApproveGenesisAction` hands `approval.input` to `execute()` verbatim and never re-reads the store, so approving a month-old proposal applies a plan written against a store that may no longer exist in that form. This is live and demonstrable today: `paypal-test-books` has a pending `placeholder_store_identity` proposal captured when its name, tagline and description were all empty strings — the store has since been given a real identity ("PayPal Test Books" / "Bookkeeping that finally makes sense" / a full description), and approving that card would overwrite all three on the grounds of a placeholder that is no longer there. **Second, the check that would prevent it already exists.** Every one of the 33 action definitions has `getCurrentValues(context)`, and it is the same function whose output was frozen into `previousValues` when the proposal was made — so "has the store moved since?" is one call and one comparison, at a site that already assembles the context (`buildActionContext`, `lib/execution/genesisAutonomy.ts:132`). It is used today only to reverse an executed action, never to guard one. | An owner's own work can be silently overwritten by a proposal they left sitting, and the longer they leave it the more likely that becomes. **What is required from you** is only what a drifted proposal should DO, because "apply it silently" is the one answer I will not choose on your behalf. My recommendation: at approval time compare `getCurrentValues` against the frozen `previousValues`; when they differ, refuse the execution and tell the owner what changed, rather than expiring proposals on a timer — age is a proxy, drift is the actual condition, and a 6-day-old proposal can overwrite yesterday's edit just as easily as a 36-day-old one. The alternatives are (a) expire at N days and accept that recent overwrites still happen, (b) show the drift on the card and let the owner approve anyway, or (c) both: refuse, and offer to re-propose against the store as it is now. Nothing is built until you pick. Two smaller findings need no decision and are noted here only so they are not lost: `supersedePendingApproval` **deletes** the old row (`deleteMany`) where every other model in this codebase supersedes by status, so `ApprovalRequest`'s documented `SUPERSEDED` state is never written and that history is destroyed while `EXECUTED` and `REJECTED` history is kept; and `GenesisObservation.approvalRequestId` is an unenforced pointer that deletion can dangle — checked, and every dereference today re-reads the row and handles its absence, so this is a latent hazard rather than a live defect. |
+| **E23** | **Six observations on screen that nothing can ever retract.** Audited 2026-09-02 against the live database. `resolveMissingObservations` scopes every retraction with `dedupeKey: { startsWith: <prefix> }`, so a `GenesisObservation` written before its producer had a prefix is owned by no producer and can never be resolved. Eight such rows exist; **six are still ACTIVE**, the oldest last confirmed 36 days ago, across `cubit-coil`, `cofoundr` and `socks-galore`. Two are keyed on a bare `ExecutionLog` cuid and read "Starting opportunistic business review — still pending since 7/27"; their underlying action is `genesis.recommendations.generate`, which was later added to `AWAITING_A_HUMAN` precisely because it can never be paired with its own completion — so those two are false by our own later ruling. The other four are pre-`ai_review:` findings. **They are not uniformly wrong, and that is the point**: `cubit-coil`'s `missing_seo_metadata` is false (`blueprint.marketingAssets.seoTitle` is set, and it is what the live storefront serves), while `cofoundr`'s `missing_product_images` is still perfectly true — Spark, Launch, Operate and Scale all still have no image. Neither row shape can be created again; both producers now always prefix. Full detail in `BI_ENGINE.md` §21. | Whichever of the six become false will stay on screen forever, and two already have. The defect is not that the rows are wrong but that nothing can make them right again. **What is required from you**: approval to run a one-off correction that marks those six RESOLVED, after which the current producers re-raise whatever is still true under a properly prefixed key — `cofoundr`'s missing product images would come straight back, correctly, and be resolvable this time. It is six rows on three businesses and it is a **production data change**, which is why it is here and not done. The alternative — permanent code teaching the resolver to adopt a row shape that can never occur again — is the worse answer and is not recommended. |
+| **E24** | **Two production approvals whose 'revert' would destroy what it exists to restore.** Found 2026-09-02 while implementing E22. `previousValues` is not a note about the past — `revertApprovalRequest` parses it straight back through the action's own `inputSchema` and executes it. It is only as truthful as the context that captured it, and the capturing paths were not all passing the same one: `cognitiveLayer.ts` supplied `{ storeId, blueprint, businessRecord }` and nothing else, so any `getCurrentValues` reading `storeIdentity`, `theme`, `brand` or `product` froze a **default** rather than the real value. Probed against the registry rather than read: **7 of 23 registered actions do exactly that**, including `delete_product` and `update_theme`. **The capture is fixed** — `buildActionContext` is now the single builder every capturing path uses, and it reads the brand mark and the product too — so no new row can be written this way. **The rows already written are not fixed, and cannot be by code.** In production: two EXECUTED `update_brand_logo` approvals (on `cubit-coil` and `be-free`) hold `previousValues` of `{ imageUrl: "" }`, and that schema accepts an empty string — so reverting either **blanks that business's logo** instead of restoring the one it replaced. Four pending `update_store_identity` proposals hold three empty strings for the same reason; E22's drift check now refuses those rather than applying them, which is the safe outcome, though the refusal will say the name changed from "(empty)" when what actually changed is what we recorded. | Nobody can revert those two logo approvals safely, and the four identity proposals are unapprovable until re-proposed. **What is required from you**: whether to (a) leave them — the drift check already prevents the dangerous half, and reverting a logo is rare; (b) approve a one-time correction that rewrites those six rows' `previousValues` from the current live values, which makes revert meaningful again but records a 'previous' value that is really the present one; or (c) retire the six proposals/approvals so they are re-proposed correctly from scratch. I recommend (c) for the four pending identity proposals and (a) for the two executed logo rows, because rewriting history to look correct is the one option that makes the record less true than it is now. Not touched either way — this is production data. |
 
 ## Needs a migration and a decision about existing data
 
@@ -71,6 +72,151 @@ they are facts about what a laptop can observe.
 | **E13** | **No real provider has ever signed a request.** | Every signature in every suite is generated locally with a secret we chose. `verify-order-webhook-live` signs with Stripe's own SDK, which is stronger than a hand-rolled HMAC and still proves only that our code agrees with our own signing. Closing it needs a live account sending a live event — which is Connections. |
 | **E14** | **PayPal's webhook verification has never run.** | It is a live API call against a transmission id, a certificate URL and a merchant's credentials. The handler it guards is now well covered; the verification in front of it cannot be exercised at all without PayPal. |
 | **E15** | **No server action has been invoked over HTTP.** | An action is addressed by a build-specific id in a `Next-Action` header. Reconstructing it would couple a suite to a private Next detail that changes between versions, so a test built on it fails on an upgrade for no reason. The guards are proven at the function layer and the pages over HTTP. **Not external, and not work** — listed because it is the one boundary no lane reaches, and the honest answer is that it should stay unreached. |
+
+---
+
+## E19 — the receipts, audited end to end (2026-09-02)
+
+**Nothing has been sent and Resend has not been enabled.** This is the audit
+Sean asked for, the smallest safe fix (built, inert), and the plan.
+
+### Why the sweep returns before creating any Job row
+
+`runDueOrderNotifications` checks `isEmailConfigured()` as its very first
+statement, before it reads a single order (`lib/orders/notificationSweep.ts`).
+With no `RESEND_API_KEY` it returns `skipped: true` immediately. That is
+deliberate and its comment says why: every individual notification checks
+too, so without one decision up front a platform with no email produces one
+report per unsent order per day, which is how a real signal gets buried.
+
+### What actually prevents enqueueing
+
+Only that check. There is no queue fault, no failed job, no exhausted key.
+Confirmed against the live database: **`OutboundOperation` holds zero rows
+for any `order-notification:` key**, and the only `Job` rows that have ever
+existed are `telemetry.prune`, `retention.sweep` and `security.prune`.
+Nothing has ever been claimed, so nothing is spent — the earlier note in this
+file saying otherwise was wrong and is corrected above.
+
+### Historical only, or future too?
+
+**Both.** The inline path — the one that would send a receipt at the moment
+of purchase — makes the same check first: `sendOrderConfirmation` returns
+`email_not_configured` before it claims anything, precisely so an order is
+never marked confirmed on a platform that cannot send. A purchase made right
+now gets no receipt either. This is not a backlog problem with a healthy
+present; nothing has ever worked, on either rail (both live rails are Stripe
+— `stripeEvent.ts` and the PayPal return route both call it inline).
+
+### Exactly what Resend configuration is required
+
+Two variables, and `isEmailConfigured()` requires both:
+
+- `RESEND_API_KEY` — the API key.
+- `EMAIL_FROM_ADDRESS` — the single Genesis-controlled sending address. Store
+  names appear as the display name in front of it (`displayNameFor`), so no
+  per-store domain and no per-store DNS is needed.
+
+Plus a verified sending domain in Resend for whatever `EMAIL_FROM_ADDRESS`
+uses — ideally a dedicated subdomain, so a marketing send can never damage
+transactional deliverability.
+
+### How mass retroactive sending is prevented
+
+This was the real danger and it was one variable away. `orders.notifications`
+is **live and healthy right now** — it ran three times on 2026-09-02 and
+succeeded in five milliseconds each time, by doing nothing — with `BATCH = 50`
+and no upper bound on an order's age. Setting `RESEND_API_KEY` alone would
+have made the next tick enqueue all seven orders at once, some six weeks old.
+
+The fix is a **second, independent switch**: `EMAIL_NOTIFICATIONS_START_AT`,
+an ISO timestamp. The sweep only considers orders at or after it, and with the
+variable unset or unparseable it reaches back for **nothing at all** —
+fail-closed in both directions, so a typo cannot silently become 1970. Turning
+email on and authorising the backstop to reach backwards are now two separate
+decisions and neither can be made by accident while making the other. The
+inline path is untouched.
+
+Also shipped, because Sean required it before go-live (E19a): `sendEmail` now
+refuses RFC 2606 reserved addresses (`.test`, `.example`, `.invalid`,
+`.localhost`) before the provider is even constructed, and **throws rather
+than falsely claiming the order was confirmed**. Four of the seven orders are
+`@example.test` and would otherwise have been guaranteed hard bounces in a
+new domain's first batch.
+
+### The three real customers
+
+Not two — the earlier count in this file was wrong. Seven paid orders, all
+Stripe, none notified. Four are `@example.test` beta rows. **Three are real
+people**, all on `cubit-coil`:
+
+| Placed | Amount | Buyer |
+|---|---|---|
+| 19 July | $29.99 | a real gmail address |
+| 30 August | $69.80 | a real company address |
+| 31 August | $47.83 | a real gmail address |
+
+$147.62 between them, and the oldest has been waiting six weeks. The store
+owner for all three is Sean, so the three merchant notices would come to him.
+
+### How those three are delivered safely
+
+`scripts/send-missed-receipt.ts`, written and **not run**. One order id per
+invocation — no `--all`, no date range, because a bulk mode is precisely what
+the horizon was added to remove. Dry run unless given `--send`, printing the
+recipient, subject and what the platform currently believes about that order.
+It goes through the real `sendOrderConfirmation`, so the claim column, the
+`runOnce` ledger, tenant scoping and the reserved-address refusal are exactly
+what a live order gets, and an already-confirmed order comes back
+`already_sent` rather than sending twice.
+
+**What is required from Sean**: approval of the sending plan itself, and
+specifically whether a six-week-late receipt should acknowledge the delay. The
+current template does not — it reads as an ordinary confirmation, which for
+the 19 July order will arrive as a surprise. That is a wording decision, not
+an engineering one, and it is the last thing standing between these three
+people and their receipts.
+
+### How future purchases are guaranteed a receipt
+
+Two independent mechanisms, unchanged by any of this:
+
+1. **Inline, at purchase.** Both live rails call `sendOrderConfirmation` the
+   moment the order commits — the Stripe handler inside `after()` (strictly
+   after the transaction, so a rolled-back order can never be confirmed), and
+   the PayPal return route.
+2. **The backstop, every 15 minutes.** `orders.notifications` finds paid
+   orders older than a ten-minute grace with no confirmation claim and
+   enqueues them onto the durable queue, which owns retries. This is the
+   mechanism that catches the PayPal redirect nobody redelivers.
+
+Both are idempotent through `runOnce` and the claim columns, so the two
+cannot double-send. The horizon narrows only what the *backstop* may reach
+backwards to; anything placed after it is fully covered by both.
+
+### Deployment and verification plan
+
+1. **Deploy the code first, with nothing configured.** The horizon and the
+   reserved-address guard are inert while `RESEND_API_KEY` is unset — the
+   sweep already sends nothing. This can ship today and change no behaviour,
+   which is the point of doing it before the credential exists.
+2. **Verify inertness in production**: `orders.notifications` keeps
+   succeeding, `Job` still holds no notification rows, all seven orders still
+   have null claims.
+3. **When Resend is ready**, set `RESEND_API_KEY` and `EMAIL_FROM_ADDRESS`
+   and **leave `EMAIL_NOTIFICATIONS_START_AT` unset**. Nothing retroactive
+   can happen. Verify: the sweep now reports `skipReason: "no_horizon"`
+   rather than `email_not_configured`.
+4. **Prove the live path on a real purchase** — one test order on a real
+   address — before anything historical is touched. That is the check that
+   matters, because it is the one that protects every future customer.
+5. **Then set `EMAIL_NOTIFICATIONS_START_AT`** to the moment of step 3, so
+   the backstop covers everything from go-live forward and nothing before it.
+6. **Then, and separately, the three historical receipts** — one
+   `send-missed-receipt.ts` invocation each, dry run first, after Sean has
+   approved the wording.
+
+Steps 3 to 6 are all gated on Sean. Steps 1 and 2 are not.
 
 ## Blocked by Connections (recorded here, out of scope by instruction)
 

@@ -79,6 +79,59 @@ import { notifyCustomerRefunded } from "./refundNotification";
 /** A quiet period before a claimless order is treated as missed. */
 const GRACE_MS = 10 * 60 * 1000;
 
+/**
+ * ============ THE BACKSTOP HAS A BEGINNING (2026-09-02) =============
+ *
+ * WHAT THIS PREVENTS. This sweep had a lower bound on age and no upper
+ * one, so its scope was every order this platform has ever taken. Email
+ * has never been configured, so nothing has ever been claimed and no key
+ * has ever been spent: seven paid orders sit with confirmationSentAt and
+ * ownerNotifiedAt null, and OutboundOperation holds zero rows for any
+ * order-notification key. The scheduled task is live and healthy — it ran
+ * three times on the day this was written and succeeded in five
+ * milliseconds each time, by doing nothing.
+ *
+ * So setting RESEND_API_KEY alone would have made the very next tick
+ * enqueue all seven at once, some of them six weeks old, to three real
+ * customers who have long since stopped expecting anything. A backstop
+ * that reaches back forever is not a backstop, it is an archive replay.
+ *
+ * FAIL CLOSED, AND DELIBERATELY A SECOND SWITCH. Without this horizon the
+ * sweep sends nothing retroactively at all. Turning email on and turning
+ * the backstop's reach on are two decisions, so neither can be made by
+ * accident while making the other. Orders before the horizon are not
+ * forgotten — they are simply not this sweep's to decide, which is the
+ * honest scope for a mechanism whose whole purpose is catching what the
+ * inline send missed MINUTES ago.
+ *
+ * The inline path is untouched and is what guarantees a receipt for a
+ * purchase made from here on: stripeEvent.ts and the PayPal return route
+ * both call sendOrderConfirmation the moment the order commits.
+ */
+export const NOTIFICATION_HORIZON_VAR = "EMAIL_NOTIFICATIONS_START_AT";
+
+/**
+ * The instant from which this sweep may notice an unnotified order.
+ *
+ * Null means no horizon is set, which means the sweep does nothing —
+ * never "no limit". An unparseable value is also null and is reported,
+ * because a typo that silently became "the beginning of time" is exactly
+ * the accident this exists to stop.
+ */
+export function notificationHorizon(
+  // READ DIRECTLY, not through the constant above. lib/config/registry.ts
+  // declares every variable this platform uses and verify-config-db.ts checks
+  // BOTH directions against source — including that nothing is described which
+  // nothing reads. An indirect process.env[CONST] lookup is invisible to that
+  // scan, so the declaration looked like documentation for a variable no code
+  // touched. It caught this on the first full run.
+  raw: string | undefined = process.env.EMAIL_NOTIFICATIONS_START_AT
+): Date | null {
+  if (!raw || raw.trim().length === 0) return null;
+  const at = new Date(raw.trim());
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
 /** How many of each kind one run will attempt. Bounded so a backlog cannot */
 /** turn a cron into a mail blast, and so one run cannot exhaust a rate limit. */
 const BATCH = 50;
@@ -105,8 +158,15 @@ export interface SweepResult {
    * the case that matters most — customers all told, merchant told nothing.
    */
   ownerSales: number;
-  /** True when nothing was attempted because email is not configured. */
+  /**
+   * True when nothing was attempted at all.
+   *
+   * Two different reasons, and `skipReason` says which — an operator
+   * reading "skipped" while wondering why a customer heard nothing needs
+   * to know whether the credential is missing or the horizon is.
+   */
   skipped: boolean;
+  skipReason: null | "email_not_configured" | "no_horizon";
 }
 
 /**
@@ -124,16 +184,26 @@ export async function runDueOrderNotifications(
   // passes nothing and the real sender is used.
   send?: EmailSender,
 ): Promise<SweepResult> {
-  const empty: SweepResult = { confirmations: 0, deliveries: 0, refunds: 0, ownerSales: 0, skipped: false };
+  const empty: SweepResult = { confirmations: 0, deliveries: 0, refunds: 0, ownerSales: 0, skipped: false, skipReason: null };
 
   // CHECKED ONCE, HERE. Every individual notification checks too and would
   // report its own line — on a platform with no email configured that is one
   // report per unsent order per day, which is how a real signal gets buried.
   if (!isEmailConfigured()) {
-    return { ...empty, skipped: true };
+    return { ...empty, skipped: true, skipReason: "email_not_configured" };
+  }
+
+  // SECOND SWITCH. Configured to send is not the same as authorised to
+  // reach backwards, and the whole point is that one does not imply the
+  // other. See NOTIFICATION_HORIZON_VAR above.
+  const horizon = notificationHorizon();
+  if (!horizon) {
+    return { ...empty, skipped: true, skipReason: "no_horizon" };
   }
 
   const before = new Date(now.getTime() - GRACE_MS);
+  // Old enough to be missed, and new enough to be this sweep's business.
+  const createdWindow = { lt: before, gte: horizon };
   const result = { ...empty };
 
   // ============ PAID, AND NEVER CONFIRMED ============================
@@ -157,7 +227,7 @@ export async function runDueOrderNotifications(
     // money is with their bank. If the dispute is won the status returns to
     // paid and the sweep picks it up again, which is the behaviour a derived
     // filter gives for free.
-    where: { confirmationSentAt: null, status: ORDER_STATUS.PAID, createdAt: { lt: before } },
+    where: { confirmationSentAt: null, status: ORDER_STATUS.PAID, createdAt: createdWindow },
     select: { id: true, storeId: true },
     orderBy: { createdAt: "asc" },
     take: BATCH,
@@ -177,7 +247,11 @@ export async function runDueOrderNotifications(
   // in-request send to wait for — the only writer is applyShipmentUpdate, which
   // notifies inline, so anything still unclaimed here already failed once.
   const undelivered = await prismaSystem.order.findMany({
-    where: { deliveredAt: { not: null }, deliveryNotifiedAt: null },
+    // BOUNDED BY WHEN IT WAS DELIVERED, not when it was ordered. The event
+    // this notice is about is the delivery, so that is the date the horizon
+    // has to compare against — an order placed before the horizon and
+    // delivered after it is a live delivery, and the customer should hear.
+    where: { deliveredAt: { not: null, gte: horizon }, deliveryNotifiedAt: null },
     select: { id: true, storeId: true },
     orderBy: { deliveredAt: "asc" },
     take: BATCH,
@@ -193,7 +267,15 @@ export async function runDueOrderNotifications(
 
   // ============ REFUNDED, AND NEVER TOLD =============================
   const unrefunded = await prismaSystem.order.findMany({
-    where: { status: "refunded", refundNotifiedAt: null },
+    // THERE IS NO refundedAt COLUMN, so this bounds on the order's own
+    // createdAt — the only date it has. That is deliberately the
+    // conservative direction: an order placed before the horizon and
+    // refunded after it is NOT swept, so a customer could miss a refund
+    // notice for a pre-horizon order. Losing a notice is recoverable and
+    // visible on the order screen; replaying weeks of refund emails is
+    // not. If this becomes real rather than theoretical, the fix is a
+    // refundedAt column, not a wider horizon.
+    where: { status: "refunded", refundNotifiedAt: null, createdAt: { gte: horizon } },
     select: { id: true, storeId: true },
     orderBy: { createdAt: "asc" },
     take: BATCH,
@@ -232,7 +314,7 @@ export async function runDueOrderNotifications(
     // celebrate at somebody, and if a dispute is won the status returns to paid
     // and this picks it up — the same derived-filter behaviour the confirmation
     // sweep relies on rather than a status list of its own.
-    where: { ownerNotifiedAt: null, status: ORDER_STATUS.PAID, createdAt: { lt: before } },
+    where: { ownerNotifiedAt: null, status: ORDER_STATUS.PAID, createdAt: createdWindow },
     select: { id: true, storeId: true },
     orderBy: { createdAt: "asc" },
     take: BATCH,
