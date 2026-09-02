@@ -6,7 +6,11 @@ import { computeInsights, INSIGHT_ENGINE_CONSUMER, type Insight } from "./insigh
 import { runTimeBasedDetection } from "./changeDetection";
 import { distillBeliefs } from "./learn";
 import { notifyFromInsights } from "./notify";
-import { runOpportunisticAiReviewIfStale, STALE_REVIEW_MS } from "@/lib/dashboard/genesisObservations";
+import {
+  runDeterministicObservationSweep,
+  runOpportunisticAiReviewIfStale,
+  STALE_REVIEW_MS,
+} from "@/lib/dashboard/genesisObservations";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 
 // Business Intelligence Engine M1 (2026-08-18) — the reachable cycle.
@@ -56,6 +60,7 @@ export interface IntelligenceCycleSummary {
 /** The stages of one pass, in order. Named so a failure can say which. */
 export type CycleStage =
   | "detect_change"
+  | "observation_sweep"
   | "insights"
   | "notify"
   | "learn"
@@ -81,6 +86,27 @@ export interface CycleStages {
    * not a day later.
    */
   detectChange: () => Promise<void>;
+  /**
+   * The other half of "what became true while nobody was looking", and the
+   * half that was only ever reached by somebody looking.
+   *
+   * runDeterministicObservationSweep finds three conditions that become true
+   * from time passing — an execution still PENDING an hour later, a FAILED or
+   * WARNING outcome inside the last seven days, a connection that needs the
+   * owner — and its only two callers were a Stripe webhook and the dashboard
+   * page. A business with no card activity whose owner does not visit was
+   * never swept at all. Checked against production before this was written:
+   * nine of sixteen businesses have never had a single deterministic
+   * observation written, and every one of the sixteen has stale-pending
+   * executions this sweep would name.
+   *
+   * ITS OWN STAGE, not folded into detectChange. Two independent sweeps
+   * sharing one stage means the first one to throw takes the second with it,
+   * which is the exact failure this function's own isolation exists to
+   * prevent. It stays cheap — three reads and no model — so the cost of the
+   * separation is a second try/catch.
+   */
+  observationSweep: () => Promise<void>;
   insights: () => Promise<Insight[]>;
   notify: (insights: Insight[]) => Promise<void>;
   learn: () => Promise<void>;
@@ -158,6 +184,7 @@ export async function runCycleStages(
   // isolated like every other stage: a sweep that throws must not stop the
   // interpretation of what is already known.
   await runStage("detect_change", stages.detectChange);
+  await runStage("observation_sweep", stages.observationSweep);
 
   const computed = await runStage("insights", stages.insights);
 
@@ -244,6 +271,7 @@ export async function runIntelligenceCycle(storeId: string): Promise<Intelligenc
     // "internal" — the same source name every first-party writer uses. This is
     // Genesis noticing on its own, not a provider reporting.
     detectChange: () => runTimeBasedDetection(storeId, "internal"),
+    observationSweep: () => runDeterministicObservationSweep(storeId),
     insights: () => computeInsights(storeId),
     notify: (insights) => notifyFromInsights(storeId, insights),
     learn: () => distillBeliefs(storeId),

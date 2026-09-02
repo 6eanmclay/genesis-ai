@@ -8,6 +8,7 @@ import {
   getStoresDueForAiReview,
   runDueAiReviews,
   INTELLIGENCE_MAX_AGE_MS,
+  runCycleStages,
 } from "@/lib/intelligence/cycle";
 import { STALE_REVIEW_MS } from "@/lib/dashboard/genesisObservations";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
@@ -704,6 +705,173 @@ async function main(): Promise<void> {
     await detectInsightRecurrence(neighbour.id);
     eq("one store's standing condition is not another's belief",
       await prismaSystem.belief.count({ where: { storeId: neighbour.id } }), 0);
+  }
+
+  // ======================================================================
+  console.log("\n=== 14. The deterministic sweep is reached without a visitor ===\n");
+  // ======================================================================
+  //
+  // runDeterministicObservationSweep finds three conditions that become true
+  // from time passing, and until now its only two callers were a Stripe
+  // webhook and the dashboard page. Checked against production before this
+  // was written: nine of sixteen businesses had never had a single
+  // deterministic observation written, and all sixteen had stale-pending
+  // executions the sweep would have named.
+  //
+  // The seam is the WIRING — runIntelligenceCycle must call it — so these
+  // exercise the real cycle rather than the sweep. Calling the sweep directly
+  // would pass identically before and after the change, which is the hollow
+  // shape sabotage has already caught three times in this suite.
+  {
+    const stalePendingOn = async (storeId: string) =>
+      prisma.executionLog.create({
+        data: {
+          executionId: `stale-${storeId}`,
+          storeId,
+          // NOT one of AWAITING_A_HUMAN. GENESIS_STORE_MESSAGE is PENDING by
+          // design — J4 raised something and the owner has not answered — and
+          // treating that as a stalled execution would turn every proactive
+          // message into an alarm an hour later.
+          action: EXECUTION_ACTIONS.PRODUCT_CREATE,
+          status: "PENDING",
+          verified: false,
+          message: "Creating the product",
+          retryable: true,
+          actorType: "GENESIS",
+          // Older than the one-hour cutoff, inside the seven-day window.
+          createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+        },
+      });
+
+    const deterministicOn = (storeId: string) =>
+      prismaSystem.genesisObservation.count({
+        where: { storeId, status: "ACTIVE", dedupeKey: { startsWith: "deterministic:" } },
+      });
+
+    const visited = await makeStore("Cofoundr");
+    const neighbour = await makeStore("Lumen Aquatics");
+    await stalePendingOn(visited.id);
+
+    eq("before the cycle, nobody has swept this business", await deterministicOn(visited.id), 0);
+
+    await runIntelligenceCycle(visited.id);
+
+    assert("a scheduled pass finds what only a visitor used to find",
+      (await deterministicOn(visited.id)) > 0);
+
+    // THE CONTROL. Without it the assertion above passes for a suite that
+    // writes a deterministic observation for every store it touches, which
+    // would say nothing about whether the stale execution was what did it.
+    await runIntelligenceCycle(neighbour.id);
+    eq("a business with nothing stalled is still swept and still silent",
+      await deterministicOn(neighbour.id), 0);
+
+    // Tenant scope, asserted rather than assumed: the sweep reads one
+    // business, and the neighbour's row is the only thing that could leak in.
+    await stalePendingOn(neighbour.id);
+    await runIntelligenceCycle(neighbour.id);
+    const visitedAfter = await deterministicOn(visited.id);
+    await runIntelligenceCycle(visited.id);
+    eq("the neighbour's stalled execution never becomes this one's finding",
+      await deterministicOn(visited.id), visitedAfter);
+
+    // ============ AND IT DOES NOT SAY IT TWICE ========================
+    //
+    // The sweep already dedupes by topicKey, and the whole point of running it
+    // daily is that a condition standing for a week is one finding, not seven.
+    const outputsBefore = await prismaSystem.cognitiveOutput.count({
+      where: { storeId: visited.id, topicKey: { startsWith: "deterministic:" } },
+    });
+    await runIntelligenceCycle(visited.id);
+    eq("running again on the same standing condition records nothing new",
+      await prismaSystem.cognitiveOutput.count({
+        where: { storeId: visited.id, topicKey: { startsWith: "deterministic:" } },
+      }), outputsBefore);
+
+    // ============ AND J4 WAITING ON THE OWNER IS NOT A STALL =========
+    //
+    // AWAITING_A_HUMAN exists because recordGenesisExecution writes a PENDING
+    // row meaning "J4 raised something and the owner has not answered", which
+    // stays PENDING for as long as the owner takes. Counting those as stalled
+    // executions turns every proactive message into an urgent badge an hour
+    // later.
+    //
+    // THE SEAM IS THE QUERY, NOT THE PREDICATE. verify-stale-executions.ts
+    // already proves isAwaitingHumanDecision answers correctly, and it stayed
+    // green when the `notIn` filter was cut out of getStaleExecutions — the
+    // helper kept giving the right answer to a caller that had stopped asking.
+    // This asserts the exclusion where it actually takes effect, which matters
+    // more now the sweep runs daily for every business rather than only the
+    // ones somebody opened.
+    const patient = await makeStore("Fernbrook Botanicals");
+    await prisma.executionLog.create({
+      data: {
+        executionId: `awaiting-${patient.id}`,
+        storeId: patient.id,
+        action: EXECUTION_ACTIONS.GENESIS_STORE_MESSAGE,
+        status: "PENDING",
+        verified: false,
+        message: "Your three best-selling products are nearly out of stock",
+        retryable: false,
+        actorType: "GENESIS",
+        createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+      },
+    });
+    await runIntelligenceCycle(patient.id);
+    eq("a message J4 is still waiting on is not a stalled execution",
+      await deterministicOn(patient.id), 0);
+
+  }
+
+  // ======================================================================
+  console.log("\n=== 15. The two sweeps survive each other ===\n");
+  // ======================================================================
+  //
+  // This is the whole reason the observation sweep is its own stage rather
+  // than a second line inside detect_change. Sharing a stage means the first
+  // one to throw takes the second with it, silently — and both are cheap
+  // deterministic reads that have no reason to fail together.
+  {
+    const store = await makeStore("Haul & Co.");
+    const noop = async () => {};
+    const boom = async () => { throw new Error("sweep failed"); };
+
+    let sweptAfterDetectChangeThrew = false;
+    const a = await runCycleStages(store.id, {
+      detectChange: boom,
+      observationSweep: async () => { sweptAfterDetectChangeThrew = true; },
+      insights: async () => [],
+      notify: noop,
+      learn: noop,
+      staffPolicyGap: noop,
+      speak: async () => ({ spoken: 0 }),
+    }, () => {});
+    assert("detect_change throwing does not stop the observation sweep", sweptAfterDetectChangeThrew);
+    eq("and the stage that failed is the one named", a.failedStages, ["detect_change"]);
+
+    let interpretedAfterSweepThrew = false;
+    const b = await runCycleStages(store.id, {
+      detectChange: noop,
+      observationSweep: boom,
+      insights: async () => { interpretedAfterSweepThrew = true; return []; },
+      notify: noop,
+      learn: noop,
+      staffPolicyGap: noop,
+      speak: async () => ({ spoken: 0 }),
+    }, () => {});
+    assert("the observation sweep throwing does not stop interpretation",
+      interpretedAfterSweepThrew);
+    eq("and it is named by its own stage name", b.failedStages, ["observation_sweep"]);
+
+    // A FAILED SWEEP IS NOT A COMPLETED EVALUATION. The same rule Slice 1
+    // established for every other stage: a pass that did not finish must not
+    // advance the cadence, or the business drops out of the queue for a day
+    // having been told nothing.
+    assert("a pass whose sweep failed is not ok", b.ok === false);
+    const before = await lastAt(store.id);
+    await runIntelligenceCycle(store.id);
+    assert("a pass whose stages all ran does advance the cadence",
+      (await lastAt(store.id)) !== before);
   }
 
   console.log(`\n${failures} failed, ${passes} passed`);

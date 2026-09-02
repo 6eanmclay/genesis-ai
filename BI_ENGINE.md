@@ -967,6 +967,133 @@ One business never remembers another's conversation, including concurrently.
 
 ---
 
+## 19. Slice 3 — the sweep that only a visitor could reach (2026-09-02)
+
+**One change, and two audits that found nothing to change. Written after
+checking each against the live production database rather than against this
+document.**
+
+### The change: the deterministic sweep gets a scheduled caller
+
+`runDeterministicObservationSweep` finds three conditions that become true
+because time passed — an execution still `PENDING` an hour later, a `FAILED` or
+`WARNING` outcome inside the last seven days, and a connection that needs the
+owner. Its only two callers were `lib/payments/stripeEvent.ts` (a Stripe webhook
+arrived) and `app/dashboard/ai-actions.ts` (somebody opened the dashboard).
+
+So a business with no card activity, whose owner had not visited, was never
+swept. Measured against production before writing any code:
+
+| | |
+|---|---|
+| Businesses with stale-pending executions this sweep would name | **16 of 16** |
+| Businesses that have never had a single deterministic observation written | **9 of 16** |
+| Of the 7 that have, how long since the last one | 6 are 14–30 days stale; only `cubit-coil` is current |
+
+`cofoundr` is the clearest case: ten stale-pending executions and eight `FAILED`
+or `WARNING` outcomes inside the last seven days, and not one deterministic
+observation, ever. Real failures that nobody has been told about.
+
+This is the same shape as Slice 2's G1 and the fix is the same shape too — the
+sweep is not changed at all, it gains a caller. It runs as **its own cycle
+stage**, `observation_sweep`, rather than as a second line inside
+`detect_change`: two independent sweeps sharing one stage means the first to
+throw takes the second with it, which is precisely the failure `runCycleStages`
+exists to prevent. The cost of the separation is one more `try`/`catch`.
+
+Nothing new guards against saying it twice, because the sweep already dedupes on
+`topicKey` and already resolves what stopped being true. It was documented as
+"safe to call from every opportunistic trigger point" — this makes the schedule
+one of those points.
+
+**A consequence worth expecting.** 54 `deterministic:` observations are ACTIVE
+in production with the oldest not re-confirmed for 30 days. They are stale
+because the sweep that resolves them had not run, not because the conditions
+persist. The next cycle per business will resolve the ones that are no longer
+true, so the backlog should visibly shrink on its own.
+
+### The test that was missing, found by sabotage
+
+`AWAITING_A_HUMAN` exists so that J4's own PENDING rows — "J4 raised something
+and the owner has not answered" — are not read as stalled executions. Cutting
+`action: { notIn: [...AWAITING_A_HUMAN] }` out of `getStaleExecutions` left
+every suite green, `verify-stale-executions.ts` included: that suite proves
+`isAwaitingHumanDecision` returns the right answer, and the helper went on
+returning it to a caller that had stopped asking. The helper was tested; the
+seam was not.
+
+That mattered more after this change than before it, because the sweep now runs
+daily for all sixteen businesses rather than only the ones somebody opened —
+without the exclusion, every proactive message becomes an urgent badge an hour
+later. `verify-intelligence-cadence-db` now asserts it where it takes effect: a
+business whose only PENDING row is a message J4 is waiting on produces no
+observation. Cutting the filter now turns that red.
+
+### Audit: nothing left to widen for `recordId`
+
+Every producer of `GenesisObservation.recordId` was checked against the rule
+already established — a finding carries a record only when its own sentence
+names exactly one thing.
+
+- **Carries one, validated.** `notify.ts` keeps an insight's `recordId` only
+  when `verifiedRecord()` matches a `BusinessRecord` on `{ id, storeId,
+  entityType }`, dropping the link and never the finding.
+- **Carries one, valid by construction.** `toolHandlers.ts`'s challenge path
+  uses the id of the record it wrote moments earlier in the same tenant.
+  `cognitiveLayer.ts` keeps a model-returned id only when it matches a record
+  that was genuinely fetched for that store and shown to the model —
+  re-validating either would be ceremony, not safety.
+- **Correctly carries nothing.** The deterministic sweep's findings come from
+  `ExecutionLog` rows, which are not `BusinessRecord`s; a missing staff handbook
+  is the absence of a record; a connection gap is about a provider.
+
+The one detector that could theoretically name a single record and does not is
+`detectOverdueInvoiceCluster`, and it cannot reach that case:
+`OVERDUE_INVOICE_COUNT_THRESHOLD = 3`, so its sentence is always plural.
+Lowering the threshold so it can say "this invoice is overdue" is a change to
+what J4 considers worth raising — a voice decision, not a mechanical widening —
+and it is not made here. **Nothing was changed for this item, deliberately.**
+
+### Audit: the six observations that can never resolve
+
+Eight `GenesisObservation` rows in production have a `dedupeKey` with no prefix;
+six are still ACTIVE, the oldest confirmed 36 days ago. `resolveMissingObservations`
+scopes every sweep with `dedupeKey: { startsWith: <prefix> }`, so a row written
+before its producer had a prefix is owned by nobody and can never be retracted.
+They are two different legacy shapes:
+
+- **Two rows keyed on a bare `ExecutionLog` cuid** — the pre-`deterministic:`
+  form, on `cofoundr` and `socks-galore`, both reading "Starting opportunistic
+  business review — still pending since 7/27". Both underlying rows still exist
+  and are still `PENDING`, and their action is
+  `genesis.recommendations.generate` — which was later added to
+  `AWAITING_A_HUMAN` *because* it mints a fresh `executionId` per call and can
+  never be paired with its own completion. The codebase has already decided this
+  is not a stall. These two badges are false, by our own later ruling.
+- **Four rows keyed on a bare AI-review topicKey** — the pre-`ai_review:` form:
+  `missing_seo_metadata` and `missing_hero_copy` on `cubit-coil`,
+  `missing_product_images` on `cofoundr`, `usp_performance_missing_from_hero` on
+  `socks-galore`.
+
+**They are not uniformly wrong, which is the point.** `cubit-coil`'s
+`missing_seo_metadata` is false — `blueprint.marketingAssets.seoTitle` reads
+"Cubit & Coil | Hand-Wound Copper Tensor Rings", which is what the live
+storefront serves. But `cofoundr`'s `missing_product_images` is still perfectly
+true: Spark, Launch, Operate and Scale all still have no image, 35 days on. The
+defect is not that these rows are wrong; it is that **nothing can ever make them
+right again**, so whichever ones become false will stay on screen forever.
+
+Neither shape can be created again — both producers now always prefix — so this
+is a bounded, one-off legacy condition affecting six rows across three
+businesses, not a class of bug. The correct remedy is a one-off data correction
+that resolves them, letting the current producers re-raise whatever is still
+true under a prefixed key. **That is a production data change and it is not made
+here**; it is recorded in `EXTERNAL_BLOCKERS.md` for Sean's decision. Writing
+permanent code to adopt a row shape that can never occur again would be the
+worse answer.
+
+---
+
 ## 18. Slice 2 — time is a reason to notice, and duration is the evidence
 
 **The mapping, written before implementing.**
