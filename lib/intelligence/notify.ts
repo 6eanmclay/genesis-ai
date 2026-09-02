@@ -37,7 +37,16 @@ const NOTIFY_WORTHY: Partial<Record<string, (insight: Insight) => boolean>> = {
   // only — never an ambient badge.
 };
 
-const INSIGHT_PREFIX = "insight:";
+/**
+ * The dedupeKey prefix that makes an observation an insight's observation.
+ *
+ * EXPORTED (2026-09-02) so the belief detector can find the observation that
+ * belongs to a given insight instead of keeping its own idea of the mapping.
+ * The key is `insight:<insight.type>`, and the type is already the insight's
+ * stable identity — so this prefix plus that type IS the condition's identity,
+ * and there is exactly one definition of it.
+ */
+export const INSIGHT_PREFIX = "insight:";
 
 // Called once per store per scheduler cycle, after the Insight Engine
 // (lib/intelligence/insights.ts) has produced this cycle's insights.

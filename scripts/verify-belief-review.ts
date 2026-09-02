@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import { prisma, prismaSystem } from "@/lib/prisma";
+import { INSIGHT_PREFIX } from "@/lib/intelligence/notify";
 import {
   getReviewableBeliefs,
   contradictBelief,
@@ -92,10 +93,10 @@ async function main() {
   // REAL EVIDENCE ROWS, not ids invented for the test. Each of the four tables
   // a detector can group is represented, because resolving them is the whole
   // job and a suite that only exercised one would miss three.
-  // DERIVED BY THE REAL DETECTOR, not hand-written. Three findings in three
-  // distinct weeks is what detectInsightRecurrence actually requires, so this
-  // suite exercises the mechanism the product uses rather than a Belief row
-  // shaped to make the assertions pass.
+  // These three remain because they are EVIDENCE ROWS the resolver has to
+  // resolve — CognitiveOutput is one of the four tables evidenceRefs can point
+  // at, and dropping them would leave that path untested. They no longer make
+  // the belief.
   const findings = await Promise.all(
     [24, 16, 9].map((day) =>
       prisma.cognitiveOutput.create({
@@ -106,6 +107,32 @@ async function main() {
       })
     )
   );
+
+  // ============ WHAT MAKES THE BELIEF NOW (2026-09-02) =================
+  //
+  // DERIVED BY THE REAL DETECTOR, not hand-written — unchanged as a principle,
+  // changed as a fixture. detectInsightRecurrence used to require three
+  // findings in three distinct weeks, so this suite wrote three rows. BI Slice
+  // 2 replaced that signal: it now reads how long the CONDITION has stood,
+  // from the GenesisObservation that owns the finding's identity, because the
+  // insight dedupe means a persistent condition writes one row rather than one
+  // per week.
+  //
+  // So the fixture supplies the evidence the detector actually consumes: a
+  // standing observation, 25 days old, still ACTIVE. The belief is still
+  // produced by the production detector, never inserted directly.
+  const STANDING_DAYS = 25;
+  await prisma.genesisObservation.create({
+    data: {
+      storeId: store.id,
+      dedupeKey: `${INSIGHT_PREFIX}refunds.clustered`,
+      genesisState: "opportunity",
+      summary: "Refunds cluster on Mondays",
+      status: "ACTIVE",
+      firstNoticedAt: daysAgo(STANDING_DAYS),
+      lastConfirmedAt: new Date(),
+    },
+  });
   await detectInsightRecurrence(store.id);
 
   const belief = await prisma.belief.findFirstOrThrow({
@@ -196,7 +223,13 @@ async function main() {
   check("it is counted as unresolved instead", leaky.active[0]?.evidenceMissing, 1);
   await prisma.belief.update({
     where: { id: belief.id, storeId: store.id },
-    data: { evidenceRefs: findings.map((f) => f.id), evidenceCount: 3 },
+    // RESTORED TO WHAT THE DETECTOR ITSELF PRODUCES (2026-09-02). This pinned
+    // 3 — the row count under the old week-counting signal. Under BI Slice 2
+    // the detector derives the count from how long the condition has stood, so
+    // a hard 3 here made the very next re-derivation look like STRONGER
+    // evidence and resurrected a belief the owner had dismissed. The
+    // durability rule was right; the fixture was describing the old model.
+    data: { evidenceRefs: findings.map((f) => f.id), evidenceCount: STANDING_DAYS },
   });
 
   // ==========================================================================
@@ -220,7 +253,10 @@ async function main() {
 
   // Nothing about the EVIDENCE changed, because nothing about it did. A
   // correction is a judgement on the conclusion, not a rewriting of history.
-  check("the evidence count is untouched", row.evidenceCount, 3);
+  // The literal was 3 — the row count under the old signal. The PROPERTY is
+  // unchanged and is the point: dismissing a belief is a judgement on the
+  // conclusion, never a rewriting of the evidence behind it.
+  check("the evidence count is untouched", row.evidenceCount, STANDING_DAYS);
   check("and the confidence it was derived at", row.confidence, belief.confidence);
 
   // ==========================================================================
@@ -253,24 +289,25 @@ async function main() {
     (await prisma.belief.findUniqueOrThrow({ where: { id: belief.id } })).status, DISMISSED);
 
   // NOT "suppress forever", which would stop J4 learning: a dismissal holds
-  // while the evidence is the evidence the owner already judged. Four more real
-  // findings across four more weeks is a genuinely stronger pattern than the one
-  // they rejected, so the detector is entitled to raise it again.
-  await Promise.all(
-    [45, 38, 31, 3].map((day) =>
-      prisma.cognitiveOutput.create({
-        data: {
-          storeId: store.id, kind: "insight", topicKey: "refunds.clustered",
-          summary: "Refunds cluster on Mondays", status: "ACTIVE", generatedAt: daysAgo(day),
-        },
-      })
-    )
-  );
+  // while the evidence is the evidence the owner already judged. A genuinely
+  // stronger pattern than the one they rejected entitles the detector to raise
+  // it again.
+  //
+  // WHAT "STRONGER" MEANS NOW. It was four more findings across four more
+  // weeks; under BI Slice 2 the strength of this pattern IS how long the
+  // condition has stood, so the same escalation is the same condition having
+  // stood far longer — 25 days when they dismissed it, 60 now.
+  const LONGER_STANDING_DAYS = 60;
+  await prisma.genesisObservation.updateMany({
+    where: { storeId: store.id, dedupeKey: `${INSIGHT_PREFIX}refunds.clustered` },
+    data: { firstNoticedAt: daysAgo(LONGER_STANDING_DAYS), lastConfirmedAt: new Date() },
+  });
   await detectInsightRecurrence(store.id);
   const revived = await prisma.belief.findUniqueOrThrow({ where: { id: belief.id } });
   check("but genuinely stronger evidence than they saw brings it back", revived.status, "ACTIVE");
   assert("and it IS stronger, not merely re-run",
-    revived.evidenceCount > 3, revived.evidenceCount + " supporting rows now");
+    revived.evidenceCount > STANDING_DAYS,
+    `${revived.evidenceCount} days standing now, against ${STANDING_DAYS} when it was dismissed`);
 
   // ==========================================================================
   console.log("\n=== 7. Changing your mind about a correction ===\n");

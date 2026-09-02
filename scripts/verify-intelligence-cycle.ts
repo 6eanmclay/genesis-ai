@@ -1,7 +1,11 @@
 import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import { prismaSystem } from "@/lib/prisma";
 import { INSIGHT_ENGINE_CONSUMER } from "@/lib/intelligence/insights";
-import { getStoresDueForIntelligence, runIntelligenceCycle } from "@/lib/intelligence/cycle";
+import {
+  getStoresDueForIntelligence,
+  runIntelligenceCycle,
+  INTELLIGENCE_MAX_AGE_MS,
+} from "@/lib/intelligence/cycle";
 
 // Business Intelligence Engine M1 — the end-to-end check, against real data.
 //
@@ -92,10 +96,46 @@ async function main(): Promise<void> {
     `${dueWithoutIntegration.length} of ${due.length} due stores have no connector`
   );
 
+  // ============ DUE HAS TWO HONEST REASONS NOW (2026-09-02) =============
+  //
+  // This asserted that every due store had unconsumed events, which was the
+  // whole of the rule when it was written. BI Slice 1 added the second half
+  // deliberately: a business whose data has not moved is STILL re-evaluated
+  // once its last deterministic pass goes stale, because a condition can
+  // become true purely because time passed.
+  //
+  // So the assertion keeps its real job — a store must be due for a genuine,
+  // nameable reason, never for none — and now recognises both reasons. It is
+  // not softened to "the cycle ran": a store with neither unconsumed events
+  // nor a stale evaluation still fails it.
   for (const storeId of due.slice(0, 3)) {
-    const [maxSeq, cursor] = await Promise.all([maxSequenceFor(storeId), cursorFor(storeId)]);
-    console.log(`\n  store ${storeId}: maxSequence=${maxSeq} cursor=${cursor} lag=${maxSeq - cursor}`);
-    check("  due store genuinely has unconsumed events", maxSeq > cursor);
+    const [maxSeq, cursor, store] = await Promise.all([
+      maxSequenceFor(storeId),
+      cursorFor(storeId),
+      prismaSystem.store.findUnique({
+        where: { id: storeId },
+        select: { lastIntelligenceAt: true },
+      }),
+    ]);
+
+    const hasUnconsumedEvents = maxSeq > cursor;
+    const lastAt = store?.lastIntelligenceAt ?? null;
+    const staleByTime =
+      lastAt === null || Date.now() - lastAt.getTime() >= INTELLIGENCE_MAX_AGE_MS;
+    const reason = hasUnconsumedEvents
+      ? "unconsumed events"
+      : lastAt === null
+        ? "never evaluated"
+        : staleByTime
+          ? "evaluation is stale"
+          : "NO REASON";
+
+    console.log(
+      `\n  store ${storeId}: maxSequence=${maxSeq} cursor=${cursor} lag=${maxSeq - cursor}` +
+        ` lastIntelligenceAt=${lastAt ? lastAt.toISOString() : "null"} -> ${reason}`
+    );
+    check("  due store is due for a real reason, not for none",
+      hasUnconsumedEvents || staleByTime);
   }
 
   if (!RUN) {

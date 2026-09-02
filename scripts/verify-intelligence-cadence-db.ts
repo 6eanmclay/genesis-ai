@@ -11,6 +11,9 @@ import {
 } from "@/lib/intelligence/cycle";
 import { STALE_REVIEW_MS } from "@/lib/dashboard/genesisObservations";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
+import { runTimeBasedDetection, runChangeDetection } from "@/lib/intelligence/changeDetection";
+import { detectInsightRecurrence } from "@/lib/intelligence/learn";
+import { INSIGHT_PREFIX } from "@/lib/intelligence/notify";
 
 // WAKING J4 ON A SCHEDULE, AND STAYING QUIET WHEN NOTHING CHANGED:
 //
@@ -522,6 +525,185 @@ async function main(): Promise<void> {
       where: { storeId: theirs.id },
     });
     eq("and writes no findings into the other store", strayObservations, 0);
+  }
+
+  // ======================================================================
+  console.log("\n=== 12. Time alone is now a reason to notice (G1) ===\n");
+  // ======================================================================
+  {
+    // The two time-based sweeps had ONE caller: runChangeDetection, which the
+    // scheduler runs after a connector sync and only when that sync returned
+    // changes. Eight of sixteen production stores have no connected
+    // integration at all, so an invoice could go overdue and J4 emit nothing.
+    const store = await makeStore();
+
+    // A genuinely overdue invoice, and NO connector, NO sync, NO change list.
+    await prismaSystem.businessRecord.create({
+      data: {
+        storeId: store.id, entityType: "document", externalId: `inv-${stamp}-${++seq}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        data: {
+          type: "invoice", status: "open", amountInCents: 24500,
+          dueAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+      },
+    });
+
+    const eventsFor = () =>
+      prismaSystem.businessEvent.count({ where: { storeId: store.id, eventType: "invoice.overdue" } });
+
+    eq("nothing has been noticed yet", await eventsFor(), 0);
+
+    // THROUGH THE CYCLE, not by calling the sweep directly — the seam under
+    // test is the new caller, and a test that called the detector itself would
+    // pass with the caller deleted.
+    const summary = await runIntelligenceCycle(store.id);
+    assert("the deterministic pass completes", summary.ok, JSON.stringify(summary.failedStages));
+    eq("the overdue invoice was noticed with no connector activity at all",
+      await eventsFor(), 1);
+
+    // ---- 2. and a connector sync cannot double-emit it -----------------
+    //
+    // Both callers pass through alreadyFlaggedRecently, a 20h window. This is
+    // the property, not the implementation: whichever path runs second must
+    // add nothing.
+    await runChangeDetection(store.id, "quickbooks", []);
+    eq("a connector sync over the same still-true condition adds nothing",
+      await eventsFor(), 1);
+
+    // AND THE SYNC PATH STILL SWEEPS AT ALL — the half the assertion above
+    // cannot see. Found by sabotage: deleting the sweep call from
+    // runChangeDetection entirely left "adds nothing" green, because a path
+    // that does nothing also adds nothing. So a store where the SYNC gets
+    // there first must produce the event.
+    const syncFirst = await makeStore("Sync First");
+    await prismaSystem.businessRecord.create({
+      data: {
+        storeId: syncFirst.id, entityType: "document", externalId: `inv-sf-${stamp}-${++seq}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        data: {
+          type: "invoice", status: "open", amountInCents: 9900,
+          dueAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+      },
+    });
+    await runChangeDetection(syncFirst.id, "quickbooks", []);
+    eq("a connector sync that gets there first still notices it",
+      await prismaSystem.businessEvent.count({
+        where: { storeId: syncFirst.id, eventType: "invoice.overdue" },
+      }), 1);
+
+    await runIntelligenceCycle(store.id);
+    eq("and neither does a second cycle", await eventsFor(), 1);
+
+    // ---- 7. tenant isolation --------------------------------------------
+    const neighbour = await makeStore("Neighbour");
+    await runTimeBasedDetection(neighbour.id, "internal");
+    eq("sweeping one store writes nothing into another",
+      await prismaSystem.businessEvent.count({ where: { storeId: neighbour.id } }), 0);
+    eq("and the first store is untouched by its neighbour's sweep", await eventsFor(), 1);
+  }
+
+  // ======================================================================
+  console.log("\n=== 13. Recurrence is how long it has been true (G2) ===\n");
+  // ======================================================================
+  {
+    // The old signal counted DISTINCT WEEKS IN WHICH A ROW WAS WRITTEN. Slice
+    // 1's dedupe means an unchanging insight writes one row ever, so that
+    // counter froze at one and a belief about a persistent condition could
+    // never form again. The condition's own duration is the honest signal, and
+    // GenesisObservation already carries it.
+    const store = await makeStore();
+    const beliefs = () => prismaSystem.belief.count({ where: { storeId: store.id } });
+    const belief = () =>
+      prismaSystem.belief.findFirst({
+        where: { storeId: store.id, category: "insight_recurrence" },
+        select: { topicKey: true, claim: true, evidenceCount: true, firstObservedAt: true, lastConfirmedAt: true },
+      });
+
+    const standingFor = async (days: number, summary = "3 invoices are now overdue.") => {
+      const first = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      await prismaSystem.genesisObservation.upsert({
+        where: { storeId_dedupeKey: { storeId: store.id, dedupeKey: `${INSIGHT_PREFIX}invoices.overdue` } },
+        create: {
+          storeId: store.id, dedupeKey: `${INSIGHT_PREFIX}invoices.overdue`,
+          genesisState: "urgent", summary, status: "ACTIVE",
+          firstNoticedAt: first, lastConfirmedAt: new Date(),
+        },
+        update: { summary, firstNoticedAt: first, lastConfirmedAt: new Date(), status: "ACTIVE" },
+      });
+    };
+
+    // ---- 3. duration, not calendar identity ---------------------------
+    await standingFor(20);
+    await detectInsightRecurrence(store.id);
+    eq("a condition standing 20 days is not yet a belief", await beliefs(), 0);
+
+    await standingFor(25);
+    await detectInsightRecurrence(store.id);
+    eq("one standing 25 days is", await beliefs(), 1);
+
+    const formed = await belief();
+    eq("keyed on the condition, never on a week",
+      formed?.topicKey, "insight_recurrence:invoices.overdue");
+    assert("and the claim states its duration",
+      (formed?.claim ?? "").includes("25 days"), formed?.claim ?? "");
+
+    // ---- 4. another day passing is not another finding ------------------
+    await standingFor(26);
+    await detectInsightRecurrence(store.id);
+    eq("a day later it is still ONE belief, not a second", await beliefs(), 1);
+    const older = await belief();
+    eq("the same logical finding", older?.topicKey, "insight_recurrence:invoices.overdue");
+    assert("whose age has moved", (older?.claim ?? "").includes("26 days"), older?.claim ?? "");
+    assert("and whose evidence grew with it",
+      (older?.evidenceCount ?? 0) > (formed?.evidenceCount ?? 0),
+      `${formed?.evidenceCount} -> ${older?.evidenceCount}`);
+
+    // ---- 5. a worsening condition updates ------------------------------
+    await standingFor(27, "7 invoices are now overdue.");
+    await detectInsightRecurrence(store.id);
+    const worse = await belief();
+    assert("a changed condition updates the same belief",
+      (worse?.claim ?? "").includes("7 invoices"), worse?.claim ?? "");
+    eq("still one belief", await beliefs(), 1);
+
+    // ---- 6. resolution still retracts ----------------------------------
+    await prismaSystem.genesisObservation.updateMany({
+      where: { storeId: store.id, dedupeKey: `${INSIGHT_PREFIX}invoices.overdue` },
+      data: { status: "RESOLVED" },
+    });
+    const before = await belief();
+    await detectInsightRecurrence(store.id);
+    const after = await belief();
+    eq("a resolved condition stops being re-confirmed",
+      after?.lastConfirmedAt?.getTime(), before?.lastConfirmedAt?.getTime());
+
+    // THE ASSERTION ABOVE CANNOT SEE A RESOLVED ROW BEING READ, because the
+    // belief already exists and re-confirming it with the same timestamp looks
+    // identical to not touching it. Found by sabotage: removing the ACTIVE
+    // filter left it green.
+    //
+    // So: a store whose ONLY standing condition is already resolved must form
+    // no belief at all. That is a difference nothing can hide.
+    const resolvedOnly = await makeStore("Resolved Only");
+    await prismaSystem.genesisObservation.create({
+      data: {
+        storeId: resolvedOnly.id, dedupeKey: `${INSIGHT_PREFIX}revenue.decreased`,
+        genesisState: "urgent", summary: "Revenue fell sharply.", status: "RESOLVED",
+        firstNoticedAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000),
+        lastConfirmedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      },
+    });
+    await detectInsightRecurrence(resolvedOnly.id);
+    eq("a long-standing but RESOLVED condition forms no belief",
+      await prismaSystem.belief.count({ where: { storeId: resolvedOnly.id } }), 0);
+
+    // ---- 7. tenant isolation -------------------------------------------
+    const neighbour = await makeStore("Neighbour Two");
+    await detectInsightRecurrence(neighbour.id);
+    eq("one store's standing condition is not another's belief",
+      await prismaSystem.belief.count({ where: { storeId: neighbour.id } }), 0);
   }
 
   console.log(`\n${failures} failed, ${passes} passed`);

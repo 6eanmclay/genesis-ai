@@ -83,6 +83,7 @@ async function main() {
     const order: string[] = [];
     const boom = new Error("a stage is down");
     const summary = await cycle.runCycleStages(store.id, {
+      detectChange: async () => {},
       insights: async () => { order.push("insights"); return []; },
       notify: async () => { order.push("notify"); },
       learn: async () => { order.push("learn"); throw boom; },
@@ -102,6 +103,7 @@ async function main() {
     // ==================================================================
     let notified = false;
     const failedInsights = await cycle.runCycleStages(store.id, {
+      detectChange: async () => {},
       insights: async () => { throw new Error("insight engine is down"); },
       notify: async () => { notified = true; },
       learn: async () => {},
@@ -116,6 +118,7 @@ async function main() {
 
     // CONTROL: the same shape with nothing thrown is a clean pass.
     const clean = await cycle.runCycleStages(store.id, {
+      detectChange: async () => {},
       insights: async () => [],
       notify: async () => {},
       learn: async () => {},
@@ -130,6 +133,7 @@ async function main() {
     // ==================================================================
     const reported: { stage: string; storeId?: string | null }[] = [];
     await cycle.runCycleStages(store.id, {
+      detectChange: async () => {},
       insights: async () => [],
       notify: async () => {},
       learn: async () => { throw new Error("learn is down"); },
@@ -145,6 +149,7 @@ async function main() {
       await (async () => {
         const quiet: unknown[] = [];
         await cycle.runCycleStages(store.id, {
+          detectChange: async () => {},
           insights: async () => [],
           notify: async () => {},
           learn: async () => {},

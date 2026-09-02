@@ -229,6 +229,54 @@ export async function recordBusinessEvents(
   await writeBusinessEvents(prisma, storeId, sourceProvider, rows);
 }
 
+/**
+ * The time-based sweeps, over current state, for one store.
+ *
+ * ============ WHY THIS IS ITS OWN FUNCTION (2026-09-02) ==============
+ *
+ * These two sweeps find conditions that become true because TIME PASSED — an
+ * invoice's due date going by, stock reaching zero — and nothing about them
+ * needs a connector to have synced. But their only route to being called was
+ * inside `runChangeDetection`, which the scheduler runs after a sync, and only
+ * when that sync returned changes. Eight of sixteen production stores have no
+ * connected integration at all, so for half the platform an invoice could go
+ * overdue and J4 would never emit a thing.
+ *
+ * So the sweeps get a second caller: the deterministic intelligence cycle.
+ * This function is what both callers share, rather than each running its own
+ * copy — two implementations of "run the sweeps" is the mirrored-registry
+ * problem again, and the one that drifted would be the one nobody read.
+ *
+ * ============ AND IT CANNOT DOUBLE-EMIT ==============================
+ *
+ * Nothing new was needed for that. Both sweeps already refuse a record they
+ * flagged inside RESWEEP_WINDOW_MS — twenty hours, deliberately under a daily
+ * cadence — so a record yields at most one event per eventType per day however
+ * many callers reach it. That guard is store-scoped, which makes it the tenant
+ * boundary here too.
+ *
+ * The RECORD-LEVEL rules are deliberately not here: they compare a previous
+ * value to a current one, and only a sync knows what just changed.
+ */
+export async function runTimeBasedDetection(
+  storeId: string,
+  sourceProvider: string
+): Promise<void> {
+  const [overdue, lowInventory] = await Promise.all([
+    detectOverdueInvoices(storeId),
+    detectLowInventory(storeId),
+  ]);
+
+  const sweepEntries = [...overdue, ...lowInventory].map((r) => ({
+    recordId: r.recordId,
+    entityType: r.entityType,
+    candidates: [r.candidate],
+  }));
+
+  if (sweepEntries.length === 0) return;
+  await recordBusinessEvents(storeId, sourceProvider, sweepEntries);
+}
+
 // The full Change Detection pass for one store's sync cycle — record-level
 // rules over what actually just changed, plus the time-based sweeps over
 // current state regardless of what changed. Called once per store by the
@@ -248,15 +296,10 @@ export async function runChangeDetection(
     ),
   }));
 
-  const [overdue, lowInventory] = await Promise.all([
-    detectOverdueInvoices(storeId),
-    detectLowInventory(storeId),
-  ]);
-  const sweepEntries = [...overdue, ...lowInventory].map((r) => ({
-    recordId: r.recordId,
-    entityType: r.entityType,
-    candidates: [r.candidate],
-  }));
+  if (recordLevelEntries.length > 0) {
+    await recordBusinessEvents(storeId, sourceProvider, recordLevelEntries);
+  }
 
-  await recordBusinessEvents(storeId, sourceProvider, [...recordLevelEntries, ...sweepEntries]);
+  // THE SAME SWEEPS THE CYCLE RUNS, not a second copy of them.
+  await runTimeBasedDetection(storeId, sourceProvider);
 }

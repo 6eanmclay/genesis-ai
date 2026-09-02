@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { INSIGHT_PREFIX } from "./notify";
 import { volunteeredByJ4 } from "./proposalOrigin";
 
 // J4 Foundation Phase 2 — the Learn cognitive subsystem. Continuously
@@ -20,7 +21,25 @@ import { volunteeredByJ4 } from "./proposalOrigin";
 // can never silently drift from what the raw evidence actually shows.
 
 const EVIDENCE_SATURATION_COUNT = 5; // occurrences beyond this add diminishing confidence, not none
-const INSIGHT_RECURRENCE_WEEKS_THRESHOLD = 3; // real recurrence needs distinct weeks, not a same-day burst
+/**
+ * How long a condition must have been standing before it becomes a belief.
+ *
+ * ============ THIS USED TO COUNT WEEKS OF WRITES (2026-09-02) ========
+ *
+ * It was INSIGHT_RECURRENCE_WEEKS_THRESHOLD = 3, counted over distinct
+ * `weekBucket(CognitiveOutput.generatedAt)` values — "in how many different
+ * weeks did we write this down". A workable proxy only while every cycle wrote
+ * a fresh row for the same standing insight.
+ *
+ * The 2026-09-02 insight dedupe ended that on purpose: an unchanging insight
+ * writes ONE row, ever. So the counter froze at one and a belief about a
+ * genuinely persistent condition could never form again. The dedupe is right;
+ * this signal was always the weaker half, and the dedupe exposed it.
+ *
+ * Twenty-one days is the same three weeks, restated in the unit that describes
+ * the condition rather than our writing habits. Not a new number.
+ */
+const INSIGHT_RECURRENCE_DAYS_THRESHOLD = 21;
 const REJECTION_PATTERN_THRESHOLD = 2;
 
 /**
@@ -176,33 +195,55 @@ function weekBucket(date: Date): number {
 // thing getRecentGenesisHistory's 60-day/5-item cap could never do. This is
 // the literal realization of "this is the third week in a row."
 export async function detectInsightRecurrence(storeId: string): Promise<void> {
-  const rows = await prisma.cognitiveOutput.findMany({
-    where: { storeId, kind: "insight", topicKey: { not: null } },
-    orderBy: { generatedAt: "asc" },
+  // ============ THE CONDITION'S OWN DURATION, NOT OUR WRITING ========
+  //
+  // GenesisObservation already carries `firstNoticedAt` and `lastConfirmedAt`,
+  // maintained by the same upsert that owns finding identity and retracted by
+  // resolveMissingObservations when the condition stops being true. That IS
+  // "how long has this been true", where counting rows was only ever "how
+  // often did we write it down".
+  //
+  // ACTIVE only, deliberately: a resolved condition stops being re-confirmed,
+  // which is resolution continuing to work rather than a new lifecycle.
+  //
+  // No new persistence and no new timestamp — both fields already exist, on
+  // the path that already owns them.
+  const standing = await prisma.genesisObservation.findMany({
+    where: { storeId, status: "ACTIVE", dedupeKey: { startsWith: INSIGHT_PREFIX } },
+    select: { id: true, dedupeKey: true, summary: true, firstNoticedAt: true, lastConfirmedAt: true },
   });
 
-  const byTopicKey = groupBy(rows, (r) => r.topicKey as string);
-  for (const [topicKey, group] of byTopicKey) {
-    const distinctWeeks = new Set(group.map((r) => weekBucket(r.generatedAt)));
-    if (distinctWeeks.size < INSIGHT_RECURRENCE_WEEKS_THRESHOLD) continue;
+  for (const observation of standing) {
+    // THE IDENTITY IS THE CONDITION, NOT THE WEEK. `insight:<type>` with the
+    // prefix removed is the insight type this belief has always been keyed on,
+    // so a persistent condition stays one logical finding while its age moves.
+    const insightType = observation.dedupeKey.slice(INSIGHT_PREFIX.length);
+    if (insightType.length === 0) continue;
 
-    const latest = group[group.length - 1];
+    const days = Math.floor(
+      (observation.lastConfirmedAt.getTime() - observation.firstNoticedAt.getTime()) / DAY_MS
+    );
+    if (days < INSIGHT_RECURRENCE_DAYS_THRESHOLD) continue;
+
     // No contradiction concept modeled for this detector yet — an opposite-
     // direction insight (e.g. revenue.increased) is a different topicKey
     // entirely under today's grouping, so there's nothing genuine to count
     // as contradicting evidence here. Left honestly at 0 rather than forcing
     // a concept that doesn't really exist for this pattern.
     await upsertBelief(storeId, {
-      topicKey: `insight_recurrence:${topicKey}`,
-      claim: `Genesis has now flagged this ${distinctWeeks.size} weeks in a row: ${latest.summary}`,
+      topicKey: `insight_recurrence:${insightType}`,
+      claim: `Genesis has been flagging this for ${days} days: ${observation.summary}`,
       category: "insight_recurrence",
-      supportingCount: group.length,
+      // Days standing IS the evidence now, and it feeds the same confidence
+      // curve as before: more of it, more confidence, saturating where it
+      // always did.
+      supportingCount: days,
       contradictingCount: 0,
-      firstObservedAt: group[0].generatedAt,
-      lastConfirmedAt: latest.generatedAt,
+      firstObservedAt: observation.firstNoticedAt,
+      lastConfirmedAt: observation.lastConfirmedAt,
       lastContradictedAt: null,
-      evidenceRefs: group.map((r) => r.id),
-      data: { insightType: topicKey, occurrences: group.length, distinctWeeks: distinctWeeks.size },
+      evidenceRefs: [observation.id],
+      data: { insightType, standingDays: days },
     });
   }
 }
@@ -399,10 +440,17 @@ export async function detectDecisionOutcomePattern(storeId: string): Promise<voi
 }
 
 // A claim about ONE specific record doesn't need the same evidence breadth
-// a store-wide trend claim does — deliberately lower than
-// INSIGHT_RECURRENCE_WEEKS_THRESHOLD (3), matching the existing precedent
-// that REJECTION_PATTERN_THRESHOLD/OUTCOME_PATTERN_THRESHOLD both already
-// use 2 for a narrower, more specific claim.
+// a store-wide trend claim does — deliberately lower than the three weeks
+// detectInsightRecurrence asked for (it now asks for 21 days of standing
+// condition instead; see INSIGHT_RECURRENCE_DAYS_THRESHOLD), matching the
+// existing precedent that REJECTION_PATTERN_THRESHOLD and
+// OUTCOME_PATTERN_THRESHOLD both already use 2 for a narrower claim.
+//
+// THIS DETECTOR KEEPS COUNTING WEEKS, and that is correct rather than
+// inconsistent: it counts distinct weeks in which a RECORD-LEVEL EVENT
+// genuinely occurred, and each of those is a real separate occurrence. The
+// other detector was counting how often we wrote the same standing condition
+// down, which is not the same kind of thing at all.
 const EVENT_RECURRENCE_WEEKS_THRESHOLD = 2;
 
 // Detector 3 — recurring events tied to one specific record. Reads

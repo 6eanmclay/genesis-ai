@@ -566,6 +566,7 @@ async function main() {
 
   const { runCycleStages } = await import("@/lib/intelligence/cycle");
   const spokenSummary = await runCycleStages("any-store", {
+    detectChange: async () => {},
     insights: async () => [],
     notify: async () => {},
     learn: async () => {},
@@ -576,6 +577,7 @@ async function main() {
     spokenSummary.spoken === 7,
     "a cycle summary that cannot say whether J4 spoke is a cycle nobody can audit");
   const silentSummary = await runCycleStages("any-store", {
+    detectChange: async () => {},
     insights: async () => [],
     notify: async () => {},
     learn: async () => {},

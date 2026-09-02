@@ -967,6 +967,70 @@ One business never remembers another's conversation, including concurrently.
 
 ---
 
+## 18. Slice 2 — time is a reason to notice, and duration is the evidence
+
+**The mapping, written before implementing.**
+
+### G1 — the time-based sweeps had one caller
+
+| Detector | Called from | Reachable when |
+|---|---|---|
+| `detectOverdueInvoices` | `runChangeDetection` | a connector sync returned changes |
+| `detectLowInventory` | `runChangeDetection` | the same |
+
+`runChangeDetection` has exactly one caller, `scheduler.ts:167`, inside
+`runDueSyncs`, and only when `metadata.changes.length > 0`. Eight of sixteen
+production stores have no connected integration at all, so for half the
+platform an invoice going overdue produces nothing, ever.
+
+**The new caller** is a stage in the deterministic cycle. It runs ONLY the
+time-based sweeps — never the record-level rules, which require the `changes`
+array a sync produces and which would be meaningless without one.
+
+**Why it cannot double-emit, using nothing new.** Both sweeps already call
+`alreadyFlaggedRecently(storeId, recordId, eventType)`, which refuses anything
+flagged inside `RESWEEP_WINDOW_MS` (20 hours). That guard exists for precisely
+this reason and says so in its own comment: without it, "invoice X is overdue"
+would get a fresh row every cycle forever. Twenty hours sits deliberately under
+a daily cadence, so a record yields at most one event per eventType per day no
+matter how many callers reach it. It is store-scoped, so the guard is also the
+tenant boundary.
+
+**One implementation, two callers.** The sweeps plus their write are lifted
+into `runTimeBasedDetection`, and `runChangeDetection` calls it. Two copies of
+"run the sweeps" would be the mirrored-registry problem again: the one that
+drifted would be the one nobody was reading.
+
+### G2 — recurrence measured writes, not the condition
+
+`detectInsightRecurrence` counted DISTINCT WEEKS IN WHICH A ROW WAS WRITTEN —
+`weekBucket` over `CognitiveOutput.generatedAt`, needing three.
+
+That was a workable proxy only while every cycle wrote a fresh row for the same
+standing insight. Slice 1's dedupe ended that deliberately: an unchanging
+insight now writes one row, ever. So the counter freezes at one and a belief
+about a genuinely persistent condition can never form again. The dedupe is
+right; the signal was always the weaker half, and the dedupe exposed it.
+
+**The condition's own duration already exists.** `GenesisObservation` carries
+`firstNoticedAt` and `lastConfirmedAt`, maintained by the same upsert that owns
+finding identity, and retracted by `resolveMissingObservations` when the
+condition stops being true. That is literally "how long has this been true",
+where the old signal was "how often did we write it down".
+
+- Identity stays the condition: the observation's `dedupeKey`
+  (`insight:<type>`), which is already the insight's stable identity.
+- Duration, not row count: `lastConfirmedAt - firstNoticedAt`.
+- The threshold is the old one restated in its own units: three weeks was
+  `INSIGHT_RECURRENCE_WEEKS_THRESHOLD = 3`, so twenty-one days. Not a new number.
+- ACTIVE only, so a resolved condition stops being re-confirmed — which is
+  resolution continuing to work, not a new lifecycle.
+
+**No new persistence and no new timestamp.** Both fields already exist and are
+already written on the path that owns them.
+
+---
+
 ## 17. Slice 1b — the cheap evaluation stops paying for the expensive one (2026-09-02)
 
 **Written before implementing, as the boundary check.**

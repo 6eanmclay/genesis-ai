@@ -3,6 +3,7 @@ import { reportIssue } from "@/lib/observability/reportIssue";
 import { proposeStaffPolicyGap } from "@/lib/businessModel/staffPolicyGap";
 import { prisma, prismaSystem } from "@/lib/prisma";
 import { computeInsights, INSIGHT_ENGINE_CONSUMER, type Insight } from "./insights";
+import { runTimeBasedDetection } from "./changeDetection";
 import { distillBeliefs } from "./learn";
 import { notifyFromInsights } from "./notify";
 import { runOpportunisticAiReviewIfStale, STALE_REVIEW_MS } from "@/lib/dashboard/genesisObservations";
@@ -54,6 +55,7 @@ export interface IntelligenceCycleSummary {
 
 /** The stages of one pass, in order. Named so a failure can say which. */
 export type CycleStage =
+  | "detect_change"
   | "insights"
   | "notify"
   | "learn"
@@ -70,6 +72,15 @@ export type CycleStage =
  * database and a live provider happen to do on the day.
  */
 export interface CycleStages {
+  /**
+   * Conditions that became true because time passed.
+   *
+   * FIRST, because it is the only stage that produces new facts rather than
+   * interpreting existing ones — an invoice that went overdue this morning
+   * should be visible to the interpretation that follows it in the same pass,
+   * not a day later.
+   */
+  detectChange: () => Promise<void>;
   insights: () => Promise<Insight[]>;
   notify: (insights: Insight[]) => Promise<void>;
   learn: () => Promise<void>;
@@ -143,6 +154,11 @@ export async function runCycleStages(
   // overdue thresholds) that can become newly significant purely from time
   // passing, so a pass is still worth running for a store whose newest events
   // individually produced nothing.
+  // WHAT BECAME TRUE WHILE NOBODY WAS LOOKING. Deterministic, cheap, and
+  // isolated like every other stage: a sweep that throws must not stop the
+  // interpretation of what is already known.
+  await runStage("detect_change", stages.detectChange);
+
   const computed = await runStage("insights", stages.insights);
 
   // NOT RUN WITH AN EMPTY LIST WHEN INSIGHTS FAILED. notifyFromInsights
@@ -225,6 +241,9 @@ export async function runCycleStages(
  */
 export async function runIntelligenceCycle(storeId: string): Promise<IntelligenceCycleSummary> {
   const summary = await runCycleStages(storeId, {
+    // "internal" — the same source name every first-party writer uses. This is
+    // Genesis noticing on its own, not a provider reporting.
+    detectChange: () => runTimeBasedDetection(storeId, "internal"),
     insights: () => computeInsights(storeId),
     notify: (insights) => notifyFromInsights(storeId, insights),
     learn: () => distillBeliefs(storeId),
