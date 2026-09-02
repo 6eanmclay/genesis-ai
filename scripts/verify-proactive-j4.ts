@@ -569,7 +569,6 @@ async function main() {
     insights: async () => [],
     notify: async () => {},
     learn: async () => {},
-    aiReview: async () => {},
     staffPolicyGap: async () => {},
     speak: async () => ({ spoken: 7 }),
   });
@@ -580,7 +579,6 @@ async function main() {
     insights: async () => [],
     notify: async () => {},
     learn: async () => {},
-    aiReview: async () => {},
     staffPolicyGap: async () => {},
     speak: async () => { throw new Error("speaking failed"); },
   }, () => {});

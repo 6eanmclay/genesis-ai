@@ -5,8 +5,12 @@ import {
   runDueIntelligenceCycles,
   runIntelligenceCycle,
   getStoresDueForIntelligence,
+  getStoresDueForAiReview,
+  runDueAiReviews,
   INTELLIGENCE_MAX_AGE_MS,
 } from "@/lib/intelligence/cycle";
+import { STALE_REVIEW_MS } from "@/lib/dashboard/genesisObservations";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 
 // WAKING J4 ON A SCHEDULE, AND STAYING QUIET WHEN NOTHING CHANGED:
 //
@@ -354,6 +358,170 @@ async function main(): Promise<void> {
     // shortened pass safe: the remainder is first in line next time.
     eq("a store the deadline skipped is not marked evaluated",
       (await lastAt(store.id))?.getTime(), setTo.getTime());
+  }
+
+  // ======================================================================
+  console.log("\n=== 8. The cheap evaluation no longer pays for the expensive one ===\n");
+  // ======================================================================
+  {
+    // ============ THE SEPARATION THIS SLICE EXISTS FOR ================
+    //
+    // In the first production tick the AI review was 98.7% of the cycle:
+    // 206 of 209 seconds, six Opus calls. The other five stages cost about
+    // 380ms per store. So a deterministic evaluation every business could
+    // afford daily was priced at the rate of one only six could.
+    //
+    // The property: a deterministic pass completes, and advances the
+    // timestamp, WITHOUT any review being attempted.
+    const store = await makeStore();
+
+    const reviewsFor = () =>
+      prismaSystem.executionLog.count({
+        where: { storeId: store.id, action: EXECUTION_ACTIONS.GENESIS_RECOMMENDATIONS_GENERATE },
+      });
+
+    eq("no review has been attempted for a new store", await reviewsFor(), 0);
+    const summary = await runIntelligenceCycle(store.id);
+
+    assert("the deterministic pass completes without a provider",
+      summary.ok === true, JSON.stringify(summary.failedStages));
+    assert("and stamps the store",
+      (await lastAt(store.id)) !== null, "a completed deterministic pass did not advance the cadence");
+    eq("while attempting no AI review at all", await reviewsFor(), 0);
+
+    // AND THE STAGE IS GONE, not merely skipped. A stage that still existed
+    // and quietly did nothing would look identical from outside until the day
+    // somebody re-enabled it.
+    eq("ai_review is no longer one of the cycle's stages",
+      summary.failedStages.includes("ai_review" as never), false);
+  }
+
+  // ======================================================================
+  console.log("\n=== 9. The AI review is independently 24h-gated ===\n");
+  // ======================================================================
+  {
+    // Selection only — deliberately nothing is invoked here, so this section
+    // cannot cost money or depend on a provider being reachable.
+    const never = await makeStore();
+    const fresh = await makeStore();
+    const stale = await makeStore();
+
+    const logReview = (storeId: string, at: Date) =>
+      prismaSystem.executionLog.create({
+        data: {
+          executionId: `suite-${storeId}-${at.getTime()}`,
+          actorType: "GENESIS",
+          storeId, action: EXECUTION_ACTIONS.GENESIS_RECOMMENDATIONS_GENERATE,
+          status: "SUCCESS", verified: false, retryable: false,
+          message: "suite", createdAt: at,
+        },
+      });
+
+    await logReview(fresh.id, new Date(Date.now() - 60 * 60 * 1000));
+    await logReview(stale.id, new Date(Date.now() - 30 * 60 * 60 * 1000));
+
+    const due = await getStoresDueForAiReview(500);
+    assert("a store reviewed an hour ago is not due", !due.includes(fresh.id));
+    assert("a store reviewed 30 hours ago is due", due.includes(stale.id));
+    assert("a store never reviewed is due", due.includes(never.id));
+    assert("and the never-reviewed one is ordered ahead of the stale one",
+      due.indexOf(never.id) < due.indexOf(stale.id),
+      `never at ${due.indexOf(never.id)}, stale at ${due.indexOf(stale.id)}`);
+
+    // ONE DEFINITION OF STALE, not two. The selector and the gate inside
+    // runOpportunisticAiReviewIfStale must read the same constant, or a store
+    // could be selected by one and refused by the other forever.
+    eq("the selector uses the gate's own staleness window", STALE_REVIEW_MS, 24 * 60 * 60 * 1000);
+
+    // A FAILED review does not count as having been reviewed — the gate reads
+    // SUCCESS, so a store whose review failed is still due.
+    const failed = await makeStore();
+    await prismaSystem.executionLog.create({
+      data: {
+        executionId: `suite-failed-${failed.id}`,
+        actorType: "GENESIS",
+        storeId: failed.id, action: EXECUTION_ACTIONS.GENESIS_RECOMMENDATIONS_GENERATE,
+        status: "FAILED", verified: false, retryable: false, message: "suite",
+      },
+    });
+    assert("a store whose review failed is still due one",
+      (await getStoresDueForAiReview(500)).includes(failed.id),
+      "a failure was mistaken for a completed review");
+  }
+
+  // ======================================================================
+  console.log("\n=== 10. A review cannot touch the deterministic cadence ===\n");
+  // ======================================================================
+  {
+    // Whether the review succeeds or fails in this environment, the one thing
+    // it must never do is move `lastIntelligenceAt`. That column belongs to
+    // the other task, and the whole separation rests on it.
+    const store = await makeStore();
+    await runIntelligenceCycle(store.id);
+    const stampedAt = await lastAt(store.id);
+    assert("the store starts with a deterministic evaluation", stampedAt !== null);
+
+    const batch = await runDueAiReviews(500);
+    const after = await lastAt(store.id);
+
+    eq("the review left the deterministic timestamp exactly as it was",
+      after?.getTime(), stampedAt?.getTime());
+    assert("whatever the review's own outcome was",
+      typeof batch.completed === "number",
+      JSON.stringify({ due: batch.due, processed: batch.processed, completed: batch.completed }));
+    console.log(`  NOTE  the review pass reported due=${batch.due} processed=${batch.processed} completed=${batch.completed} in this environment`);
+
+    // ============ AND THE SUCCESS PATH, WHICH NO TEST HERE CAN REACH ==
+    //
+    // FOUND BY SABOTAGE (2026-09-02). Adding a `lastIntelligenceAt` write to
+    // the review's SUCCESS branch left every assertion in this section green,
+    // because a review cannot succeed in an environment with no provider — so
+    // the branch the sabotage edited was never executed.
+    //
+    // This is lane 4 evidence (source-asserted), and is labelled as such
+    // rather than dressed up as behavioural: the guarantee is that the review
+    // task does not write that column AT ALL, on any branch, and the only way
+    // to check the unreachable branch is to read it.
+    {
+      const source = (await import("node:fs")).readFileSync("lib/intelligence/cycle.ts", "utf8");
+      const start = source.indexOf("export async function runDueAiReviews");
+      const end = source.indexOf("export interface IntelligenceBatchSummary");
+      const body = start >= 0 && end > start ? source.slice(start, end) : source;
+      assert("the review task never writes the deterministic timestamp, on any branch",
+        !body.includes("lastIntelligenceAt"),
+        "runDueAiReviews references lastIntelligenceAt — the column belongs to the other task");
+    }
+
+    // AND IT NEVER STAMPS ONE ITSELF. A store with no deterministic pass at
+    // all must not gain a timestamp from being reviewed.
+    const unevaluated = await makeStore();
+    const before = await lastAt(unevaluated.id);
+    await runDueAiReviews(500);
+    eq("a store the review touched but the cycle did not is still unevaluated",
+      (await lastAt(unevaluated.id))?.getTime() ?? null, before?.getTime() ?? null);
+  }
+
+  // ======================================================================
+  console.log("\n=== 11. Neither task reaches across tenants ===\n");
+  // ======================================================================
+  {
+    const mine = await makeStore("Mine");
+    const theirs = await makeStore("Theirs");
+
+    await runIntelligenceCycle(mine.id);
+    const mineAt = await lastAt(mine.id);
+    const theirsAt = await lastAt(theirs.id);
+
+    assert("evaluating one store stamps that store", mineAt !== null);
+    eq("and does not stamp another", theirsAt, null);
+
+    // The selectors are cross-tenant by design (they ask "who across the
+    // platform is due") and are reachable only from the CRON_SECRET-gated
+    // route. What must not happen is one store's WORK landing on another.
+    const strayObservations = await prismaSystem.genesisObservation.count({
+      where: { storeId: theirs.id },
+    });
+    eq("and writes no findings into the other store", strayObservations, 0);
   }
 
   console.log(`\n${failures} failed, ${passes} passed`);

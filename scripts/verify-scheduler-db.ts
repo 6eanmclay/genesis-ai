@@ -383,6 +383,46 @@ async function main(): Promise<void> {
     }
   }
 
+  console.log("\n--- the expensive review is shed before the watchdog ---\n");
+  {
+    // ============ WHY THE LANE MATTERS (2026-09-02) ===================
+    //
+    // The AI review measured 29-39 seconds and about fifteen cents per store in
+    // production, and was 98.7% of the intelligence cycle. It is its own task
+    // now, and its lane is the one already defined for work that "makes
+    // third-party calls on its own initiative" and that an invocation running
+    // out of time "should lose before it loses a customer's receipt".
+    //
+    // The consequence that matters: every maintenance task, the ops.alerts
+    // watchdog included, is now considered ahead of it. Noticing the platform
+    // is broken must never queue behind an opinion about a storefront.
+    const review = SCHEDULED_TASKS.find((task) => task.key === "intelligence.aiReview");
+    const cycles = SCHEDULED_TASKS.find((task) => task.key === "intelligence.cycles");
+    const alerts = SCHEDULED_TASKS.find((task) => task.key === "ops.alerts");
+
+    assert("the AI review is its own task", review !== undefined);
+    eq("in the outbound lane", review?.lane, "outbound");
+    eq("while the deterministic cycle stays in recompute", cycles?.lane, "recompute");
+    assert("so the watchdog is considered before the review",
+      LANE_ORDER.indexOf(alerts!.lane) < LANE_ORDER.indexOf(review!.lane),
+      `${alerts?.lane} vs ${review?.lane}`);
+
+    assert("the deterministic cycle no longer claims minutes it does not need",
+      (cycles?.minBudgetMs ?? Infinity) <= 10_000,
+      `${cycles?.minBudgetMs} - it measured about 380ms per store`);
+    assert("the review claims enough for one real review",
+      (review?.minBudgetMs ?? 0) >= 40_000,
+      `${review?.minBudgetMs} - one measured 28.9s to 38.9s`);
+
+    // THE WATCHDOG FITS THE LEFTOVER IT PREVIOUSLY MISSED. It was deferred
+    // with roughly 30s remaining against a 30s claim it never needed.
+    assert("the watchdog fits in the margin that previously deferred it",
+      (alerts?.minBudgetMs ?? Infinity) <= 10_000,
+      `${alerts?.minBudgetMs} - it reads one source and a handful of counts`);
+    assert("without shortening what it is allowed to take",
+      alerts?.maxBudgetMs === 30_000, `${alerts?.maxBudgetMs}`);
+  }
+
   console.log("\n--- supplier discovery stays off ---\n");
   {
     // ============ A BOUNDARY, NOT AN OPINION (2026-09-02) =============
@@ -550,7 +590,17 @@ async function main(): Promise<void> {
     //   ops.alerts       added 2026-08-30. needsAttention() and its scheduler
     //                    counterpart already computed the right answers and had
     //                    one caller each: a page somebody had to open.
-    const ADDED = ["telemetry.prune", "security.prune", "retention.sweep", "ops.alerts"];
+    //   intelligence.aiReview
+    //                    added 2026-09-02. NOT new work: it is the stage
+    //                    that used to run inside intelligence.cycles,
+    //                    lifted out after the first production tick
+    //                    measured it at 98.7% of that task -- 206 of 209
+    //                    seconds, six Opus calls. Named here because this
+    //                    list's whole job is that nothing appears in the
+    //                    registry without somebody saying why. See
+    //                    BI_ENGINE.md section 17.
+    const ADDED = ["telemetry.prune", "security.prune", "retention.sweep", "ops.alerts",
+      "intelligence.aiReview"];
     // Sorted on both sides: this is about WHICH tasks were added, not the order
     // they happen to be declared in. A failure that only says "the same list in
     // a different order" is noise standing in front of the assertion that

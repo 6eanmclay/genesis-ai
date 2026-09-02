@@ -967,6 +967,71 @@ One business never remembers another's conversation, including concurrently.
 
 ---
 
+## 17. Slice 1b — the cheap evaluation stops paying for the expensive one (2026-09-02)
+
+**Written before implementing, as the boundary check.**
+
+### What the first production tick measured
+
+`intelligence.cycles` ran 209,067ms. **206,390ms of it — 98.7% — was six
+`cognitive_review` calls to claude-opus-4-8**, 28.9s to 38.9s each, $0.9145 for
+the tick. Everything else — five deterministic stages across seven stores —
+cost **~2,677ms, about 380ms per store**.
+
+So the cadence problem was never throughput. Sixteen stores of deterministic
+evaluation is about six seconds of work. What does not fit in a daily
+invocation is sixteen Opus reviews.
+
+### The boundary
+
+| Task | Lane | Stages | Stamps `lastIntelligenceAt` |
+|---|---|---|---|
+| `intelligence.cycles` | recompute | insights, notify, learn, staff_policy_gap, speak | **yes**, on full success |
+| `intelligence.aiReview` | outbound | the existing `runOpportunisticAiReviewIfStale`, then speak | **never** |
+
+`outbound` is deliberate and is not a new idea: it is already defined as the
+lane for work that "makes third-party calls on its own initiative" and that "an
+invocation running out of time should lose before it loses a customer's
+receipt". A 34-second, 15-cent model call is exactly that. It also puts the
+whole maintenance lane — including the `ops.alerts` watchdog — ahead of it.
+
+### The state transitions, and why they cannot duplicate anything
+
+1. **Deterministic pass completes** -> `lastIntelligenceAt` advances. No AI
+   review is required for it to advance, which is the whole point.
+2. **Any deterministic stage fails** -> no stamp, store stays due, retried.
+3. **AI review succeeds or fails** -> `lastIntelligenceAt` is untouched. A
+   review failure can no longer erase a good deterministic evaluation, and a
+   review success can no longer be what makes one "count".
+4. **AI review due-ness comes from `ExecutionLog`**, unchanged: the last SUCCESS
+   of `genesis.recommendations.generate` older than `STALE_REVIEW_MS`, or none.
+   **No `lastAiReviewAt` column is added** — the audit found the existing
+   evidence sufficient, and a second timestamp would be a second answer to a
+   question already answered.
+
+**No duplicate reviews.** Three independent guards, all pre-existing: the outer
+selection, the 24h gate inside `runOpportunisticAiReviewIfStale`, and the
+5-minute PENDING claim against a concurrent run. The gate stays inside the
+function, so even a wrong selection cannot produce a second review.
+
+**No duplicate findings.** Observations still upsert on `(storeId, dedupeKey)`,
+`observationFromReview` is unchanged, and `resolveMissingObservations` is still
+scoped to `AI_REVIEW_PREFIX`. Nothing about the recommendation or observation
+lifecycle moves.
+
+**No duplicate speech.** `speakNewFindings` only speaks a finding with no open
+`ProactiveDelivery`. It runs at the end of both tasks — which preserves today's
+behaviour, where a review's findings are spoken in the same pass that produced
+them — and running it twice says nothing twice.
+
+### What is deliberately NOT changed
+
+The six stages keep their implementations, their order relative to each other,
+and their failure semantics. This is a scheduler and lifecycle separation. No
+intelligence logic is redesigned, no detector is added, and no threshold moves.
+
+---
+
 ## 16. Slice 1 — the engine is woken reliably (2026-09-02)
 
 **Scoped, not yet built when this was written.** The audit that produced it found

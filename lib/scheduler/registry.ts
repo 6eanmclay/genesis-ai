@@ -7,7 +7,7 @@ import { sweepAbandonedTemporaries } from "@/lib/storage/temporaryAssets";
 import { pruneExpiredAttempts } from "@/lib/auth/attemptThrottle";
 import { runDueOrderNotifications } from "@/lib/orders/notificationSweep";
 import { runDueSyncs } from "@/lib/intelligence/scheduler";
-import { runDueIntelligenceCycles } from "@/lib/intelligence/cycle";
+import { runDueAiReviews, runDueIntelligenceCycles } from "@/lib/intelligence/cycle";
 import { runDueGrowthPointRefreshes } from "@/lib/growthPoints/refresh";
 import { runDueSourcing } from "@/lib/sourcing/sourcingSchedule";
 import {
@@ -268,17 +268,17 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     purpose: "Run the first-party intelligence cycle for stores with new activity.",
     everyMs: DAY,
     enabled: always,
-    // ENOUGH FOR ONE BUSINESS, not for all of them (2026-09-02).
+    // RE-DERIVED FROM PRODUCTION (2026-09-02).
     //
-    // This declared 180_000 under the old worst-case rule and was refused
-    // every single tick, because something ahead of it always left less than
-    // three minutes. Under the minimum rule it declares what it takes to
-    // evaluate at least one store and produce a real result, and the deadline
-    // below decides how many more it gets through. A pass that reaches four of
-    // sixteen is a pass that did four businesses' work, not a failure — and it
-    // leaves the other twelve first in line.
-    minBudgetMs: 30_000,
-    maxBudgetMs: 180_000,
+    // First measured tick: five deterministic stages cost about 380ms per
+    // store — seven stores in roughly 2.7 seconds. The 180_000 this used to
+    // declare was almost entirely the AI review, which is now its own task.
+    //
+    // So: a second is more than enough to evaluate one business, and a minute
+    // covers every store this platform is likely to have for a long time.
+    // Sixteen stores is about six seconds of work.
+    minBudgetMs: 5_000,
+    maxBudgetMs: 60_000,
     // The skip list is gone, and that is a behaviour change stated rather than
     // slipped in. It existed because syncs ran immediately before this in one
     // invocation; as independent tasks with their own cadence there is no
@@ -481,12 +481,49 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // catch the process.
     everyMs: HOUR,
     enabled: always,
-    minBudgetMs: 30_000,
+    // RE-DERIVED FROM THE IMPLEMENTATION AND PRODUCTION TIMING (2026-09-02).
+    //
+    // It reads ONE source, `platformHealth`, which is a Promise.all of a
+    // handful of counts plus schedulerHealth — no external call, no model, no
+    // write unless something is actually found. In the same tick that measured
+    // this, `webhooks.releaseStaleReplays` did comparable work in 12ms.
+    //
+    // It declared thirty seconds because that was its inherited worst case,
+    // and it was deferred by roughly half a second of margin — the watchdog
+    // losing its slot to a rounding error. Five seconds is its honest minimum
+    // with room to spare; the allowance is unchanged, so it may still take
+    // thirty if it ever needs to.
+    minBudgetMs: 5_000,
     maxBudgetMs: 30_000,
     run: () => runAlertSweep(),
   },
 
   // ------------------------------------------------------------- outbound
+  {
+    key: "intelligence.aiReview",
+    lane: "outbound",
+    purpose: "Ask the model to review businesses whose last review has gone stale.",
+    // ============ WHY THIS IS OUTBOUND, NOT RECOMPUTE (2026-09-02) ===
+    //
+    // The lane is defined for work that makes third-party calls on its own
+    // initiative and that an invocation running out of time should lose before
+    // it loses a customer's receipt. A review measured 29-39 seconds and about
+    // fifteen cents against a provider; that is precisely this lane.
+    //
+    // It also puts every maintenance task — the ops.alerts watchdog included —
+    // ahead of it, which is the right order: noticing that the platform is
+    // broken should never queue behind an opinion about a storefront.
+    //
+    // Daily, matching STALE_REVIEW_MS, which is what actually decides whether
+    // any individual store is reviewed.
+    everyMs: DAY,
+    enabled: always,
+    // One review, measured: 28.9s to 38.9s. Below this there is no point
+    // starting; the allowance is what a tick may spend in total.
+    minBudgetMs: 45_000,
+    maxBudgetMs: 180_000,
+    run: (ctx) => runDueAiReviews(50, { deadlineAt: ctx.deadlineAt }),
+  },
   {
     key: "sourcing.discovery",
     lane: "outbound",

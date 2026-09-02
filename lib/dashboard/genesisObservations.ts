@@ -10,7 +10,14 @@ import {
 import { runCognitiveReview } from "@/lib/intelligence/cognitiveLayer";
 import type { Insight } from "@/lib/intelligence/insights";
 
-const STALE_REVIEW_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long an AI review stays fresh.
+ *
+ * EXPORTED (2026-09-02) so the task that selects which stores are due a review
+ * asks the same question this gate answers. A second copy of the number in the
+ * selector would be a second definition of "stale", and the two would drift.
+ */
+export const STALE_REVIEW_MS = 24 * 60 * 60 * 1000;
 const CLAIM_MS = 5 * 60 * 1000;
 
 export type ObservationState = "opportunity" | "urgent";

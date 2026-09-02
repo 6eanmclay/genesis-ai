@@ -74,21 +74,26 @@ async function main() {
       "it needs insights, so a failed insights stage makes it failed too, not merely skipped");
 
     // THE BEHAVIOUR, not the shape. A stage that throws must not stop the rest.
+    //
+    // DEMONSTRATED WITH `learn` SINCE 2026-09-02. It used to be the AI review,
+    // which was the original defect — one stage needing a provider took two
+    // that did not down with it. The review is no longer a stage at all (it is
+    // its own task now, see BI_ENGINE.md section 17), but the property it
+    // exposed belongs to every stage and is held here with a deterministic one.
     const order: string[] = [];
-    const boom = new Error("provider is down");
+    const boom = new Error("a stage is down");
     const summary = await cycle.runCycleStages(store.id, {
       insights: async () => { order.push("insights"); return []; },
       notify: async () => { order.push("notify"); },
-      learn: async () => { order.push("learn"); },
-      aiReview: async () => { order.push("ai_review"); throw boom; },
+      learn: async () => { order.push("learn"); throw boom; },
       staffPolicyGap: async () => { order.push("staff_policy_gap"); },
       speak: async () => { order.push("speak"); return { spoken: 3 }; },
     });
 
-    eq("the AI review's failure is named", summary.failedStages, ["ai_review"]);
-    assert("and the two deterministic stages behind it still ran",
+    eq("the failing stage is named", summary.failedStages, ["learn"]);
+    assert("and the two stages behind it still ran",
       order.includes("staff_policy_gap") && order.includes("speak"),
-      "this is the whole defect: neither needs a provider, both died with one");
+      "this is the whole defect: neither depended on it, both died with it");
     eq("J4 still spoke", summary.spoken, 3);
     eq("and the pass is honestly not ok", summary.ok, false);
 
@@ -100,7 +105,6 @@ async function main() {
       insights: async () => { throw new Error("insight engine is down"); },
       notify: async () => { notified = true; },
       learn: async () => {},
-      aiReview: async () => {},
       staffPolicyGap: async () => {},
       speak: async () => ({ spoken: 0 }),
     });
@@ -115,7 +119,6 @@ async function main() {
       insights: async () => [],
       notify: async () => {},
       learn: async () => {},
-      aiReview: async () => {},
       staffPolicyGap: async () => {},
       speak: async () => ({ spoken: 0 }),
     });
@@ -130,7 +133,6 @@ async function main() {
       insights: async () => [],
       notify: async () => {},
       learn: async () => { throw new Error("learn is down"); },
-      aiReview: async () => {},
       staffPolicyGap: async () => {},
       speak: async () => ({ spoken: 0 }),
     }, (_message, _error, context) => reported.push({ stage: context.stage, storeId: context.storeId }));
@@ -146,7 +148,6 @@ async function main() {
           insights: async () => [],
           notify: async () => {},
           learn: async () => {},
-          aiReview: async () => {},
           staffPolicyGap: async () => {},
           speak: async () => ({ spoken: 0 }),
         }, () => quiet.push(1));

@@ -5,7 +5,8 @@ import { prisma, prismaSystem } from "@/lib/prisma";
 import { computeInsights, INSIGHT_ENGINE_CONSUMER, type Insight } from "./insights";
 import { distillBeliefs } from "./learn";
 import { notifyFromInsights } from "./notify";
-import { runOpportunisticAiReviewIfStale } from "@/lib/dashboard/genesisObservations";
+import { runOpportunisticAiReviewIfStale, STALE_REVIEW_MS } from "@/lib/dashboard/genesisObservations";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 
 // Business Intelligence Engine M1 (2026-08-18) — the reachable cycle.
 //
@@ -56,7 +57,6 @@ export type CycleStage =
   | "insights"
   | "notify"
   | "learn"
-  | "ai_review"
   | "staff_policy_gap"
   | "speak";
 
@@ -73,7 +73,7 @@ export interface CycleStages {
   insights: () => Promise<Insight[]>;
   notify: (insights: Insight[]) => Promise<void>;
   learn: () => Promise<void>;
-  aiReview: (insights: Insight[] | null) => Promise<void>;
+
   staffPolicyGap: () => Promise<void>;
   speak: () => Promise<{ spoken: number }>;
 }
@@ -169,15 +169,18 @@ export async function runCycleStages(
   // over here.
   await runStage("learn", () => stages.learn());
 
-  // The recommendation stage. Self-gated on its own staleness/claim check, so
-  // this is usually a cheap no-op and never a per-pass AI cost. No briefing is
-  // composed from here — that stays owner-attended, exactly as before.
+  // ============ THE AI REVIEW IS NOT A STAGE ANY MORE (2026-09-02) =====
   //
-  // THE ONE STAGE THAT NEEDS A PROVIDER. runCognitiveReview writes its own
-  // durable FAILED ExecutionLog and then throws; that log is the owner-facing
-  // half and is unchanged. What changed is that its throw no longer reaches the
-  // two stages below.
-  await runStage("ai_review", () => stages.aiReview(computed));
+  // It used to run here, between learn and the gap check, and it was 98.7% of
+  // this function's entire cost: 206 of 209 seconds in the first production
+  // tick, six Opus calls at 29-39 seconds each. The other five stages together
+  // cost about 380 milliseconds per store.
+  //
+  // So a cheap evaluation every business could have daily was priced at the
+  // rate of an expensive one only six of them could have. They are separate
+  // tasks now — `intelligence.aiReview`, in the outbound lane — and this
+  // function is the deterministic half, which is what `lastIntelligenceAt`
+  // has always meant. See BI_ENGINE.md section 17.
 
   // WHAT J4 IS MISSING AND CAN JUSTIFY ASKING FOR (2026-08-23). Deterministic
   // and cheap — two reads — so it runs unconditionally here rather than inside
@@ -225,13 +228,6 @@ export async function runIntelligenceCycle(storeId: string): Promise<Intelligenc
     insights: () => computeInsights(storeId),
     notify: (insights) => notifyFromInsights(storeId, insights),
     learn: () => distillBeliefs(storeId),
-    aiReview: async (insights) => {
-      const store = await prisma.store.findUnique({
-        where: { id: storeId },
-        select: { userId: true },
-      });
-      await runOpportunisticAiReviewIfStale(storeId, store?.userId ?? null, insights ?? undefined);
-    },
     staffPolicyGap: () => proposeStaffPolicyGap(storeId),
     speak: () => speakNewFindings(storeId),
   });
@@ -447,6 +443,114 @@ export async function getStoresDueForIntelligence(
  * Each store is isolated: one store's failure must not abort the pass for
  * every store behind it in the queue.
  */
+/**
+ * Which businesses are due an AI review, oldest first.
+ *
+ * ============ NO SECOND TIMESTAMP (2026-09-02) =======================
+ *
+ * Due-ness is read from the evidence that already decides it:
+ * `runOpportunisticAiReviewIfStale` gates on the last SUCCESS of
+ * GENESIS_RECOMMENDATIONS_GENERATE in ExecutionLog being older than
+ * STALE_REVIEW_MS. This asks the same table the same question, so a
+ * `lastAiReviewAt` column would be a second answer to a question already
+ * answered — and the two could disagree.
+ *
+ * The gate stays inside that function regardless. This selection only decides
+ * WHO to offer to it and in what order; the function itself still decides
+ * whether a review actually happens, so a wrong answer here cannot produce a
+ * duplicate review.
+ *
+ * Cross-tenant, like every other due-ness query here, and reachable only from
+ * the CRON_SECRET-gated route.
+ */
+export async function getStoresDueForAiReview(
+  limit: number,
+  now: Date = new Date(),
+): Promise<string[]> {
+  const [stores, lastReviews] = await Promise.all([
+    prismaSystem.store.findMany({ select: { id: true } }),
+    prismaSystem.executionLog.groupBy({
+      by: ["storeId"],
+      where: { action: EXECUTION_ACTIONS.GENESIS_RECOMMENDATIONS_GENERATE, status: "SUCCESS" },
+      _max: { createdAt: true },
+    }),
+  ]);
+
+  const lastBy = new Map<string, Date>();
+  for (const row of lastReviews) {
+    if (row.storeId && row._max.createdAt) lastBy.set(row.storeId, row._max.createdAt);
+  }
+
+  return stores
+    .map((s) => ({ storeId: s.id, last: lastBy.get(s.id) ?? null }))
+    .filter((s) => s.last === null || now.getTime() - s.last.getTime() > STALE_REVIEW_MS)
+    // Longest since its last review first, never reviewed first of all — the
+    // same self-correcting order the deterministic side uses, and for the same
+    // reason: reviewing a store moves it to the back.
+    .sort((a, b) => {
+      const at = a.last?.getTime() ?? -Infinity;
+      const bt = b.last?.getTime() ?? -Infinity;
+      return at === bt ? a.storeId.localeCompare(b.storeId) : at - bt;
+    })
+    .slice(0, Math.max(0, limit))
+    .map((s) => s.storeId);
+}
+
+/**
+ * The AI review pass: expensive, bounded, and unable to touch the
+ * deterministic cadence.
+ *
+ * A failure here records itself the way it always did — runCognitiveReview
+ * writes its own durable FAILED ExecutionLog — and CANNOT clear or advance
+ * `lastIntelligenceAt`, because that column belongs to the other task.
+ */
+export async function runDueAiReviews(
+  limit = 50,
+  opts: { deadlineAt?: number } = {},
+): Promise<IntelligenceBatchSummary> {
+  const due = await getStoresDueForAiReview(limit);
+
+  const summaries: IntelligenceCycleSummary[] = [];
+  let stoppedEarly = false;
+
+  for (const storeId of due) {
+    // A review costs 29-39 seconds. Checked before starting one rather than
+    // during, so a store is either reviewed or untouched.
+    if (opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt) {
+      stoppedEarly = true;
+      break;
+    }
+    try {
+      const store = await prisma.store.findUnique({
+        where: { id: storeId },
+        select: { userId: true },
+      });
+      await runOpportunisticAiReviewIfStale(storeId, store?.userId ?? null);
+      // SPEAKS WHAT IT JUST FOUND, exactly as the combined pass did — the
+      // review used to be followed by `speak` in the same cycle. Idempotent:
+      // speakNewFindings only speaks a finding with no open delivery, so
+      // running it in both tasks says nothing twice.
+      await speakNewFindings(storeId);
+      summaries.push({ storeId, ok: true, insights: 0, spoken: 0, failedStages: [] });
+    } catch (error) {
+      reportIssue("ai review failed for store", error, {
+        subsystem: "scheduler",
+        stage: "intelligence.aiReview",
+        storeId,
+      });
+      summaries.push({ storeId, ok: false, insights: 0, spoken: 0, failedStages: [] });
+    }
+  }
+
+  return {
+    due: due.length,
+    processed: summaries.length,
+    completed: summaries.filter((s) => s.ok).length,
+    stoppedEarly,
+    summaries,
+  };
+}
+
 export interface IntelligenceBatchSummary {
   /** Stores selected as due by this pass. */
   due: number;
