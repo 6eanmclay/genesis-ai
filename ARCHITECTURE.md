@@ -134,6 +134,62 @@ arrives.
 Full requirements, the classification table, and the outstanding work:
 [STORAGE.md](STORAGE.md).
 
+## Standing invariant: a scheduled task declares its minimum, not its worst case (2026-09-02)
+
+**A single daily cron cannot run every task, so the rule that decides which
+tasks it *does* run is load-bearing. Two properties keep it honest, and both
+were once wrong in a way nothing surfaced.**
+
+`lib/scheduler/run.ts` used to treat `budgetMs` as a **worst-case reservation**
+and refuse to start a task unless that whole reservation still remained. The
+reservation was never enforced as a limit, so it predicted a cost nothing
+collected. Combined with a fixed order — lane, then position in the registry —
+a task behind an expensive one was refused every tick, identically, forever.
+
+The arithmetic made it inevitable rather than unlucky. Enabled tasks declared
+**830 seconds** of budget against a **240-second** invocation, so whichever
+tasks sat past the 240-second mark could never start. Production confirmed the
+prediction exactly: `intelligence.cycles` (180s) and `sourcing.discovery`
+(240s — the entire invocation, with nothing allowed before it) were the only
+two enabled tasks with no recorded run, while all eleven others ran.
+
+**A deferral also left no trace.** No `ScheduledTaskRun` row is written for a
+task that never started, so `lastSuccesses()` was unchanged and the next tick
+recomputed the same order and made the same decision. The scheduler could
+starve a task indefinitely and its own health view was the only thing that
+could notice.
+
+### The two rules that replace it
+
+**1. `minBudgetMs` is the least time in which a task can do something useful
+and stop cleanly.** Not a worst case, not a limit, and never a promise about
+how long the task will actually take. The scheduler starts a task when at least
+that much remains.
+
+**2. The deadline is cooperative, not enforced.** Every task's `run()` receives
+the moment the invocation intends to stop. Nothing kills a task that overruns —
+killing it would abandon partial work, which is worse than finishing late. A
+task that can bound itself (anything batching over stores, rows or jobs) MUST
+consume the deadline and stop early, reporting how much it did against how much
+was due. A task that cannot bound itself declares a `minBudgetMs` equal to its
+true need and is simply skipped when it does not fit.
+
+**3. Order is lane first, then most overdue relative to its own interval.**
+Lane still encodes cost of delay — a customer's receipt outranks a supplier
+search, always. Within a lane, `(now − lastSuccess) / everyMs` descending
+replaces registry position, so a task that has missed three of its own
+intervals outranks one that has missed one. A never-run task sorts first. This
+is what makes permanent starvation structurally impossible: falling behind is
+the thing that earns priority.
+
+### What this obliges of any new task
+
+- Declare `minBudgetMs` as the smallest useful unit, not the expected total.
+- If the work is a batch, take the deadline and honour it, and report
+  `due` alongside `processed` so a shortfall is visible rather than silent.
+- Never assume a full invocation. Assume the next one, and leave the queue in a
+  state where the remainder is first in line.
+
 ## Standing invariant: the mirrored registry (2026-08-21)
 
 **A hand-maintained registry that mirrors another registry, where the type system appears to enforce the mirror but cannot.** Found three times during the verification sprint, in three unrelated parts of the codebase, always with the same signature: the file documents the mirror, the compiler checks the *shape*, and nothing checks the *membership*.
@@ -579,6 +635,50 @@ Who J4 is — its voice, personality, how it teaches, challenges, delivers criti
 **Explicitly named, not solved by this freeze**: a numeric cap on total trials an account may ever farm (Sean's own words: "add internal fraud checks if someone creates dozens of stores solely to farm trials") is a real future decision once real abuse patterns (if any) are observed — this freeze makes that decision *possible* (the grant history survives deletion and is queryable per account) without guessing the actual threshold today. True cross-account abuse (the same person operating multiple real logins) remains an open, unsolved vector common to every trial-based product — not addressed by store- or account-scoped guards, named here rather than silently left out.
 
 **Business Partner's value proposition, frozen 2026-08-05, Sean's own words**: *"Business Partner is not about giving owners 'more AI.' It's about removing friction from running their business. The value is that routine business improvements become effortless, allowing owners to stay focused on growing their business instead of constantly deciding whether a small improvement is worth spending Growth Points on."* This is the real reason the trial works as a conversion mechanism at all: it isn't demonstrating a feature, it's letting an owner live the difference between constantly weighing a small decision and not having to. Governs how J4 itself talks about the plan whenever the deferred "recommend from observed usage" capability above gets built — friction removed, never AI volume, is the only correct framing.
+
+---
+
+**When J4 last evaluated a business — `Store.lastIntelligenceAt` (2026-09-02).**
+A nullable timestamp meaning exactly one thing: *the most recent moment a full
+intelligence cycle completed for this store with no stage failure.* It is
+deliberately NOT `BusinessEventCursor.updatedAt`, which means "when the event
+cursor advanced" — a different fact about a different thing, and the two are
+kept as separate fields even though that cost a migration.
+
+It is written **only on a completed evaluation** (`ok === true`). It is not
+written when a store is merely selected, when any stage failed, or when the
+invocation's deadline arrived before the store was reached. The consequence is
+deliberate: a store whose cycle keeps failing never records a success, stays
+due, and is retried on every run — a failed pass can never be mistaken for a
+healthy one that found nothing.
+
+**The bound that follows, stated rather than discovered later.** Because a
+persistently failing store is always due and sorts first, it consumes one slot
+of each invocation's batch. That is bounded and self-limiting for a handful of
+stores; if the number of permanently failing stores ever approached the batch
+size, the queue would stop advancing for everyone behind them. That condition
+is visible — `schedulerHealth` and the cycle's own `due` vs `processed`
+reporting both surface it — and is an alert, never a silent degradation.
+
+**Selection order.** Stores due by elapsed time are taken oldest-evaluated
+first, `NULL` (never evaluated) first of all. This keeps the self-correcting
+property the event-driven rule had: processing a store moves it to the back of
+the queue. The older rule — largest event backlog first, whose fairness came
+from lag returning to zero — does not survive a time-based floor on its own,
+because a time-due store has no lag to reset.
+
+**Cadence.** N is 24 hours, inherited rather than chosen: `intelligence.cycles`
+already declares `everyMs: DAY`, `intelligence.syncs` declares the same, and
+`STALE_REVIEW_MS` — the AI review's own gate — is 24 hours. A quiet business is
+re-evaluated once a day because that is what the architecture already said.
+
+**Why this costs no extra model calls.** `runOpportunisticAiReviewIfStale`
+gates on the last SUCCESS of `GENESIS_RECOMMENDATIONS_GENERATE` in
+`ExecutionLog`, older than `STALE_REVIEW_MS`, with a 5-minute PENDING claim
+against concurrent runs. That log is shared with the owner-attended path, so a
+scheduled cycle and a page visit cooperate through one gate instead of both
+paying. However often the scheduler wakes, the AI stage runs at most once per
+store per day, and not at all for a store whose owner already triggered it.
 
 ---
 

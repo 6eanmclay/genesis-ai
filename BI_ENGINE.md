@@ -967,6 +967,58 @@ One business never remembers another's conversation, including concurrently.
 
 ---
 
+## 16. Slice 1 — the engine is woken reliably (2026-09-02)
+
+**Scoped, not yet built when this was written.** The audit that produced it found
+that sections 1-14 are substantially correct: the lifecycle exists. What does not
+happen is it RUNNING.
+
+### The two findings
+
+**The cycle task was starved by the scheduler.** `intelligence.cycles` had no
+recorded run while eleven other tasks ran the same day. Not specific to it: see
+ARCHITECTURE.md's *a scheduled task declares its minimum, not its worst case*
+for the general defect and the fix. `sourcing.discovery` was the second victim
+and the arithmetic predicted both before production confirmed them.
+
+**Nothing makes a quiet business due.** `getStoresDueForIntelligence` selects on
+unconsumed `BusinessEvent` activity, and every writer of that table is
+action-originated — a connector sync that returned changes, an execution, a
+sale, a product adoption. Time alone produces no event, so a store whose data
+has not moved is never re-evaluated. At audit time `storesDueNow` was 0 across
+all 16 production stores, the newest connector-sourced event was a month old,
+and 54 of 95 ACTIVE observations had not been re-confirmed in over 14 days —
+J4 was showing owners findings it had not checked, and could not retract them
+because the thing that would retract them does not run.
+
+### What Slice 1 does, and what it deliberately does not
+
+It makes the scheduler capable of running the cycle, and makes elapsed time a
+reason for a store to be due. `Store.lastIntelligenceAt` and its exact
+semantics are recorded in ARCHITECTURE.md rather than here, because the field
+is a fact about a Store and outlives this milestone.
+
+It does NOT make the time-based detectors independent of connector syncs. That
+is Slice 2, approved in principle and deliberately not started: establishing
+that the scheduler can wake J4 reliably comes first, because a new detector
+that nothing runs is worth nothing.
+
+It does NOT touch observation identity or resolution semantics, and it does not
+clean up the six legacy `GenesisObservation` rows whose `dedupeKey` carries no
+sweep prefix (two are raw cuids) and which therefore no current sweep can ever
+resolve. Those are recorded as cleanup debt, last confirmed 2026-07-27 to
+07-30, and are left alone.
+
+**`sourcing.discovery` is explicitly disabled by this slice.** It was
+`enabled: always` and never ran, because it declares the entire invocation
+budget and something always runs before it. Fixing the scheduler would have
+started it — the only task that makes third-party calls on its own initiative —
+as a side effect of unrelated work. Preserving its OBSERVED behaviour therefore
+required changing its DECLARED state, and that is stated here rather than
+slipped in. Turning it on is its own decision, with its own review.
+
+---
+
 ## 15. The milestone, closed (2026-08-21)
 
 **Status: COMPLETE within the approved scope.** Closed at `66078f1`, after four

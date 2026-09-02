@@ -149,6 +149,18 @@ export const CONFIG: ConfigEntry[] = [
     purpose: "Whether the weekly attribution sweep runs.",
     absence: "Off, deliberately." },
 
+  // ---- ops ---------------------------------------------------------------
+  { name: "SOURCING_DISCOVERY_ENABLED", group: "ops", requirement: "optional", secret: false,
+    purpose:
+      "Whether the scheduler may run supplier discovery, the one task that makes " +
+      "third-party calls on its own initiative.",
+    absence:
+      "Off, deliberately (2026-09-02). It was nominally always-on and had never once " +
+      "run, because it declared the entire invocation budget and something always ran " +
+      "first. Fixing that starvation would have started it as a side effect of " +
+      "unrelated work, so its observed behaviour was preserved by making its state " +
+      "explicit. Turning it on is its own decision." },
+
   // ---- shipping ----------------------------------------------------------
   { readBySdk: true, name: "EASYPOST_API_KEY", group: "shipping", requirement: "feature", secret: true,
     purpose: "Buys shipping labels and tracks parcels.",

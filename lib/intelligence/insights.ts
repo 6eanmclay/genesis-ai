@@ -290,7 +290,68 @@ export async function computeInsights(storeId: string): Promise<Insight[]> {
   // Sequential, not Promise.all — these are real, independently-recordable
   // acts, not a batch; a failure on one must not obscure whether the others
   // succeeded.
+  // ============ THE SAME FINDING IS NOT A SECOND FINDING (2026-09-02) ==
+  //
+  // This loop used to call communicateFinding unconditionally, and
+  // communicateFinding always creates. So every pass appended another
+  // CognitiveOutput row for an insight that had not changed — invisible while
+  // cycles almost never ran, and one row per insight per store per day the
+  // moment BI Slice 1 made them run daily. `cognitiveOutput` is
+  // `verdict: "decide", keepDays: null` in lib/retention/policy.ts, so nothing
+  // would ever have pruned them, and getEntityHistory would have shown an
+  // owner the same sentence repeated every day.
+  //
+  // Found by the quiet-business test Slice 1 was required to pass: three
+  // cycles on unchanged data left observations, deliveries, messages and
+  // beliefs all flat, and CognitiveOutput at 1 -> 2 -> 3.
+  //
+  // ============ AND THIS IS THE HOUSE PATTERN, NOT A NEW ONE ==========
+  //
+  // Every other repeating producer already does one of these two things:
+  // genesisObservations.ts skips when an ACTIVE row with the same topicKey
+  // exists, and gaps.ts / the goal-prediction pass supersede their own ACTIVE
+  // rows before writing fresh ones. This loop did neither, and was the only
+  // one that did neither.
+  //
+  // Scoped BY TOPIC KEY rather than by kind, deliberately: kind "insight" is
+  // also written by the deterministic sweep and by socialInsight.ts, and
+  // superseding by kind would silently clobber rows this file never wrote.
+  //
+  // WHAT IT MUST NOT BECOME is "never update this insight again". An insight
+  // whose summary genuinely changed — three invoices overdue becoming five —
+  // is new information, and is recorded by superseding the stale row first.
+  // Only a byte-identical restatement is skipped.
+  const activeByTopic = new Map(
+    (
+      await prisma.cognitiveOutput.findMany({
+        where: {
+          storeId,
+          kind: "insight",
+          status: "ACTIVE",
+          topicKey: { in: computed.map((insight) => insight.type) },
+        },
+        select: { id: true, topicKey: true, summary: true },
+      })
+    ).map((row) => [row.topicKey as string, row])
+  );
+
   for (const insight of computed) {
+    const standing = activeByTopic.get(insight.type);
+
+    // Unchanged, and already on the record. Saying it again would not tell
+    // anybody anything they were not already being told.
+    if (standing && standing.summary === insight.summary) continue;
+
+    // Changed. The older statement is no longer what J4 thinks, so it is
+    // superseded rather than left standing beside its own replacement — the
+    // same transition gaps.ts and the prediction pass already use.
+    if (standing) {
+      await prisma.cognitiveOutput.updateMany({
+        where: { id: standing.id, storeId },
+        data: { status: "SUPERSEDED" },
+      });
+    }
+
     await communicateFinding(storeId, {
       kind: "insight",
       summary: insight.summary,

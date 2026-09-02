@@ -251,7 +251,10 @@ async function main() {
   assert("all three are selected",
     [first.id, second.id, third.id].every((id) => selected.includes(id)));
 
-  const summaries = await runDueIntelligenceCycles(50);
+  // The batch now reports due/processed alongside the per-store summaries, so
+  // a pass stopped by a deadline is distinguishable from one that found little.
+  const batch = await runDueIntelligenceCycles(50);
+  const summaries = batch.summaries;
   const reported = new Set(summaries.map((s) => s.storeId));
   assert("every selected store produced a summary",
     [first.id, second.id, third.id].every((id) => reported.has(id)),

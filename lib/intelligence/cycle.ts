@@ -221,7 +221,7 @@ export async function runCycleStages(
  * can never drift into different ideas of what a cycle is.
  */
 export async function runIntelligenceCycle(storeId: string): Promise<IntelligenceCycleSummary> {
-  return runCycleStages(storeId, {
+  const summary = await runCycleStages(storeId, {
     insights: () => computeInsights(storeId),
     notify: (insights) => notifyFromInsights(storeId, insights),
     learn: () => distillBeliefs(storeId),
@@ -235,12 +235,52 @@ export async function runIntelligenceCycle(storeId: string): Promise<Intelligenc
     staffPolicyGap: () => proposeStaffPolicyGap(storeId),
     speak: () => speakNewFindings(storeId),
   });
+
+  // ============ ONLY A COMPLETED PASS COUNTS AS AN EVALUATION ==========
+  //
+  // Written when every stage ran without failing, and at no other time — not
+  // because the store was selected, and never on a pass that failed partway.
+  //
+  // The consequence is deliberate: a store whose cycle keeps failing never
+  // records a success, stays due, and is retried every run. A failure must
+  // never be able to masquerade as a healthy pass that found nothing, which is
+  // exactly what a "last attempted" timestamp would have allowed.
+  //
+  // The bound that follows is stated in ARCHITECTURE.md rather than
+  // discovered later: a persistently failing store holds one slot of each
+  // batch, which is self-limiting for a few and visible through `due` vs
+  // `processed` if it ever stopped being a few.
+  //
+  // Failing to record it must not fail the pass — the work really did happen.
+  if (summary.ok) {
+    try {
+      await prisma.store.updateMany({
+        where: { id: storeId },
+        data: { lastIntelligenceAt: new Date() },
+      });
+    } catch (error) {
+      reportIssue("could not record lastIntelligenceAt", error, {
+        subsystem: "scheduler",
+        stage: "intelligence.cycle",
+        storeId,
+      });
+    }
+  }
+
+  return summary;
 }
 
 
 export interface StoreEventActivity {
   storeId: string;
   maxSequence: bigint;
+}
+
+/** Every store, with when J4 last completed an evaluation of it. */
+export interface StoreEvaluationState {
+  storeId: string;
+  /** Null means never evaluated. */
+  lastIntelligenceAt: Date | null;
 }
 
 export interface ConsumerCursorState {
@@ -268,21 +308,73 @@ export interface ConsumerCursorState {
 export function selectDueStoreIds(
   activity: StoreEventActivity[],
   cursors: ConsumerCursorState[],
-  opts: { limit: number; skipStoreIds?: Iterable<string> }
+  opts: {
+    limit: number;
+    skipStoreIds?: Iterable<string>;
+    /**
+     * Every store and when it was last evaluated. Omitted entirely and the
+     * behaviour is exactly what it was before elapsed time counted: activity
+     * only.
+     */
+    evaluations?: StoreEvaluationState[];
+    /** How long a store may go unevaluated before it is due anyway. */
+    maxAgeMs?: number;
+    now?: Date;
+  }
 ): string[] {
   const consumed = new Map(cursors.map((c) => [c.storeId, c.lastProcessedSequence]));
   const skip = new Set(opts.skipStoreIds ?? []);
+  const now = opts.now ?? new Date();
 
-  return activity
+  // ---- due because something happened ------------------------------------
+  //
+  // Unchanged. Largest backlog first, store id as a deterministic tie-break so
+  // the same inputs always produce the same order. Self-correcting: a
+  // processed store's lag returns to zero, so it yields to others next pass.
+  const byActivity = activity
     .filter((a) => !skip.has(a.storeId))
     .map((a) => ({ storeId: a.storeId, lag: a.maxSequence - (consumed.get(a.storeId) ?? BigInt(0)) }))
     .filter((a) => a.lag > BigInt(0))
-    // Largest backlog first, store id as a deterministic tie-break so the same
-    // inputs always produce the same order. No starvation risk: a processed
-    // store's lag returns to zero, so it yields to others on the next pass.
     .sort((a, b) => (a.lag === b.lag ? a.storeId.localeCompare(b.storeId) : a.lag > b.lag ? -1 : 1))
-    .slice(0, Math.max(0, opts.limit))
     .map((a) => a.storeId);
+
+  // ---- due because time passed -------------------------------------------
+  //
+  // ============ WHY THIS NEEDED ITS OWN ORDERING (2026-09-02) ==========
+  //
+  // The rule above is fair because lag returns to zero when a store is
+  // processed, so nobody can hold the front of the queue. A store due by
+  // ELAPSED TIME has no lag to reset, so that argument does not carry over —
+  // sorting the time-due set the same way would return the same head every
+  // run and the tail would never be reached.
+  //
+  // Oldest-evaluated first restores exactly the property that was lost:
+  // evaluating a store moves it to the back. Never-evaluated (null) sorts
+  // first, which is also what makes the first run after the migration correct
+  // rather than arbitrary.
+  const seen = new Set(byActivity);
+  const byAge =
+    opts.evaluations === undefined || opts.maxAgeMs === undefined
+      ? []
+      : opts.evaluations
+          .filter((e) => !skip.has(e.storeId) && !seen.has(e.storeId))
+          .filter(
+            (e) =>
+              e.lastIntelligenceAt === null ||
+              now.getTime() - e.lastIntelligenceAt.getTime() >= opts.maxAgeMs!,
+          )
+          .sort((a, b) => {
+            const at = a.lastIntelligenceAt?.getTime() ?? -Infinity;
+            const bt = b.lastIntelligenceAt?.getTime() ?? -Infinity;
+            return at === bt ? a.storeId.localeCompare(b.storeId) : at - bt;
+          })
+          .map((e) => e.storeId);
+
+  // ACTIVITY OUTRANKS AGE, deliberately. A store where something genuinely
+  // happened has new information to interpret; a store due only because a day
+  // passed has, by definition, nothing new. Under a tight limit the one with
+  // something to say goes first.
+  return [...byActivity, ...byAge].slice(0, Math.max(0, opts.limit));
 }
 
 /**
@@ -297,11 +389,23 @@ export function selectDueStoreIds(
  * processedAt. Phase 1's independence invariant is intact — nothing here can
  * change what the Insight Engine treats as real.
  */
+/**
+ * How long a business may go unevaluated before it is due regardless of
+ * whether anything happened.
+ *
+ * NOT A NEW NUMBER. `intelligence.cycles` already declares `everyMs: DAY`,
+ * `intelligence.syncs` declares the same, and STALE_REVIEW_MS — the AI
+ * review's own gate — is 24 hours. This is that same day, named once here so
+ * the three cannot drift apart silently.
+ */
+export const INTELLIGENCE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 export async function getStoresDueForIntelligence(
   limit: number,
-  skipStoreIds?: Iterable<string>
+  skipStoreIds?: Iterable<string>,
+  now: Date = new Date()
 ): Promise<string[]> {
-  const [activity, cursors] = await Promise.all([
+  const [activity, cursors, evaluations] = await Promise.all([
     prismaSystem.businessEvent.groupBy({
       by: ["storeId"],
       _max: { sequence: true },
@@ -310,6 +414,12 @@ export async function getStoresDueForIntelligence(
       where: { consumerName: INSIGHT_ENGINE_CONSUMER },
       select: { storeId: true, lastProcessedSequence: true },
     }),
+    // CROSS-TENANT, and gated the same way everything else here is: this asks
+    // "which stores across the platform are due", which no store-scoped client
+    // can ask, and is reachable only from the CRON_SECRET-gated route.
+    prismaSystem.store.findMany({
+      select: { id: true, lastIntelligenceAt: true },
+    }),
   ]);
 
   return selectDueStoreIds(
@@ -317,7 +427,13 @@ export async function getStoresDueForIntelligence(
       .filter((a) => a._max.sequence !== null)
       .map((a) => ({ storeId: a.storeId, maxSequence: a._max.sequence as bigint })),
     cursors,
-    { limit, skipStoreIds }
+    {
+      limit,
+      skipStoreIds,
+      evaluations: evaluations.map((s) => ({ storeId: s.id, lastIntelligenceAt: s.lastIntelligenceAt })),
+      maxAgeMs: INTELLIGENCE_MAX_AGE_MS,
+      now,
+    }
   );
 }
 
@@ -331,14 +447,44 @@ export async function getStoresDueForIntelligence(
  * Each store is isolated: one store's failure must not abort the pass for
  * every store behind it in the queue.
  */
+export interface IntelligenceBatchSummary {
+  /** Stores selected as due by this pass. */
+  due: number;
+  /** Stores actually evaluated before the deadline arrived. */
+  processed: number;
+  /** Of those, how many completed every stage. */
+  completed: number;
+  /** True when the deadline stopped the pass with stores still due. */
+  stoppedEarly: boolean;
+  summaries: IntelligenceCycleSummary[];
+}
+
 export async function runDueIntelligenceCycles(
   limit = 50,
-  opts: { skipStoreIds?: Iterable<string> } = {}
-): Promise<IntelligenceCycleSummary[]> {
+  opts: { skipStoreIds?: Iterable<string>; deadlineAt?: number } = {}
+): Promise<IntelligenceBatchSummary> {
   const due = await getStoresDueForIntelligence(limit, opts.skipStoreIds);
 
   const summaries: IntelligenceCycleSummary[] = [];
+  let stoppedEarly = false;
+
   for (const storeId of due) {
+    // STOP BEFORE STARTING ONE IT CANNOT FINISH.
+    //
+    // The deadline is the invocation's, and honouring it is this task's own
+    // responsibility — nothing kills it (see ARCHITECTURE.md, *a scheduled
+    // task declares its minimum, not its worst case*). Checked BEFORE a store
+    // rather than during it, so a store is either evaluated properly or not
+    // touched at all; a half-run cycle would be the one outcome that could
+    // write a misleading lastIntelligenceAt.
+    //
+    // The stores not reached are not lost: they keep their older
+    // lastIntelligenceAt, so they sort ahead of everyone evaluated today and
+    // are first in line on the next invocation.
+    if (opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt) {
+      stoppedEarly = true;
+      break;
+    }
     try {
       summaries.push(await runIntelligenceCycle(storeId));
     } catch (error) {
@@ -376,5 +522,12 @@ export async function runDueIntelligenceCycles(
       summaries.push({ storeId, ok: false, insights: 0, spoken: 0, failedStages: ["insights"] });
     }
   }
-  return summaries;
+
+  return {
+    due: due.length,
+    processed: summaries.length,
+    completed: summaries.filter((s) => s.ok).length,
+    stoppedEarly,
+    summaries,
+  };
 }

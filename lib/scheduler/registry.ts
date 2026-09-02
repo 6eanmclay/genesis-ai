@@ -100,12 +100,69 @@ export interface ScheduledTask {
    */
   enabled: () => boolean;
   /**
-   * Roughly how long this is allowed to take. The runner stops starting new
-   * tasks when the remaining budget cannot cover the next one, so a slow task
-   * cannot silently swallow the ones after it.
+   * THE LEAST TIME IN WHICH THIS TASK CAN DO SOMETHING USEFUL AND STOP.
+   *
+   * Not a worst case, not a limit, and not a promise about how long it will
+   * actually take. The runner starts a task when at least this much of the
+   * invocation remains.
+   *
+   * ============ WHY THIS IS NOT A RESERVATION (2026-09-02) ============
+   *
+   * It used to be `budgetMs`, meaning "roughly how long this is allowed to
+   * take", and the runner refused to start a task unless that whole amount
+   * still remained. Nothing enforced it, so it predicted a cost nobody
+   * collected — and a task declaring 180s was refused with 141s free, every
+   * tick, in the same order, forever. Two real tasks never ran at all.
+   *
+   * See ARCHITECTURE.md, *a scheduled task declares its minimum, not its
+   * worst case*, for the full defect and the arithmetic that made it certain.
+   *
+   * ONLY intelligence.cycles HAS BEEN RE-DERIVED so far. Every other task
+   * still carries the number it declared as a worst case. That is safe rather
+   * than wrong — the check is identical, so their behaviour is unchanged — but
+   * their numbers are conservative under the new meaning, and re-deriving them
+   * is real work that belongs to whoever makes each task deadline-aware, not
+   * to a rename.
    */
-  budgetMs: number;
-  run: () => Promise<unknown>;
+  minBudgetMs: number;
+  /**
+   * THE LONGEST THIS TASK MAY RUN BEFORE IT SHOULD STOP OF ITS OWN ACCORD.
+   *
+   * ============ WHY BOTH NUMBERS EXIST (2026-09-02) ==================
+   *
+   * `minBudgetMs` answers "is it worth starting", and this answers "how much
+   * of the invocation is yours". Splitting them is what stopped a
+   * self-bounding task from eating the whole tick: the deadline a task
+   * receives is `min(end of invocation, now + maxBudgetMs)`, so a batch can
+   * work until its own allowance runs out and the lanes behind it still get
+   * the rest.
+   *
+   * Every value here is the number that task ALREADY declared as `budgetMs`
+   * before the split — "roughly how long this is allowed to take" — recovered
+   * verbatim rather than re-chosen, so no task's allowance silently changed.
+   * For all but one task it equals `minBudgetMs`, which is exactly the old
+   * behaviour: start only if the full allowance fits, then use it.
+   *
+   * Like the deadline itself, this is COOPERATIVE. Nothing kills a task that
+   * runs past it; a task that batches is expected to check.
+   */
+  maxBudgetMs: number;
+  /**
+   * The work.
+   *
+   * `deadlineAt` is the epoch millisecond at which the invocation intends to
+   * stop. It is COOPERATIVE: nothing kills a task that runs past it, because
+   * killing one would abandon partial work. A task that batches over stores,
+   * rows or jobs MUST honour it and stop early, reporting what it did against
+   * what was due. A task that cannot bound itself simply ignores it and
+   * declares a `minBudgetMs` equal to its real need.
+   */
+  run: (ctx: TaskContext) => Promise<unknown>;
+}
+
+export interface TaskContext {
+  /** Epoch ms the invocation intends to stop at. Advisory, never enforced. */
+  deadlineAt: number;
 }
 
 const MINUTE = 60_000;
@@ -115,6 +172,21 @@ const WEEK = 7 * DAY;
 
 /** Always on. Named so the registry reads as a table rather than a wall of arrows. */
 const always = () => true;
+
+/**
+ * SUPPLIER DISCOVERY IS OFF, AND THAT IS A CHANGE (2026-09-02).
+ *
+ * It was `enabled: always` and had never once run: it declares the entire
+ * invocation budget, and something always runs before it. Fixing the
+ * scheduler's starvation would have started it — the only task that makes
+ * third-party calls on its own initiative — as a side effect of work that had
+ * nothing to do with it.
+ *
+ * So its OBSERVED behaviour is preserved by changing its DECLARED state, which
+ * is the honest way round: the alternative was shipping a silent behaviour
+ * change inside a fix for something else. Turning it on is its own decision.
+ */
+const sourcingDiscoveryEnabled = () => process.env.SOURCING_DISCOVERY_ENABLED === "1";
 
 export const SCHEDULED_TASKS: ScheduledTask[] = [
   // ---------------------------------------------------------------- queue
@@ -134,7 +206,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // not of this design.
     everyMs: 2 * MINUTE,
     enabled: always,
-    budgetMs: 60_000,
+    minBudgetMs: 60_000,
+    maxBudgetMs: 60_000,
     run: () =>
       drain(HANDLERS, {
         maxJobs: 50,
@@ -160,7 +233,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // that genuinely needs retries and idempotency.
     everyMs: 15 * MINUTE,
     enabled: always,
-    budgetMs: 30_000,
+    minBudgetMs: 30_000,
+    maxBudgetMs: 30_000,
     run: () => runDueOrderNotifications(),
   },
 
@@ -171,7 +245,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     purpose: "Pull fresh data for stores whose connectors are due a sync.",
     everyMs: DAY,
     enabled: always,
-    budgetMs: 120_000,
+    minBudgetMs: 120_000,
+    maxBudgetMs: 120_000,
     run: () => runDueSyncs(50),
   },
   {
@@ -183,7 +258,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // anything to do with each other beyond sharing a trigger.
     everyMs: HOUR,
     enabled: always,
-    budgetMs: 60_000,
+    minBudgetMs: 60_000,
+    maxBudgetMs: 60_000,
     run: () => runDueGrowthPointRefreshes(50),
   },
   {
@@ -192,15 +268,25 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     purpose: "Run the first-party intelligence cycle for stores with new activity.",
     everyMs: DAY,
     enabled: always,
-    budgetMs: 180_000,
+    // ENOUGH FOR ONE BUSINESS, not for all of them (2026-09-02).
+    //
+    // This declared 180_000 under the old worst-case rule and was refused
+    // every single tick, because something ahead of it always left less than
+    // three minutes. Under the minimum rule it declares what it takes to
+    // evaluate at least one store and produce a real result, and the deadline
+    // below decides how many more it gets through. A pass that reaches four of
+    // sixteen is a pass that did four businesses' work, not a failure — and it
+    // leaves the other twelve first in line.
+    minBudgetMs: 30_000,
+    maxBudgetMs: 180_000,
     // The skip list is gone, and that is a behaviour change stated rather than
     // slipped in. It existed because syncs ran immediately before this in one
     // invocation; as independent tasks with their own cadence there is no
     // "just now" to deduplicate against. runDueIntelligenceCycles already
-    // selects only stores with new activity, so a store whose cycle just ran is
-    // not due — the deduplication it needs comes from its own due-ness, which
-    // is the property that survives the two tasks being scheduled apart.
-    run: () => runDueIntelligenceCycles(50),
+    // selects only stores that are due, so a store whose cycle just ran is not
+    // due — the deduplication it needs comes from its own due-ness, which is
+    // the property that survives the two tasks being scheduled apart.
+    run: (ctx) => runDueIntelligenceCycles(50, { deadlineAt: ctx.deadlineAt }),
   },
   {
     key: "storage.reconcile",
@@ -211,7 +297,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // not be activated until the ledger write paths are deployed, or its first
     // report is a pile of false orphans nobody reads past.
     enabled: nightlyEnabled,
-    budgetMs: 120_000,
+    minBudgetMs: 120_000,
+    maxBudgetMs: 120_000,
     run: async () => {
       const { vercelBlobStorage } = await import("@/lib/storage/vercelBlob");
       return runNightlyReconciliation({
@@ -245,7 +332,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // minute on a Sunday the moment a frequent trigger existed.
     everyMs: WEEK,
     enabled: attributionSweepEnabled,
-    budgetMs: 240_000,
+    minBudgetMs: 240_000,
+    maxBudgetMs: 240_000,
     run: async () => {
       const { vercelBlobStorage } = await import("@/lib/storage/vercelBlob");
       const listing = await vercelBlobStorage.list();
@@ -261,7 +349,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     purpose: "Release deliveries a crashed replay left claimed, so they can be replayed again.",
     everyMs: HOUR,
     enabled: always,
-    budgetMs: 15_000,
+    minBudgetMs: 15_000,
+    maxBudgetMs: 15_000,
     run: () => releaseStaleReplays(),
   },
   {
@@ -270,7 +359,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     purpose: "Delete uploads a crashed creation left behind.",
     everyMs: DAY,
     enabled: always,
-    budgetMs: 60_000,
+    minBudgetMs: 60_000,
+    maxBudgetMs: 60_000,
     run: () => sweepAbandonedTemporaries(),
   },
   {
@@ -279,7 +369,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     purpose: "Drop sign-in throttle rows that have outlived their window.",
     everyMs: DAY,
     enabled: always,
-    budgetMs: 15_000,
+    minBudgetMs: 15_000,
+    maxBudgetMs: 15_000,
     run: () => pruneExpiredAttempts(),
   },
   {
@@ -302,7 +393,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // one prune per day rather than one per minute.
     everyMs: DAY,
     enabled: always,
-    budgetMs: 5_000,
+    minBudgetMs: 5_000,
+    maxBudgetMs: 5_000,
     run: async () => {
       const day = new Date().toISOString().slice(0, 10);
       const created = await enqueue({
@@ -324,7 +416,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // and switching it on is a decision recorded in EXTERNAL_BLOCKERS.md.
     everyMs: DAY,
     enabled: always,
-    budgetMs: 10_000,
+    minBudgetMs: 10_000,
+    maxBudgetMs: 10_000,
     run: async () => {
       const day = new Date().toISOString().slice(0, 10);
       const created = await enqueue({
@@ -348,7 +441,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // than one per tick.
     everyMs: DAY,
     enabled: always,
-    budgetMs: 5_000,
+    minBudgetMs: 5_000,
+    maxBudgetMs: 5_000,
     run: async () => {
       const day = new Date().toISOString().slice(0, 10);
       const created = await enqueue({
@@ -387,7 +481,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // catch the process.
     everyMs: HOUR,
     enabled: always,
-    budgetMs: 30_000,
+    minBudgetMs: 30_000,
+    maxBudgetMs: 30_000,
     run: () => runAlertSweep(),
   },
 
@@ -401,8 +496,9 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     // invocation running out of time should lose this before it loses a
     // customer's receipt.
     everyMs: DAY,
-    enabled: always,
-    budgetMs: 240_000,
+    enabled: sourcingDiscoveryEnabled,
+    minBudgetMs: 240_000,
+    maxBudgetMs: 240_000,
     run: () => runDueSourcing(),
   },
 ];

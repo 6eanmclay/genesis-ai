@@ -118,6 +118,28 @@ export async function lastSuccesses(keys: string[]): Promise<Map<string, Date>> 
  * part most likely to be quietly wrong is exactly the part hardest to observe
  * in a system that only ticks once a day.
  */
+/**
+ * How far past its own interval a task is, as a multiple of that interval.
+ *
+ * A task that has missed three of its own intervals scores 3 and outranks one
+ * that has missed one, whatever their absolute cadences — an hourly task an
+ * hour late does not outrank a daily task three days late. Never run scores
+ * Infinity, so a task nothing has ever run goes first.
+ *
+ * Pure, and separate from `isDue`, because this is the property that makes
+ * starvation structurally impossible and it should be provable without a clock
+ * or a database — the same reasoning `isDue` itself was separated for.
+ */
+export function overdueRatio(
+  task: Pick<ScheduledTask, "everyMs">,
+  lastSuccessAt: Date | undefined,
+  now: Date,
+): number {
+  if (!lastSuccessAt) return Number.POSITIVE_INFINITY;
+  if (task.everyMs <= 0) return Number.POSITIVE_INFINITY;
+  return (now.getTime() - lastSuccessAt.getTime()) / task.everyMs;
+}
+
 export function isDue(
   task: Pick<ScheduledTask, "everyMs">,
   lastSuccessAt: Date | undefined,
@@ -143,13 +165,25 @@ export async function runDueTasks(options: RunOptions): Promise<SchedulerResult>
   const startedAt = Date.now();
   const lanes = options.lanes ?? LANE_ORDER;
 
-  const candidates = (options.tasks ?? SCHEDULED_TASKS)
-    .filter((t) => (options.only ? t.key === options.only : lanes.includes(t.lane)))
-    // COST OF DELAY FIRST. An invocation that runs out of time should lose a
-    // supplier search, never a customer's receipt.
-    .sort((a, b) => LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane));
+  const selected = (options.tasks ?? SCHEDULED_TASKS)
+    .filter((t) => (options.only ? t.key === options.only : lanes.includes(t.lane)));
 
-  const last = await lastSuccesses(candidates.map((t) => t.key));
+  const last = await lastSuccesses(selected.map((t) => t.key));
+
+  // COST OF DELAY FIRST, THEN WHOEVER IS FURTHEST BEHIND.
+  //
+  // Lane still decides first: an invocation that runs out of time should lose
+  // a supplier search, never a customer's receipt. What changed (2026-09-02) is
+  // the order WITHIN a lane, which used to be position in the registry — a
+  // constant, so a task behind an expensive one lost every single tick and
+  // could never catch up. See ARCHITECTURE.md, *a scheduled task declares its
+  // minimum, not its worst case*.
+  const candidates = [...selected].sort(
+    (a, b) =>
+      LANE_ORDER.indexOf(a.lane) - LANE_ORDER.indexOf(b.lane) ||
+      overdueRatio(b, last.get(b.key), now) - overdueRatio(a, last.get(a.key), now) ||
+      a.key.localeCompare(b.key),
+  );
   const outcomes: TaskOutcome[] = [];
   const deferred: string[] = [];
 
@@ -171,11 +205,11 @@ export async function runDueTasks(options: RunOptions): Promise<SchedulerResult>
     // time" and "found nothing to do" were indistinguishable, which is the
     // worst possible pair to confuse in a scheduler.
     const remaining = budgetMs - (Date.now() - startedAt);
-    if (remaining < task.budgetMs) {
+    if (remaining < task.minBudgetMs) {
       deferred.push(task.key);
       outcomes.push({
         key: task.key, lane: task.lane, status: "skipped",
-        reason: `deferred — ${Math.max(0, remaining)}ms left, needs ${task.budgetMs}ms`,
+        reason: `deferred — ${Math.max(0, remaining)}ms left, needs at least ${task.minBudgetMs}ms`,
       });
       // Deliberately CONTINUE rather than break: a cheap maintenance task after
       // an expensive one can still fit, and the sort has already put the
@@ -183,7 +217,20 @@ export async function runDueTasks(options: RunOptions): Promise<SchedulerResult>
       continue;
     }
 
-    outcomes.push(await runOne(task, options.trigger));
+    // ============ A TASK'S OWN DEADLINE, NOT THE INVOCATION'S =========
+    //
+    // Handing over `startedAt + budgetMs` gave every task the whole tick, so a
+    // task that honours its deadline honoured the wrong one: it would work
+    // until the invocation ended and every lane behind it was deferred. The
+    // fix for starvation had quietly created a second way to starve.
+    //
+    // The invocation's end stays the hard outer boundary — the `min` is what
+    // guarantees no task ever receives a deadline past it, whatever it
+    // declared. Within that, a task gets the allowance it already declared.
+    //
+    // Still advisory: nothing kills a task that runs past it.
+    const deadlineAt = Math.min(startedAt + budgetMs, Date.now() + task.maxBudgetMs);
+    outcomes.push(await runOne(task, options.trigger, deadlineAt));
   }
 
   return {
@@ -195,7 +242,7 @@ export async function runDueTasks(options: RunOptions): Promise<SchedulerResult>
 }
 
 /** One task, recorded from before it starts to after it ends. */
-async function runOne(task: ScheduledTask, trigger: string): Promise<TaskOutcome> {
+async function runOne(task: ScheduledTask, trigger: string, deadlineAt: number): Promise<TaskOutcome> {
   return withCorrelation({ origin: "cron", surface: task.key }, async () => {
     const began = Date.now();
 
@@ -220,7 +267,7 @@ async function runOne(task: ScheduledTask, trigger: string): Promise<TaskOutcome
     }
 
     try {
-      await task.run();
+      await task.run({ deadlineAt });
       const durationMs = Date.now() - began;
       await finish(runId, "succeeded", null, durationMs);
       return { key: task.key, lane: task.lane, status: "ran", durationMs };

@@ -427,6 +427,20 @@ model Store {
   // OWNER asks for in chat is never gated by this, because being asked is
   // not the same as volunteering. See lib/dashboard/storefrontSuggestionGate.ts.
   lastStorefrontSuggestionAt   DateTime?
+  // WHEN J4 LAST EVALUATED THIS BUSINESS (2026-09-02, BI Slice 1).
+  //
+  // Written only when a full intelligence cycle COMPLETED with no stage
+  // failure — never because the store was selected, never on a failed pass.
+  // A store whose cycle keeps failing therefore stays due and is retried,
+  // which is the point: a failure must never be mistaken for a healthy pass
+  // that found nothing.
+  //
+  // Deliberately NOT BusinessEventCursor.updatedAt, which means "when the
+  // event cursor advanced". Two different facts, two different fields. Null
+  // means never evaluated, and sorts first when choosing who is due.
+  //
+  // Full semantics in ARCHITECTURE.md, Business Intelligence Engine.
+  lastIntelligenceAt           DateTime?
   // Storefront Canvas, step 1 of 6 (2026-08-12) — which audience this
   // business actually serves, asked once during creation and changeable by
   // asking J4 later. "mobile" | "desktop" | "balanced"; null is treated as
