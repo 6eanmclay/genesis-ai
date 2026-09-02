@@ -1,43 +1,49 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BusinessMap, Certainty, MapDomainKey } from "@/lib/businessModel/businessMap";
 import { branchesFor, type MapBranch, type MapProspect } from "@/lib/businessModel/mapBranches";
 import { MapDataStream } from "./MapDataStream";
+import { ConnectionChooser } from "./ConnectionChooser";
 
-// THE BUSINESS AS A NETWORK YOU CAN GO INSIDE.
+// GOING INSIDE THE BUSINESS, ONE LEVEL AT A TIME.
 //
-// ============ ZOOM IS THE LEVEL OF UNDERSTANDING (2026-09-01) ==========
+// ============ EVERY LEVEL IS LAID OUT FRESH (2026-09-01) ===============
 //
-// Sean: "Zoomed out: J4 + the whole business. One level in: J4 + one business
-// domain. Another level in: entities within that domain... The map should feel
-// like the user is exploring their business from the inside, not navigating a
-// conventional sitemap."
+// Sean, on the previous build: "Right now selecting a branch mostly
+// slides/repositions the network. I want it to actually zoom... The currently
+// selected branch becomes the new center of attention."
 //
-// So the transform is not a viewer control that happens to exist — it IS the
-// navigation. Selecting a branch zooms toward it and reveals the layer beneath;
-// stepping back zooms out. The ring never disappears while you are inside it,
-// dimmed but present, so it always reads as one network rather than a stack of
-// screens.
+// The old version laid every level out in ONE shared coordinate space and only
+// moved a camera over it. Children were placed relative to their parent's
+// position out on the ring, so the deeper you went the more they crowded into
+// the same pixels — which is exactly the hairball in his screenshots, where
+// "Connections" sat on top of "Mailchimp" and "Creation / Assets / Designs"
+// stacked on each other.
 //
-//   depth 0   the ring, J4 at the centre
-//   depth 1   one domain, its middle layer fanned out
-//   depth 2   one branch, its individual things
+// Those were one bug, not two. A layout that accumulates cannot be zoomed out
+// of trouble. So:
 //
-// ============ EVERY NODE IS SOMETHING THAT EXISTS =====================
+//   THE FOCUSED NODE IS RE-LAID-OUT TO THE CENTRE, at the size J4 had one
+//   level up, and its children ring it at branch size. Nothing inherits a
+//   parent's coordinates, so no level can ever crowd another.
 //
-// Branches come from lib/businessModel/mapBranches.ts, which groups the
-// assembler's own nodes and adds prospects the server supplies from real
-// registries. Nothing is drawn here that no row or registry stands behind, and
-// an unconnected prospect has no children — inventing "Content → Engagement"
-// under a disconnected account is precisely the pretence this refuses.
+// ============ AND THE ZOOM IS REAL, NOT A TRANSLATION =================
 //
-// ============ AND THE THREE STATES SURVIVE EVERY LEVEL ================
+// The world scale genuinely increases with depth on top of the re-layout, so
+// the transform's SCALE changes rather than only its translation — the
+// difference between going inside something and sliding past it. The browser
+// suite asserts the scale factor itself for that reason.
 //
-// known / inferred / unknown carry through domains, branches and leaves. An
-// empty branch stays on the map saying "not known yet", which is what lets an
-// owner watch their understanding fill in over time.
+// ============ IT STAYS ONE WORLD =====================================
+//
+// Sean: "Keep J4/context visible in some subtle way as we travel deeper... but
+// don't let the old level clutter the new one."
+//
+// So the level above is drawn as a single faint node with a line to the
+// centre, plus the breadcrumb. One mark, not a whole ring — context without
+// competition.
 
 const DOMAIN_ORDER: MapDomainKey[] = [
   "business", "commerce", "customers", "financials", "goals",
@@ -46,24 +52,25 @@ const DOMAIN_ORDER: MapDomainKey[] = [
 
 interface Geometry {
   w: number; h: number; cx: number; cy: number;
-  rx: number; ry: number;
+  /** Radius of the ring of children around whatever is centred. */
+  ring: number; ringSquash: number;
   hub: number; dot: number;
   label: number; sub: number; gap: number;
-  child: number; childDot: number; childLabel: number; childHit: number;
+  hit: number;
 }
 
 const WIDE: Geometry = {
-  w: 900, h: 560, cx: 450, cy: 280, rx: 300, ry: 186,
-  hub: 46, dot: 9, label: 16, sub: 12.5, gap: 18,
-  child: 92, childDot: 6, childLabel: 12.5, childHit: 20,
+  w: 900, h: 560, cx: 450, cy: 280,
+  ring: 258, ringSquash: 0.66,
+  hub: 46, dot: 9, label: 16, sub: 12.5, gap: 18, hit: 30,
 };
 
 // Not a shrunken copy: a tighter ring with LARGER type, its radius set by the
 // longest label so "Connections" cannot clip to "onnections".
 const NARROW: Geometry = {
-  w: 460, h: 430, cx: 230, cy: 215, rx: 112, ry: 122,
-  hub: 32, dot: 7, label: 15.5, sub: 12, gap: 12,
-  child: 66, childDot: 5, childLabel: 11, childHit: 13,
+  w: 460, h: 430, cx: 230, cy: 215,
+  ring: 118, ringSquash: 0.92,
+  hub: 33, dot: 7, label: 15, sub: 11.5, gap: 11, hit: 22,
 };
 
 export interface MapService {
@@ -75,6 +82,8 @@ export interface MapService {
   description: string;
   signupUrl: string | null;
   manage: DomainDestination | null;
+  /** The provider's own domain, for its own favicon. Null when unverified. */
+  iconDomain: string | null;
 }
 
 export interface DomainDestination {
@@ -94,9 +103,17 @@ function certaintyWord(c: Certainty): string {
   return "not known yet";
 }
 
-interface Placed extends MapBranch {
+/** One thing on the map at the current level. */
+interface Placed {
+  id: string;
+  label: string;
+  sub: string;
+  certainty: Certainty;
   x: number;
   y: number;
+  /** What selecting it means. */
+  go: string[];
+  serviceId: string | null;
 }
 
 export function BusinessMapCanvas({
@@ -112,11 +129,9 @@ export function BusinessMapCanvas({
 }) {
   /** [domainKey, branchId?, leafId?] — the whole navigation state. */
   const [path, setPath] = useState<string[]>([]);
+  const [chooserOpen, setChooserOpen] = useState(false);
   const [narrow, setNarrow] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(true);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const drag = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
-  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     const narrowQ = window.matchMedia("(max-width: 640px)");
@@ -136,144 +151,125 @@ export function BusinessMapCanvas({
 
   const G = narrow ? NARROW : WIDE;
 
-  const domains = useMemo(
-    () =>
-      DOMAIN_ORDER.map((key, i) => {
-        const domain = map.domains.find((d) => d.key === key)!;
-        const angle = (i / DOMAIN_ORDER.length) * Math.PI * 2 - Math.PI / 2;
-        return {
-          ...domain,
-          x: G.cx + Math.cos(angle) * G.rx,
-          y: G.cy + Math.sin(angle) * G.ry,
-          angle,
-        };
-      }),
-    [map.domains, G],
-  );
-
-  const activeDomain = path[0] ? domains.find((d) => d.key === path[0]) ?? null : null;
-
+  const domain = path[0] ? map.domains.find((d) => d.key === path[0]) ?? null : null;
   const branches = useMemo(
-    () => (activeDomain ? branchesFor(activeDomain, prospects[activeDomain.key] ?? []) : []),
-    [activeDomain, prospects],
+    () => (domain ? branchesFor(domain, prospects[domain.key] ?? []) : []),
+    [domain, prospects],
   );
+  const branch = path[1] ? branches.find((b) => b.id === path[1]) ?? null : null;
+  const leaf = path[2] ? branch?.children.find((c) => c.id === path[2]) ?? null : null;
 
-  /** Fan a set of nodes out from a parent, away from the hub. */
-  const fan = useCallback(
-    (from: { x: number; y: number; angle: number }, items: MapBranch[], radius: number): Placed[] => {
-      const spread = Math.min(1.1, 0.32 * Math.max(1, items.length - 1));
-      return items.map((b, i) => {
-        const t = items.length === 1 ? 0 : (i / (items.length - 1)) * 2 - 1;
-        const a = from.angle + t * spread;
-        return { ...b, x: from.x + Math.cos(a) * radius, y: from.y + Math.sin(a) * radius * 0.78 };
+  /**
+   * What is at the centre, and what rings it.
+   *
+   * Computed FRESH for the current level. This is the whole fix: nothing here
+   * reads a position from the level above, so nothing can inherit its crowding.
+   */
+  const scene = useMemo(() => {
+    const ring = (items: Placed[]): Placed[] =>
+      items.map((item, i) => {
+        const angle = (i / Math.max(1, items.length)) * Math.PI * 2 - Math.PI / 2;
+        return {
+          ...item,
+          x: G.cx + Math.cos(angle) * G.ring,
+          y: G.cy + Math.sin(angle) * G.ring * G.ringSquash,
+        };
       });
-    },
-    [],
-  );
 
-  const placedBranches = useMemo(
-    () => (activeDomain ? fan(activeDomain, branches.slice(0, 6), G.child) : []),
-    [activeDomain, branches, fan, G],
-  );
+    if (leaf && branch && domain) {
+      return {
+        centre: { label: leaf.label, certainty: leaf.certainty, sub: leaf.state },
+        children: [] as Placed[],
+        parent: branch.label,
+      };
+    }
+    if (branch && domain) {
+      return {
+        centre: { label: branch.label, certainty: branch.certainty, sub: branch.state },
+        children: ring(
+          branch.children.slice(0, 8).map((c) => ({
+            id: c.id, label: c.label, sub: c.state, certainty: c.certainty,
+            x: 0, y: 0, go: [domain.key, branch.id, c.id], serviceId: null,
+          })),
+        ),
+        parent: domain.label,
+      };
+    }
+    if (domain) {
+      return {
+        centre: { label: domain.label, certainty: domain.certainty, sub: domain.summary },
+        children: ring(
+          branches.slice(0, 8).map((b) => ({
+            id: b.id, label: b.label, sub: b.state, certainty: b.certainty,
+            x: 0, y: 0, go: [domain.key, b.id], serviceId: b.serviceId,
+          })),
+        ),
+        parent: "J4",
+      };
+    }
+    return {
+      centre: { label: "J4", certainty: "known" as Certainty, sub: map.business.name },
+      children: ring(
+        DOMAIN_ORDER.map((key) => {
+          const d = map.domains.find((x) => x.key === key)!;
+          return {
+            id: d.key, label: d.label,
+            sub: d.nodes.length > 0 ? `${d.nodes.length}` : "not known yet",
+            certainty: d.certainty, x: 0, y: 0, go: [d.key], serviceId: null,
+          };
+        }),
+      ),
+      parent: null,
+    };
+  }, [domain, branch, leaf, branches, map, G]);
 
-  const activeBranch = path[1] ? placedBranches.find((b) => b.id === path[1]) ?? null : null;
-
-  const placedLeaves = useMemo(() => {
-    if (!activeBranch || !activeDomain) return [];
-    const angle = Math.atan2(activeBranch.y - activeDomain.y, activeBranch.x - activeDomain.x);
-    return fan({ ...activeBranch, angle }, activeBranch.children.slice(0, 6), G.child * 0.75);
-  }, [activeBranch, activeDomain, fan, G]);
-
-  const activeLeaf = path[2] ? placedLeaves.find((l) => l.id === path[2]) ?? null : null;
-
-  // ---- zoom follows depth, which is the whole navigation idea -------------
-  const view = useMemo(() => {
-    const target = activeLeaf ?? activeBranch ?? activeDomain;
-    if (!target) return { scale: 1, x: G.cx, y: G.cy };
-    // Halfway between the hub and the focus, so J4 stays in frame — the point
-    // is that you are inside J4's understanding, not that you left it.
-    const scale = path.length >= 3 ? 2.1 : path.length === 2 ? 1.7 : 1.35;
-    return { scale, x: (G.cx + target.x) / 2, y: (G.cy + target.y) / 2 };
-  }, [activeDomain, activeBranch, activeLeaf, path.length, G]);
+  // ---- depth is a real scale change, not a nudge --------------------------
+  const level = path.length;
+  const worldScale = 1 + level * 0.3;
 
   const service = useMemo(() => {
-    const id = (activeLeaf ?? activeBranch)?.serviceId;
+    const id = leaf ? null : branch?.serviceId ?? null;
     return id ? services.find((s) => s.id === id) ?? null : null;
-  }, [activeBranch, activeLeaf, services]);
+  }, [branch, leaf, services]);
 
   const card = useMemo(() => {
-    const node = activeLeaf ?? activeBranch;
-    if (node) {
-      return {
-        title: node.label,
-        state: node.state,
-        body: node.detail ?? "",
-        certainty: node.certainty,
-        destination: service?.connected
-          ? service.manage ?? destinations[activeDomain!.key] ?? null
-          : destinations[activeDomain!.key] ?? null,
-        service,
-      };
+    // NO CARD FOR CONNECTIONS. Sean: "Remove that card entirely from the map
+    // experience. When the user selects Connections, the experience should
+    // instead lead naturally into the connection-selection experience."
+    if (path[0] === "connections" && path.length === 1) return null;
+    if (level === 0) return null;
+    return {
+      title: scene.centre.label,
+      state: leaf?.state ?? branch?.state ?? (domain?.certainty === "unknown" ? "Not yet known" : certaintyWord(scene.centre.certainty)),
+      body: leaf?.detail ?? branch?.detail ?? domain?.summary ?? "",
+      certainty: scene.centre.certainty,
+      destination: service?.connected ? service.manage ?? destinations[path[0] as MapDomainKey] ?? null : destinations[path[0] as MapDomainKey] ?? null,
+      service,
+    };
+  }, [path, level, scene, leaf, branch, domain, destinations, service]);
+
+  const go = useCallback((next: string[]) => {
+    // Connections opens the chooser instead of a level.
+    if (next.length === 1 && next[0] === "connections") {
+      setPath(next);
+      setChooserOpen(true);
+      return;
     }
-    if (activeDomain) {
-      return {
-        title: activeDomain.label,
-        state: activeDomain.certainty === "unknown" ? "Not yet known" : certaintyWord(activeDomain.certainty),
-        body: activeDomain.summary,
-        certainty: activeDomain.certainty,
-        destination: destinations[activeDomain.key] ?? null,
-        service: null as MapService | null,
-      };
-    }
-    return null;
-  }, [activeDomain, activeBranch, activeLeaf, destinations, service]);
-
-  // ============ THE CARD RUNS FROM WHERE J4 ACTUALLY IS ==============
-  //
-  // It used to be placed from the selected node's MODEL coordinates, which was
-  // right until the world started zooming: once the view translates, J4's
-  // position on screen moves, and the card sat on top of him. The hub's
-  // post-transform position is what matters, so it is computed here and the
-  // card takes the opposite corner.
-  const cardSide = useMemo(() => {
-    if (!activeDomain) return { left: false, top: false };
-    const hubX = G.cx + view.scale * (G.cx - view.x) + pan.x;
-    const hubY = G.cy + view.scale * (G.cy - view.y) + pan.y;
-    return { left: hubX > G.w / 2, top: hubY > G.h / 2 };
-  }, [activeDomain, view, pan, G]);
-
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    drag.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y, moved: false };
-    setDragging(true);
-  }, [pan.x, pan.y]);
-
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    const d = drag.current;
-    if (!d) return;
-    if (Math.abs(e.clientX - d.x) > 3 || Math.abs(e.clientY - d.y) > 3) d.moved = true;
-    setPan({ x: d.panX + (e.clientX - d.x), y: d.panY + (e.clientY - d.y) });
-  }, []);
-
-  const endDrag = useCallback(() => {
-    drag.current = null;
-    setDragging(false);
-  }, []);
-
-  /** One step out. The back button and the card's close do the same thing. */
-  const stepOut = useCallback(() => {
-    setPan({ x: 0, y: 0 });
-    setPath((p) => p.slice(0, -1));
-  }, []);
-
-  const goTo = useCallback((next: string[]) => {
-    if (drag.current?.moved) return;
-    setPan({ x: 0, y: 0 });
     setPath(next);
   }, []);
 
-  const dim = (key: MapDomainKey) => (path[0] && path[0] !== key ? 0.16 : 1);
+  const stepOut = useCallback(() => {
+    setChooserOpen(false);
+    setPath((p) => p.slice(0, -1));
+  }, []);
 
-  const here = activeLeaf?.label ?? activeBranch?.label ?? activeDomain?.label ?? null;
+  const reset = useCallback(() => {
+    setChooserOpen(false);
+    setPath([]);
+  }, []);
+
+  const trail = [scene.parent === "J4" || scene.parent === null ? null : null];
+  void trail;
 
   return (
     <section
@@ -299,214 +295,129 @@ export function BusinessMapCanvas({
             --map-unknown: #78838a;
             --map-ink: #e6ebed;
             --map-soft: #a5b0b6;
-            --map-surface: #12181c;
-            --map-ground: #0e1316;
+            --map-surface: #0b1013;
+            --map-ground: #0a0e11;
             --map-stream: #7fadf5;
           }
         }
-        .business-map .map-stage { touch-action: none; }
+        .business-map .map-stage { touch-action: pan-y; }
         .business-map .hit { cursor: pointer; }
         .business-map .hit:focus-visible { outline: 2px solid var(--map-inferred); outline-offset: 3px; }
-        .business-map .map-world { transition: transform 320ms cubic-bezier(.2,.7,.3,1); }
+        .business-map .map-world { transition: transform 380ms cubic-bezier(.22,.7,.24,1); }
+        .business-map .lvl { transition: opacity 300ms ease; }
         @media (prefers-reduced-motion: reduce) {
-          .business-map .map-world { transition: none; }
-        }
-        @media (prefers-reduced-motion: no-preference) {
-          .business-map .node-in { animation: mapNodeIn 240ms ease-out both; }
-          @keyframes mapNodeIn { from { opacity: 0 } to { opacity: 1 } }
+          .business-map .map-world, .business-map .lvl { transition: none; }
         }
       `}</style>
 
       <div className="overflow-hidden rounded-2xl border border-black/[.07] bg-[var(--map-ground)] dark:border-white/[.10]">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/[.06] px-4 py-2.5 dark:border-white/[.08]">
-          {/* WHERE YOU ARE, as a trail rather than a title — the point is that
-              you are inside one network, not on a page. */}
-          <p className="flex flex-wrap items-center gap-1 text-xs text-[var(--map-soft)]">
-            <button
-              type="button"
-              onClick={() => goTo([])}
-              className={path.length === 0 ? "font-medium text-[var(--map-inferred)]" : "underline underline-offset-2"}
+          <p className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-[var(--map-soft)]">
+            <button type="button" onClick={reset}
+              className={level === 0 ? "font-medium text-[var(--map-inferred)]" : "underline underline-offset-2"}
             >J4</button>
-            {[activeDomain?.label, activeBranch?.label, activeLeaf?.label].map((label, i) =>
+            {[domain?.label, branch?.label, leaf?.label].map((label, i) =>
               label ? (
                 <span key={i} className="flex items-center gap-1">
                   <span aria-hidden>›</span>
-                  <button
-                    type="button"
-                    onClick={() => goTo(path.slice(0, i + 1))}
-                    className={i === path.length - 1 ? "font-medium text-[var(--map-ink)]" : "underline underline-offset-2"}
+                  <button type="button" onClick={() => go(path.slice(0, i + 1))}
+                    className={i === level - 1 ? "truncate font-medium text-[var(--map-ink)]" : "underline underline-offset-2"}
                   >{label}</button>
                 </span>
               ) : null,
             )}
-            {path.length === 0 && <span className="ml-1">— tap a branch to go inside</span>}
+            {level === 0 && <span className="ml-1">— tap a branch to go inside</span>}
           </p>
-          <div className="flex items-center gap-1">
-            <button
-              type="button" onClick={stepOut} disabled={path.length === 0}
-              data-testid="map-back"
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" onClick={stepOut} disabled={level === 0} data-testid="map-back"
               className="rounded-full border border-black/[.08] px-2.5 py-1 text-[11px] text-[var(--map-soft)] disabled:opacity-40 dark:border-white/[.145]"
             >Back</button>
-            <button
-              type="button" onClick={() => goTo([])}
+            <button type="button" onClick={reset}
               className="rounded-full border border-black/[.08] px-2.5 py-1 text-[11px] text-[var(--map-soft)] dark:border-white/[.145]"
             >Whole business</button>
           </div>
         </div>
 
-        <div
-          className="map-stage relative h-[320px] w-full select-none overflow-hidden bg-[var(--map-surface)] sm:h-[400px] lg:h-[460px]"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          style={{ cursor: dragging ? "grabbing" : "grab" }}
-        >
+        <div className="map-stage relative h-[330px] w-full select-none overflow-hidden bg-[var(--map-surface)] sm:h-[400px] lg:h-[470px]">
           <MapDataStream reducedMotion={reducedMotion} />
 
           <svg
             viewBox={`0 0 ${G.w} ${G.h}`}
             className="relative h-full w-full"
             role="img"
-            aria-label={`J4 at the centre with ${domains.length} branches: ${domains
-              .map((d) => `${d.label}, ${certaintyWord(d.certainty)}`)
-              .join("; ")}`}
+            aria-label={`${scene.centre.label} at the centre with ${scene.children.length} connected: ${scene.children.map((c) => c.label).join("; ")}`}
           >
+            <defs>
+              <radialGradient id="mapGlow">
+                <stop offset="0%" stopColor="var(--map-inferred)" stopOpacity="0.30" />
+                <stop offset="100%" stopColor="var(--map-inferred)" stopOpacity="0" />
+              </radialGradient>
+            </defs>
+
             <g
               className="map-world"
               data-testid="map-world"
-              transform={`translate(${pan.x} ${pan.y}) translate(${G.cx} ${G.cy}) scale(${view.scale}) translate(${-view.x} ${-view.y})`}
+              data-scale={worldScale.toFixed(2)}
+              transform={`translate(${G.cx} ${G.cy}) scale(${worldScale}) translate(${-G.cx} ${-G.cy})`}
             >
-              {domains.map((d) => {
-                const focused = path[0] === d.key;
-                return (
-                  <line
-                    key={`edge-${d.key}`}
-                    x1={G.cx} y1={G.cy} x2={d.x} y2={d.y}
-                    stroke={certaintyColor(d.certainty)}
-                    strokeWidth={focused ? 2.4 : d.certainty === "unknown" ? 1 : 1.6}
-                    strokeDasharray={d.certainty === "unknown" && !focused ? "4 5" : undefined}
-                    opacity={(d.certainty === "unknown" ? 0.45 : 0.55) * dim(d.key)}
-                  />
-                );
-              })}
+              {/* the level above, as ONE faint mark rather than a whole ring */}
+              {scene.parent && (
+                <g className="lvl" opacity={0.32} data-testid="map-context">
+                  <line x1={G.cx} y1={G.cy} x2={G.cx} y2={G.cy - G.ring * G.ringSquash - G.hub}
+                    stroke="var(--map-unknown)" strokeWidth={1} strokeDasharray="3 5" />
+                  <text x={G.cx} y={G.cy - G.ring * G.ringSquash - G.hub - 6} textAnchor="middle"
+                    fill="var(--map-soft)" fontSize={G.sub}>{scene.parent}</text>
+                </g>
+              )}
 
-              {activeDomain && placedBranches.map((b) => (
-                <line
-                  key={`bedge-${b.id}`} className="node-in"
-                  x1={activeDomain.x} y1={activeDomain.y} x2={b.x} y2={b.y}
-                  stroke={certaintyColor(b.certainty)} strokeWidth={1.1}
-                  strokeDasharray={b.certainty === "unknown" ? "3 4" : undefined}
-                  opacity={path[1] && path[1] !== b.id ? 0.18 : 0.5}
-                />
-              ))}
-              {activeBranch && placedLeaves.map((l) => (
-                <line
-                  key={`ledge-${l.id}`} className="node-in"
-                  x1={activeBranch.x} y1={activeBranch.y} x2={l.x} y2={l.y}
-                  stroke={certaintyColor(l.certainty)} strokeWidth={0.9}
-                  opacity={0.45}
+              {scene.children.map((c) => (
+                <line key={`e-${c.id}`}
+                  x1={G.cx} y1={G.cy} x2={c.x} y2={c.y}
+                  stroke={certaintyColor(c.certainty)}
+                  strokeWidth={c.certainty === "unknown" ? 1 : 1.6}
+                  strokeDasharray={c.certainty === "unknown" ? "4 5" : undefined}
+                  opacity={c.certainty === "unknown" ? 0.4 : 0.5}
                 />
               ))}
 
-              <circle cx={G.cx} cy={G.cy} r={G.hub} fill="var(--map-surface)" stroke="var(--map-inferred)" strokeWidth={1.75} />
-              <text x={G.cx} y={G.cy + G.hub * 0.16} textAnchor="middle"
-                fill="var(--map-inferred)" fontSize={G.hub * 0.44} fontWeight={600}>J4</text>
+              {/* the centre — always hub-sized, whatever level it is */}
+              <circle cx={G.cx} cy={G.cy} r={G.hub * 2.1} fill="url(#mapGlow)" />
+              <circle cx={G.cx} cy={G.cy} r={G.hub} fill="var(--map-surface)"
+                stroke={certaintyColor(scene.centre.certainty)} strokeWidth={2} />
+              <text x={G.cx} y={G.cy + (level === 0 ? G.hub * 0.16 : 2)} textAnchor="middle"
+                fill={level === 0 ? "var(--map-inferred)" : "var(--map-ink)"}
+                fontSize={level === 0 ? G.hub * 0.44 : G.label * 0.86} fontWeight={600}
+                data-testid="map-centre"
+              >
+                {scene.centre.label.length > 14 ? `${scene.centre.label.slice(0, 13)}…` : scene.centre.label}
+              </text>
 
-              {domains.map((d) => {
-                const right = Math.cos(d.angle) > 0.12;
-                const centred = Math.abs(Math.cos(d.angle)) <= 0.12;
+              {scene.children.map((c) => {
+                const right = c.x > G.cx + 1;
+                const centred = Math.abs(c.x - G.cx) <= 1;
                 const anchor = centred ? "middle" : right ? "start" : "end";
                 const dx = centred ? 0 : right ? G.gap : -G.gap;
-                const dy = centred ? (Math.sin(d.angle) > 0 ? G.label * 2.1 : -G.label * 1.6) : 0;
-                const focused = path[0] === d.key;
-                const open = () => goTo(focused ? [] : [d.key]);
+                const dy = centred ? (c.y > G.cy ? G.label * 1.9 : -G.label * 1.4) : 0;
                 return (
-                  <g
-                    key={d.key} className="hit" role="button" tabIndex={0}
-                    aria-pressed={focused}
-                    aria-label={`${d.label}: ${d.summary}`}
-                    opacity={dim(d.key)}
-                    onClick={open}
+                  <g key={c.id} className="hit" role="button" tabIndex={0}
+                    data-level="child"
+                    aria-label={`${c.label}, ${c.sub}`}
+                    onClick={() => go(c.go)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(c.go); }
                     }}
                   >
-                    <circle cx={d.x} cy={d.y} r={Math.max(26, G.dot * 3.4)} fill="transparent" />
-                    {focused && (
-                      <circle cx={d.x} cy={d.y} r={G.dot * 2.2} fill="none"
-                        stroke={certaintyColor(d.certainty)} strokeWidth={1.5} opacity={0.55} />
-                    )}
-                    <circle cx={d.x} cy={d.y} r={G.dot}
-                      fill={d.certainty === "unknown" ? "var(--map-surface)" : certaintyColor(d.certainty)}
-                      stroke={certaintyColor(d.certainty)} strokeWidth={1.75} />
-                    <text x={d.x + dx} y={d.y + dy - 1} textAnchor={anchor}
-                      fill="var(--map-ink)" fontSize={G.label} fontWeight={600}>{d.label}</text>
-                    <text x={d.x + dx} y={d.y + dy + G.label * 1.05} textAnchor={anchor}
+                    <circle cx={c.x} cy={c.y} r={G.hit} fill="transparent" />
+                    <circle cx={c.x} cy={c.y} r={G.dot}
+                      fill={c.certainty === "unknown" ? "var(--map-surface)" : certaintyColor(c.certainty)}
+                      stroke={certaintyColor(c.certainty)} strokeWidth={1.6} />
+                    <text x={c.x + dx} y={c.y + dy - 1} textAnchor={anchor}
+                      fill="var(--map-ink)" fontSize={G.label} fontWeight={600}>
+                      {c.label.length > 15 ? `${c.label.slice(0, 14)}…` : c.label}
+                    </text>
+                    <text x={c.x + dx} y={c.y + dy + G.label * 1.05} textAnchor={anchor}
                       fill="var(--map-soft)" fontSize={G.sub}>
-                      {d.nodes.length > 0 ? `${d.nodes.length}` : "not known yet"}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {activeDomain && placedBranches.map((b) => {
-                const selected = path[1] === b.id;
-                const right = b.x >= activeDomain.x;
-                const open = () => goTo(selected ? [activeDomain.key] : [activeDomain.key, b.id]);
-                return (
-                  <g
-                    key={`branch-${b.id}`} className="hit node-in" data-level="branch"
-                    role="button" tabIndex={0}
-                    aria-pressed={selected}
-                    aria-label={`${b.label}, ${b.state}`}
-                    opacity={path[1] && !selected ? 0.3 : 1}
-                    onClick={open}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
-                    }}
-                  >
-                    <circle cx={b.x} cy={b.y} r={G.childHit} fill="transparent" />
-                    {selected && (
-                      <circle cx={b.x} cy={b.y} r={G.childDot * 2.4} fill="none"
-                        stroke={certaintyColor(b.certainty)} strokeWidth={1.25} opacity={0.6} />
-                    )}
-                    <circle cx={b.x} cy={b.y} r={G.childDot}
-                      fill={b.certainty === "unknown" ? "var(--map-surface)" : certaintyColor(b.certainty)}
-                      stroke={certaintyColor(b.certainty)} strokeWidth={1.4} />
-                    <text x={b.x + (right ? 10 : -10)} y={b.y + 3.5}
-                      textAnchor={right ? "start" : "end"}
-                      fill="var(--map-ink)" fontSize={G.childLabel}>
-                      {b.label.length > 16 ? `${b.label.slice(0, 15)}…` : b.label}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {activeBranch && placedLeaves.map((l) => {
-                const selected = path[2] === l.id;
-                const right = l.x >= activeBranch.x;
-                const open = () =>
-                  goTo(selected ? [activeDomain!.key, activeBranch.id] : [activeDomain!.key, activeBranch.id, l.id]);
-                return (
-                  <g
-                    key={`leaf-${l.id}`} className="hit node-in" data-level="leaf"
-                    role="button" tabIndex={0}
-                    aria-pressed={selected}
-                    aria-label={`${l.label}, ${l.state}`}
-                    onClick={open}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
-                    }}
-                  >
-                    <circle cx={l.x} cy={l.y} r={G.childHit} fill="transparent" />
-                    <circle cx={l.x} cy={l.y} r={G.childDot * 0.85}
-                      fill={l.certainty === "unknown" ? "var(--map-surface)" : certaintyColor(l.certainty)}
-                      stroke={certaintyColor(l.certainty)} strokeWidth={1.2} />
-                    <text x={l.x + (right ? 8 : -8)} y={l.y + 3}
-                      textAnchor={right ? "start" : "end"}
-                      fill="var(--map-soft)" fontSize={G.childLabel * 0.92}>
-                      {l.label.length > 14 ? `${l.label.slice(0, 13)}…` : l.label}
+                      {c.sub.length > 18 ? `${c.sub.slice(0, 17)}…` : c.sub}
                     </text>
                   </g>
                 );
@@ -517,29 +428,11 @@ export function BusinessMapCanvas({
           {card && (
             <div
               data-testid="map-card"
-              // ============ IT FLOATS, IT DOES NOT BLOCK ==============
-              //
-              // The card sits over the drawing, and on a phone the branches fan
-              // into the space it occupies -- so it was swallowing taps meant
-              // for nodes underneath it. A node you can see and cannot tap is
-              // worse than one that is covered.
-              //
-              // The container takes no pointer events; only its own controls
-              // do. What it costs is selecting the body text, which nothing
-              // needs; what it buys is that the map stays fully usable with a
-              // card open.
-              className="pointer-events-none absolute z-10 max-w-[62%] rounded-xl border border-black/[.10] bg-[var(--map-surface)]/95 p-2.5 shadow-lg backdrop-blur-sm sm:max-w-[15rem] sm:p-3 dark:border-white/[.14]"
-              style={{
-                left: cardSide.left ? "0.6rem" : undefined,
-                right: cardSide.left ? undefined : "0.6rem",
-                top: cardSide.top ? "0.6rem" : undefined,
-                bottom: cardSide.top ? undefined : "0.6rem",
-              }}
+              className="pointer-events-none absolute bottom-2 left-2 z-10 max-w-[62%] rounded-xl border border-black/[.10] bg-[var(--map-surface)]/95 p-2.5 shadow-lg backdrop-blur-sm sm:max-w-[15rem] sm:p-3 dark:border-white/[.14]"
             >
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-semibold leading-tight text-[var(--map-ink)]">{card.title}</p>
-                <button
-                  type="button" data-testid="map-card-close" onClick={stepOut} aria-label="Close"
+                <button type="button" data-testid="map-card-close" onClick={stepOut} aria-label="Close"
                   className="pointer-events-auto -mr-1 -mt-1 shrink-0 rounded px-1 text-sm leading-none text-[var(--map-soft)]"
                 >×</button>
               </div>
@@ -549,33 +442,22 @@ export function BusinessMapCanvas({
                 {card.state}
               </p>
               {card.body && (
-                <p className="mt-1.5 line-clamp-2 text-xs leading-snug text-[var(--map-soft)] sm:line-clamp-4">{card.body}</p>
+                <p className="mt-1.5 line-clamp-2 text-xs leading-snug text-[var(--map-soft)] sm:line-clamp-3">{card.body}</p>
               )}
-
-              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                {card.service && !card.service.connected && card.service.available && (
-                  <>
-                    <Link
-                      href={destinations.connections?.href ?? "#"}
-                      className="pointer-events-auto rounded-full border border-black/[.14] px-2.5 py-1 text-[11px] font-medium text-[var(--map-ink)] dark:border-white/[.22]"
-                    >Connect</Link>
-                    {card.service.signupUrl ? (
-                      <a href={card.service.signupUrl} target="_blank" rel="noopener noreferrer"
-                        className="pointer-events-auto px-1 text-[11px] text-[var(--map-soft)] underline underline-offset-2">Create</a>
-                    ) : (
-                      <span className="text-[11px] text-[var(--map-soft)]">No signup link we could verify.</span>
-                    )}
-                  </>
-                )}
-                {card.destination && !(card.service && !card.service.connected && card.service.available) && (
-                  <Link
-                    href={card.destination.href}
-                    data-testid="map-view-link"
-                    className="pointer-events-auto rounded-full bg-[var(--map-inferred)] px-2.5 py-1 text-[11px] font-medium text-white"
-                  >{card.destination.label}</Link>
-                )}
-              </div>
+              {card.destination && (
+                <Link href={card.destination.href} data-testid="map-view-link"
+                  className="pointer-events-auto mt-2.5 inline-block rounded-full bg-[var(--map-inferred)] px-2.5 py-1 text-[11px] font-medium text-white"
+                >{card.destination.label}</Link>
+              )}
             </div>
+          )}
+
+          {chooserOpen && (
+            <ConnectionChooser
+              services={services}
+              connectionsHref={destinations.connections?.href ?? "#"}
+              onClose={() => { setChooserOpen(false); setPath([]); }}
+            />
           )}
         </div>
 
@@ -594,7 +476,9 @@ export function BusinessMapCanvas({
           </span>
           {/* YOUR DATA, native to the map rather than a badge over it. */}
           <span className="ml-auto">
-            {here ? `${here} — your data, organised by J4.` : "This is your business data. J4 organises it for you."}
+            {level === 0
+              ? "This is your business data. J4 organises it for you."
+              : `${scene.centre.label} — your data, organised by J4.`}
           </span>
         </div>
       </div>

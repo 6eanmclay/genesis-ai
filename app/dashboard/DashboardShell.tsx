@@ -1024,17 +1024,6 @@ export function DashboardShell({
                     : "pt-[140px] md:pt-14 lg:pt-0"
               }`}
             >
-              {isHome && (
-                <div className="px-4 pb-2 md:hidden">
-                  <J4MobileHero
-                    focusableApprovals={focusableApprovals}
-                    liveObservations={liveObservations}
-                    curiosityItems={curiosityItems}
-                    ownerBriefingSummary={ownerBriefingSummary}
-                    justArrived={justArrived}
-                  />
-                </div>
-              )}
               {/* Pages can ask J4 for something (2026-08-17). Studio's
                   recommendation chips use this: the text goes through the SAME
                   handoff the presence field uses, so the conversation's own
@@ -1056,6 +1045,32 @@ export function DashboardShell({
               >
                 {children}
               </J4AskContext.Provider>
+              {/* ============ THE NARRATIVE SITS BELOW THE MAP (2026-09-01) ==
+                  Sean: "The Business Map should be the visual hero of the
+                  Business landing page... move the longer Genesis business
+                  update/announcement below the map / below the primary
+                  business information."
+
+                  It used to render here ABOVE {children}, and on a phone its
+                  full paragraph pushed the map most of a screen down — the map
+                  was the second thing an owner met, after a wall of text.
+
+                  ONLY THE NARRATIVE MOVED. This component carries no greeting:
+                  J4MobileHero is the briefing sentence and nothing else, and on
+                  home the greeting is the map section's own "Welcome back"
+                  heading, which stays exactly where it was. The arrival ritual
+                  is a separate full-screen layer and is untouched. */}
+              {isHome && (
+                <div className="px-4 pb-6 pt-2 md:hidden">
+                  <J4MobileHero
+                    focusableApprovals={focusableApprovals}
+                    liveObservations={liveObservations}
+                    curiosityItems={curiosityItems}
+                    ownerBriefingSummary={ownerBriefingSummary}
+                    justArrived={justArrived}
+                  />
+                </div>
+              )}
             </main>
           </div>
 
