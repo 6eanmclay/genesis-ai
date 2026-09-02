@@ -9,6 +9,8 @@ import {
 import { CATEGORY_DOMAIN, connectableServices, whatItAdds } from "@/lib/businessModel/connectionDomains";
 import { SIGNUP_DESTINATIONS, signupFor } from "@/lib/businessModel/signupDestinations";
 import { CONNECTOR_CATALOG, CONNECTION_CATEGORY_LABELS } from "@/lib/integrations/catalog";
+import { branchesFor, type MapProspect } from "@/lib/businessModel/mapBranches";
+import { SOCIAL_PLATFORMS } from "@/lib/social/platforms";
 import { readFileSync } from "node:fs";
 
 // WHAT J4 UNDERSTANDS, AND HOW SURE IT IS:
@@ -489,6 +491,105 @@ async function main(): Promise<void> {
       assert(`and promises nothing about ${invented}`,
         !new RegExp(invented, "i").test(sentence), sentence);
     }
+  }
+
+  // ======================================================================
+  console.log("\n=== 7c. The middle layer is derived, not declared ===\n");
+  // ======================================================================
+  {
+    // Sean: "J4 -> Commerce -> Products / Orders / Money. Then the user can
+    // select one: Commerce -> Products -> individual products."
+    const { store } = await makeStore();
+    for (let i = 0; i < 4; i++) {
+      await prismaSystem.product.create({
+        data: { storeId: store.id, name: `Ring ${i}`, description: "d", priceInCents: 1000, active: true },
+      });
+    }
+    const map = await mapFor(store.id, store.slug);
+    const commerce = map.domains.find((d) => d.key === "commerce")!;
+    const branches = branchesFor(commerce);
+
+    eq("four products become one branch, not four", branches.length, 1);
+    eq("named from the kind the assembler already wrote", branches[0].label, "Products");
+    eq("saying how many there are", branches[0].state, "4 recorded");
+    eq("with each product underneath it", branches[0].children.length, 4);
+    assert("and every leaf still points at a real row",
+      branches[0].children.every((c) => c.recordId !== null),
+      JSON.stringify(branches[0].children.map((c) => c.recordId)));
+
+    // ---- a group of one is not a group ---------------------------------
+    const { store: solo } = await makeStore();
+    await prismaSystem.product.create({
+      data: { storeId: solo.id, name: "Only Ring", description: "d", priceInCents: 1000, active: true },
+    });
+    const soloMap = await mapFor(solo.id, solo.slug);
+    const soloBranches = branchesFor(soloMap.domains.find((d) => d.key === "commerce")!);
+    eq("one product is reachable in one tap, not two", soloBranches.length, 1);
+    eq("named as itself rather than pluralised", soloBranches[0].label, "Only Ring");
+    eq("with nothing underneath it", soloBranches[0].children.length, 0);
+  }
+
+  // ======================================================================
+  console.log("\n=== 7d. Social shows the platforms, and X tells the truth ===\n");
+  // ======================================================================
+  {
+    // Sean: "Selecting Social reveals Instagram · Facebook · TikTok · X."
+    // They are not invented here: SOCIAL_PLATFORMS is the registry the Studio
+    // already publishes from.
+    const { store } = await makeStore();
+    const map = await mapFor(store.id, store.slug);
+    const social = map.domains.find((d) => d.key === "social")!;
+
+    const prospects: MapProspect[] = SOCIAL_PLATFORMS.map((pf) => ({
+      id: pf.id,
+      label: pf.label,
+      available: pf.publishProvider !== null,
+      connected: false,
+      detail: "",
+      serviceId: null,
+    }));
+    const branches = branchesFor(social, prospects);
+
+    eq("every platform appears", branches.length, SOCIAL_PLATFORMS.length);
+    for (const pf of SOCIAL_PLATFORMS) {
+      const branch = branches.find((b) => b.label === pf.label);
+      assert(`${pf.label} is on the Social branch`, branch !== undefined, pf.label);
+      eq(`${pf.label} is not known yet`, branch?.certainty, "unknown");
+      // AND NOTHING IS INVENTED UNDER IT. An unconnected account reports
+      // nothing, so "Content -> Engagement -> Traffic" must not exist.
+      eq(`${pf.label} has no fabricated children`, branch?.children.length, 0);
+    }
+
+    const x = branches.find((b) => b.label === "X")!;
+    eq("X says Genesis cannot connect it", x.state, "Genesis cannot connect this yet");
+    const instagram = branches.find((b) => b.label === "Instagram")!;
+    eq("while Instagram says it is simply not connected", instagram.state, "Not connected");
+
+    // The registry itself is the reason, and it is checked rather than trusted.
+    eq("because X genuinely has no connector",
+      SOCIAL_PLATFORMS.find((pf) => pf.id === "x")?.publishProvider ?? null, null);
+  }
+
+  // ======================================================================
+  console.log("\n=== 7e. A connected platform is not the same as a claim ===\n");
+  // ======================================================================
+  {
+    const { store } = await makeStore();
+    await prismaSystem.storeIntegration.create({
+      data: { storeId: store.id, provider: "INSTAGRAM", status: "CONNECTED", externalAccountId: `ig-${stamp}` },
+    });
+    const map = await mapFor(store.id, store.slug);
+    const social = map.domains.find((d) => d.key === "social")!;
+    const branches = branchesFor(social, [
+      { id: "instagram", label: "Instagram", available: true, connected: true, detail: "Audience size.", serviceId: "instagram" },
+    ]);
+    const ig = branches.find((b) => b.label === "Instagram")!;
+    eq("a connected platform reads as known", ig.certainty, "known");
+    eq("and says so", ig.state, "Connected");
+    // STILL NO INVENTED CHAIN. Connecting an account does not by itself mean
+    // J4 has content, engagement or traffic from it -- those appear when rows
+    // for them exist, and not a moment sooner.
+    eq("but still claims no data it does not have", ig.children.length, 0);
   }
 
   // ======================================================================

@@ -2,44 +2,46 @@
 
 import { useEffect, useRef } from "react";
 
-// THE BUSINESS, SEEN FROM UNDERNEATH.
+// THE NETWORK THE BUSINESS SITS INSIDE.
 //
-// ============ AN ORIGINAL GLYPH SET, DELIBERATELY (2026-09-01) =========
+// ============ AN ORIGINAL LANGUAGE, NOT A REFERENCE (2026-09-01) =======
 //
-// Sean: "Do not copy the Matrix aesthetic or use recognizable Matrix
-// typography/symbols. Create an original Genesis visual language using abstract
-// data characters, points, particles, business/data glyphs, subtle streams."
+// Sean sent two reference images of green node-and-line networks and was
+// explicit: "Do not copy either image, its exact composition, colors,
+// typography, or distinctive visual elements... I do NOT want literal Matrix
+// visuals. I do NOT want green falling code."
 //
-// So: no katakana, no green-on-black, no mirrored characters. The alphabet
-// below is the vocabulary of a business ledger read at a distance — digits,
-// currency, percentages, deltas, the box-drawing marks of a table, and a few
-// dots. It reads as *information* rather than as code, which is the actual
-// subject: this is a merchant's own data flowing under their business.
+// So what is taken is the IDEA — connected points, subtle links, depth,
+// clusters, a sense of information flowing — and nothing else. No green: the
+// field is drawn in the map's own ink token, which is the same blue J4 is
+// drawn in and which follows the theme. No dense lattice: this sits at a few
+// percent opacity behind a white stage, where the references are the subject
+// of their own image.
 //
-// ============ AND IT STAYS UNDERNEATH =================================
+// It replaces the earlier falling-glyph treatment, which read as rain rather
+// than as a network.
 //
-// Sean: "Keep it restrained. The map and information remain readable. This
-// should feel futuristic and intentional, not like a screen saver."
+// ============ IT IS BACKDROP, AND STAYS BACKDROP ======================
 //
-// Low alpha, slow drift, and it never draws over the centre — the hub is
-// punched out with a radial fade so J4 and the branch labels always sit on
-// clean ground. The map is painted in a separate SVG layer above this.
+// Sean: "Keep it readable, especially at 390px."
+//
+// Three things keep it underneath. Alpha is capped low. The hub is punched out
+// with a radial fade so J4 and the branch labels always sit on clean ground.
+// And links are only drawn between points that are genuinely close, so the
+// field stays sparse instead of turning into a mesh.
 //
 // ============ AND IT IS OPTIONAL BY CONSTRUCTION ======================
 //
-// `prefers-reduced-motion` renders ONE static frame — the same glyph field,
-// not animated and not blank. A viewer who cannot take motion still gets the
-// texture and loses nothing; the map itself never depended on it.
+// `prefers-reduced-motion` renders ONE static frame of the same field — not
+// animated, and not blank. The map never depended on it moving.
 
-/** Digits, ledger marks, and deltas. Nothing alphabetic, nothing recognisable. */
-const GLYPHS = "0123456789$%△▽·:+-|/\\◦◇□▪▫┼┤├╌═≈↗↘".split("");
-
-interface Column {
+interface Point {
   x: number;
   y: number;
-  speed: number;
-  glyphs: string[];
-  alpha: number;
+  /** 0 = far, 1 = near. Drives size, alpha and drift speed together. */
+  depth: number;
+  vx: number;
+  vy: number;
 }
 
 export function MapDataStream({ reducedMotion }: { reducedMotion: boolean }) {
@@ -52,24 +54,19 @@ export function MapDataStream({ reducedMotion }: { reducedMotion: boolean }) {
     if (!ctx) return;
 
     let raf = 0;
-    let columns: Column[] = [];
+    let points: Point[] = [];
     let width = 0;
     let height = 0;
 
     // ============ THE FIELD IS GENERATED ONCE ======================
     //
-    // A resize used to re-roll every glyph, so under reduced motion the canvas
-    // changed whenever the layout shifted -- a still image that was not still.
-    // The alphabet is drawn from this pool by index instead, so a resize
-    // re-lays the columns out without inventing new characters.
-    const pool = Array.from({ length: 512 }, () => GLYPHS[Math.floor(Math.random() * GLYPHS.length)]);
-    const jitter = Array.from({ length: 512 }, () => Math.random());
+    // A resize used to re-roll the whole field, so under reduced motion the
+    // canvas changed whenever the layout shifted — a still image that was not
+    // still. The random pool is drawn once and only re-laid-out on resize.
+    const seeds = Array.from({ length: 600 }, () => Math.random());
     let cursor = 0;
-    const nextGlyph = () => pool[cursor++ % pool.length];
-    const nextJitter = () => jitter[cursor % jitter.length];
+    const seed = () => seeds[cursor++ % seeds.length];
 
-    // The device pixel ratio matters here: glyphs this faint turn to mush on a
-    // phone if the backing store is not scaled.
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -79,68 +76,97 @@ export function MapDataStream({ reducedMotion }: { reducedMotion: boolean }) {
       canvas.height = Math.max(1, Math.floor(height * dpr));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const spacing = width < 420 ? 26 : 34;
-      const count = Math.max(6, Math.floor(width / spacing));
+      // Fewer points on a phone: the same density that reads as texture on a
+      // desktop reads as noise in a 340px column.
+      const count = width < 420 ? 34 : 68;
       cursor = 0;
-      columns = Array.from({ length: count }, (_, i) => {
-        const rows = Math.ceil(height / 18) + 4;
-        const j = nextJitter();
+      points = Array.from({ length: count }, () => {
+        const depth = 0.25 + seed() * 0.75;
+        const angle = seed() * Math.PI * 2;
         return {
-          x: i * spacing + spacing / 2,
-          y: j * height,
-          speed: 6 + j * 12,
-          alpha: 0.25 + j * 0.45,
-          glyphs: Array.from({ length: rows }, () => nextGlyph()),
+          x: seed() * width,
+          y: seed() * height,
+          depth,
+          // Slow, and slower the further away — parallax without a camera.
+          vx: Math.cos(angle) * (2 + depth * 5),
+          vy: Math.sin(angle) * (2 + depth * 5),
         };
       });
     };
 
-    // Read the map's own tokens so the stream belongs to the theme rather than
-    // carrying a colour of its own.
-    const inkOf = () => {
-      const styles = getComputedStyle(canvas);
-      return styles.getPropertyValue("--map-stream").trim() || "rgba(27, 95, 196, 1)";
-    };
+    const inkOf = () =>
+      getComputedStyle(canvas).getPropertyValue("--map-stream").trim() || "#1b5fc4";
 
     const draw = (dt: number) => {
       ctx.clearRect(0, 0, width, height);
       const ink = inkOf();
-      ctx.font = `${width < 420 ? 11 : 13}px ui-monospace, SFMono-Regular, Menlo, monospace`;
-      ctx.textAlign = "center";
-
       const cx = width / 2;
       const cy = height / 2;
-      // The hub is punched out so nothing ever competes with J4 or the labels.
-      const clear = Math.min(width, height) * 0.34;
+      // Nothing competes with J4 or the labels.
+      const clear = Math.min(width, height) * 0.3;
+      // Links only between genuine neighbours, so the field never becomes a mesh.
+      const linkDistance = width < 420 ? 62 : 84;
 
-      for (const col of columns) {
-        if (!reducedMotion) col.y += col.speed * dt;
-        if (col.y > height + 40) col.y = -40;
+      const fade = (x: number, y: number) => {
+        const d = Math.hypot(x - cx, y - cy);
+        return Math.min(1, Math.max(0, (d - clear) / (clear * 0.85)));
+      };
 
-        for (let r = 0; r < col.glyphs.length; r++) {
-          const y = ((col.y + r * 18) % (height + 80)) - 40;
-          if (y < -20 || y > height + 20) continue;
-
-          // Distance fade around the centre, plus a gentle head-to-tail fade
-          // so a column reads as a stream rather than a dotted line.
-          const d = Math.hypot(col.x - cx, y - cy);
-          const near = Math.min(1, Math.max(0, (d - clear) / (clear * 0.9)));
-          const tail = 1 - r / col.glyphs.length;
-          const a = col.alpha * near * (0.25 + tail * 0.75) * 0.16;
-          if (a <= 0.004) continue;
-
-          ctx.globalAlpha = a;
-          ctx.fillStyle = ink;
-          ctx.fillText(col.glyphs[r], col.x, y);
+      if (!reducedMotion) {
+        for (const p of points) {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          if (p.x < -20) p.x = width + 20;
+          if (p.x > width + 20) p.x = -20;
+          if (p.y < -20) p.y = height + 20;
+          if (p.y > height + 20) p.y = -20;
         }
       }
+
+      // ---- links first, so points sit on top of them ----------------------
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 0.6;
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i];
+        const fa = fade(a.x, a.y);
+        if (fa <= 0.02) continue;
+        for (let j = i + 1; j < points.length; j++) {
+          const b = points[j];
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const d = Math.hypot(dx, dy);
+          if (d > linkDistance) continue;
+          const fb = fade(b.x, b.y);
+          if (fb <= 0.02) continue;
+          // Closer pairs are stronger, and the pair is only as visible as its
+          // dimmer end.
+          const strength = 1 - d / linkDistance;
+          ctx.globalAlpha = strength * Math.min(fa, fb) * ((a.depth + b.depth) / 2) * 0.09;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+      }
+
+      // ---- the points themselves ------------------------------------------
+      ctx.fillStyle = ink;
+      for (const p of points) {
+        const f = fade(p.x, p.y);
+        if (f <= 0.02) continue;
+        ctx.globalAlpha = f * p.depth * 0.3;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 0.6 + p.depth * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
       ctx.globalAlpha = 1;
     };
 
     resize();
 
     if (reducedMotion) {
-      // ONE FRAME. Same texture, no loop, no timer left running.
+      // ONE FRAME. Same field, no loop, no timer left running.
       draw(0);
       const onResize = () => {
         resize();

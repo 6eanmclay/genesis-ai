@@ -234,13 +234,20 @@ async function main() {
     // ====================================================================
     console.log("\n=== 5. Zoom controls actually move the drawing ===\n");
     // ====================================================================
-    const transformBefore = await page.evaluate(() =>
-      document.querySelector('[data-screen="business-map"] svg g')?.getAttribute("transform") ?? "");
-    await page.getByRole("button", { name: "Zoom in" }).click();
-    const transformAfter = await page.evaluate(() =>
-      document.querySelector('[data-screen="business-map"] svg g')?.getAttribute("transform") ?? "");
-    assert("zooming changes the drawing", transformBefore !== transformAfter,
-      `${transformBefore} vs ${transformAfter}`);
+    // ZOOM IS THE NAVIGATION NOW, not a pair of viewer buttons beside it.
+    // Selecting a branch moves the world; "Whole business" brings it back.
+    await page.getByRole("button", { name: "Whole business" }).click();
+    await page.waitForTimeout(300);
+    const atWhole = await page.locator('[data-testid="map-world"]').getAttribute("transform");
+    await page.getByRole("button", { name: /^Customers:/ }).click();
+    await page.waitForTimeout(350);
+    const atCustomers = await page.locator('[data-testid="map-world"]').getAttribute("transform");
+    assert("selecting a branch moves the world", atWhole !== atCustomers,
+      `${atWhole} vs ${atCustomers}`);
+    await page.getByRole("button", { name: "Whole business" }).click();
+    await page.waitForTimeout(350);
+    assert("and stepping all the way out restores it",
+      (await page.locator('[data-testid="map-world"]').getAttribute("transform")) === atWhole);
 
     // ====================================================================
     console.log("\n=== 6. The original overview is still underneath ===\n");
@@ -427,10 +434,10 @@ async function main() {
 
       // (5) children appear on the map and reveal contextual information
       const childCount = await small.evaluate(() =>
-        document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"]').length);
+        document.querySelectorAll('[data-screen="business-map"] svg g[data-level="branch"]').length);
       assert("children of the focused branch appear on the map", childCount > 0, `${childCount}`);
 
-      await small.locator('[data-screen="business-map"] svg g.node-in[role="button"]').first().click();
+      await small.locator('[data-screen="business-map"] svg g[data-level="branch"]').first().click();
       await small.waitForTimeout(250);
       const cardText = await small.locator('[data-testid="map-card"]').innerText();
       assert("tapping a child reveals what J4 knows about it", cardText.length > 12, cardText.slice(0, 120));
@@ -460,11 +467,11 @@ async function main() {
         return card.right < hub.left || card.left > hub.right || card.bottom < hub.top || card.top > hub.bottom;
       }), "the card overlaps J4");
 
-      // (8, first half) closing the child card steps back to the branch
+      // (8, first half) closing steps back to the branch
       await small.locator('[data-testid="map-card-close"]').click();
       await small.waitForTimeout(200);
       const stillFocused = await small.evaluate(() =>
-        document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"]').length);
+        document.querySelectorAll('[data-screen="business-map"] svg g[data-level="branch"]').length);
       assert("closing the child card keeps the branch open", stillFocused > 0, `${stillFocused}`);
 
       // (7) a deeper View action reaches a real screen.
@@ -516,7 +523,10 @@ async function main() {
       await small.getByRole("button", { name: /^Connections:/ }).click();
       await small.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
 
-      const nodes = small.locator('[data-screen="business-map"] svg g.node-in[role="button"]');
+      // BRANCHES ONLY. `.node-in[role=button]` matches leaves too now, and
+      // selecting a branch reveals leaves that join the selector -- so the
+      // loop's indices drifted onto nodes it had never meant to click.
+      const nodes = small.locator('[data-screen="business-map"] svg g[data-level="branch"]');
       const count = await nodes.count();
       assert("the Connections branch offers services to inspect", count > 0, `${count}`);
 
@@ -525,7 +535,7 @@ async function main() {
       let sawConnectable = false;
       for (let i = 0; i < count; i++) {
         await nodes.nth(i).click();
-        await small.waitForTimeout(180);
+        await small.waitForTimeout(220);
         const card = small.locator('[data-testid="map-card"]');
         const text = (await card.innerText()).replace(/\s+/g, " ");
         const connect = await card.getByRole("link", { name: "Connect" }).count();
@@ -554,6 +564,14 @@ async function main() {
             !(create === 1 && /no signup link we could verify/i.test(text)), text.slice(0, 120));
         }
         checked++;
+        // Back to the branch level, so the next index means what it meant.
+        if (await small.locator('[data-testid="map-back"]').isEnabled()) {
+          const trail = await small.locator('[data-screen="business-map"]').innerText();
+          if (/›[^›]*›/.test(trail)) {
+            await small.locator('[data-testid="map-back"]').click();
+            await small.waitForTimeout(200);
+          }
+        }
       }
       assert("every offered service was checked", checked === count, `${checked}/${count}`);
       assert("including at least one already connected", sawConnected);
@@ -568,17 +586,118 @@ async function main() {
         const texts = Array.from(g?.querySelectorAll("text") ?? []).map((n) => n.textContent?.trim());
         return texts[1] ?? "";
       });
+      // A branch's own state line is the label now: "Connected" for something
+      // that is, "Not connected" for something that is not.
       const connectedOnMap = await small.evaluate(() =>
         Array.from(document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"]'))
-          .filter((g) => (g.getAttribute("aria-label") ?? "").includes("from your data")).length);
+          .map((g) => g.getAttribute("aria-label") ?? "")
+          .filter((l) => /,\s*Connected$/.test(l)).length);
       assert("every connected system the branch counts is reachable on it",
         Number(branchCount) <= connectedOnMap || Number.isNaN(Number(branchCount)),
         `branch says ${branchCount}, children show ${connectedOnMap} connected`);
 
-      await small.locator('[data-testid="map-card-close"]').click();
-      await small.waitForTimeout(150);
-      await small.locator('[data-testid="map-card-close"]').click();
-      await small.waitForTimeout(150);
+      // IDEMPOTENT RESET. The loop already steps back after each service, so
+      // closing a card twice here waited on one that was not open.
+      await small.getByRole("button", { name: "Whole business" }).click();
+      await small.waitForTimeout(250);
+    }
+
+    // ====================================================================
+    console.log("\n=== 8e. Going inside the business, one level at a time ===\n");
+    // ====================================================================
+    //
+    // Sean: "Zoomed out: J4 + the whole business. One level in: J4 + one
+    // business domain. Another level in: entities within that domain... The map
+    // should feel like the user is exploring their business from the inside."
+    //
+    // So the test is that the WORLD TRANSFORM changes at each level, and that
+    // stepping back restores it. A focus state that only dimmed things would
+    // pass a "did something change" check and fail this one.
+    {
+      await small.locator('[data-screen="business-map"] .map-stage').scrollIntoViewIfNeeded();
+      await small.waitForTimeout(200);
+
+      const worldAt = () =>
+        small.locator('[data-testid="map-world"]').getAttribute("transform");
+
+      const atRoot = await worldAt();
+      assert("the map starts on the whole business", (await small.locator('[data-testid="map-card"]').count()) === 0);
+
+      // level 1 — one domain
+      await small.getByRole("button", { name: /^Commerce:/ }).click();
+      await small.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
+      const atDomain = await worldAt();
+      assert("selecting a domain zooms the map toward it", atDomain !== atRoot,
+        `${atRoot} vs ${atDomain}`);
+      assert("and the trail says where you are",
+        /J4[\s\S]*Commerce/.test(await small.locator('[data-screen="business-map"]').innerText()));
+
+      // level 2 — the middle layer, grouped
+      const branches = small.locator('[data-screen="business-map"] svg g.node-in[role="button"]');
+      assert("the domain reveals a middle layer", (await branches.count()) > 0);
+      const firstBranchLabel = (await branches.first().getAttribute("aria-label")) ?? "";
+      await branches.first().click();
+      await small.waitForTimeout(300);
+      const atBranch = await worldAt();
+      assert("selecting a branch zooms in again", atBranch !== atDomain, `${atDomain} vs ${atBranch}`);
+      assert("and the card describes it",
+        (await small.locator('[data-testid="map-card"]').innerText()).length > 5, firstBranchLabel);
+
+      // level 3 — individual things, when the branch is a group
+      const leaves = await small.evaluate(() =>
+        document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"]').length);
+      assert("a group reveals the things inside it", leaves > 0, `${leaves}`);
+
+      // BACK STEPS OUT ONE LEVEL AT A TIME, and returns the view.
+      await small.locator('[data-testid="map-back"]').click();
+      await small.waitForTimeout(300);
+      assert("Back steps out one level", (await worldAt()) === atDomain,
+        `${await worldAt()} vs ${atDomain}`);
+      await small.locator('[data-testid="map-back"]').click();
+      await small.waitForTimeout(350);
+      assert("and again returns to the whole business", (await worldAt()) === atRoot,
+        `${await worldAt()} vs ${atRoot}`);
+      assert("with no card left open", (await small.locator('[data-testid="map-card"]').count()) === 0);
+    }
+
+    // ====================================================================
+    console.log("\n=== 8f. Social shows the platforms, and claims nothing ===\n");
+    // ====================================================================
+    {
+      await small.getByRole("button", { name: /^Social:/ }).click();
+      await small.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
+
+      const labels = await small.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"]'))
+          .map((g) => (g.getAttribute("aria-label") ?? "").split(",")[0]));
+      for (const platform of ["Instagram", "Facebook", "TikTok", "X"]) {
+        assert(`${platform} appears under Social`, labels.includes(platform), JSON.stringify(labels));
+      }
+
+      // X has no connector at all, and says so rather than offering Connect.
+      const xNode = small.locator('[data-screen="business-map"] svg g.node-in[role="button"]')
+        .filter({ has: small.locator('text="X"') }).first();
+      await xNode.click();
+      await small.waitForTimeout(250);
+      const xCard = await small.locator('[data-testid="map-card"]').innerText();
+      assert("X says Genesis cannot connect it", /cannot connect/i.test(xCard), xCard.slice(0, 140));
+      assert("and offers no Connect button",
+        (await small.locator('[data-testid="map-card"]').getByRole("link", { name: "Connect" }).count()) === 0);
+
+      // AND NOTHING UNDER AN UNCONNECTED PLATFORM. No Content, no Engagement,
+      // no Traffic -- those appear when rows exist and not before.
+      const under = await small.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg text'))
+          .map((n) => n.textContent?.trim() ?? ""));
+      for (const invented of ["Content", "Engagement", "Traffic", "Followers"]) {
+        assert(`the map never draws ${invented} for an unconnected account`,
+          !under.includes(invented), JSON.stringify(under.filter((u) => u === invented)));
+      }
+
+      await small.locator('[data-testid="map-back"]').click();
+      await small.waitForTimeout(200);
+      await small.locator('[data-testid="map-back"]').click();
+      await small.waitForTimeout(200);
     }
 
     // ====================================================================

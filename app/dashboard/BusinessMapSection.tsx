@@ -6,6 +6,8 @@ import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { signupFor } from "@/lib/businessModel/signupDestinations";
 import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
+import { SOCIAL_PLATFORMS } from "@/lib/social/platforms";
+import type { MapProspect } from "@/lib/businessModel/mapBranches";
 import { BusinessMapCanvas, type MapService, type DomainDestination } from "./BusinessMapCanvas";
 import type { MapDomainKey } from "@/lib/businessModel/businessMap";
 
@@ -110,6 +112,54 @@ export async function BusinessMapSection({
 
   const services: MapService[] = [...rails, ...fromCatalog];
 
+  // ============ WHAT COULD INFORM A BRANCH, FROM REAL REGISTRIES =======
+  //
+  // Sean: "At the top level: J4 -> Social. Selecting Social reveals Instagram ·
+  // Facebook · TikTok · X as connected child nodes... If TikTok isn't
+  // connected: Not connected / Not yet known."
+  //
+  // Social had no children at all, because `profile.socialAccounts` is empty
+  // for every business today -- so the branch said "not known yet" and opening
+  // it showed nothing to do about that. These four are not invented: they are
+  // SOCIAL_PLATFORMS, the registry the Studio already publishes from.
+  //
+  // X CARRIES ITS OWN TRUTH. Its `publishProvider` is null and that file says
+  // why in its own words: "NO CONNECTOR EXISTS. Adding one means a new
+  // IntegrationProvider value and a migration; leaving this null is what stops
+  // the interface implying otherwise." So X appears, and appears as something
+  // Genesis cannot connect -- which is more useful to an owner than pretending
+  // it is not a platform they use.
+  const connectedSet = new Set(connectedProviders);
+  const socialProspects: MapProspect[] = SOCIAL_PLATFORMS.map((platform) => {
+    const provider = platform.publishProvider;
+    const catalogEntry = CONNECTOR_CATALOG.find((e) => e.provider === provider);
+    return {
+      id: platform.id,
+      label: platform.label,
+      // Connectable only when a connector actually exists for it.
+      available: provider !== null && catalogEntry?.connector != null,
+      connected: provider !== null && connectedSet.has(provider),
+      // THE PROVIDER'S OWN WORDS where the catalogue has them, and nothing at
+      // all where it does not. No capability is written here.
+      detail: catalogEntry?.description ?? "",
+      serviceId: catalogEntry?.id ?? null,
+    };
+  });
+
+  const connectionProspects: MapProspect[] = services.map((s) => ({
+    id: s.id,
+    label: s.name,
+    available: s.available,
+    connected: s.connected,
+    detail: s.description,
+    serviceId: s.id,
+  }));
+
+  const prospects: Partial<Record<MapDomainKey, MapProspect[]>> = {
+    social: socialProspects,
+    connections: connectionProspects,
+  };
+
   // ============ WHERE A BRANCH GOES WHEN THERE IS A REAL SCREEN =========
   //
   // Sean: "Every meaningful node/domain should have a way to go deeper when a
@@ -146,7 +196,12 @@ export async function BusinessMapSection({
       </p>
 
       <div className="mt-4">
-        <BusinessMapCanvas map={map} services={services} destinations={destinations} />
+        <BusinessMapCanvas
+          map={map}
+          services={services}
+          prospects={prospects}
+          destinations={destinations}
+        />
       </div>
 
       {/* ---- what a connection would add ------------------------------------
