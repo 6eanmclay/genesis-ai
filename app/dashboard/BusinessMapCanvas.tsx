@@ -53,19 +53,26 @@ interface Geometry {
   hub: number; dot: number;
   label: number; sub: number; gap: number;
   child: number; childDot: number; childLabel: number;
+  /** Tap target for a child. Must be smaller than the gap between two of them. */
+  childHit: number;
 }
 
 const WIDE: Geometry = {
   w: 900, h: 560, cx: 450, cy: 280, rx: 300, ry: 186,
   hub: 46, dot: 9, label: 16, sub: 12.5, gap: 18,
-  child: 92, childDot: 6, childLabel: 12.5,
+  child: 92, childDot: 6, childLabel: 12.5, childHit: 20,
 };
 
 const NARROW: Geometry = {
   w: 460, h: 430, cx: 230, cy: 215, rx: 112, ry: 122,
   hub: 32, dot: 7, label: 15.5, sub: 12, gap: 12,
-  child: 58, childDot: 5, childLabel: 11,
+  child: 66, childDot: 5, childLabel: 11, childHit: 13,
 };
+
+export interface DomainDestination {
+  label: string;
+  href: string;
+}
 
 /** A service the Connections branch can offer. Passed in; never invented here. */
 export interface MapService {
@@ -77,11 +84,14 @@ export interface MapService {
   /** The catalogue's own words about what it brings. Never written here. */
   description: string;
   signupUrl: string | null;
-}
-
-export interface DomainDestination {
-  label: string;
-  href: string;
+  /**
+   * Where a CONNECTED service is managed, when that is not the Connections
+   * screen.
+   *
+   * Stripe and PayPal are connected through Payments and are not in the
+   * connections catalogue at all — see the section for why they still appear.
+   */
+  manage: DomainDestination | null;
 }
 
 function certaintyColor(c: Certainty): string {
@@ -457,7 +467,14 @@ export function BusinessMapCanvas({
                       }
                     }}
                   >
-                    <circle cx={c.x} cy={c.y} r={22} fill="transparent" />
+                    {/* ============ HIT TARGETS MUST NOT OVERLAP ==========
+                        A fixed 22-unit target was wider than the gap between
+                        two adjacent children on a phone, so the later-painted
+                        node sat on top of its neighbour and the neighbour
+                        could not be tapped at all. Sized from the geometry
+                        instead, and the browser suite now clicks every child
+                        rather than only the first. */}
+                    <circle cx={c.x} cy={c.y} r={G.childHit} fill="transparent" />
                     {selected && (
                       <circle cx={c.x} cy={c.y} r={G.childDot * 2.4} fill="none"
                         stroke={certaintyColor(c.certainty)} strokeWidth={1.25} opacity={0.6} />
@@ -533,8 +550,21 @@ export function BusinessMapCanvas({
                     would -- and on a phone the third button wrapped the card
                     onto an extra line, growing it until it reached the J4 hub
                     it is supposed to sit clear of. Suppressed where it would
-                    only repeat the button beside it. */}
-                {card.destination && !(card.service && !card.service.connected && card.service.available) && (
+                    only repeat the button beside it.
+
+                    A CONNECTED service links where it is actually managed:
+                    Stripe and PayPal are configured in Payments, not in
+                    Connections, so sending an owner to Connections for them
+                    would be an action that does not fit their state. */}
+                {card.service?.connected && card.service.manage ? (
+                  <Link
+                    href={card.service.manage.href}
+                    data-testid="map-view-link"
+                    className="rounded-full bg-[var(--map-inferred)] px-2.5 py-1 text-[11px] font-medium text-white"
+                  >
+                    {card.service.manage.label}
+                  </Link>
+                ) : card.destination && !(card.service && !card.service.connected && card.service.available) && (
                   <Link
                     href={card.destination.href}
                     data-testid="map-view-link"

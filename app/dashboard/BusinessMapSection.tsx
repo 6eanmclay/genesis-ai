@@ -69,13 +69,46 @@ export async function BusinessMapSection({
   // TikTok's says outright that audience demographics are not available through
   // its standard API. A list invented in this file would lose that.
   const descriptions = new Map(CONNECTOR_CATALOG.map((e) => [e.id, e.description]));
-  const services: MapService[] = connectableServices(integrations.map((i) => i.provider)).map(
-    (s) => ({
-      ...s,
-      description: descriptions.get(s.id) ?? "",
-      signupUrl: signupFor(s.id, s.available)?.url ?? null,
-    }),
+  const connectedProviders = integrations.map((i) => i.provider);
+  const fromCatalog: MapService[] = connectableServices(connectedProviders).map((s) => ({
+    ...s,
+    description: descriptions.get(s.id) ?? "",
+    signupUrl: signupFor(s.id, s.available)?.url ?? null,
+    manage: null,
+  }));
+
+  // ============ A CONNECTED SYSTEM ALWAYS APPEARS (2026-09-01) =========
+  //
+  // FOUND BY THE FINAL STATE CHECK. The Connections branch counts what is
+  // really connected -- for Cubit & Coil that is Printful, PayPal and Stripe --
+  // but its children were built only from CONNECTOR_CATALOG, which contains
+  // neither payment rail. So the branch said three and tapping it showed one.
+  //
+  // The rails are not a gap in the catalogue: they are connected through
+  // Payments, which is a different screen and a different flow. So they are
+  // added here with the destination that actually fits their state, rather
+  // than being offered a Connect button that would take an owner somewhere
+  // they cannot connect them.
+  const PAYMENT_RAIL_NAMES: Record<string, string> = { STRIPE: "Stripe", PAYPAL: "PayPal" };
+  const inCatalog = new Set(
+    CONNECTOR_CATALOG.map((e) => e.provider).filter((p): p is NonNullable<typeof p> => p !== null),
   );
+  const rails: MapService[] = connectedProviders
+    .filter((p) => !inCatalog.has(p) && PAYMENT_RAIL_NAMES[p])
+    .map((p) => ({
+      id: `rail:${p.toLowerCase()}`,
+      name: PAYMENT_RAIL_NAMES[p],
+      domain: "financials" as const,
+      available: true,
+      connected: true,
+      // NO INVENTED CAPABILITY. What is true and checkable is that it is
+      // connected and where it is managed.
+      description: "Connected through Payments.",
+      signupUrl: null,
+      manage: { label: "View Payments", href: `${basePath}/payments` },
+    }));
+
+  const services: MapService[] = [...rails, ...fromCatalog];
 
   // ============ WHERE A BRANCH GOES WHEN THERE IS A REAL SCREEN =========
   //

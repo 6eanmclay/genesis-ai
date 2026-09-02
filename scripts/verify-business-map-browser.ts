@@ -497,6 +497,91 @@ async function main() {
     }
 
     // ====================================================================
+    console.log("\n=== 8d. Every action fits the provider's actual state ===\n");
+    // ====================================================================
+    //
+    // Sean, before deployment: "don't offer an action that doesn't make sense
+    // for the current provider state."
+    //
+    // Four states, and each has exactly one sensible set of controls. This
+    // walks every service the Connections branch offers and checks the card it
+    // produces, rather than checking the one service that happens to be first.
+    {
+      // THE STICKY HEADER IS REAL AND SO IS THIS. On a phone the shell's
+      // header is fixed to the top, and a node scrolled under it cannot be
+      // tapped -- by this suite or by an owner. The map is brought fully into
+      // view first, which is what a person does before tapping anything.
+      await small.locator('[data-screen="business-map"] .map-stage').scrollIntoViewIfNeeded();
+      await small.waitForTimeout(200);
+      await small.getByRole("button", { name: /^Connections:/ }).click();
+      await small.waitForSelector('[data-testid="map-card"]', { timeout: 10_000 });
+
+      const nodes = small.locator('[data-screen="business-map"] svg g.node-in[role="button"]');
+      const count = await nodes.count();
+      assert("the Connections branch offers services to inspect", count > 0, `${count}`);
+
+      let checked = 0;
+      let sawConnected = false;
+      let sawConnectable = false;
+      for (let i = 0; i < count; i++) {
+        await nodes.nth(i).click();
+        await small.waitForTimeout(180);
+        const card = small.locator('[data-testid="map-card"]');
+        const text = (await card.innerText()).replace(/\s+/g, " ");
+        const connect = await card.getByRole("link", { name: "Connect" }).count();
+        const create = await card.getByRole("link", { name: "Create" }).count();
+        const view = await card.locator('[data-testid="map-view-link"]').count();
+
+        if (/connected/i.test(text) && !/not connected/i.test(text)) {
+          // CONNECTED: nothing to connect, nothing to create.
+          sawConnected = true;
+          assert(`a connected service offers no Connect (${text.slice(0, 24)})`, connect === 0, text.slice(0, 90));
+          assert(`nor Create (${text.slice(0, 24)})`, create === 0, text.slice(0, 90));
+          assert(`but does offer somewhere to manage it (${text.slice(0, 24)})`, view === 1, text.slice(0, 90));
+        } else if (/cannot connect/i.test(text)) {
+          // COMING SOON: no Connect and no Create -- creating an account
+          // Genesis cannot connect afterwards is the homework being removed.
+          assert(`an unbuildable connector offers no Connect (${text.slice(0, 24)})`, connect === 0, text.slice(0, 90));
+          assert(`and no Create (${text.slice(0, 24)})`, create === 0, text.slice(0, 90));
+        } else {
+          // CONNECTABLE, NOT CONNECTED: Connect always; Create only where a
+          // signup destination was actually verified.
+          sawConnectable = true;
+          assert(`a connectable service offers Connect (${text.slice(0, 24)})`, connect === 1, text.slice(0, 90));
+          assert(`and either Create or an honest gap (${text.slice(0, 24)})`,
+            create === 1 || /no signup link we could verify/i.test(text), text.slice(0, 120));
+          assert(`and never both a Create and a missing-link note (${text.slice(0, 24)})`,
+            !(create === 1 && /no signup link we could verify/i.test(text)), text.slice(0, 120));
+        }
+        checked++;
+      }
+      assert("every offered service was checked", checked === count, `${checked}/${count}`);
+      assert("including at least one already connected", sawConnected);
+      assert("and at least one still to connect", sawConnectable);
+
+      // AND THE BRANCH COUNT MATCHES WHAT TAPPING SHOWS. The count said three
+      // connected systems while the children were built from a catalogue that
+      // contains neither payment rail, so the branch said three and showed one.
+      const branchCount = await small.evaluate(() => {
+        const labels = Array.from(document.querySelectorAll('[data-screen="business-map"] svg g[role="button"]'));
+        const g = labels.find((el) => (el.getAttribute("aria-label") ?? "").startsWith("Connections:"));
+        const texts = Array.from(g?.querySelectorAll("text") ?? []).map((n) => n.textContent?.trim());
+        return texts[1] ?? "";
+      });
+      const connectedOnMap = await small.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg g.node-in[role="button"]'))
+          .filter((g) => (g.getAttribute("aria-label") ?? "").includes("from your data")).length);
+      assert("every connected system the branch counts is reachable on it",
+        Number(branchCount) <= connectedOnMap || Number.isNaN(Number(branchCount)),
+        `branch says ${branchCount}, children show ${connectedOnMap} connected`);
+
+      await small.locator('[data-testid="map-card-close"]').click();
+      await small.waitForTimeout(150);
+      await small.locator('[data-testid="map-card-close"]').click();
+      await small.waitForTimeout(150);
+    }
+
+    // ====================================================================
     console.log("\n=== 8c. Reduced motion still gives a useful map ===\n");
     // ====================================================================
     {
