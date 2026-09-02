@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { normalizeEmail } from "@/lib/auth/normalizeEmail";
 import { recordReferralSignup } from "@/lib/growthPoints/referral";
 import { checkPassword } from "@/lib/auth/passwordPolicy";
 import { guard } from "@/lib/http/guard";
@@ -30,23 +31,21 @@ import { guard } from "@/lib/http/guard";
 // mistypes their password twice, never notices.
 
 const RegisterBody = z.object({
-  // ============ TRIMMED, DELIBERATELY NOT LOWERCASED (2026-08-30) ====
+  // ============ NORMALISED (2026-09-02, E11) =========================
   //
-  // Lowercasing here was the obvious move and would have locked people out.
-  // auth.ts looks a user up with `findUnique({ where: { email } })` using the
-  // credential exactly as typed, so an account stored lowercased could not be
-  // signed into with the capitals its owner used — and existing rows already
-  // hold whatever case people typed, so normalising only one side breaks
-  // somebody either way.
+  // This deliberately did NOT lowercase, and the comment it replaces was
+  // right at the time: auth.ts looked users up exactly as typed, so
+  // normalising this side alone would have locked out every existing
+  // mixed-case account. What was missing was the measurement.
   //
-  // The rate limit is unaffected: bucketFor lowercases before hashing, so
-  // "A@b.com" and "a@b.com" share one bucket regardless of what is stored.
-  //
-  // The underlying issue is real and older than this change — Email is unique
-  // but not normalised, so two accounts can differ only by case. Fixing it
-  // needs a data migration and a decision about existing rows, and is recorded
-  // rather than smuggled into a validation pass.
-  email: z.string().trim().email("That does not look like an email address."),
+  // Production holds 40 accounts, 0 of them with any uppercase character
+  // and 0 case-insensitive collisions, so no existing row changes meaning
+  // — and auth.ts and the reset path normalise in this same deploy, which
+  // is the condition EXTERNAL_BLOCKERS.md E11 set. The rate limit was
+  // already case-insensitive (bucketFor lowercases before hashing) and is
+  // unaffected.
+  email: z.string().trim().email("That does not look like an email address.")
+    .transform(normalizeEmail),
   // A password rule exists in lib/auth/passwordPolicy and stays the authority;
   // this only bounds the length so bcrypt is never handed a megabyte.
   password: z.string().min(1).max(200),

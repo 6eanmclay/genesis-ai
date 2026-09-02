@@ -8,6 +8,7 @@ import { standingFor, touchSession } from "@/lib/security/sessions";
 import { isTwoFactorEnabled, verifySecondFactor } from "@/lib/security/twoFactor";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { normalizeEmail } from "@/lib/auth/normalizeEmail";
 import { isTokenIssuedBeforePasswordChange } from "@/lib/auth/passwordReset";
 import { checkSignInThrottle, recordFailedAttempt, clearAttempts } from "@/lib/auth/attemptThrottle";
 
@@ -48,7 +49,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (!credentials?.email || !credentials?.password) {
           return null;
         }
-        const email = credentials.email as string;
+        // NORMALISED ONCE, HERE, and every lookup below uses this value.
+        // Both the throttle lookup and the sign-in lookup were literal, so
+        // an account could be reached only with the capitalisation its
+        // owner first typed. See lib/auth/normalizeEmail.ts for why both
+        // sides could finally change together.
+        const email = normalizeEmail(credentials.email as string);
 
         // Brute-force protection (2026-08-20). There was none at all before
         // this: a script could work through a password list against a known

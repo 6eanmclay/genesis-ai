@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { normalizeEmail } from "@/lib/auth/normalizeEmail";
 import { recordSecurityEvent, SECURITY_EVENTS } from "@/lib/security/events";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { createPasswordResetToken } from "@/lib/auth/passwordReset";
@@ -72,7 +73,11 @@ export async function requestPasswordReset(
     // real ones would make the limit itself an oracle.
     await recordFailedAttempt(buckets);
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    // NORMALISED, or a reset request typed with different capitals than
+    // the account was created with finds nothing and silently succeeds —
+    // this path deliberately reports success either way, so the person
+    // would wait for an email that was never going to come.
+    const user = await prisma.user.findUnique({ where: { email: normalizeEmail(email) } });
     // Never reveal whether an account exists — same outcome either way.
     // Real work (token + email) only happens when a real user is found; a
     // non-existent email just returns the same success state with no real

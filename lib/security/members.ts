@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, ROLE_PERMISSIONS, type Permission } from "@/lib/permissions";
 import { recordSecurityEvent, SECURITY_EVENTS } from "./events";
 import { revokeOtherSessions } from "./sessions";
+import { normalizeEmail } from "@/lib/auth/normalizeEmail";
 
 // WHO CAN DO WHAT ON THIS BUSINESS (Security & Trust steps 6 and 7, D5: build
 // the real capability, not a review screen over an empty model).
@@ -149,7 +150,10 @@ export async function addMember(input: {
     select: { userId: true },
   });
   const person = await prisma.user.findUnique({
-    where: { email: input.email.trim().toLowerCase() },
+    // The same normalisation as every other lookup, from the one place
+    // that defines it. This path already lowercased by hand — a second,
+    // private copy of the rule is how the two drift apart.
+    where: { email: normalizeEmail(input.email) },
     select: { id: true },
   });
   if (!person) return { added: false, reason: "no_such_account" };
