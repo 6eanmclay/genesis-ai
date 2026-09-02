@@ -732,6 +732,25 @@ async function main(): Promise<void> {
     eq("and the other one shows none",
       seen.find((e) => e.label === "Unphotographed Ring")?.image, null);
 
+    // ---- a database id is never presented as a stock code ----------------
+    assert("a Genesis-native product shows no SKU it never had",
+      seen.every((e) => !e.facts.some((f) => f.label === "SKU")),
+      JSON.stringify(seen.map((e) => e.facts.find((f) => f.label === "SKU")?.value)));
+    // AND A REAL ONE STILL SHOWS. Proving the rule drops the id rather than
+    // the row: an item whose sku is genuinely not its own id keeps it.
+    const external = entitiesFor({
+      ...(await mapFor(store.id, store.slug)).domains.find((d) => d.key === "commerce")!,
+      nodes: [{
+        id: "internal:item:abc", domain: "commerce" as const, label: "Sourced Ring",
+        certainty: "known" as const, detail: null, provenance: null,
+        recordId: "internal:item:abc", recordKind: "computed" as const,
+        image: null, kind: "Product",
+        facts: [{ label: "SKU", value: "CC-RING-014" }],
+      }],
+    });
+    eq("a real stock code is still shown",
+      external[0].facts.find((f) => f.label === "SKU")?.value, "CC-RING-014");
+
     // ---- the commercial facts are the product's own ----------------------
     const one = seen.find((e) => e.label === "Photographed Ring")!;
     eq("price is shown in money, not cents",

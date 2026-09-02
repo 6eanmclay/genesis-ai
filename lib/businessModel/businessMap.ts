@@ -347,6 +347,7 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
   // ---- Commerce ----
   for (const item of p.offerings.items) {
     const data = item.data as Record<string, unknown>;
+    const productId = item.id.replace("internal:item:", "");
     const price = typeof data.priceInCents === "number"
       ? `${(data.priceInCents / 100).toFixed(2)}`
       : null;
@@ -357,10 +358,18 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
       recordId: item.id,
       // The canonical item shape has no image field, so the photograph comes
       // from the caller keyed by the underlying product id — never invented.
-      image: input.productImages?.[item.id.replace("internal:item:", "")] ?? null,
+      image: input.productImages?.[productId] ?? null,
       facts: knownOf([
         ["Price", price],
-        ["SKU", data.sku],
+        // A DATABASE ID IS NOT A STOCK CODE (2026-09-02, seen in a screenshot).
+        //
+        // A Genesis-native product has no SKU, so internalMapper fills the
+        // canonical field with `product.id` to satisfy the shape. Printing
+        // that under the heading "SKU" tells an owner they have a stock code
+        // they never set — a cuid presented as their own commercial data. So
+        // the row appears only when the value is genuinely something other
+        // than the record's own identifier.
+        ["SKU", data.sku === productId ? null : data.sku],
         ["Category", data.category],
         ["On sale in your storefront", data.active === true ? "Yes" : data.active === false ? "No" : null],
         ["In stock", data.quantityAvailable],
