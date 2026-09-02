@@ -43,6 +43,7 @@ import { AttentionCardList } from "./AttentionCardList";
 import { J4NoticedDisclosure } from "./J4NoticedDisclosure";
 import { buildAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { RecentOrdersCard } from "./RecentOrdersCard";
+import { BusinessMapSection } from "./BusinessMapSection";
 import { BusinessJourney } from "./BusinessJourney";
 import { logJourneyStageIfChanged } from "@/lib/dashboard/journeyStage";
 
@@ -326,6 +327,26 @@ export async function HomeWorkspace({
   return (
     <div style={themeCssVars(storeTheme)} className="min-h-screen p-8 lg:min-h-0">
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
+
+      {/* ============ THE MAP IS THE FRONT DOOR (2026-09-01) ============
+          Sean: "I want the Business Map to become the first page/landing screen
+          when the owner enters Genesis... the map should sit above the existing
+          overview rather than replacing it."
+
+          ABOVE, not instead of. Everything below this line is the overview
+          exactly as it was — the snapshot, J4 Noticed, the journey, recent
+          orders. Business Map = understand the business; Overview = see what is
+          happening. Both are useful and neither replaces the other.
+
+          The Genesis arrival experience is untouched: it is a separate
+          full-screen layer (GenesisArrivalOverlay) that plays over this page and
+          clears itself, and nothing here interferes with it. */}
+      <BusinessMapSection
+        storeId={store.id}
+        storeSlug={store.slug}
+        ownerName={userName ?? null}
+        basePath={basePath}
+      />
 
       {/* Today, at a glance — the workspace now begins directly with real
           business state; the greeting moved to Live Intelligence (see

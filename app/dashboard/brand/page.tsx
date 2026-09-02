@@ -18,6 +18,8 @@ import {
 import { EditStoreForm } from "../EditStoreForm";
 import { AttentionCardList } from "../AttentionCardList";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
+import { readOwnerFactsWithProvenance } from "@/lib/businessModel/ownerFacts";
+import { certaintyOf } from "@/lib/businessModel/businessMap";
 
 // The 9 AI-generated identity fields, in the same order FIELD_LABELS
 // already names them — no manual edit form exists for these today (only
@@ -36,6 +38,22 @@ const BRAND_IDENTITY_FIELDS = [
   "targetAudience",
   "uniqueSellingProposition",
 ] as const;
+
+/**
+ * Which of the nine live in the fact lifecycle rather than the blueprint.
+ *
+ * A MIRROR of what update_brand_identity.getCurrentValues does, and the reason
+ * this constant exists rather than four inline conditionals: the two must agree
+ * about which fields are facts, and a list is something a suite can compare.
+ */
+const FACT_BACKED: Partial<Record<(typeof BRAND_IDENTITY_FIELDS)[number], SingletonFactKey>> = {
+  targetAudience: "targetAudience",
+  brandPersonality: "brandPersonality",
+  brandVoiceAndTone: "brandVoice",
+  uniqueSellingProposition: "sellingProposition",
+};
+
+type SingletonFactKey = "targetAudience" | "brandPersonality" | "brandVoice" | "sellingProposition";
 
 function formatIdentityValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : "Not set yet";
@@ -99,6 +117,8 @@ export async function BrandScreen({
   });
 
   const brandIdentity = (store.blueprint as BlueprintContextSubset | null)?.brandIdentity;
+  // THE SAME SOURCE THE APPROVAL DIFF READS. See the note above the list.
+  const identityFacts = await readOwnerFactsWithProvenance(store.id);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
   return (
@@ -214,16 +234,60 @@ export async function BrandScreen({
         What J4 has made of your business. This is its interpretation, not a set of facts you
         entered, and it shapes tone, voice, and design everywhere.
       </p>
+      {/* ============ WHERE EACH FIELD ACTUALLY COMES FROM (2026-09-01) ===
+          PHASE 4. Two findings drove this, and the first is a real defect.
+
+          THIS SCREEN READ ALL NINE FIELDS FROM blueprint.brandIdentity, while
+          `update_brand_identity.getCurrentValues` reads FOUR of them —
+          audience, personality, voice, selling proposition — from the fact
+          lifecycle. Two answers to "what is the current target audience".
+
+          They agree in production today only by accident: the 48 promoted rows
+          are byte-identical copies of the blueprint. The moment an owner states
+          a new audience, the fact supersedes and the blueprint is untouched, so
+          the approval diff would show the new answer and this screen would keep
+          showing the old one. Now both read the same place.
+
+          AND EACH FIELD SAYS WHOSE IT IS. `known` means somebody asserted it;
+          `inferred` means J4 concluded it. In production every one of the four
+          is INFERENCE, so this screen now says so instead of presenting a
+          model's reading as settled fact. */}
       <dl className="mt-4 flex max-w-2xl flex-col gap-3 rounded-xl border border-black/[.08] bg-black/[.02] p-4 dark:border-white/[.145] dark:bg-white/[.03]">
-        {BRAND_IDENTITY_FIELDS.map((key) => (
-          <div key={key}>
-            <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500">{FIELD_LABELS[key]}</dt>
-            <dd className="mt-0.5 text-sm text-black dark:text-zinc-50">
-              {formatIdentityValue(brandIdentity?.[key])}
-            </dd>
-          </div>
-        ))}
+        {BRAND_IDENTITY_FIELDS.map((key) => {
+          const fact = FACT_BACKED[key];
+          const origin = fact ? identityFacts[fact] : null;
+          const value = fact
+            ? (origin?.statement ?? undefined)
+            : brandIdentity?.[key];
+          return (
+            <div key={key}>
+              <dt className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                {FIELD_LABELS[key]}
+                <span className="text-[10px] font-normal normal-case tracking-normal text-zinc-400">
+                  {fact
+                    ? origin
+                      ? certaintyOf(origin.provenance) === "known"
+                        ? "you told J4 this"
+                        : "J4 worked this out"
+                      : "not recorded yet"
+                    : "J4 wrote this"}
+                </span>
+              </dt>
+              <dd className="mt-0.5 text-sm text-black dark:text-zinc-50">
+                {formatIdentityValue(value)}
+              </dd>
+            </div>
+          );
+        })}
       </dl>
+      <p className="mt-3 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+        This is J4&apos;s reading of what it understands about your business. You can see that
+        understanding on your{" "}
+        <Link href={basePath} className="font-medium text-black underline underline-offset-2 dark:text-zinc-50">
+          Business Map
+        </Link>
+        .
+      </p>
 
       {/* Brand identity is deliberately not casually editable (2026-08-12).
           The point is not to stop an owner changing it, it is to make sure

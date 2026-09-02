@@ -157,6 +157,59 @@ async function main(): Promise<void> {
       /BRAND_IDENTITY_FIELDS\.map/.test(page), "the field list is not rendered");
   }
 
+  console.log("\n--- brand identity reads the same source the approval does ---\n");
+  {
+    // ============ PHASE 4: THE TWO ANSWERS THAT DISAGREED ==========
+    //
+    // This screen read all nine fields from blueprint.brandIdentity, while
+    // `update_brand_identity.getCurrentValues` reads FOUR of them from the fact
+    // lifecycle. Two answers to "what is the current target audience".
+    //
+    // They agree in production only by accident — the 48 promoted rows are
+    // byte-identical copies of the blueprint. The moment an owner states a new
+    // audience the fact supersedes, the blueprint is untouched, and the two
+    // diverge: the approval diff would show the new answer while the screen
+    // kept showing the old one.
+    const actions = strip(readFileSync("lib/execution/genesisActions.ts", "utf8"));
+    const factBacked = ["targetAudience", "brandPersonality", "brandVoiceAndTone", "uniqueSellingProposition"];
+
+    assert("the screen now reads the fact lifecycle",
+      /readOwnerFactsWithProvenance\(/.test(page), "still blueprint-only");
+    assert("and declares which fields are fact-backed",
+      /FACT_BACKED/.test(page), "no FACT_BACKED map");
+    for (const field of factBacked) {
+      assert(`${field} is declared fact-backed on the screen`,
+        new RegExp(`${field}:`).test(page.slice(page.indexOf("FACT_BACKED"), page.indexOf("FACT_BACKED") + 400)),
+        field);
+    }
+    // The mirror: the action reads exactly these four from claims.
+    assert("and the approval reads the same four from claims",
+      /brandPersonality: claims\./.test(actions) &&
+      /brandVoiceAndTone: claims\./.test(actions) &&
+      /targetAudience: claims\./.test(actions) &&
+      /uniqueSellingProposition: claims\./.test(actions),
+      "the action no longer reads all four from claims");
+
+    // The five narrative fields stay on the blueprint in BOTH.
+    for (const field of ["brandStory", "missionStatement", "visionStatement", "brandPromise", "coreValues"]) {
+      assert(`${field} still comes from the blueprint in the action`,
+        new RegExp(`${field}: blueprint`).test(actions), field);
+      assert(`and is not claimed as fact-backed on the screen`,
+        !new RegExp(`${field}:`).test(page.slice(page.indexOf("FACT_BACKED"), page.indexOf("FACT_BACKED") + 400)),
+        field);
+    }
+
+    console.log("\n--- and every field says whose it is ---\n");
+    assert("a fact the owner stated reads as theirs",
+      /you told J4 this/.test(page), "no owner-origin label");
+    assert("one J4 concluded reads as J4's",
+      /J4 worked this out/.test(page), "no inference label");
+    assert("and the narrative says J4 wrote it",
+      /J4 wrote this/.test(page), "no generated label");
+    assert("the screen links into the Business Map",
+      /Business Map/.test(page), "no link to the map");
+  }
+
   console.log("\n--- the three business facts are all still editable ---\n");
   {
     for (const field of ["name", "tagline", "description"]) {

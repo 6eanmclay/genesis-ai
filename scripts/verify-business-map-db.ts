@@ -6,6 +6,9 @@ import {
   businessMap, certaintyOf, MAP_DOMAINS, DOMAIN_LABEL, MAP_EDGE_KINDS,
   type MapDomainKey,
 } from "@/lib/businessModel/businessMap";
+import { CATEGORY_DOMAIN, connectableServices, whatItAdds } from "@/lib/businessModel/connectionDomains";
+import { SIGNUP_DESTINATIONS, signupFor } from "@/lib/businessModel/signupDestinations";
+import { CONNECTOR_CATALOG, CONNECTION_CATEGORY_LABELS } from "@/lib/integrations/catalog";
 import { readFileSync } from "node:fs";
 
 // WHAT J4 UNDERSTANDS, AND HOW SURE IT IS:
@@ -399,6 +402,93 @@ async function main(): Promise<void> {
       map.nodes.every((n) => (MAP_DOMAINS as readonly string[]).includes(n.domain)),
       JSON.stringify(map.nodes.filter((n) => !(MAP_DOMAINS as readonly string[]).includes(n.domain)).map((n) => n.domain)));
     void user;
+  }
+
+  // ======================================================================
+  console.log("\n=== 7b. A connection explains what it would add ===\n");
+  // ======================================================================
+  {
+    // ============ MIRROR TWENTY ====================================
+    //
+    // CATEGORY_DOMAIN mirrors ConnectionCategory. A category with no branch
+    // would render a service that explains nothing, which is the one thing
+    // the panel exists to prevent.
+    for (const category of Object.keys(CONNECTION_CATEGORY_LABELS)) {
+      assert(`${category} feeds a real branch of the map`,
+        (MAP_DOMAINS as readonly string[]).includes(
+          CATEGORY_DOMAIN[category as keyof typeof CATEGORY_DOMAIN]),
+        category);
+    }
+    eq("and every category is mapped, with no extras",
+      Object.keys(CATEGORY_DOMAIN).sort(), Object.keys(CONNECTION_CATEGORY_LABELS).sort());
+
+    // ---- derived from the catalogue, never a second list ---------------
+    const services = connectableServices([]);
+    eq("every catalogue entry is offered", services.length, CONNECTOR_CATALOG.length);
+    assert("nothing is connected for a business with no integrations",
+      services.every((s) => !s.connected));
+
+    // A service Genesis cannot connect must not look connectable. Taken
+    // straight from the catalogue's own `connector: null`.
+    const comingSoon = CONNECTOR_CATALOG.filter((e) => e.connector === null).map((e) => e.id);
+    assert("the catalogue really does have unbuilt connectors to distinguish",
+      comingSoon.length > 0, JSON.stringify(comingSoon));
+    for (const id of comingSoon) {
+      eq(`${id} is not offered as available`, services.find((s) => s.id === id)?.available, false);
+    }
+
+    // ---- connected state comes from the real provider list -------------
+    const withStripe = connectableServices(["STRIPE", "INSTAGRAM"]);
+    const instagram = withStripe.find((s) => s.id === "instagram");
+    eq("Instagram feeds the Social branch", instagram?.domain, "social");
+    eq("and it reads as connected when it is", instagram?.connected, true);
+    eq("an unconnected one does not",
+      withStripe.find((s) => s.id === "tiktok")?.connected, false);
+
+    // ---- Connect or Create: the Create door is never a guess -----------
+    //
+    // Sean: "Do not invent URLs or rely on search-engine instructions... For
+    // providers without a reliable official signup destination, don't
+    // fabricate one; handle that honestly."
+    //
+    // Every destination was fetched and returned 200 on 2026-09-01. What can
+    // be checked WITHOUT a network — and therefore on every run, for ever — is
+    // that each URL is https and actually points at the provider's own domain.
+    // That is what stops a later edit sending "Create a Printful account"
+    // somewhere that is not Printful.
+    for (const [id, dest] of Object.entries(SIGNUP_DESTINATIONS)) {
+      if (!dest) continue;
+      assert(`${id}'s signup link is https`, dest.url.startsWith("https://"), dest.url);
+      const host = new URL(dest.url).hostname;
+      assert(`${id}'s signup link is on ${dest.domain}`,
+        host === dest.domain || host.endsWith(`.${dest.domain}`), `${host} vs ${dest.domain}`);
+      assert(`${id} is a real catalogue id`,
+        CONNECTOR_CATALOG.some((e) => e.id === id), id);
+    }
+
+    // The two we could not confirm are recorded as null, not omitted — an
+    // absent key and a deliberate null read the same to `signupFor`, but only
+    // the null says somebody looked.
+    eq("QuickBooks has no fabricated signup link", SIGNUP_DESTINATIONS.quickbooks, null);
+    eq("nor Facebook", SIGNUP_DESTINATIONS.facebook, null);
+
+    // "If they don't need it, leave it alone" — no Create for something
+    // Genesis could not connect afterwards.
+    for (const id of comingSoon) {
+      eq(`${id} offers no Create, because connecting it is impossible`,
+        signupFor(id, false), null);
+    }
+    assert("but a connectable service with a verified link does offer one",
+      signupFor("instagram", true) !== null);
+
+    // ---- and the sentence never claims a capability --------------------
+    const sentence = whatItAdds({ ...instagram!, connected: false }, "Social");
+    assert("an unconnected service says which branch it would feed",
+      /Social/.test(sentence), sentence);
+    for (const invented of ["posts", "followers", "engagement", "insights", "daily", "history"]) {
+      assert(`and promises nothing about ${invented}`,
+        !new RegExp(invented, "i").test(sentence), sentence);
+    }
   }
 
   // ======================================================================
