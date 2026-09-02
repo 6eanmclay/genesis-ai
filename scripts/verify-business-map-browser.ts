@@ -23,6 +23,14 @@ import { startTestServer } from "@/scripts/lib/testServer";
 //   pair of rendered labels is compared for overlap at every level. A layout
 //   that inherits its parent's coordinates cannot pass this.
 //
+// ============ AND THE TWO LAYERS (2026-09-02) =========================
+//
+// The map now has exactly two: the spatial ring, and the entity carousel that
+// replaced the category level. The orb is J4 and holds the centre through
+// both, which is asserted the only way that claim can be: the SAME DOM node is
+// marked before the transition and looked for again after it. A redrawn orb
+// would pass a "there is an orb" check and fails this one.
+//
 // isVisible() proves neither of those, and has twice been true in this project
 // for something nobody could see. Every claim below is a bounding box, a
 // computed transform, or a hit test.
@@ -141,7 +149,13 @@ async function main() {
     // hairball used to appear at.
     for (let i = 0; i < 6; i++) {
       const product = await prisma.product.create({
-        data: { storeId: store.id, name: `Copper Tensor Ring ${i}`, description: "d", priceInCents: 3232, active: true },
+        data: {
+          storeId: store.id, name: `Copper Tensor Ring ${i}`, description: "d",
+          priceInCents: 3232, active: true,
+          // One product has a photograph and the others do not, so the card
+          // can be checked for showing a real one and for not inventing one.
+          imageUrl: i === 0 ? "/brand/genesis-avatar-orb.png" : null,
+        },
       });
       if (i === 0) {
         await prisma.order.create({
@@ -155,6 +169,33 @@ async function main() {
     }
     await prisma.storeIntegration.create({
       data: { storeId: store.id, provider: "STRIPE", status: "CONNECTED", externalAccountId: `acct_${stamp}` },
+    });
+
+    // An asset with everything a rich card can show, and an observation that
+    // is genuinely ABOUT it — the only way to see the "J4 noticed" block,
+    // since no producer names a record in production yet.
+    const asset = await prisma.businessRecord.create({
+      data: {
+        storeId: store.id, entityType: "asset", externalId: `asset-${stamp}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        data: {
+          title: "Spring lookbook cover",
+          fileType: "photo",
+          category: "product photography",
+          summary: "A hand holding a copper ring against linen.",
+          extractionConfidence: 0.91,
+          origin: "uploaded",
+          relatedEntityType: "product",
+          storageUrl: "/brand/genesis-avatar-orb.png",
+        },
+      },
+    });
+    await prisma.genesisObservation.create({
+      data: {
+        storeId: store.id, status: "ACTIVE", genesisState: "opportunity",
+        dedupeKey: `asset-unused-${stamp}`, recordId: asset.id, entityType: "asset",
+        summary: "This photograph has never been used in a post.",
+      },
     });
     await prisma.genesisObservation.create({
       data: {
@@ -196,58 +237,114 @@ async function main() {
     await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 });
 
     // ====================================================================
-    console.log("\n=== 2. Zoom is real: the world's SCALE changes per level ===\n");
+    console.log("\n=== 2. The orb is J4, and it holds the centre ===\n");
     // ====================================================================
+    const orb = page.locator('[data-testid="map-centre"]');
+    const stageBox = async (pg = page) =>
+      (await pg.locator('[data-screen="business-map"] .map-stage').boundingBox())!;
+    const orbBox = async (pg = page) => (await pg.locator('[data-testid="map-centre"]').boundingBox())!;
+
+    // Sean: "The center of the Business Map should not say 'J4' as text. The
+    // center is the J4 orb."
+    assert("the centre is the canonical orb, not a drawing of one",
+      (await orb.locator('img[alt="Genesis"]').count()) === 1,
+      String(await orb.innerHTML().catch(() => "")).slice(0, 120));
+    assert("and it says nothing at all at the top level",
+      ((await orb.textContent()) ?? "").trim() === "",
+      ((await orb.textContent()) ?? "").trim());
+    assert("the word J4 is not drawn on the map",
+      (await page.locator('[data-screen="business-map"] svg text').allTextContents())
+        .every((s) => s.trim() !== "J4"),
+      JSON.stringify(await page.locator('[data-screen="business-map"] svg text').allTextContents()));
+
+    {
+      const s = await stageBox();
+      const o = await orbBox();
+      assert("the orb sits at the centre of the stage",
+        Math.abs((o.x + o.width / 2) - (s.x + s.width / 2)) < 2 &&
+          Math.abs((o.y + o.height / 2) - (s.y + s.height / 2)) < 2,
+        `orb ${o.x + o.width / 2},${o.y + o.height / 2} stage ${s.x + s.width / 2},${s.y + s.height / 2}`);
+    }
+
     const scale0 = await worldScale(page);
     assert("the whole business renders at base scale", scale0 > 0.9 && scale0 < 1.1, `${scale0}`);
 
+    // MARK THE ACTUAL ELEMENT. If entering a branch re-created the orb, the
+    // mark would be gone — which is exactly the failure "keep the orb
+    // anchored" is vulnerable to, and no screenshot would show it.
+    await page.evaluate(() => {
+      (document.querySelector('[data-testid="map-centre"]') as HTMLElement & { __orb?: string }).__orb = "same-orb";
+    });
+
     await page.getByRole("button", { name: /^Commerce,/ }).click();
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(600);
+
+    assert("entering a branch does not re-create the orb",
+      await page.evaluate(() =>
+        (document.querySelector('[data-testid="map-centre"]') as HTMLElement & { __orb?: string })?.__orb === "same-orb"));
+    assert("the orb is still the orb", (await orb.locator('img[alt="Genesis"]').count()) === 1);
+    {
+      const s = await stageBox();
+      const o = await orbBox();
+      assert("and still holds the same column",
+        Math.abs((o.x + o.width / 2) - (s.x + s.width / 2)) < 2,
+        `orb ${o.x + o.width / 2} stage ${s.x + s.width / 2}`);
+      assert("having moved up to make room, not away",
+        o.y >= s.y - 1 && o.y < s.y + 40, `orb y ${o.y}, stage y ${s.y}`);
+    }
+    assert("the branch is named under the orb, flowing out of it",
+      /Commerce/.test(((await orb.textContent()) ?? "")), ((await orb.textContent()) ?? "").trim());
+
     const scale1 = await worldScale(page);
-    assert("selecting Commerce genuinely zooms in", scale1 > scale0 + 0.15, `${scale0} -> ${scale1}`);
-
-    const centre1 = ((await page.locator('[data-testid="map-centre"]').textContent()) ?? "").trim();
-    assert("and Commerce becomes the centre", centre1 === "Commerce", centre1);
-
-    const branchNodes = page.locator('[data-screen="business-map"] svg g[data-level="child"]');
-    assert("its children ring it", (await branchNodes.count()) > 0, `${await branchNodes.count()}`);
-
-    // second level
-    await branchNodes.first().click();
-    await page.waitForTimeout(500);
-    const scale2 = await worldScale(page);
-    assert("going a level deeper zooms again", scale2 > scale1 + 0.15, `${scale1} -> ${scale2}`);
-    const centre2 = ((await page.locator('[data-testid="map-centre"]').textContent()) ?? "").trim();
-    assert("and that node is now the centre", centre2.length > 0 && centre2 !== "Commerce", centre2);
+    assert("and the world genuinely zoomed into that branch", scale1 > scale0 + 0.15,
+      `${scale0} -> ${scale1}`);
 
     // ====================================================================
     console.log("\n=== 3. No level is a hairball ===\n");
     // ====================================================================
-    const atLeaf = await collisions(page);
-    assert("no labels overlap at the deepest level", atLeaf.length === 0, JSON.stringify(atLeaf));
-    await page.locator('[data-testid="map-back"]').click();
-    await page.waitForTimeout(450);
-    const atBranch = await collisions(page);
-    assert("nor one level up", atBranch.length === 0, JSON.stringify(atBranch));
+    // KEPT PERMANENTLY at Sean's request. The shape of the check is unchanged;
+    // what changed is that there is now one ring instead of three levels of
+    // them, so this is the level that can collide and it is checked at both
+    // widths (see section 8).
+    {
+      const insideLabels = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-screen="business-map"] svg text'))
+          .filter((el) => (el.textContent ?? "").trim().length > 0).length);
+      assert("behind the carousel the ring is structure, not text", insideLabels === 0,
+        `${insideLabels} labels still drawn at 2.2x`);
+      assert("and nothing collides there", (await collisions(page)).length === 0,
+        JSON.stringify(await collisions(page)));
+    }
+
     await page.locator('[data-testid="map-back"]').click();
     await page.waitForTimeout(450);
     const atRoot = await collisions(page);
-    assert("nor on the whole business", atRoot.length === 0, JSON.stringify(atRoot));
+    assert("no labels overlap on the whole business", atRoot.length === 0, JSON.stringify(atRoot));
+    assert("and there are real labels to overlap",
+      (await page.locator('[data-screen="business-map"] svg text').count()) >= 10,
+      String(await page.locator('[data-screen="business-map"] svg text').count()));
 
     // ====================================================================
-    console.log("\n=== 4. Back and Whole business walk the levels ===\n");
+    console.log("\n=== 4. Back returns to the whole business ===\n");
     // ====================================================================
     assert("Back returned to base scale", Math.abs((await worldScale(page)) - scale0) < 0.05,
       `${await worldScale(page)} vs ${scale0}`);
-    assert("and J4 is the centre again",
-      ((await page.locator('[data-testid="map-centre"]').textContent()) ?? "").trim() === "J4");
+    assert("and the orb is silent again at the centre",
+      ((await orb.textContent()) ?? "").trim() === "");
+    {
+      const s = await stageBox();
+      const o = await orbBox();
+      assert("back in the middle of the stage",
+        Math.abs((o.y + o.height / 2) - (s.y + s.height / 2)) < 2,
+        `orb ${o.y + o.height / 2} stage ${s.y + s.height / 2}`);
+    }
 
     await page.getByRole("button", { name: /^Customers,/ }).click();
     await page.waitForTimeout(450);
     await page.getByRole("button", { name: "Whole business" }).click();
     await page.waitForTimeout(450);
-    assert("Whole business returns from any depth",
-      ((await page.locator('[data-testid="map-centre"]').textContent()) ?? "").trim() === "J4");
+    assert("Whole business returns from a branch",
+      ((await orb.textContent()) ?? "").trim() === "");
 
     // ====================================================================
     console.log("\n=== 5. Connections opens a chooser, not a card ===\n");
@@ -306,11 +403,230 @@ async function main() {
     await page.locator('[data-testid="connection-chooser-close"]').click();
     await page.waitForTimeout(350);
     assert("closing the chooser returns to the whole business",
-      ((await page.locator('[data-testid="map-centre"]').textContent()) ?? "").trim() === "J4");
+      ((await orb.textContent()) ?? "").trim() === "");
+    assert("and Connections never becomes a carousel",
+      (await page.locator('[data-testid="entity-carousel"]').count()) === 0);
 
     await page.screenshot({ path: `${SHOTS}/business-map-desktop-firstscreen.png`, fullPage: false });
 
     // ====================================================================
+    // ====================================================================
+    console.log("\n=== 5b. One tap reaches the actual things ===\n");
+    // ====================================================================
+    {
+      // Sean: "J4 -> Commerce -> Products carousel... Once I enter a branch, I
+      // want to immediately see the actual things inside it."
+      await page.getByRole("button", { name: /^Commerce,/ }).click();
+      await page.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
+
+      const cards = page.locator('[data-testid="entity-card"]');
+      const count = await cards.count();
+      assert("one tap from the whole business reaches real products", count === 6, `${count} cards`);
+      assert("and no intermediate category screen was passed through",
+        (await page.locator("text=/^Products$/").count()) === 0);
+
+      // NOT A STRIP OF TILES. Sean: "Each entity should have enough room to
+      // show its image/content and a meaningful description."
+      const first = (await cards.first().boundingBox())!;
+      assert("a card has room to say something", first.width >= 300 && first.height >= 220,
+        `${Math.round(first.width)}x${Math.round(first.height)}`);
+
+      const firstText = await cards.first().innerText();
+      assert("it names the thing", /Copper Tensor Ring/.test(firstText), firstText.slice(0, 120));
+      assert("says what kind of thing it is", /PRODUCT/i.test(firstText), firstText.slice(0, 120));
+      // THE DISTINCTION SEAN ASKED TO KEEP.
+      assert("and where the knowledge came from",
+        /from your data|J4 worked this out/i.test(firstText), firstText.slice(0, 200));
+      assert("it carries real facts off the record",
+        /32\.32/.test(firstText) && /On sale in your storefront/i.test(firstText),
+        firstText.slice(0, 300));
+
+      // A REAL PHOTOGRAPH WHERE THERE IS ONE, AND NOTHING WHERE THERE IS NOT.
+      const withPhoto = cards.filter({ hasText: "Copper Tensor Ring 0" });
+      assert("the photographed product shows its photograph",
+        (await withPhoto.locator("img").count()) === 1);
+      const withoutPhoto = cards.filter({ hasText: "Copper Tensor Ring 3" });
+      assert("and the others show no stand-in image",
+        (await withoutPhoto.locator("img").count()) === 0);
+
+      // ---- the conversational escape hatch ------------------------------
+      const ask = cards.first().locator('[data-testid="entity-ask"]');
+      assert("every card offers Ask J4", (await ask.count()) === 1);
+      assert("and no product claims a notice nobody made about it",
+        (await page.locator('[data-testid="entity-noticed"]').count()) === 0,
+        `${await page.locator('[data-testid="entity-noticed"]').count()}`);
+      assert("every single card offers it",
+        (await page.locator('[data-testid="entity-ask"]').count()) === count,
+        `${await page.locator('[data-testid="entity-ask"]').count()} of ${count}`);
+
+      // ---- moving through the collection --------------------------------
+      const position = page.locator('[data-testid="carousel-position"]');
+      assert("the carousel says where you are", /1 of 6/.test((await position.innerText()).trim()),
+        (await position.innerText()).trim());
+      await page.locator('[data-testid="carousel-next"]').click();
+      await page.waitForTimeout(700);
+      assert("and next genuinely moves through it", /2 of 6/.test((await position.innerText()).trim()),
+        (await position.innerText()).trim());
+      await page.locator('[data-testid="carousel-prev"]').click();
+      await page.waitForTimeout(700);
+      assert("prev comes back", /1 of 6/.test((await position.innerText()).trim()),
+        (await position.innerText()).trim());
+
+      // THE ORB'S OWN BLOCK MUST NOT BE UNDER THE CARDS. The mobile block has
+      // always asserted this; desktop did not, and a screenshot suggested the
+      // branch label was sitting behind the first card.
+      {
+        const o = await orbBox();
+        const c = (await cards.first().boundingBox())!;
+        assert("the cards start below the orb and its label, never under them",
+          c.y >= o.y + o.height - 1, `card top ${Math.round(c.y)}, orb block bottom ${Math.round(o.y + o.height)}`);
+      }
+
+      // THE ACTIONS ARE INSIDE THE STAGE, NOT PAST ITS EDGE.
+      //
+      // The stage is `overflow-hidden`, so a card taller than its track would
+      // have its actions silently cut off — and every assertion above would
+      // still pass, because the button exists and has a width. This project
+      // has shipped that exact failure before (a full-screen overlay over
+      // green DOM checks), so the button's own box is compared to the stage's.
+      {
+        const s = await stageBox();
+        const b = (await cards.first().locator('[data-testid="entity-ask"]').boundingBox())!;
+        assert("Ask J4 sits inside the stage, not past its clipped edge",
+          b.y + b.height <= s.y + s.height + 1 && b.y >= s.y - 1,
+          `button ${Math.round(b.y)}..${Math.round(b.y + b.height)}, stage ${Math.round(s.y)}..${Math.round(s.y + s.height)}`);
+        assert("and so does the destination link",
+          ((await cards.first().locator('[data-testid="entity-destination"]').boundingBox())?.y ?? 0) + 20
+            <= s.y + s.height + 1);
+      }
+
+      // A VIEWPORT SHOT, NOT AN ELEMENT SHOT. locator.screenshot() composites
+      // whatever overlaps the element's box, which has misled this project
+      // before.
+      await page.screenshot({ path: `${SHOTS}/carousel-commerce-desktop.png` });
+    }
+
+    // ====================================================================
+    console.log("\n=== 5c. A card carries what J4 knows, and no more ===\n");
+    // ====================================================================
+    {
+      await page.getByRole("button", { name: "Whole business" }).click();
+      await page.waitForTimeout(400);
+      await page.getByRole("button", { name: /^Creation,/ }).click();
+      await page.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
+      // THE CAROUSEL EXISTS BEFORE THE ORB HAS FINISHED MOVING. Measuring
+      // either one on the first frame measures them mid-flight — which is what
+      // this block did, and what the overlap assertion correctly caught.
+      await page.waitForTimeout(700);
+
+      const lookbook = page.locator('[data-testid="entity-card"]').filter({ hasText: "Spring lookbook" });
+      assert("the asset is on the map", (await lookbook.count()) === 1);
+      const text = await lookbook.innerText();
+
+      // Sean: "What it is, where it came from, what J4 inferred about it, how
+      // confident J4 is, what business entity it relates to."
+      assert("J4's own reading of the file is the description",
+        /A hand holding a copper ring against linen/.test(text), text.slice(0, 240));
+      assert("what it is", /product photography/i.test(text), text.slice(0, 240));
+      assert("where it came from", /uploaded/i.test(text), text.slice(0, 240));
+      assert("how confident J4 is, in J4's own units", /91%/.test(text), text.slice(0, 240));
+      assert("and what it relates to", /Relates to/i.test(text), text.slice(0, 240));
+      assert("the photograph itself is shown",
+        (await lookbook.locator("img").count()) === 1);
+
+      // WHAT J4 NOTICED — a real observation naming this record.
+      assert("an observation about this thing appears on its card",
+        (await lookbook.locator('[data-testid="entity-noticed"]').count()) === 1);
+      // AND ON NO OTHER CARD. Found by sabotage (2026-09-02): making the card
+      // fall back to "any notice we have" left every assertion green, because
+      // each one only ever asked whether the RIGHT card had it. A notice on
+      // the wrong thing is worse than no notice, so the count is exact.
+      assert("and on nothing else",
+        (await page.locator('[data-testid="entity-noticed"]').count()) === 1,
+        `${await page.locator('[data-testid="entity-noticed"]').count()} cards claim a notice`);
+      assert("and says what was noticed",
+        /never been used in a post/.test(text), text.slice(0, 400));
+      // AND THE STORE-WIDE ONE STAYS OFF IT. "J4 noticed" on a card has to
+      // mean J4 noticed THIS, or the section means nothing.
+      assert("a store-wide notice is not pinned to a random thing",
+        !/SEO title or meta description/.test(await page.locator('[data-testid="entity-carousel"]').innerText()),
+        "a store-wide observation leaked onto an entity card");
+
+      {
+        const o = await orbBox();
+        const c = (await lookbook.boundingBox())!;
+        assert("and the same holds for a card with a photograph on it",
+          c.y >= o.y + o.height - 1, `card top ${Math.round(c.y)}, orb block bottom ${Math.round(o.y + o.height)}`);
+      }
+      await page.screenshot({ path: `${SHOTS}/carousel-creation-desktop.png` });
+    }
+
+    // ====================================================================
+    console.log("\n=== 5d. A customer card is thin, and an empty branch says so ===\n");
+    // ====================================================================
+    {
+      await page.getByRole("button", { name: "Whole business" }).click();
+      await page.waitForTimeout(400);
+      await page.getByRole("button", { name: /^Customers,/ }).click();
+      await page.waitForTimeout(600);
+      const customers = page.locator('[data-testid="entity-card"]');
+      if ((await customers.count()) > 0) {
+        const text = await customers.first().innerText();
+        // A CUSTOMER WHO GAVE NO NAME IS TITLED BY THEIR EMAIL, because that
+        // is the only identity the business has for them, it is the owner's
+        // own record, and it is what the Customers screen already shows. What
+        // privacy means here is that NOTHING IS PILED ON: no phone, no
+        // address, no order history sitting open on a landing screen.
+        // A DIGIT RUN IS NOT A PHONE NUMBER. The first version of this check
+        // matched the timestamp inside the fixture's own email address, which
+        // is the classic assertion that fails for a reason unrelated to the
+        // thing it names. So it looks for the fields themselves.
+        assert("a customer card adds no contact details beyond who they are",
+          !/phone|address|street|road|avenue|postcode|zip/i.test(text),
+          text.slice(0, 200));
+        const facts = await customers.first().locator("dt").allTextContents();
+        assert("and shows only what they have spent",
+          JSON.stringify(facts.map((f) => f.trim())) === JSON.stringify(["Spent with you"]) || facts.length === 0,
+          JSON.stringify(facts));
+      } else {
+        console.log("  NOTE  no contact records in this fixture; customer privacy checked in the db suite");
+      }
+
+      await page.getByRole("button", { name: "Whole business" }).click();
+      await page.waitForTimeout(400);
+      await page.getByRole("button", { name: /^Goals,/ }).click();
+      await page.waitForTimeout(600);
+      assert("an empty branch says it is empty rather than showing nothing",
+        (await page.locator('[data-testid="entity-empty"]').count()) === 1);
+      const emptyText = await page.locator('[data-testid="entity-empty"]').innerText();
+      assert("in plain words", /doesn't know anything about goals yet/i.test(emptyText),
+        emptyText.slice(0, 200));
+      assert("and the orb is still there while it says so",
+        (await orb.locator('img[alt="Genesis"]').count()) === 1);
+
+      await page.getByRole("button", { name: "Whole business" }).click();
+      await page.waitForTimeout(400);
+
+      // ---- X is X ------------------------------------------------------
+      await page.getByRole("button", { name: /^Social,/ }).click();
+      await page.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
+      const xCard = page.locator('[data-testid="entity-card"]').filter({ hasText: "X" }).first();
+      const xText = await xCard.innerText();
+      assert("X says Genesis cannot connect it",
+        /cannot connect this yet/i.test(xText), xText.slice(0, 200));
+      assert("and is not offered a Connect button it could not honour",
+        (await xCard.locator('[data-testid="entity-connect"]').count()) === 0, xText.slice(0, 200));
+      assert("and does not describe somebody else's product",
+        !/toast|point of sale|restaurant/i.test(xText), xText.slice(0, 200));
+      assert("while Instagram, which Genesis can connect, is offered one",
+        (await page.locator('[data-testid="entity-card"]').filter({ hasText: "Instagram" })
+          .first().locator('[data-testid="entity-connect"]').count()) === 1);
+
+      await page.screenshot({ path: `${SHOTS}/carousel-social-desktop.png` });
+      await page.getByRole("button", { name: "Whole business" }).click();
+      await page.waitForTimeout(400);
+    }
+
     console.log("\n=== 6. The narrative is below the map, the greeting above ===\n");
     // ====================================================================
     {
@@ -378,14 +694,42 @@ async function main() {
     });
     assert("and none is cut off", clipped.length === 0, JSON.stringify(clipped));
 
-    // zoom works on touch too
+    // zoom works on touch too, and lands on the things themselves
     const s0 = await worldScale(small);
     await small.getByRole("button", { name: /^Commerce,/ }).click();
-    await small.waitForTimeout(500);
+    await small.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
+    // THE CAROUSEL IS IN THE DOM BEFORE THE TRANSITION FINISHES. Reading the
+    // world's transform or the orb's box on the first frame measures them
+    // mid-flight — the desktop block waits for exactly this reason.
+    await small.waitForTimeout(700);
     assert("tapping a branch zooms on a phone", (await worldScale(small)) > s0 + 0.15,
       `${s0} -> ${await worldScale(small)}`);
-    assert("with no collision at that level", (await collisions(small)).length === 0,
-      JSON.stringify(await collisions(small)));
+
+    {
+      const card = (await small.locator('[data-testid="entity-card"]').first().boundingBox())!;
+      const st = (await small.locator('[data-screen="business-map"] .map-stage').boundingBox())!;
+      // NOT A TILE: the card takes essentially the whole width it is given.
+      // An absolute pixel floor would just be a guess about the page's own
+      // padding, which is not what "room to say something" means.
+      assert("a card fills the phone rather than being a tile",
+        card.width >= st.width * 0.85 && card.width <= 390 && card.height >= 200,
+        `card ${Math.round(card.width)}x${Math.round(card.height)}, stage ${Math.round(st.width)}`);
+      const o = await orbBox(small);
+      assert("and the orb still holds the centre column on a phone",
+        Math.abs((o.x + o.width / 2) - (st.x + st.width / 2)) < 2,
+        `orb ${o.x + o.width / 2} stage ${st.x + st.width / 2}`);
+      assert("with the card below it, not under it",
+        card.y >= o.y + o.height - 1, `card ${card.y}, orb bottom ${o.y + o.height}`);
+      const over = await small.evaluate(() => ({
+        doc: document.documentElement.scrollWidth, win: window.innerWidth,
+      }));
+      assert("and a swipeable carousel does not make the page scroll sideways",
+        over.doc <= over.win + 1, JSON.stringify(over));
+      assert("Ask J4 is reachable on a phone",
+        (await small.locator('[data-testid="entity-ask"]').first().boundingBox())!.width > 0);
+      await small.screenshot({ path: `${SHOTS}/carousel-mobile.png`, fullPage: false });
+    }
+
     await small.locator('[data-testid="map-back"]').click();
     await small.waitForTimeout(400);
 
@@ -443,9 +787,11 @@ async function main() {
 
       const before = await worldScale(p2);
       await p2.getByRole("button", { name: /^Commerce,/ }).click();
-      await p2.waitForTimeout(400);
+      await p2.waitForSelector('[data-testid="entity-carousel"]', { timeout: 10_000 });
       assert("and still zooms", (await worldScale(p2)) > before + 0.15,
         `${before} -> ${await worldScale(p2)}`);
+      assert("the carousel is reachable with motion reduced",
+        (await p2.locator('[data-testid="entity-card"]').count()) > 0);
       assert("with no collision", (await collisions(p2)).length === 0,
         JSON.stringify(await collisions(p2)));
 

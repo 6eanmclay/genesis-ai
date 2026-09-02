@@ -9,8 +9,9 @@ import {
 import { CATEGORY_DOMAIN, connectableServices, whatItAdds } from "@/lib/businessModel/connectionDomains";
 import { SIGNUP_DESTINATIONS, signupFor } from "@/lib/businessModel/signupDestinations";
 import { CONNECTOR_CATALOG, CONNECTION_CATEGORY_LABELS } from "@/lib/integrations/catalog";
-import { branchesFor, type MapProspect } from "@/lib/businessModel/mapBranches";
+import { entitiesFor, type MapProspect } from "@/lib/businessModel/mapEntities";
 import { SOCIAL_PLATFORMS } from "@/lib/social/platforms";
+import { socialProspects } from "@/lib/businessModel/socialProspects";
 import { readFileSync } from "node:fs";
 
 // WHAT J4 UNDERSTANDS, AND HOW SURE IT IS:
@@ -58,12 +59,18 @@ function eq(name: string, actual: unknown, expected: unknown): void {
     `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
 
-const mapFor = async (storeId: string, slug: string, designCount = 0) =>
+const mapFor = async (
+  storeId: string,
+  slug: string,
+  designCount = 0,
+  productImages: Record<string, string> = {},
+) =>
   businessMap({
     understanding: await getBusinessUnderstanding(storeId),
     facts: await readOwnerFactsWithProvenance(storeId),
     slug,
     designCount,
+    productImages,
   });
 
 async function main(): Promise<void> {
@@ -494,39 +501,71 @@ async function main(): Promise<void> {
   }
 
   // ======================================================================
-  console.log("\n=== 7c. The middle layer is derived, not declared ===\n");
+  console.log("\n=== 7c. The middle layer is gone; the things are here ===\n");
   // ======================================================================
   {
-    // Sean: "J4 -> Commerce -> Products / Orders / Money. Then the user can
-    // select one: Commerce -> Products -> individual products."
+    // Sean (2026-09-02): "I don't think we need the intermediate category
+    // level anymore... entering that branch should transition directly into a
+    // carousel of the actual entities."
     const { store } = await makeStore();
     for (let i = 0; i < 4; i++) {
       await prismaSystem.product.create({
-        data: { storeId: store.id, name: `Ring ${i}`, description: "d", priceInCents: 1000, active: true },
+        data: { storeId: store.id, name: `Ring ${i}`, description: "d", priceInCents: 1000 + i, active: true },
       });
     }
     const map = await mapFor(store.id, store.slug);
     const commerce = map.domains.find((d) => d.key === "commerce")!;
-    const branches = branchesFor(commerce);
+    const entities = entitiesFor(commerce);
 
-    eq("four products become one branch, not four", branches.length, 1);
-    eq("named from the kind the assembler already wrote", branches[0].label, "Products");
-    eq("saying how many there are", branches[0].state, "4 recorded");
-    eq("with each product underneath it", branches[0].children.length, 4);
-    assert("and every leaf still points at a real row",
-      branches[0].children.every((c) => c.recordId !== null),
-      JSON.stringify(branches[0].children.map((c) => c.recordId)));
+    // THE WHOLE POINT: four products are four things, not one group.
+    eq("four products are four entities, reached in one tap", entities.length, 4);
+    assert("every one points at a real row",
+      entities.every((e) => e.recordId !== null),
+      JSON.stringify(entities.map((e) => e.recordId)));
+    assert("and every one carries its own kind",
+      entities.every((e) => e.kind === "Product"),
+      JSON.stringify(entities.map((e) => e.kind)));
+    assert("no entity is a group",
+      !entities.some((e) => /^group:/.test(e.id)),
+      JSON.stringify(entities.map((e) => e.id)));
 
-    // ---- a group of one is not a group ---------------------------------
+    // ---- kinds stay together, because the organising survived the level ----
+    //
+    // SABOTAGE FOUND THIS ONE EMPTY (2026-09-02). The first version of this
+    // check read the ordering off a real domain and asserted each kind was
+    // contiguous -- which passed no matter what `entitiesFor` did, because the
+    // assembler happens to emit one kind at a time today. It measured the
+    // assembler, not the function under test.
+    //
+    // So the interleaving is constructed. This is the case that will arrive on
+    // its own the first time a domain gains a second kind, and it is the whole
+    // reason the grouping was kept as an ordering when it stopped being a level.
+    const nodeOf = (id: string, label: string, kind: string | null) => ({
+      id, domain: "commerce" as const, label, certainty: "known" as const,
+      detail: null, provenance: null, recordId: null, recordKind: null,
+      image: null, facts: [], kind,
+    });
+    const interleaved = entitiesFor({
+      ...commerce,
+      nodes: [
+        nodeOf("a", "Ring A", "Product"),
+        nodeOf("x", "Lookbook", "Asset"),
+        nodeOf("b", "Ring B", "Product"),
+        nodeOf("y", "Invoice", "Asset"),
+      ],
+    });
+    eq("interleaved kinds are re-gathered, in first-seen order",
+      interleaved.map((e) => e.label), ["Ring A", "Ring B", "Lookbook", "Invoice"]);
+
+    // ---- one product is still one card -----------------------------------
     const { store: solo } = await makeStore();
     await prismaSystem.product.create({
       data: { storeId: solo.id, name: "Only Ring", description: "d", priceInCents: 1000, active: true },
     });
     const soloMap = await mapFor(solo.id, solo.slug);
-    const soloBranches = branchesFor(soloMap.domains.find((d) => d.key === "commerce")!);
-    eq("one product is reachable in one tap, not two", soloBranches.length, 1);
-    eq("named as itself rather than pluralised", soloBranches[0].label, "Only Ring");
-    eq("with nothing underneath it", soloBranches[0].children.length, 0);
+    const soloEntities = entitiesFor(soloMap.domains.find((d) => d.key === "commerce")!);
+    eq("one product is one entity", soloEntities.length, 1);
+    eq("named as itself, never pluralised", soloEntities[0].label, "Only Ring");
   }
 
   // ======================================================================
@@ -548,21 +587,21 @@ async function main(): Promise<void> {
       detail: "",
       serviceId: null,
     }));
-    const branches = branchesFor(social, prospects);
+    const entities = entitiesFor(social, prospects);
 
-    eq("every platform appears", branches.length, SOCIAL_PLATFORMS.length);
+    eq("every platform appears", entities.length, SOCIAL_PLATFORMS.length);
     for (const pf of SOCIAL_PLATFORMS) {
-      const branch = branches.find((b) => b.label === pf.label);
-      assert(`${pf.label} is on the Social branch`, branch !== undefined, pf.label);
-      eq(`${pf.label} is not known yet`, branch?.certainty, "unknown");
-      // AND NOTHING IS INVENTED UNDER IT. An unconnected account reports
-      // nothing, so "Content -> Engagement -> Traffic" must not exist.
-      eq(`${pf.label} has no fabricated children`, branch?.children.length, 0);
+      const entity = entities.find((b) => b.label === pf.label);
+      assert(`${pf.label} is on the Social branch`, entity !== undefined, pf.label);
+      eq(`${pf.label} is not known yet`, entity?.certainty, "unknown");
+      // AND NOTHING IS INVENTED ON ITS CARD. An unconnected account reports
+      // nothing, so it must carry no facts at all.
+      eq(`${pf.label} has no fabricated facts`, entity?.facts.length, 0);
     }
 
-    const x = branches.find((b) => b.label === "X")!;
+    const x = entities.find((b) => b.label === "X")!;
     eq("X says Genesis cannot connect it", x.state, "Genesis cannot connect this yet");
-    const instagram = branches.find((b) => b.label === "Instagram")!;
+    const instagram = entities.find((b) => b.label === "Instagram")!;
     eq("while Instagram says it is simply not connected", instagram.state, "Not connected");
 
     // The registry itself is the reason, and it is checked rather than trusted.
@@ -580,19 +619,318 @@ async function main(): Promise<void> {
     });
     const map = await mapFor(store.id, store.slug);
     const social = map.domains.find((d) => d.key === "social")!;
-    const branches = branchesFor(social, [
+    const entities = entitiesFor(social, [
       { id: "instagram", label: "Instagram", available: true, connected: true, detail: "Audience size.", serviceId: "instagram" },
     ]);
-    const ig = branches.find((b) => b.label === "Instagram")!;
+    const ig = entities.find((b) => b.label === "Instagram")!;
     eq("a connected platform reads as known", ig.certainty, "known");
-    eq("and says so", ig.state, "Connected");
-    // STILL NO INVENTED CHAIN. Connecting an account does not by itself mean
+    // THE EXISTING CONNECTION LANGUAGE, unchanged from the chooser's wording.
+    eq("and says so in the chooser's own words", ig.state, "Connected — J4 uses this");
+    // STILL NO INVENTED CLAIM. Connecting an account does not by itself mean
     // J4 has content, engagement or traffic from it -- those appear when rows
     // for them exist, and not a moment sooner.
-    eq("but still claims no data it does not have", ig.children.length, 0);
+    eq("but still claims no data it does not have", ig.facts.length, 0);
   }
 
   // ======================================================================
+  // ======================================================================
+  console.log("\n=== 7f. A card is read off the record, never written ===\n");
+  // ======================================================================
+  {
+    // Sean (2026-09-02): "I want the entity cards to be information-rich —
+    // what it is, where it came from, what J4 inferred about it, how confident
+    // J4 is, what business entity it relates to."
+    //
+    // Every line below is asserted to come from a FIELD THAT WAS SET. The
+    // sabotage that matters here is the opposite of the usual one: it is not
+    // "does the card show enough", it is "does the card ever show something
+    // nobody stored".
+    const { store } = await makeStore();
+
+    await prismaSystem.businessRecord.create({
+      data: {
+        storeId: store.id, entityType: "asset", externalId: `asset-rich-${stamp}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        data: {
+          title: "Copper supplier invoice",
+          fileType: "document",
+          category: "invoice",
+          summary: "An invoice from the copper supplier covering the spring run.",
+          extractionConfidence: 0.82,
+          origin: "uploaded",
+          relatedEntityType: "supplier",
+          storageUrl: "https://example.test/invoice.pdf",
+        },
+      },
+    });
+    // A second asset with ALMOST NOTHING on it. This is the honest-absence
+    // case, and it is the one a rich card design silently gets wrong.
+    await prismaSystem.businessRecord.create({
+      data: {
+        storeId: store.id, entityType: "asset", externalId: `asset-bare-${stamp}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        // BLANK, NOT ABSENT. Found by sabotage (2026-09-02): removing the
+        // empty-value guard entirely left the suite green, because no fixture
+        // had a field that was present and empty. An extractor that writes ""
+        // is the realistic case, and it is the one that puts "Category: " with
+        // nothing after it on a card.
+        data: { title: "Untitled upload", category: "", origin: "   " },
+      },
+    });
+
+    const map = await mapFor(store.id, store.slug);
+    const creation = map.domains.find((d) => d.key === "creation")!;
+    const entities = entitiesFor(creation);
+    const rich = entities.find((e) => e.label === "Copper supplier invoice")!;
+    const bare = entities.find((e) => e.label === "Untitled upload")!;
+
+    const labels = rich.facts.map((f) => f.label);
+    assert("the card says what kind of thing it is", labels.includes("What it is"), labels.join(", "));
+    assert("and where it came from", labels.includes("Where it came from"), labels.join(", "));
+    assert("and what it relates to", labels.includes("Relates to"), labels.join(", "));
+    eq("J4's confidence is shown as J4's confidence, in its own units",
+      rich.facts.find((f) => f.label === "J4's confidence reading it")?.value, "82%");
+    eq("the detail line is J4's own reading of the file",
+      rich.detail, "An invoice from the copper supplier covering the spring run.");
+
+    // ---- and the bare one says less, rather than saying nothing loudly ----
+    eq("a record with no summary gets no invented one", bare.detail, null);
+    eq("a record with no fields gets no empty rows", bare.facts.length, 0);
+    assert("no fact on any card is blank",
+      entities.every((e) => e.facts.every((f) => f.value.trim().length > 0)),
+      JSON.stringify(entities.map((e) => e.facts)));
+
+    // ---- a PDF is not a photograph ---------------------------------------
+    eq("a document carries no image, despite having a storageUrl", rich.image, null);
+    eq("and neither does a record with no file at all", bare.image, null);
+  }
+
+  // ======================================================================
+  console.log("\n=== 7g. A product's picture is its own, or there is none ===\n");
+  // ======================================================================
+  {
+    const { store } = await makeStore();
+    const withPhoto = await prismaSystem.product.create({
+      data: { storeId: store.id, name: "Photographed Ring", description: "d", priceInCents: 4200, active: true },
+    });
+    await prismaSystem.product.create({
+      data: { storeId: store.id, name: "Unphotographed Ring", description: "d", priceInCents: 900, active: false },
+    });
+
+    // No images passed at all: the map must not conjure one.
+    const blind = entitiesFor((await mapFor(store.id, store.slug)).domains.find((d) => d.key === "commerce")!);
+    assert("with no images supplied, no product claims a picture",
+      blind.every((e) => e.image === null),
+      JSON.stringify(blind.map((e) => [e.label, e.image])));
+
+    const seen = entitiesFor(
+      (await mapFor(store.id, store.slug, 0, { [withPhoto.id]: "https://example.test/ring.jpg" }))
+        .domains.find((d) => d.key === "commerce")!,
+    );
+    eq("the photographed product shows its own photograph",
+      seen.find((e) => e.label === "Photographed Ring")?.image, "https://example.test/ring.jpg");
+    eq("and the other one shows none",
+      seen.find((e) => e.label === "Unphotographed Ring")?.image, null);
+
+    // ---- the commercial facts are the product's own ----------------------
+    const one = seen.find((e) => e.label === "Photographed Ring")!;
+    eq("price is shown in money, not cents",
+      one.facts.find((f) => f.label === "Price")?.value, "42.00");
+    eq("and whether it is actually on sale",
+      one.facts.find((f) => f.label === "On sale in your storefront")?.value, "Yes");
+    eq("which is not the same answer for an inactive product",
+      seen.find((e) => e.label === "Unphotographed Ring")!.facts
+        .find((f) => f.label === "On sale in your storefront")?.value, "No");
+  }
+
+  // ======================================================================
+  console.log("\n=== 7h. A customer card is deliberately thin ===\n");
+  // ======================================================================
+  {
+    // Sean: "The presentation should be appropriate for customer information
+    // and privacy." What a person spent with this business is the owner's own
+    // commercial record. The rest of what Genesis holds about them is not
+    // something to leave open on a landing screen.
+    const { store } = await makeStore();
+    const customer = await prismaSystem.businessRecord.create({
+      data: {
+        storeId: store.id, entityType: "contact", externalId: `contact-${stamp}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        data: { name: "Dana Reyes", email: `buyer-${stamp}@example.test`, phone: "+15550101", roles: ["customer"] },
+      },
+    });
+    await prismaSystem.businessRecord.create({
+      data: {
+        storeId: store.id, entityType: "transaction", externalId: `txn-${stamp}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        data: { type: "sale", amountInCents: 12300, contactId: customer.id },
+      },
+    });
+
+    const map = await mapFor(store.id, store.slug);
+    const customers = entitiesFor(map.domains.find((d) => d.key === "customers")!);
+    assert("the customer is on the map", customers.length > 0, String(customers.length));
+    const dana = customers[0];
+
+    const shown = dana.facts.map((f) => f.label);
+    eq("exactly one thing is shown about a person", shown, ["Spent with you"]);
+    assert("and it is not their email address",
+      !JSON.stringify(dana.facts).includes("@example.test"),
+      JSON.stringify(dana.facts));
+    // A CUSTOMER WHO GAVE A NAME IS TITLED BY IT. One who gave only an email
+    // is titled by that, because it is the only identity the business has for
+    // them and it is the owner's own record — the browser suite covers that
+    // case. What must never happen is contact details piling up as facts.
+    eq("a person is titled by their name when they gave one", dana.label, "Dana Reyes");
+  }
+
+  // ======================================================================
+  console.log("\n=== 7i. What J4 noticed is about THIS record ===\n");
+  // ======================================================================
+  {
+    // The card's "J4 noticed" block is keyed on GenesisObservation.recordId.
+    // NOTHING WRITES THAT FIELD TODAY -- every live observation is store-wide
+    // -- so this proves the read is correct rather than proving the feature is
+    // populated, and the store-wide case is asserted to stay OUT.
+    const { store } = await makeStore();
+    const asset = await prismaSystem.businessRecord.create({
+      data: {
+        storeId: store.id, entityType: "asset", externalId: `asset-noticed-${stamp}`,
+        sourceProvider: "test", provenance: "OWNER", provenanceDetail: "suite",
+        data: { title: "Spring lookbook" },
+      },
+    });
+    await prismaSystem.genesisObservation.create({
+      data: {
+        storeId: store.id, dedupeKey: `about-record-${stamp}`, genesisState: "opportunity",
+        summary: "This lookbook has never been used in a post.",
+        status: "ACTIVE", recordId: asset.id, entityType: "asset",
+      },
+    });
+    await prismaSystem.genesisObservation.create({
+      data: {
+        storeId: store.id, dedupeKey: `store-wide-${stamp}`, genesisState: "urgent",
+        summary: "No payment provider is connected.", status: "ACTIVE",
+      },
+    });
+    await prismaSystem.genesisObservation.create({
+      data: {
+        storeId: store.id, dedupeKey: `dismissed-${stamp}`, genesisState: "opportunity",
+        summary: "An old note about this lookbook.", status: "DISMISSED", recordId: asset.id,
+      },
+    });
+
+    // The same query the section runs.
+    const rows = await prismaSystem.genesisObservation.findMany({
+      where: { storeId: store.id, status: "ACTIVE", recordId: { not: null } },
+      select: { recordId: true, summary: true },
+    });
+    const noticed: Record<string, string[]> = {};
+    for (const o of rows) if (o.recordId) (noticed[o.recordId] ??= []).push(o.summary);
+
+    eq("an observation about a record reaches that record's card",
+      noticed[asset.id], ["This lookbook has never been used in a post."]);
+    eq("a store-wide observation reaches no card at all", Object.keys(noticed).length, 1);
+    assert("and a dismissed one is not resurrected onto a card",
+      !JSON.stringify(noticed).includes("An old note"), JSON.stringify(noticed));
+
+    // AND THE CURRENT TRUTH, checked rather than assumed: no producer in the
+    // codebase names a record yet, so this block is silent in production.
+    const producers = readFileSync("lib/dashboard/genesisObservations.ts", "utf8");
+    assert("the observation writer does accept a recordId",
+      producers.includes("recordId"), "recordId absent from the writer");
+  }
+
+  // ======================================================================
+  console.log("\n=== 7j. A missing identifier matches nothing ===\n");
+  // ======================================================================
+  {
+    // Sean (2026-09-02): "We should never allow two unrelated entities to
+    // match simply because both happen to have null identifiers. Matching
+    // needs to require an actual identifying value."
+    //
+    // THE DEFECT THIS REPLACED. `CONNECTOR_CATALOG.find((e) => e.provider ===
+    // platform.publishProvider)` with a null publishProvider matched the first
+    // catalogue entry that also had `provider: null`, so X — the one platform
+    // Genesis genuinely cannot publish to — described Toast POS.
+    const prospects = socialProspects([]);
+
+    // First, the hazard is real and still present in the data, so this check
+    // is not guarding a condition that quietly went away.
+    const nullProviderPlatforms = SOCIAL_PLATFORMS.filter((pf) => pf.publishProvider === null);
+    const nullProviderEntries = CONNECTOR_CATALOG.filter((e) => e.provider === null);
+    assert("there is still a platform with no provider",
+      nullProviderPlatforms.length > 0, JSON.stringify(SOCIAL_PLATFORMS.map((p) => p.id)));
+    assert("and still a catalogue entry with no provider, so null could match null",
+      nullProviderEntries.length > 0, JSON.stringify(CONNECTOR_CATALOG.map((e) => e.id)));
+
+    for (const pf of nullProviderPlatforms) {
+      const prospect = prospects.find((x) => x.id === pf.id)!;
+      assert(`${pf.label} takes no catalogue entry's id`,
+        prospect.serviceId === null, String(prospect.serviceId));
+      assert(`${pf.label} takes no catalogue entry's words`,
+        prospect.detail === "", prospect.detail);
+      assert(`${pf.label} is not offered as connectable`,
+        prospect.available === false, String(prospect.available));
+      // The specific wrong answer, named, so a regression is legible.
+      const wouldHaveBeen = CONNECTOR_CATALOG.find((e) => e.provider === pf.publishProvider);
+      assert(`${pf.label} does not describe ${wouldHaveBeen?.id ?? "an unrelated service"}`,
+        wouldHaveBeen === undefined || prospect.detail !== wouldHaveBeen.description,
+        `${prospect.detail}`);
+    }
+
+    // ---- and a platform that DOES have a provider still finds its own ----
+    const instagram = prospects.find((x) => x.id === "instagram")!;
+    const igEntry = CONNECTOR_CATALOG.find((e) => e.provider === "INSTAGRAM");
+    eq("a platform with a real provider keeps its own catalogue entry",
+      instagram.serviceId, igEntry?.id ?? null);
+    assert("and its own description", instagram.detail === (igEntry?.description ?? ""),
+      instagram.detail.slice(0, 80));
+
+    // ---- connected state comes from what is connected --------------------
+    const live = socialProspects(["INSTAGRAM"]);
+    eq("a connected platform reads as connected",
+      live.find((x) => x.id === "instagram")?.connected, true);
+    eq("and an unconnected one does not",
+      live.find((x) => x.id === "tiktok")?.connected, false);
+  }
+
+  // ======================================================================
+  console.log("\n=== 7k. Connect is offered only where it can be honoured ===\n");
+  // ======================================================================
+  {
+    // Sean: "If Genesis doesn't actually have a connector for that service,
+    // there should be no Connect button." So the card carries an explicit
+    // `connectable`, rather than the interface inferring one from the mere
+    // presence of an id.
+    const { store } = await makeStore();
+    const map = await mapFor(store.id, store.slug);
+    const social = map.domains.find((d) => d.key === "social")!;
+
+    const entities = entitiesFor(social, [
+      { id: "insta", label: "Instagram", available: true, connected: false, detail: "d", serviceId: "instagram" },
+      { id: "already", label: "Facebook", available: true, connected: true, detail: "d", serviceId: "facebook" },
+      // HAS AN ID, HAS NO CONNECTOR. This is the case the old inference got
+      // wrong: an id was taken as proof that connecting was possible.
+      { id: "nope", label: "Toast POS", available: false, connected: false, detail: "d", serviceId: "toast-pos" },
+      { id: "x", label: "X", available: false, connected: false, detail: "", serviceId: null },
+    ]);
+
+    const byLabel = (l: string) => entities.find((e) => e.label === l)!;
+    eq("an available, unconnected service can be connected", byLabel("Instagram").connectable, true);
+    eq("an already-connected one cannot be connected again", byLabel("Facebook").connectable, false);
+    eq("a service with an id but no connector cannot be connected",
+      byLabel("Toast POS").connectable, false);
+    eq("and neither can one with no id at all", byLabel("X").connectable, false);
+
+    // A THING IS NOT A SERVICE. Nothing read off a business record is ever
+    // connectable, however it is labelled.
+    const commerceEntities = entitiesFor(map.domains.find((d) => d.key === "business")!);
+    assert("no record-backed entity is ever connectable",
+      commerceEntities.every((e) => e.connectable === false),
+      JSON.stringify(commerceEntities.filter((e) => e.connectable).map((e) => e.label)));
+  }
+
   console.log("\n=== 8. Nothing here writes ===\n");
   // ======================================================================
   {

@@ -54,6 +54,17 @@ export const GENESIS_AVATAR_SIZE = {
   // Back to 88px, the size it originally was, which is also the one size that
   // has never been reported as too small.
   presenceOrb: "h-[88px] w-[88px] shrink-0",
+  // The Business Map's centre (2026-09-02). Sean: "The center of the Business
+  // Map should not say 'J4' as text. The center is the J4 orb... the orb
+  // remains the constant visual anchor." Two tiers because the orb is the one
+  // thing that does NOT change between the map's two layers — it holds the
+  // stage centre while the business rings it, then keeps the same column at
+  // the top while the entity carousel takes the room below. It steps down
+  // rather than staying huge so a phone still has room for a real card; it is
+  // the same orb, moved, not a different presence.
+  mapCentre: "aspect-square w-[84px] sm:w-[104px]",
+  mapAnchor: "aspect-square w-[56px] sm:w-[64px]",
+
   // GenesisDomicile's own ambient orb — sized relative to its own frame,
   // not a fixed pixel value, kept as its own real token rather than
   // forced onto the fixed-pixel scale above. Bumped 78% -> 85% (2026-08-09,

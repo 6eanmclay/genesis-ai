@@ -118,6 +118,45 @@ export interface MapNode {
    * if the kind of "something" is stated.
    */
   recordKind: "business_record" | "belief" | "computed" | null;
+
+  /**
+   * A picture of this thing, when one genuinely exists.
+   *
+   * Assets carry `storageUrl`. Products do not — the canonical item shape has
+   * no image field, and their photograph lives on the Product row — so the
+   * presentation layer resolves those separately rather than this inventing
+   * one. Null means there is no picture, never a placeholder.
+   */
+  image: string | null;
+
+  /**
+   * WHAT CLASS OF THING THIS IS — "Product", "Asset", "Customer".
+   *
+   * Separate from `detail` because the two stopped being the same thing when
+   * cards became information-rich (2026-09-02): an asset's detail is now J4's
+   * own one-line reading of the file, which is a sentence, not a category. The
+   * carousel keeps kinds together and prints the kind on each card, and neither
+   * job can be done by measuring a sentence.
+   *
+   * Null for a genuine one-off — the business description, all-time revenue —
+   * where there is no class, only the thing.
+   */
+  kind: string | null;
+
+  /**
+   * WHAT J4 KNOWS ABOUT THIS THING, as label/value pairs (2026-09-02).
+   *
+   * Sean: "The Business Map shouldn't just tell me that something exists. It
+   * should be a place where I can actually understand what J4 knows about that
+   * thing... what it is, where it came from, what J4 inferred about it, how
+   * confident J4 is, what business entity it relates to."
+   *
+   * Every pair is read off a field that exists on the record. Nothing is
+   * computed for display, nothing is filled in when absent — an asset with no
+   * summary contributes no summary line rather than an empty one, because a
+   * blank row implies J4 looked and found nothing when it never looked.
+   */
+  facts: { label: string; value: string }[];
 }
 
 export interface MapEdge {
@@ -155,6 +194,17 @@ export interface BusinessMapInput {
   slug?: string | null;
   /** Designs, which the profile does not carry. Absent is a real answer. */
   designCount?: number;
+
+  /**
+   * Product photographs, keyed by product id.
+   *
+   * PASSED IN RATHER THAN LOOKED UP, because this assembler does no IO and is
+   * not going to start. The canonical item shape has no image field — a
+   * product's photograph lives on its own Product row — so the caller reads
+   * them and hands them over. Absent means the product has no photograph, and
+   * the card then shows none rather than a stand-in.
+   */
+  productImages?: Record<string, string>;
 }
 
 /**
@@ -200,7 +250,7 @@ function node(
   id: string,
   label: string,
   certainty: Certainty,
-  extra: Partial<Pick<MapNode, "detail" | "provenance" | "recordId" | "recordKind">> = {}
+  extra: Partial<Pick<MapNode, "detail" | "provenance" | "recordId" | "recordKind" | "image" | "facts" | "kind">> = {}
 ): MapNode {
   const recordId = extra.recordId ?? null;
   return {
@@ -212,6 +262,9 @@ function node(
     provenance: extra.provenance ?? null,
     recordId,
     recordKind: extra.recordKind ?? (recordId ? kindOfId(recordId) : null),
+    image: extra.image ?? null,
+    kind: extra.kind ?? null,
+    facts: extra.facts ?? [],
   };
 }
 
@@ -281,30 +334,56 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
   if (p.people.owner) {
     add(node("business", "owner", p.people.owner.name ?? p.people.owner.email, "known", {
       detail: "Owner",
+      kind: "Person",
     }));
   }
   for (const member of p.people.members) {
     add(node("business", `member:${member.email}`, member.name ?? member.email, "known", {
       detail: member.role,
+      kind: "Person",
     }));
   }
 
   // ---- Commerce ----
   for (const item of p.offerings.items) {
+    const data = item.data as Record<string, unknown>;
+    const price = typeof data.priceInCents === "number"
+      ? `${(data.priceInCents / 100).toFixed(2)}`
+      : null;
     add(node("commerce", `item:${item.id}`, labelOf(item), certaintyOf(item.provenance), {
       detail: "Product",
+      kind: "Product",
       provenance: item.provenance,
       recordId: item.id,
+      // The canonical item shape has no image field, so the photograph comes
+      // from the caller keyed by the underlying product id — never invented.
+      image: input.productImages?.[item.id.replace("internal:item:", "")] ?? null,
+      facts: knownOf([
+        ["Price", price],
+        ["SKU", data.sku],
+        ["Category", data.category],
+        ["On sale in your storefront", data.active === true ? "Yes" : data.active === false ? "No" : null],
+        ["In stock", data.quantityAvailable],
+      ]),
     }));
   }
 
   // ---- Customers ----
   for (const top of p.customers.topContacts) {
     const contact = top.contact;
+    // DELIBERATELY THIN. Sean: "Same for customers, except obviously the
+    // presentation should be appropriate for customer information and
+    // privacy." What they have spent with this business is the owner's own
+    // commercial record; the rest of what Genesis holds about a person does
+    // not belong on a card that sits open on a landing screen.
     add(node("customers", `contact:${contact.id}`, labelOf(contact), certaintyOf(contact.provenance), {
       detail: "Customer",
+      kind: "Customer",
       provenance: contact.provenance,
       recordId: contact.id,
+      facts: knownOf([
+        ["Spent with you", top.totalSpentInCents ? `${(top.totalSpentInCents / 100).toFixed(2)}` : null],
+      ]),
     }));
   }
 
@@ -326,6 +405,7 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
   for (const goal of p.goals) {
     add(node("goals", `goal:${goal.id}`, labelOf(goal), certaintyOf(goal.provenance), {
       detail: "Goal",
+      kind: "Goal",
       provenance: goal.provenance,
       recordId: goal.id,
     }));
@@ -333,6 +413,7 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
   for (const challenge of p.challenges) {
     add(node("goals", `challenge:${challenge.id}`, labelOf(challenge), certaintyOf(challenge.provenance), {
       detail: "Challenge",
+      kind: "Challenge",
       provenance: challenge.provenance,
       recordId: challenge.id,
     }));
@@ -342,6 +423,7 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
   for (const account of p.socialAccounts) {
     add(node("social", `social:${account.id}`, labelOf(account), certaintyOf(account.provenance), {
       detail: "Social account",
+      kind: "Social account",
       provenance: account.provenance,
       recordId: account.id,
     }));
@@ -351,15 +433,34 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
   for (const system of p.connectedSystems) {
     add(node("connections", `system:${system.provider}`, system.provider, "known", {
       detail: system.isStale ? "Connected, not syncing" : "Connected",
+      kind: "Connected system",
     }));
   }
 
   // ---- Creation ----
   for (const asset of p.assets) {
+    // EVERY FIELD HERE EXISTS ON AssetSchema. summary is J4's own reading of
+    // the file, extractionConfidence is how sure it was, relatedEntityType is
+    // what it hangs off, origin is where it came from. Nothing is inferred at
+    // this layer — it is carried.
+    const data = asset.data as Record<string, unknown>;
+    const confidence = typeof data.extractionConfidence === "number"
+      ? `${Math.round(data.extractionConfidence * 100)}%`
+      : null;
     add(node("creation", `asset:${asset.id}`, labelOf(asset), certaintyOf(asset.provenance), {
-      detail: "Asset",
+      detail: typeof data.summary === "string" && data.summary.trim() ? data.summary : null,
+      kind: "Asset",
       provenance: asset.provenance,
       recordId: asset.id,
+      image: typeof data.storageUrl === "string" && data.fileType === "photo" ? data.storageUrl : null,
+      facts: knownOf([
+        ["What it is", data.category],
+        ["File", data.fileType],
+        ["Where it came from", data.origin],
+        ["Role", data.role],
+        ["J4's confidence reading it", confidence],
+        ["Relates to", data.relatedEntityType],
+      ]),
     }));
   }
   if (input.designCount && input.designCount > 0) {
@@ -375,8 +476,14 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
     // and a well-established one is still J4's conclusion.
     add(node("learned", `belief:${belief.id}`, belief.claim, "inferred", {
       detail: belief.maturity,
+      kind: "What J4 has learned",
       recordId: belief.id,
       recordKind: "belief",
+      facts: knownOf([
+        ["How sure J4 is", `${Math.round(belief.confidence * 100)}%`],
+        ["Times it has held up", belief.evidenceCount],
+        ["Maturity", belief.maturity],
+      ]),
     }));
   }
 
@@ -453,6 +560,24 @@ const EMPTY_SUMMARY: Record<MapDomainKey, string> = {
   creation: "Nothing has been designed or uploaded yet.",
   learned: "J4 has not worked anything out on its own yet. This fills as it watches.",
 };
+
+/**
+ * Keep only the pairs that have a real value.
+ *
+ * A card with "Confidence: —" says J4 measured something and got nothing. A
+ * card without the line says J4 has no confidence score for this, which is the
+ * truth. So absent fields are dropped rather than rendered empty.
+ */
+function knownOf(pairs: [string, unknown][]): { label: string; value: string }[] {
+  const kept: { label: string; value: string }[] = [];
+  for (const [label, raw] of pairs) {
+    if (raw === null || raw === undefined) continue;
+    const value = typeof raw === "number" ? String(raw) : String(raw).trim();
+    if (value.length === 0) continue;
+    kept.push({ label, value });
+  }
+  return kept;
+}
 
 /** A record's own best label, without inventing one. */
 function labelOf(record: { id: string; data: Record<string, unknown> }): string {

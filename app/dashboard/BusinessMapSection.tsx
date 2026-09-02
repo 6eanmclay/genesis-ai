@@ -6,8 +6,8 @@ import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { signupFor, SIGNUP_DESTINATIONS } from "@/lib/businessModel/signupDestinations";
 import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
-import { SOCIAL_PLATFORMS } from "@/lib/social/platforms";
-import type { MapProspect } from "@/lib/businessModel/mapBranches";
+import { socialProspects } from "@/lib/businessModel/socialProspects";
+import type { MapProspect } from "@/lib/businessModel/mapEntities";
 import { BusinessMapCanvas, type MapService, type DomainDestination } from "./BusinessMapCanvas";
 import type { MapDomainKey } from "@/lib/businessModel/businessMap";
 
@@ -49,7 +49,7 @@ export async function BusinessMapSection({
   // DESIGNS ARE NOT IN THE PROFILE, so they are counted here rather than
   // invented inside the assembler. Creation is Cubit & Coil's largest real
   // body of work and a Creation branch that ignored it would be wrong.
-  const [understanding, facts, designCount, integrations] = await Promise.all([
+  const [understanding, facts, designCount, integrations, productRows, observations] = await Promise.all([
     getBusinessUnderstanding(storeId),
     readOwnerFactsWithProvenance(storeId),
     prisma.businessRecord.count({ where: { storeId, entityType: "design" } }),
@@ -57,9 +57,43 @@ export async function BusinessMapSection({
       where: { storeId, status: "CONNECTED" },
       select: { provider: true },
     }),
+    // A PRODUCT'S OWN PHOTOGRAPH. The canonical item shape carries no image,
+    // so the cards would otherwise show a colour band for the one part of the
+    // business that is entirely visual. Read here and handed to the pure
+    // assembler; never invented there.
+    prisma.product.findMany({
+      where: { storeId, imageUrl: { not: null } },
+      select: { id: true, imageUrl: true },
+    }),
+    // WHAT J4 NOTICED ABOUT ONE SPECIFIC THING.
+    //
+    // Sean: "Anything interesting J4 noticed about it." This is the real
+    // observation store, filtered to rows that name a record — the same
+    // GenesisObservations the owner sees under "J4 Noticed", shown against the
+    // thing they are about.
+    //
+    // NOTHING WRITES recordId TODAY (checked 2026-09-02: every producer leaves
+    // it null, so every live observation is store-wide). So this section is
+    // correct and currently silent, which is the honest state — it is a read
+    // of real data, not a placeholder, and it lights up the moment a producer
+    // starts naming records. It is not padded with store-wide notices, because
+    // "J4 noticed" on a card must mean J4 noticed THIS.
+    prisma.genesisObservation.findMany({
+      where: { storeId, status: "ACTIVE", recordId: { not: null } },
+      select: { recordId: true, summary: true },
+    }),
   ]);
 
-  const map = businessMap({ understanding, facts, slug: storeSlug, designCount });
+  const productImages: Record<string, string> = {};
+  for (const p of productRows) if (p.imageUrl) productImages[p.id] = p.imageUrl;
+
+  const noticed: Record<string, string[]> = {};
+  for (const o of observations) {
+    if (!o.recordId) continue;
+    (noticed[o.recordId] ??= []).push(o.summary);
+  }
+
+  const map = businessMap({ understanding, facts, slug: storeSlug, designCount, productImages });
 
   // ============ WHAT EACH SERVICE BRINGS, IN THE CATALOGUE'S OWN WORDS ===
   //
@@ -136,22 +170,16 @@ export async function BusinessMapSection({
   // the interface implying otherwise." So X appears, and appears as something
   // Genesis cannot connect -- which is more useful to an owner than pretending
   // it is not a platform they use.
-  const connectedSet = new Set(connectedProviders);
-  const socialProspects: MapProspect[] = SOCIAL_PLATFORMS.map((platform) => {
-    const provider = platform.publishProvider;
-    const catalogEntry = CONNECTOR_CATALOG.find((e) => e.provider === provider);
-    return {
-      id: platform.id,
-      label: platform.label,
-      // Connectable only when a connector actually exists for it.
-      available: provider !== null && catalogEntry?.connector != null,
-      connected: provider !== null && connectedSet.has(provider),
-      // THE PROVIDER'S OWN WORDS where the catalogue has them, and nothing at
-      // all where it does not. No capability is written here.
-      detail: catalogEntry?.description ?? "",
-      serviceId: catalogEntry?.id ?? null,
-    };
-  });
+  // ============ WHAT COULD INFORM A BRANCH, FROM REAL REGISTRIES =======
+  //
+  // Sean: "J4 -> Social. Selecting Social reveals Instagram, Facebook, TikTok,
+  // X... If TikTok isn't connected: Not connected / Not yet known."
+  //
+  // MOVED OUT OF THIS FILE (2026-09-02) into `socialProspects.ts`, which is
+  // pure and therefore testable — it was carrying a null-matching defect that
+  // gave X the identity of Toast POS, and a server component is the one place
+  // that could not be exercised by the suite. That file records the rule.
+  const socialProspectList = socialProspects(connectedProviders);
 
   const connectionProspects: MapProspect[] = services.map((s) => ({
     id: s.id,
@@ -163,7 +191,7 @@ export async function BusinessMapSection({
   }));
 
   const prospects: Partial<Record<MapDomainKey, MapProspect[]>> = {
-    social: socialProspects,
+    social: socialProspectList,
     connections: connectionProspects,
   };
 
@@ -208,6 +236,7 @@ export async function BusinessMapSection({
           services={services}
           prospects={prospects}
           destinations={destinations}
+          noticed={noticed}
         />
       </div>
 
