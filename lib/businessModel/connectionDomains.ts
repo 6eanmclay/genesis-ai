@@ -42,7 +42,19 @@ export const CATEGORY_DOMAIN: Record<ConnectionCategory, MapDomainKey> = {
   customers_crm: "customers",
   marketing: "customers",
   communication: "customers",
-  business_systems: "commerce",
+  // ============ NOT "commerce", AND THE SCREENSHOT IS WHY =========
+  //
+  // It was, and the rendered card read "Google Calendar — Would let J4
+  // understand your Commerce." A calendar does not tell J4 anything about
+  // commerce, and the whole point of this line is that an owner should never
+  // wonder why they would connect something.
+  //
+  // `business_systems` is a genuinely mixed category — a calendar, a print
+  // supplier, two point-of-sale systems, a scheduling tool. What they honestly
+  // share is that they are systems the BUSINESS runs on, which is the Business
+  // branch. Less precise for Printful than "commerce" would be, and true for
+  // all five rather than true for three.
+  business_systems: "business",
   developer_api: "connections",
 };
 

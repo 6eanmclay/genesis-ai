@@ -151,6 +151,12 @@ async function main() {
     assert("it starts within the first screen, not below the fold",
       !!mapBox && mapBox.y < 900, `y=${mapBox?.y}`);
 
+    // THE LANDING SCREEN AS AN OWNER MEETS IT — captured before this suite
+    // opens anything. The end-of-run screenshot shows a scrolled page with the
+    // connections panel expanded, which is evidence of the test rather than of
+    // the experience.
+    await page.screenshot({ path: `${SHOTS}/business-map-desktop-firstscreen.png`, fullPage: false });
+
     const welcome = (await page.locator("h1").first().innerText()).trim();
     assert("the greeting names the owner", /Welcome back, Sean/.test(welcome), welcome);
 
