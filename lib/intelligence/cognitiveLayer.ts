@@ -319,6 +319,25 @@ export interface CognitiveReviewSummary {
   confidence: number;
   message: string;
   actionHref: string;
+
+  /**
+   * The one record this finding is about, when it genuinely is about one.
+   *
+   * ============ WHY THIS IS ON THE SUMMARY (2026-09-02) ================
+   *
+   * The review already resolved and validated this to write its
+   * CognitiveOutput row — the id is filtered to records the model was
+   * actually shown, and checked against `BusinessRecord where { id, storeId,
+   * entityType }` further down. But the summary handed to the observation
+   * writer carried only the message and its topicKey, so the observation was
+   * stored with `recordId: null` and could never reach the entity it was
+   * about on the Business Map.
+   *
+   * Nothing new is inferred to fill this. It is the answer the review had
+   * already earned and was discarding at a return type.
+   */
+  recordId: string | null;
+  entityType: "goal" | "challenge" | "asset" | null;
 }
 
 export async function runCognitiveReview(params: {
@@ -696,6 +715,30 @@ export async function runCognitiveReview(params: {
     // SYSTEM_PROMPT's own recentAssets paragraph.
     ...businessProfile.assets.map((a) => [a.id, "asset"] as const),
   ]);
+  /**
+    * WHICH REAL RECORD AN OUTPUT IS ABOUT, resolved once (2026-09-02).
+    *
+    * This expression already existed inline where CognitiveOutput rows are
+    * written. It is lifted here because a SECOND consumer now needs the same
+    * answer — the observation the Business Map reads — and two copies of a
+    * trust decision are two chances to weaken one of them.
+    *
+    * It is the whole of the trust: an id the model returned is kept only when
+    * it matches a record that was genuinely fetched and shown to it. Anything
+    * else, including a plausible-looking id the model invented, resolves to
+    * null. Nothing new is inferred here and nothing is looked up.
+    */
+  const relatedRecordOf = (item: { relatedRecordId: string | null }): {
+    recordId: string | null;
+    entityType: "goal" | "challenge" | "asset" | null;
+  } => {
+    const recordId =
+      item.relatedRecordId && entityTypeByRecordId.has(item.relatedRecordId)
+        ? item.relatedRecordId
+        : null;
+    return { recordId, entityType: recordId ? entityTypeByRecordId.get(recordId) ?? null : null };
+  };
+
   // J4 Foundation Phase 3 (Reason) — same defense-in-depth for
   // relatedBeliefTopicKey: only a topicKey that matches a real,
   // already-fetched belief is ever persisted, never trusted from the
@@ -711,11 +754,7 @@ export async function runCognitiveReview(params: {
   // clears for this authority-exempt action.
   const createdOutputs: { id: string; recordId: string | null; entityType: "goal" | "challenge" | "asset" | null }[] = [];
   for (const item of result.outputs) {
-    const recordId =
-      item.relatedRecordId && entityTypeByRecordId.has(item.relatedRecordId)
-        ? item.relatedRecordId
-        : null;
-    const entityType = recordId ? (entityTypeByRecordId.get(recordId) ?? null) : null;
+    const { recordId, entityType } = relatedRecordOf(item);
     const relatedBeliefTopicKey =
       "relatedBeliefTopicKey" in item && item.relatedBeliefTopicKey && realBeliefTopicKeys.has(item.relatedBeliefTopicKey)
         ? item.relatedBeliefTopicKey
@@ -953,5 +992,7 @@ export async function runCognitiveReview(params: {
       confidence: item.confidence,
       message: item.summary,
       actionHref: item.actionHref,
+      // THE SAME RESOLUTION the CognitiveOutput row got, not a second one.
+      ...relatedRecordOf(item),
     }));
 }

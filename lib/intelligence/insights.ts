@@ -23,6 +23,23 @@ export interface Insight {
   severity: "opportunity" | "urgent";
   summary: string;
   metrics: Record<string, unknown>;
+
+  /**
+   * The one record this insight is about — set ONLY when it genuinely is one.
+   *
+   * ============ MOST INSIGHTS HAVE NO SUCH RECORD (2026-09-02) =========
+   *
+   * They are clusters and trends, and that is not a limitation to work around:
+   * "3 invoices are overdue" is about three records, and "cancellations rose
+   * sharply" is about a shape in an event history, not about any record at
+   * all. A single id on either would be a false claim about which thing the
+   * owner should look at, and it would put that claim on that thing's card.
+   *
+   * So this stays null everywhere except where a detector already recognises a
+   * singular case in its own summary text.
+   */
+  recordId?: string | null;
+  entityType?: string | null;
 }
 
 const REVENUE_TREND_THRESHOLD = 0.15; // 15% week-over-week
@@ -139,14 +156,27 @@ async function detectLowStockCluster(storeId: string): Promise<Insight | null> {
   const depleted = items.filter((i) => i.data.quantityAvailable !== null && i.data.quantityAvailable <= 0);
   if (depleted.length < LOW_STOCK_COUNT_THRESHOLD) return null;
 
+  // ONE ITEM IS A THING; SEVERAL ARE A SITUATION (2026-09-02).
+  //
+  // This detector already told the truth about the difference in its own two
+  // summaries -- "Copper Ring is out of stock" versus "4 items are out of
+  // stock" -- and the record follows exactly that line. The singular sentence
+  // names one thing an owner can go and look at, so it carries that thing's
+  // id; the plural sentence names none of them, so it carries nothing.
+  //
+  // Deliberately NOT "the first of several". A card reading "J4 noticed: 4
+  // items are out of stock" on one product would be pointing at the wrong
+  // thing while sounding right.
+  const only = depleted.length === 1 ? depleted[0] : null;
   return {
     type: "inventory.depleted",
     severity: "urgent",
-    summary:
-      depleted.length === 1
-        ? `${depleted[0].data.name} is out of stock.`
-        : `${depleted.length} items are out of stock.`,
+    summary: only
+      ? `${only.data.name} is out of stock.`
+      : `${depleted.length} items are out of stock.`,
     metrics: { count: depleted.length, items: depleted.map((i) => i.data.name) },
+    recordId: only ? only.id : null,
+    entityType: only ? "item" : null,
   };
 }
 

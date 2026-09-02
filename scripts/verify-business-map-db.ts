@@ -856,9 +856,16 @@ async function main(): Promise<void> {
   // ======================================================================
   {
     // The card's "J4 noticed" block is keyed on GenesisObservation.recordId.
-    // NOTHING WRITES THAT FIELD TODAY -- every live observation is store-wide
-    // -- so this proves the read is correct rather than proving the feature is
-    // populated, and the store-wide case is asserted to stay OUT.
+    //
+    // CORRECTED 2026-09-02: this comment used to say nothing wrote that field.
+    // One thing does -- `lib/execution/toolHandlers.ts` names a challenge's
+    // record when an owner states a high-severity active one in chat, and the
+    // assembler puts challenges on Goals with the same id, so that case joins
+    // end to end. Every other sweep leaves it null, most of them honestly
+    // (a missing connection is not about one record).
+    //
+    // So the block is narrow, not dormant, and what is proven below is that
+    // the read is correct and that the store-wide case stays OUT.
     const { store } = await makeStore();
     const asset = await prismaSystem.businessRecord.create({
       data: {

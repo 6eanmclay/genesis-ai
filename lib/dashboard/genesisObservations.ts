@@ -169,6 +169,49 @@ export async function runDeterministicObservationSweep(storeId: string): Promise
 
 const AI_REVIEW_PREFIX = "ai_review:";
 
+/**
+ * One review finding, as the observation it becomes.
+ *
+ * ============ WHY THIS IS A FUNCTION (2026-09-02) =====================
+ *
+ * It was an object literal inside the call below, which made the Tier 1
+ * change — carrying the review's own `recordId` through instead of dropping
+ * it — impossible to test without a live model behind `runCognitiveReview`.
+ *
+ * SABOTAGE PROVED THE TESTS WERE HOLLOW. Setting `recordId` back to null at
+ * the call site left the suite green, because every check was calling
+ * `upsertObservation` directly and so was measuring the storage helper, which
+ * had always stored what it was handed. The mapping is the thing this
+ * milestone changed, so the mapping is what has to be callable.
+ *
+ * THE DEDUPE KEY LIVES HERE TOO, and deliberately: identity is
+ * `${AI_REVIEW_PREFIX}${topicKey}` and nothing else. A key that folded in the
+ * recordId would make a finding that gains a record into a SECOND row, and
+ * would desynchronise the resolve sweep below — which builds its list from
+ * this same function for exactly that reason.
+ */
+export function observationFromReview(r: {
+  topicKey: string;
+  message: string;
+  actionHref: string;
+  recordId: string | null;
+  entityType: "goal" | "challenge" | "asset" | null;
+}): ObservationInput {
+  return {
+    dedupeKey: `${AI_REVIEW_PREFIX}${r.topicKey}`,
+    genesisState: "opportunity",
+    summary: r.message,
+    actionHref: r.actionHref,
+    // WHAT IT IS ABOUT, where the review genuinely knew. Already resolved and
+    // validated inside runCognitiveReview against the records the model was
+    // actually shown; carried here rather than recomputed. Null for the
+    // majority of findings, which are about the business rather than about one
+    // record — and null is what keeps them off every entity card.
+    recordId: r.recordId,
+    entityType: r.entityType,
+  };
+}
+
 // The AI-gated trigger. Meant to be invoked via next/server's after(), never
 // awaited inline — see the Phase 4 plan for why that keeps Home's response
 // unblocked while staying within the "no scheduler/queue/worker" boundary.
@@ -240,18 +283,14 @@ export async function runOpportunisticAiReviewIfStale(
   // shouldn't light up the ambient pill).
   const highPriority = recommendations.filter((r) => r.priority === "high");
   await Promise.all(
-    highPriority.map((r) =>
-      upsertObservation(storeId, {
-        dedupeKey: `${AI_REVIEW_PREFIX}${r.topicKey}`,
-        genesisState: "opportunity",
-        summary: r.message,
-        actionHref: r.actionHref,
-      })
-    )
+    highPriority.map((r) => upsertObservation(storeId, observationFromReview(r)))
   );
   await resolveMissingObservations(
     storeId,
-    recommendations.map((r) => `${AI_REVIEW_PREFIX}${r.topicKey}`),
+    // THE SAME EXPRESSION THAT WROTE THEM. Building this list separately is
+    // how a write key and a resolve key drift apart, and the cost of drifting
+    // is every AI-review row being resolved the moment it is written.
+    recommendations.map((r) => observationFromReview(r).dedupeKey),
     "opportunity",
     AI_REVIEW_PREFIX
   );

@@ -72,12 +72,20 @@ export async function BusinessMapSection({
     // GenesisObservations the owner sees under "J4 Noticed", shown against the
     // thing they are about.
     //
-    // NOTHING WRITES recordId TODAY (checked 2026-09-02: every producer leaves
-    // it null, so every live observation is store-wide). So this section is
-    // correct and currently silent, which is the honest state — it is a read
-    // of real data, not a placeholder, and it lights up the moment a producer
-    // starts naming records. It is not padded with store-wide notices, because
-    // "J4 noticed" on a card must mean J4 noticed THIS.
+    // ONE PRODUCER WRITES recordId TODAY, not none — corrected 2026-09-02
+    // after this comment first claimed the opposite.
+    //
+    // `lib/execution/toolHandlers.ts` writes `recordId` + `entityType:
+    // "challenge"` when an owner states a HIGH-SEVERITY, ACTIVE challenge in
+    // chat, and the assembler puts challenges on the Goals domain carrying the
+    // same id — so that one case joins end to end and appears on its card.
+    //
+    // Every other sweep (deterministic findings, the AI review, insights,
+    // connection gaps, the staff-policy gap) leaves it null, and most of those
+    // are genuinely store-wide. So this section is NARROW rather than dormant:
+    // real, correct, and quiet for a store that has never stated such a
+    // challenge. It is not padded with store-wide notices, because "J4
+    // noticed" on a card must mean J4 noticed THIS.
     prisma.genesisObservation.findMany({
       where: { storeId, status: "ACTIVE", recordId: { not: null } },
       select: { recordId: true, summary: true },
