@@ -967,6 +967,98 @@ One business never remembers another's conversation, including concurrently.
 
 ---
 
+## 20. Cursor-aware pruning, designed and not built (2026-09-02)
+
+`lib/retention/policy.ts` gives `businessEvent` a `decide` verdict whose `needs`
+field reads "Cursor-aware pruning, designed rather than assumed." This is that
+design. **Nothing is implemented and no job is enabled.**
+
+### The rule
+
+The safe horizon is a **sequence, not a date**:
+
+```
+prunableBelow(storeId) = MIN(lastProcessedSequence)
+                         over every BusinessEventCursor row for that store
+
+DELETE BusinessEvent
+ WHERE storeId    = :storeId
+   AND sequence  <= prunableBelow(:storeId)     -- makes it safe
+   AND occurredAt < daysAgo(:keepDays)          -- makes it a retention policy
+```
+
+Both conditions, for different reasons. The sequence bound is what stops a
+consumer losing events it had not reached; `getNewEventsForConsumer` selects
+`sequence > cursor.lastProcessedSequence` and nothing else, so an event deleted
+above a cursor is indistinguishable from an event that never happened. The date
+bound is what makes this retention rather than an eager delete of everything
+already processed — the events are also the evidence behind what J4 concluded.
+
+### Three ways the obvious version is wrong
+
+**1. A store with no cursor row must prune nothing.** Cursors are created lazily
+on first read (`getOrCreateCursor`), and only one consumer exists today
+(`insight-engine`). A store whose cycle has never run therefore has *no* cursor
+row at all, and `MIN` over an empty set must resolve to **0 — prune nothing**,
+never to "unconstrained". Getting that backwards deletes the entire history of
+precisely the businesses that have never been processed. Section 19 measured
+nine of sixteen in exactly that state, so this is the ordinary case, not an edge
+one.
+
+**2. A second consumer starts at 0 and wants everything.**
+`lastProcessedSequence` is `@default(0)`. Register a new consumer after any
+prune has run and it asks for history that no longer exists, and — like every
+consumer — it cannot tell the difference. It also pins `MIN` at 0, so nothing
+would ever be prunable again; that half fails loudly, the other half silently.
+**Registering a consumer must set its starting sequence explicitly** (the
+store's current max, or a deliberate replay point) rather than inheriting the
+default. That is a code change required *before* any prune ships, not after.
+
+**3. A stalled consumer must not be rescued by the passage of time.** If a
+store's cycle has been failing for sixty days its cursor is sixty days behind,
+and a date-only prune would delete the backlog and let the store resume as
+though nothing had been missed. The sequence bound prevents that, and the
+consequence is that the table keeps growing for a broken store. **That is the
+correct behaviour and it is a signal**, so it should be paired with an
+`ops.alerts` finding for a cursor that has not advanced in N days — otherwise
+the growth is tolerated instead of noticed.
+
+### What is blocked, and on whom
+
+`keepDays` is the whole of the remaining decision, and it is the same class as
+the other four `decide` verdicts: how long the evidence behind J4's
+understanding must be kept is a product and record-keeping question, not an
+engineering one. Inventing ninety days here would be the arbitrary assumption
+that `policy.ts` was written to refuse.
+
+### It is not needed yet, and that is worth stating plainly
+
+Measured in production 2026-09-02:
+
+| Table | Rows | Last 30 days | Oldest |
+|---|---|---|---|
+| ExecutionLog | 2,859 | 2,651 | 37d |
+| CognitiveOutput | 1,295 | 1,232 | 32d |
+| AiUsageEvent | 1,258 | 1,168 | 30d |
+| StoreMessage | 947 | 895 | 36d |
+| GenesisObservation | 329 | 292 | 37d |
+| **BusinessEvent** | **54** | **7** | **33d** |
+| WebhookDelivery | 0 | 0 | — |
+
+The table this design is about holds fifty-four rows. The largest table on the
+platform holds under three thousand, growing at roughly ninety rows a day across
+sixteen businesses — call it thirty thousand a year, which is nothing for
+Postgres. `WebhookDelivery`, the table the `redact` policy was written for, is
+empty, because no provider webhook is live.
+
+So the design is recorded and deliberately not built. Building a prune now would
+be spending a production data risk to solve a problem that does not exist, and
+the one change it *would* justify on its own merits — giving new consumers an
+explicit starting sequence — is cheap and can be made whenever a second consumer
+is actually added.
+
+---
+
 ## 19. Slice 3 — the sweep that only a visitor could reach (2026-09-02)
 
 **One change, and two audits that found nothing to change. Written after

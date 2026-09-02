@@ -143,7 +143,13 @@ export const RETENTION: RetentionPolicy[] = [
       "of one silently drops events a consumer had not reached, and the consumer cannot " +
       "tell the difference between an event that never happened and one that was removed. " +
       "Any prune here must be cursor-aware, which is design work.",
-    needs: "Cursor-aware pruning, designed rather than assumed.",
+    // THE DESIGN NOW EXISTS: BI_ENGINE.md section 20. Prune below
+    // MIN(lastProcessedSequence) across the store's cursors AND older than
+    // keepDays, both. Three things the obvious version gets wrong are written
+    // up there — chiefly that a store with NO cursor row must prune nothing,
+    // which is the ordinary case rather than an edge one. Only keepDays is
+    // still a decision. Nothing is implemented and no job is enabled.
+    needs: "A keepDays horizon. The cursor-aware design is done — BI_ENGINE.md §20.",
   },
   {
     model: "cognitiveOutput",
