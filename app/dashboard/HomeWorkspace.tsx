@@ -41,7 +41,7 @@ import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
 import { AttentionCardList } from "./AttentionCardList";
 import { J4NoticedDisclosure } from "./J4NoticedDisclosure";
-import { buildAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
+import { buildAttentionCards, buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessMapSection } from "./BusinessMapSection";
 import { BusinessJourney } from "./BusinessJourney";
@@ -304,6 +304,34 @@ export async function HomeWorkspace({
   // here is already permission-gated at the fetch site above (empty/null
   // when the role doesn't have access), so this needs no extra permission
   // branching of its own.
+  // ============ J4'S NOTICES BELONG TO THE ARRIVAL (2026-09-01) ========
+  //
+  // Sean, from production: "J4's notices/observations should be part of the
+  // Genesis welcome/arrival experience, not buried at the bottom of a
+  // particular business page."
+  //
+  // These are GenesisObservation rows — the same ones the Storefront page used
+  // to render at its foot, read the same way and built by the same
+  // buildPageAttentionCards. Nothing about the data or the dismissal changed;
+  // they are simply shown where J4 is speaking rather than inside an editor.
+  //
+  // NOT FILTERED TO ONE PAGE. The storefront screen asked only for rows whose
+  // actionHref pointed at itself, which is what made each notice the property
+  // of a page. Here every active observation for the business is in scope,
+  // because "what has J4 noticed" is a question about the business.
+  const observations = canViewAnalytics
+    ? await prisma.genesisObservation.findMany({
+        where: { storeId: store.id, status: "ACTIVE" },
+        select: { dedupeKey: true, genesisState: true, summary: true },
+      })
+    : [];
+  const observationCards = buildPageAttentionCards({
+    basePath,
+    approvals: [],
+    observations,
+    dismissedCardIds,
+  });
+
   const attentionCards = buildAttentionCards({
     basePath,
     issues: attention.recentOutcomes,
@@ -428,7 +456,7 @@ export async function HomeWorkspace({
               </div>
             )}
           </div>
-          {attentionCards.cards.length === 0 ? (
+          {attentionCards.cards.length + observationCards.length === 0 ? (
             <div className="mt-3 max-w-2xl rounded-2xl border border-[#2563eb]/15 bg-[#2563eb]/[0.035] px-5 py-4">
               <p className="text-sm text-zinc-700 dark:text-zinc-300">
                 Nothing needs you right now — I&apos;m still watching {store.name}.
@@ -436,10 +464,13 @@ export async function HomeWorkspace({
               <p className="mt-1 text-xs text-zinc-500">J4 never stops working on your business.</p>
             </div>
           ) : (
-            <J4NoticedDisclosure count={attentionCards.cards.length + attentionCards.overflowCount}>
+            <J4NoticedDisclosure count={attentionCards.cards.length + observationCards.length + attentionCards.overflowCount}>
               <div className="mt-3">
+                {/* One list, not two. The observations join the cards J4 was
+                    already surfacing here rather than getting a section of
+                    their own — they are the same kind of thing to an owner. */}
                 <AttentionCardList
-                  cards={attentionCards.cards}
+                  cards={[...observationCards, ...attentionCards.cards]}
                   approveAction={approveGenesisAction}
                   rejectAction={rejectGenesisAction}
                   approveGroupAction={approveGenesisActionGroup}

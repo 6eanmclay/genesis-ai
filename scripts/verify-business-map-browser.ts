@@ -139,6 +139,88 @@ async function main() {
     ).catch(() => {});
 
     // ====================================================================
+    console.log("\n=== 1b. Where an owner actually LANDS, and how they get back ===\n");
+    // ====================================================================
+    //
+    // THE CHECK THAT WAS MISSING, and it is why the map was invisible in
+    // production. Every earlier assertion navigated straight to /b/<slug> and
+    // proved the map renders THERE. None asked where an owner arrives, or
+    // whether the navigation can reach it — and it could not: the rooms were
+    // Storefront, Studio, Office, Commerce, Account, with no entry for home at
+    // all. A screen with no door can be reached once, by arriving, and never
+    // again.
+    {
+      // Signing in lands somewhere. That somewhere must be the map.
+      const landed = page.url();
+      await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 }).catch(() => {});
+      assert("signing in lands on a screen that has the Business Map",
+        (await page.locator('[data-screen="business-map"]').count()) === 1, `landed at ${landed}`);
+
+      // The legacy entry point too — production sends a signed-in owner to
+      // /dashboard from the root, and that path was never exercised.
+      await page.goto(`${server.baseUrl}/dashboard`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 });
+      assert("/dashboard shows the map as well as /b/<slug>",
+        (await page.locator('[data-screen="business-map"]').count()) === 1);
+
+      // AND IT IS REACHABLE FROM ANYWHERE. Go into the Storefront room, then
+      // find the way home. This is the assertion whose absence let a screen
+      // with no navigation entry ship.
+      await page.goto(`${server.baseUrl}/b/${store.slug}/website`, { waitUntil: "domcontentloaded" });
+      await page.waitForLoadState("domcontentloaded");
+      assert("the Storefront room does not show the map",
+        (await page.locator('[data-screen="business-map"]').count()) === 0);
+
+      // THE VISIBLE ONE. Both the desktop rail and the mobile bar are in the
+      // DOM at every width; only one is on screen, and clicking the other
+      // waits for ever.
+      const homeLinks = page.locator(`a[href="/b/${store.slug}"]:visible`);
+      assert("the navigation offers a way back to the business",
+        (await homeLinks.count()) > 0, "no visible nav entry points at the business home");
+      const homeLink = homeLinks.first();
+      await homeLink.click();
+      await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 });
+      assert("and following it returns to the map",
+        (await page.locator('[data-screen="business-map"]').count()) === 1);
+    }
+
+    // ====================================================================
+    console.log("\n=== 1c. J4's notices live in the arrival, not in the editor ===\n");
+    // ====================================================================
+    {
+      // Sean, from production: the SEO notice was sitting at the foot of the
+      // Storefront page. It is the same row, read the same way; only where it
+      // is shown changed, and it must not be shown twice.
+      await prisma.genesisObservation.create({
+        data: {
+          storeId: store.id,
+          status: "ACTIVE",
+          genesisState: "OPPORTUNITY",
+          dedupeKey: `seo-${stamp}`,
+          summary: "Your storefront has no SEO title or meta description yet.",
+          actionHref: "/dashboard/website",
+        },
+      });
+
+      await page.goto(`${server.baseUrl}/b/${store.slug}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 });
+      const homeText = await page.locator("body").innerText();
+      assert("J4's notice reaches the arrival experience",
+        /no SEO title or meta description/.test(homeText), homeText.slice(0, 200));
+
+      await page.goto(`${server.baseUrl}/b/${store.slug}/website`, { waitUntil: "domcontentloaded" });
+      await page.waitForLoadState("domcontentloaded");
+      const siteText = await page.locator("body").innerText();
+      assert("and is NOT duplicated at the foot of the Storefront editor",
+        !/no SEO title or meta description/.test(siteText), siteText.slice(-260));
+      assert("the Storefront editor no longer has a Genesis noticed section",
+        !/Genesis noticed/.test(siteText), siteText.slice(-260));
+
+      await page.goto(`${server.baseUrl}/b/${store.slug}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 });
+    }
+
+    // ====================================================================
     console.log("\n=== 2. The map is the first thing under it, and is really drawn ===\n");
     // ====================================================================
     await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 });
@@ -493,6 +575,26 @@ async function main() {
         Array.from(document.querySelectorAll('[data-screen="business-map"] svg g[role="button"]'))
           .filter((g) => Number(g.getAttribute("opacity") ?? "1") < 0.5).length);
       assert("with every branch back at full strength", restored === 0, `${restored} still dimmed`);
+
+      // EVERY ROOM SURVIVES THE BAR. Adding Business as a room pushed Account
+      // straight out of it, and only a screenshot showed that. The bar is
+      // counted and measured now.
+      const bar = await small.evaluate(() => {
+        const links = Array.from(document.querySelectorAll("nav a, nav button"));
+        const seen = links
+          .map((el) => (el.textContent ?? "").trim())
+          .filter((s) => s.length > 0 && s.length < 20);
+        return { labels: seen, width: window.innerWidth };
+      });
+      for (const room of ["Business", "Storefront", "Studio", "Commerce", "Account"]) {
+        assert(`${room} is still in the mobile bar`,
+          bar.labels.some((l) => l.includes(room)), JSON.stringify(bar.labels));
+      }
+      const offscreen = await small.evaluate(() =>
+        Array.from(document.querySelectorAll("nav a, nav button"))
+          .map((el) => el.getBoundingClientRect())
+          .filter((r) => r.width > 0 && (r.left < -1 || r.right > window.innerWidth + 1)).length);
+      assert("and no nav item is pushed off the side at 390px", offscreen === 0, `${offscreen} offscreen`);
 
       // (9) no horizontal overflow
       const overflow = await small.evaluate(() => ({

@@ -96,6 +96,28 @@ export const NAV_SECTIONS: NavSection[] = [
   // rendered by J4Summon, with the Office door beneath him. Orders sits to his
   // left because it is the room with live, time-sensitive material in it, and
   // Products to his right.
+  // ============ THE MAP HAD NO DOOR (2026-09-01) ==================
+  //
+  // Sean, from production: "when I enter the business, I'm still landing
+  // directly on the existing Storefront page... I do not see the Business Map
+  // at all."
+  //
+  // He was right, and the cause was here rather than in the map. The rooms
+  // were Storefront, Studio, (J4/Office), Commerce, Account — and the arrival
+  // screen that renders the map was NOT among them. GENESIS_SURFACES.md put it
+  // that way deliberately: "Your Business (Overview) -> The opening screen.
+  // Kept, but not a room." That was right when home was a snapshot an owner
+  // passed through once. It stopped being right the moment the map became the
+  // primary business experience: a screen with no entry in the navigation can
+  // be reached exactly once, by arriving, and never again.
+  //
+  // So it is a room now, and the FIRST one. `sectionHref` already rewrites
+  // "/dashboard" to "/b/<slug>", so this addresses the right business without
+  // a special case.
+  //
+  // Storefront is not diminished by this and keeps everything it had — it is
+  // simply no longer the first thing an owner meets.
+  { key: "home", label: "Business", href: "/dashboard", permission: null },
   { key: "website", label: "Storefront", href: "/dashboard/website", permission: "store:manage" },
   // Commerce (2026-08-17) — Products and Orders consolidated into one room.
   // Sean: "the goal is navigation consolidation, not rebuilding those
@@ -166,7 +188,18 @@ export const NAV_SECTIONS: NavSection[] = [
 // yet revisited.
 // The four LINK tabs, two either side of the J4/Office centre. A new
 // capability earns a section inside a room, never another tab.
-export const PRIMARY_TAB_COUNT = 4;
+// ============ FIVE, BECAUSE THE MAP BECAME A ROOM (2026-09-01) =========
+//
+// It was four, and adding Business as the first room silently pushed ACCOUNT
+// out of the bar — the screenshot showed Business · Storefront · Office ·
+// Studio · Commerce and no Account at all. GENESIS_SURFACES.md is explicit
+// that "Account is a real primary destination (Sean, 2026-08-17), not
+// overflow", so losing it was a regression, not a trade.
+//
+// Five tabs plus the J4 orb is six slots at 390px. That is the real cost of
+// the map becoming a room, it is asserted at that width rather than assumed,
+// and the alternative — a primary destination quietly disappearing — is worse.
+export const PRIMARY_TAB_COUNT = 5;
 
 // Secondary navigation, shown only while inside Your Business — only the
 // real, currently-shipped workspaces, nothing speculative (no "Socials"

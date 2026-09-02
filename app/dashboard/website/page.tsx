@@ -403,28 +403,17 @@ export async function WebsiteScreen({
       {/* Phase 1 (2026-08-08) — same compact card language Home's own "J4
           Noticed" zone uses, replacing ObservationsPanel here. Approvals
           stay in the bespoke VisualProposal rendering above, untouched. */}
-      {websiteObservationCards.length > 0 && (
-        <>
-          <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
-            Genesis noticed ({websiteObservationCards.length})
-          </h2>
-          <div className="mt-3">
-            <AttentionCardList
-              cards={websiteObservationCards}
-              approveAction={approveGenesisAction}
-              rejectAction={rejectGenesisAction}
-              approveGroupAction={approveGenesisActionGroup}
-              issueAction={startIssueConversation}
-              discoveryAction={startDiscoveryConversation}
-              taskAction={startTaskConversation}
-              highlightId={focus}
-              dismissAction={dismissAttentionCard}
-              currentPath={`${basePath}/website`}
-              slug={slug}
-            />
-          </div>
-        </>
-      )}
+      {/* ============ J4'S NOTICES MOVED TO THE ARRIVAL (2026-09-01) ====
+          Sean: "Move this out of the Storefront page. J4's notices/observations
+          should be part of the Genesis welcome/arrival experience, not buried
+          at the bottom of a particular business page... The notice should feel
+          like J4 communicating with the owner, not like another section of the
+          Storefront editor."
+
+          The DATA and the dismissal behaviour are untouched — the same
+          GenesisObservation rows, read through the same buildPageAttentionCards
+          and rendered by the same AttentionCardList. Only WHERE they are shown
+          changed, and they are deliberately not duplicated here. */}
 
       {/* One review surface for every Website proposal — but each card
           stays its own independently-decided ApprovalRequest. Cards sharing
