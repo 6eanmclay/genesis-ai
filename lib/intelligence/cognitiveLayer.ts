@@ -3,6 +3,7 @@ import { businessContextOf } from "@/lib/businessModel/businessContext";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { buildActionContext } from "@/lib/execution/genesisAutonomy";
 import { formatMoneyApprox } from "@/lib/money";
 import { getInventorySnapshot } from "@/lib/dashboard/inventory";
 import { computeInsights, type Insight } from "./insights";
@@ -829,18 +830,32 @@ export async function runCognitiveReview(params: {
     // the model's own restatement of what it was shown. Fetched fresh here
     // (not reused from businessProfile's own earlier snapshot) since that
     // snapshot could be stale by the time this loop runs.
-    const currentRecord =
-      recordId && entityType
-        ? await prisma.businessRecord.findFirst({
-            where: { id: recordId, storeId, entityType },
-            select: { id: true, entityType: true, data: true },
-          })
-        : null;
-    const previousValues = await definition.getCurrentValues({
+    // ============ THE WHOLE CONTEXT, NOT THREE FIELDS OF IT =========
+    //
+    // This built its own context literal carrying { storeId, blueprint,
+    // businessRecord } — so any getCurrentValues reading storeIdentity,
+    // theme, brand or product froze a DEFAULT here instead of the real
+    // current value. Seven of the twenty-three registered actions do, and
+    // previousValues is executable input: revertApprovalRequest parses it
+    // back through the action's own schema and runs it. Four pending
+    // update_store_identity proposals in production carry three empty
+    // strings for that reason, and two EXECUTED update_brand_logo rows
+    // carry { imageUrl: "" } — reverting one blanks a real logo.
+    //
+    // buildActionContext is now the single builder every capturing path
+    // uses, so a field an action can read is a field it populates. It
+    // fetches the record itself, which is why the separate lookup this
+    // replaced is gone rather than kept alongside.
+    const context = await buildActionContext(
       storeId,
-      blueprint,
-      businessRecord: currentRecord,
-    });
+      recordId && entityType ? { id: recordId, entityType } : null,
+      // Product-scoped actions name their product in the proposed input.
+      typeof (parsedInput.data as { productId?: unknown } | null)?.productId === "string"
+        ? (parsedInput.data as { productId: string }).productId
+        : null
+    );
+    const currentRecord = context.businessRecord ?? null;
+    const previousValues = await definition.getCurrentValues(context);
 
     // Progressive storefront improvement (2026-08-12) — the frequency
     // governor and suggestion memory. This is J4's own initiative, so it is

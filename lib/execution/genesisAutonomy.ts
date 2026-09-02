@@ -36,19 +36,65 @@ async function getActiveDelegatedAuthority(storeId: string, actionType: string) 
 // already gets populated for update_product_image elsewhere in this
 // codebase — just resolved here instead, since this is the one place that
 // builds context for the autonomous-execution path specifically.
-async function buildActionContext(
+/**
+ * EXPORTED 2026-09-02, and it now reads the brand mark and the product too.
+ *
+ * ============ WHY THIS STOPPED BEING PRIVATE =========================
+ *
+ * previousValues is not a note about the past — it is executable input.
+ * revertApprovalRequest parses it straight back through the action's own
+ * inputSchema and executes it, and the approval-drift check added the same
+ * day compares against it. Both are only as truthful as the context that
+ * captured it.
+ *
+ * They were not all capturing the same context. cognitiveLayer.ts — the
+ * recommendation path that produced most of the pending proposals — passed
+ * { storeId, blueprint, businessRecord } and nothing else, so any
+ * getCurrentValues reading storeIdentity, theme, brand or product froze a
+ * DEFAULT rather than the real current value. Probed rather than read:
+ * seven of twenty-three registered actions do exactly that, including
+ * delete_product and update_theme.
+ *
+ * The consequence is live and it is not subtle. Two EXECUTED
+ * update_brand_logo approvals in production hold previousValues
+ * { imageUrl: "" }, and update_brand_logo's inputSchema accepts an empty
+ * string — so reverting either one BLANKS that business's logo instead of
+ * restoring the one it replaced. Same shape for update_store_identity,
+ * whose schema accepts three empty strings and would erase a real name,
+ * tagline and description.
+ *
+ * So there is one context builder now and every path that freezes
+ * previousValues uses it. A field an action can read is a field this must
+ * populate; that is the whole invariant, and scripts/verify-action-context.ts
+ * asserts it against the registry rather than against this comment.
+ */
+export async function buildActionContext(
   storeId: string,
-  record?: { id: string; entityType: string } | null
+  record?: { id: string; entityType: string } | null,
+  // Product-scoped actions name their product in the INPUT, so the caller
+  // that has the input passes it. Null is the ordinary case and leaves
+  // `product` null, exactly as before.
+  productId?: string | null
 ): Promise<GenesisActionContext> {
-  const [store, businessRecord] = await Promise.all([
+  const [store, businessRecord, product] = await Promise.all([
     prisma.store.findUniqueOrThrow({
       where: { id: storeId },
-      select: { name: true, tagline: true, description: true, theme: true, blueprint: true },
+      select: { name: true, tagline: true, description: true, theme: true, blueprint: true, logoUrl: true },
     }),
     record
       ? prisma.businessRecord.findFirst({
           where: { id: record.id, storeId, entityType: record.entityType },
           select: { id: true, entityType: true, data: true },
+        })
+      : Promise.resolve(null),
+    // STORE-SCOPED, like every other read here. A productId from an input
+    // is caller-supplied, so it is matched against this store rather than
+    // trusted — a mismatched pair finds nothing and leaves `product` null,
+    // which is the same as not asking.
+    productId
+      ? prisma.product.findFirst({
+          where: { id: productId, storeId },
+          select: { id: true, name: true, imageUrl: true, description: true },
         })
       : Promise.resolve(null),
   ]);
@@ -64,6 +110,10 @@ async function buildActionContext(
     blueprint: store.blueprint as BlueprintContextSubset | null,
     theme: store.theme as Theme | null,
     storeIdentity: { name: store.name, tagline: store.tagline, description: store.description },
+    // The mark, separate from the written identity — and the field whose
+    // absence is already blanking two production logos on revert.
+    brand: { logoUrl: store.logoUrl },
+    product,
     businessRecord: businessRecord
       ? { id: businessRecord.id, entityType: businessRecord.entityType, data: businessRecord.data }
       : null,

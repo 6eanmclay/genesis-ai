@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FIELD_LABELS } from "@/lib/execution/fieldLabels";
+import { FIELD_LABELS, formatDiffValue, HIDDEN_DIFF_KEYS } from "@/lib/execution/fieldLabels";
 import { ImageLightbox } from "@/app/dashboard/ImageLightbox";
 
 // Meeting with J4 M2 — extracted from ApprovalRequestsPanel.tsx so any
@@ -29,19 +29,7 @@ import { ImageLightbox } from "@/app/dashboard/ImageLightbox";
 // here fails silently and visibly at the same time. "productId" was the only
 // one hidden, and it was hidden for exactly this reason — the rest are the same
 // category, found by asserting the property rather than by noticing a card.
-export const HIDDEN_DIFF_KEYS = new Set([
-  "productId",
-  "designId",
-  "goalRecordId",
-  "challengeRecordId",
-  "recordId",
-  "entityType",
-  "topicKey",
-  "aiUsageEventId",
-  "sourceKey",
-  "externalProductId",
-  "externalVariantId",
-]);
+export { HIDDEN_DIFF_KEYS };
 
 // A plain string array (e.g. coreValues, brandKeywords) formatted for one
 // diff row — Array.prototype.toString() joins with a bare comma, no space,
@@ -50,15 +38,12 @@ export const HIDDEN_DIFF_KEYS = new Set([
 // rather than a raw integer — a generic, name-pattern-based rule, not a
 // per-action special case. Everything else falls through to String()
 // unchanged.
-export function formatDiffValue(key: string, value: unknown): string {
-  if (key.endsWith("InCents") && typeof value === "number") {
-    return `$${(value / 100).toFixed(2)}`;
-  }
-  if (Array.isArray(value)) {
-    return value.length > 0 ? value.join(", ") : "(empty)";
-  }
-  return String(value ?? "(empty)");
-}
+// MOVED TO fieldLabels.ts (2026-09-02), re-exported here so every existing
+// caller is untouched. The approval-drift refusal has to describe a changed
+// value, and it must use the same words this card does — but this file is
+// "use client" and fieldLabels.ts is the deliberately dependency-free module
+// that already exists for exactly that sharing.
+export { formatDiffValue };
 
 // The generic per-key diff rows — including the one real special case
 // (side-by-side image preview for imageUrl) — shared by every current and

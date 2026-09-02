@@ -78,3 +78,44 @@ export const FIELD_LABELS: Record<string, string> = {
   generationPrompt: "Image Prompt",
   answer: "Answer",
 };
+
+// MOVED HERE FROM ActionDiff.tsx (2026-09-02) so the approval-drift check can
+// describe a changed value in the same words the approval card already uses.
+// ActionDiff.tsx is "use client"; this module is deliberately dependency-free
+// and is already the shared home for exactly this kind of presentation rule.
+// One formatter, so a refusal and the card it refers to cannot word the same
+// value differently.
+export function formatDiffValue(key: string, value: unknown): string {
+  if (key.endsWith("InCents") && typeof value === "number") {
+    return `$${(value / 100).toFixed(2)}`;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.join(", ") : "(empty)";
+  }
+  // An empty STRING is an absent value too, exactly as the empty array above
+  // already is. Without this a refusal reads: Name was "" and is now "Meridian"
+  // — and the approval card renders a blank struck-through line. Found by
+  // verify-approval-drift-db.ts asserting the sentence an owner actually reads.
+  if (value === "") return "(empty)";
+  return String(value ?? "(empty)");
+}
+
+// MOVED HERE FROM ActionDiff.tsx (2026-09-02), same reason as
+// formatDiffValue above: the approval-drift check has to skip exactly the
+// keys the approval card hides, and a second copy of this list is the
+// mirrored-registry problem — the copy that drifted would be the one
+// nobody read. ActionDiff.tsx re-exports it, so every existing caller and
+// scripts/verify-field-labels.ts are untouched.
+export const HIDDEN_DIFF_KEYS = new Set([
+  "productId",
+  "designId",
+  "goalRecordId",
+  "challengeRecordId",
+  "recordId",
+  "entityType",
+  "topicKey",
+  "aiUsageEventId",
+  "sourceKey",
+  "externalProductId",
+  "externalVariantId",
+]);

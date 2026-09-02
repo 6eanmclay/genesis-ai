@@ -66,6 +66,8 @@ import { checkGrowthPointBalanceForActions } from "@/lib/growthPoints/ledger";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { GENESIS_ACTIONS, type GenesisActionContext, type GenesisActionType } from "@/lib/execution/genesisActions";
+import { buildActionContext } from "@/lib/execution/genesisAutonomy";
+import { driftFor, explainDrift, type DriftedField } from "@/lib/execution/approvalDrift";
 import {
   supersedePendingApproval,
   resolveMostRecentPendingApprovalBatch,
@@ -4596,6 +4598,35 @@ export async function performApproveGenesisActionGroup(
       continue;
     }
 
+    // ============ THE SAME REFUSAL, ON THE PATH THAT SKIPS IT ========
+    //
+    // This loop calls execute() itself rather than delegating to
+    // performApproveGenesisAction, so the drift check added there does not
+    // reach it — and this is the ONE-CLICK path. 'Approve all' is exactly
+    // where a stale proposal would be applied without anybody reading it,
+    // and the chat approval ('yes, do those') comes through here too.
+    //
+    // A drifted member is reported as a failure of that member and the rest
+    // of the group still runs. Refusing the whole batch because one card
+    // went stale would punish the good ones, and this function's own
+    // per-member succeeded/failed shape already exists to say exactly this.
+    const groupDrift = await driftFor(approval, storeId);
+    if (groupDrift.length > 0) {
+      await logApprovalDecisionEvent({
+        userId,
+        storeId,
+        approval,
+        name: "approval.refused_stale",
+        outcome: "failure",
+      });
+      // NOTHING IS WRITTEN TO THE ROW. Unlike the FAILED branch below,
+      // which records an executionId, a refusal did not attempt anything —
+      // so there is no execution to point at and the proposal stays exactly
+      // as decidable as it was.
+      failed.push({ summary: approval.summary, reason: explainDrift(groupDrift) });
+      continue;
+    }
+
     const result = await execute(
       definition.executable,
       // Dynamic dispatch by actionType, same as approveGenesisAction below.
@@ -4754,6 +4785,16 @@ export async function performApprovePendingChanges(storeId: string): Promise<Gro
 export type GenesisActionDecisionResult =
   | { outcome: "not_found" }
   | { outcome: "execution_failed"; message: string }
+  /**
+   * The business changed after this was proposed, so it was NOT applied.
+   *
+   * Distinct from execution_failed on purpose. Nothing was attempted and
+   * nothing went wrong — a refusal is the mechanism working, and telling
+   * an owner their change 'failed' would send them looking for a fault
+   * that does not exist. The proposal stays PENDING_APPROVAL and every
+   * value it would have written is untouched.
+   */
+  | { outcome: "stale"; message: string; changed: DriftedField[] }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   | { outcome: "executed"; message: string; metadata: any };
 
@@ -4827,6 +4868,34 @@ export async function performApproveGenesisAction(approvalRequestId: string): Pr
   // No transaction is held across the execution: execute() calls providers, and
   // a row lock for the length of a network call would be a worse problem than
   // the one being fixed.
+  // ============ IS THIS STILL A PLAN FOR THE BUSINESS IT DESCRIBES? ===
+  //
+  // BEFORE THE CLAIM, deliberately. A refusal must leave the proposal
+  // exactly as it found it — still PENDING_APPROVAL, still decidable — so
+  // it cannot claim the row and then hand it back. Checking after the claim
+  // would also mean a refused proposal briefly reads as EXECUTING to
+  // everything else looking at it.
+  //
+  // The context is the SAME BUILDER that froze previousValues in the first
+  // place (buildActionContext), which is what makes the comparison mean
+  // anything: a thinner context here would report every field it could not
+  // see as changed, and refuse proposals that were perfectly current.
+  const drifted = await driftFor(approval, storeId);
+  if (drifted.length > 0) {
+    // Recorded, because a refusal an owner never mentions is a proposal that
+    // silently stopped working. Same log every other approval decision
+    // writes, so this is visible in the security/decision history rather
+    // than only in the moment.
+    await logApprovalDecisionEvent({
+      userId,
+      storeId,
+      approval,
+      name: "approval.refused_stale",
+      outcome: "failure",
+    });
+    return { outcome: "stale", message: explainDrift(drifted), changed: drifted };
+  }
+
   const attemptExecutionId = randomUUID();
   const claim = await prisma.approvalRequest.updateMany({
     where: { id: approval.id, storeId, status: "PENDING_APPROVAL" },
@@ -4942,7 +5011,26 @@ export async function approveGenesisAction(approvalRequestId: string, slug?: str
   // scoped and is untouched. Only the destination was wrong: approving a card
   // from Business A's page landed the owner on the legacy dashboard, which
   // shows whichever business the account last made active.
-  await performApproveGenesisAction(approvalRequestId);
+  const result = await performApproveGenesisAction(approvalRequestId);
+
+  // ============ A REFUSAL THE OWNER NEVER SEES IS A BROKEN BUTTON ====
+  //
+  // This discarded the result and redirected, which was fine while every
+  // outcome either changed the store or threw. A drifted proposal does
+  // neither: the card would simply still be sitting there after a click,
+  // with nothing anywhere saying why, and the owner would click it again.
+  //
+  // J4 says so in the conversation, which is where J4 already explains
+  // everything else it did or declined to do — the group approval path has
+  // written its result there since it was built. Not a toast and not a new
+  // surface: one place the owner reads what happened.
+  if (result.outcome === "stale") {
+    const { storeId } = await requireBusinessOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
+    await prisma.storeMessage.create({
+      data: { storeId, role: "assistant", content: result.message },
+    });
+  }
+
   redirect(slug ? `${businessBasePath(slug)}` : "/dashboard");
 }
 
