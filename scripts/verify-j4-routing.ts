@@ -55,6 +55,11 @@ type Expectation = string | null;
 function digest(over: Partial<UnderstandingDigest> = {}): UnderstandingDigest {
   return {
     name: "Copper & Coil",
+    // EMPTY BY DEFAULT: a store running no sale is the normal case, and a
+    // routing case that wants one says so. Added 2026-09-03 with the digest
+    // field, and the compiler is what required it here rather than letting a
+    // fixture drift from the type it claims to be.
+    activePromotions: [],
     tagline: "Hand-wound rings",
     categories: ["Handmade goods"],
     // NULL BY DEFAULT, deliberately. Every routing case in this file was

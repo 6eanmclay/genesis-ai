@@ -124,6 +124,29 @@ export interface ConnectedSummaries {
   appointment: Awaited<ReturnType<typeof getAppointmentSummary>>;
 }
 
+/**
+ * A discount the owner is running right now.
+ *
+ * `id` is carried so a later tool can name WHICH promotion to change without
+ * asking the owner for one — and `name` is what may be shown. A cuid has been
+ * put in front of a customer in this codebase before; these two fields are
+ * deliberately not interchangeable.
+ */
+export interface ActivePromotion {
+  id: string;
+  name: string;
+  kind: "SALE" | "CODE";
+  /** The code a customer types, for a CODE. Null for a storewide SALE. */
+  code: string | null;
+  percentOff: number | null;
+  amountOffInCents: number | null;
+  scope: string;
+  startsAt: Date | null;
+  endsAt: Date | null;
+  /** How many products it applies to, when its scope is specific ones. */
+  productCount: number;
+}
+
 export interface BusinessUnderstanding {
   profile: BusinessProfile;
   /**
@@ -171,6 +194,21 @@ export interface BusinessUnderstanding {
    * added.
    */
   throughEventSequence: string | null;
+  /**
+   * THE DISCOUNTS CURRENTLY RUNNING (2026-09-03).
+   *
+   * Added because J4 could CREATE a promotion and then never see it again:
+   * `Promotion` was not referenced in this file at all, and the Business Map's
+   * "On sale in your storefront" is a PRODUCT's active flag, not a discount.
+   * So J4 could not answer "what sales am I running?", and could not stop a
+   * sale because it could not name one. An owner asking either of those is
+   * asking about money.
+   *
+   * ACTIVE ONLY, and bounded. Every promotion ever run is history, and history
+   * belongs to the intelligence engine reasoning over BusinessEvent, not to a
+   * snapshot that every turn pays for.
+   */
+  activePromotions: ActivePromotion[];
   /** What is standing in the way of what. See BlockedGoal. */
   blockedGoals: BlockedGoal[];
   beliefs: Awaited<ReturnType<typeof getBeliefs>>;
@@ -269,6 +307,8 @@ export async function getBusinessUnderstanding(
     recentRecordsSection,
     // The high-water mark this assembly reflects. One indexed read.
     latestEvent,
+    // Appended LAST to match its query. See the note beside it.
+    activePromotionRows,
   ] = await Promise.all([
     getBusinessProfile(storeId),
     getBeliefs(storeId, { viewerUserId: opts?.viewerUserId }),
@@ -320,6 +360,27 @@ export async function getBusinessUnderstanding(
       orderBy: { sequence: "desc" },
       select: { sequence: true },
     }),
+    // APPENDED LAST, with its binding appended last too. This file's own
+    // comment above records what happens when a binding is added at the end
+    // while its query goes in the middle: it typechecks far enough to be
+    // confusing. One indexed read on (storeId, active).
+    prisma.promotion.findMany({
+      where: { storeId, active: true },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: {
+        id: true,
+        name: true,
+        kind: true,
+        code: true,
+        percentOff: true,
+        amountOffInCents: true,
+        scope: true,
+        startsAt: true,
+        endsAt: true,
+        _count: { select: { products: true } },
+      },
+    }),
   ]);
 
   // Resolved against the goals and challenges ALREADY fetched, so naming what
@@ -341,6 +402,18 @@ export async function getBusinessUnderstanding(
   return {
     profile,
     blockedGoals,
+    activePromotions: activePromotionRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      code: row.code,
+      percentOff: row.percentOff,
+      amountOffInCents: row.amountOffInCents,
+      scope: row.scope,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      productCount: row._count.products,
+    })),
     connectedSummaries: {
       invoice: invoiceSummary,
       campaign: campaignSummary,

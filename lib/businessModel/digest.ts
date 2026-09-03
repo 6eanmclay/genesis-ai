@@ -50,6 +50,16 @@ function truncate(text: string, max = MAX_CLAIM_CHARS): string {
 
 export interface UnderstandingDigest {
   name: string;
+  /**
+   * The discounts running right now, described the way an owner says them.
+   *
+   * ADDED 2026-09-03. J4 could create a promotion and never see it again, so
+   * it could not answer "what sales am I running?" and could not stop a sale
+   * because it could not NAME one. Names, not ids: the id stays in the full
+   * understanding for a handler to resolve against, exactly as product names
+   * already work for request_sale.
+   */
+  activePromotions: string[];
   tagline: string | null;
   /** What the business is, in its own classification's words. */
   categories: string[];
@@ -119,6 +129,21 @@ export function digestOf(
 
   return {
     name: profile.identity.name,
+    activePromotions: understanding.activePromotions.slice(0, MAX_ITEMS).map((promo) => {
+      const discount =
+        promo.percentOff !== null
+          ? `${promo.percentOff}% off`
+          : promo.amountOffInCents !== null
+            ? `${(promo.amountOffInCents / 100).toFixed(2)} off`
+            : "discount unset";
+      const reach = promo.scope === "ALL_PRODUCTS"
+        ? "all products"
+        : `${promo.productCount} product${promo.productCount === 1 ? "" : "s"}`;
+      const entry = promo.kind === "CODE" && promo.code
+        ? `${promo.name} (code ${promo.code}, ${discount}, ${reach})`
+        : `${promo.name} (${discount}, ${reach})`;
+      return truncate(entry, 80);
+    }),
     offering: profile.identity.offering ? truncate(profile.identity.offering, 120) : null,
     tagline: profile.identity.tagline ? truncate(profile.identity.tagline, 80) : null,
     categories: profile.classification.businessCategories.slice(0, MAX_ITEMS).map((c) => c.label),
@@ -192,6 +217,15 @@ export function renderDigest(digest: UnderstandingDigest): string {
   } else {
     // Worth saying, because it changes what is worth proposing.
     lines.push("Sells: nothing active yet");
+  }
+
+  // Only when there are some. A store running no sale is the normal case, and
+  // "no promotions" in every prompt is a line nobody acts on — where "Sells:
+  // nothing active yet" above genuinely changes what is worth proposing.
+  // look_up_business_data answers from the full understanding, so the empty
+  // case is still answerable when the owner actually asks.
+  if (digest.activePromotions.length) {
+    lines.push(`Running now: ${digest.activePromotions.join("; ")}`);
   }
 
   // THE LINE THAT REPLACES A PROMPT WORKAROUND. generate_brand_logo's
