@@ -4,7 +4,11 @@ import {
   waitForOwnServer,
   assertServerServesRoute,
   assertServerUsesTestDatabase,
+  SERVER_LOG_PATH,
 } from "@/scripts/lib/testServer";
+import { mkdtempSync, readFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { startRealPostgres } from "@/scripts/lib/realPostgres";
 import { reserveFreePort } from "@/scripts/lib/freePort";
 import { createServer } from "http";
@@ -69,7 +73,14 @@ async function refusal(run: () => Promise<unknown>): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  // Section 5 needs this set BEFORE the server is closed, because that is
+  // when the log is written. Set before it is started, so ordering cannot
+  // quietly make the assertion vacuous.
+  const serverLog = join(mkdtempSync(join(tmpdir(), "genesis-lane-integrity-")), "server.log");
+  process.env[SERVER_LOG_PATH] = serverLog;
+
   const server = await startTestServer();
+  let closed = false;
   try {
     console.log("=== 1. a healthy server, serving the expected route, is accepted ===");
     //
@@ -162,8 +173,33 @@ async function main(): Promise<void> {
     } finally {
       await otherDb.close();
     }
-  } finally {
+    console.log("=== 5. a failing suite can say what the server did ===");
+    //
+    // Gap 27 was not unresolvable because it was rare. It was unresolvable
+    // because the server's output was only ever attached to a STARTUP error,
+    // so a suite that failed an ASSERTION discarded the one artefact that
+    // says which branch the handler took. Closing here rather than in the
+    // finally is what makes the written log observable.
     await server.close();
+    closed = true;
+
+    let log = "";
+    try {
+      log = readFileSync(serverLog, "utf8");
+    } catch {
+      log = "";
+    }
+    check("the server's own log was captured", log.length > 0, true);
+    // Its real content, not merely a file: the bound-address banner is
+    // something only the server itself prints.
+    check("and it holds what the server printed", /Local:|Next\.js/.test(log), true);
+    check(
+      "and it is labelled with the port it came from",
+      new RegExp(`===== server on port \\d+ =====`).test(log),
+      true,
+    );
+  } finally {
+    if (!closed) await server.close();
   }
 
   console.log("");

@@ -1,6 +1,9 @@
 import { execFile } from "child_process";
 import { readdirSync } from "fs";
-import { startTestServer, SHARED_SERVER_URL, SHARED_SERVER_DB } from "./lib/testServer";
+import { startTestServer, SHARED_SERVER_URL, SHARED_SERVER_DB, SERVER_LOG_PATH } from "./lib/testServer";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { TEST_DATABASE_ENV } from "./lib/requireTestDatabase";
 import { httpLane, type HttpLane } from "./lib/suiteLanes";
 
@@ -86,6 +89,41 @@ interface Outcome {
   seconds: number;
 }
 
+
+// ============ A FAILED SUITE MUST SAY WHAT THE SERVER DID ========
+//
+// Gap 27: verify-order-webhook-live failed once with a 200 and no order.
+// The handler can reach that outcome two different ways - the store could
+// not be resolved, or the order write failed permanently - and they are told
+// apart by ONE line it logs server-side.
+//
+// That line existed on the failing run and was thrown away, because the
+// server's output was only ever included in a STARTUP error. So the single
+// artefact saying what the application actually did was discarded at exactly
+// the moment it was needed, and the failure did not recur in thirteen further
+// runs. Rare is survivable; undiagnosable is not.
+//
+// Printed ONLY on failure, and tail-limited, so a passing lane stays readable.
+const SERVER_LOG_LINES = 40;
+
+function printServerLog(logPath: string): void {
+  let text = "";
+  try {
+    text = readFileSync(logPath, "utf8").trim();
+  } catch {
+    // No log is not a second failure to report.
+    return;
+  }
+  if (!text) return;
+  const lines = text.split("\n");
+  const shown = Math.min(SERVER_LOG_LINES, lines.length);
+  console.log(
+    `        --- the server's own log (last ${shown} of ${lines.length} lines) ---`,
+  );
+  for (const line of lines.slice(-SERVER_LOG_LINES)) {
+    console.log(`        ${line}`);
+  }
+}
 function runSuite(suite: Suite, env: NodeJS.ProcessEnv, stream: boolean): Promise<Outcome> {
   const startedAt = Date.now();
   return new Promise((resolve) => {
@@ -161,12 +199,27 @@ async function main(): Promise<void> {
   }
 
   // ---- the ones that need their own --------------------------------------
-  for (const suite of solo) {
-    console.log(`\nRunning ${suite.file} on its own server (${suite.lane})...`);
-    const outcome = await runSuite(suite, { ...process.env }, suites.length === 1);
-    outcomes.push(outcome);
-    console.log(`${outcome.ok ? "PASS" : "FAIL"}  ${outcome.file}  (${outcome.seconds}s)`);
-    if (!outcome.ok) console.log(`        ${outcome.tail}`);
+  // Each suite gets its own log file, so a failure prints the log of the
+  // server THAT suite was talking to and nothing else.
+  const logDir = mkdtempSync(join(tmpdir(), "genesis-server-logs-"));
+  try {
+    for (const suite of solo) {
+      console.log(`\nRunning ${suite.file} on its own server (${suite.lane})...`);
+      const logPath = join(logDir, `${suite.file}.log`);
+      const outcome = await runSuite(
+        suite,
+        { ...process.env, [SERVER_LOG_PATH]: logPath },
+        suites.length === 1,
+      );
+      outcomes.push(outcome);
+      console.log(`${outcome.ok ? "PASS" : "FAIL"}  ${outcome.file}  (${outcome.seconds}s)`);
+      if (!outcome.ok) {
+        console.log(`        ${outcome.tail}`);
+        printServerLog(logPath);
+      }
+    }
+  } finally {
+    rmSync(logDir, { recursive: true, force: true });
   }
 
   const passed = outcomes.filter((o) => o.ok).length;

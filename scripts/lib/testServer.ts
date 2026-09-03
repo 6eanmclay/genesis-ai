@@ -262,6 +262,23 @@ export async function assertServerUsesTestDatabase(baseUrl: string, db: RealPost
 export const SHARED_SERVER_URL = "GENESIS_HARNESS_BASE_URL";
 export const SHARED_SERVER_DB = "GENESIS_HARNESS_DATABASE_URL";
 
+/**
+ * Where a suite's server should leave its own log (gap 27).
+ *
+ * A suite that fails AFTER the server started used to discard the server's
+ * output entirely - it was only ever included in a startup error. So the one
+ * artefact that says what the application actually did was thrown away at
+ * precisely the moment it was needed.
+ *
+ * That is what makes gap 27 unresolvable rather than merely rare:
+ * `verify-order-webhook-live` saw a 200 with no order, which has exactly two
+ * causes in the handler, and they are told apart by ONE server-side log line.
+ *
+ * The runner sets this per suite and prints the log when the suite fails.
+ * Unset, nothing is written and nothing changes.
+ */
+export const SERVER_LOG_PATH = "GENESIS_SERVER_LOG";
+
 export async function startTestServer(options: { timeoutMs?: number } = {}): Promise<TestServer> {
   // ============ REUSE, WHEN A RUNNER PROVIDED ONE ================
   //
@@ -343,6 +360,21 @@ async function startOwnServer(options: { timeoutMs?: number } = {}): Promise<Tes
       child.kill("SIGTERM");
     }
     await db.close();
+    // Appended, not overwritten: a suite may start more than one server,
+    // and the earlier one's log is just as likely to hold the answer.
+    const logPath = process.env[SERVER_LOG_PATH];
+    if (logPath) {
+      try {
+        const { appendFileSync } = await import("fs");
+        appendFileSync(
+          logPath,
+          `\n===== server on port ${port} =====\n${output.join("")}`,
+        );
+      } catch {
+        // A diagnostic that cannot be written must not replace the failure
+        // it was meant to explain.
+      }
+    }
   };
 
   try {
