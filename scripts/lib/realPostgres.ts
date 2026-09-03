@@ -9,6 +9,7 @@ import { join } from "path";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { MARK_TEST_DATABASE_SQL } from "./requireTestDatabase";
+import { reserveFreePort, assertReachable } from "./freePort";
 
 // A REAL Postgres, for the tests PGlite cannot serve (2026-08-20).
 //
@@ -42,13 +43,9 @@ export interface RealPostgres {
   close(): Promise<void>;
 }
 
-function pickPort(): number {
-  return 47000 + (process.pid % 9000);
-}
-
 export async function startRealPostgres(): Promise<RealPostgres> {
   const dataDir = mkdtempSync(join(tmpdir(), "genesis-pg-"));
-  const port = pickPort();
+  const port = await reserveFreePort();
 
   const pg = new EmbeddedPostgres({
     databaseDir: dataDir,
@@ -69,6 +66,10 @@ export async function startRealPostgres(): Promise<RealPostgres> {
 
   await pg.initialise();
   await pg.start();
+  // 'ready to accept connections' is the server's opinion, not the client's.
+  // See freePort.ts: a Postgres that bound only ::1 says exactly that and is
+  // unreachable at 127.0.0.1, which surfaced much later as Prisma P1001.
+  await assertReachable("127.0.0.1", port, "The harness Postgres");
   await pg.createDatabase("genesis_test");
 
   const url = `postgresql://postgres:postgres@127.0.0.1:${port}/genesis_test`;
