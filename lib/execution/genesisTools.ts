@@ -358,23 +358,57 @@ export type StoreChatUnifiedToolName = (typeof STORE_CHAT_UNIFIED_TOOL_NAMES)[nu
  * products are which — it receives the list every turn — so what was missing
  * was never comprehension, only vocabulary.
  */
-export const RequestSaleInputSchema = z.object({
-  /** What the merchant will see it called. For a code, name it for them. */
-  name: z.string().min(1),
-  kind: z.enum(["SALE", "CODE"]),
-  /** Required for a CODE. Ignored for a SALE. */
-  code: z.string().nullable().optional(),
-  discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]),
-  percentOff: z.number().int().min(1).max(100).nullable().optional(),
-  amountOffInCents: z.number().int().min(1).nullable().optional(),
-  /** "all", or the exact product names the merchant named. */
-  include: z.enum(["all", "named"]),
-  includeNames: z.array(z.string()).nullable().optional(),
-  /** Products to leave out of whatever `include` selected. */
-  excludeNames: z.array(z.string()).nullable().optional(),
-  startsAt: z.string().nullable().optional(),
-  endsAt: z.string().nullable().optional(),
-});
+/**
+ * STARTING a sale and ENDING one are different requests (2026-09-03).
+ *
+ * This was one flat create shape, and the tool's own description promised
+ * "take the pyramid off sale" — a request the schema could not express. A
+ * model following that description faithfully emitted a CREATE for an END,
+ * so an owner asking to stop a sale was offered a new one, in the `money`
+ * category. Absent is safe; wrong is not.
+ *
+ * A DISCRIMINATED UNION rather than an optional flag, because a flag that
+ * defaults silently is the same bug again: an end request that forgets the
+ * flag becomes a creation. Here the model must say which it means, and the
+ * handler refuses anything it did not say.
+ *
+ * MODIFYING an existing sale (changing its discount, dates or products) is
+ * deliberately NOT here. `update_promotion` supports it and this tool does
+ * not, so the description says so and tells the model to say so too —
+ * rather than reaching for the shape it does have.
+ */
+export const RequestSaleInputSchema = z.discriminatedUnion("intent", [
+  z.object({
+    intent: z.literal("create"),
+    /** What the merchant will see it called. For a code, name it for them. */
+    name: z.string().min(1),
+    kind: z.enum(["SALE", "CODE"]),
+    /** Required for a CODE. Ignored for a SALE. */
+    code: z.string().nullable().optional(),
+    discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]),
+    percentOff: z.number().int().min(1).max(100).nullable().optional(),
+    amountOffInCents: z.number().int().min(1).nullable().optional(),
+    /** "all", or the exact product names the merchant named. */
+    include: z.enum(["all", "named"]),
+    includeNames: z.array(z.string()).nullable().optional(),
+    /** Products to leave out of whatever `include` selected. */
+    excludeNames: z.array(z.string()).nullable().optional(),
+    startsAt: z.string().nullable().optional(),
+    endsAt: z.string().nullable().optional(),
+  }),
+  z.object({
+    intent: z.literal("end"),
+    /**
+     * The promotion's own name, as the owner says it and as it appears in
+     * the "Running now:" line of the business context.
+     *
+     * A NAME, never an id. The id exists in the understanding for the
+     * handler to resolve this against; putting one in front of a model is
+     * how a cuid ends up quoted back to an owner.
+     */
+    promotionName: z.string().min(1),
+  }),
+]);
 
 export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
   return [
@@ -423,7 +457,11 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
     {
       name: "request_sale",
       description:
-        "Call this when the merchant asks you to put products on sale, discount them, change what they cost as a promotion, or create a discount code — 'put everything 26% off', 'put all the tensor rings on sale except the t-shirt, hoodie and mug', 'make me a code for 10% off', 'take the pyramid off sale'. This PROPOSES the promotion for the merchant's own review and approval; it never changes a price immediately. Resolve the scope yourself from the product list you were given: include 'all' when they mean every product, or 'named' with includeNames set to the exact matching names — and put anything they explicitly want left OUT into excludeNames, which is how 'everything except X and Y' is expressed. Use the real product names as they appear in that list, not the merchant's shorthand. Never tell the merchant to go and create a sale themselves; you can prepare the real thing for them to approve.",
+        "Call this to START a sale or discount code, or to END one that is already running. Set intent to whichever the merchant is actually asking for. " +
+        "intent 'create' — 'put everything 26% off', 'put all the tensor rings on sale except the t-shirt, hoodie and mug', 'make me a code for 10% off'. Resolve the scope yourself from the product list you were given: include 'all' when they mean every product, or 'named' with includeNames set to the exact matching names — and put anything they explicitly want left OUT into excludeNames, which is how 'everything except X and Y' is expressed. Use the real product names as they appear in that list, not the merchant's shorthand. " +
+        "intent 'end' — 'take the pyramid off sale', 'stop the spring sale', 'end that discount code'. Set promotionName to the name of the promotion as it appears in the 'Running now:' line of the business context above. If nothing is running, or the merchant names something that is not there, say so — do not create a new promotion instead. " +
+        "You CANNOT change an existing promotion's discount, dates or products with this tool. If that is what they are asking for, tell them plainly that you can start one or end one, and never propose a NEW promotion as a way of changing an old one — that leaves both running. " +
+        "Either way this PROPOSES the change for the merchant's own review and approval; it never changes a price immediately. Never tell the merchant to go and do it themselves; you can prepare the real thing for them to approve.",
       input_schema: z.toJSONSchema(RequestSaleInputSchema) as Anthropic.Tool.InputSchema,
     },
     {

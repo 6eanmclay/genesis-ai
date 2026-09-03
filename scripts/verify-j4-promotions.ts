@@ -87,6 +87,7 @@ async function main() {
 
   const before = await prisma.promotion.count({ where: { storeId: store.id } });
   const result = await runTool({
+    intent: "create",
     name: "Back to School Sale!",
     kind: "SALE",
     discountType: "PERCENTAGE",
@@ -169,6 +170,7 @@ async function main() {
 
   const beforeCount = (await pending()).length;
   const missing = await runTool({
+    intent: "create",
     name: "Sale", kind: "SALE", discountType: "PERCENTAGE", percentOff: 20,
     include: "all",
     excludeNames: ["Copper Kettle"],
@@ -183,6 +185,7 @@ async function main() {
 
   // AMBIGUITY IS A QUESTION TOO, not a guess at the closest match.
   const ambiguous = await runTool({
+    intent: "create",
     name: "Sale", kind: "SALE", discountType: "PERCENTAGE", percentOff: 20,
     include: "named", includeNames: ["Tensor Ring"],
   });
@@ -192,6 +195,7 @@ async function main() {
 
   // A discount with no amount is refused before it reaches a constraint.
   const noAmount = await runTool({
+    intent: "create",
     name: "Sale", kind: "SALE", discountType: "PERCENTAGE", include: "all",
   });
   eq("a discount with no amount proposes nothing", (await pending()).length, beforeCount);
@@ -202,6 +206,7 @@ async function main() {
   // ========================================================================
 
   const everything = await runTool({
+    intent: "create",
     name: "Store-wide", kind: "SALE", discountType: "PERCENTAGE", percentOff: 10, include: "all",
   });
   const storewide = (await pending())[0];
@@ -226,6 +231,143 @@ async function main() {
       GENESIS_ACTIONS.update_promotion.maxAuthorityTier === "always_ask",
     "the category ceiling enforces this by construction, not by this entry's own choice");
 
+  // ================= ENDING A SALE (P0b) ==========================
+  //
+  // update_promotion has existed in full the whole time and NOTHING could
+  // produce it: requestSale hardcoded create_promotion, and request_sale's
+  // description advertised 'take the pyramid off sale' against a schema with
+  // no promotionId and no active. So an owner asking to STOP a sale was
+  // offered a NEW one, in the money category.
+
+  console.log("");
+  console.log("--- ending a sale ---");
+
+  const runningSale = await prisma.promotion.create({
+    data: {
+      storeId: store.id,
+      name: "Spring Sale",
+      kind: "SALE",
+      discountType: "PERCENTAGE",
+      percentOff: 20,
+      scope: "ALL_PRODUCTS",
+      active: true,
+    },
+  });
+
+  // 4. AN END REQUEST ACTUALLY REACHES update_promotion.
+  const endBefore = (await pending()).length;
+  const ended = await runTool({ intent: "end", promotionName: "Spring Sale" });
+  eq("ending a sale is proposed, not performed", ended.handled && ended.executionStatus, "PENDING");
+  const afterEnd = await pending();
+  eq("one proposal was written", afterEnd.length, endBefore + 1);
+  const endProposal = afterEnd.find((a) => a.summary === `End ${runningSale.name}`);
+  assert("it is an update_promotion, not a create", endProposal?.actionType === "update_promotion",
+    `got ${endProposal?.actionType ?? "nothing"}`);
+  const endInput = (endProposal?.input ?? {}) as { promotionId?: string; active?: boolean };
+  eq("aimed at the promotion that is running", endInput.promotionId, runningSale.id);
+  eq("and switches it off", endInput.active, false);
+
+  // 5. APPROVAL IS STILL REQUIRED, by the existing money ceiling.
+  eq("ending a sale still needs approval", endProposal?.authorizationTier, "always_ask");
+  eq("because the action is money", GENESIS_ACTIONS.update_promotion.category, "money");
+  // Nothing executed: the promotion is still running until the owner says so.
+  const stillRunning = await prisma.promotion.findFirst({
+    where: { id: runningSale.id, storeId: store.id },
+    select: { active: true },
+  });
+  eq("and no price moved without a decision", stillRunning?.active, true);
+
+  // 2. AN AMBIGUOUS OR NONEXISTENT PROMOTION IS REFUSED.
+  const nonexistentBefore = (await pending()).length;
+  const nonexistent = await runTool({ intent: "end", promotionName: "A Sale That Never Was" });
+  eq("a promotion that does not exist proposes nothing", (await pending()).length, nonexistentBefore);
+  eq("and says so", nonexistent.handled && nonexistent.kind, "sale_end_unresolved");
+
+  const twin = await prisma.promotion.create({
+    data: {
+      storeId: store.id, name: "Spring Sale", kind: "SALE", discountType: "PERCENTAGE",
+      percentOff: 30, scope: "ALL_PRODUCTS", active: true,
+    },
+  });
+  const ambiguousEnd = await runTool({ intent: "end", promotionName: "Spring Sale" });
+  eq("two promotions with one name are not guessed between", ambiguousEnd.handled && ambiguousEnd.kind, "sale_end_ambiguous");
+  eq("and nothing is proposed", (await pending()).length, nonexistentBefore);
+  await prisma.promotion.deleteMany({ where: { id: twin.id, storeId: store.id } });
+
+  // 1. ANOTHER STORE'S PROMOTION CANNOT BE ENDED FROM HERE.
+  const stranger = await prisma.user.create({ data: { email: `j4p-other-${uniq()}@test.local` } });
+  const otherStore = await prisma.store.create({
+    data: { userId: stranger.id, name: "Someone Else", slug: `j4p-other-${uniq()}`, published: true },
+  });
+  const theirSale = await prisma.promotion.create({
+    data: {
+      storeId: otherStore.id, name: "Their Private Sale", kind: "SALE", discountType: "PERCENTAGE",
+      percentOff: 90, scope: "ALL_PRODUCTS", active: true,
+    },
+  });
+  const crossBefore = (await pending()).length;
+  const cross = await runTool({ intent: "end", promotionName: "Their Private Sale" });
+  eq("another store's sale is not found from here", cross.handled && cross.kind, "sale_end_unresolved");
+  eq("and nothing is proposed against it", (await pending()).length, crossBefore);
+  const theirs = await prisma.promotion.findFirst({
+    where: { id: theirSale.id, storeId: otherStore.id },
+    select: { active: true },
+  });
+  eq("their sale is untouched", theirs?.active, true);
+
+  // 3. A CREATE REQUEST CANNOT BECOME AN END, AND AN UNSTATED INTENT IS REFUSED.
+  //
+  // The second half is the one that matters: defaulting an unstated intent to
+  // 'create' is exactly how 'stop the spring sale' produced another sale.
+  const unclearBefore = (await pending()).length;
+  const unclear = await runTool({
+    name: "Sale", kind: "SALE", discountType: "PERCENTAGE", percentOff: 15, include: "all",
+  });
+  eq("an unstated intent is refused, not assumed", unclear.handled && unclear.kind, "sale_request_intent_unclear");
+  eq("and proposes nothing at all", (await pending()).length, unclearBefore);
+
+  const createAgain = await runTool({
+    intent: "create", name: "A Real New Sale", kind: "SALE",
+    discountType: "PERCENTAGE", percentOff: 15, include: "all",
+  });
+  eq("a create request still creates", createAgain.handled && createAgain.kind, "sale_request");
+  const createdOne = (await pending()).find((a) => a.summary?.includes("15% off"));
+  eq("as a create_promotion, never an update", createdOne?.actionType, "create_promotion");
+
+  // 7. THE RESULTING STATE IS REFLECTED BACK INTO J4'S UNDERSTANDING.
+  //
+  // The loop that makes this usable: J4 names a sale from the understanding,
+  // proposes ending it, the owner approves, and J4 must then stop describing
+  // it as running. Approval is simulated by the executable's own effect.
+  const { getBusinessUnderstanding } = await import("@/lib/businessModel/understanding");
+  const seenBefore = await getBusinessUnderstanding(store.id);
+  assert("J4 can see the sale it is being asked to end",
+    seenBefore.activePromotions.some((promo) => promo.id === runningSale.id));
+
+  const { updatePromotionExecutable } = await import("@/lib/execution/executables/promotions");
+  await updatePromotionExecutable.run(
+    { promotionId: runningSale.id, active: false },
+    // GENESIS, because this stands in for the owner approving what J4
+    // proposed — the same actor the approval path records.
+    { storeId: store.id, userId: owner.id, actorType: "GENESIS" },
+  );
+  const seenAfter = await getBusinessUnderstanding(store.id);
+  assert("and stops describing it as running once it is ended",
+    !seenAfter.activePromotions.some((promo) => promo.id === runningSale.id));
+
+  // 6. EXECUTION VERIFICATION REMAINS ENFORCED.
+  //
+  // Not a claim that verify() was called here — a claim that this action
+  // cannot exist without one. The Executable type requires it, so an action
+  // whose executable had no verify() would not compile.
+  assert("the executable this routes to can be read back",
+    typeof updatePromotionExecutable.verify === "function",
+    "an action that cannot be verified must not be reachable from chat");
+
+  await prisma.promotion.deleteMany({ where: { storeId: otherStore.id } });
+  await prisma.store.delete({ where: { id: otherStore.id } });
+  await prisma.user.delete({ where: { id: stranger.id } });
+
   // The tool must be reachable from the chat surface, or none of the above runs.
   const tools = codeOnly(readFileSync(join(process.cwd(), "lib", "execution", "genesisTools.ts"), "utf8"));
   assert("the tool is offered to the model", /name: "request_sale"/.test(tools));
@@ -237,6 +379,10 @@ async function main() {
     /actionType: "create_promotion"/.test(handlers) &&
       !/createPromotionExecutable\.run/.test(handlers),
     "a handler that executed directly would move prices with no merchant decision");
+  assert("and the end path writes one too, against update_promotion",
+    /actionType: "update_promotion"/.test(handlers) &&
+      !/updatePromotionExecutable\.run/.test(handlers),
+    "ending a sale is a pricing change and needs the same decision");
 
   await prisma.store.delete({ where: { id: store.id } });
   await prisma.user.delete({ where: { id: owner.id } });

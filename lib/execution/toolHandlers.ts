@@ -641,7 +641,139 @@ export function resolveScopedProducts<T extends { name: string }>(
  * selection is wrong — which is precisely what they are being shown in order to
  * catch.
  */
+/**
+ * ENDING a sale, routed to the action that has always been able to do it.
+ *
+ * `update_promotion` has existed in full since the promotions milestone —
+ * executable, `active` boolean, money ceiling, an ACTION_SECTIONS row — and
+ * NOTHING in the product could produce it. This is the missing producer, not
+ * a new path: same GENESIS_ACTIONS entry, same approval, same ceiling, same
+ * executable, same verify().
+ *
+ * RESOLVED AGAINST THE DATABASE, not the turn's understanding. The
+ * understanding is what lets the MODEL name a promotion; what the proposal is
+ * aimed at has to be true now, and a sale can end between the snapshot and
+ * the sentence. Store-scoped, which tenant isolation requires anyway.
+ */
+async function requestEndOfSale(ctx: ToolTurnContext, promotionName: string): Promise<ToolTurnResult> {
+  const running = await prisma.promotion.findMany({
+    where: { storeId: ctx.storeId, active: true },
+    select: { id: true, name: true, code: true },
+  });
+
+  if (running.length === 0) {
+    return {
+      handled: true,
+      reply: "Nothing is on sale at the moment, so there is nothing to end.",
+      kind: "sale_end_none_running",
+      executionStatus: "WARNING",
+      outcome: "failure",
+    };
+  }
+
+  // Name OR code, because an owner says either — 'end SAVE10' names the code.
+  // Case- and space-insensitive, the same latitude product names already get.
+  const wanted = promotionName.trim().toLowerCase();
+  const matches = running.filter(
+    (promo) =>
+      promo.name.trim().toLowerCase() === wanted ||
+      (promo.code !== null && promo.code.trim().toLowerCase() === wanted),
+  );
+
+  // ASKING IS THE RIGHT ANSWER, exactly as it is for an unresolved product
+  // name below. Ending the wrong discount is a pricing change nobody asked
+  // for, and guessing between two is how that happens.
+  if (matches.length === 0) {
+    return {
+      handled: true,
+      reply:
+        `I could not find a promotion called "${promotionName}". ` +
+        `What is running: ${listNames(running.map((promo) => promo.name))}.`,
+      kind: "sale_end_unresolved",
+      executionStatus: "WARNING",
+      outcome: "failure",
+    };
+  }
+  if (matches.length > 1) {
+    return {
+      handled: true,
+      reply:
+        `More than one promotion is called "${promotionName}". ` +
+        `Which one do you mean: ${listNames(matches.map((promo) => promo.name))}?`,
+      kind: "sale_end_ambiguous",
+      executionStatus: "WARNING",
+      outcome: "failure",
+    };
+  }
+
+  const target = matches[0];
+  const summary = `End ${target.name}`;
+
+  await prisma.approvalRequest.create({
+    data: {
+      storeId: ctx.storeId,
+      recommendationId: null,
+      actionType: "update_promotion",
+      topicKey: deriveTopicKey("update_promotion", target.id),
+      input: { promotionId: target.id, active: false } as unknown as object,
+      // EMPTY, like create_promotion's. driftedFields walks the keys of
+      // previousValues and compares them against getCurrentValues, which for
+      // this action carries only the id — so naming `active` here would
+      // report drift on every proposal. The switch this reverses is carried
+      // by the input itself, which is what that action's own comment says.
+      previousValues: {},
+      summary,
+      authorizationTier: GENESIS_ACTIONS.update_promotion.authorizationTier,
+      groupId: randomUUID(),
+    },
+  });
+
+  return {
+    handled: true,
+    reply: `I've prepared ending ${target.name}. It's waiting for your approval — nothing has changed yet.`,
+    kind: "sale_end_request",
+    // PENDING and an explicit success, for the same reason the create path
+    // annotates it: the sentence is true about the STORE, not the turn.
+    executionStatus: "PENDING",
+    outcome: "success",
+    logMessage: `Proposed ${summary}`,
+    // The id is metadata, never reply text.
+    metadata: { promotionId: target.id },
+  };
+}
+
 const requestSale: ToolHandler = async (ctx) => {
+  const intent = (ctx.input as { intent?: unknown })?.intent;
+
+  if (intent === "end") {
+    const named = (ctx.input as { promotionName?: unknown }).promotionName;
+    if (typeof named !== "string" || named.trim() === "") {
+      return {
+        handled: true,
+        reply: "Which sale would you like me to end?",
+        kind: "sale_end_unnamed",
+        executionStatus: "WARNING",
+        outcome: "failure",
+      };
+    }
+    return requestEndOfSale(ctx, named);
+  }
+
+  // REFUSED RATHER THAN DEFAULTED. Treating an unstated intent as 'create' is
+  // precisely the failure this change exists to remove: the tool would answer
+  // 'stop the spring sale' by proposing another sale.
+  if (intent !== "create") {
+    return {
+      handled: true,
+      reply:
+        "Did you want me to start a sale, or end one that is already running? " +
+        "I can do either — I just need to know which.",
+      kind: "sale_request_intent_unclear",
+      executionStatus: "WARNING",
+      outcome: "failure",
+    };
+  }
+
   const input = ctx.input as {
     name?: string;
     kind?: "SALE" | "CODE";
