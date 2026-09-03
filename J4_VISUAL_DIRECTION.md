@@ -1,177 +1,323 @@
-# J4 Visual Direction — J4 becomes a character, not an icon
+# J4 Visual & Interaction Direction — APPROVED
 
-**Status: DIRECTION, captured 2026-09-03. NOT APPROVED FOR BUILD.** Sean's
-instruction was explicit: record this, finish the current engineering work and
-gap 27 first, then run a fresh capability audit, and report back *before*
-implementing any of it. Nothing in this document has been built. Nothing in it
-should be started without Sean saying so.
+**Status: APPROVED PRODUCT DIRECTION, 2026-09-03 (Sean). NOT YET IMPLEMENTED.**
 
-**References** (in `design/j4-visual-direction/`, copied into the repo because
-the originals were in a session-scoped upload folder that does not survive):
+This is a real product decision, not concept art under consideration. It
+supersedes the older Genesis-orb interaction model as the primary J4 experience.
+**Implementation is deliberately deferred** — do not build the avatar, animation
+system, mouth/voice synchronization, skins, expanded character, or Business Map
+choreography yet. The architecture should be designed with this J4 in mind; the
+next work item is the capability audit in `J4_CAPABILITY_AUDIT.md`.
 
-| File | What it is |
+**References** (`design/j4-visual-direction/`, copied into the repo because the
+originals were in session-scoped upload folders that do not survive):
+
+| File | Role |
 |---|---|
-| `j4-primary-reference.png` | **The primary visual reference.** |
-| `j4-concept-sheet.png` | Concept sheet: alternate presentation, expressions, sizes, states. |
+| `j4-compact-primary.png` | **Primary visual reference** — the approved character. |
+| `j4-primary-reference.png` | Earlier full-scene reference for the same character. |
+| `j4-concept-sheet.png` | Supporting: sizes, expressions, alternate presentation. |
+
+The shell-geometry reference is the diagram in **Shell geometry** below, from
+Sean's own description. No annotated layout image exists — the attachments were
+all the same character screenshot, and naming one of them "annotated layout"
+would have been a filename that lied about its contents.
+
+### What this supersedes
+
+`GENESIS_AVATAR.md` and the 2026-08-01 frozen avatar identity describe the blue
+orb/sonar treatment with transparent **"Listening"** and **"Thinking"** text
+labels. **That is an older interaction model and is no longer the desired
+primary J4 interaction.** It is not deleted — the history is worth keeping — but
+where the two disagree, this document is current.
+
+`GENESIS_SURFACES.md` (locked) and `J4_IDENTITY.md` (frozen) are not edited by
+this document. Those describe *who J4 is* and *where J4 lives*, which this does
+not contradict. Any change to their frozen contents remains Sean's to make
+explicitly, in those files.
 
 ---
 
-## The product change this represents
+## The one rule that governs all of it
+
+> **There is one J4. We are only changing how much of him the owner sees.**
+
+Compact and expanded are **presentation state, not two systems**. This exists to
+prevent "chat J4", "expanded J4", "Business Map J4" and eventually "mobile J4"
+being built as separate implementations. Across every compact ↔ expanded
+transition and every navigation between Genesis surfaces, all of the following
+must survive unchanged:
+
+- conversation and context
+- current task
+- voice state
+- intelligence
+- permissions
+- pending approvals
+- execution state
+
+A second J4 state machine for mobile is the specific outcome to avoid. Web and
+mobile are **presentation surfaces for the same J4**.
+
+---
+
+## Genesis and J4 are different things
 
 **Genesis is the platform/interface. J4 is the persistent business-partner
-character inside Genesis.** That distinction is the whole point, and it is a
-change from how the avatar has been treated until now.
+character inside Genesis.** J4 is a character and a visual communication system,
+not merely an animated avatar or an icon.
 
-**The old blue orb / sonar interaction — the one that displayed "Listening" and
-"Thinking" — is now an OLDER INTERACTION MODEL, not the future primary J4
-experience.** It is not deleted by this document and nothing about it changes
-today; it is reclassified. Anything that treats it as the destination should be
-read with that in mind, including `GENESIS_AVATAR.md`-era decisions and the
-frozen avatar identity work from 2026-08-01.
-
-**Colour split**: green is J4's identity and interaction colour. Genesis remains
-blue. Both are true at once — this is not a rebrand of Genesis.
+**Colour**: green is J4's identity/interaction colour. **Genesis remains blue.**
+Both are true at once; this is not a rebrand of Genesis.
 
 ---
 
-## What the new J4 must eventually support
+## Shell geometry — J4 owns the bottom-left corner
 
-Recorded as Sean stated them, because a paraphrase of a design brief is how a
-design brief gets quietly narrowed:
+**J4 is not a floating circle above the bottom navigation, and Studio / Website
+/ Products / Business must not sit underneath him.** He has a **dedicated
+permanent bottom-left home zone in the main Genesis shell**, and the existing
+navigation shifts right to begin after that zone.
 
-1. A recognizable **persistent character/avatar**.
-2. **Green as J4's identity/interaction colour** while Genesis remains blue.
-3. **Animated visual states**: listening, thinking, speaking, working, success,
-   attention, and others as needed.
-4. **Actual mouth/face animation synchronized with J4's spoken responses**, so
-   users immediately understand that J4 is talking.
-5. **Different facial expressions appropriate to context.**
-6. A **friendly, approachable personality** rather than a generic robotic
-   assistant.
-7. **Multiple user-selectable appearances/skins.** The initial direction is the
-   white/black version and a black/black version, with further customization
-   possibly later.
-8. **It must work at very small sizes as well as expanded/full-size.**
-   Explicitly: *do not assume the detailed concept art can simply be dropped
-   into every UI location.* The concept sheet already shows this being reasoned
-   about at 128/80/48/32/16px.
+```
+┌─────────────────────────────────────────────────┐
+│                                                 │
+│                   WORKSPACE                     │
+│                                                 │
+├────────────────┬────────────────────────────────┤
+│                │                                │
+│       J4       │ Studio | Website | Products |  │
+│                │ Business | ...                 │
+└────────────────┴────────────────────────────────┘
+```
 
-**The principle underneath all of it: J4 is becoming a character, not just an
-icon.**
+The bottom shell is `[ J4 HOME ] [ Studio ] [ Website ] [ Products ] [ Business ] …`
+— **not** `J4 floating over [ Studio | Website | … ]`.
 
----
+**Why**: compact J4 must be larger and more recognizable than a normal chatbot
+button *without covering the workspace*. The dedicated corner gives room for his
+face, the circular green frame, the restrained honeycomb environment, facial
+expressions, listening/thinking/speaking feedback, the Talk interaction, and an
+obvious Expand control.
 
-## What this changes about the Business Map
-
-J4 should be able to **explain what he understands about the business while
-visually navigating and highlighting the relevant parts of the Business Map.**
-
-Sean's example, kept verbatim because the sequencing is the requirement:
-
-> "Your TikTok is getting more views than Facebook, but Facebook is generating
-> more revenue."
-
-While saying that, J4 should visually focus/highlight TikTok, then Facebook, and
-eventually take the owner directly into the relevant detail. J4 then asks:
-
-> "Do you want me to break down Facebook specifically, or compare all of your
-> social media?"
-
-The owner answers conversationally and **J4 changes the scope of the visual
-experience**. This should eventually work across Products, Customers, Commerce,
-Social, Connections, and the rest.
-
-So the Business Map stops being a thing the owner reads on their own and becomes
-a surface J4 drives *with* them. Speech, highlight, and navigation are one
-synchronized act, not three features that happen to coexist.
+**J4 should feel like he has a permanent seat inside Genesis, not like a
+third-party chat widget floating over the product.**
 
 ---
 
-## The conversational-interface goal
+## The two interaction modes
 
-**Eventually, anything the owner can legitimately do through Genesis should be
-something they can ask J4 to do conversationally, where appropriate.**
+### Compact J4 — Presence Mode: "I'm here."
 
-The goal state: **J4 is the single conversational interface to the business,
-while the Genesis UI and Business Map remain the visual surfaces J4 can navigate
-with the owner.**
+Persistently available in his home zone. Primarily **his face** inside the
+circular green frame over a **restrained** honeycomb background — present, but
+never the giant energy/sonar effect of the old orb. Visually quiet; it must
+never dominate the workspace.
 
----
+**A normal conversation does not require expanding him.** Tap J4 → talk → he
+listens → understands/thinks → talks back, all from compact. Facial animation
+and subtle green/honeycomb behaviour carry the state; the character does most of
+the communicating, the frame only supports it.
 
-## The audit Sean asked for (NOT started)
+### Expanded J4 — Partner Mode: "Let's work together."
 
-To be run after the current production-readiness work and gap 27. Genesis has
-gained many capabilities since the original J4 tool/action design, so
-`J4_CAPABILITY_AUDIT.md` (2026-08-08) is stale — **this audit should supersede
-and update that document rather than become a second parallel one.**
+Reached by an **explicit Expand control**. Double-click/double-tap must not be
+the primary discoverable interaction.
 
-Seven questions, as specified:
+**He emerges upward/outward from his existing bottom-left home zone.** The
+spatial principle: **J4 expands from his corner; he does not materialize in the
+centre of the screen**, and his home position stays spatially understandable
+throughout the transition. Minimizing returns him there.
 
-1. Everything Genesis can currently do.
-2. Everything J4 can currently inspect/explain.
-3. Everything J4 can currently execute.
-4. Capabilities Genesis has gained that J4 cannot yet invoke.
-5. Which actions require approval.
-6. Which actions require verification.
-7. Which capabilities need new tools/actions **versus simply better
-   conversational routing** — a distinction that decides how much of this is
-   building and how much is wiring.
+Expanded unlocks the full character: torso, arms and hands, pointing, gesturing,
+turning toward content, looking at what he is explaining, presenting choices,
+comparing items, reacting, celebrating, and visually guiding the owner.
 
-**Hard constraint, stated by Sean:** do not create duplicate architecture where
-an existing execution/verification/action system already handles the capability.
-Genesis already has an execution layer, an approval/drift layer, a verification
-layer, and a tool registry. The audit's job is to find what is *missing*, not to
-propose a second version of what exists.
+**Expanded J4 is not a modal.** Studio, Website, Products, Business and the other
+primary surfaces stay accessible and usable while he is expanded, and the owner
+can move between them with J4 still present.
 
 ---
 
-## Dependencies and open questions — flagged, NOT decided
+## Visual language — state through behaviour, not labels
 
-These are recorded so whoever picks this up does not discover them late. None is
-answered here and none should be answered without Sean.
+J4 communicates state primarily through **character behaviour**, not persistent
+textual status. The owner should be able to look at J4 and understand what he is
+doing.
 
-**Mouth animation depends on a voice system that has never been proven.** J4
-voice output shipped in `77cc202`, but real synthesis is UNVERIFIED because
-there is no ElevenLabs key. Face animation "synchronized with J4's spoken
-responses" cannot be built, let alone verified, against a synthesis path that
-has never produced audio. Whatever the sync mechanism ends up being — visemes,
-amplitude envelope, or timed markers from the provider — it is downstream of a
-working voice provider. **This is a real blocker for requirement 4, not a
-detail.**
+| State | How it reads |
+|---|---|
+| **Listening** | attentive expression, subtle pulse |
+| **Understanding / Thinking** | thoughtful expression, subtle processing animation |
+| **Speaking** | facial/mouth animation synchronized with his voice |
+| **Working** | more active visual energy, purposeful gesture |
+| **Success** | positive expression/gesture |
+| **Needs Attention** | clear but non-alarming |
 
-**The concept art is not an asset set.** Requirement 8 says so directly. A
-128px render and a 16px mark are different design problems, and the expression
-and state matrix multiplies it: states (listening/thinking/speaking/working/
-success/attention) × expressions × skins (white/black, black/black) × sizes.
-Whether these are rendered sprites, a vector rig, or a component that composes
-parts is an unmade decision with very different cost profiles. Prior art matters
-here: `project_j4_avatar_branding` recorded that gpt-image-1 could not preserve
-locked regions, which is exactly the problem an expression matrix runs into.
-
-**E25 is adjacent and still Sean's.** The nav currently has five primary tabs
-against a rooms model locked at four in `GENESIS_SURFACES.md`. A J4-driven
-Business Map walkthrough navigates those surfaces, so the walkthrough design
-touches an unresolved decision. It does not block the audit.
-
-**"Legitimately" is doing real work in the conversational-interface goal.**
-Not every capability should be conversational — destructive, financial, and
-irreversible actions already sit behind approval and verification for reasons
-that predate this direction. Question 5 and 6 of the audit exist precisely so
-that boundary is drawn from the existing systems rather than re-litigated.
-
-**Existing frozen documents are untouched.** `GENESIS_SURFACES.md` is locked and
-`J4_IDENTITY.md` is frozen; this document does not edit either. Where this
-direction supersedes them, that is Sean's call to make explicitly, and it should
-be made in those documents rather than implied from this one.
+Compact states also include idle/ready. **The old "LISTENING / THINKING" labels
+are no longer the primary mechanism.**
 
 ---
 
-## Sequencing, as instructed
+## Gestures carry meaning, not decoration
 
-1. Finish current production-readiness work. *(Gaps 25 and 26 closed, deployed,
-   production-verified as of 2026-09-03.)*
-2. Gap 27 investigation — the intermittent `verify-order-webhook-live`
-   assertion about an order landing in the attacker's own store.
-3. The fresh capability audit above.
-4. **Report back. Do not begin the avatar, animations, voice system, Business
-   Map walkthrough, or new J4 commands before that.**
+J4 should physically participate in an explanation. **Gestures must be
+semantic** — do not implement animation for decoration.
+
+| Gesture | Meaning |
+|---|---|
+| Point | look here |
+| Turn | I'm addressing this |
+| Open hand | here's an option |
+| Two hands toward separate objects | compare these |
+| Pull together | group / compare |
+| Thinking gesture | processing |
+| Thumbs up | completed |
+
+Worked example. Owner: *"J4, give me some font options."* J4 expands; three
+choices appear — Original | Requested | J4's Alternative. He points to each in
+turn: *"This is your original." / "This is what you asked me to try." / "And
+this is another option I created for you."* Then: *"If you don't like any of
+them, tell me which one you like most and I can create something different
+that's still close to that direction."* The owner answers conversationally.
+Website stays visible in the workspace to his right throughout.
+
+---
+
+## Business Map + J4
+
+The Business Map becomes a visual surface J4 navigates and explains **with** the
+owner. He remains on the left while the map, entities and data he is explaining
+occupy the workspace beside him.
+
+> *"Your TikTok is getting more views than Facebook, but Facebook is generating
+> more revenue."*
+
+As he says it, the UI focuses/highlights TikTok, then Facebook, and he can point
+toward each. Then:
+
+> *"Do you want me to break down Facebook specifically, or compare all your
+> social media?"*
+
+The owner's answer **changes the scope of the visual explanation**. The same
+model should eventually apply to Social, Products, Customers, Commerce, Orders,
+Connections, Marketing, Growth and other Business Map entities.
+
+Speech, highlight and navigation are **one synchronized act**, not three
+features that coexist.
+
+**The separation to preserve:**
+
+| Layer | What it is |
+|---|---|
+| J4 | the conversational partner |
+| Business Map | what J4 understands about the business |
+| Entity views | what J4 understands about individual things |
+| Genesis UI | the workspace where the work happens |
+| Intelligence Engine | the underlying business understanding |
+
+---
+
+## Appearance / personalization
+
+**"Choose your J4."** Treated as personalization, not a complicated identity
+system. Initially the **white/black** (primary) and **black/black** concepts;
+more skins later.
+
+**Expressions and behaviour must be independent of appearance**, so a future
+skin never requires rebuilding the interaction system.
+
+---
+
+## Size adaptability
+
+Roughly 128 / 80 / 48 / 32 / 16px, per the concept sheet. **Do not assume the
+detailed concept art can be displayed at every size** — the production
+implementation needs a representation strategy that keeps him recognizable and
+useful when compact.
+
+---
+
+## Voice and visual speech
+
+When J4 speaks aloud his mouth/face should animate with the speech, so the cue
+is immediate: *J4 is talking — listen.* This is preferable to a textual
+indicator.
+
+**Do not pretend the voice pipeline is production-proven.** Voice output shipped
+in `77cc202`, but real synthesis is UNVERIFIED and depends on a provider
+credential that is not present. Treat voice/mouth synchronization as a
+**downstream implementation dependency** — not something to fake in the
+architecture, and not something whose absence should be designed around
+silently.
+
+---
+
+## Capability principle for the audit
+
+> **Anything the owner can legitimately accomplish through Genesis should, where
+> appropriate, be requestable conversationally through J4.**
+
+J4 should ultimately become the conversational interface through which the owner
+operates the business. **"Legitimately" and "where appropriate" are load-bearing**
+— destructive, financial and irreversible actions already sit behind approval and
+verification, and that boundary is to be read off the existing systems rather
+than re-litigated.
+
+**Before creating new tools, audit what exists.** Reuse the existing execution,
+approval, verification, recommendation, integration and intelligence
+architecture wherever it already provides the correct behaviour. **Do not create
+duplicate architecture**, and do not create a second audit document —
+`J4_CAPABILITY_AUDIT.md` (2026-08-08) is stale and must be **superseded and
+updated**, not paralleled.
+
+The audit answers: what Genesis can do today; what J4 can inspect; what J4 can
+explain; what J4 can execute; every Genesis capability J4 cannot invoke; which
+gaps need a genuinely new tool/action; which need only conversational routing;
+which actions require owner approval; which require execution verification; and
+which existing actions can be reused rather than duplicated.
+
+---
+
+## The target experience
+
+> Owner asks J4 → J4 understands → J4 explains/shows → owner approves if
+> necessary → Genesis executes → Genesis verifies → J4 reports back.
+
+And when explaining: **J4 should be able to show the owner what he is talking
+about, not merely tell them.**
+
+---
+
+## Timing and priority
+
+The exhaustive visual/UI polish pass is **deliberately not now**. Mobile becomes
+a major implementation/testing phase around **the 23rd**, so this phase
+prioritizes: architecture, capability completeness, J4 action/tool coverage, safe
+execution, approval boundaries, verification, Business Map data/interaction
+contracts, and conversational behaviour.
+
+Do not polish desktop interactions that mobile implementation will likely
+revisit. **Build the shared J4 behaviour and architecture once**, so web and
+mobile become different presentation surfaces for the same J4.
+
+Responsive geometry is an **interaction model, not identical pixels**: desktop
+gives J4 a dedicated bottom-left zone and a larger left-side expanded area;
+mobile needs its own interpretation with less horizontal room but the same mental
+model — *J4 has a persistent home → talk to him there → expand him for the full
+partner experience → return him home when finished.*
+
+---
+
+## Open dependencies — flagged, not decided
+
+- **Mouth sync is blocked on an unproven voice pipeline** (above). A real
+  blocker for that requirement, not a detail.
+- **The concept art is not an asset set.** States × expressions × skins × sizes
+  is a matrix; 16px and 128px are different design problems. Sprites vs a vector
+  rig vs a composed component is an unmade decision with very different costs.
+  Prior art: gpt-image-1 could not preserve locked regions, which is exactly the
+  problem an expression matrix hits.
+- **E25 is adjacent and still Sean's**: five primary nav tabs against a rooms
+  model locked at four in `GENESIS_SURFACES.md`. A J4-driven Business Map
+  walkthrough navigates those surfaces. It does not block the audit.
