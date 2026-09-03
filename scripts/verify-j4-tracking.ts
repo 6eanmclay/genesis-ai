@@ -238,6 +238,40 @@ async function run(db: Awaited<ReturnType<typeof startRealPostgres>>): Promise<v
     GENESIS_ACTIONS.attach_tracking.category === "operations" &&
       GENESIS_ACTIONS.correct_tracking.category === "operations");
 
+  console.log("=== 9. the approval it wrote can actually be approved ===");
+  //
+  // THE BOUNDARY THIS SUITE DID NOT CROSS. Everything above stops at the
+  // proposal. Approving one runs driftFor, which rebuilds the action context
+  // and compares previousValues against getCurrentValues - so a proposal can
+  // be written perfectly and still be refused forever at the moment the owner
+  // says yes. A tool that only ever proposes is not a capability.
+  const { driftFor } = await import("@/lib/execution/approvalDrift");
+
+  // ON ITS OWN ORDER, not one an earlier section has since shipped. Reusing
+  // the mug proposal made this assertion depend on where it sat in the file:
+  // section 7 attaches tracking to that order for real, so by here the
+  // proposal IS legitimately stale and the guard was right to say so.
+  const fresh = await order(store.id, "Fresh For Drift", "drift@example.test");
+  await runTool("attach_tracking", { productName: "Fresh For Drift", trackingNumber: GOOD });
+  const attachApproval = (await pending()).find((a) => a.summary?.includes("Fresh For Drift"));
+  check("an attach proposal is not stale the moment it is made",
+    await driftFor(attachApproval!, store.id), []);
+
+  // AND THE SAME GUARD PROTECTS TRACKING, not only the fulfilment toggle:
+  // somebody attaching a number by hand before the owner approves means the
+  // proposal would overwrite a number a customer may already be following.
+  await prisma.order.updateMany({
+    where: { id: fresh.id, storeId: store.id },
+    data: { trackingNumber: "9400111899223197428490", carrier: "USPS" },
+  });
+  const nowStale = await driftFor(attachApproval!, store.id);
+  check("but it is refused once a number is attached behind it", nowStale.length, 1);
+  check("naming the field that moved", nowStale[0]?.key, "trackingNumber");
+
+  const correctApproval = (await pending()).find((a) => a.actionType === "correct_tracking");
+  check("and neither is a correction",
+    await driftFor(correctApproval!, store.id), []);
+
   await prisma.order.deleteMany({ where: { storeId: soleStore.id } });
   await prisma.store.delete({ where: { id: soleStore.id } });
   await prisma.user.delete({ where: { id: soleOwner.id } });

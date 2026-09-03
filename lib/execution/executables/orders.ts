@@ -10,7 +10,7 @@ interface OrderMetadata {
   fulfillmentStatus: string;
 }
 
-interface ToggleFulfilledInput {
+export interface ToggleFulfilledInput {
   orderId: string;
   // `currentlyFulfilled` used to live here, supplied by the caller. Removed
   // 2026-08-20 — the executable reads the real state itself now, and a field

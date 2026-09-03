@@ -118,6 +118,7 @@ export const TOOL_POLICY: Record<string, ToolPolicy> = {
   // rather than duplicated here where it could drift out of agreement.
   attach_tracking: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   correct_tracking: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
+  toggle_order_fulfilled: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
 };
 
 /**

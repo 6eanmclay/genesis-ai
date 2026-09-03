@@ -74,9 +74,15 @@ export async function buildActionContext(
   // Product-scoped actions name their product in the INPUT, so the caller
   // that has the input passes it. Null is the ordinary case and leaves
   // `product` null, exactly as before.
-  productId?: string | null
+  productId?: string | null,
+  // Order-scoped actions name their order in the INPUT, exactly as
+  // product-scoped ones do. Added 2026-09-03 with the fulfilment toggle,
+  // whose getCurrentValues has to read the order's CURRENT state - a context
+  // that cannot see the order reports it as changed and refuses every
+  // proposal, which is what correct_tracking was silently doing.
+  orderId?: string | null,
 ): Promise<GenesisActionContext> {
-  const [store, businessRecord, product] = await Promise.all([
+  const [store, businessRecord, product, order] = await Promise.all([
     prisma.store.findUniqueOrThrow({
       where: { id: storeId },
       select: { name: true, tagline: true, description: true, theme: true, blueprint: true, logoUrl: true },
@@ -95,6 +101,15 @@ export async function buildActionContext(
       ? prisma.product.findFirst({
           where: { id: productId, storeId },
           select: { id: true, name: true, imageUrl: true, description: true },
+        })
+      : Promise.resolve(null),
+    // STORE-SCOPED, for the same reason as the product above: an orderId
+    // taken from an input is caller-supplied, so it is matched against this
+    // store rather than trusted. A mismatched pair finds nothing.
+    orderId
+      ? prisma.order.findFirst({
+          where: { id: orderId, storeId },
+          select: { id: true, productName: true, trackingNumber: true, carrier: true, fulfillmentStatus: true },
         })
       : Promise.resolve(null),
   ]);
@@ -117,6 +132,7 @@ export async function buildActionContext(
     businessRecord: businessRecord
       ? { id: businessRecord.id, entityType: businessRecord.entityType, data: businessRecord.data }
       : null,
+    order,
   };
 }
 

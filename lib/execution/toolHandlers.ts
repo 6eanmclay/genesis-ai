@@ -814,6 +814,84 @@ function trackingHandler(mode: "attach" | "correct"): ToolHandler {
   };
 }
 
+/**
+ * Marking an order shipped, or un-marking it.
+ *
+ * Reuses resolveOrder, so which order the owner meant is decided the same way
+ * as for tracking - and refused the same way when it is not clear.
+ *
+ * THE SUMMARY SAYS WHICH DIRECTION, and previousValues freezes the state that
+ * made it true. The executable flips whatever it finds; the approval is a
+ * promise about a specific order in a specific state, so if that state moves
+ * before the owner says yes, the existing drift check refuses rather than
+ * flipping the wrong way. Nothing new guards this - the guard is the one that
+ * already exists, finally given an order to look at.
+ */
+const toggleOrderFulfilment: ToolHandler = async (ctx) => {
+  const input = ctx.input as { productName?: string | null; buyerEmail?: string | null };
+
+  const match = await resolveOrder(ctx.storeId, input.productName, input.buyerEmail);
+  if (match.kind === "none") {
+    return {
+      handled: true,
+      reply: "I could not find that order. Which product was it, and who bought it?",
+      kind: "fulfilment_order_unresolved",
+      executionStatus: "WARNING",
+      outcome: "failure",
+    };
+  }
+  if (match.kind === "many") {
+    return {
+      handled: true,
+      reply: `More than one order matches. Which did you mean: ${describeOrders(match.candidates)}?`,
+      kind: "fulfilment_order_ambiguous",
+      executionStatus: "WARNING",
+      outcome: "failure",
+    };
+  }
+
+  // Read here rather than taken from the caller, so the summary describes the
+  // order as it is at the moment of proposing.
+  const current = await prisma.order.findFirst({
+    where: { id: match.order.id, storeId: ctx.storeId },
+    select: { fulfillmentStatus: true },
+  });
+  const wasFulfilled = current?.fulfillmentStatus === "fulfilled";
+  const summary = wasFulfilled
+    ? `Mark ${match.order.productName} as NOT shipped`
+    : `Mark ${match.order.productName} as shipped`;
+
+  await prisma.approvalRequest.create({
+    data: {
+      storeId: ctx.storeId,
+      recommendationId: null,
+      actionType: "toggle_order_fulfilled",
+      topicKey: deriveTopicKey("toggle_order_fulfilled", match.order.id),
+      input: { orderId: match.order.id } as unknown as object,
+      // THE STATE THAT MADE THE SUMMARY TRUE. getCurrentValues reads the same
+      // field live when the owner approves, and a difference is a refusal —
+      // which is the only thing standing between a flip and its opposite.
+      previousValues: {
+        orderId: match.order.id,
+        fulfillmentStatus: current?.fulfillmentStatus ?? "unfulfilled",
+      },
+      summary,
+      authorizationTier: GENESIS_ACTIONS.toggle_order_fulfilled.authorizationTier,
+      groupId: randomUUID(),
+    },
+  });
+
+  return {
+    handled: true,
+    reply: `I've prepared that for ${match.order.productName}. It's waiting for your approval — nothing has changed yet.`,
+    kind: "fulfilment_toggle_request",
+    executionStatus: "PENDING",
+    outcome: "success",
+    logMessage: `Proposed ${summary}`,
+    metadata: { orderId: match.order.id, wasFulfilled },
+  };
+};
+
 const attachTracking: ToolHandler = trackingHandler("attach");
 const correctTracking: ToolHandler = trackingHandler("correct");
 
@@ -2694,6 +2772,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   refine_storefront: makeRefineStorefront(),
   request_product_content_change: makeRequestProductContentChange(),
   request_sale: requestSale,
+  toggle_order_fulfilled: toggleOrderFulfilment,
   attach_tracking: attachTracking,
   correct_tracking: correctTracking,
   look_up_business_data: makeLookUpBusinessData(),

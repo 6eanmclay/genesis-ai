@@ -12,6 +12,7 @@ import {
 } from "./executables/promotions";
 import { updateHeroExecutable, type UpdateHeroInput } from "./executables/updateHero";
 import { attachTrackingExecutable, type AttachTrackingInput } from "./executables/attachTracking";
+import { toggleOrderFulfilledExecutable, type ToggleFulfilledInput } from "./executables/orders";
 import { correctTrackingExecutable, type CorrectTrackingInput } from "./executables/correctTracking";
 import {
   updateProductImageExecutable,
@@ -173,7 +174,14 @@ export interface GenesisActionContext {
    * against, and it is the field whose CURRENT value decides whether the
    * proposal is still the one the owner agreed to.
    */
-  order?: { id: string; productName: string; trackingNumber: string | null; carrier: string | null } | null;
+  order?: {
+    id: string;
+    productName: string;
+    trackingNumber: string | null;
+    carrier: string | null;
+    /** What the toggle is reversing, and the field drift compares. */
+    fulfillmentStatus: string | null;
+  } | null;
 }
 
 // Phase 0 of the architecture-pivot roadmap (see memory:
@@ -371,6 +379,7 @@ export const GENESIS_ACTIONS: Record<
     | CreatePromotionInput
     | UpdatePromotionInput
     | AttachTrackingInput
+    | ToggleFulfilledInput
     | CorrectTrackingInput
   >
 > = {
@@ -527,6 +536,38 @@ export const GENESIS_ACTIONS: Record<
   // waiting. A wrong number sends someone to a courier page about a stranger's
   // parcel. Only always_ask is implemented today, so this costs nothing now
   // and prevents a wrong default later.
+  // ---- Marking an order shipped, or un-marking it (2026-09-03, P1) ------
+  //
+  // A TOGGLE UNDER APPROVAL IS NOT AN ORDINARY ACTION. The executable reads
+  // the current state and flips it, deliberately - that is what makes it safe
+  // against a stale page in the dashboard, where the click and the write are
+  // a second apart. An approval is different: the proposal and the execution
+  // are separated by however long the owner takes to say yes, and a flip is
+  // the one shape whose meaning INVERTS when the state moves underneath it.
+  // "Mark it shipped", approved an hour later against an order somebody
+  // already shipped, un-ships it.
+  //
+  // So getCurrentValues reads the order's CURRENT fulfilment, previousValues
+  // freezes what it was when offered, and the existing drift check refuses
+  // the approval when they disagree. No second staleness mechanism, and the
+  // toggle is NOT converted into a set-state action: its semantics are
+  // correct for the dashboard, and it is the approval gap that needs the
+  // guard, not the executable.
+  toggle_order_fulfilled: {
+    executable: toggleOrderFulfilledExecutable,
+    inputSchema: z.object({
+      orderId: z.string().min(1),
+    }) as unknown as z.ZodType<ToggleFulfilledInput>,
+    // THE WHOLE POINT OF THIS ENTRY. Read live, compared against what was
+    // frozen at proposal time, and a difference is a refusal.
+    getCurrentValues: ({ order }) => ({
+      orderId: order?.id ?? "",
+      fulfillmentStatus: order?.fulfillmentStatus ?? "unfulfilled",
+    }),
+    category: "operations",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
   attach_tracking: {
     executable: attachTrackingExecutable,
     inputSchema: z.object({
@@ -1098,6 +1139,7 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
   update_brand_logo: { key: "brand", label: "Identity", href: "/dashboard/brand" },
   create_product_from_design: { key: "products", label: "Products", href: "/dashboard/products" },
+  toggle_order_fulfilled: { key: "orders", label: "Orders", href: "/dashboard/orders" },
   attach_tracking: { key: "orders", label: "Orders", href: "/dashboard/orders" },
   correct_tracking: { key: "orders", label: "Orders", href: "/dashboard/orders" },
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },

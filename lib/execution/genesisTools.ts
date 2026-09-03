@@ -340,6 +340,7 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "request_product_removal",
   "request_product_content_change",
   "request_sale",
+  "toggle_order_fulfilled",
   "attach_tracking",
   "correct_tracking",
   "approve_pending_changes",
@@ -395,6 +396,17 @@ export type StoreChatUnifiedToolName = (typeof STORE_CHAT_UNIFIED_TOOL_NAMES)[nu
  * different thing to agree to, so it is a different tool with its own
  * approval.
  */
+/**
+ * Which order to mark shipped, or un-mark. No tracking number involved -
+ * that is attach_tracking, which marks it fulfilled as a side effect of
+ * having a number to give the customer. This is the plain flag, for an order
+ * that went out without one or was marked by mistake.
+ */
+export const OrderFulfilmentInputSchema = z.object({
+  productName: z.string().min(1).nullable().optional(),
+  buyerEmail: z.string().min(1).nullable().optional(),
+});
+
 export const TrackingInputSchema = z.object({
   /** The product as it appears on the order, e.g. "Copper Mug". */
   productName: z.string().min(1).nullable().optional(),
@@ -491,6 +503,15 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
         "You CANNOT change an existing promotion's discount, dates or products with this tool. If that is what they are asking for, tell them plainly that you can start one or end one, and never propose a NEW promotion as a way of changing an old one — that leaves both running. " +
         "Either way this PROPOSES the change for the merchant's own review and approval; it never changes a price immediately. Never tell the merchant to go and do it themselves; you can prepare the real thing for them to approve.",
       input_schema: z.toJSONSchema(RequestSaleInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "toggle_order_fulfilled",
+      description:
+        "Call this when the merchant wants an order marked as SHIPPED without giving you a tracking number, or wants one un-marked because it was flagged by mistake — 'the mug order went out yesterday', 'mark Jane's ring as shipped', 'that one has not actually shipped, undo it'. " +
+        "If they give you a tracking NUMBER, use attach_tracking instead — that records the number and marks it shipped in one step, which is what the customer actually needs. " +
+        "Identify the order the way they did: productName and/or buyerEmail as they appear in the orders you were given. Never ask for an order id; they do not have one. If more than one order matches, ask which. " +
+        "This PROPOSES the change for their approval. If the order's state changes before they approve it, Genesis refuses the stale approval rather than flipping the flag the wrong way — so tell them what you are about to do in terms of where the order is NOW.",
+      input_schema: z.toJSONSchema(OrderFulfilmentInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "attach_tracking",

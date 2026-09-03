@@ -156,7 +156,11 @@ export async function driftFor(
     typeof input?.recordId === "string" && typeof input?.entityType === "string"
       ? { id: input.recordId as string, entityType: input.entityType as string }
       : null,
-    typeof input?.productId === "string" ? (input.productId as string) : null
+    typeof input?.productId === "string" ? (input.productId as string) : null,
+    // Without this the order is absent from the context, getCurrentValues
+    // reports empty, and every order-scoped proposal reads as drifted the
+    // moment it is written. correct_tracking was doing exactly that.
+    typeof input?.orderId === "string" ? (input.orderId as string) : null,
   );
   const current = (await definition.getCurrentValues(context)) as Record<string, unknown>;
   return driftedFields(approval.previousValues as Record<string, unknown>, current);

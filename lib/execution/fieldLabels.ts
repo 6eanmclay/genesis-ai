@@ -18,6 +18,7 @@ export const FIELD_LABELS: Record<string, string> = {
   // What the owner is actually agreeing to: a number that will be sent to a
   // customer, and who is carrying the parcel.
   trackingNumber: "Tracking Number",
+  fulfillmentStatus: "Fulfilment",
   carrier: "Carrier",
   brandStory: "Brand Story",
   missionStatement: "Mission Statement",
