@@ -199,6 +199,7 @@ import {
   type ProductSelector,
 } from "@/lib/products/selection";
 import { formatMoney } from "@/lib/money";
+import { isPlausibleTrackingNumber } from "./executables/attachTracking";
 
 export type ToolHandler = (ctx: ToolTurnContext) => Promise<ToolTurnResult>;
 
@@ -641,6 +642,181 @@ export function resolveScopedProducts<T extends { name: string }>(
  * selection is wrong — which is precisely what they are being shown in order to
  * catch.
  */
+/**
+ * Which order the owner meant (2026-09-03, P1).
+ *
+ * There is no order number to ask for - the Order model has a cuid and
+ * Stripe's session id - so an order is named the way an owner names one, and
+ * resolved here against their own orders. STORE-SCOPED, which tenant
+ * isolation requires anyway and which is what makes another merchant's order
+ * unreachable rather than merely unlikely.
+ *
+ * Ambiguity is REFUSED, not resolved by recency. The nearest wrong order is
+ * a real customer sent to a courier page about somebody else's parcel.
+ */
+type OrderMatch =
+  | { kind: "one"; order: { id: string; productName: string; buyerEmail: string; trackingNumber: string | null; carrier: string | null } }
+  | { kind: "none" }
+  | { kind: "many"; candidates: { productName: string; buyerEmail: string }[] };
+
+async function resolveOrder(
+  storeId: string,
+  productName: string | null | undefined,
+  buyerEmail: string | null | undefined,
+): Promise<OrderMatch> {
+  const orders = await prisma.order.findMany({
+    where: { storeId },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    select: { id: true, productName: true, buyerEmail: true, trackingNumber: true, carrier: true },
+  });
+
+  const wantedProduct = productName?.trim().toLowerCase() || null;
+  const wantedBuyer = buyerEmail?.trim().toLowerCase() || null;
+  // Neither given is not a narrow search, it is every order. Refused as
+  // ambiguous rather than answered with the most recent one.
+  if (!wantedProduct && !wantedBuyer) {
+    return { kind: "many", candidates: orders.slice(0, 5).map((o) => ({ productName: o.productName, buyerEmail: o.buyerEmail })) };
+  }
+
+  const matches = orders.filter((order) => {
+    const productOk = wantedProduct === null || order.productName.trim().toLowerCase() === wantedProduct;
+    const buyerOk = wantedBuyer === null || order.buyerEmail.trim().toLowerCase() === wantedBuyer;
+    return productOk && buyerOk;
+  });
+
+  if (matches.length === 0) return { kind: "none" };
+  if (matches.length > 1) {
+    return { kind: "many", candidates: matches.slice(0, 5).map((o) => ({ productName: o.productName, buyerEmail: o.buyerEmail })) };
+  }
+  return { kind: "one", order: matches[0] };
+}
+
+/** How a refusal names the orders it could not choose between. Never an id. */
+function describeOrders(candidates: { productName: string; buyerEmail: string }[]): string {
+  return listNames(candidates.map((c) => `${c.productName} for ${c.buyerEmail}`));
+}
+
+/**
+ * Attaching a tracking number, and correcting one, share everything except
+ * which existing action they propose - so they share a handler rather than
+ * being copied. The DIFFERENCE is which state the order must be in, and that
+ * is checked here so the refusal names the other tool instead of letting the
+ * executable throw after an approval the owner already gave.
+ */
+function trackingHandler(mode: "attach" | "correct"): ToolHandler {
+  return async (ctx) => {
+    const input = ctx.input as {
+      productName?: string | null;
+      buyerEmail?: string | null;
+      trackingNumber?: string;
+      carrier?: string | null;
+    };
+
+    const trackingNumber = input.trackingNumber?.trim() ?? "";
+    // The SAME test the executable applies, run before an approval is written
+    // rather than after the owner has agreed to it. Imported, not restated,
+    // so the two cannot drift into disagreeing about what a number looks like.
+    if (!isPlausibleTrackingNumber(trackingNumber)) {
+      return {
+        handled: true,
+        reply:
+          "That does not look like a tracking number to me. " +
+          "Could you check the label and give it to me again?",
+        kind: "tracking_implausible",
+        executionStatus: "WARNING",
+        outcome: "failure",
+      };
+    }
+
+    const match = await resolveOrder(ctx.storeId, input.productName, input.buyerEmail);
+    if (match.kind === "none") {
+      return {
+        handled: true,
+        reply: "I could not find that order. Which product was it, and who bought it?",
+        kind: "tracking_order_unresolved",
+        executionStatus: "WARNING",
+        outcome: "failure",
+      };
+    }
+    if (match.kind === "many") {
+      return {
+        handled: true,
+        reply:
+          `More than one order matches. Which did you mean: ${describeOrders(match.candidates)}?`,
+        kind: "tracking_order_ambiguous",
+        executionStatus: "WARNING",
+        outcome: "failure",
+      };
+    }
+
+    const order = match.order;
+    if (mode === "attach" && order.trackingNumber) {
+      return {
+        handled: true,
+        reply:
+          `That order already has tracking ${order.trackingNumber}. ` +
+          "If that one is wrong I can replace it — say so and I will.",
+        kind: "tracking_already_present",
+        executionStatus: "WARNING",
+        outcome: "failure",
+      };
+    }
+    if (mode === "correct" && !order.trackingNumber) {
+      return {
+        handled: true,
+        reply: "That order has no tracking number yet, so there is nothing to correct — I can add this one instead.",
+        kind: "tracking_nothing_to_correct",
+        executionStatus: "WARNING",
+        outcome: "failure",
+      };
+    }
+
+    const actionType = mode === "attach" ? "attach_tracking" : "correct_tracking";
+    const carrier = input.carrier?.trim() || "USPS";
+    const summary =
+      mode === "attach"
+        ? `Mark ${order.productName} shipped — ${carrier} ${trackingNumber}`
+        : `Replace tracking on ${order.productName} — ${carrier} ${trackingNumber}`;
+
+    await prisma.approvalRequest.create({
+      data: {
+        storeId: ctx.storeId,
+        recommendationId: null,
+        actionType,
+        topicKey: deriveTopicKey(actionType, order.id),
+        input: { orderId: order.id, trackingNumber, carrier } as unknown as object,
+        // THE NUMBER BEING REPLACED IS THE DIFF, and it is what drift compares
+        // against getCurrentValues when the owner approves. An attach has none
+        // by definition, so it reads as an addition rather than an invented
+        // 'before'; a correction names the one the owner is agreeing to lose.
+        previousValues: { orderId: order.id, trackingNumber: order.trackingNumber ?? "" },
+        summary,
+        authorizationTier: GENESIS_ACTIONS[actionType].authorizationTier,
+        groupId: randomUUID(),
+      },
+    });
+
+    return {
+      handled: true,
+      reply:
+        `I've prepared that for ${order.productName}. ` +
+        "It's waiting for your approval — nothing has been sent to the customer yet.",
+      kind: mode === "attach" ? "tracking_attach_request" : "tracking_correct_request",
+      // PENDING and an explicit success, for the reason the sale paths annotate:
+      // the sentence is true about the ORDER, not about the turn.
+      executionStatus: "PENDING",
+      outcome: "success",
+      logMessage: `Proposed ${summary}`,
+      // The id is metadata. It is never in the reply.
+      metadata: { orderId: order.id, trackingNumber, carrier },
+    };
+  };
+}
+
+const attachTracking: ToolHandler = trackingHandler("attach");
+const correctTracking: ToolHandler = trackingHandler("correct");
+
 /**
  * ENDING a sale, routed to the action that has always been able to do it.
  *
@@ -2518,6 +2694,8 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   refine_storefront: makeRefineStorefront(),
   request_product_content_change: makeRequestProductContentChange(),
   request_sale: requestSale,
+  attach_tracking: attachTracking,
+  correct_tracking: correctTracking,
   look_up_business_data: makeLookUpBusinessData(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the

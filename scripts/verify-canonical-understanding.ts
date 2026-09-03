@@ -208,8 +208,21 @@ async function main() {
     const profileFetches = counted(codeOnly(read("lib", "businessModel", "profile.ts")), "await Promise.all([");
     const understandingFetches = counted(understandingSrc, "await Promise.all([");
     console.log(`        profile ${profileFetches} + understanding ${understandingFetches} = ${profileFetches + understandingFetches} core fetches`);
+    // 40 -> 42 (2026-09-03). Two reads were added to the understanding, and
+    // this is the visible edit the message below asks for rather than a
+    // number quietly following the code upward:
+    //
+    //   activePromotions - J4 could CREATE a promotion and never see it
+    //     again, so it could not say what was on sale or stop one.
+    //   recentOrders     - getOrderSummary counts orders and returns none of
+    //     them, so J4 knew a store had eleven and could name none.
+    //
+    // Both are one indexed read on an existing index, both are bounded, and
+    // both buy a capability an owner asks for out loud. The measured total is
+    // 41; the ceiling stays one above it so the next addition is deliberate
+    // too.
     assert("the core assembly stays within the measured envelope",
-      profileFetches + understandingFetches <= 40,
+      profileFetches + understandingFetches <= 42,
       "the number is recorded from measurement; raising it is a visible edit, not a drift");
 
     // ==================================================================

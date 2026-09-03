@@ -11,6 +11,8 @@ import {
   type UpdatePromotionInput,
 } from "./executables/promotions";
 import { updateHeroExecutable, type UpdateHeroInput } from "./executables/updateHero";
+import { attachTrackingExecutable, type AttachTrackingInput } from "./executables/attachTracking";
+import { correctTrackingExecutable, type CorrectTrackingInput } from "./executables/correctTracking";
 import {
   updateProductImageExecutable,
   type UpdateProductImageInput,
@@ -162,6 +164,16 @@ export interface GenesisActionContext {
   // BusinessRecord (a Goal, a Challenge, ...) instead of a second
   // product-shaped field per new entity type.
   businessRecord?: { id: string; entityType: string; data: unknown } | null;
+  /**
+   * The order an order-scoped action is about (2026-09-03, P1).
+   *
+   * The same "one context field per record-scoped action kind" pattern as
+   * `product` above, which the comment beside businessRecord already
+   * generalises. `trackingNumber` is what an attach or a correction diffs
+   * against, and it is the field whose CURRENT value decides whether the
+   * proposal is still the one the owner agreed to.
+   */
+  order?: { id: string; productName: string; trackingNumber: string | null; carrier: string | null } | null;
 }
 
 // Phase 0 of the architecture-pivot roadmap (see memory:
@@ -358,6 +370,8 @@ export const GENESIS_ACTIONS: Record<
     | AnswerSupplierEconomicsInput
     | CreatePromotionInput
     | UpdatePromotionInput
+    | AttachTrackingInput
+    | CorrectTrackingInput
   >
 > = {
   // The owner answering J4's question about what a supplier charges (2026-08-20).
@@ -497,6 +511,57 @@ export const GENESIS_ACTIONS: Record<
     // so there is no "current" value to diff against.
     getCurrentValues: () => ({ designId: "", name: "", priceInCents: 0 }),
     category: "content",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  // ---- Tracking (2026-09-03, P1) ---------------------------------------
+  //
+  // The executables have existed since the shipping milestone and nothing
+  // conversational could reach them: an owner could ask J4 to build a store
+  // but not to say a parcel had gone out, which is the most ordinary thing
+  // they do all day.
+  //
+  // ALWAYS_ASK EVEN THOUGH `operations` PERMITS AUTO. Attaching tracking
+  // marks the order fulfilled and is what tells the customer their parcel is
+  // moving - an effect that leaves the platform and reaches a person who is
+  // waiting. A wrong number sends someone to a courier page about a stranger's
+  // parcel. Only always_ask is implemented today, so this costs nothing now
+  // and prevents a wrong default later.
+  attach_tracking: {
+    executable: attachTrackingExecutable,
+    inputSchema: z.object({
+      orderId: z.string().min(1),
+      trackingNumber: z.string().min(1),
+      carrier: z.string().optional(),
+    }) as unknown as z.ZodType<AttachTrackingInput>,
+    // The order's tracking is EMPTY by definition on this path - the
+    // executable refuses an order that already has one - so the diff reads as
+    // an addition rather than an invented replacement.
+    getCurrentValues: ({ order }) => ({
+      orderId: order?.id ?? "",
+      trackingNumber: order?.trackingNumber ?? "",
+    }),
+    category: "operations",
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
+  },
+  // Correcting one that is already out there. Same ceiling and more reason
+  // for it: a correction means somebody has already been given the wrong
+  // number, and the executable records what it replaced.
+  correct_tracking: {
+    executable: correctTrackingExecutable,
+    inputSchema: z.object({
+      orderId: z.string().min(1),
+      trackingNumber: z.string().min(1),
+      carrier: z.string().optional(),
+    }) as unknown as z.ZodType<CorrectTrackingInput>,
+    // Here the previous number is the whole point of the diff: the owner is
+    // agreeing to replace THAT one, and drift refuses if it changed since.
+    getCurrentValues: ({ order }) => ({
+      orderId: order?.id ?? "",
+      trackingNumber: order?.trackingNumber ?? "",
+    }),
+    category: "operations",
     authorizationTier: "always_ask",
     maxAuthorityTier: "always_ask",
   },
@@ -1033,6 +1098,8 @@ export const ACTION_SECTIONS: Record<string, { key: string; label: string; href:
   update_seo: { key: "marketing", label: "Marketing", href: "/dashboard/marketing" },
   update_brand_logo: { key: "brand", label: "Identity", href: "/dashboard/brand" },
   create_product_from_design: { key: "products", label: "Products", href: "/dashboard/products" },
+  attach_tracking: { key: "orders", label: "Orders", href: "/dashboard/orders" },
+  correct_tracking: { key: "orders", label: "Orders", href: "/dashboard/orders" },
   update_product_image: { key: "products", label: "Products", href: "/dashboard/products" },
   update_product: { key: "products", label: "Products", href: "/dashboard/products" },
   create_product: { key: "products", label: "Products", href: "/dashboard/products" },

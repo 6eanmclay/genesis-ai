@@ -26,7 +26,7 @@ import { reportIssue } from "@/lib/observability/reportIssue";
 // number is theirs; Genesis is not asserting it is valid, only that they gave
 // it.
 
-interface AttachTrackingInput {
+export interface AttachTrackingInput {
   orderId: string;
   trackingNumber: string;
   /** What the merchant says carried it. Free text — they know, we do not. */

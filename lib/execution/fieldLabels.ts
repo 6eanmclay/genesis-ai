@@ -15,6 +15,10 @@ export const FIELD_LABELS: Record<string, string> = {
   heroSubheadline: "Hero Subheadline",
   heroImageUrl: "Homepage Hero Image",
   imageUrl: "Product Image",
+  // What the owner is actually agreeing to: a number that will be sent to a
+  // customer, and who is carrying the parcel.
+  trackingNumber: "Tracking Number",
+  carrier: "Carrier",
   brandStory: "Brand Story",
   missionStatement: "Mission Statement",
   visionStatement: "Vision Statement",
@@ -139,6 +143,12 @@ export const HIDDEN_DIFF_KEYS = new Set([
   // on the card is a real improvement and a design decision, not a label
   // fix; recorded rather than smuggled in here.
   "promotionId",
+  // Tracking, 2026-09-03. Which ORDER is being marked shipped is an
+  // identifier, not the change being approved — and the card already names
+  // the order in its summary, in the owner's own terms. Hidden rather than
+  // labelled for the same reason as promotionId: "Order: cmtlu4db2..." under
+  // a friendly heading is worse than the raw key it would replace.
+  "orderId",
   "productIds",
   "designId",
   "goalRecordId",

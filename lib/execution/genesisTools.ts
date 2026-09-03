@@ -340,6 +340,8 @@ export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "request_product_removal",
   "request_product_content_change",
   "request_sale",
+  "attach_tracking",
+  "correct_tracking",
   "approve_pending_changes",
   "edit_store_content",
   "manage_business_asset",
@@ -377,6 +379,32 @@ export type StoreChatUnifiedToolName = (typeof STORE_CHAT_UNIFIED_TOOL_NAMES)[nu
  * not, so the description says so and tells the model to say so too —
  * rather than reaching for the shape it does have.
  */
+/**
+ * Saying a parcel has gone out, or fixing a number already sent (2026-09-03).
+ *
+ * NO ORDER NUMBER EXISTS TO ASK FOR. The Order model carries a cuid and
+ * Stripe's session id, and neither is something an owner says. So an order is
+ * named the way they actually refer to one - what was bought, and who bought
+ * it - and the handler resolves that against their own orders. Inventing a
+ * customer-facing order number to make this tidier would be a new identifier
+ * nobody asked for, on a record customers already receive email about.
+ *
+ * ATTACH AND CORRECT ARE DIFFERENT ACTS, not one with a flag. Attaching is
+ * additive and the executable refuses an order that already has a number.
+ * Correcting REPLACES one a customer may already be following, which is a
+ * different thing to agree to, so it is a different tool with its own
+ * approval.
+ */
+export const TrackingInputSchema = z.object({
+  /** The product as it appears on the order, e.g. "Copper Mug". */
+  productName: z.string().min(1).nullable().optional(),
+  /** The buyer's email as it appears on the order, when the owner names them. */
+  buyerEmail: z.string().min(1).nullable().optional(),
+  trackingNumber: z.string().min(1),
+  /** USPS when the owner does not say. */
+  carrier: z.string().nullable().optional(),
+});
+
 export const RequestSaleInputSchema = z.discriminatedUnion("intent", [
   z.object({
     intent: z.literal("create"),
@@ -463,6 +491,25 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
         "You CANNOT change an existing promotion's discount, dates or products with this tool. If that is what they are asking for, tell them plainly that you can start one or end one, and never propose a NEW promotion as a way of changing an old one — that leaves both running. " +
         "Either way this PROPOSES the change for the merchant's own review and approval; it never changes a price immediately. Never tell the merchant to go and do it themselves; you can prepare the real thing for them to approve.",
       input_schema: z.toJSONSchema(RequestSaleInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "attach_tracking",
+      description:
+        "Call this when the merchant says an order has SHIPPED and gives you a tracking number — 'the mug order went out, tracking 1Z999AA10123456784', 'shipped Jane's ring today, here's the number'. " +
+        "Identify the order the way they did: set productName to the product on that order and/or buyerEmail to the customer, using the values as they appear in the orders you were given — call look_up_business_data first if you do not have them. Do not ask the merchant for an order id; they do not have one. " +
+        "If more than one order matches, ask which one rather than guessing — attaching a number to the wrong order sends a real customer to a courier page about somebody else's parcel. " +
+        "Use attach_tracking only for an order with NO tracking yet. If it already has one and they are fixing it, that is correct_tracking. " +
+        "This PROPOSES the change for their approval and marks the order fulfilled when approved; it never writes to the order immediately.",
+      input_schema: z.toJSONSchema(TrackingInputSchema) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "correct_tracking",
+      description:
+        "Call this when the merchant wants to REPLACE a tracking number already on an order — 'I put the wrong tracking on the mug order', 'that number was for a different parcel, the right one is ...'. " +
+        "Identify the order exactly as for attach_tracking: productName and/or buyerEmail, never an id. " +
+        "Only for an order that ALREADY has a number. If it has none, that is attach_tracking. " +
+        "This matters more than an attach, because the customer may already be following the old number — so it PROPOSES the change for the merchant's approval and records what it replaced.",
+      input_schema: z.toJSONSchema(TrackingInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "approve_pending_changes",

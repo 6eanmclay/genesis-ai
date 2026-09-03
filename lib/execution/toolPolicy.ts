@@ -107,6 +107,17 @@ export const TOOL_POLICY: Record<string, ToolPolicy> = {
   improve_storefront: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   answer_supplier_economics: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   refine_storefront: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
+  // ADDED 2026-09-03 (P1). The executables have existed since the shipping
+  // milestone; nothing conversational could reach them. Both propose an
+  // approval rather than writing to the order, so they mutate in the sense
+  // this flag means: they create a real row.
+  //
+  // STORE_MANAGE, not a new orders-specific permission. The EXECUTABLES
+  // already require ORDERS_MANAGE and re-check it against the resolved store
+  // when they run, so the narrower gate is enforced where the write happens
+  // rather than duplicated here where it could drift out of agreement.
+  attach_tracking: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
+  correct_tracking: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
 };
 
 /**

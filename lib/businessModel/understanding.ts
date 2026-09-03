@@ -147,6 +147,30 @@ export interface ActivePromotion {
   productCount: number;
 }
 
+/**
+ * An order recent enough for the owner to still be talking about it.
+ *
+ * NO ORDER NUMBER EXISTS. The Order model has a cuid and Stripe's session
+ * id, and neither is something a person says out loud. So an order is
+ * identified here the way an owner actually refers to one - what was bought,
+ * who bought it, when - and the id is carried for a handler to resolve that
+ * description to a row. Inventing a customer-facing order number to fill the
+ * gap would be a new identifier nobody asked for.
+ */
+export interface RecentOrder {
+  id: string;
+  productName: string;
+  buyerEmail: string;
+  quantity: number;
+  amountInCents: number;
+  placedAt: Date;
+  status: string;
+  fulfillmentStatus: string | null;
+  /** Null when nothing has been attached yet - which is what makes it attachable. */
+  trackingNumber: string | null;
+  carrier: string | null;
+}
+
 export interface BusinessUnderstanding {
   profile: BusinessProfile;
   /**
@@ -209,6 +233,20 @@ export interface BusinessUnderstanding {
    * snapshot that every turn pays for.
    */
   activePromotions: ActivePromotion[];
+  /**
+   * THE ORDERS THE OWNER MIGHT STILL MENTION (2026-09-03, P1).
+   *
+   * getOrderSummary counts orders and sums revenue; it returns no individual
+   * ones. So J4 knew a store had eleven orders and could not name a single
+   * one of them - which makes "add this tracking number to the mug order"
+   * unanswerable, and tracking is the most ordinary thing an owner does all
+   * day.
+   *
+   * BOUNDED AND RECENT, not the order history. Everything ever sold belongs
+   * to the intelligence engine reasoning over BusinessEvent, not to a snapshot
+   * assembled on every turn.
+   */
+  recentOrders: RecentOrder[];
   /** What is standing in the way of what. See BlockedGoal. */
   blockedGoals: BlockedGoal[];
   beliefs: Awaited<ReturnType<typeof getBeliefs>>;
@@ -309,6 +347,7 @@ export async function getBusinessUnderstanding(
     latestEvent,
     // Appended LAST to match its query. See the note beside it.
     activePromotionRows,
+    recentOrderRows,
   ] = await Promise.all([
     getBusinessProfile(storeId),
     getBeliefs(storeId, { viewerUserId: opts?.viewerUserId }),
@@ -381,6 +420,25 @@ export async function getBusinessUnderstanding(
         _count: { select: { products: true } },
       },
     }),
+    // Appended last, with its binding appended last. One indexed read on
+    // (storeId, createdAt).
+    prisma.order.findMany({
+      where: { storeId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: {
+        id: true,
+        productName: true,
+        buyerEmail: true,
+        quantity: true,
+        amountInCents: true,
+        createdAt: true,
+        status: true,
+        fulfillmentStatus: true,
+        trackingNumber: true,
+        carrier: true,
+      },
+    }),
   ]);
 
   // Resolved against the goals and challenges ALREADY fetched, so naming what
@@ -413,6 +471,18 @@ export async function getBusinessUnderstanding(
       startsAt: row.startsAt,
       endsAt: row.endsAt,
       productCount: row._count.products,
+    })),
+    recentOrders: recentOrderRows.map((row) => ({
+      id: row.id,
+      productName: row.productName,
+      buyerEmail: row.buyerEmail,
+      quantity: row.quantity,
+      amountInCents: row.amountInCents,
+      placedAt: row.createdAt,
+      status: row.status,
+      fulfillmentStatus: row.fulfillmentStatus,
+      trackingNumber: row.trackingNumber,
+      carrier: row.carrier,
     })),
     connectedSummaries: {
       invoice: invoiceSummary,
