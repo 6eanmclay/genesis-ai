@@ -2,6 +2,7 @@ import { startRealPostgres } from "@/scripts/lib/realPostgres";
 import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { sourceOfRoute, sourceOfSymbol } from "@/scripts/lib/sourceOf";
 
 // THE BI ENGINE, PRODUCTION-READY — acceptance for P1-P3.
 //
@@ -49,7 +50,10 @@ async function main() {
     // ==================================================================
     console.log("\n=== GAP 1 — a stage failure does not take the stages behind it ===\n");
     // ==================================================================
-    const cycleSrc = codeOnly(read("lib", "intelligence", "cycle.ts"));
+    // Resolved by symbol (2026-09-02) — see scripts/lib/sourceOf.ts. Three
+    // of this suite's own assertions were stale against moved code when the
+    // lanes first ran it; naming a file by hand is what made that possible.
+    const cycleSrc = codeOnly(sourceOfSymbol("runCycleStages"));
 
     // The shape that made the defect possible: a stage awaited straight, so its
     // throw becomes the caller's throw. Every stage is now handed to runStage
@@ -194,7 +198,7 @@ async function main() {
     // So the property is no longer 'these five stages report' but 'EVERY
     // task does', which is what it should always have been — five named
     // stages could never have covered a sixth.
-    const schedulerSrc = codeOnly(read("lib", "scheduler", "run.ts"));
+    const schedulerSrc = codeOnly(sourceOfSymbol("runDueTasks"));
     assert("a failing task is caught rather than ending the invocation",
       /\} catch \(error\) \{/.test(schedulerSrc));
     // THE FAILURE PATH SPECIFICALLY. Sabotage caught this: a loose
@@ -215,7 +219,7 @@ async function main() {
     // ==================================================================
     console.log("\n=== GAP 3 — production can say whether the engine ran ===\n");
     // ==================================================================
-    const statusSrc = codeOnly(read("app", "api", "cron", "status", "route.ts"));
+    const statusSrc = codeOnly(sourceOfRoute("/api/cron/status"));
     assert("the status route is still CRON_SECRET-gated",
       statusSrc.includes("isAuthorizedCronRequest"),
       "it is cross-tenant, so the header check IS the authorization");

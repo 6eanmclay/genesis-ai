@@ -3,6 +3,7 @@ import { NAV_SECTIONS, COMMERCE_SECTIONS, STOREFRONT_SECTIONS, businessBasePath,
 import { resolveWorkspaceContext } from "@/lib/j4/workspaceContext";
 import { roomForPath } from "@/lib/dashboard/rooms";
 import { readFileSync } from "fs";
+import { sourceOfSymbol } from "@/scripts/lib/sourceOf";
 
 // WHERE J4 SAYS IT IS TAKING YOU, AND WHERE IT ACTUALLY GOES:
 //
@@ -49,13 +50,16 @@ function assert(label: string, ok: boolean, detail = ""): void {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  — ${detail}` : ""}`);
 }
 
-// MOVED, NOT LOST (2026-09-02). The destination map left the chat route
-// for lib/execution/toolHandlers.ts and is now exported as
-// NAV_DESTINATIONS. Nothing about it changed — the Office is still
-// deliberately absent, and the assertions below still read the real
-// declaration rather than an import, because what they check is that the
-// DECLARED map matches the schema's enum.
-const source = readFileSync("lib/execution/toolHandlers.ts", "utf8");
+// MOVED ONCE ALREADY, AND NOW ASKED FOR BY NAME (2026-09-02). The map
+// left the chat route for toolHandlers.ts and was renamed
+// NAV_DESTINATIONS; this suite went on reading the old file and reported
+// zero destinations. Resolving the symbol means the next move is found
+// rather than mis-reported, and a rename fails loudly by name.
+//
+// Still the DECLARATION rather than an import of the value: what these
+// assertions check is that the declared map matches the schema's enum,
+// and importing it would make that comparison trivially true.
+const source = sourceOfSymbol("NAV_DESTINATIONS");
 
 /** The destination map as the route actually declares it. */
 function destinationsFromRoute(): Record<string, { href: string; label: string }> {

@@ -19,6 +19,7 @@ import { parsePaypalCustomId } from "@/lib/promotions/checkoutDiscount";
 import type { DraftLine } from "@/lib/bag/checkoutDraft";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { sourceOfRoute, sourceOfSymbol } from "@/scripts/lib/sourceOf";
 
 // A BAG, ACROSS THE WIRE AND BACK:
 //
@@ -219,7 +220,14 @@ eq("and a multi-product order links none", primaryProductId(linesFromDraft(plain
 
 console.log("\n=== 7. The single-product path is untouched ===\n");
 
-const actions = read("app", "store", "[slug]", "actions.ts");
+// ASKED, NOT REMEMBERED (2026-09-02). These three used to name files by
+// hand, and one of them was already wrong: the Stripe handler had moved
+// out of the webhook route into lib/payments/stripeEvent.ts, so four
+// assertions here were red about behaviour that was perfectly intact.
+// sourceOf.ts finds the declaration wherever it now lives and throws a
+// named error when it cannot, which is the whole point — a moved symbol
+// must never leave a green assertion reading a stale file.
+const actions = sourceOfSymbol("checkoutFromBag");
 assert("createCheckoutSession still exists with its own Stripe call",
   /export async function createCheckoutSession\(/.test(actions) &&
     /createStripeCheckoutSession\(store, product, slug, baseUrl, pricing\)/.test(actions),
@@ -238,7 +246,7 @@ assert("which charges only what the draft quoted",
 //
 // This is the cost of a source assertion, and the reason one has to actually
 // RUN. Nothing caught it for as long as this suite belonged to no lane.
-const stripeHook = read("lib", "payments", "stripeEvent.ts");
+const stripeHook = sourceOfSymbol("handleStripeEvent");
 assert("the webhook only takes the bag path when there IS a draft",
   /const draftId = session\.metadata\?\.checkoutDraftId/.test(stripeHook) &&
     /bagLines \? primaryProductId\(bagLines\) : \(product\?\.id \?\? null\)/.test(stripeHook),
@@ -251,7 +259,11 @@ assert("a contents-unknown order is surfaced, not just stored",
 assert("and so is a charge that does not match the quote",
   /if \(writtenOrderId && bagMismatch\)/.test(stripeHook));
 
-const paypalReturn = read("app", "api", "checkout", "paypal", "return", "route.ts");
+// BY ROUTE, because every Next handler exports GET — fourteen files in
+// this repository do, so the name is no identity. The URL is, and it is
+// still derived rather than recorded: a route that moved changed the URL
+// it serves, which is a real change and should fail here.
+const paypalReturn = sourceOfRoute("/api/checkout/paypal/return");
 assert("the PayPal route distinguishes a bag by its marker",
   /parseDraftCustomId\(customId\)/.test(paypalReturn));
 assert("and still accepts a single-product custom_id",
