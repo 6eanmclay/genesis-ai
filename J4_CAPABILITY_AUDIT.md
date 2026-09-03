@@ -1,214 +1,568 @@
 # J4 Capability Audit
 
-**Status: AUDIT. No code changed to produce this — every row below is traced against the real, current code (`GENESIS_ACTIONS`, the unified chat tools, `businessProfile`/data-answer context, and every real Server Action in `app/dashboard/ai-actions.ts`), not assumed from what the UI appears to support.**
+**Status: REFRESHED 2026-09-03. This supersedes the 2026-08-08 audit** rather
+than sitting beside it — Sean's instruction, and the right one: a second parallel
+audit would immediately disagree with the first. The August framing (capability
+gap vs routing gap, the real approval vocabulary, priorities) is kept because it
+still works. What changed is the answer, and one of the categories.
 
-Date: 2026-08-08. Requested after multiple real-device tests each surfaced a different capability gap one at a time (asset persistence, product renaming, product deletion before this session's fix) — this audit exists so gaps get found and prioritized together instead of patched one real-user complaint at a time.
+**Method.** Every number below is read out of the code, not remembered:
 
----
+| Registry | Where | Count |
+|---|---|---|
+| Server actions (what the Genesis UI can do) | 32 files with `"use server"` | **149** |
+| API routes | `app/api/**/route.ts` | **27** |
+| Executables (what can run under approval) | `GENESIS_ACTIONS` | **23** |
+| Tools J4 may invoke | `TOOL_POLICY` | **20** (3 read, 17 mutating) |
+| Execution-log actions (verification vocabulary) | `EXECUTION_ACTIONS` | **55** |
+| Business Map domains | `MAP_DOMAINS` | **9** |
 
-## How to read this
-
-Each row distinguishes two genuinely different problems, per Sean's explicit instruction:
-
-- **Capability gap** — the underlying mechanism (an `Executable`, a database write, a real action) does not exist at all. J4 cannot do this no matter how the request is phrased.
-- **Routing gap** — the mechanism exists and works (often already used by a manual dashboard form), but nothing in the conversational tool-routing layer (`lib/execution/genesisTools.ts` / `STORE_CHAT_UNIFIED_SYSTEM_PROMPT` / the unified call's branches) can reach it. J4 has the capability; the conversation can't find it.
-
-**Approval level** uses the real, existing vocabulary from `lib/execution/genesisActions.ts` — `auto` (executes immediately), `always_ask` (creates a real `ApprovalRequest`, needs a click), or `read-only` (nothing to approve, it's just an answer). Category ceilings are hard-coded and already enforce that `money`/`destructive` actions can never be delegated past `always_ask` — that boundary is not up for revision here.
-
-**Priority** is mine, explained in the closing section — Critical / High / Medium / Low, weighted by how often a real owner would naturally ask for it and how confusing it is when J4 can't.
-
----
-
-## 1. Business Identity
-
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Answer "what's our brand story / mission / target audience" | Yes | `businessProfile.identity` in the data-answer context | — | read-only | — |
-| Rename the store, change tagline/description | Yes | `update_store_identity` via `edit_store_content` → PRIMARY | Just fixed this session (routing gap: a second, independent classification call could silently disagree with the first and downgrade a real rename into pure conversation) | always_ask | — |
-| Change brand story/mission/vision/values/personality/voice/USP | Yes | `update_brand_identity`, same routing | — | always_ask | — |
-| Change visual/design direction (mood, photography style, icon style) | Yes | `update_design_direction`, same routing | — | always_ask | — |
-
-**This area is solid.** No open gap — it's the one area this session's own work already hardened.
+Regenerate with the inventory walk described in *How this was counted* at the
+end. `scripts/verify-tool-policy.ts` already asserts `TOOL_POLICY` and the tool
+catalog agree in both directions, so the 20 is trustworthy rather than a list
+somebody maintained by hand.
 
 ---
 
-## 2. Products
+## The headline finding
 
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Answer "what do we sell / what's the price of X" | Yes | `currentProducts` in context | — | read-only | — |
-| Create a new product from an uploaded photo | Yes | `create_product`, triggered by `classifyAndExtractAsset`'s product-proposal detection | — | always_ask | — |
-| **Create a new product from a plain instruction** ("add a ring, $45, hand-hammered copper") | **No** | — | **Routing gap.** `create_product`'s `Executable` and `GENESIS_ACTIONS` entry already exist and work — nothing in the unified tool router can reach them from a direct instruction. `edit_store_content` explicitly excludes products ("You do not handle individual product edits"); no other tool covers it. | always_ask | **High** |
-| **Edit an existing product's name/price/description** ("change the ring's price to $50") | **No** | — | **Routing gap.** `editProductExecutable` already exists (used by the manual Products page form) and is fully functional — it is simply never registered in `GENESIS_ACTIONS`, the same exact shape `delete_product` was in before this session's fix. | always_ask | **Critical** — this is the most natural "talk to your business partner" sentence in the whole audit and it currently goes nowhere. |
-| Replace/regenerate a product's photo | Yes | `update_product_image` via `request_image_change` | — | always_ask | — |
-| Remove an obsolete product | Yes | `delete_product` via `request_product_removal` | Fixed this session | always_ask | — |
-| **Activate/deactivate a product** ("hide the wipes, don't delete them") | **No** | — | **Capability gap in the conversational layer, but not in the system** — `toggleProductActiveExecutable` exists (manual form only), never registered in `GENESIS_ACTIONS`, no tool routes to it. Same shape as the edit gap above. | auto or always_ask (low blast radius — reversible) | **Medium** |
+**Genesis grew and J4 did not.** 149 owner-reachable server actions against 23
+executables and 20 tools. The interesting part is *why* the gap exists, and it
+is not what the August audit was built to describe.
 
-**Products is the single most inconsistent area in the product** — creation, deletion, and image changes all work conversationally; the single most common everyday edit (price/description) does not.
+That audit split every gap two ways:
 
----
+- **Capability gap** — the mechanism does not exist at all.
+- **Routing gap** — the mechanism exists and works, but the conversational layer
+  cannot reach it.
 
-## 3. Storefront / Website
+Almost nothing left is a capability gap: the mechanisms exist, as real server
+actions the dashboard already calls. But almost nothing is a pure routing gap
+either, because J4 does not execute by calling server actions. It executes by
+emitting a tool, which maps to a `GENESIS_ACTIONS` entry, which is what carries
+approval, category ceilings, execution logging and `verify()`. **A capability
+with no `GENESIS_ACTIONS` entry has nowhere for J4 to route to that is safe.**
 
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Change hero headline/subheadline | Yes | `update_hero` via `edit_store_content` | — | always_ask (deliberately locked — "storefront's single most visible element") | — |
-| Change homepage content (about us, why choose us, FAQ, newsletter, footer, featured collections) | Yes | `update_homepage_content`, same routing | — | always_ask | — |
-| Reorder homepage sections | Yes | `update_section_order`, same routing | — | always_ask | — |
-| Change theme (colors, typography, layout, card/button style) | Yes | `update_theme`, same routing | — | always_ask | — |
-| Publish/unpublish the storefront | **No** | — | **Routing gap.** `toggleStorePublished` exists and works (manual toggle on Website), no conversational path — "put the store live" or "take it down for maintenance" has nowhere to go. | always_ask (a real, highly visible state change) | **High** |
-| Change shipping/return/privacy policy or terms | Yes | `update_store_content`, `edit_store_content` routing | — | always_ask | — |
-| SEO title/meta description | Yes | `update_seo`, same routing | — | **auto** (the one action that's earned autonomous execution) | — |
+So this audit uses a third category, and it is where most of the work is:
 
----
+> **Wrapper gap** — the business logic exists and is proven in the UI, but there
+> is no `Executable` for it, so it cannot be approved, logged or verified, and
+> therefore should not be conversational yet. Closing one means a thin
+> `GENESIS_ACTIONS` entry + `TOOL_POLICY` row + tool definition that *calls the
+> existing logic*. **No new business logic, no duplicated architecture.**
 
-## 4. Images and Documents
-
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Receive an uploaded photo/document, see it, describe it | Yes | `uploadBusinessAssetFromChat` + `classifyAndExtractAsset` | — | read-only (ingestion, not a decision) | — |
-| Receive a large batch reliably | Yes | Fixed this session — chunked, retryable, real progress | — | — | — |
-| Regenerate/replace a product photo | Yes | `request_image_change` → `update_product_image` | — | always_ask | — |
-| **Persist an uploaded image/document as a designated business asset** ("save this as our primary logo") | **No** | — | **Real capability gap**, not routing — there is no designation concept anywhere in the schema. Full architecture recommendation already given and approved in principle; explicitly the next milestone after this audit. | TBD (see the asset-designation memo) | **Critical** — this is the exact real-device finding that prompted this whole audit. |
-| Generate new artwork/imagery on request ("can you draw a new logo") | **No** | — | **Real capability gap.** No image-generation-on-demand tool exists in chat (product-photo sourcing exists, but it searches/generates for an existing product, it isn't a general "draw me X" capability). Already named as a known, deferred gap earlier this session. | always_ask | Medium |
+That distinction is the audit's main deliverable. It answers questions 6 and 7
+directly: **most gaps need a new action/tool declaration, and almost none need
+new capability.**
 
 ---
 
-## 5. Business Assets (the persistent library, not the upload event)
+## 1. What Genesis can do today (Q1)
 
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Recall a recently uploaded asset in conversation | Yes | `businessProfile.assets` (`recentAssets`) | — | read-only | — |
-| **Designate an asset as "the" primary logo / brand guide / supplier agreement** | **No** | — | Same gap as row above — this is that gap's real, general form. See the approved architecture direction (role + relationship/scope + supersession). | TBD | **Critical** |
-| **"Show me the assets I've given you for this product"** | **No** | — | **Capability gap.** `relatedRecordId`/`relatedEntityType` already exist on the Asset entity for exactly this kind of link, but nothing queries by it conversationally today — recall is recency-based, not relationship-based. | read-only | High (bundled with the designation milestone — same underlying query need) |
-| Browse/search all uploaded assets | **No** | — | **Capability gap.** Approved in `BUSINESS_ASSETS_ARCHITECTURE.md` (M4) but never built. | read-only | Medium |
+149 server actions across 32 files. Grouped by what the owner would call it:
 
----
+| Area | File | Actions |
+|---|---|---|
+| Store, products, orders, connections | `app/dashboard/actions.ts` | 28 |
+| Conversation, drafts, approvals | `app/dashboard/ai-actions.ts` | 29 |
+| Onboarding | `app/onboarding/**` | 26 |
+| Studio — creation | `app/b/[slug]/studio/create/actions.ts` | 10 |
+| Account security | `app/account/security/actions.ts` | 7 |
+| Storefront (customer-facing) | `app/store/[slug]/**` | 11 |
+| Connections | `app/dashboard/connectionsActions.ts` | 5 |
+| Catalog / sourcing | `app/dashboard/catalog/actions.ts` | 4 |
+| Promotions | `app/dashboard/promotions/actions.ts` | 3 |
+| Access / members | `app/dashboard/access/actions.ts` | 3 |
+| J4 proposals | `app/j4/proposal-actions.ts` | 3 |
+| Studio — social | `app/b/[slug]/studio/social/actions.ts` | 3 |
+| Understanding | `app/dashboard/understanding/actions.ts` | 2 |
+| Billing | `app/dashboard/billing/actions.ts` | 2 |
+| Growth Points | `app/dashboard/growth-points/actions.ts` | 2 |
+| Everything else | 8 files | 1 each |
 
-## 6. Orders
-
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Answer "how many orders, how much revenue, what's recent" | Yes | `buildChatDataContext` (revenue, recent transactions) | — | read-only | — |
-| **Mark an order fulfilled / check fulfillment status conversationally** | **No** | — | **Routing gap.** `toggleOrderFulfilled` exists and works (manual Orders page only); order fulfillment state isn't part of the data-answer context either, so J4 can't even *answer* "is order #1234 fulfilled" today, let alone act on it. | always_ask or auto (routine, reversible) | Medium |
-| Refund an order | **No** | — | **Real capability gap.** No refund executable exists anywhere in the codebase yet. | always_ask, hard-locked (`money` category ceiling) | Medium — real, but genuinely money-risk, deserves its own careful design, not a quick add |
-
----
-
-## 7. Customers
-
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Answer "who are my top customers / repeat buyers / lapsed customers" | Yes | `topContacts`, computed segments in `businessProfile` | — | read-only | — |
-| Add a customer/contact manually (not synced from an order or connected system) | **No** | — | **Real capability gap** — `capture_business_fact`'s tool only covers goal/challenge/employee/location; `contact` isn't a conversational-capture entity type today. Arguably correct as-is (customers should come from real orders/syncs, not be fabricated) — flagged, not necessarily a real gap to close. | always_ask | Low |
-| Message/email a specific customer | **No** | — | See Communications (§13) — same underlying gap. | always_ask | see §13 |
-
----
-
-## 8. Payments
-
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Connect/disconnect Stripe or PayPal | No, by design | Manual only (`connectStripe`/`connectPaypal`) | **Correctly out of conversational scope** — this is a real OAuth/credential flow; it should never be conversational. Not a gap. | N/A | — |
-| **Answer "is Stripe/PayPal connected, is anything wrong with my payment setup"** | **No** | — | **Real capability gap.** Unlike QuickBooks/Mailchimp/Google Calendar, payment connection status isn't part of `businessProfile.connectedSystems` at all — J4 has no visibility into this even to *describe* it, despite it being one of the most operationally important questions a business partner should be able to answer. | read-only | **High** |
-| Purchase Growth Points / manage billing / change plan | No, by design | Manual only | **Correctly out of conversational scope** — real payment action. | N/A | — |
+Not all 149 are J4's business. Roughly 11 are customer-facing storefront/bag
+actions (a shopper's session, not the owner's), 26 are first-run onboarding, and
+a handful are auth/telemetry plumbing. **The owner-facing operational surface is
+roughly 100 actions.** That is the number to measure J4 against, and it is
+stated rather than quietly used, because inflating the denominator would make
+the gap look worse than it is.
 
 ---
 
-## 9. Integrations
+## 2 & 3. What J4 can inspect and explain today (Q2, Q3)
 
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Connect/disconnect QuickBooks, Mailchimp, Google Calendar, etc. | No, by design | Manual only (credential/OAuth) | Correctly out of conversational scope. | N/A | — |
-| Answer "what's connected, is anything stale/broken" | Yes | `businessProfile.connectedSystems` (`syncedAgoLabel`, `isStale`) | — | read-only | — |
-| Trigger a manual re-sync | **No** | — | **Routing gap.** `syncIntegration` exists and works (manual button only); "resync my QuickBooks" has no conversational path. | auto (low-risk, no state change beyond refreshing data) | Low |
+**Inspection is the strongest part of J4 today — with one revenue-affecting
+hole, found while scoping the plan below.** One tool,
+`look_up_business_data`, reads one canonical assembler,
+`getBusinessUnderstanding`, which returns 15 facets:
 
----
+`profile`, `connectedSummaries`, `upcomingAppointments`, `recentBusiness`,
+`recentRecords`, `throughEventSequence`, `blockedGoals`, `beliefs`,
+`recentDecisions`, `activeThoughts`, `platformRelationship`, `currentAssets`,
+`commitments`, `ownerUnderstanding`, `asOf`.
 
-## 10. Business Information / Knowledge
+Viewer scoping is inside the assembler — owner-scoped beliefs and
+`ownerUnderstanding` are withheld from non-owners — so the tool's permission
+governs whether the question may be asked, not what the answer may contain.
+That is the correct split and should not be re-implemented per tool.
 
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Remember a stated goal, challenge, new employee, new location | Yes | `capture_business_fact` | — | auto (a durable-fact write, not a storefront change) | — |
-| Answer almost anything about the business from what it's been told | Yes | Full `businessProfile` in the data-answer context | — | read-only | — |
-| **Remember an arbitrary reminder/note/todo** ("remind me to call the supplier next week") | **No** | — | **Real capability gap.** Doesn't fit goal/challenge/employee/location; there's no general-purpose "remember this for later" entity. See §12 Tasks — same real gap. | auto | High |
+**The hole: promotions are invisible to J4 entirely.** The `Promotion` model
+exists in Prisma, and `understanding.ts` does not reference it once. Neither
+does the Business Map — its "On sale in your storefront" is a *product's*
+`active` flag, and `reasoning.ts`'s "sale" means a revenue transaction, not a
+discount. So J4 can create a promotion and then never see it again: it cannot
+answer "what sales am I running?", and it cannot stop one because it cannot
+name one. An inspection gap, not merely an execution gap.
 
----
+`MAP_DOMAINS` already defines the 9 Business Map domains: `business`,
+`commerce`, `customers`, `financials`, `goals`, `social`, `connections`,
+`creation`, `learned`. Every map edge names the column or computation backing
+it, so **the data contract the approved Business Map walkthrough needs already
+exists.** The walkthrough's gap is presentation and choreography, not data.
 
-## 11. Recommendations
+**The honest limits of explanation:**
 
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Surface a real, ranked next-best-action | Yes | `getNextBestAction` (Growth Engine), now a card in the unified Home zone | — | matches the underlying action's own tier | — |
-| Explain the reasoning behind a recommendation | Yes | `explainRecommendation` | — | read-only | — |
-| Give a genuine planning answer ("build me a 90-day plan") | Yes | `look_up_business_data`'s planning-capable data-answer prompt | — | read-only | — |
-
-**This area is solid.** No open gap found.
-
----
-
-## 12. Tasks
-
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Surface a system-detected task (missing logo, unpublished store, etc.) as a real, clickable, context-seeded conversation | Yes | `Task` model + `startTaskConversation`, just unified into the Home redesign | — | matches the underlying action's own tier | — |
-| **Create a task from a conversational instruction** ("remind me to follow up with the supplier") | **No** | — | **Real capability gap** — every `Task` today is system-detected (`runTaskDetection`); there is no owner-authored task creation path at all. Same underlying gap as §10's "remember a reminder." | auto | **High** |
-
----
-
-## 13. Communications
-
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Plan/draft a marketing campaign | Yes | `plan_campaign` | — | read-only (planning) / always_ask to actually schedule | — |
-| **Actually send a campaign or message a customer** | **No** | — | **Real capability gap, deliberately deferred** — explicitly paused pending a real Resend account ("never mock the real dependency," Sean's own earlier instruction). Not an oversight; a known, intentional dependency block. | always_ask (`communication` category, but a real send is high-consequence) | Blocked on a real credential, not a priority-ordering question |
+- J4 can explain what it *understands*; it cannot yet point at what it is
+  explaining. That is the approved direction in `J4_VISUAL_DIRECTION.md` and is
+  deliberately unbuilt.
+- `take_me_there` returns a destination, which is the nearest thing to
+  navigation that exists. A walkthrough needs *focus/highlight within* a
+  surface, which has no representation today.
+- There is no way for J4 to say "and here is the thing I mean" in a form the UI
+  can act on — no scope/selection contract between the conversation and a
+  surface. **This is the one genuinely new architectural piece the Business Map
+  direction requires**, and it is a contract, not a capability.
 
 ---
 
-## 14. Analytics / Insights
+## 4. What J4 can execute today (Q4)
 
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Answer revenue/order/customer/inventory questions with real numbers | Yes | `buildChatDataContext` + `businessProfile` | — | read-only | — |
-| Answer questions about connected-system data (invoices, campaign performance, appointments) | Yes | Same context, with honest staleness framing | — | read-only | — |
-| Synthesize a real recommendation from beliefs/decisions/trends | Yes | `understanding.beliefs`/`recentDecisions`/`activeThoughts` | — | read-only | — |
+17 mutating tools, reaching 23 executables.
 
-**This area is solid.**
+| Tool | Reaches |
+|---|---|
+| `edit_store_content` | `update_store_identity`, `update_brand_identity`, `update_design_direction`, `update_store_content`, `update_homepage_content`, `update_seo`, `update_hero`, `update_section_order` |
+| `request_product_content_change` | `update_product` |
+| `request_product_removal` | `delete_product` |
+| `request_image_change` | `update_product_image`, `update_brand_logo` |
+| `request_sale` | `create_promotion`, `update_promotion` |
+| `create_design` / `approve_design_as_product` | `create_product_from_design`, `create_product` |
+| `create_composition` / `approve_composition` | `update_marketing_assets` |
+| `generate_brand_logo` | `update_brand_logo` |
+| `improve_storefront` / `refine_storefront` | `refine_storefront`, `update_theme` |
+| `answer_supplier_economics` | `answer_supplier_economics` |
+| `capture_business_fact` | business facts (Understand layer) |
+| `plan_campaign` | campaign planning |
+| `manage_business_asset` | asset library |
+| `approve_pending_changes` | the approval queue itself |
+
+Plus `update_goal_status`, `resolve_challenge`, `communicate_finding` reached
+from the intelligence path rather than a chat tool.
+
+**What that covers, fairly stated:** storefront content, brand identity, design
+direction, products (create/edit/delete), product and brand imagery,
+promotions, designs and compositions, business facts, and the approval queue.
+That is the "make and change the storefront" half of the product, and it is
+genuinely well covered.
 
 ---
 
-## 15. Future Automations
+## 5. What Genesis can do that J4 cannot invoke (Q5)
 
-| Capability | Can J4 do it? | How | Why not / what's missing | Approval | Priority |
-|---|---|---|---|---|---|
-| Execute a real action automatically, without a click, once trusted | Yes (mechanism), barely used (in practice) | `DelegatedAuthority` + `authorizationTier: "auto"` — real, live, code-enforced | Only `update_seo` has actually earned `auto` today; every other action defaults to `always_ask` even where the category ceiling would allow more | auto (per-action, real, deliberate) | Ongoing, not a gap — a trust-earning process, not a missing mechanism |
+Every row names a real server action. Classification per §The headline finding.
+
+### Orders and fulfilment — **the largest and most surprising gap**
+
+| Capability | Server action | Gap | Notes |
+|---|---|---|---|
+| Mark an order fulfilled | `toggleOrderFulfilled` | wrapper | The single most common daily operation an owner has. |
+| Attach a tracking number | `attachTrackingNumber` | wrapper | |
+| Correct a tracking number | `correctTrackingNumber` | wrapper | Already has correction semantics to reuse. |
+| Buy a shipping label | `purchaseShippingLabel` | wrapper | **money** category — `always_ask`, hard ceiling. |
+| Save a return address | `saveReturnAddress` | wrapper | |
+
+J4 can build a store and cannot help run it. An owner asking *"mark order 118
+shipped with tracking 1Z…"* is the most natural conversational request in the
+product and there is no tool for it.
+
+### Store lifecycle
+
+| Capability | Server action | Gap |
+|---|---|---|
+| Publish / unpublish the store | `toggleStorePublished` | wrapper — arguably `destructive`-adjacent; unpublishing takes a live store down |
+| Activate / deactivate a product | `toggleProductActive` | wrapper |
+| Product media: add, reorder, delete, replace | `addProductImages`, `reorderProductImages`, `deleteProductImage`, `replaceProductImage` | wrapper — `request_image_change` covers *changing* one image, not managing a gallery |
+
+### Promotions — partially covered
+
+| Capability | Server action | Gap |
+|---|---|---|
+| Create a promotion | `createPromotion` | **covered** via `request_sale` |
+| Pause / resume a promotion | `setPromotionActive` | **routing only — see Correction 2**: `update_promotion` already exists in full and nothing can produce it |
+| Delete a promotion | `deletePromotion` | wrapper — `destructive` |
+
+J4 can start a sale and cannot stop one — and the tool's description promises
+it can, which is worse. See **Correction 2** in the plan below.
+
+### Connections
+
+`connectIntegration`, `verifyIntegration`, `disconnectIntegration`,
+`syncIntegration`, `submitIntegrationCredentials`, plus the provider-specific
+`connectStripe` / `disconnectStripe` / `recheckStripe`, `connectPaypal` /
+`submitPaypalCredentials` / `disconnectPaypal` / `recheckPaypal`,
+`submitUspsCredentials` / `disconnectUsps` / `recheckUsps`.
+
+**Gap: wrapper for the safe half, and deliberately never for the rest.**
+`syncIntegration` and `verifyIntegration` are reads-with-effects and are
+reasonable conversational requests. **Credential submission must never be
+conversational** — an owner should not paste a secret into a chat transcript
+that is stored and may be summarised. That is a boundary, not a gap, and it
+belongs in this document as one.
+
+### Access and authority
+
+`addMemberAction`, `changeRoleAction`, `removeMemberAction`, `grantAuthority`,
+`revokeAuthority`.
+
+**Gap: wrapper, and the lowest priority here by design.** These change who can
+do what. A conversational path to privilege escalation is exactly the shape of
+mistake worth avoiding, and the post-migration audit already caught one
+authorization hole this milestone. If it is ever built, `destructive` ceiling.
+
+### Money and plan
+
+`purchaseGrowthPoints`, `subscribeToPlan`, `manageBilling`.
+
+**Gap: wrapper, `money` category, `always_ask` hard.** J4 recommending a plan is
+already covered by the trusted-advisor principle; J4 *buying* one is a different
+act. `addGrowthPointsForTesting` must never be reachable.
+
+### Account security
+
+`beginSetupAction`, `enableAction`, `disableAction`, `regenerateAction`,
+`confirmPasswordAction`, `endSessionAction`, `endOtherSessionsAction`.
+
+**Not a gap — out of scope on purpose.** 2FA and session revocation sit behind
+re-authentication. Conversational 2FA disablement is an attack, not a feature.
+Recorded so nobody later reads its absence as an oversight.
+
+### Catalog and sourcing
+
+`adoptFromCatalog`, `dismissFromCatalog`, `priceFromCatalog`,
+`rediscoverForCatalog`.
+
+**Gap: wrapper.** *"Add that supplier's mug to my store at £18"* is a natural
+request and the whole sourcing model exists behind it.
+
+### Understanding and beliefs
+
+`contradictBeliefAction`, `restoreBeliefAction`.
+
+**Gap: wrapper — and the most interesting one.** J4 can *capture* a fact
+(`capture_business_fact`) but an owner cannot conversationally tell J4 *"that's
+wrong"* about a belief J4 itself formed. The Business Fact Lifecycle already
+implements owner correction with supersession preserved; only the conversational
+route is missing. This one is nearly pure routing.
+
+### Studio and assets
+
+`addDesignToStore`, `saveDesignDraft`, `loadDesignDraft`, `describeDesign`,
+`addAssetToLibrary`, `removeAssetFromLibrary`, `restoreAssetToLibrary`,
+`saveSocialDraft`.
+
+**Mostly covered** by `create_design`, `approve_design_as_product` and
+`manage_business_asset`. `describeDesign` and draft save/load are wrapper gaps of
+low value. Social publishing is not authorized regardless.
+
+### Attention, recommendations, drafts
+
+`dismissAttentionCard`, `explainRecommendation`, `reviewBusinessWithGenesis`,
+`applyThemePersonality`, `restoreStoreDraftVersion`, `confirmStoreDraft`,
+`discardStoreDraft`.
+
+**Gap: routing, genuinely.** These are conversational by nature — *"dismiss
+that", "why did you recommend that?", "undo that theme change"* — and every
+mechanism exists. `explainRecommendation` in particular is J4 explaining itself,
+which is the product's whole thesis.
 
 ---
 
-## Priority order (mine, for review)
+## 6 & 7. New tool vs routing only (Q6, Q7)
 
-**Critical — the exact class of gap that keeps surfacing in real testing, one at a time:**
-1. **Product editing** (§2) — a fully-built executable, zero conversational reach. The single most natural sentence in the whole audit currently fails.
-2. **Asset designation** (§4/§5) — already scoped as the next milestone; this audit doesn't change that, it confirms it's the right call.
+| Kind | Count (approx.) | What closing it costs |
+|---|---|---|
+| **Pure routing** — mechanism + executable exist, conversation cannot reach it | ~7 | Tool definition + `TOOL_POLICY` row + prompt. No new logic. |
+| **Wrapper** — mechanism exists, no executable | ~30 | Thin `GENESIS_ACTIONS` entry calling existing logic, + tool + policy. No new logic. |
+| **Genuine capability** — nothing exists | **1** | The conversation↔surface scope/selection contract the Business Map walkthrough needs. |
+| **Deliberately never** | ~12 | Credentials, 2FA, session revocation, test-only helpers. |
 
-**High — real, frequently-plausible requests with no path today:**
-3. Direct conversational product creation (§2)
-4. Publish/unpublish the storefront conversationally (§3)
-5. Payment connection status visibility (§8) — J4 can't even *describe* Stripe/PayPal state today
-6. General-purpose reminders/tasks from conversation (§10/§12 — one real gap, appears in two areas)
-7. "Show me the assets for this product" (§5) — same underlying work as the designation milestone, worth bundling
+**The single genuinely new architectural piece is the scope contract**, not any
+business capability. Everything else is declaration.
 
-**Medium — real, but lower frequency or genuinely needs its own careful design:**
-8. Product activate/deactivate conversationally (§2)
-9. Order fulfillment visibility + toggling (§6)
-10. On-demand image generation ("draw me a new logo") (§4)
-11. Asset browse/search library (§5, already-approved M4)
+---
 
-**Low / not gaps:**
-- Manual re-sync trigger (§9) — real but rare, low cost of the current friction
-- Adding a customer/contact manually (§7) — plausibly correct to leave manual
-- Payment/integration credential connection (§8/§9) — correctly out of conversational scope, not a gap
-- Campaign sending (§13) — blocked on a real Resend account, not a prioritization question
-- Refunds (§6) — real money risk, deserves deliberate design later, not a quick add
+## 8 & 9. Approval and verification (Q7 of Sean's list, Q8/Q9)
 
-**The pattern worth naming directly:** every "Critical" and most "High" items are **routing gaps, not capability gaps** — the underlying `Executable` already exists for product edit, activate/deactivate, publish/unpublish, and re-sync; it's simply never registered in `GENESIS_ACTIONS` or reachable from the unified tool router. That's the same exact shape as `delete_product` before this session's fix. Closing the product-editing gap alone would very likely be the highest-leverage single fix in this entire audit — it's a known pattern, low architectural risk, and the most obviously "reasonable thing an owner would say."
+Both systems already exist and **must be reused, not re-implemented**.
+
+**Approval** is `AuthorizationTier` — `always_ask` | `auto_below_limit` | `auto`
+— with hard-coded per-category ceilings no owner setting can raise:
+
+| Category | Ceiling |
+|---|---|
+| `content` | `auto` |
+| `operations` | `auto` |
+| `communication` | `auto` |
+| `integration` | `auto_below_limit` |
+| `money` | **`always_ask`, hard** |
+| `destructive` | **`always_ask`, hard** |
+
+Only `always_ask` is real today; the other two tiers are declared and not yet
+enforced anywhere. **Any new executable must declare a category, and the
+category decides the ceiling** — which means the approval question for every gap
+above is already answered by which category it falls into. Nothing new is
+needed.
+
+**Verification** is `recordExecution` against `EXECUTION_ACTIONS` (55 entries),
+plus the `verify()` requirement the compiler enforces — an executable that
+cannot be read back does not compile. That is the strongest guarantee in the
+codebase and it applies automatically to any new executable. **No new
+verification architecture.**
+
+**Practical consequence:** the safe order to close gaps is by category —
+`content` and `operations` first (auto, reversible, already the well-trodden
+path), `integration` next, and `money`/`destructive` last and always behind
+`always_ask`.
+
+---
+
+## 10. What to reuse rather than duplicate (Q10)
+
+| Need | Reuse | Do not build |
+|---|---|---|
+| Approval, drift refusal, revert | `GENESIS_ACTIONS`, `ApprovalRequest`, `approvalDrift` | a second approval path |
+| Execution logging + read-back | `recordExecution`, `EXECUTION_ACTIONS`, `verify()` | a second audit trail |
+| Tool authorization | `TOOL_POLICY` + `mayInvokeTool` (fails closed) | per-tool ad-hoc checks |
+| Business reading | `getBusinessUnderstanding` | a second assembler — `buildChatDataContext` was already deleted for being one |
+| Map data + edges | `MAP_DOMAINS`, the edge registry | a J4-specific map model |
+| Recommendations | the existing recommendation/track-record system | a J4-specific suggester |
+| Integrations | `lib/integrations` provider layer | per-provider J4 code |
+| Order/shipping logic | `lib/carriage`, `lib/pricing/orderPricing.ts` | a conversational pricing path |
+
+`lib/pricing/orderPricing.ts` is the one source of truth both rails must take — a
+conversational rail that priced independently would be a third opinion about
+money.
+
+---
+
+# The plan (2026-09-03) — approved priorities, scoped against the real code
+
+Sean's sequencing, scoped after reading each mechanism rather than from the
+inventory above. **Two things the audit got wrong were found while scoping, and
+both make the work smaller — except one, which makes it more urgent.**
+
+## Correction 1: the order wrappers are thinner than stated
+
+All four Priority-1 capabilities **already have Executables**, which means they
+already have `verify()`, execution logging and the confirmed-safe
+fetch-then-authorize pattern:
+
+| Capability | Executable that already exists |
+|---|---|
+| `toggleOrderFulfilled` | `toggleOrderFulfilledExecutable` |
+| `attachTrackingNumber` | `attachTrackingExecutable` |
+| `correctTrackingNumber` | `correctTrackingExecutable` |
+| `purchaseShippingLabel` | `purchaseShippingLabelExecutable` |
+
+So the "wrapper gap" is not "write an executable". It is the five-part
+declaration every existing action already follows:
+
+1. a `GENESIS_ACTIONS` entry — `executable`, `inputSchema`, `getCurrentValues`,
+   `category`, `authorizationTier`, `maxAuthorityTier`
+2. an `ACTION_SECTIONS` entry so the approval has somewhere to live
+3. a `TOOL_POLICY` row (permission + `mutates`)
+4. a tool definition in `buildStoreChatUnifiedTools()`
+5. a handler in `toolHandlers.ts`
+
+**No new business logic. No new execution, approval or verification
+architecture.** `scripts/verify-tool-policy.ts` and
+`scripts/verify-action-sections.ts` already fail closed if any of 2–4 is
+missing, which is the safety net for doing this work at all.
+
+## Correction 2: promotions is not a missing capability, it is a WRONG one
+
+This is the finding that changes priority order.
+
+- `update_promotion` **exists in full** — executable, `active: z.boolean()`,
+  `money`/`always_ask`, and an `ACTION_SECTIONS` row.
+- **Nothing in the product can produce it.** Grepped repo-wide: it appears only
+  in its own definition and the sections registry. `requestSale` hardcodes
+  `actionType: "create_promotion"`.
+- `request_sale`'s tool description advertises **"take the pyramid off sale"**,
+  but `RequestSaleInputSchema` has no `promotionId` and no `active` — every
+  field describes a NEW promotion.
+
+So a model following the description faithfully will emit a **create**-shaped
+proposal for an **end**-shaped request. The owner asks to stop a sale and is
+offered a new one. That is a `money`-category action behaving wrongly, not
+merely a capability that is absent — **absent is safe, wrong is not.**
+
+`scripts/verify-j4-promotions.ts` asserts `update_promotion.maxAuthorityTier
+=== "always_ask"` — a green assertion about a ceiling on a path nothing can
+reach. It is correct and it is not evidence of reachability.
+
+**Therefore promotions moves ahead of orders**: it is smaller, and it fixes
+behaviour that is actively misleading rather than merely missing.
+
+---
+
+## Priority order, revised
+
+### P0 — Promotions: see them, then stop them (do first)
+
+**You cannot stop what you cannot see**, and J4 cannot see promotions at all
+(§2 & 3). So P0 has two halves and the order matters:
+
+**P0a — visibility.** Add promotions to `getBusinessUnderstanding` so J4 can
+answer "what sales am I running?" and can name one. This is a read, it reuses
+the one canonical assembler, and it is independently valuable even if nothing
+else here is built. The Business Map's `commerce` domain should gain them too,
+which is also what a Business Map walkthrough would need to explain a discount.
+
+**P0b — stop advertising a capability that does not exist.**
+
+Either the description stops promising it, or the schema can express it. **Do
+the second**, because the capability is genuinely wanted and everything below
+the tool already exists:
+
+- extend `RequestSaleInputSchema` with an explicit end/stop intent naming an
+  existing promotion (by name, resolved server-side — never by asking the owner
+  for an id, per the internal-identifiers rule)
+- branch `requestSale` to emit `update_promotion` with `active: false`
+- P0a is a hard prerequisite: `ToolTurnContext` carries `products` (which is how
+  `requestSale` resolves product names) and carries **no promotions at all**, so
+  without P0a the handler would have to guess which sale the owner meant
+
+**Sabotage that must go red:** an end-request that produces a `create_promotion`
+proposal; an end-request naming a promotion in another store; the ceiling
+dropping below `always_ask`.
+
+### P1 — Orders and fulfilment
+
+In value order, all `operations` except the last:
+
+1. `toggleOrderFulfilled` — the most common daily operation in the product
+2. `attachTrackingNumber`
+3. `correctTrackingNumber` — already has correction semantics to reuse
+4. `purchaseShippingLabel` — **`money`, `always_ask` hard**
+
+**One flag on #1 and #2**: marking fulfilled and attaching tracking are what
+trigger telling the customer. That is a real-world side effect leaving the
+platform, so both stay `always_ask` regardless of what the `operations` ceiling
+would permit. (Only `always_ask` is implemented today, so this costs nothing
+now and prevents a wrong default later.)
+
+**#4 is externally limited**: buying a label spends real money against a carrier
+account. It can be built and approved, but it cannot be *proven* end to end
+here — EasyPost live webhooks are already a recorded blocker. Build it last and
+say plainly that its verification is partial.
+
+### P2 — The conversation ↔ surface/selection contract
+
+**This is the one genuinely new architecture**, and it is a contract, not a
+capability. It has two directions and one durability rule.
+
+**Inbound — what the owner is looking at.** A `SurfaceContext` travelling with
+each message: the surface, the business, and a selection of zero or more
+entities as `{kind, id, label}`. This is what makes *"change this font"* and
+*"compare these three products"* resolvable without the owner restating
+anything.
+
+**Outbound — what J4 means.** A `FocusDirective` J4 can return alongside its
+reply: the entities to focus or highlight, optionally ordered, so *"TikTok is
+getting more views than Facebook"* can light up TikTok and then Facebook. The
+expanded character can later point at the same targets — **the directive is what
+the pointing is aimed at**, which is why the contract must exist before any of
+the visual work.
+
+**Durability.** The selection survives turns, compact ↔ expanded, and navigation
+between surfaces. That is the same requirement as *there is one J4* and should
+be satisfied by the same state, not a parallel one.
+
+**Five constraints, each from something already decided here:**
+
+1. **Reuse `MAP_DOMAINS` entity kinds.** The map already names its 9 domains and
+   every edge names its backing column. A second entity vocabulary would drift
+   from it immediately.
+2. **A selection is a POINTER, not data.** J4 resolves the entity through
+   `getBusinessUnderstanding`; the contract carries identity only. Otherwise it
+   becomes a second understanding assembler, which is exactly what
+   `buildChatDataContext` was deleted for being.
+3. **Authorization is re-checked server-side against the pointer.** A selection
+   naming an entity the caller cannot reach is **refused, never substituted** —
+   the rule `BUSINESS_CONTEXT.md` already enforces for named businesses, and
+   which a chat-supplied pointer makes newly reachable by an attacker.
+4. **Ids never surface to the owner.** `label` is for display, `id` is for
+   resolution. A cuid has become a SKU here before.
+5. **`take_me_there` is not this.** It returns a destination; this focuses
+   *within* one. They should stay separate tools with separate meanings.
+
+**Deliverable for P2 is a written contract plus the inbound half**, which is
+independently useful (it makes "this" resolvable) and testable without any
+visual work. The outbound half is inert until something renders it — build it,
+prove it round-trips, and leave it unrendered.
+
+### P3 — Everything else, by value and risk
+
+Ordered by owner value against blast radius, not alphabetically:
+
+| Next | Why | Risk |
+|---|---|---|
+| `explainRecommendation`, `dismissAttentionCard` | pure routing; J4 explaining itself is the product's thesis | low |
+| `contradictBeliefAction` | "owners can correct J4", made conversational | low |
+| `setPromotionActive` (covered by P0), `deletePromotion` | completes the lifecycle | `destructive` |
+| Product media (`addProductImages`, `reorderProductImages`, `deleteProductImage`, `replaceProductImage`) | common, visual, reversible | low–medium |
+| `toggleProductActive`, `toggleStorePublished` | unpublishing takes a live store down | medium |
+| Catalog adoption (`adoptFromCatalog`, `priceFromCatalog`) | real sourcing value | medium |
+| Connections `syncIntegration` / `verifyIntegration` only | reads-with-effects | medium |
+| Billing, Growth Points | `money`, hard ceiling | high |
+| Access and authority | conversational privilege escalation | high — last, or never |
+
+**Unchanged: deliberately never.** Credential submission, 2FA disablement,
+session revocation, `addGrowthPointsForTesting`. Coverage is not a reason.
+
+---
+
+## Genuinely new architecture required
+
+**One thing: the surface/selection contract (P2).** Everything else in P0, P1
+and P3 is declaration against machinery that already exists — executables,
+approval tiers, category ceilings, `verify()`, tool policy, action sections.
+
+Two things that look new and are not:
+- *Order actions for J4* — the executables exist; only the declarations are
+  missing.
+- *Stopping a promotion* — the action exists; only the tool cannot say it.
+
+---
+
+## What this audit does NOT claim
+
+- **No implementation happened.** No tool, executable, policy row or prompt was
+  added. This is an inventory.
+- **Counts are of declarations, not of quality.** That `toggleOrderFulfilled`
+  exists says nothing about whether it handles partial fulfilment well.
+- **The ~100 owner-facing figure is a judgement**, not a computed number. The
+  149 is exact; the split into owner-facing vs storefront vs onboarding vs
+  plumbing is mine and worth arguing with.
+- **Voice remains unproven.** Anything depending on J4 speaking is downstream of
+  a synthesis path that has never produced audio.
+
+## How this was counted
+
+Server actions: every file containing `"use server"`, then `^export async
+function` within it. API routes: `app/api/**/route.ts`, exported HTTP verbs.
+The registries were read by importing them, not by grepping counts. Repeat
+before trusting any number here — the point of deriving them is that they go
+stale, and a hand-maintained count in a document is exactly the drift the
+mirrored-registry invariant exists to prevent.
