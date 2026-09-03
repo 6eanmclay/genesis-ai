@@ -1,3 +1,6 @@
+// Importing embedded-postgres installs an exit hook that discards
+// process.exitCode. See trueExitCode.ts — without this a failing suite exits 0.
+import "./trueExitCode";
 import EmbeddedPostgres from "embedded-postgres";
 import { execFile } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
