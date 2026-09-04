@@ -20,7 +20,7 @@ import { useEffect, useState } from "react";
 
 /** Every duration in the opening, in milliseconds. Tune here, nowhere else. */
 export const BOOT_TIMELINE = {
-  /** Two full rotations. Long enough to glimpse him and not see him. */
+  /** One clean rotation - long enough to glimpse him without seeing him. */
   flip: 1900,
   /** He has stopped. A beat of stillness before anything happens. */
   settle: 420,
@@ -118,10 +118,14 @@ export function J4Boot({
       aria-label={`Genesis is starting. ${lit} of ${SYSTEMS.length} systems online.`}
     >
       <style>{`
+        /* ONE ROTATION. It was two; Sean's call is that one clean flip is
+           enough, because the six sequential activations carry the rest of
+           the movement. The scale settles early so the last of the turn is
+           purely rotation. */
         @keyframes j4boot-flip {
-          0%   { transform: rotateY(0deg)   scale(.86) }
-          55%  { transform: rotateY(360deg) scale(1) }
-          100% { transform: rotateY(720deg) scale(1) }
+          0%   { transform: rotateY(0deg)   scale(.88) }
+          70%  { transform: rotateY(250deg) scale(1) }
+          100% { transform: rotateY(360deg) scale(1) }
         }
         @keyframes j4boot-eye  { from { opacity: 0; transform: scaleY(.2) } to { opacity: 1; transform: scaleY(1) } }
         @keyframes j4boot-boop { 0% { opacity: .9; transform: scale(.7) } 100% { opacity: 0; transform: scale(1.9) } }

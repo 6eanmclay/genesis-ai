@@ -37,10 +37,9 @@ import {
 // has, on /j4. There is deliberately nothing here to keep in step with anything.
 
 export function J4Dock({
-  onOpen,
+  onTalkToJ4,
   onOpenOffice,
   talkState,
-  onToggleTalk,
 }: {
   /**
    * Open the conversation J4 already has.
@@ -54,7 +53,7 @@ export function J4Dock({
    * It also means the conversation cannot be destroyed by expanding or
    * minimising: this component owns none of it.
    */
-  onOpen: () => void;
+  onTalkToJ4: () => void;
   /**
    * Open the Office - the established full-screen surface, unchanged.
    *
@@ -79,7 +78,6 @@ export function J4Dock({
    * host it. This is his home; talking to him belongs in it.
    */
   talkState: TalkState;
-  onToggleTalk: () => void;
 }) {
   // SHARED WITH THE OFFICE. This rule used to live here alone; the Office
   // needed the same one, and two copies would have been two J4s having
@@ -119,7 +117,7 @@ export function J4Dock({
           <button
             type="button"
             data-testid="j4-talk"
-            onClick={onOpen}
+            onClick={onTalkToJ4}
             className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#4ade3a] px-4 py-2 text-[13px] font-medium text-[#06210a] transition-transform hover:scale-[1.03]"
           >
             Talk to J4
@@ -134,7 +132,7 @@ export function J4Dock({
         </div>
       )}
 
-      {/* ---- J4'S CORNER, with his Office nested inside it -------------- */}
+      {/* ---- J4 HIMSELF ------------------------------------------------- */}
       {/*
           HIERARCHY, NOT ADJACENCY (2026-09-04, Sean). The first version put
           J4 and the Office side by side with a divider after them, which read
@@ -149,12 +147,16 @@ export function J4Dock({
       <div className="pointer-events-auto px-3 pb-3 pt-2">
         <div
           data-testid="j4-corner"
-          className="relative rounded-[1.75rem] border border-[#4ade3a]/18 bg-[#050908]/55 p-2 pb-1 pr-[3.15rem] backdrop-blur-[2px]"
+          className="relative rounded-[1.75rem] p-1"
         >
           <button
             type="button"
             data-testid="j4-open"
-            onClick={onOpen}
+            onClick={onTalkToJ4}
+            // DOUBLE-TAP EXPANDS. The explicit control below stays, because
+            // a gesture nobody is told about is not an affordance - this is
+            // the shortcut for people who find it, not the only way in.
+            onDoubleClick={() => setExpanded(true)}
             aria-label={`J4 \u2014 ${label}. Open the conversation.`}
             className="block rounded-full transition-transform hover:scale-[1.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4ade3a]"
           >
@@ -166,21 +168,28 @@ export function J4Dock({
             />
           </button>
 
-          {/* THE DOORWAY. Deliberately small and set INTO his corner: a way
-              through, not a peer. GENESIS_SURFACES has always said the Office
-              is a room with a stable name, a place and a door - and this is
-              the door, standing where the owner already looks for J4. */}
+
+          {/* ---- LAYER 2: THE OFFICE, inside the same square ---------
+
+              Sean's mockup, exactly: one corner container, J4 filling it,
+              and the minimised Office occupying the bottom-left portion of
+              that SAME square. Not on top of his face, not underneath him,
+              not across the screen - a second small surface attached to the
+              dock, which is what a minimised application looks like.
+
+              Its own button, so its hit target is genuinely separate: J4
+              takes the taps everywhere else in the square. */}
           <button
             type="button"
             data-testid="j4-office"
             onClick={onOpenOffice}
             aria-label="Office \u2014 the work you and J4 have done together"
-            className="group absolute bottom-7 right-1.5 flex h-[2.9rem] w-[2.6rem] flex-col items-center justify-center gap-0.5 rounded-lg border border-[#4ade3a]/25 bg-[#050a08]/85 transition-colors hover:border-[#4ade3a]/55"
+            className="group absolute bottom-1.5 left-1.5 z-10 flex h-[2.6rem] w-[2.9rem] flex-col items-center justify-center gap-0.5 rounded-xl border border-[#4ade3a]/30 bg-[#050a08]/92 transition-colors hover:border-[#4ade3a]/60"
           >
             <svg
               viewBox="0 0 24 24"
-              width="17"
-              height="17"
+              width="15"
+              height="15"
               fill="none"
               stroke="currentColor"
               strokeWidth={1.6}
@@ -193,41 +202,18 @@ export function J4Dock({
               <path d="M4 21h16" />
               <circle cx="14" cy="13" r="0.9" fill="currentColor" stroke="none" />
             </svg>
-            <span className="text-[8.5px] font-medium leading-none text-white/55 transition-colors group-hover:text-white/85">
+            <span className="text-[8px] font-medium leading-none text-white/60 transition-colors group-hover:text-white/90">
               Office
             </span>
           </button>
+          {/* NO MICROPHONE BUTTON (2026-09-04, Sean).
 
-          {/* TALK. Small, and beneath the door rather than beside the
-              character, so the corner still reads as J4 first. */}
-          <button
-            type="button"
-            data-testid="j4-talk-toggle"
-            onClick={onToggleTalk}
-            aria-pressed={talkState !== "off"}
-            aria-label={talkState === "off" ? "Talk to J4" : `J4 is ${talkState}. Tap to stop.`}
-            className={`absolute bottom-[3.9rem] right-1.5 flex h-[2.1rem] w-[2.6rem] items-center justify-center rounded-lg border transition-colors ${
-              talkState === "off"
-                ? "border-[#4ade3a]/25 bg-[#050a08]/85 text-[#4ade3a]/75 hover:border-[#4ade3a]/55 hover:text-[#4ade3a]"
-                : "border-[#4ade3a]/70 bg-[#4ade3a]/15 text-[#4ade3a]"
-            }`}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="15"
-              height="15"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.8}
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <rect x="9" y="3" width="6" height="11" rx="3" />
-              <path d="M5 11a7 7 0 0 0 14 0" />
-              <path d="M12 18v3" />
-            </svg>
-          </button>
+              A mic sitting next to J4 is the old model: an avatar beside the
+              interface, with a control for talking to it. J4 IS the interface.
+              Tapping him is how you talk to him, so tapping him starts
+              listening - there is nothing else to press.
 
+              The capability did not move again; it moved INTO him. */}
           {/* THE EXPAND CONTROL IS EXPLICIT. The direction is specific that a
               double-tap must not be the primary discoverable interaction. */}
           <button

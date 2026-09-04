@@ -1284,9 +1284,16 @@ export function DashboardShell({
           Two presences, one J4 — neither owns conversation or map state, and
           both read the same stores. */}
       <J4Dock
-        onOpen={() => {
+        // TAPPING HIM IS TALKING TO HIM. There is no microphone button any
+        // more, because a mic beside J4 is an avatar next to an interface -
+        // and he is the interface. So one tap opens the conversation AND
+        // starts listening; the composer is still there for anyone who would
+        // rather type, and Talk Mode's own error handling covers a denied or
+        // missing microphone.
+        onTalkToJ4={() => {
           setJ4Presentation("panel");
           setJ4Open(true);
+          if (talk.state === "off") void talk.start();
         }}
         // THE SAME OVERLAY, IN ITS OTHER PRESENTATION. Identical to what
         // J4Summon's expand has always done, so the Office is unchanged: one
@@ -1297,7 +1304,6 @@ export function DashboardShell({
           setJ4Open(true);
         }}
         talkState={talk.state}
-        onToggleTalk={() => (talk.state === "off" ? talk.start() : talk.stop())}
       />
 
       {/* THE OLD CENTRE ORB IS GONE (2026-09-04, Sean).

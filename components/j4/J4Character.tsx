@@ -213,7 +213,10 @@ export function J4Character({
         }
       `}</style>
 
-      <g clipPath={`url(#${uid}-disc)`}>
+      {/* NO DISC CLIP. The artwork is already a circle with its own ring;
+          clipping it to another circle cut into that ring and was part of why
+          the small J4 looked unlike the reference. */}
+      <g>
         <g className="j4-float">
           {/* THE CHARACTER HIMSELF. Everything premium about him — helmet
               panels, ear module, neck, shoulders, the light on the armour —
@@ -224,7 +227,12 @@ export function J4Character({
             y="0"
             width="512"
             height="512"
-            preserveAspectRatio="xMidYMid slice"
+            // MEET, NOT SLICE. Slice fills the square by cropping, which on a
+            // 1276x1288 source quietly trimmed him and, inside the disc clip,
+            // shaved the artwork's own ring. The compact J4 must be the same
+            // character at a smaller size - so the whole image is fitted and
+            // nothing is cropped, squashed or reconstructed.
+              preserveAspectRatio="xMidYMid meet"
           />
 
           {/* ============ THE FACE IS LIGHT ON REAL GLASS ==============
@@ -348,51 +356,63 @@ function Face({
   const L = cx - eyeDx;
   const R = cx + eyeDx;
 
-  // THE OPEN EYE is a rounded rectangle rather than a circle: a circle reads
-  // as a dot or a light, and a tall rounded shape reads as an eye even at
-  // 116px, which is the only size that matters here.
-  const openEye = (x: number, ry: number) => (
-    <rect x={x - 13} y={eyeY - ry} width={26} height={ry * 2} rx={13} fill={colour} />
+  // ============ CRESCENTS, NEVER DOTS ================================
+  //
+  // The reference's eyes are glowing arcs. I had built them as rounded
+  // rectangles for the open states, and Sean's word for the result was
+  // right: two glowing buttons. A dot is a light; an arc is an eye, and the
+  // difference is the whole character.
+  //
+  // So every state is the SAME crescent, and what changes is how open it is
+  // and which way it bends - which is also how a real eye reads. `lift` is
+  // how far the arc's middle rises above its ends: positive is the happy
+  // downward-closing curve of the reference, larger values are wider open.
+  const crescent = (x: number, width: number, lift: number, weight: number) => (
+    <path
+      d={`M${x - width} ${eyeY + lift * 0.32} Q${x} ${eyeY - lift} ${x + width} ${eyeY + lift * 0.32}`}
+      fill="none"
+      stroke={colour}
+      strokeWidth={weight}
+      strokeLinecap="round"
+    />
   );
 
   const eyes =
     state === "listening" ? (
+      // Open and attentive: a wide, high arc. Still an arc.
       <g>
-        {openEye(L, 19)}
-        {openEye(R, 19)}
+        {crescent(L, 26, 26, 13)}
+        {crescent(R, 26, 26, 13)}
       </g>
     ) : state === "speaking" ? (
-      // Slightly softer than listening: he is doing the talking now, so the
-      // eyes stop being the thing asking for your attention.
       <g>
-        {openEye(L, 15)}
-        {openEye(R, 15)}
+        {crescent(L, 25, 21, 12)}
+        {crescent(R, 25, 21, 12)}
       </g>
     ) : state === "thinking" ? (
-      // Half-lidded, looking up. The lid is a real shape rather than a
-      // smaller eye, because narrowing is what reads as concentration.
+      // Narrowed. A shallower arc reads as concentration without needing a
+      // different shape vocabulary.
       <g>
-        {openEye(L, 13)}
-        {openEye(R, 13)}
+        {crescent(L, 24, 13, 12)}
+        {crescent(R, 24, 13, 12)}
       </g>
     ) : state === "success" ? (
-      <g {...stroke}>
-        <path d={`M${L - 22} ${eyeY + 6} Q${L} ${eyeY - 20} ${L + 22} ${eyeY + 6}`} />
-        <path d={`M${R - 22} ${eyeY + 6} Q${R} ${eyeY - 20} ${R + 22} ${eyeY + 6}`} />
+      <g>
+        {crescent(L, 24, 30, 13)}
+        {crescent(R, 24, 30, 13)}
       </g>
     ) : state === "attention" ? (
-      <g {...stroke}>
-        <path d={`M${L - 22} ${eyeY} h44`} />
-        <path d={`M${R - 22} ${eyeY} h44`} />
+      <g>
+        {crescent(L, 23, 4, 12)}
+        {crescent(R, 23, 4, 12)}
       </g>
     ) : (
-      // Resting: the reference's own downward arc, calm and available.
-      <g {...stroke}>
-        <path d={`M${L - 24} ${eyeY - 8} Q${L} ${eyeY + 16} ${L + 24} ${eyeY - 8}`} />
-        <path d={`M${R - 24} ${eyeY - 8} Q${R} ${eyeY + 16} ${R + 24} ${eyeY - 8}`} />
+      // Resting: the reference's own curve, exactly.
+      <g>
+        {crescent(L, 25, 23, 13)}
+        {crescent(R, 25, 23, 13)}
       </g>
     );
-
   // THE MOUTH, AND THE SEAM FOR A REAL VOICE.
   //
   // When mouthOpenness is a number, it drives the mouth directly and no
@@ -444,12 +464,20 @@ function Face({
     state === "thinking" ? { x: "j4-ponder", y: "" } :
     { x: "", y: "" };
 
+  // THE MOUTH IS ANCHORED. Only the eyes travel.
+  //
+  // The drift used to wrap both, so looking left slid his whole face left -
+  // which is a head turning, not eyes moving, and on a fixed photograph it
+  // reads as the mouth coming loose. Three independent layers now: eyes
+  // move, mouth animates in place, artwork never moves at all.
   return (
-    <g className={drift.x || undefined}>
-      <g className={drift.y || undefined}>
-        <g className={state === "listening" ? "j4-blink" : undefined}>{eyes}</g>
-        {mouth}
+    <g>
+      <g className={drift.x || undefined}>
+        <g className={drift.y || undefined}>
+          <g className={state === "listening" ? "j4-blink" : undefined}>{eyes}</g>
+        </g>
       </g>
+      {mouth}
     </g>
   );
 }

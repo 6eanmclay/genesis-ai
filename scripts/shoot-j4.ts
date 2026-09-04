@@ -102,6 +102,14 @@ async function main(): Promise<void> {
         { timeout: 45_000 },
       )
       .catch(() => {});
+    // AND WAIT FOR THE OPENING TO LEAVE. It is a black z-120 layer, so the
+    // z-100 check above walks straight past it - which is why the last run's
+    // element screenshots came back pure black. The elements were there; the
+    // sequence was still standing in front of them.
+    await page
+      .locator('[data-testid="j4-boot"]')
+      .waitFor({ state: "detached", timeout: 30_000 })
+      .catch(() => {});
     await page.waitForTimeout(1_500);
     // AND CAPTURE THE OPENING WHILE IT RUNS. J4Boot now takes the arrival
     // slot, so the sequence is what stands between sign-in and the
@@ -134,57 +142,32 @@ async function main(): Promise<void> {
     // together and a divider separates them from the business destinations.
     // What matters behaviourally is that they are NOT two assistants: one
     // conversation, two presentations of the same overlay.
-    // NESTING, NOT ADJACENCY. Two buttons side by side would satisfy any
-    // check that only counted them, which is why this asserts CONTAINMENT
-    // both ways: the Office is a descendant of J4's corner in the DOM, and
-    // its box sits inside his. It is J4 -> Office, not J4 | Office.
+    // TWO THINGS, AND ONLY TWO. Tap J4 to talk; tap the doorway in the
+    // screen's corner to enter his Office. The Office used to sit inside his
+    // panel next to a microphone, and that read as a control cluster rather
+    // than as a partner with a door beside him.
     const pair = page.locator('[data-testid="j4-corner"]');
     console.log(`J4 owns a corner: ${(await pair.count()) > 0}`);
-    const nested = await page.evaluate(() => {
-      const corner = document.querySelector('[data-testid="j4-corner"]');
+    console.log(`no microphone button anywhere: ${(await page.locator('[data-testid="j4-talk-toggle"]').count()) === 0}`);
+    const geometry = await page.evaluate(() => {
       const office = document.querySelector('[data-testid="j4-office"]');
-      if (!corner || !office) return null;
-      const c = corner.getBoundingClientRect();
+      const corner = document.querySelector('[data-testid="j4-corner"]');
+      if (!office || !corner) return null;
       const o = office.getBoundingClientRect();
+      const c = corner.getBoundingClientRect();
       return {
-        inDom: corner.contains(office),
-        inBox: o.left >= c.left - 1 && o.right <= c.right + 1 && o.top >= c.top - 1 && o.bottom <= c.bottom + 1,
+        // inside the same square, in its bottom-left portion
+        inside: corner.contains(office),
+        inBox:
+          o.left >= c.left - 2 && o.right <= c.right + 2 &&
+          o.top >= c.top - 2 && o.bottom <= c.bottom + 2,
+        bottomLeft: o.left < c.left + c.width * 0.5 && o.bottom > c.top + c.height * 0.5,
         smaller: o.width * o.height < c.width * c.height * 0.36,
       };
     });
-    console.log(`the Office door is inside his corner (DOM): ${nested?.inDom}`);
-    console.log(`and inside it geometrically: ${nested?.inBox}`);
-    console.log(`and subordinate in size: ${nested?.smaller}`);
-    // CLAMPED TO THE VIEWPORT. The first version of this asked for 32px of
-    // padding below a dock that already sits on the bottom edge, and
-    // Playwright returned the part of the clip that existed - which was black.
-    const box = await pair.boundingBox();
-    const view = page.viewportSize();
-    if (box && view) {
-      const x = Math.max(0, box.x - 14);
-      const y = Math.max(0, box.y - 18);
-      await page.screenshot({
-        path: `${SHOTS}/j4-dock-pair.png`,
-        clip: {
-          x,
-          y,
-          width: Math.min(view.width - x, box.width + 110),
-          height: Math.min(view.height - y, box.height + 26),
-        },
-      });
-      console.log(`dock pair captured at ${Math.round(box.width)}x${Math.round(box.height)} CSS px`);
-    }
-
-    // AND A TIGHT CROP OF THE PAIR ITSELF. A second browser context at
-    // deviceScaleFactor 3 was tried first and photographed the arrival
-    // overlay's black backdrop: the element existed, so it had a bounding box,
-    // so the check reported a successful capture of nothing. An element
-    // screenshot in the context that is already past arrival cannot do that.
-    await pair.screenshot({ path: `${SHOTS}/j4-dock-pair-tight.png` }).catch(() => {});
-    await page.locator('[data-testid="j4-open"]').screenshot({
-      path: `${SHOTS}/j4-character-actual-size.png`,
-    }).catch(() => {});
-    console.log("character captured at its real rendered size");
+    console.log(`the doorway is inside J4's square: ${geometry?.inside && geometry?.inBox}`);
+    console.log(`in its bottom-left portion: ${geometry?.bottomLeft}`);
+    console.log(`and the smaller of the two: ${geometry?.smaller}`);
     // THE OFFICE OPENS THE OFFICE, unchanged and still full-screen.
     await page.locator('[data-testid="j4-office"]').click();
     await page.waitForTimeout(1_200);
@@ -210,7 +193,6 @@ async function main(): Promise<void> {
     });
     console.log(`J4 corners on the page: ${j4s.corner}`);
     console.log(`the map centre is no longer an avatar: ${!j4s.centreHasCanvas}`);
-    console.log(`talk control lives in his corner: ${(await page.locator('[data-testid="j4-talk-toggle"]').count()) > 0}`);
 
     // ---- THE LOOP: click him, and the real conversation opens ----------
     //
