@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { J4Character, type J4State } from "./J4Character";
 import { useJ4State } from "./useJ4State";
+import type { TalkState } from "@/app/dashboard/useJ4Talk";
 import {
   getGenesisActivityServerSnapshot,
   getGenesisActivitySnapshot,
@@ -38,6 +39,8 @@ import {
 export function J4Dock({
   onOpen,
   onOpenOffice,
+  talkState,
+  onToggleTalk,
 }: {
   /**
    * Open the conversation J4 already has.
@@ -67,11 +70,27 @@ export function J4Dock({
    * its other presentation.
    */
   onOpenOffice: () => void;
+  /**
+   * Talk Mode, moved here from the old centre orb.
+   *
+   * GENESIS_SURFACES: "Voice is available in every room. No exceptions."
+   * The orb that used to carry it is gone, so the capability moves to J4's
+   * own corner rather than disappearing with the thing that happened to
+   * host it. This is his home; talking to him belongs in it.
+   */
+  talkState: TalkState;
+  onToggleTalk: () => void;
 }) {
   // SHARED WITH THE OFFICE. This rule used to live here alone; the Office
   // needed the same one, and two copies would have been two J4s having
   // different days on the same screen.
-  const { state, justFocused } = useJ4State();
+  const { state: activityState, justFocused } = useJ4State();
+
+  // VOICE WINS WHEN VOICE IS HAPPENING. TalkState and J4State say the same
+  // words - listening, thinking, speaking - and while the owner is actually
+  // talking to him, the microphone is the truer account of what he is doing
+  // than anything inferred from a text composer.
+  const state = talkState === "off" ? activityState : (talkState as typeof activityState);
   const [expanded, setExpanded] = useState(false);
   const label = STATE_LABEL[state];
 
@@ -79,7 +98,12 @@ export function J4Dock({
     <div
       data-testid="j4-dock"
       data-j4-expanded={expanded ? "true" : "false"}
-      className="pointer-events-none fixed bottom-0 left-0 z-40 hidden lg:block"
+      // EVERY WIDTH NOW. He used to be desktop-only because the mobile bar
+      // had its own centre orb; that orb is gone, and one J4 identity
+      // throughout the application means he cannot be absent on a phone.
+      // Scaled down rather than redesigned - the mobile pass is its own
+      // phase and this is not it.
+      className="pointer-events-none fixed bottom-0 left-0 z-40 origin-bottom-left scale-[.68] sm:scale-[.8] lg:scale-100"
     >
       {/* ---- EXPANDED: emerges from this corner, never the centre -------- */}
       {expanded && (
@@ -172,6 +196,36 @@ export function J4Dock({
             <span className="text-[8.5px] font-medium leading-none text-white/55 transition-colors group-hover:text-white/85">
               Office
             </span>
+          </button>
+
+          {/* TALK. Small, and beneath the door rather than beside the
+              character, so the corner still reads as J4 first. */}
+          <button
+            type="button"
+            data-testid="j4-talk-toggle"
+            onClick={onToggleTalk}
+            aria-pressed={talkState !== "off"}
+            aria-label={talkState === "off" ? "Talk to J4" : `J4 is ${talkState}. Tap to stop.`}
+            className={`absolute bottom-[3.9rem] right-1.5 flex h-[2.1rem] w-[2.6rem] items-center justify-center rounded-lg border transition-colors ${
+              talkState === "off"
+                ? "border-[#4ade3a]/25 bg-[#050a08]/85 text-[#4ade3a]/75 hover:border-[#4ade3a]/55 hover:text-[#4ade3a]"
+                : "border-[#4ade3a]/70 bg-[#4ade3a]/15 text-[#4ade3a]"
+            }`}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <rect x="9" y="3" width="6" height="11" rx="3" />
+              <path d="M5 11a7 7 0 0 0 14 0" />
+              <path d="M12 18v3" />
+            </svg>
           </button>
 
           {/* THE EXPAND CONTROL IS EXPLICIT. The direction is specific that a

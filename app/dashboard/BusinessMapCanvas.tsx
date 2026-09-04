@@ -426,7 +426,29 @@ export function BusinessMapCanvas({
               open ? "top-3" : "top-1/2 -translate-y-1/2"
             }`}
           >
-            <GenesisAvatar className={open ? GENESIS_AVATAR_SIZE.mapAnchor : GENESIS_AVATAR_SIZE.mapCentre} />
+            {/* THE CENTRE IS THE BUSINESS, NOT J4 (2026-09-04, Sean).
+
+                The Business Map milestone made this orb J4 himself, and that
+                was right while J4 had no home of his own. He has one now - the
+                corner - and Sean's rule is one J4 identity in the application.
+                A second J4 floating in the middle of the map is exactly the
+                competing representation that rule exists to stop.
+
+                So the hub goes back to meaning what the map says it means:
+                the whole business, with the branches coming off it. The
+                element itself is untouched - same node, same testid, never
+                remounted - because verify-business-map-browser tracks its
+                identity through the open/close transition and a redrawn
+                centre would fail that on purpose. */}
+            <span
+              aria-hidden="true"
+              className={`block rounded-full ${open ? "h-7 w-7" : "h-16 w-16"}`}
+              style={{
+                background:
+                  "radial-gradient(circle at 38% 34%, var(--map-ink) 0%, var(--map-soft) 42%, transparent 72%)",
+                opacity: 0.55,
+              }}
+            />
             {/* The branch reads as flowing OUT of J4, which is the direction
                 Sean drew: orb, then down, then the things. */}
             {open && domain && (

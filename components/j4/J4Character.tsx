@@ -58,7 +58,12 @@ const AMBER = "#ffd24a";
 // every one of these moved. The visor ellipse was verified by drawing it back
 // over the artwork before anything was repainted, because the previous
 // estimate had swallowed part of the helmet.
-const FACE = { cx: 0.625, cy: 0.424, rx: 0.186, ry: 0.165, eyeY: 0.398, mouthY: 0.515 };
+// MEASURED ON THE CANONICAL ASSET (2026-09-04). Sean supplied the final
+// image - full green ring, blank visor, nothing else - and it is installed
+// uncropped and unmodified. These five numbers are the only thing that knows
+// where his glass is, and they were checked by drawing the ellipse back over
+// the artwork before anything relied on them.
+const FACE = { cx: 0.575, cy: 0.435, rx: 0.180, ry: 0.195, eyeY: 0.377, mouthY: 0.517 };
 
 export function J4Character({
   state = "idle",
@@ -66,12 +71,26 @@ export function J4Character({
   gaze = "ahead",
   size = 96,
   title,
+  mouthOpenness,
 }: {
   state?: J4State;
   skin?: J4Skin;
   gaze?: J4Gaze;
   size?: number;
   title?: string;
+  /**
+   * How open his mouth is right now, 0 to 1 - THE SEAM FOR A REAL VOICE.
+   *
+   * Left undefined, the speaking state animates on a rhythm, and that rhythm
+   * is honestly a rhythm: it does not claim to match words nobody has
+   * synthesised. When a voice pipeline exists it drives this per frame and
+   * the animation stops - synchronisation then comes from the audio rather
+   * than from a guess that happens to look plausible.
+   *
+   * The distinction matters because a fake sync is worse than none: it
+   * teaches the owner to read a mouth that is not telling them anything.
+   */
+  mouthOpenness?: number | null;
 }) {
   const gazeX = gaze === "left" ? -9 : gaze === "right" ? 9 : 0;
   const gazeY = gaze === "down" ? 7 : 0;
@@ -116,16 +135,81 @@ export function J4Character({
       </defs>
 
       <style>{`
+        /* ---- THE VISOR IS A DISPLAY, AND THIS IS ITS VOCABULARY -------
+
+           Every state below is LIGHT on one unchanging character. Nothing
+           here swaps an image, and nothing here is a loading indicator
+           wearing a face: a spinner says the system is busy, whereas eyes
+           that hold you and then look away say J4 heard you and is thinking
+           about it. That difference is the entire point of the blank glass.
+
+           The two listening drifts run on 5.3s and 7.1s deliberately. Equal
+           or harmonic periods make a loop the eye can count, and anything
+           countable stops reading as alive. */
+
         @keyframes j4b { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
         @keyframes j4p { 0%,100% { opacity: .5 } 50% { opacity: 1 } }
         @keyframes j4s { to { transform: rotate(360deg) } }
-        @keyframes j4t { 0%,100% { transform: scaleY(.4) } 50% { transform: scaleY(1.3) } }
+
+        /* LISTENING: micro-saccades. Real eyes never hold perfectly still,
+           and a static pair of glowing dots reads as a graphic rather than
+           attention. */
+        @keyframes j4lx {
+          0%, 38%   { transform: translateX(0) }
+          43%, 57%  { transform: translateX(5px) }
+          62%, 86%  { transform: translateX(-4px) }
+          91%, 100% { transform: translateX(0) }
+        }
+        @keyframes j4ly {
+          0%, 28%   { transform: translateY(0) }
+          33%, 62%  { transform: translateY(-3px) }
+          68%, 100% { transform: translateY(2px) }
+        }
+        /* A blink, rarely. Most of the cycle is simply open. */
+        @keyframes j4bl {
+          0%, 92%, 100% { transform: scaleY(1) }
+          95%, 97%      { transform: scaleY(.08) }
+        }
+
+        /* THINKING: deliberate gaze shifts, held. Up and away is what a
+           person does while recalling something, and holding each position
+           is what separates thought from fidgeting. */
+        @keyframes j4pd {
+          0%, 14%   { transform: translate(-15px, -11px) }
+          28%, 46%  { transform: translate(12px, -13px) }
+          60%, 78%  { transform: translate(-7px, -5px) }
+          92%, 100% { transform: translate(-15px, -11px) }
+        }
+
+        /* SPEAKING: the fallback mouth, used only while nothing is driving
+           mouthOpenness. It is honest about being a rhythm rather than
+           lip-sync - see the prop's own note. */
+        @keyframes j4t {
+          0%, 100% { transform: scaleY(.34) }
+          22%      { transform: scaleY(1.15) }
+          48%      { transform: scaleY(.52) }
+          74%      { transform: scaleY(1.3) }
+        }
+
+        /* IDLE: one slow breath in the bloom, and nothing else moving. */
+        @keyframes j4br { 0%,100% { opacity: .55 } 50% { opacity: .9 } }
+
         .j4-float { animation: j4b 4.5s ease-in-out infinite }
         .j4-pulse { animation: j4p 1.4s ease-in-out infinite }
         .j4-spin  { animation: j4s 2.4s linear infinite; transform-origin: 256px 256px }
-        .j4-talk  { animation: j4t .26s ease-in-out infinite; transform-origin: ${cx}px ${mouthY}px }
+        .j4-lx    { animation: j4lx 5.3s ease-in-out infinite }
+        .j4-ly    { animation: j4ly 7.1s ease-in-out infinite }
+        .j4-blink { animation: j4bl 6.8s ease-in-out infinite; transform-origin: ${cx}px ${eyeY}px }
+        .j4-ponder{ animation: j4pd 5.6s ease-in-out infinite }
+        .j4-talk  { animation: j4t .3s ease-in-out infinite; transform-origin: ${cx}px ${mouthY}px }
+        .j4-breathe { animation: j4br 6s ease-in-out infinite }
+
+        /* REDUCED MOTION STILL HAS A FACE. Everything stops moving; the eyes
+           and mouth stay in their state's resting shape, so J4 still reads
+           as listening or thinking without anything animating. */
         @media (prefers-reduced-motion: reduce) {
-          .j4-float, .j4-pulse, .j4-spin, .j4-talk { animation: none }
+          .j4-float, .j4-pulse, .j4-spin, .j4-lx, .j4-ly,
+          .j4-blink, .j4-ponder, .j4-talk, .j4-breathe { animation: none }
         }
       `}</style>
 
@@ -172,12 +256,13 @@ export function J4Character({
               rx={FACE.rx * 512 * 1.25}
               ry={FACE.ry * 512 * 1.15}
               fill={`url(#${uid}-glow)`}
-              opacity={state === "idle" ? 0.75 : 1}
+              className={state === "idle" ? "j4-breathe" : undefined}
+              opacity={state === "idle" ? undefined : 1}
             />
             <g filter={`url(#${uid}-soft)`} opacity="0.8">
-              <Face state={state} cx={cx} eyeY={eyeY} mouthY={mouthY} eyeDx={eyeDx} />
+              <Face state={state} cx={cx} eyeY={eyeY} mouthY={mouthY} eyeDx={eyeDx} mouthOpenness={mouthOpenness} />
             </g>
-            <Face state={state} cx={cx} eyeY={eyeY} mouthY={mouthY} eyeDx={eyeDx} />
+            <Face state={state} cx={cx} eyeY={eyeY} mouthY={mouthY} eyeDx={eyeDx} mouthOpenness={mouthOpenness} />
           </g>
         </g>
       </g>
@@ -217,9 +302,25 @@ export function J4Character({
 }
 
 /**
- * Eyes and mouth. Drawn twice by the caller — once blurred underneath for the
- * glow the reference has, once sharp on top — so the light looks emitted rather
+ * J4's face: eyes and mouth, drawn as light on his blank visor.
+ *
+ * Drawn twice by the caller - once blurred underneath for the bloom the
+ * reference has, once sharp on top - so the light reads as emitted rather
  * than printed.
+ *
+ * ============ STATES ARE BEHAVIOUR, NOT ICONS =======================
+ *
+ * Each state is a shape AND a way of moving, because the shape alone is not
+ * enough: open eyes that never move are a graphic, and the same open eyes
+ * with small involuntary drift are attention. The movement is what makes an
+ * owner read 'he is listening to me' without being told.
+ *
+ * listening - eyes open on you, micro-saccades, a rare blink
+ * thinking  - eyes up and away, held positions, deliberate
+ * speaking  - mouth animates; eyes relaxed and open
+ * success   - a smile that reaches the eyes
+ * attention - narrowed, amber, still
+ * idle      - resting arcs, nothing moving but a slow bloom
  */
 function Face({
   state,
@@ -227,46 +328,106 @@ function Face({
   eyeY,
   mouthY,
   eyeDx,
+  mouthOpenness,
 }: {
   state: J4State;
   cx: number;
   eyeY: number;
   mouthY: number;
   eyeDx: number;
+  mouthOpenness?: number | null;
 }) {
-  const stroke = { fill: "none", stroke: GREEN, strokeWidth: 12, strokeLinecap: "round" as const };
+  const colour = state === "attention" ? AMBER : GREEN;
+  const stroke = {
+    fill: "none",
+    stroke: colour,
+    strokeWidth: 12,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
   const L = cx - eyeDx;
   const R = cx + eyeDx;
 
+  // THE OPEN EYE is a rounded rectangle rather than a circle: a circle reads
+  // as a dot or a light, and a tall rounded shape reads as an eye even at
+  // 116px, which is the only size that matters here.
+  const openEye = (x: number, ry: number) => (
+    <rect x={x - 13} y={eyeY - ry} width={26} height={ry * 2} rx={13} fill={colour} />
+  );
+
   const eyes =
     state === "listening" ? (
-      // WIDE OPEN, and the only round-eyed state — "he is listening" has to be
-      // readable at a glance, from across a desk.
-      <g fill={GREEN}>
-        <circle cx={L} cy={eyeY} r="16" />
-        <circle cx={R} cy={eyeY} r="16" />
+      <g>
+        {openEye(L, 19)}
+        {openEye(R, 19)}
+      </g>
+    ) : state === "speaking" ? (
+      // Slightly softer than listening: he is doing the talking now, so the
+      // eyes stop being the thing asking for your attention.
+      <g>
+        {openEye(L, 15)}
+        {openEye(R, 15)}
+      </g>
+    ) : state === "thinking" ? (
+      // Half-lidded, looking up. The lid is a real shape rather than a
+      // smaller eye, because narrowing is what reads as concentration.
+      <g>
+        {openEye(L, 13)}
+        {openEye(R, 13)}
       </g>
     ) : state === "success" ? (
       <g {...stroke}>
         <path d={`M${L - 22} ${eyeY + 6} Q${L} ${eyeY - 20} ${L + 22} ${eyeY + 6}`} />
         <path d={`M${R - 22} ${eyeY + 6} Q${R} ${eyeY - 20} ${R + 22} ${eyeY + 6}`} />
       </g>
-    ) : state === "thinking" ? (
+    ) : state === "attention" ? (
       <g {...stroke}>
-        <path d={`M${L - 22} ${eyeY - 4} Q${L} ${eyeY - 14} ${L + 22} ${eyeY - 4}`} />
-        <path d={`M${R - 22} ${eyeY - 4} Q${R} ${eyeY - 14} ${R + 22} ${eyeY - 4}`} />
+        <path d={`M${L - 22} ${eyeY} h44`} />
+        <path d={`M${R - 22} ${eyeY} h44`} />
       </g>
     ) : (
-      // The resting eye, matching the reference's own downward arc.
+      // Resting: the reference's own downward arc, calm and available.
       <g {...stroke}>
         <path d={`M${L - 24} ${eyeY - 8} Q${L} ${eyeY + 16} ${L + 24} ${eyeY - 8}`} />
         <path d={`M${R - 24} ${eyeY - 8} Q${R} ${eyeY + 16} ${R + 24} ${eyeY - 8}`} />
       </g>
     );
 
+  // THE MOUTH, AND THE SEAM FOR A REAL VOICE.
+  //
+  // When mouthOpenness is a number, it drives the mouth directly and no
+  // animation runs - that is where a voice pipeline plugs in, per frame,
+  // once one exists. Until then the speaking state uses a rhythm, which is
+  // honestly a rhythm: it is not pretending to be synchronised with words
+  // nobody has synthesised yet.
+  const driven = typeof mouthOpenness === "number";
+  const openness = driven ? Math.max(0, Math.min(1, mouthOpenness as number)) : 0;
+
   const mouth =
     state === "speaking" ? (
-      <ellipse className="j4-talk" cx={cx} cy={mouthY} rx="26" ry="18" fill={GREEN} />
+      <ellipse
+        className={driven ? undefined : "j4-talk"}
+        cx={cx}
+        cy={mouthY}
+        rx={26}
+        ry={18}
+        fill={colour}
+        style={
+          driven
+            ? {
+                transform: `scaleY(${0.3 + openness * 1.05})`,
+                transformOrigin: `${cx}px ${mouthY}px`,
+              }
+            : undefined
+        }
+      />
+    ) : state === "thinking" ? (
+      // A short, off-centre line. Nothing to say yet.
+      <path d={`M${cx - 16} ${mouthY} h32`} {...stroke} />
+    ) : state === "listening" ? (
+      // Barely there: the eyes are carrying this state, and a big smile
+      // while somebody is still talking reads as not listening.
+      <path d={`M${cx - 22} ${mouthY - 2} Q${cx} ${mouthY + 10} ${cx + 22} ${mouthY - 2}`} {...stroke} />
     ) : state === "attention" ? (
       <path d={`M${cx - 30} ${mouthY} h60`} {...stroke} />
     ) : state === "success" ? (
@@ -275,10 +436,20 @@ function Face({
       <path d={`M${cx - 32} ${mouthY - 8} Q${cx} ${mouthY + 18} ${cx + 32} ${mouthY - 8}`} {...stroke} />
     );
 
+  // HOW THE FACE MOVES. Two nested groups so the horizontal and vertical
+  // drifts run on different periods and never resolve into a countable loop;
+  // the blink wraps only the eyes, because a mouth does not blink.
+  const drift =
+    state === "listening" ? { x: "j4-lx", y: "j4-ly" } :
+    state === "thinking" ? { x: "j4-ponder", y: "" } :
+    { x: "", y: "" };
+
   return (
-    <g>
-      {eyes}
-      {mouth}
+    <g className={drift.x || undefined}>
+      <g className={drift.y || undefined}>
+        <g className={state === "listening" ? "j4-blink" : undefined}>{eyes}</g>
+        {mouth}
+      </g>
     </g>
   );
 }

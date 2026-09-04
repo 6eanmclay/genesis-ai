@@ -17,7 +17,6 @@ import { GenesisLanguageLegend } from "./GenesisLanguageLegend";
 import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { J4MobileHero } from "./J4MobileHero";
 import { J4Overlay } from "./J4Overlay";
-import { J4Summon } from "./J4Summon";
 import { J4Dock } from "@/components/j4/J4Dock";
 import { J4HandoffContext } from "./J4HandoffContext";
 import { J4AskContext } from "./J4AskContext";
@@ -1280,19 +1279,21 @@ export function DashboardShell({
           setJ4Presentation("office");
           setJ4Open(true);
         }}
-      />
-
-      <J4Summon
-        open={j4Open}
-        onExpand={() => {
-          setJ4FocusComposer(false);
-          setJ4Presentation("office");
-          setJ4Open(true);
-        }}
         talkState={talk.state}
-        talkError={talk.error}
         onToggleTalk={() => (talk.state === "off" ? talk.start() : talk.stop())}
       />
+
+      {/* THE OLD CENTRE ORB IS GONE (2026-09-04, Sean).
+
+          J4Summon put a blue Genesis orb in the middle of the mobile bar and
+          was, for a while, the only J4 on a phone. It is now a second
+          identity for the same partner - a different colour, a different
+          shape, in a different place - and Sean's instruction is one J4
+          throughout the application.
+
+          Its one real capability, Talk Mode, moved into J4's corner rather
+          than being deleted with it: GENESIS_SURFACES requires voice in every
+          room, and removing the orb must not quietly remove the microphone. */}
 
       <J4Overlay open={j4Open} presentation={j4Presentation} onClose={() => setJ4Open(false)}>
         <J4HandoffContext.Provider

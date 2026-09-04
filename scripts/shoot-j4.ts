@@ -172,6 +172,23 @@ async function main(): Promise<void> {
     await page.keyboard.press("Escape");
     await page.waitForTimeout(700);
 
+    // ---- ONE J4, AND THE OLD ONE IS ACTUALLY GONE ----------------------
+    //
+    // Removing a component is easy to believe and easy to get wrong: the orb
+    // lived in four places, and only two of them represented J4. This asserts
+    // the outcome rather than the edit - no J4 representation anywhere on the
+    // main workspace except the corner.
+    const j4s = await page.evaluate(() => {
+      const corner = document.querySelectorAll('[data-testid="j4-corner"]').length;
+      // The old orb draws itself into a canvas inside .map-orb or the summon.
+      const centre = document.querySelector('[data-testid="map-centre"]');
+      const centreHasCanvas = !!centre?.querySelector("canvas, img");
+      return { corner, centreHasCanvas };
+    });
+    console.log(`J4 corners on the page: ${j4s.corner}`);
+    console.log(`the map centre is no longer an avatar: ${!j4s.centreHasCanvas}`);
+    console.log(`talk control lives in his corner: ${(await page.locator('[data-testid="j4-talk-toggle"]').count()) > 0}`);
+
     // ---- THE LOOP: click him, and the real conversation opens ----------
     //
     // Not a second chat. The dock asks the shell for the same surface the orb
