@@ -44,8 +44,17 @@ export type J4Skin = "light" | "dark";
 /** Kept for API compatibility. Gaze is no longer drawn — see the note above. */
 export type J4Gaze = "ahead" | "left" | "right" | "down";
 
-const BASE = "/brand/j4-off.png";
-const FACE = "/brand/j4-face-on.png";
+// THE DOCK'S OWN PAIR, not the entrance's.
+//
+// Same J4, same identity, no business icons. The full canonical badge carries
+// six hexagons and a globe, which at 116px in the corner is noise rather than
+// information - so the compact presentation uses the icon-free crop of the
+// same character, with the same illuminated face registered onto its visor.
+//
+// The entrance sequence uses the full badge, because there the six icons ARE
+// the story.
+const BASE = "/brand/j4-character.png";
+const FACE = "/brand/j4-dock-face.png";
 
 export function J4Character({
   state = "idle",
