@@ -252,6 +252,33 @@ async function main(): Promise<void> {
     await page.keyboard.press("Escape");
     await page.waitForTimeout(700);
 
+    // ---- THE TV USES THE SCREEN ----------------------------------------
+    //
+    // It was capped at ~80% of the space below Live Intelligence by a
+    // flex-weight spacer. Three things have to hold at once, and only
+    // measuring all three tells you the change was right: it reaches near the
+    // bottom, the separation is still there, and the PAGE still does not
+    // scroll - a taller frame that pushed the document would be a regression
+    // dressed as an improvement.
+    const tv = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="business-tv"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return {
+        heightPct: Math.round((r.height / window.innerHeight) * 100),
+        gapBelow: Math.round(window.innerHeight - r.bottom),
+        pageScrolls:
+          document.documentElement.scrollHeight > window.innerHeight + 2,
+        innerScrolls: Array.from(document.querySelectorAll("main")).some(
+          (m) => getComputedStyle(m).overflowY === "auto",
+        ),
+      };
+    });
+    console.log(`the TV is ${tv?.heightPct}% of the viewport height`);
+    console.log(`clear space below it: ${tv?.gapBelow}px`);
+    console.log(`the page itself scrolls: ${tv?.pageScrolls} (must be false)`);
+    console.log(`scrolling happens inside it: ${tv?.innerScrolls}`);
+
     // ---- ONE J4, AND THE OLD ONE IS ACTUALLY GONE ----------------------
     //
     // Removing a component is easy to believe and easy to get wrong: the orb

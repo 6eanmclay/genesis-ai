@@ -1019,7 +1019,22 @@ export function DashboardShell({
               whole environment. <main>'s own lg:overflow-y-auto still
               makes it the one real scrolling surface if routed content is
               taller than this now-smaller footprint. */}
-          <div className="lg:mt-4 lg:flex lg:min-h-0 lg:flex-[4] lg:flex-col lg:overflow-hidden lg:rounded-2xl lg:border lg:border-black/[.08] lg:bg-white dark:lg:border-white/[.145] dark:lg:bg-zinc-950">
+          {/* TALLER, AND ANCHORED NEAR THE BOTTOM (2026-09-04, Sean).
+
+              This was lg:flex-[4] against a lg:flex-[1] spacer, which capped
+              it at roughly 80% of the space below Live Intelligence. That was
+              a deliberate choice - the environment reading as real, unclaimed
+              ground beneath an object - and it cost too much of the screen:
+              significantly less of the application was visible at once.
+
+              It now claims the remaining height and the ground becomes a
+              fixed strip rather than a share, so the frame reaches down toward
+              the bottom of the viewport while the separation is still real and
+              still visible. The page itself does not grow: the root is
+              lg:h-screen lg:overflow-hidden and <main> below is the one
+              scrolling surface, so a taller frame shows more of the same
+              content rather than pushing the page. */}
+          <div data-testid="business-tv" className="lg:mt-4 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden lg:rounded-2xl lg:border lg:border-black/[.08] lg:bg-white dark:lg:border-white/[.145] dark:lg:bg-zinc-950">
             <div className="hidden lg:flex lg:h-14 lg:shrink-0 lg:items-center lg:gap-4 lg:border-b lg:border-black/[.08] lg:bg-black/[.02] lg:px-4 dark:lg:border-white/[.145] dark:lg:bg-white/[.03]">
               {primaryNavRow}
             </div>
@@ -1101,8 +1116,13 @@ export function DashboardShell({
               border/background/content of its own; the page's own
               backdrop shows through. This is the "intentionally open"
               space from the wireframe review, not a placeholder for
-              future content. */}
-          <div className="hidden lg:block lg:flex-[1]" aria-hidden="true" />
+              future content.
+
+              A FIXED STRIP RATHER THAN A SHARE. As lg:flex-[1] it grew with
+              the screen and took a fifth of every viewport with it. The
+              intent was that the ground be visible, not that it be large -
+              and it still is, on top of the grid's own lg:pb-10. */}
+          <div className="hidden lg:block lg:h-4 lg:shrink-0" aria-hidden="true" />
         </div>
 
         <aside
