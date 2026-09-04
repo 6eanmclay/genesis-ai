@@ -168,24 +168,20 @@ async function main(): Promise<void> {
     console.log(`business map still visible: ${await map.isVisible()}`);
     console.log(`page not scroll-locked: ${await page.evaluate(() => document.body.style.overflow !== "hidden")}`);
 
-    // A real navigation target, clicked while J4 is open.
-    const navLink = page.locator('nav a, header a').first();
-    const navName = (await navLink.textContent().catch(() => "")) || "(none)";
-    let navClickable = false;
-    try {
-      await navLink.click({ trial: true, timeout: 4_000 });
-      navClickable = true;
-    } catch {
-      navClickable = false;
-    }
-    console.log(`navigation still clickable while open (${navName.trim().slice(0, 24)}): ${navClickable}`);
-
     // ---- MINIMISE AND REOPEN KEEPS THE CONVERSATION --------------------
     const typed = await composer.inputValue().catch(() => "");
     console.log(`composer content before minimise: ${JSON.stringify(typed.slice(0, 40))}`);
     await page.keyboard.press("Escape");
     await page.waitForTimeout(700);
-    console.log(`panel closed: ${(await page.locator('[data-j4-presentation="panel"]').count()) === 0 || !(await page.locator('[data-j4-presentation="panel"]').isVisible())}`);
+    // NOT REMOVAL. J4Overlay keeps the conversation mounted on purpose - Talk
+    // Mode sends a spoken turn through its composer without ever expanding it,
+    // so unmounting would break voice, and the file says so. The intended
+    // closed state is therefore hidden and non-interactive, not gone. The
+    // first version of this check asserted removal and reported a failure that
+    // was entirely my own.
+    const closedPanel = page.locator('[data-j4-presentation="panel"]');
+    console.log(`panel hidden after Escape: ${(await closedPanel.getAttribute("aria-hidden")) === "true"}`);
+    console.log(`and the conversation is still mounted: ${(await page.locator('textarea').count()) > 0}`);
     await open.click();
     await page.waitForTimeout(900);
     const messages = await page.locator('[role="dialog"]').innerText().catch(() => "");
@@ -195,6 +191,86 @@ async function main(): Promise<void> {
     // ---- ONE COMPOSER, NOT TWO -----------------------------------------
     const composers = await page.locator('textarea').count();
     console.log(`composers on the page: ${composers}`);
+
+    // ---- DOES THE PANEL BLOCK NAVIGATION? ------------------------------
+    //
+    // LAST, deliberately. This one leaves the page, and /create-business
+    // sits outside the dashboard layout, so the shell - dock, panel and all
+    // - unmounts on arrival. Running it earlier left every later check
+    // inspecting a page that no longer had a J4 on it.
+    //
+    // The first probe answered 'not clickable' and stopped, which is not an
+    // answer. A link can be unclickable because something covers it, or
+    // because the probe aimed at a link that was never on screen. Those need
+    // different fixes, so the check has to tell them apart.
+    //
+    // hitTest reports, for each visible link, what actually sits at its centre
+    // and how that element is related to the link. Playwright refuses a click
+    // unless the hit is the link itself or something inside it - an ANCESTOR
+    // means the link does not own its own centre point.
+    const hitTest = async () =>
+      page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll("a[href]"));
+        return links
+          .map((a) => {
+            const r = a.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) return null;
+            const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            const rel = !hit
+              ? "nothing"
+              : hit === a
+                ? "self"
+                : a.contains(hit)
+                  ? "descendant"
+                  : hit.contains(a)
+                    ? "ancestor"
+                    : "OTHER";
+            const inPanel = hit?.closest('[data-j4-presentation="panel"]') ? " IN-PANEL" : "";
+            return {
+              text: (a.textContent || "").trim().slice(0, 20),
+              href: a.getAttribute("href") || "",
+              rel: rel + inPanel,
+            };
+          })
+          .filter(Boolean)
+          .slice(0, 6);
+      });
+
+    const openHits = await hitTest();
+    for (const h of openHits as { text: string; href: string; rel: string }[]) {
+      console.log(`  link ${JSON.stringify(h.text)} -> ${h.href} : ${h.rel}`);
+    }
+    console.log(`links intercepted BY THE PANEL: ${(openHits as { rel: string }[]).filter((h) => h.rel.includes("IN-PANEL")).length}`);
+
+    // THE REAL CLICK. Aim at a link that owns its own centre, so a failure is
+    // about reachability rather than about a link that is merely a flex child.
+    const target = (openHits as { text: string; href: string; rel: string }[]).find(
+      (h) => (h.rel === "self" || h.rel === "descendant") && h.href.startsWith("/"),
+    );
+    console.log(`clicking ${JSON.stringify(target?.text ?? "(none)")} -> ${target?.href ?? "-"}`);
+    let navigated = false;
+    if (target) {
+      const before = page.url();
+      try {
+        // :visible, because the same href also exists in the mobile bar that
+        // is md:hidden at this width. Resolving it without that filter picks
+        // the offscreen twin and times out against a link nobody can see -
+        // which is the whole reason this check reported a failure twice.
+        await page.locator(`a[href="${target.href}"]:visible`).first().click({ timeout: 8_000 });
+        // WAIT FOR THE DESTINATION, not for a fixed guess. This is a dev
+        // server compiling the route on demand, so a couple of seconds is
+        // sometimes not enough and the arrival looks like a refusal.
+        await page.waitForURL((u) => u.pathname !== new URL(before).pathname, {
+          timeout: 30_000,
+        });
+        navigated = page.url() !== before;
+      } catch (error) {
+        console.log(`  click threw: ${String(error).split("\n")[0].slice(0, 90)}`);
+      }
+    }
+    console.log(`navigated while J4 was open: ${navigated} (now ${page.url().replace(server.baseUrl, "")})`);
+    await page.screenshot({ path: `${SHOTS}/j4-panel-after-nav.png` });
+
 
     // Expanded.
     const expand = page.locator('[data-testid="j4-expand"]');
