@@ -44,17 +44,20 @@ export type J4Skin = "light" | "dark";
 /** Kept for API compatibility. Gaze is no longer drawn — see the note above. */
 export type J4Gaze = "ahead" | "left" | "right" | "down";
 
-// THE DOCK'S OWN PAIR, not the entrance's.
+// ONE CANONICAL PAIR, EVERYWHERE (2026-09-04).
 //
-// Same J4, same identity, no business icons. The full canonical badge carries
-// six hexagons and a globe, which at 116px in the corner is noise rather than
-// information - so the compact presentation uses the icon-free crop of the
-// same character, with the same illuminated face registered onto its visor.
+// The dock briefly had its own separately-registered pair, and that is
+// exactly how the two J4s drifted: two registrations, two scales, two sets
+// of eye spacing. Sean's rule is one shared asset and state system, fixed
+// once so the correction propagates - so both the entrance and the corner
+// draw the same two files, and the size is the only thing that varies.
 //
-// The entrance sequence uses the full badge, because there the six icons ARE
-// the story.
-const BASE = "/brand/j4-character.png";
-const FACE = "/brand/j4-dock-face.png";
+// The face layer is the MASTER'S OWN VISOR, pasted over the master's own
+// artwork through a feathered ellipse. No threshold, no alpha ramp, no
+// recomputed positions: the eyes and mouth are the master's pixels at the
+// master's spacing, because they ARE the master's pixels.
+const BASE = "/brand/j4-off.png";
+const FACE = "/brand/j4-face-on.png";
 
 export function J4Character({
   state = "idle",
