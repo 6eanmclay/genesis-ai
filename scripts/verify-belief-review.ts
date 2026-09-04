@@ -383,6 +383,121 @@ async function main() {
     employeeSees.active.some((b) => b.category === "insight_recurrence"),
     employeeSees.active.map((b) => b.claim).join(" | "));
 
+  // ==========================================================================
+  console.log("\n=== 10. J4 can be told he is wrong, in the owner's own words ===\n");
+  // ==========================================================================
+  //
+  // The executable above is reached from a button that already has the belief
+  // id. J4 never does: renderDigest shows him beliefs as prose, so the CLAIM is
+  // the only handle he or the owner has. This section is about that resolution
+  // and nothing else - contradictBelief's own rules are section 8's job.
+  const { TOOL_HANDLERS } = await import('@/lib/execution/toolHandlers');
+  const { getBusinessUnderstanding } = await import('@/lib/businessModel/understanding');
+
+  const claimed = async (storeId: string, claim: string, topicKey: string) =>
+    prisma.belief.create({
+      data: {
+        storeId, topicKey, claim,
+        category: "owner_preference", confidence: 0.7, evidenceCount: 2,
+        firstObservedAt: daysAgo(20), lastConfirmedAt: daysAgo(2),
+        // ABOUT THE BUSINESS, NOT ABOUT A PERSON, deliberately. Section 9
+        // establishes that a belief about someone is only theirs to read, so
+        // giving these an owner recordId made the employee case below fail for
+        // the wrong reason - they could not SEE it, which tells us nothing
+        // about whether the ownership rule is enforced.
+        evidenceRefs: [],
+      },
+    });
+
+  const mugs = await claimed(store.id, "Mugs sell best in November", "seasonal:mugs");
+
+  // THE UNDERSTANDING IS THE SOURCE, not a fixture. If a belief does not reach
+  // getBusinessUnderstanding then J4 cannot see it, and a handler test built on
+  // a hand-made list would pass while the feature was dead.
+  const seenByJ4 = await getBusinessUnderstanding(store.id, { viewerUserId: owner.id });
+  assert("a belief reaches the understanding J4 is given",
+    seenByJ4.beliefs.some((b) => b.claim === "Mugs sell best in November"),
+    seenByJ4.beliefs.map((b) => b.claim).join(" | "));
+
+  const tellJ4 = async (claim: string, note: string | null, userId = owner.id) =>
+    TOOL_HANDLERS.contradict_belief({
+      storeId: store.id,
+      userId,
+      userMessage: "that's not right",
+      conversationalReply: "",
+      input: { claim, note },
+      status: () => {},
+      products: [],
+      understanding: await getBusinessUnderstanding(store.id, { viewerUserId: userId }),
+    } as unknown as Parameters<(typeof TOOL_HANDLERS)["contradict_belief"]>[0]);
+
+  // A claim J4 does not hold changes nothing at all.
+  const nonsense = await tellJ4("Candles outsell everything", null);
+  check("an unrecognised claim retires nothing",
+    (await prisma.belief.findUniqueOrThrow({ where: { id: mugs.id } })).status, "ACTIVE");
+  assert("and says so rather than pretending",
+    /couldn't match/i.test(String((nonsense as { reply?: string }).reply)),
+    String((nonsense as { reply?: string }).reply));
+
+  // AMBIGUITY ASKS. Retiring the wrong belief is a silent loss the owner would
+  // never see, so a claim matching two of them must not pick one.
+  //
+  // THE FIRST VERSION OF THIS TEST WAS WRONG, and the handler was right. It
+  // probed with "Mugs sell best in November" while one belief said exactly
+  // that, and expected a question. An exact claim is not ambiguous just
+  // because a longer belief also contains it - exact-match precedence is the
+  // point, so it is asserted below rather than left to be rediscovered.
+  const mugsB = await claimed(store.id, "Mugs sell best in December", "seasonal:mugs2");
+  const vague = await tellJ4("Mugs sell best", null);
+  assert("a claim matching two beliefs asks which",
+    /which of those/i.test(String((vague as { reply?: string }).reply)),
+    String((vague as { reply?: string }).reply));
+  check("and retires neither of them",
+    (await prisma.belief.count({
+      where: { storeId: store.id, id: { in: [mugs.id, mugsB.id] }, status: "ACTIVE" },
+    })), 2);
+  // AND AN EXACT CLAIM STILL WINS while that partial match is still there:
+  // otherwise the fix for ambiguity would have made precise corrections
+  // impossible, which is a worse failure than the one it prevents.
+  const precise = await tellJ4("Mugs sell best in December", "wrong month");
+  check("an exact claim is not made ambiguous by a longer neighbour",
+    (await prisma.belief.findUniqueOrThrow({ where: { id: mugsB.id } })).status, "DISMISSED");
+  check("and the one it did not name is untouched",
+    (await prisma.belief.findUniqueOrThrow({ where: { id: mugs.id } })).status, "ACTIVE");
+  assert("with J4 confirming the correction",
+    /stopped believing/i.test(String((precise as { reply?: string }).reply)),
+    String((precise as { reply?: string }).reply));
+
+  await prisma.belief.delete({ where: { storeId: store.id, id: mugsB.id } });
+
+  // THE REAL CORRECTION, by claim, with the owner's own reason.
+  const done = await tellJ4("Mugs sell best in November", "no, that was one good month");
+  const retired = await prisma.belief.findUniqueOrThrow({ where: { id: mugs.id } });
+  check("naming the belief in words retires it", retired.status, "DISMISSED");
+  check("with the owner's reason kept verbatim",
+    retired.retiredReason, "dismissed by the owner: no, that was one good month");
+  assert("and J4 says he has stopped believing it",
+    /stopped believing/i.test(String((done as { reply?: string }).reply)),
+    String((done as { reply?: string }).reply));
+
+  // AN EMPLOYEE IS REFUSED AND TOLD. The executable already refuses; what
+  // matters here is that the refusal reaches the person instead of being
+  // swallowed into a cheerful reply.
+  const revive = await claimed(store.id, "Your best day is Friday", "seasonal:friday");
+  const byStaff = await tellJ4("Your best day is Friday", null, employee.id);
+  check("an employee cannot correct a belief through J4",
+    (await prisma.belief.findUniqueOrThrow({ where: { id: revive.id } })).status, "ACTIVE");
+  assert("and is told the record is unchanged",
+    /only the business owner/i.test(String((byStaff as { reply?: string }).reply)),
+    String((byStaff as { reply?: string }).reply));
+
+  // ANOTHER BUSINESS'S BELIEF IS NOT REACHABLE BY ITS WORDS. The understanding
+  // is store-scoped, so an identical claim elsewhere resolves to nothing here.
+  const elsewhere = await claimed(other.id, "Only we believe this", "tenant:probe");
+  await tellJ4("Only we believe this", "not true");
+  check("a claim cannot reach another business's belief",
+    (await prisma.belief.findUniqueOrThrow({ where: { id: elsewhere.id } })).status, "ACTIVE");
+
   await prisma.store.deleteMany({ where: { id: { in: [store.id, other.id] } } });
   await prisma.user.deleteMany({ where: { id: { in: [owner.id, employee.id] } } });
 

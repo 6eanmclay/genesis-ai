@@ -346,9 +346,31 @@ export const AnswerSupplierEconomicsToolInputSchema = z.object({
 });
 export type AnswerSupplierEconomicsToolInput = z.infer<typeof AnswerSupplierEconomicsToolInputSchema>;
 
+/**
+ * The merchant telling J4 that something he BELIEVES is wrong.
+ *
+ * A CLAIM, NEVER AN ID. Beliefs reach the model as prose - renderDigest
+ * writes "You currently believe: <claim> [maturity]" - so the claim is the
+ * only handle either of them has, and a belief id has never been in front of
+ * the model to send back.
+ */
+export const ContradictBeliefInputSchema = z.object({
+  claim: z.string().min(1),
+  /**
+   * Their reason, in their own words, stored verbatim. Null when they only
+   * said it was wrong.
+   *
+   * NULLABLE BUT REQUIRED, the same shape take_me_there's intent uses: the
+   * key must be present. A tool call that omits it fails this parse, which is
+   * the intended strictness rather than an oversight.
+   */
+  note: z.string().nullable(),
+});
+export type ContradictBeliefInput = z.infer<typeof ContradictBeliefInputSchema>;
 export const STORE_CHAT_UNIFIED_TOOL_NAMES = [
   "look_up_business_data",
   "capture_business_fact",
+  "contradict_belief",
   "plan_campaign",
   "request_image_change",
   "request_product_removal",
@@ -471,6 +493,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       description:
         "Call this when the merchant is asking to be TOLD or EXPLAINED something using real business data or understanding — a factual question (revenue, orders, customers, appointments, WHICH SYSTEMS ARE CONNECTED and what they have synced — including whether one is stale or has never synced — or how their connected social accounts are performing — reach, engagement, followers, which posts did well), or a genuine planning/strategy question ('what should I do next', 'build me a 90-day plan', 'how would you spend N Growth Points'). Never call this for a request to actually change something, and never for a request to CREATE something — making a logo, a design, a product or any other real artefact is the relevant creation tool, not this one. You already have a summary of the business above, so do not reach for this as a preliminary step before acting; call it when being TOLD something IS what was asked for. CONNECTIONS ARE UNDERSTANDING, NOT SETTINGS. Tell me about my connections, what is connected, is my accounting still syncing — these are questions about the business and this tool answers them: businessProfile.connectedSystems and the invoice, campaign and appointment summaries built from those systems are the real answer. Never send the merchant to a settings screen to read something you were already given, and never describe integrations as somebody else's department — what the business is connected to is part of what you understand about it. Taking them to the Connections screen is take_me_there; actually connecting or disconnecting something is neither tool and is not something you can do yet, so say that plainly rather than implying either.",
       input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
+    },
+    {
+      name: "contradict_belief",
+      description:
+        "Call this when the merchant tells you that something YOU BELIEVE about their business is wrong. You are shown these every turn as 'You currently believe: ...' - they are your own conclusions drawn from evidence, not facts the merchant gave you, so being corrected is them doing you a favour and should be received that way rather than defended. Pass claim as the belief they are contradicting, in the words it was shown to you. Pass note as their reason in THEIR words, verbatim and untidied, or null when they only said it was wrong - a reason you invented or smoothed is worse than none, because somebody reading the record later will take it for theirs. Do NOT call this when they disagree with something you merely said in conversation, when they are stating a business fact (that is capture_business_fact), or when a belief has simply gone out of date rather than being wrong - retiring and contradicting are different records and a later reader must be able to tell them apart. Only the business owner can do this; if an employee says it the write is refused, and you must say so plainly rather than implying it worked.",
+      input_schema: z.toJSONSchema(ContradictBeliefInputSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "show_upload_options",

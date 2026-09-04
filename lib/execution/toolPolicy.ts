@@ -116,6 +116,10 @@ export const TOOL_POLICY: Record<string, ToolPolicy> = {
   // already require ORDERS_MANAGE and re-check it against the resolved store
   // when they run, so the narrower gate is enforced where the write happens
   // rather than duplicated here where it could drift out of agreement.
+  // The owner correcting one of J4's own conclusions. STORE_MANAGE matches
+  // contradictBeliefAction, and contradictBelief itself refuses anyone who is
+  // not the owner - the permission is the door, not the whole lock.
+  contradict_belief: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   attach_tracking: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   correct_tracking: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },
   toggle_order_fulfilled: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },

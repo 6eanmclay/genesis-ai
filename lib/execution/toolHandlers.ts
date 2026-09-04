@@ -18,6 +18,7 @@ import {
   ApproveDesignAsProductInputSchema,
   CreateCompositionInputSchema,
   TakeMeThereInputSchema,
+  ContradictBeliefInputSchema,
   type BusinessFactCaptureInput,
 } from "@/lib/execution/genesisTools";
 import { GENESIS_ACTIONS } from "@/lib/execution/genesisActions";
@@ -1343,6 +1344,120 @@ const requestProductRemoval: ToolHandler = async (ctx) => {
  * supplier, a product and an outstanding question first. Defaulted to the real
  * implementation, imported lazily like the rest.
  */
+/**
+ * The owner telling J4 that one of his own conclusions is wrong.
+ *
+ * RESOLVED BY CLAIM, NEVER BY ID. contradictBelief takes a beliefId, and a
+ * belief id has never been in front of the model - the digest shows beliefs as
+ * prose ("You currently believe: ..."), so the claim is the only handle the
+ * owner or the model has. The ids come from the turn's own understanding,
+ * which is already scoped to this store, so a claim cannot resolve to another
+ * business's belief even if the model invented the words.
+ *
+ * NO APPROVAL, deliberately. The owner saying "that's wrong" IS the
+ * authorization - the same reasoning that lets answer_supplier_economics and
+ * manage_business_asset write directly. Asking them to confirm a correction
+ * they just volunteered would be asking permission to listen.
+ */
+export function makeContradictBelief(
+  apply?: (input: {
+    storeId: string;
+    beliefId: string;
+    userId: string;
+    note?: string;
+  }) => Promise<{ ok: boolean; refusal?: string }>,
+): ToolHandler {
+  return async (ctx) => {
+    ctx.status("Taking that off the record\u2026");
+
+    const parsed = ContradictBeliefInputSchema.safeParse(ctx.input);
+    if (!parsed.success) return { handled: false, reason: "invalid_input" };
+
+    const beliefs = ctx.understanding?.beliefs ?? [];
+    if (beliefs.length === 0) {
+      return {
+        handled: true,
+        reply: "I don't have any beliefs on record about your business yet, so there's nothing for me to take back.",
+        kind: "contradict_belief_none",
+        outcome: "failure",
+      };
+    }
+
+    // EXACT FIRST, then containment either way - the model is quoting prose it
+    // was shown, so it may pass slightly more or slightly less than the stored
+    // claim. Ambiguity asks rather than picking, because retiring the wrong
+    // belief is a silent loss the owner would not see.
+    const wanted = parsed.data.claim.trim().toLowerCase();
+    const exact = beliefs.filter((b) => b.claim.trim().toLowerCase() === wanted);
+    const matches =
+      exact.length > 0
+        ? exact
+        : beliefs.filter((b) => {
+            const claim = b.claim.trim().toLowerCase();
+            return claim.includes(wanted) || wanted.includes(claim);
+          });
+
+    if (matches.length === 0) {
+      return {
+        handled: true,
+        reply:
+          "I couldn't match that to something I currently believe, so I haven't changed anything. Which one did you mean?",
+        kind: "contradict_belief_unknown",
+        outcome: "failure",
+      };
+    }
+    if (matches.length > 1) {
+      return {
+        handled: true,
+        reply:
+          `That could be more than one thing I believe: ${matches
+            .map((b) => `"${b.claim}"`)
+            .join(" or ")}. Which of those is wrong?`,
+        kind: "contradict_belief_ambiguous",
+      };
+    }
+
+    const run =
+      apply ??
+      (async (input: { storeId: string; beliefId: string; userId: string; note?: string }) => {
+        const { contradictBelief } = await import("@/lib/intelligence/beliefReview");
+        return contradictBelief(input);
+      });
+
+    const note = parsed.data.note?.trim();
+    const outcome = await run({
+      storeId: ctx.storeId,
+      beliefId: matches[0].id,
+      userId: ctx.userId,
+      note: note && note.length > 0 ? note : undefined,
+    });
+
+    if (!outcome.ok) {
+      // THE REFUSALS ARE SAID, NOT SWALLOWED. not_permitted is the real one:
+      // contradictBelief is owner-only, so an employee reaches here and must
+      // be told the record is unchanged rather than left to assume it worked.
+      return {
+        handled: true,
+        reply:
+          outcome.refusal === "not_permitted"
+            ? "Only the business owner can correct what I believe, so I've left it as it was."
+            : "I couldn't take that one back \u2014 it isn't on my record any more. Nothing changed.",
+        kind: "contradict_belief_refused",
+        outcome: "failure",
+      };
+    }
+
+    return {
+      handled: true,
+      reply: `Understood \u2014 I've stopped believing that${
+        note && note.length > 0 ? ", and recorded why in your words" : ""
+      }.`,
+      kind: "contradict_belief",
+      revalidate: "/dashboard",
+    };
+  };
+}
+
 export function makeAnswerSupplierEconomics(
   apply?: (input: { storeId: string; answer: unknown }) => Promise<{ status: string; reply: string; [k: string]: unknown }>
 ): ToolHandler {
@@ -2842,6 +2957,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   toggle_order_fulfilled: toggleOrderFulfilment,
   attach_tracking: attachTracking,
   correct_tracking: correctTracking,
+  contradict_belief: makeContradictBelief(),
   look_up_business_data: makeLookUpBusinessData(),
   // Bound to the real href resolver by the route, which is the only place that
   // knows this business's slug. The registry entry here would navigate to the

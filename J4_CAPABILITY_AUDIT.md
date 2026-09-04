@@ -416,6 +416,43 @@ behaviour that is actively misleading rather than merely missing.
 
 ---
 
+## Correction 3: `explainRecommendation` is not pure routing
+
+**Found 2026-09-04, on picking it up as the first P3 item.** The table above
+counts it among the ~7 that need only a tool definition, a policy row and a
+prompt. Two things make that wrong.
+
+**It would duplicate J4 rather than extend him.**
+`getRecommendationExplanation` makes its own model call to explain a one-line
+recommendation. It exists because a dashboard *button* has no model behind it.
+J4 is the model. Routing him through a tool that asks another model to explain
+one sentence is a second call to do what he already does natively, and worse
+than what he would say himself, because that call sees only the recommendation
+text while J4 has the whole business.
+
+**The ids do not line up with what J4 can see.** `getRecommendations` merges
+two producers with different id spaces: `ruleBasedProducer` emits the six
+closed keys of `RECOMMENDATION_MESSAGES`, and `genesisProducer` emits
+CognitiveOutput row ids. `getRecommendationExplanation` looks up the closed
+registry and throws on anything else. J4's context carries the CognitiveOutput
+ones (as `activeThoughts`) and *not* the rule-based ones — so a wrapper would
+have covered exactly the recommendations he cannot see, and thrown on the ones
+he can. The dashboard is right and has no bug: `RecommendationItem` shows the
+explain control only for `source === "rules"`, because Genesis-authored ones
+already carry their reasoning.
+
+**So the real gap is different.** It is not that J4 needs a tool to explain a
+recommendation; it is that the six rule-based ones are not part of what he
+knows. That is the same shape as the Connections defect — the data exists and
+he is not given it — and it is a context question, not a routing one. Not
+done here, and deliberately not bolted onto the digest, which is a 2,400
+character routing budget rather than somewhere to add six on-demand queries.
+
+`contradictBeliefAction` was taken instead, and it genuinely was pure routing:
+beliefs already reach the model every turn through `renderDigest`.
+
+---
+
 ## Priority order, revised
 
 ### P0 — Promotions: see them, then stop them (do first)
