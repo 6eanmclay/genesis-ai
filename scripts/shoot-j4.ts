@@ -111,9 +111,27 @@ async function main(): Promise<void> {
     // together and a divider separates them from the business destinations.
     // What matters behaviourally is that they are NOT two assistants: one
     // conversation, two presentations of the same overlay.
-    const pair = page.locator('[data-testid="j4-pair"]');
-    console.log(`J4 and the Office are one group: ${(await pair.count()) > 0}`);
-    console.log(`with a divider before the business nav: ${(await page.locator('[data-testid="j4-dock-divider"]').count()) > 0}`);
+    // NESTING, NOT ADJACENCY. Two buttons side by side would satisfy any
+    // check that only counted them, which is why this asserts CONTAINMENT
+    // both ways: the Office is a descendant of J4's corner in the DOM, and
+    // its box sits inside his. It is J4 -> Office, not J4 | Office.
+    const pair = page.locator('[data-testid="j4-corner"]');
+    console.log(`J4 owns a corner: ${(await pair.count()) > 0}`);
+    const nested = await page.evaluate(() => {
+      const corner = document.querySelector('[data-testid="j4-corner"]');
+      const office = document.querySelector('[data-testid="j4-office"]');
+      if (!corner || !office) return null;
+      const c = corner.getBoundingClientRect();
+      const o = office.getBoundingClientRect();
+      return {
+        inDom: corner.contains(office),
+        inBox: o.left >= c.left - 1 && o.right <= c.right + 1 && o.top >= c.top - 1 && o.bottom <= c.bottom + 1,
+        smaller: o.width * o.height < c.width * c.height * 0.36,
+      };
+    });
+    console.log(`the Office door is inside his corner (DOM): ${nested?.inDom}`);
+    console.log(`and inside it geometrically: ${nested?.inBox}`);
+    console.log(`and subordinate in size: ${nested?.smaller}`);
     // CLAMPED TO THE VIEWPORT. The first version of this asked for 32px of
     // padding below a dock that already sits on the bottom edge, and
     // Playwright returned the part of the clip that existed - which was black.

@@ -110,96 +110,86 @@ export function J4Dock({
         </div>
       )}
 
-      {/* ---- COMPACT: J4 and his Office, as one unit -------------------- */}
+      {/* ---- J4'S CORNER, with his Office nested inside it -------------- */}
       {/*
-          LAYOUT CONCEPT ONLY at this stage. Sean asked for the physical
-          relationship first - [J4][Office] | [business] - and said he would
-          critique the visual treatment after seeing it running. So this is
-          grouping and spacing over the existing behaviour: no new J4 system,
-          no change to what either control opens.
+          HIERARCHY, NOT ADJACENCY (2026-09-04, Sean). The first version put
+          J4 and the Office side by side with a divider after them, which read
+          as two buttons that happened to be neighbours. It is J4 -> Office,
+          not J4 | Office.
+
+          So the outer panel IS J4's permanent home, he fills it, and the
+          Office is a small doorway set into its lower corner - a door in the
+          wall of his room rather than a second occupant of the shelf. Talking
+          to him is talking to him; the door is how you go further in.
       */}
-      <div className="pointer-events-auto flex items-end gap-2 px-3 pb-3 pt-2">
+      <div className="pointer-events-auto px-3 pb-3 pt-2">
         <div
-          data-testid="j4-pair"
-          className="flex items-end gap-1 rounded-2xl border border-[#4ade3a]/15 bg-[#070b0a]/45 p-1 pr-1.5 backdrop-blur-[2px]"
+          data-testid="j4-corner"
+          className="relative rounded-[1.75rem] border border-[#4ade3a]/18 bg-[#050908]/55 p-2 pb-1 pr-[3.15rem] backdrop-blur-[2px]"
         >
-        <div className="flex w-[9.5rem] flex-col items-center gap-1">
-        <button
-          type="button"
-          data-testid="j4-open"
-          onClick={onOpen}
-          aria-label={`J4 — ${label}. Open the conversation.`}
-          className="rounded-full transition-transform hover:scale-[1.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4ade3a]"
-        >
-          <J4Character
-            state={state}
-            gaze={justFocused ? "right" : "ahead"}
-            size={116}
-            title={`J4 — ${label}`}
-          />
-        </button>
+          <button
+            type="button"
+            data-testid="j4-open"
+            onClick={onOpen}
+            aria-label={`J4 \u2014 ${label}. Open the conversation.`}
+            className="block rounded-full transition-transform hover:scale-[1.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4ade3a]"
+          >
+            <J4Character
+              state={state}
+              gaze={justFocused ? "right" : "ahead"}
+              size={124}
+              title={`J4 \u2014 ${label}`}
+            />
+          </button>
 
-        {/* THE EXPAND CONTROL IS EXPLICIT. The direction is specific that a
-            double-tap must not be the primary discoverable interaction. */}
-        <button
-          type="button"
-          data-testid="j4-expand"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-          className="rounded-full px-2 py-0.5 text-[11px] font-medium text-[#4ade3a]/85 transition-colors hover:text-[#4ade3a]"
-        >
-          {expanded ? "Minimise" : "Expand"}
-        </button>
-        </div>
-
-          {/* ---- THE OFFICE, beside him ------------------------------- */}
-          {/* A PLACE, NOT A SECOND ASSISTANT. GENESIS_SURFACES is explicit
-              that the Office is still a room with a stable name, a place and
-              a door - it is simply not a tab in the room bar. This is that
-              door, put where the owner already looks for J4, which is why it
-              is drawn as somewhere to go rather than as a face to talk to. */}
+          {/* THE DOORWAY. Deliberately small and set INTO his corner: a way
+              through, not a peer. GENESIS_SURFACES has always said the Office
+              is a room with a stable name, a place and a door - and this is
+              the door, standing where the owner already looks for J4. */}
           <button
             type="button"
             data-testid="j4-office"
             onClick={onOpenOffice}
-            aria-label="Office - the work you and J4 have done together"
-            className="group mb-[1.375rem] flex h-[6.25rem] w-[5.25rem] flex-col items-center justify-center gap-2 rounded-xl border border-[#4ade3a]/20 bg-[#0b1210]/70 transition-colors hover:border-[#4ade3a]/45 hover:bg-[#0e1a16]/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4ade3a]"
+            aria-label="Office \u2014 the work you and J4 have done together"
+            className="group absolute bottom-7 right-1.5 flex h-[2.9rem] w-[2.6rem] flex-col items-center justify-center gap-0.5 rounded-lg border border-[#4ade3a]/25 bg-[#050a08]/85 transition-colors hover:border-[#4ade3a]/55"
           >
             <svg
               viewBox="0 0 24 24"
-              width="26"
-              height="26"
+              width="17"
+              height="17"
               fill="none"
               stroke="currentColor"
-              strokeWidth={1.5}
+              strokeWidth={1.6}
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="text-[#4ade3a]/75 transition-colors group-hover:text-[#4ade3a]"
+              className="text-[#4ade3a]/80 transition-colors group-hover:text-[#4ade3a]"
               aria-hidden="true"
             >
               <path d="M7 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16" />
               <path d="M4 21h16" />
               <circle cx="14" cy="13" r="0.9" fill="currentColor" stroke="none" />
             </svg>
-            <span className="text-[11px] font-medium text-white/65 transition-colors group-hover:text-white/90">
+            <span className="text-[8.5px] font-medium leading-none text-white/55 transition-colors group-hover:text-white/85">
               Office
             </span>
           </button>
-        </div>
 
-        {/* THE DIVIDER. Everything left of it is the partnership; everything
-            right of it is the business. The whole point of the grouping is
-            that J4 and the Office stop reading as two competing assistants. */}
-        <div
-          data-testid="j4-dock-divider"
-          aria-hidden="true"
-          className="mb-8 h-14 w-px bg-gradient-to-b from-transparent via-white/20 to-transparent"
-        />
+          {/* THE EXPAND CONTROL IS EXPLICIT. The direction is specific that a
+              double-tap must not be the primary discoverable interaction. */}
+          <button
+            type="button"
+            data-testid="j4-expand"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-0.5 block w-full rounded-full px-2 py-0.5 text-center text-[11px] font-medium text-[#4ade3a]/80 transition-colors hover:text-[#4ade3a]"
+          >
+            {expanded ? "Minimise" : "Expand"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
-
 // STATE IS SPOKEN TO ASSISTIVE TECHNOLOGY ONLY. The direction says J4
 // communicates state through expression rather than a text label, so these
 // never appear on screen — but "a green circle" is not a state to a screen
