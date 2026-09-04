@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { setJ4Focus } from "@/lib/dashboard/j4Focus";
 import { usePathname } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
@@ -520,6 +521,7 @@ export function GenesisAssistant({
             | { type: "token"; delta: string }
             | { type: "done" }
             | { type: "fallback" }
+            | { type: "focus"; nodeIds: string[] }
             | { type: "error"; message: string };
 
           if (event.type === "padding") {
@@ -543,6 +545,18 @@ export function GenesisAssistant({
             sawDone = true;
             reportDiag(requestId, tStart, "client_done_event_received");
             setStreamingStatus(null);
+          } else if (event.type === "focus") {
+            // POINTING AT SOMETHING ON THE SCREEN THE OWNER IS ALREADY ON.
+            //
+            // This chat sits on /dashboard, which is where the Business Map
+            // actually lives - so this is the case the focus contract exists
+            // for. Without it J4 could only bring something forward by first
+            // moving the owner to /j4 and back, which is not pointing, it is
+            // a detour.
+            //
+            // Same presentation-only store as the other consumer, and the ids
+            // are the server's own resolved ones.
+            setJ4Focus(event.nodeIds);
           } else if (event.type === "fallback") {
             sawFallback = true;
             reportDiag(requestId, tStart, "client_fallback_event_received");

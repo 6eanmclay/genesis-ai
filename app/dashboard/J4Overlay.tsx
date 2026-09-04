@@ -34,11 +34,32 @@ export function J4Overlay({
   open,
   onClose,
   children,
+  presentation = "office",
 }: {
   open: boolean;
   onClose: () => void;
   children: React.ReactNode;
+  /**
+   * HOW the same conversation is shown (2026-09-03).
+   *
+   * "office" is unchanged and still means what the comment below its panel
+   * says it means: a full screen you have entered, frozen deliberately in
+   * 2026-08-15. Reaching the Office through its own navigation still does
+   * exactly that.
+   *
+   * "panel" is J4 opening HIMSELF up from the corner instead. Non-modal, no
+   * scrim, no scroll lock: the workspace stays visible, clickable and
+   * scrollable, which is what the approved direction requires of the
+   * expanded character.
+   *
+   * ONE MOUNT, TWO PRESENTATIONS. The children are the same element either
+   * way, so the conversation and its state are literally the same instance -
+   * switching how it is framed cannot restart it, and there is no second
+   * chat to keep in step.
+   */
+  presentation?: "office" | "panel";
 }) {
+  const isPanel = presentation === "panel";
   // The animation's own state, which is not the same thing as `open`. It
   // trails `open` by one frame on the way in: the panel mounts in its closed
   // position and only then transitions, because an element that mounts
@@ -85,7 +106,11 @@ export function J4Overlay({
   // and its scroll position is never touched by anything but this — which is
   // what makes "close J4 and you are exactly where you were" structural.
   useEffect(() => {
-    if (!open) return;
+    // THE PANEL MUST NOT FREEZE THE PAGE. Locking the body is right for a
+    // full screen you have entered and wrong for a partner sitting in the
+    // corner: the owner has to be able to scroll the map they are asking
+    // about while asking about it.
+    if (!open || isPanel) return;
     const scrollY = window.scrollY;
     const previous = {
       position: document.body.style.position,
@@ -112,7 +137,7 @@ export function J4Overlay({
       document.body.style.overflow = previous.overflow;
       window.scrollTo(0, scrollY);
     };
-  }, [open]);
+  }, [open, isPanel]);
 
   useEffect(() => {
     if (!open) return;
@@ -145,21 +170,36 @@ export function J4Overlay({
     // hidden layer can never intercept a tap meant for the workspace, which
     // is what made the page feel frozen around the control.
     <div
-      className={`fixed inset-0 z-[60] touch-none ${visible ? "" : "pointer-events-none"}`}
+      className={
+        isPanel
+          ? // ANCHORED TO HIS CORNER, and sized to leave the workspace
+            // visible beside it. No inset-0, so nothing covers the page.
+            `fixed bottom-[10.5rem] left-4 z-[60] w-[min(26rem,calc(100vw-2rem))] ${
+              visible ? "" : "pointer-events-none"
+            }`
+          : `fixed inset-0 z-[60] touch-none ${visible ? "" : "pointer-events-none"}`
+      }
       role="dialog"
-      aria-modal={visible}
+      // NOT MODAL as a panel. aria-modal would tell a screen reader the rest
+      // of the page is inert, which is the opposite of the point.
+      aria-modal={isPanel ? undefined : visible}
       aria-hidden={!visible}
-      aria-label="J4's Office"
+      aria-label={isPanel ? "J4" : "J4's Office"}
+      data-j4-presentation={presentation}
     >
       {/* Kept even though the Office now covers it. It is what the panel
           animates in over, so removing it would show the workspace sliding
           about behind a translucent edge for the length of the transition. */}
-      <div
-        aria-hidden="true"
-        className={`absolute inset-0 bg-black/30 transition-opacity duration-300 md:bg-black/50 ${
-          visible ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      />
+      {/* The scrim belongs to the Office. A panel that dimmed the workspace
+          would be a modal wearing a smaller shape. */}
+      {!isPanel && (
+        <div
+          aria-hidden="true"
+          className={`absolute inset-0 bg-black/30 transition-opacity duration-300 md:bg-black/50 ${
+            visible ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+        />
+      )}
 
       {/* FULL SCREEN. This is the Office, and entering it is the point.
           Sean, 2026-08-15: "don't open it as a half-height sheet, drawer, or
@@ -181,11 +221,21 @@ export function J4Overlay({
           So the two are cleanly split. The orb brings J4 to where the owner
           is. This brings the owner to where the work is. */}
       <div
-        className={`absolute inset-0 flex origin-bottom touch-auto flex-col overflow-hidden bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 ${
-          visible
-            ? "translate-y-0 scale-100 opacity-100"
-            : "pointer-events-none translate-y-8 scale-[0.96] opacity-0"
-        }`}
+        className={
+          isPanel
+            ? // EMERGING FROM HIS CORNER: the origin is bottom-left, so it
+              // grows out of J4 rather than appearing over the page.
+              `flex max-h-[min(34rem,70vh)] origin-bottom-left touch-auto flex-col overflow-hidden rounded-2xl border border-[#4ade3a]/25 bg-white shadow-[0_24px_60px_-20px_rgba(0,0,0,.65)] transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 ${
+                visible
+                  ? "translate-y-0 scale-100 opacity-100"
+                  : "pointer-events-none translate-y-4 scale-[0.96] opacity-0"
+              }`
+            : `absolute inset-0 flex origin-bottom touch-auto flex-col overflow-hidden bg-white shadow-2xl transition-[transform,opacity] duration-[380ms] dark:bg-zinc-950 ${
+                visible
+                  ? "translate-y-0 scale-100 opacity-100"
+                  : "pointer-events-none translate-y-8 scale-[0.96] opacity-0"
+              }`
+        }
         style={{ transitionTimingFunction: "cubic-bezier(0.32, 0.72, 0, 1)" }}
       >
         {/* The close row is NOT mobile only, though the grab handle in it is

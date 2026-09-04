@@ -116,7 +116,7 @@ async function main(): Promise<void> {
 
     // A composer is the proof the conversation is really there.
     const composer = page
-      .locator('textarea, input[type="text"]')
+      .locator('[role="dialog"] textarea, [role="dialog"] input[type="text"]')
       .filter({ hasNot: page.locator('[type="email"]') })
       .last();
     const hasComposer = (await composer.count()) > 0;
@@ -137,8 +137,17 @@ async function main(): Promise<void> {
 
       // SEND, then look for thinking. No model key here, so the reply itself
       // may fail - the state transition is what this can honestly check.
-      await composer.press("Enter");
-      await page.waitForTimeout(900);
+      // THE SEND BUTTON, not Enter. The first attempt pressed Enter and
+      // reported no thinking state - but the screenshot showed the message
+      // still sitting in the composer, so nothing had been sent at all. The
+      // composer's own send control is the arrow beside it.
+      // SCOPED TO THE DIALOG. The first selector matched a button on the page
+      // BEHIND the overlay, which the overlay then intercepted - the error
+      // named it: role=dialog, aria-modal=true, aria-label="J4's Office".
+      const dialog = page.locator('[role="dialog"]');
+      const send = dialog.locator('form button').last();
+      await send.click();
+      await page.waitForTimeout(700);
       const thinking = await page.locator('[data-j4-state="thinking"]').count();
       console.log(`J4 shows thinking after send: ${thinking > 0}`);
       await page.screenshot({ path: `${SHOTS}/j4-loop-3-thinking.png` });
@@ -148,6 +157,44 @@ async function main(): Promise<void> {
       console.log(`conversation still open afterwards: ${stillThere}`);
       await page.screenshot({ path: `${SHOTS}/j4-loop-4-after.png` });
     }
+
+    // ---- THE PANEL IS NOT A MODAL --------------------------------------
+    const panel = page.locator('[data-j4-presentation="panel"]');
+    console.log(`opened as a panel: ${(await panel.count()) > 0}`);
+    console.log(`and not as a modal: ${(await panel.getAttribute("aria-modal")) === null}`);
+
+    // The workspace has to still be there, and still be usable.
+    const map = page.locator('[data-screen="business-map"]');
+    console.log(`business map still visible: ${await map.isVisible()}`);
+    console.log(`page not scroll-locked: ${await page.evaluate(() => document.body.style.overflow !== "hidden")}`);
+
+    // A real navigation target, clicked while J4 is open.
+    const navLink = page.locator('nav a, header a').first();
+    const navName = (await navLink.textContent().catch(() => "")) || "(none)";
+    let navClickable = false;
+    try {
+      await navLink.click({ trial: true, timeout: 4_000 });
+      navClickable = true;
+    } catch {
+      navClickable = false;
+    }
+    console.log(`navigation still clickable while open (${navName.trim().slice(0, 24)}): ${navClickable}`);
+
+    // ---- MINIMISE AND REOPEN KEEPS THE CONVERSATION --------------------
+    const typed = await composer.inputValue().catch(() => "");
+    console.log(`composer content before minimise: ${JSON.stringify(typed.slice(0, 40))}`);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(700);
+    console.log(`panel closed: ${(await page.locator('[data-j4-presentation="panel"]').count()) === 0 || !(await page.locator('[data-j4-presentation="panel"]').isVisible())}`);
+    await open.click();
+    await page.waitForTimeout(900);
+    const messages = await page.locator('[role="dialog"]').innerText().catch(() => "");
+    console.log(`conversation survived reopen: ${messages.includes("selling best")}`);
+    await page.screenshot({ path: `${SHOTS}/j4-panel-reopened.png` });
+
+    // ---- ONE COMPOSER, NOT TWO -----------------------------------------
+    const composers = await page.locator('textarea').count();
+    console.log(`composers on the page: ${composers}`);
 
     // Expanded.
     const expand = page.locator('[data-testid="j4-expand"]');

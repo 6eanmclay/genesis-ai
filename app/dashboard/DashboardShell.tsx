@@ -356,6 +356,11 @@ export function DashboardShell({
   // the workspace stays mounted and keeps its scroll position because
   // literally nothing about it changes when J4 opens.
   const [j4Open, setJ4Open] = useState(false);
+  // HOW J4 is shown, which is not the same question as whether he is open.
+  // The dock opens him as a panel beside the workspace; every existing entry
+  // point still opens the Office, whose full-screen behaviour was frozen
+  // deliberately and is not being redesigned here.
+  const [j4Presentation, setJ4Presentation] = useState<"office" | "panel">("office");
   // STUDIO SHOWS THE WORK. OFFICE HOLDS THE CONVERSATION (2026-08-18, second
   // pass, and this reverses the docking from earlier today).
   //
@@ -1040,6 +1045,7 @@ export function DashboardShell({
                     // Deliberate: a recommendation that needs J4 to reason,
                     // explain, or ask something back belongs in the
                     // conversational surface, not over the artwork.
+                    setJ4Presentation("office");
                     setJ4Open(true);
                   },
                 }}
@@ -1229,7 +1235,7 @@ export function DashboardShell({
           thing the persistent layer exists to prevent. */}
       <button
         type="button"
-        onClick={() => setJ4Open(true)}
+        onClick={() => { setJ4Presentation("office"); setJ4Open(true); }}
         aria-haspopup="dialog"
         aria-expanded={j4Open}
         // Desktop only as of 2026-08-12. On mobile the J4 center slot in the
@@ -1261,12 +1267,18 @@ export function DashboardShell({
 
           Two presences, one J4 — neither owns conversation or map state, and
           both read the same stores. */}
-      <J4Dock onOpen={() => setJ4Open(true)} />
+      <J4Dock
+        onOpen={() => {
+          setJ4Presentation("panel");
+          setJ4Open(true);
+        }}
+      />
 
       <J4Summon
         open={j4Open}
         onExpand={() => {
           setJ4FocusComposer(false);
+          setJ4Presentation("office");
           setJ4Open(true);
         }}
         talkState={talk.state}
@@ -1274,7 +1286,7 @@ export function DashboardShell({
         onToggleTalk={() => (talk.state === "off" ? talk.start() : talk.stop())}
       />
 
-      <J4Overlay open={j4Open} onClose={() => setJ4Open(false)}>
+      <J4Overlay open={j4Open} presentation={j4Presentation} onClose={() => setJ4Open(false)}>
         <J4HandoffContext.Provider
           value={{
             text: j4Handoff,
