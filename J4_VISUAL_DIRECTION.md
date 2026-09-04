@@ -157,6 +157,11 @@ content or guide the owner through it.
 
 ---
 
+> **Beyond this direction:** per-owner J4 appearance, a possible product
+> tier, and an optional digital-ownership layer are captured in
+> [J4_PERSONALIZATION_AND_OWNERSHIP.md](J4_PERSONALIZATION_AND_OWNERSHIP.md)
+> (2026-09-04). Not authorised, not designed — but the one-character,
+> one-controlled-surface rule below is what keeps it possible.
 ## Visual language — state through behaviour, not labels
 
 J4 communicates state primarily through **character behaviour**, not persistent

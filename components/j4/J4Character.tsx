@@ -53,7 +53,12 @@ const AMBER = "#ffd24a";
 // full extent of the render's dark glass, which at 116px swallowed the white
 // helmet and threw away the one thing the photograph was there to provide.
 // The face only needs to cover the baked expression, not the whole visor.
-const FACE = { cx: 0.541, cy: 0.487, rx: 0.163, ry: 0.172, eyeY: 0.478, mouthY: 0.600 };
+// RE-MEASURED 2026-09-04 for the Concept 2 base. The asset changed from a
+// head crop of the busy badge to the full circular frame Sean specified, so
+// every one of these moved. The visor ellipse was verified by drawing it back
+// over the artwork before anything was repainted, because the previous
+// estimate had swallowed part of the helmet.
+const FACE = { cx: 0.625, cy: 0.424, rx: 0.186, ry: 0.165, eyeY: 0.398, mouthY: 0.515 };
 
 export function J4Character({
   state = "idle",
@@ -177,17 +182,23 @@ export function J4Character({
         </g>
       </g>
 
-      {/* The frame. Thin at rest so it reads as containment rather than a halo;
-          the old sonar bloom is exactly what the direction moved away from. */}
-      <circle
-        className={state === "listening" ? "j4-pulse" : undefined}
-        cx="256"
-        cy="256"
-        r="248"
-        fill="none"
-        stroke={state === "attention" ? AMBER : GREEN}
-        strokeWidth={state === "listening" || state === "attention" ? 14 : 9}
-      />
+      {/* THE RING IS THE ARTWORK'S NOW. The base is cut to Concept 2's own
+          green circular frame, so drawing a second one at rest gave J4 two
+          rings of slightly different greens. What is drawn here is only the
+          part that MEANS something: a ring that thickens and pulses while he
+          is listening, and turns amber when something needs the owner. At
+          idle there is nothing here at all and the artwork speaks for itself. */}
+      {(state === "listening" || state === "attention") && (
+        <circle
+          className={state === "listening" ? "j4-pulse" : undefined}
+          cx="256"
+          cy="256"
+          r="248"
+          fill="none"
+          stroke={state === "attention" ? AMBER : GREEN}
+          strokeWidth="14"
+        />
+      )}
       {state === "thinking" && (
         <circle
           className="j4-spin"

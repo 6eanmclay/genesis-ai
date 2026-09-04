@@ -106,6 +106,12 @@ underneath, sharp on top — so it reads as emitted rather than printed. This is
 
 ---
 
+> **The blank visor is now load-bearing for more than states.**
+> [J4_PERSONALIZATION_AND_OWNERSHIP.md](J4_PERSONALIZATION_AND_OWNERSHIP.md)
+> records a future concept — per-owner appearance, and optionally owned J4
+> configurations — that is only possible while one stable character carries
+> a surface the code controls. Re-baking anything into the base asset closes
+> that door, which is a concrete reason to refuse it rather than a taste one.
 ## 4. Locked regions — what must not move between states
 
 The failure this prevents is already documented: gpt-image-1 could not preserve

@@ -1,7 +1,8 @@
 "use client";
 
-import { useSyncExternalStore, useState, useEffect } from "react";
+import { useState } from "react";
 import { J4Character, type J4State } from "./J4Character";
+import { useJ4State } from "./useJ4State";
 import {
   getGenesisActivityServerSnapshot,
   getGenesisActivitySnapshot,
@@ -67,49 +68,11 @@ export function J4Dock({
    */
   onOpenOffice: () => void;
 }) {
-  const activity = useSyncExternalStore(
-    subscribeGenesisActivity,
-    getGenesisActivitySnapshot,
-    getGenesisActivityServerSnapshot,
-  );
-  const focus = useSyncExternalStore(
-    subscribeJ4Focus,
-    getJ4FocusSnapshot,
-    getJ4FocusServerSnapshot,
-  );
-
+  // SHARED WITH THE OFFICE. This rule used to live here alone; the Office
+  // needed the same one, and two copies would have been two J4s having
+  // different days on the same screen.
+  const { state, justFocused } = useJ4State();
   const [expanded, setExpanded] = useState(false);
-
-  // POINTING, FIRST VERSION. When J4 has focused something on the map — which
-  // lives to the right of this corner — he looks that way. Simple controlled
-  // motion rather than an animation system, which is what the direction asked
-  // for at this stage: gestures that MEAN something before gestures that impress.
-  const [justFocused, setJustFocused] = useState(false);
-  // AN EVENT, NOT AN EFFECT. J4 pointing at something is a thing that
-  // HAPPENS; reacting to it on every render would re-trigger the look
-  // whenever anything else re-rendered this corner.
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const stop = subscribeJ4Focus(() => {
-      if (getJ4FocusSnapshot().nodeIds.length === 0) return;
-      setJustFocused(true);
-      clearTimeout(timer);
-      timer = setTimeout(() => setJustFocused(false), 2600);
-    });
-    return () => {
-      clearTimeout(timer);
-      stop();
-    };
-  }, []);
-
-  const state: J4State = activity.isWorking
-    ? "thinking"
-    : activity.isComposing
-      ? "listening"
-      : justFocused
-        ? "success"
-        : "idle";
-
   const label = STATE_LABEL[state];
 
   return (
@@ -125,7 +88,7 @@ export function J4Dock({
           className="pointer-events-auto absolute bottom-[7.5rem] left-4 w-[20rem] origin-bottom-left rounded-2xl border border-[#4ade3a]/30 bg-[#0b0f0e]/95 p-4 shadow-[0_18px_50px_-12px_rgba(0,0,0,.6)] backdrop-blur"
         >
           <p className="text-[13px] leading-snug text-white/85">
-            {focus.nodeIds.length > 0
+            {justFocused
               ? "I've brought that up on your business map."
               : "I'm here. Ask me about your business, or tell me what to change."}
           </p>

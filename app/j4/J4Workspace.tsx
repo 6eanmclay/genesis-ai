@@ -19,6 +19,8 @@ import { mapWithConcurrency, withRetry } from "@/lib/concurrency";
 import { ALLOWED_CONTENT_TYPES, MAX_UPLOAD_BYTES, resolveAssetContentType } from "@/lib/businessAssets/uploadAssetFile";
 import { SubmitButton } from "@/app/dashboard/SubmitButton";
 import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
+import { J4Character } from "@/components/j4/J4Character";
+import { useJ4State } from "@/components/j4/useJ4State";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { extractAudioUrl, extractChangeList, extractImageUrl, extractImageUrls, extractQuickReplies } from "./messageChanges";
 import { VoiceMemoButton } from "./VoiceMemoButton";
@@ -900,6 +902,12 @@ export function J4Workspace({
   // always did. Just Talk still pins the view, which is what it is for.
   const shownCategory: Category = talkingOnly ? "conversation" : activeCategory;
   const overallState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
+  // WHAT J4 IS DOING, as opposed to what he has concluded. overallState above
+  // is an ASSESSMENT - urgent, pending, opportunity - and putting that on his
+  // face would have him looking worried about the business while listening to
+  // a sentence. His expression tracks the conversation; the assessment stays
+  // where it already is.
+  const { state: j4State, justFocused: j4Focused } = useJ4State();
 
   // Leaving the room. Back when the owner came from their own business (the
   // layer pushed us here), so the workspace and its scroll position come
@@ -1685,6 +1693,13 @@ export function J4Workspace({
         style={{ borderColor: GENESIS_ATMOSPHERE.border, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
       >
         <div className="flex min-w-0 items-center gap-3">
+          {/* NOT IN THE OFFICE. J4 should feel physically present here rather
+              than be a thumbnail in a header - and he now is, beside the
+              composer below. Two of him on one screen, one of them small, is
+              exactly the framing this is stepping away from.
+
+              Kept for /j4 as its own page, which has no other J4 on it. */}
+          {!isLayer && (
           <div className="relative shrink-0">
             <GenesisAvatar className={GENESIS_AVATAR_SIZE.inline} />
             {/* Just Talk hides the operational status dot — a "something
@@ -1701,6 +1716,7 @@ export function J4Workspace({
               />
             )}
           </div>
+          )}
           <div className="min-w-0">
             <p className="text-base font-semibold tracking-wide text-[#f4f2fb]">J4</p>
             <p className="truncate text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
@@ -2315,8 +2331,28 @@ export function J4Workspace({
               removing. Marked decorative so a screen reader is not told about
               a button that does not exist. */}
           {isLayer && (
-            <div className="flex h-[4.5rem] shrink-0 items-center" aria-hidden="true">
-              <GenesisAvatar className={GENESIS_AVATAR_SIZE.card} />
+            /* J4 HIMSELF, BESIDE THE THING YOU TALK TO HIM WITH.
+
+               The relationship was already right and already argued for above:
+               he sits OUTSIDE the composer's border because that border is the
+               line between J4 and the field. What was wrong is that he was the
+               blue Genesis orb at 4.5rem - an icon marking a text box rather
+               than someone sitting beside it.
+
+               Same character, same state hook as the dock, so the J4 the owner
+               just clicked in the corner is recognisably the one now in front
+               of them. One character, wherever the conversation is shown.
+
+               STILL PRESENCE, NOT A CONTROL, and still decorative to a screen
+               reader: it does not navigate, open or record. A third way to
+               start talking, in a third place, is the fragmentation this
+               architecture keeps removing. */
+            <div className="flex h-[7rem] shrink-0 items-end" aria-hidden="true">
+              <J4Character
+                state={j4State}
+                gaze={j4Focused ? "right" : "ahead"}
+                size={112}
+              />
             </div>
           )}
           {!isLayer && (

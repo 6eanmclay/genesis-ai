@@ -114,19 +114,36 @@ async function main(): Promise<void> {
     const pair = page.locator('[data-testid="j4-pair"]');
     console.log(`J4 and the Office are one group: ${(await pair.count()) > 0}`);
     console.log(`with a divider before the business nav: ${(await page.locator('[data-testid="j4-dock-divider"]').count()) > 0}`);
+    // CLAMPED TO THE VIEWPORT. The first version of this asked for 32px of
+    // padding below a dock that already sits on the bottom edge, and
+    // Playwright returned the part of the clip that existed - which was black.
     const box = await pair.boundingBox();
-    if (box) {
+    const view = page.viewportSize();
+    if (box && view) {
+      const x = Math.max(0, box.x - 14);
+      const y = Math.max(0, box.y - 18);
       await page.screenshot({
         path: `${SHOTS}/j4-dock-pair.png`,
         clip: {
-          x: Math.max(0, box.x - 12),
-          y: Math.max(0, box.y - 16),
-          width: Math.min(560, box.width + 90),
-          height: box.height + 32,
+          x,
+          y,
+          width: Math.min(view.width - x, box.width + 110),
+          height: Math.min(view.height - y, box.height + 26),
         },
       });
+      console.log(`dock pair captured at ${Math.round(box.width)}x${Math.round(box.height)} CSS px`);
     }
 
+    // AND A TIGHT CROP OF THE PAIR ITSELF. A second browser context at
+    // deviceScaleFactor 3 was tried first and photographed the arrival
+    // overlay's black backdrop: the element existed, so it had a bounding box,
+    // so the check reported a successful capture of nothing. An element
+    // screenshot in the context that is already past arrival cannot do that.
+    await pair.screenshot({ path: `${SHOTS}/j4-dock-pair-tight.png` }).catch(() => {});
+    await page.locator('[data-testid="j4-open"]').screenshot({
+      path: `${SHOTS}/j4-character-actual-size.png`,
+    }).catch(() => {});
+    console.log("character captured at its real rendered size");
     // THE OFFICE OPENS THE OFFICE, unchanged and still full-screen.
     await page.locator('[data-testid="j4-office"]').click();
     await page.waitForTimeout(1_200);
