@@ -33,8 +33,10 @@ import { useEffect, useRef, useState } from "react";
  * They are normalised to the same square framing (ring bounding box, padded),
  * which is what lets one set of coordinates address both.
  */
-const ART_OFF = "/brand/j4-boot-off.png";
-const ART_ON = "/brand/j4-boot.png";
+const ART_OFF = "/brand/j4-off.png";
+const ART_ON = "/brand/j4-icons-on.png";
+/** The illuminated face, as a transparent layer over ART_OFF. */
+const ART_FACE = "/brand/j4-face-on.png";
 
 /** Every duration in the opening, in milliseconds. Tune here, nowhere else. */
 export const BOOT_TIMELINE = {
@@ -65,12 +67,12 @@ export const BOOT_TIMELINE = {
  * by drawing them back over the image.
  */
 const SYSTEMS = [
-  { key: "storefront", label: "Storefront", cx: 0.103, cy: 0.373 },
-  { key: "commerce", label: "Commerce", cx: 0.161, cy: 0.263 },
-  { key: "business", label: "Business", cx: 0.242, cy: 0.195 },
-  { key: "world", label: "World", cx: 0.788, cy: 0.189 },
-  { key: "customers", label: "Customers", cx: 0.852, cy: 0.272 },
-  { key: "settings", label: "Settings", cx: 0.903, cy: 0.372 },
+  { key: "storefront", label: "Storefront", cx: 0.110, cy: 0.383 },
+  { key: "commerce", label: "Commerce", cx: 0.159, cy: 0.287 },
+  { key: "business", label: "Business", cx: 0.246, cy: 0.220 },
+  { key: "world", label: "World", cx: 0.772, cy: 0.218 },
+  { key: "customers", label: "Customers", cx: 0.835, cy: 0.289 },
+  { key: "settings", label: "Settings", cx: 0.884, cy: 0.382 },
 ] as const;
 
 /** Where his eyes sit on this artwork's visor. Measured, then verified. */
@@ -180,7 +182,7 @@ export function J4Boot({
           className={reduced ? undefined : "j4boot-stage"}
           style={{ transformStyle: "preserve-3d", willChange: "transform" }}
         >
-          <div className="relative w-[min(74vw,26rem)]">
+          <div data-testid="j4-boot-stage" className="relative w-[min(74vw,26rem)]">
             <img
               src={ART_OFF}
               alt=""
@@ -238,33 +240,26 @@ export function J4Boot({
               );
             })}
 
-            {/* HIS EYES. Nothing is drawn on the visor until the flip has
-                completely stopped - the whole point of the two rotations is
-                that the owner cannot quite see him yet. */}
-            {awake && (
-              <svg
-                viewBox="0 0 100 100"
-                className="pointer-events-none absolute inset-0 h-full w-full"
-                aria-hidden="true"
-              >
-                <g className="j4boot-eye" fill="#7CFF5A">
-                  <rect
-                    x={(VISOR.cx - VISOR.eyeDx) * 100 - 2.4}
-                    y={VISOR.eyeY * 100 - 3.4}
-                    width={4.8}
-                    height={6.8}
-                    rx={2.4}
-                  />
-                  <rect
-                    x={(VISOR.cx + VISOR.eyeDx) * 100 - 2.4}
-                    y={VISOR.eyeY * 100 - 3.4}
-                    width={4.8}
-                    height={6.8}
-                    rx={2.4}
-                  />
-                </g>
-              </svg>
-            )}
+            {/* HIS EYES ARE AN ASSET, NOT A DRAWING (2026-09-04).
+
+                This used to draw two rounded rectangles on the visor, and
+                that is what produced the goofy face during the entrance.
+                It is now Sean's own ON expression, registered onto this
+                exact artwork and lifted out as a transparent layer.
+
+                Same box, same object-contain, same position as the base -
+                so waking up changes an opacity and moves nothing. */}
+            <img
+              src={ART_FACE}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain transition-opacity"
+              style={{
+                opacity: awake ? 1 : 0,
+                transitionDuration: `${BOOT_TIMELINE.wake}ms`,
+              }}
+            />
           </div>
         </div>
       </div>

@@ -88,6 +88,54 @@ async function main(): Promise<void> {
       await boot.getAttribute("data-boot-phase");
       await page.screenshot({ path: `${SHOTS}/boot-1-flip.png` });
 
+      // DOES THE ARTWORK MOVE WHEN HE WAKES? Sean's rule: if it shifts even
+      // slightly, the implementation is wrong.
+      //
+      // BOTH FRAMES MUST BE SETTLED. The first attempt photographed the
+      // 'before' mid-flip and compared a rotating image to a stationary one,
+      // which can only ever differ - a check guaranteed to fail tells you as
+      // little as one guaranteed to pass.
+      const stage = page.locator('[data-testid="j4-boot-stage"]');
+      const waitPhase = (want: string[]) =>
+        page
+          .waitForFunction(
+            (list) =>
+              list.includes(
+                document
+                  .querySelector('[data-testid="j4-boot"]')
+                  ?.getAttribute("data-boot-phase") ?? "",
+              ),
+            want,
+            { timeout: 25_000 },
+          )
+          .catch(() => {});
+
+      await waitPhase(["settling"]);
+      const sbox = await stage.boundingBox();
+      if (sbox) {
+        const clip = { x: sbox.x, y: sbox.y, width: sbox.width, height: sbox.height };
+        await page.screenshot({ path: `${SHOTS}/wake-before.png`, clip });
+        // CAUGHT IN THE WAKING PHASE, before any system fires - otherwise the
+        // icons turning green count as "the artwork changed" and the check is
+        // measuring the wrong thing.
+        await waitPhase(["waking"]);
+        await page.waitForTimeout(420);
+        await page.screenshot({ path: `${SHOTS}/wake-after.png`, clip });
+        // AND THE GEOMETRY ITSELF, asserted rather than eyeballed: the base
+        // artwork's box must be identical either side of the wake. The pixel
+        // comparison of the two frames above is the stronger evidence, but
+        // this is the part a suite can keep checking forever.
+        const after = await stage.boundingBox();
+        const same =
+          !!after &&
+          Math.abs(after.x - sbox.x) < 0.5 &&
+          Math.abs(after.y - sbox.y) < 0.5 &&
+          Math.abs(after.width - sbox.width) < 0.5 &&
+          Math.abs(after.height - sbox.height) < 0.5;
+        console.log(`wake frames captured at ${Math.round(sbox.width)}x${Math.round(sbox.height)}`);
+        console.log(`the artwork does not move when he wakes: ${same}`);
+      }
+
       const seen: number[] = [];
       const started = Date.now();
       while (Date.now() - started < 25_000) {
