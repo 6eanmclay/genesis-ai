@@ -368,6 +368,56 @@ async function main() {
   assert("the Office is deliberately absent from the map",
     !Object.hasOwn(NAV_DESTINATIONS, "office"),
     "mapping it to any href is how J4 said one place and went to another");
+  // ==========================================================================
+  // CONNECTIONS ARE UNDERSTANDING, AND THE TOOLS HAVE TO SAY SO (2026-09-04)
+  // ==========================================================================
+  //
+  // FROM PRODUCTION. Asked to explain his connections, J4 answered that
+  // integrations were not something he worked on and sent the owner to
+  // settings. Nothing was broken and nothing was missing from what he knew:
+  // businessContextOf carries connectedSystems, renderDigest emits a
+  // Connected: line, and /dashboard/connections was already a known path.
+  // What was missing was a ROUTE. look_up_business_data enumerated what it
+  // answered and connections were not on that list, and take_me_there had no
+  // connections destination - so deflection was the only move his tools left
+  // him. A persona that sounds narrow is usually a tool catalogue that is.
+  //
+  // THREE DIFFERENT THINGS, asserted apart because conflating them IS the
+  // defect: explaining what is connected, going to the screen, and changing
+  // a connection.
+  const unifiedTools = buildStoreChatUnifiedTools();
+  const describeTool = (name: string) =>
+    (unifiedTools.find((t) => t.name === name)?.description ?? "").toLowerCase();
+
+  // 1. EXPLAINING is a data question, and this is the tool that answers them.
+  const lookupDesc = describeTool("look_up_business_data");
+  assert("J4 is told he can explain what is connected",
+    lookupDesc.includes("which systems are connected"),
+    "if the catalogue does not list it, he concludes it is not his");
+  assert("and told not to send the owner to a screen to read it",
+    lookupDesc.includes("not settings"),
+    "the exact deflection this replaced");
+
+  // 2. NAVIGATING is a different request, and now has a real destination.
+  const navDesc = describeTool("take_me_there");
+  assert("J4 can take the owner to Connections", navDesc.includes("connections"));
+  check("and Connections is a real screen",
+    NAV_DESTINATIONS.connections?.href, "/dashboard/connections");
+  assert("while explaining stays a question, not a trip",
+    navDesc.includes("look_up_business_data"),
+    "without this the fix trades a refusal for an unwanted redirect");
+
+  // 3. CHANGING one is honestly absent. Connecting and disconnecting are not
+  // built (the capability audit puts them at P3, medium risk), so no tool may
+  // imply otherwise - the honest-capability rule, applied to the gap this
+  // investigation just walked into.
+  const pretendsToConnect = unifiedTools.filter((t) =>
+    /(connect|disconnect|unlink|authorise|authorize) (a|an|the|their) (integration|connection|provider|account)/i.test(
+      t.description ?? "",
+    ),
+  );
+  check("and no tool claims it can connect or disconnect anything",
+    pretendsToConnect.map((t) => t.name), []);
 
   // Bound by the route, because only the request knows the slug.
   const bound = routeToolHandlers({ resolveHref: (h) => `/b/x${h}` });

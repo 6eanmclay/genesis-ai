@@ -500,6 +500,11 @@ export const NAV_DESTINATIONS: Record<string, { href: string; label: string }> =
   storefront: { href: "/dashboard/website", label: "your storefront" },
   commerce: { href: "/dashboard/orders", label: "Commerce" },
   account: { href: "/dashboard/settings", label: "your account" },
+  // ADDED 2026-09-04, from production: asked to explain his connections, J4
+  // said integrations were not something he worked on and sent the owner to
+  // settings. He had no route to explain them and no route to take anyone
+  // there either, so deflection was the only move the tools left him.
+  connections: { href: "/dashboard/connections", label: "Connections" },
 };
 
 export const OFFICE_REPLY =
