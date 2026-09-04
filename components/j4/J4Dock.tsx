@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useSyncExternalStore, useState, useEffect } from "react";
 import { J4Character, type J4State } from "./J4Character";
 import {
@@ -35,7 +34,23 @@ import {
 // already exist and renders a character; the conversation lives where it always
 // has, on /j4. There is deliberately nothing here to keep in step with anything.
 
-export function J4Dock({ conversationHref = "/j4" }: { conversationHref?: string }) {
+export function J4Dock({
+  onOpen,
+}: {
+  /**
+   * Open the conversation J4 already has.
+   *
+   * THE DOCK IS AN ENTRY POINT, NOT A CHAT. The shell already owns the real
+   * surface - the same one the orb opened - so this asks for it rather than
+   * building a second one. A dock with its own chat would be a decorative
+   * character sitting beside a chatbot, which is the thing this is meant to
+   * stop being.
+   *
+   * It also means the conversation cannot be destroyed by expanding or
+   * minimising: this component owns none of it.
+   */
+  onOpen: () => void;
+}) {
   const activity = useSyncExternalStore(
     subscribeGenesisActivity,
     getGenesisActivitySnapshot,
@@ -98,12 +113,14 @@ export function J4Dock({ conversationHref = "/j4" }: { conversationHref?: string
               ? "I've brought that up on your business map."
               : "I'm here. Ask me about your business, or tell me what to change."}
           </p>
-          <Link
-            href={conversationHref}
+          <button
+            type="button"
+            data-testid="j4-talk"
+            onClick={onOpen}
             className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#4ade3a] px-4 py-2 text-[13px] font-medium text-[#06210a] transition-transform hover:scale-[1.03]"
           >
             Talk to J4
-          </Link>
+          </button>
           <button
             type="button"
             onClick={() => setExpanded(false)}
@@ -116,8 +133,10 @@ export function J4Dock({ conversationHref = "/j4" }: { conversationHref?: string
 
       {/* ---- COMPACT: the seat itself ----------------------------------- */}
       <div className="pointer-events-auto flex w-[11.5rem] flex-col items-center gap-1 px-3 pb-3 pt-2">
-        <Link
-          href={conversationHref}
+        <button
+          type="button"
+          data-testid="j4-open"
+          onClick={onOpen}
           aria-label={`J4 — ${label}. Open the conversation.`}
           className="rounded-full transition-transform hover:scale-[1.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4ade3a]"
         >
@@ -127,7 +146,7 @@ export function J4Dock({ conversationHref = "/j4" }: { conversationHref?: string
             size={116}
             title={`J4 — ${label}`}
           />
-        </Link>
+        </button>
 
         {/* THE EXPAND CONTROL IS EXPLICIT. The direction is specific that a
             double-tap must not be the primary discoverable interaction. */}

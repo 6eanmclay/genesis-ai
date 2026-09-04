@@ -1261,7 +1261,7 @@ export function DashboardShell({
 
           Two presences, one J4 — neither owns conversation or map state, and
           both read the same stores. */}
-      <J4Dock />
+      <J4Dock onOpen={() => setJ4Open(true)} />
 
       <J4Summon
         open={j4Open}
