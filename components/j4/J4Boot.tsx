@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // J4 BRINGS THE BUSINESS ONLINE (2026-09-04).
 //
@@ -18,6 +18,24 @@ import { useEffect, useState } from "react";
 // EVERYTHING IS IN ONE TIMELINE, below, because this will be tuned by eye and
 // tuning should not mean hunting through JSX for numbers.
 
+/**
+ * TWO FRAMES OF THE SAME ARTWORK, both supplied by Sean.
+ *
+ * OFF is the source of truth for the starting state: his own edit, with the
+ * six system icons already grey. ON is the same composition with them lit.
+ * Activating a system cross-fades that ONE icon's circle from OFF to ON.
+ *
+ * NOTHING IS MANIPULATED IN CODE. An earlier version desaturated the lit
+ * icons at runtime to fake an off state, which meant the product was showing
+ * a filter's idea of "off" rather than the artist's. Both frames are now his,
+ * and the code only decides which one shows where.
+ *
+ * They are normalised to the same square framing (ring bounding box, padded),
+ * which is what lets one set of coordinates address both.
+ */
+const ART_OFF = "/brand/j4-boot-off.png";
+const ART_ON = "/brand/j4-boot.png";
+
 /** Every duration in the opening, in milliseconds. Tune here, nowhere else. */
 export const BOOT_TIMELINE = {
   /** One clean rotation - long enough to glimpse him without seeing him. */
@@ -26,8 +44,10 @@ export const BOOT_TIMELINE = {
   settle: 420,
   /** The eyes coming up. */
   wake: 520,
+  /** How long one system takes to come up. */
+  power: 380,
   /** Between one system and the next - the BOOP rhythm. */
-  step: 300,
+  step: 430,
   /** After the last system, before we go in. */
   ready: 1100,
 } as const;
@@ -45,12 +65,12 @@ export const BOOT_TIMELINE = {
  * by drawing them back over the image.
  */
 const SYSTEMS = [
-  { key: "storefront", label: "Storefront", cx: 0.105, cy: 0.360 },
-  { key: "commerce", label: "Commerce", cx: 0.155, cy: 0.265 },
-  { key: "business", label: "Business", cx: 0.235, cy: 0.190 },
-  { key: "world", label: "World", cx: 0.775, cy: 0.190 },
-  { key: "customers", label: "Customers", cx: 0.845, cy: 0.265 },
-  { key: "settings", label: "Settings", cx: 0.895, cy: 0.360 },
+  { key: "storefront", label: "Storefront", cx: 0.103, cy: 0.373 },
+  { key: "commerce", label: "Commerce", cx: 0.161, cy: 0.263 },
+  { key: "business", label: "Business", cx: 0.242, cy: 0.195 },
+  { key: "world", label: "World", cx: 0.788, cy: 0.189 },
+  { key: "customers", label: "Customers", cx: 0.852, cy: 0.272 },
+  { key: "settings", label: "Settings", cx: 0.903, cy: 0.372 },
 ] as const;
 
 /** Where his eyes sit on this artwork's visor. Measured, then verified. */
@@ -81,6 +101,22 @@ export function J4Boot({
     setReduced(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
   }, []);
 
+  // THE TIMELINE MUST NOT RESTART ON EVERY PARENT RENDER.
+  //
+  // onDone arrives as an inline arrow from the shell, so it is a new function
+  // on every render of a component that re-renders constantly. With it in the
+  // dependency list, each of those renders cleared every timer and scheduled
+  // them again from zero - and the sequence sat on the first frame forever,
+  // flipping and never waking. The harness caught it by sampling state instead
+  // of the clock: 25 seconds of polling and the count never left 0.
+  //
+  // Held in a ref so the latest callback is always used without the schedule
+  // depending on its identity.
+  const onDoneRef = useRef(onDone);
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
+
   useEffect(() => {
     const T = BOOT_TIMELINE;
     const flip = reduced ? 0 : T.flip;
@@ -100,10 +136,10 @@ export function J4Boot({
 
     const done = base + step * SYSTEMS.length;
     at(done + 200, () => setPhase("ready"));
-    at(done + 200 + (reduced ? 500 : T.ready), onDone);
+    at(done + 200 + (reduced ? 500 : T.ready), () => onDoneRef.current());
 
     return () => timers.forEach(clearTimeout);
-  }, [onDone, reduced]);
+  }, [reduced]);
 
   const awake = phase === "waking" || phase === "systems" || phase === "ready";
   const name = userName?.trim() ? `, ${userName.trim().split(" ")[0]}` : "";
@@ -146,7 +182,7 @@ export function J4Boot({
         >
           <div className="relative w-[min(74vw,26rem)]">
             <img
-              src="/brand/j4-boot.png"
+              src={ART_OFF}
               alt=""
               aria-hidden="true"
               className="block w-full select-none"
@@ -160,37 +196,30 @@ export function J4Boot({
               const on = i < lit;
               return (
                 <div key={s.key} data-system={s.key} data-on={on ? "true" : "false"}>
-                  {/* OFFLINE IS THE ICON, GREY - not a hole where an icon
-                      goes. The first version covered each one with a black
-                      disc, which read as damage rather than as a system
-                      waiting to start.
-
-                      This paints the SAME artwork into a circle over itself,
-                      aligned to the icon and desaturated, so what the owner
-                      sees is that icon in its off state. Activating fades the
-                      grey away and the artwork's own green icon is
-                      underneath - the activation reveals the real thing.
+                  {/* THE ACTIVATION IS A REVEAL. This paints the ON artwork
+                      into a circle over the OFF one, aligned to this icon, and
+                      fades it in. Nothing is filtered, traced or redrawn - the
+                      icon that lights up is the artist's lit icon.
 
                       backgroundSize is the inverse of the patch's own width,
-                      which is what makes the same fractional point line up in
-                      both layers. */}
+                      which is what makes the same fractional point land in both
+                      layers. */}
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none absolute rounded-full transition-opacity duration-[280ms]"
+                    className="pointer-events-none absolute rounded-full"
                     style={{
                       left: `${s.cx * 100}%`,
                       top: `${s.cy * 100}%`,
                       width: "13%",
                       height: "13%",
                       transform: "translate(-50%, -50%)",
-                      backgroundImage: "url(/brand/j4-boot.png)",
+                      backgroundImage: `url(${ART_ON})`,
                       backgroundSize: `${100 / 0.13}% auto`,
                       backgroundPosition: `${s.cx * 100}% ${s.cy * 100}%`,
-                      filter: "grayscale(1) brightness(.42) contrast(.9)",
-                      opacity: on ? 0 : 1,
+                      opacity: on ? 1 : 0,
+                      transition: `opacity ${BOOT_TIMELINE.power}ms ease-out`,
                     }}
-                  />
-                  {on && (
+                  />                  {on && (
                     <span
                       aria-hidden="true"
                       className="j4boot-boop pointer-events-none absolute rounded-full"

@@ -75,16 +75,42 @@ async function main(): Promise<void> {
     const sawBoot = await boot.waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
     console.log(`the opening sequence ran: ${sawBoot}`);
     if (sawBoot) {
-      await page.waitForTimeout(800);
-      console.log(`phase while flipping: ${await boot.getAttribute("data-boot-phase")}`);
+      // SAMPLE THE STATE, NOT THE CLOCK. The previous version waited fixed
+      // milliseconds and read 0 of 6 while the sequence was plainly running:
+      // the element exists before hydration, so the component's timers start
+      // later than the element appears, and in dev that gap is seconds. A
+      // check that depends on guessing that gap tests the guess.
+      //
+      // WHAT MATTERS IS THAT THEY COME UP ONE AT A TIME. So this records the
+      // count as it changes and asserts the run passes through every value:
+      // 0,1,2,3,4,5,6. Six simultaneous activations would jump 0 to 6 and
+      // fail, which no screenshot could tell you.
+      await boot.getAttribute("data-boot-phase");
       await page.screenshot({ path: `${SHOTS}/boot-1-flip.png` });
-      await page.waitForTimeout(3_100);
-      const on = await page.locator('[data-system][data-on="true"]').count();
-      console.log(`systems online mid-sequence: ${on} of 6`);
-      await page.screenshot({ path: `${SHOTS}/boot-2-systems.png` });
-      await page.waitForTimeout(1_700);
-      console.log(`phase near the end: ${await boot.getAttribute("data-boot-phase")}`);
-      await page.screenshot({ path: `${SHOTS}/boot-3-ready.png` });
+
+      const seen: number[] = [];
+      const started = Date.now();
+      while (Date.now() - started < 25_000) {
+        const [n, phase] = await Promise.all([
+          page.locator('[data-system][data-on="true"]').count(),
+          boot.getAttribute("data-boot-phase").catch(() => null),
+        ]);
+        if (seen[seen.length - 1] !== n) {
+          seen.push(n);
+          if (n === 1) await page.screenshot({ path: `${SHOTS}/boot-2-systems.png` });
+          if (n === 6) await page.screenshot({ path: `${SHOTS}/boot-3-ready.png` });
+        }
+        if (n === 6 && phase !== "systems") break;
+        if (phase === null) break;
+        await page.waitForTimeout(70);
+      }
+
+      // The trailing 0 is the sequence unmounting on its way into Genesis,
+      // not a system going dark - so it is dropped before comparing.
+      const climb = seen[seen.length - 1] === 0 ? seen.slice(0, -1) : seen;
+      const oneAtATime = JSON.stringify(climb) === JSON.stringify([0, 1, 2, 3, 4, 5, 6]);
+      console.log(`systems came up: ${seen.join(" -> ")}`);
+      console.log(`one at a time, never grouped: ${oneAtATime}`);
     }
 
     await page.waitForSelector('[data-screen="business-map"]', { timeout: 60_000 });
