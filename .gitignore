@@ -48,3 +48,8 @@ next-env.d.ts
 .vercel
 .env*
 scripts/tmp-*
+
+# Harness output and verification captures, regenerated on every run.
+db.log
+db.log.exit
+verification-screenshots/
