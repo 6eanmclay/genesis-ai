@@ -115,7 +115,7 @@ export function J4Dock({ conversationHref = "/j4" }: { conversationHref?: string
       )}
 
       {/* ---- COMPACT: the seat itself ----------------------------------- */}
-      <div className="pointer-events-auto flex w-[9.5rem] flex-col items-center gap-1 px-3 pb-3 pt-2">
+      <div className="pointer-events-auto flex w-[11.5rem] flex-col items-center gap-1 px-3 pb-3 pt-2">
         <Link
           href={conversationHref}
           aria-label={`J4 — ${label}. Open the conversation.`}
@@ -124,7 +124,7 @@ export function J4Dock({ conversationHref = "/j4" }: { conversationHref?: string
           <J4Character
             state={state}
             gaze={justFocused ? "right" : "ahead"}
-            size={84}
+            size={116}
             title={`J4 — ${label}`}
           />
         </Link>
