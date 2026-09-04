@@ -77,8 +77,11 @@ function Card({
   destination,
   noticed,
   onConnect,
+  focused,
 }: {
   entity: MapEntity;
+  /** J4 pointed at this one. Presentation only. */
+  focused: boolean;
   domainLabel: string;
   destination: DomainDestination | null;
   noticed: string[];
@@ -99,7 +102,16 @@ function Card({
       // and short, so stacking a photograph above the text left the facts
       // nowhere to go; side by side, the same card has half again as much
       // room for what J4 knows.
-      className="flex w-[min(100%,27rem)] shrink-0 snap-center flex-col overflow-hidden rounded-2xl border border-black/[.09] bg-[var(--map-surface)] shadow-sm sm:w-[min(100%,33rem)] sm:flex-row dark:border-white/[.12]"
+      // RESTRAINED, DELIBERATELY. J4 pointing at a card should read as a
+      // finger, not an alarm: the ring is the certainty colour the card
+      // already carries, at a heavier weight, and nothing moves. A brand
+      // green ring belongs with the character work, not ahead of it.
+      data-focused={focused ? "true" : undefined}
+      className={`flex w-[min(100%,27rem)] shrink-0 snap-center flex-col overflow-hidden rounded-2xl border bg-[var(--map-surface)] shadow-sm sm:w-[min(100%,33rem)] sm:flex-row ${
+        focused
+          ? "border-transparent ring-2 ring-[var(--map-known)] ring-offset-2 ring-offset-[var(--map-bg,transparent)]"
+          : "border-black/[.09] dark:border-white/[.12]"
+      }`}
     >
       {/* ---- the thing itself, where there is a picture of it -------------- */}
       {showImage ? (
@@ -227,8 +239,18 @@ export function EntityCarousel({
   destination,
   noticed,
   onConnect,
+  focusedIds,
 }: {
   entities: MapEntity[];
+  /**
+   * Entities J4 has asked to be brought forward (2026-09-03).
+   *
+   * Ids the server already resolved against this store's map, in the order
+   * J4 named them. Presentation only: this marks cards, it never reorders,
+   * filters or changes them, so what the owner is looking at is still the
+   * whole domain with something pointed at inside it.
+   */
+  focusedIds?: readonly string[];
   domainLabel: string;
   destination: DomainDestination | null;
   /** Real observations, keyed by the record they are about. */
@@ -338,6 +360,7 @@ export function EntityCarousel({
         {entities.map((e) => (
           <Card
             key={e.id}
+            focused={focusedIds?.includes(e.id) ?? false}
             entity={e}
             domainLabel={domainLabel}
             destination={destination}

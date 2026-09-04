@@ -353,6 +353,40 @@ what an expression matrix requires.
 **This is a design decision, not an implementation one**, and it is the thing
 standing between "the architecture is ready" and "this feels like J4".
 
+### Focus consumer — server half DONE, UI wired but NOT behaviourally verified
+
+**Shipped and verified** (`focusPlan.ts`, `j4Focus.ts`, `verify-j4-focus.ts`):
+31 assertions, six sabotages. The map is the authorization, exactly as in
+`selectionContext` — foreign, nonexistent and malformed ids are indistinguishable
+from each other. Focus is presentation state: never persisted, never returned to
+the server, and asserted to leave the node byte-identical.
+
+**Wired but unverified** (`BusinessMapCanvas.tsx`, `EntityCarousel.tsx`):
+type-checked and lint-clean, and **that is all that has been established**. No
+render has happened. The two-stage interaction has never been seen working.
+
+The architecture, approved and deliberate:
+
+- **focus request = event → `step()`**, in the subscription callback. NOT an
+  effect. An effect would re-apply focus on every render and fight an owner who
+  navigated away manually; as written, J4 opens a domain once and a subsequent
+  tap stays where the owner put it.
+- **focused entity = render state**, a `data-focused` attribute plus a ring in
+  the card's existing certainty colour at heavier weight. **J4 green is reserved
+  for the character system** and is deliberately not used here.
+
+### THE EXACT NEXT VERIFICATION — nothing else closes this gap
+
+1. Render the Business Map.
+2. Issue a real J4 focus request (not a synthetic store write).
+3. Verify the node's domain opens.
+4. Verify the correct carousel entity is focused, and only that one.
+5. Verify manual owner navigation afterwards is NOT overridden.
+
+**Do not manufacture DOM or screenshot evidence to close this.** Green DOM
+assertions have passed under a full-screen overlay in this codebase before,
+which is why step 1 is "render", not "assert".
+
 ### The smallest slice that is real, in order
 
 1. **Give `focus` a consumer.** P2 emits `focus.nodeIds` and nothing renders it.

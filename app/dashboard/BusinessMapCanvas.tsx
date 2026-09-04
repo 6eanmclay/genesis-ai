@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { BusinessMap, Certainty, MapDomainKey } from "@/lib/businessModel/businessMap";
 import { entitiesFor, type MapProspect } from "@/lib/businessModel/mapEntities";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
@@ -8,6 +8,12 @@ import { GenesisAvatar } from "./GenesisAvatar";
 import { MapDataStream } from "./MapDataStream";
 import { ConnectionChooser } from "./ConnectionChooser";
 import { EntityCarousel } from "./EntityCarousel";
+import { focusPlan } from "@/lib/businessModel/focusPlan";
+import {
+  getJ4FocusServerSnapshot,
+  getJ4FocusSnapshot,
+  subscribeJ4Focus,
+} from "@/lib/dashboard/j4Focus";
 
 // GOING INSIDE THE BUSINESS — NOW IN ONE STEP.
 //
@@ -129,6 +135,7 @@ export function BusinessMapCanvas({
   const [narrow, setNarrow] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(true);
 
+
   useEffect(() => {
     const narrowQ = window.matchMedia("(max-width: 640px)");
     const motionQ = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -185,12 +192,46 @@ export function BusinessMapCanvas({
   const camX = focused ? focused.x : G.cx;
   const camY = focused ? focused.y : G.cy;
 
+  // WHAT J4 HAS ASKED TO BE BROUGHT FORWARD (2026-09-03).
+  //
+  // Focus arrives as node ids the server already resolved against this
+  // store's own map, and `focusPlan` turns them into the two things this
+  // canvas can act on: which domain to open, and which entities to mark.
+  //
+  // NO SECOND REGISTRY. The plan is computed from the same `map` prop this
+  // component already renders, so there is nothing here that could disagree
+  // with what is on screen.
+  const j4Focus = useSyncExternalStore(
+    subscribeJ4Focus,
+    getJ4FocusSnapshot,
+    getJ4FocusServerSnapshot,
+  );
+  const plan = useMemo(() => focusPlan(map, j4Focus.nodeIds), [map, j4Focus.nodeIds]);
+
   const step = useCallback((key: MapDomainKey) => {
     setOpen(key);
     // CONNECTIONS KEEPS THE CHOOSER. Sean: "Connections should keep the
     // chooser we just built — that's the right pattern for that branch."
     setChooserOpen(key === "connections");
   }, []);
+
+  // NAVIGATION IS AN EVENT; MARKING IS RENDER STATE. J4 asking for focus is
+  // something that HAPPENS, so opening the domain belongs in the
+  // subscription callback rather than in an effect that fires on render -
+  // which is also what stops it fighting the owner. Once J4 has opened a
+  // domain, an owner who taps somewhere else stays where they tapped,
+  // because nothing re-applies the focus on the next render.
+  //
+  // Opening goes through `step`, the same function a click uses, so J4 and a
+  // tap cannot drift apart - including the Connections chooser step() sets.
+  useEffect(
+    () =>
+      subscribeJ4Focus(() => {
+        const next = focusPlan(map, getJ4FocusSnapshot().nodeIds);
+        if (next.domain) step(next.domain);
+      }),
+    [map, step],
+  );
 
   const reset = useCallback(() => {
     setChooserOpen(false);
@@ -405,6 +446,7 @@ export function BusinessMapCanvas({
           {open && open !== "connections" && (
             <div className="map-entities absolute inset-x-0 bottom-0 top-[132px] flex flex-col sm:top-[152px]">
               <EntityCarousel
+                focusedIds={plan.nodeIds}
                 entities={entities}
                 domainLabel={domain?.label ?? ""}
                 destination={destination}
