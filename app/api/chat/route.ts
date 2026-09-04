@@ -84,6 +84,7 @@ type StreamEvent =
   // Closed set of hrefs on the server side, so nothing the model invents can
   // reach the router.
   | { type: "navigate"; href: string }
+  | { type: "focus"; nodeIds: string[] }
   | { type: "error"; message: string };
 
 function encodeEvent(event: StreamEvent): Uint8Array {
@@ -704,6 +705,16 @@ export async function POST(request: Request) {
             // Moving the owner is the turn's job, not the handler's — a handler
             // that touched the stream could never be the first of two.
             if (result.navigate) emit({ type: "navigate", href: result.navigate });
+            // AND WHAT TO BRING FORWARD once they are there (P2 focus).
+            //
+            // Emitted beside navigate rather than folded into it, because the
+            // two are genuinely separate: J4 can focus something on the surface
+            // the owner is already looking at, without moving them at all.
+            //
+            // These ids were resolved server-side against this store's own map
+            // before the handler returned them. Nothing the client sends comes
+            // back out here.
+            if (result.focus?.length) emit({ type: "focus", nodeIds: result.focus });
           }
           // SAID NOW, not after a refresh (D1). persistToolTurn wrote this line
           // to the conversation; without emitting it the owner sees only the

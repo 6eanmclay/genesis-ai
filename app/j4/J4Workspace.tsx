@@ -3,6 +3,7 @@
 import { useCallback, useContext, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { unstable_rethrow, usePathname, useRouter } from "next/navigation";
+import { setJ4Focus } from "@/lib/dashboard/j4Focus";
 import { useFormStatus, flushSync } from "react-dom";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { deriveAssessmentState, GENESIS_STATE_META } from "@/lib/dashboard/genesisState";
@@ -1385,6 +1386,7 @@ export function J4Workspace({
             | { type: "done" }
             | { type: "fallback"; reason?: "edit_store_content" }
             | { type: "navigate"; href: string }
+            | { type: "focus"; nodeIds: string[] }
             | { type: "error"; message: string };
 
           if (event.type === "padding") {
@@ -1458,6 +1460,18 @@ export function J4Workspace({
             // as losing where you came from.
             reportDiag(requestId, tStart, "client_navigate_event_received", { href: event.href });
             router.push(event.href);
+          } else if (event.type === "focus") {
+            // J4 POINTING AT SOMETHING, which is not the same as taking the
+            // owner somewhere: the Business Map opens the node's domain and
+            // marks the entity, wherever the owner already is.
+            //
+            // Applied to a presentation-only store. Nothing is persisted, and
+            // the ids are the server's own resolved ones - see
+            // lib/dashboard/j4Focus.ts for why this end re-checks nothing.
+            reportDiag(requestId, tStart, "client_focus_event_received", {
+              count: event.nodeIds.length,
+            });
+            setJ4Focus(event.nodeIds);
           } else if (event.type === "fallback") {
             sawFallback = true;
             fallbackReason = event.reason ?? null;

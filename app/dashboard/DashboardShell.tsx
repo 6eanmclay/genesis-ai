@@ -18,6 +18,7 @@ import { MobileGenesisPresence } from "./MobileGenesisPresence";
 import { J4MobileHero } from "./J4MobileHero";
 import { J4Overlay } from "./J4Overlay";
 import { J4Summon } from "./J4Summon";
+import { J4Dock } from "@/components/j4/J4Dock";
 import { J4HandoffContext } from "./J4HandoffContext";
 import { J4AskContext } from "./J4AskContext";
 import { useJ4Talk } from "./useJ4Talk";
@@ -1251,6 +1252,17 @@ export function DashboardShell({
       {/* The summon, on its own layer above everything the shell renders.
           Rendered here rather than inside the tab bar so that no ancestor
           can contain it — see J4Summon.tsx. */}
+      {/* J4'S DESKTOP SEAT (2026-09-03, first working version).
+
+          Mounted BESIDE J4Summon rather than replacing it: Summon is the
+          mobile centre-slot presence, which stays exactly as it is until the
+          mobile pass. This renders only at lg: and above, where the comment
+          on the nav below says the desktop treatment has not happened yet.
+
+          Two presences, one J4 — neither owns conversation or map state, and
+          both read the same stores. */}
+      <J4Dock />
+
       <J4Summon
         open={j4Open}
         onExpand={() => {
