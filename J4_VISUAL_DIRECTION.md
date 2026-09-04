@@ -309,6 +309,66 @@ partner experience → return him home when finished.*
 
 ---
 
+## Implementation readiness — audited 2026-09-03, before building anything
+
+Audited against the real components rather than assumed, because the standing
+instruction is to report a conflict rather than build a parallel system.
+
+### What already exists, and is more than expected
+
+| Piece | Where | State |
+|---|---|---|
+| A persistent J4 presence | `app/dashboard/J4Summon.tsx` | Built. Renders the avatar and nothing else — "the orb is J4". |
+| A state machine driving it | `lib/dashboard/genesisActivity.ts` | Built: `idle | listening | thinking`. |
+| The avatar itself | `app/dashboard/GenesisAvatar.tsx` | A static PNG (`public/brand/genesis-avatar-orb.png`), ~85–90% of what is seen. |
+| A slot in the shell | `DashboardShell.tsx` | Mobile bar, CENTRE slot, deliberate. |
+| Conversational surface/selection context | P2, shipped | `workspacePath` + `selection.nodeIds` + `focus.nodeIds`. |
+
+**Three of the five states the direction asks for already exist and are wired.**
+Missing: `speaking` and `success`/`attention`.
+
+### The position difference is NOT a conflict
+
+The mobile bar puts J4 in the centre slot on purpose — "he is the thing your
+thumb reaches first and the navigation arranges itself around him" — which
+contradicts the approved bottom-left zone. It is not a conflict to resolve,
+because both documents already say so: this direction states mobile needs its
+own responsive interpretation, and the shell's own comment says "desktop is its
+own design pass that hasn't happened yet".
+
+**So the bottom-left zone belongs on DESKTOP, where nothing exists yet, and
+mobile's centre slot stays until the mobile phase around the 23rd.** Building
+the desktop zone does not touch the mobile bar, and does not change the tab
+count, so it does not intersect E25.
+
+### The genuine blocker: there is no character, only a photograph
+
+`GenesisAvatar` displays one image of one pose with one expression. "J4 is a
+recognizable character" with `speaking`, `success` and `attention` needs
+something that can *change* — and states × expressions × skins × sizes is the
+unmade asset decision this document already records. Prior art says it is not a
+prompt away: gpt-image-1 could not preserve locked regions, which is exactly
+what an expression matrix requires.
+
+**This is a design decision, not an implementation one**, and it is the thing
+standing between "the architecture is ready" and "this feels like J4".
+
+### The smallest slice that is real, in order
+
+1. **Give `focus` a consumer.** P2 emits `focus.nodeIds` and nothing renders it.
+   The Business Map canvas already draws nodes by id, so highlighting one is the
+   shortest path from the shipped contract to something an owner can see. **This
+   is the next implementation step and needs no new asset.**
+2. **Add `speaking` and `attention` to `GenesisActivityState`**, driven by the
+   existing machine. Behaviour first, appearance later.
+3. **A desktop bottom-left zone** hosting the existing presence, with an explicit
+   Expand control.
+4. **The character asset set** — blocked on the decision above.
+
+Steps 1–3 are implementable against what exists. Step 4 is not, and pretending
+otherwise would produce a prototype screen with a placeholder in it, which
+`feedback_no_prototype_screens` exists to prevent.
+
 ## Open dependencies — flagged, not decided
 
 - **Mouth sync is blocked on an unproven voice pipeline** (above). A real
