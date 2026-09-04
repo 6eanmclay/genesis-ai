@@ -387,6 +387,24 @@ The architecture, approved and deliberate:
 assertions have passed under a full-screen overlay in this codebase before,
 which is why step 1 is "render", not "assert".
 
+**The harness for it already exists — extend, do not build.**
+`scripts/verify-business-map-browser.ts` (browser lane, run with `--browser`)
+already signs a user in (`signIn`), navigates to `/dashboard`, and locates cards
+by `[data-testid="entity-card"]`. So the whole verification is a new scenario in
+that file:
+
+1. `setJ4Focus([<node id>])` — or better, drive a real `take_me_there` with a
+   `nodeLabel`, so the server resolves the id and nothing is synthesised.
+2. Assert the expected domain opened.
+3. Assert exactly one card carries `data-focused="true"`, and it is the right
+   one. **That attribute exists for this purpose** and is why it was added.
+4. Click a different domain, then assert `data-focused` has NOT reappeared —
+   this is the assertion that proves focus is an event and not an effect that
+   re-applies.
+
+**Screenshot it too.** A `data-focused` attribute can be present on a card that
+is invisible behind something — that exact failure has happened here.
+
 ### The smallest slice that is real, in order
 
 1. **Give `focus` a consumer.** P2 emits `focus.nodeIds` and nothing renders it.
