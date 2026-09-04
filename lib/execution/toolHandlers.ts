@@ -136,6 +136,19 @@ export type ToolTurnResult =
        */
       navigate?: string;
       /**
+       * BUSINESS MAP NODES THE SURFACE SHOULD BRING FORWARD (P2).
+       *
+       * Ids, because this is addressed to the UI rather than to a person -
+       * and it is only ever ids the server itself resolved from this store's
+       * map, never anything a caller supplied.
+       *
+       * J4 says WHICH THINGS matter, not what should happen to them. Whether
+       * that is a highlight, a scroll, a pulse or nothing at all is the
+       * surface's business, and keeping it that way is what stops this
+       * contract from having to change when the visual work lands.
+       */
+      focus?: string[];
+      /**
        * How the turn is logged. Defaults to success.
        *
        * A handler that did its job but could not give the owner what they asked
@@ -532,6 +545,55 @@ export function makeTakeMeThere(resolveHref: (href: string) => string): ToolHand
           "I'm not sure where you want to go. Tell me what you're trying to do and I'll take you there.",
         kind: "take_me_there",
         outcome: "failure",
+      };
+    }
+
+    // ASKED FOR A SPECIFIC THING, not just a place. Resolved against this
+    // store's own map, which is the same lookup that makes a selection safe:
+    // a name that is not on this map is not found, whether it belongs to
+    // another store, to nothing, or to a typo.
+    const namedLabel = parsed.success ? parsed.data.nodeLabel?.trim() : null;
+    if (namedLabel) {
+      const { mapForStore } = await import("@/lib/businessModel/mapForStore");
+      const understanding = ctx.understanding ?? (await getBusinessUnderstanding(ctx.storeId));
+      const map = await mapForStore(ctx.storeId, understanding);
+      const wanted = namedLabel.toLowerCase();
+      const matches = map.nodes.filter((node) => node.label.trim().toLowerCase() === wanted);
+
+      if (matches.length === 0) {
+        // NOWHERE, rather than somewhere approximate. Navigating to the
+        // catalogue and hoping is how an owner is told a thing exists when it
+        // does not.
+        return {
+          handled: true,
+          reply: `I could not find "${namedLabel}" on your business map. Which one did you mean?`,
+          kind: "take_me_there_unresolved",
+          executionStatus: "WARNING",
+          outcome: "failure",
+        };
+      }
+      if (matches.length > 1) {
+        return {
+          handled: true,
+          reply: `More than one thing is called "${namedLabel}". Which did you mean?`,
+          kind: "take_me_there_ambiguous",
+          executionStatus: "WARNING",
+          outcome: "failure",
+        };
+      }
+
+      const node = matches[0];
+      return {
+        handled: true,
+        reply: ctx.conversationalReply || `Bringing up ${node.label}.`,
+        kind: "take_me_there",
+        // The map lives on the business home; the node is what to bring
+        // forward once there.
+        navigate: resolveHref("/dashboard"),
+        focus: [node.id],
+        logMessage: `Focused ${node.label}`,
+        // The id is metadata and a focus target. It is not in the reply.
+        metadata: { nodeId: node.id, domain: node.domain },
       };
     }
 

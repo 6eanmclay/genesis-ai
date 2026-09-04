@@ -246,6 +246,19 @@ export const ApproveCompositionInputSchema = z.object({
 // Destinations are a closed list matching the real rooms, so a hallucinated
 // route can never reach the router.
 export const TakeMeThereInputSchema = z.object({
+  /**
+   * A THING ON THE BUSINESS MAP, by the name the merchant uses (P2).
+   *
+   * Optional, and the surface destinations below are untouched: this is for
+   * "show me the Copper Mug", which used to be answerable only as "here is
+   * Products, look for it". Resolved server-side against this store's own
+   * map - a name that is not on it goes nowhere rather than somewhere
+   * approximate.
+   *
+   * A NAME, not an id. Node ids are deliberately never put in front of the
+   * model, so it could not send one even if this asked for it.
+   */
+  nodeLabel: z.string().min(1).nullable().optional(),
   destination: z.enum([
     "studio",
     "studio.upload",

@@ -2,6 +2,8 @@ import { getBusinessUnderstanding, type BusinessUnderstanding } from "@/lib/busi
 import { businessContextOf } from "@/lib/businessModel/businessContext";
 import { digestOf, renderDigest, digestIsSubstantive, type UnderstandingDigest } from "@/lib/businessModel/digest";
 import { describeWorkspaceForJ4 } from "@/lib/j4/workspaceContext";
+import { describeSelectionForJ4, resolveSelection, type SelectionContext } from "@/lib/j4/selectionContext";
+import { mapForStore } from "@/lib/businessModel/mapForStore";
 import { getOpenProposal } from "@/lib/storefront/proposals";
 import { resolveMostRecentPendingApprovalBatch } from "@/lib/dashboard/pendingApprovals";
 
@@ -43,6 +45,16 @@ export interface TurnContextInput {
   activeProductNames: string;
   /** Where the owner is while asking. Resolved through a closed registry. */
   workspacePath?: string | null;
+  /**
+   * WHICH THINGS ON THAT SURFACE THE OWNER IS POINTING AT (P2).
+   *
+   * Business Map node ids, straight from the browser and trusted exactly as
+   * much as workspacePath is - which is to say not at all. They are resolved
+   * against this store's own map and anything not in it is dropped.
+   *
+   * Absent or empty is the ordinary case and means the whole business.
+   */
+  selectedNodeIds?: unknown;
   /** The lighter, non-ApprovalRequest confirmation loop edit_store_content uses. */
   pendingSummary?: string | null;
 }
@@ -52,6 +64,8 @@ export interface TurnContext {
   understanding: BusinessUnderstanding;
   digest: UnderstandingDigest;
   business: ReturnType<typeof businessContextOf>;
+  /** What the owner is pointing at, resolved. Empty means the whole business. */
+  selection: SelectionContext;
   /** The lines that become the user turn, in a fixed order. */
   parts: string[];
 }
@@ -91,6 +105,20 @@ export async function buildTurnContext(input: TurnContextInput): Promise<TurnCon
   const workspaceLine = describeWorkspaceForJ4(input.workspacePath ?? undefined);
   if (workspaceLine) parts.push(workspaceLine);
 
+  // AND WHICH THING ON IT. The surface line says where they are; this says
+  // what they are pointing at, so "this" and "these three" resolve to
+  // something real instead of being guessed at from the last message.
+  //
+  // The map is built ONLY when something is actually selected. A store whose
+  // owner is pointing at nothing pays nothing, which is almost every turn.
+  const requested = Array.isArray(input.selectedNodeIds) ? input.selectedNodeIds : [];
+  const selection = requested.length
+    ? resolveSelection(await mapForStore(input.storeId, understanding), requested)
+    : { scope: "business" as const, entities: [] };
+
+  const selectionLine = describeSelectionForJ4(selection);
+  if (selectionLine) parts.push(selectionLine);
+
   // THE PROPOSAL CURRENTLY ON THE TABLE — the line the Server Action was
   // missing. Without it, "I don't like that, keep it handmade" reads as a brand
   // new request, with no idea there is a specific proposal being argued with.
@@ -128,5 +156,5 @@ export async function buildTurnContext(input: TurnContextInput): Promise<TurnCon
   const economicsLine = describeOutstandingForJ4(await outstandingEconomicsQuestions(input.storeId));
   if (economicsLine) parts.push(economicsLine);
 
-  return { understanding, digest, business, parts };
+  return { understanding, digest, business, selection, parts };
 }
