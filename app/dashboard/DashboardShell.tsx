@@ -1272,6 +1272,14 @@ export function DashboardShell({
           setJ4Presentation("panel");
           setJ4Open(true);
         }}
+        // THE SAME OVERLAY, IN ITS OTHER PRESENTATION. Identical to what
+        // J4Summon's expand has always done, so the Office is unchanged: one
+        // mount, one conversation, two ways in.
+        onOpenOffice={() => {
+          setJ4FocusComposer(false);
+          setJ4Presentation("office");
+          setJ4Open(true);
+        }}
       />
 
       <J4Summon

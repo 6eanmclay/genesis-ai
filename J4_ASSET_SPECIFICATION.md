@@ -74,6 +74,38 @@ the choice belongs to whoever produces the art:
 
 ---
 
+## 3b. The shipped base, and why the expression was taken off it
+
+**Implemented 2026-09-04.** `public/brand/j4-character.png` is now cut from
+`design/j4-visual-direction/j4-primary-reference.png` at **native 860×860**
+(previously a 512 downscale). The crop box was *measured* against the live
+asset rather than re-chosen — `(196, 40) + 860`, matched to an error of 1.29 —
+because the `FACE` constants in `J4Character.tsx` are fractions of that box and
+re-cutting to a different frame would have moved the eyes and mouth off the
+glass without anything failing.
+
+**The baked expression was removed from the glass.** The render shipped with a
+smile on the visor, and the component could only show any other state by
+painting an opaque ellipse over it. That ellipse was the whole problem Sean
+named: at dock size the visor became a flat drawn shape sitting inside a
+photographic helmet. With the expression gone from the asset, nothing needs to
+cover the render, and the helmet, ear modules, shoulders, bevels and
+reflections survive all the way down to 116px.
+
+**What was preserved, deliberately:** the glass's vertical gradient (sampled
+from clean rows above and below the expression, through the central column —
+the visor's *edges* carry green rim reflections and averaging them banded the
+whole visor green on the second attempt), and the specular highlight at the
+top-left, which is protected by name because it is the one thing stopping the
+visor reading as a hole cut in his head.
+
+**So the character is now genuinely identical between states.** Only light
+changes: a bloom on the glass, then eyes and mouth drawn twice — blurred
+underneath, sharp on top — so it reads as emitted rather than printed. This is
+§4's locked-regions rule holding in practice rather than by intention.
+
+---
+
 ## 4. Locked regions — what must not move between states
 
 The failure this prevents is already documented: gpt-image-1 could not preserve

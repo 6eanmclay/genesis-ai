@@ -105,6 +105,38 @@ async function main(): Promise<void> {
       await dock.screenshot({ path: `${SHOTS}/j4-character-closeup.png` }).catch(() => {});
     }
 
+    // ---- THE DOCK IS A PAIR --------------------------------------------
+    //
+    // J4 and the Office are two ways into the same partnership, so they sit
+    // together and a divider separates them from the business destinations.
+    // What matters behaviourally is that they are NOT two assistants: one
+    // conversation, two presentations of the same overlay.
+    const pair = page.locator('[data-testid="j4-pair"]');
+    console.log(`J4 and the Office are one group: ${(await pair.count()) > 0}`);
+    console.log(`with a divider before the business nav: ${(await page.locator('[data-testid="j4-dock-divider"]').count()) > 0}`);
+    const box = await pair.boundingBox();
+    if (box) {
+      await page.screenshot({
+        path: `${SHOTS}/j4-dock-pair.png`,
+        clip: {
+          x: Math.max(0, box.x - 12),
+          y: Math.max(0, box.y - 16),
+          width: Math.min(560, box.width + 90),
+          height: box.height + 32,
+        },
+      });
+    }
+
+    // THE OFFICE OPENS THE OFFICE, unchanged and still full-screen.
+    await page.locator('[data-testid="j4-office"]').click();
+    await page.waitForTimeout(1_200);
+    const asOffice = page.locator('[data-j4-presentation="office"]');
+    console.log(`the Office square opens the Office: ${(await asOffice.count()) > 0}`);
+    console.log(`and it is still the full-screen one: ${(await asOffice.getAttribute("aria-modal")) === "true"}`);
+    await page.screenshot({ path: `${SHOTS}/j4-office-from-dock.png` });
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(700);
+
     // ---- THE LOOP: click him, and the real conversation opens ----------
     //
     // Not a second chat. The dock asks the shell for the same surface the orb

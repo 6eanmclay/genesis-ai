@@ -97,10 +97,13 @@ export function J4Character({
         {/* The drawn visor keeps the render's own depth rather than flattening
             to a black patch: brighter at the top-left where the helmet catches
             light, deep at the bottom. */}
-        <radialGradient id={`${uid}-visor`} cx="38%" cy="30%" r="78%">
-          <stop offset="0%" stopColor="#1b2a25" />
-          <stop offset="55%" stopColor="#0a1310" />
-          <stop offset="100%" stopColor="#030705" />
+        {/* LIGHT ON GLASS, not a lid over it. The visor gradient above used
+            to be painted opaque across the render's own visor; this replaces
+            it with a bloom that leaves the photograph visible underneath. */}
+        <radialGradient id={`${uid}-glow`} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor={GREEN} stopOpacity="0.20" />
+          <stop offset="55%" stopColor={GREEN} stopOpacity="0.07" />
+          <stop offset="100%" stopColor={GREEN} stopOpacity="0" />
         </radialGradient>
         <filter id={`${uid}-soft`} x="-30%" y="-30%" width="160%" height="160%">
           <feGaussianBlur stdDeviation="6" />
@@ -135,27 +138,38 @@ export function J4Character({
             preserveAspectRatio="xMidYMid slice"
           />
 
-          {/* The face, drawn over the render's own so it can change. */}
+          {/* ============ THE FACE IS LIGHT ON REAL GLASS ==============
+
+              CHANGED 2026-09-04, on Sean's note that the reference IS the
+              character and must not be reduced to a geometric drawing.
+
+              This used to paint an OPAQUE ellipse across the render's own
+              visor and draw the face on that. It had to: the render had a
+              smile baked into the glass, and the only way to show any other
+              state was to cover it. The cost was the photograph - at dock
+              size the visor became a flat shape sitting in a detailed helmet.
+
+              The expression now comes off the ASSET instead. The base render
+              was re-cut from the 1254px reference at native 860 (up from a
+              512 downscale) and the baked eyes and mouth were removed from
+              the glass itself, with its gradient and specular highlight kept.
+              So there is nothing left to hide, and what is drawn here is only
+              illumination: a bloom, then the eyes and mouth, over glass that
+              is still photographic.
+
+              The character is therefore identical in every state - only the
+              light on his visor changes, which is exactly the rule in
+              J4_ASSET_SPECIFICATION.md. */}
           <g transform={`translate(${gazeX} ${gazeY})`}>
             <ellipse
               cx={cx}
-              cy={cy}
-              rx={FACE.rx * 512}
-              ry={FACE.ry * 512}
-              fill={`url(#${uid}-visor)`}
+              cy={cy + 10}
+              rx={FACE.rx * 512 * 1.25}
+              ry={FACE.ry * 512 * 1.15}
+              fill={`url(#${uid}-glow)`}
+              opacity={state === "idle" ? 0.75 : 1}
             />
-            {/* A single soft highlight, so the drawn visor still reads as glass
-                rather than a hole cut in his head. */}
-            <ellipse
-              cx={cx - 42}
-              cy={cy - 62}
-              rx="52"
-              ry="30"
-              fill="#7fe0c8"
-              opacity="0.10"
-              filter={`url(#${uid}-soft)`}
-            />
-            <g filter={`url(#${uid}-soft)`} opacity="0.55">
+            <g filter={`url(#${uid}-soft)`} opacity="0.8">
               <Face state={state} cx={cx} eyeY={eyeY} mouthY={mouthY} eyeDx={eyeDx} />
             </g>
             <Face state={state} cx={cx} eyeY={eyeY} mouthY={mouthY} eyeDx={eyeDx} />
