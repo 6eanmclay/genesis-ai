@@ -99,6 +99,35 @@ async function main() {
   eq("and the balance still read", quiet.balance, 24);
 
   // ======================================================================
+  console.log("\n=== 3b. And the permission does not shrink underneath them ===\n");
+  // ======================================================================
+  //
+  // The recording said it kept "the highest cost they have waved through"
+  // and did not: it wrote `Math.max(cost, 0)`, which ignores what is already
+  // stored. An action CHEAPER than the agreed cost never asks, so the
+  // ordinary route cannot reach this. Two overrides above that comparison
+  // can - `alwaysAsk`, and a balance too low to afford even a cheap action -
+  // and waving one of those through quietly narrowed the permission.
+  await rememberSkipGrowthPointConfirmation(user.id, 5);
+  await rememberSkipGrowthPointConfirmation(user.id, 1);
+  const after = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { growthPointConfirmSkippedCost: true },
+  });
+  eq("waving through a cheap one keeps the dearer permission",
+    after?.growthPointConfirmSkippedCost, 5);
+
+  // And the consequence the owner would actually feel.
+  const stillQuiet = await ask();
+  assert("so a 2-point action still does not ask", !stillQuiet.mustAsk);
+  eq("for the reason they set", stillQuiet.reason, "preference-set");
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { growthPointConfirmSkippedCost: 2 },
+  });
+
+  // ======================================================================
   console.log("\n=== 4. OVERRIDE: the cost went up ===\n");
   // ======================================================================
   //

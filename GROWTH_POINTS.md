@@ -55,23 +55,60 @@ The confirmation happens at the very end, immediately before execution:
 
 A price on a button all day is a toll. A price at the moment of committing is information somebody is about to act on. The distinction is the whole reason this section exists.
 
-## 3. "Don't show me this again" is PER ACTION
+## 3. "Don't show me this again" is PER INVESTMENT TIER
 
-**Not global.** Each metered action carries its own preference:
+**Resolved 2026-08-29.** This section previously described a per-action
+preference. What is shipped, and what is intended going forward, is a preference
+scoped to the **size of the investment** rather than to the action that happens
+to carry it.
 
-- Social posting — stop asking about social posts
-- Product creation — a separate preference
-- Every other metered action — its own again
+The owner is choosing: **"I understand an investment of this size. Don't ask me
+to confirm one this size again."** They are not choosing to be told less
+afterwards — see the accounting rule below.
 
-Somebody may become comfortable posting several times a day and never want that confirmation again, while still wanting to see the cost before creating a product. One switch cannot express that, and a global switch silences the larger action precisely because they got comfortable with the smaller one.
+### How it is scoped
 
-The preference means: **"I understand this action costs Growth Points. Don't ask me again for this particular action."** It never means "never tell me about Growth Points again" — the accounting survives, and a completed action still reports what it used and what is left.
+`User.growthPointConfirmSkippedAt` records that the preference was set;
+`User.growthPointConfirmSkippedCost` records **the largest investment they have
+waved through**. A later action asks again if — and only if — it is *dearer*
+than that:
+
+| Already waved through | 1-point action | 2-point action | 5-point action |
+|---|---|---|---|
+| nothing yet | asks | asks | asks |
+| 2 points | silent | silent | **asks** |
+| 5 points | silent | silent | silent |
+
+The rule in one line, from `confirmation.ts` itself: *waving through an action at
+one price authorises that price and anything cheaper, never more.* The stored
+figure is the **highest** ever approved, so confirming something small later does
+not narrow a preference the owner already widened.
+
+**Why size rather than action.** An owner who is comfortable with a 2-point
+investment is comfortable with a 1-point one; that is a fact about the money, not
+about which button produced it. Keying on the action instead would ask again the
+first time somebody met a *new* 1-point action they had every reason to be
+relaxed about, and — worse — would stay silent when a familiar action was
+repriced upward. The tier answers both.
+
+### It never suppresses the accounting
+
+The preference silences the confirmation **before** the investment, never the
+report **after** it. A completed action still says what it used and what is left —
+*"Posted ✓ · 1 Growth Point invested · 23 remaining"* — whatever the preference
+says. Somebody who asked not to be interrupted has not asked to stop being told
+what their business invested.
 
 ### It is always overridden when
 
-- the cost materially changes
-- the owner cannot cover it
-- the action requires an explicit confirmation for its own reasons
+- **the investment is larger than the one they approved** — the comparison above
+- **the owner cannot cover it** — that is news rather than a confirmation, and it
+  has to arrive before anything runs rather than as a failure afterwards
+- **the action insists** — a caller may require an explicit confirmation for its
+  own reasons, whatever the preference says
+
+And it is reversible: `resumeGrowthPointConfirmation` puts the asking back.
+Nothing here is one-way.
 
 ## 4. When there are not enough points
 
@@ -89,9 +126,11 @@ Then offers to buy more, **and what more would let them do**:
 
 ## 5. Where this diverges from what is shipped today
 
-Two things are already built and do not match this contract. Recorded here rather than left for whoever implements the economy to discover.
+One thing is already built and does not match this contract. Recorded here rather than left for whoever implements the economy to discover.
 
-**The preference is currently GLOBAL, not per action.** `lib/growthPoints/confirmation.ts` and `User.growthPointConfirmSkippedAt` hold one flag for the whole account, shipped in `e1435e5` before this contract was written. Making it per action is part of implementing the economy: the column becomes a per-action record, and `growthPointDecision` keys on the action type it already receives. The overrides, the bounded cost and the accounting all survive that change unaltered — only the key changes.
+*The confirmation preference used to be listed here too. It was resolved on
+2026-08-29 in favour of what is shipped — see section 3, which now describes the
+per-tier behaviour rather than proposing a per-action one.*
 
 **SOCIAL_CREATION.md §5 said one Growth Point regardless of platform count.** It was locked in `68971c4` and is superseded by the table above: one platform is 1, several are 2. The rule it was really protecting survives — four platforms is still not four charges, and per-card metering in the carousel is still wrong. Only the number changed, and that file now says so.
 

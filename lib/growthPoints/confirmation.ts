@@ -119,13 +119,28 @@ export async function growthPointDecision(params: {
  * A later, dearer action asks again on its own.
  */
 export async function rememberSkipGrowthPointConfirmation(userId: string, cost: number): Promise<void> {
+  // THE COMMENT BELOW USED TO BE A CLAIM THIS CODE DID NOT KEEP (fixed
+  // 2026-09-04). It said "the highest cost they have waved through" while
+  // writing `Math.max(cost, 0)`, which never looked at the stored value and
+  // so recorded whatever was waved through LAST.
+  //
+  // Reachable, though not by the ordinary route: an action cheaper than the
+  // agreed cost never asks, so it never gets here. Two overrides sit ABOVE
+  // that comparison and do ask - `alwaysAsk`, and a balance too low to
+  // afford even a cheap action. Waving one of those through narrowed a
+  // 5-point permission to 1, and the owner started being asked again about
+  // things they had already accepted.
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { growthPointConfirmSkippedCost: true },
+  });
   await prisma.user.update({
     where: { id: userId },
     data: {
       growthPointConfirmSkippedAt: new Date(),
       // The HIGHEST cost they have waved through, so the preference does not
       // narrow itself every time they confirm something cheap.
-      growthPointConfirmSkippedCost: Math.max(cost, 0),
+      growthPointConfirmSkippedCost: Math.max(cost, existing?.growthPointConfirmSkippedCost ?? 0, 0),
     },
   });
 }
