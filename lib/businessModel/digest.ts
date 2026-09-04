@@ -1,5 +1,6 @@
 import type { BusinessUnderstanding } from "./understanding";
 import { describeStatedAge, isFirstPartyEvidence } from "./provenance";
+import { formatMoney } from "@/lib/money";
 
 // WHAT J4 KNOWS, AT THE MOMENT IT DECIDES (2026-08-22, Unified Intelligence UI1).
 //
@@ -130,12 +131,22 @@ export function digestOf(
   return {
     name: profile.identity.name,
     activePromotions: understanding.activePromotions.slice(0, MAX_ITEMS).map((promo) => {
+      // MONEY BECOMES A STRING IN ONE PLACE, and this is a place it reaches
+      // the model. I divided cents to a decimal here on
+      // 2026-09-03, which rendered "5.00 off" - no currency, in a digest that
+      // is fed to J4 as business context every turn. A GBP store's owner would
+      // be told about a discount in whichever currency the model assumed.
       const discount =
         promo.percentOff !== null
           ? `${promo.percentOff}% off`
-          : promo.amountOffInCents !== null
-            ? `${(promo.amountOffInCents / 100).toFixed(2)} off`
-            : "discount unset";
+          : promo.amountOffInCents === null
+            ? "discount unset"
+            : understanding.currency !== null
+              ? `${formatMoney(promo.amountOffInCents, understanding.currency)} off`
+              // No store row, so no currency. Say less rather than guess: a
+              // figure with an assumed symbol is a claim about the owner's
+              // money, and "discount unset" would be a different lie.
+              : "an amount off";
       const reach = promo.scope === "ALL_PRODUCTS"
         ? "all products"
         : `${promo.productCount} product${promo.productCount === 1 ? "" : "s"}`;

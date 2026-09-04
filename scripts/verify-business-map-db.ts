@@ -755,7 +755,23 @@ async function main(): Promise<void> {
     // ---- the commercial facts are the product's own ----------------------
     const one = seen.find((e) => e.label === "Photographed Ring")!;
     eq("price is shown in money, not cents",
-      one.facts.find((f) => f.label === "Price")?.value, "42.00");
+      one.facts.find((f) => f.label === "Price")?.value, "$42.00");
+
+    // AND IT IS THE STORE'S MONEY, not a format the assembler picked. This
+    // assertion used to expect a bare "42.00" - a figure with no currency at
+    // all, on the card an owner opens to see what J4 knows about a product.
+    // Updating the literal alone would have left the same hole one symbol
+    // wider, so the real question is asked instead: change the store's
+    // currency, and what the owner reads must change with it.
+    await prisma.store.update({ where: { id: store.id }, data: { currency: "GBP" } });
+    const inPounds = entitiesFor(
+      (await mapFor(store.id, store.slug)).domains.find((d) => d.key === "commerce")!,
+    );
+    eq("and it follows the store's own currency",
+      inPounds.find((e) => e.label === "Photographed Ring")?.facts
+        .find((f) => f.label === "Price")?.value,
+      "£42.00");
+    await prisma.store.update({ where: { id: store.id }, data: { currency: "USD" } });
     eq("and whether it is actually on sale",
       one.facts.find((f) => f.label === "On sale in your storefront")?.value, "Yes");
     eq("which is not the same answer for an inactive product",

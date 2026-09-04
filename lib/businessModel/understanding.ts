@@ -234,6 +234,20 @@ export interface BusinessUnderstanding {
    */
   activePromotions: ActivePromotion[];
   /**
+   * THE STORE'S OWN CURRENCY (2026-09-04).
+   *
+   * Added because a promotion reached the model as "5.00 off" - a bare
+   * number with no currency at all, which is worse than the wrong symbol: a
+   * model handed an unlabelled figure will supply a symbol itself, and the
+   * owner hears a currency nobody chose. Every amount in this understanding
+   * is denominated in this.
+   *
+   * NULL ONLY IF THE STORE ROW IS GONE, in which case there is no business to
+   * describe and nothing to format. It is not a default, and specifically not
+   * "USD" - inventing one here is the exact failure the rule exists to stop.
+   */
+  currency: string | null;
+  /**
    * THE ORDERS THE OWNER MIGHT STILL MENTION (2026-09-03, P1).
    *
    * getOrderSummary counts orders and sums revenue; it returns no individual
@@ -361,6 +375,10 @@ export async function getBusinessUnderstanding(
     prisma.store.findUnique({
       where: { id: storeId },
       select: {
+        // THE MONEY THIS BUSINESS IS DENOMINATED IN. Not a platform detail:
+        // it belongs to the business, and anything that turns one of its
+        // figures into a string needs it.
+        currency: true,
         planId: true,
         growthPointBalance: true,
         subscriptionStatus: true,
@@ -460,6 +478,7 @@ export async function getBusinessUnderstanding(
   return {
     profile,
     blockedGoals,
+    currency: store?.currency ?? null,
     activePromotions: activePromotionRows.map((row) => ({
       id: row.id,
       name: row.name,

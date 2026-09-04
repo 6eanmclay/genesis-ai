@@ -1,6 +1,7 @@
 import type { BusinessUnderstanding } from "./understanding";
 import type { OwnerFactsWithProvenance } from "./ownerFacts";
 import type { RecordProvenance } from "@prisma/client";
+import { formatMoney } from "@/lib/money";
 
 // WHAT J4 UNDERSTANDS ABOUT A BUSINESS, AS SOMETHING YOU CAN LOOK AT.
 //
@@ -348,8 +349,12 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
   for (const item of p.offerings.items) {
     const data = item.data as Record<string, unknown>;
     const productId = item.id.replace("internal:item:", "");
-    const price = typeof data.priceInCents === "number"
-      ? `${(data.priceInCents / 100).toFixed(2)}`
+    // A PRICE WITH NO CURRENCY IS NOT A PRICE. This rendered a bare "25.00"
+    // on the card an owner opens to see what J4 knows about a product.
+    // No currency means no store row, so the fact is omitted rather than
+    // shown with a symbol nobody chose.
+    const price = typeof data.priceInCents === "number" && u.currency !== null
+      ? formatMoney(data.priceInCents, u.currency)
       : null;
     add(node("commerce", `item:${item.id}`, labelOf(item), certaintyOf(item.provenance), {
       detail: "Product",
@@ -391,7 +396,14 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
       provenance: contact.provenance,
       recordId: contact.id,
       facts: knownOf([
-        ["Spent with you", top.totalSpentInCents ? `${(top.totalSpentInCents / 100).toFixed(2)}` : null],
+        // Same rule: what a customer spent is money, and it was reaching the
+      // card as an unlabelled figure.
+      [
+        "Spent with you",
+        top.totalSpentInCents && u.currency !== null
+          ? formatMoney(top.totalSpentInCents, u.currency)
+          : null,
+      ],
       ]),
     }));
   }
