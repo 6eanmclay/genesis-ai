@@ -167,6 +167,25 @@ async function main(): Promise<void> {
     const map = page.locator('[data-screen="business-map"]');
     console.log(`business map still visible: ${await map.isVisible()}`);
     console.log(`page not scroll-locked: ${await page.evaluate(() => document.body.style.overflow !== "hidden")}`);
+    // ---- THE MAP CAN STILL BE FOCUSED WHILE HE IS OPEN -----------------
+    //
+    // J4 asking the map to focus something is driven by a streamed model
+    // event (J4Workspace -> setJ4Focus -> BusinessMapCanvas), so the round
+    // trip needs a real model and is production-only, exactly like the reply.
+    // verify-j4-focus.ts already proves the store -> plan -> nodeIds path
+    // headlessly.
+    //
+    // WHAT THE PANEL CHANGES is whether the owner can SEE it. In the Office a
+    // focused card was highlighted behind a full-screen overlay - correct, and
+    // invisible. So what is checked here is the precondition the panel exists
+    // to create: the consumer is mounted and on screen at the same moment the
+    // conversation is.
+    const cards = await page.locator('[data-screen="business-map"] [data-entity-id], [data-screen="business-map"] [data-focused]').count();
+    const anyCard = cards > 0
+      ? cards
+      : await page.locator('[data-screen="business-map"] button, [data-screen="business-map"] article').count();
+    console.log(`map is live behind the open panel (focusable elements): ${anyCard}`);
+    console.log(`nothing is focused yet, correctly: ${(await page.locator('[data-focused="true"]').count()) === 0}`);
 
     // ---- MINIMISE AND REOPEN KEEPS THE CONVERSATION --------------------
     const typed = await composer.inputValue().catch(() => "");
