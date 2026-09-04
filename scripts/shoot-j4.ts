@@ -68,6 +68,25 @@ async function main(): Promise<void> {
     await signIn(page, server.baseUrl, email);
 
     await page.goto(`${server.baseUrl}/dashboard`, { waitUntil: "domcontentloaded" });
+    // THE OPENING, CAUGHT IN FLIGHT. Three frames on the way through: the
+    // flip with no face, the moment the systems are coming online, and the
+    // ready beat. Waiting for the map first would miss all three.
+    const boot = page.locator('[data-testid="j4-boot"]');
+    const sawBoot = await boot.waitFor({ state: "visible", timeout: 20_000 }).then(() => true).catch(() => false);
+    console.log(`the opening sequence ran: ${sawBoot}`);
+    if (sawBoot) {
+      await page.waitForTimeout(800);
+      console.log(`phase while flipping: ${await boot.getAttribute("data-boot-phase")}`);
+      await page.screenshot({ path: `${SHOTS}/boot-1-flip.png` });
+      await page.waitForTimeout(3_100);
+      const on = await page.locator('[data-system][data-on="true"]').count();
+      console.log(`systems online mid-sequence: ${on} of 6`);
+      await page.screenshot({ path: `${SHOTS}/boot-2-systems.png` });
+      await page.waitForTimeout(1_700);
+      console.log(`phase near the end: ${await boot.getAttribute("data-boot-phase")}`);
+      await page.screenshot({ path: `${SHOTS}/boot-3-ready.png` });
+    }
+
     await page.waitForSelector('[data-screen="business-map"]', { timeout: 60_000 });
     // WAIT FOR THE ARRIVAL EXPERIENCE TO CLEAR. It is a full-screen fixed
     // layer at z-100, and four seconds was not enough - the first attempt
@@ -84,6 +103,10 @@ async function main(): Promise<void> {
       )
       .catch(() => {});
     await page.waitForTimeout(1_500);
+    // AND CAPTURE THE OPENING WHILE IT RUNS. J4Boot now takes the arrival
+    // slot, so the sequence is what stands between sign-in and the
+    // workspace - which makes it the one thing that CANNOT be photographed
+    // after the fact. Frames are grabbed on the way past.
 
     // AND REMOVE NEXT'S DEV OVERLAY, which lives in the bottom-left corner -
     // the same corner as J4 - so in `next dev` its badge sits directly on top

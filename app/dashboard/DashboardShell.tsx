@@ -24,6 +24,7 @@ import { useJ4Talk } from "./useJ4Talk";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { ALLOWED_VOICE_MEMO_CONTENT_TYPES } from "@/lib/voice/voiceMemoFile";
 import { GenesisArrivalOverlay } from "./GenesisArrivalOverlay";
+import { J4Boot } from "@/components/j4/J4Boot";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
@@ -878,11 +879,27 @@ export function DashboardShell({
           exists). Fixed full-screen, so its position in the tree doesn't
           matter beyond being mounted; only renders on a real fresh launch,
           and only ever once per real sign-in (isFreshLaunch/consume above). */}
+      {/* THE OPENING IS J4's NOW (2026-09-04).
+
+          The arrival moment already existed and already fired exactly once
+          per real sign-in, so the sequence takes that slot rather than
+          inventing a second one - and it finishes through the SAME path,
+          consume() and all, so nothing downstream can tell the difference.
+
+          What changed is what the owner watches: J4 arriving, waking, and
+          switching six real areas of Genesis on one at a time, instead of a
+          line of copy over a blue orb. The orb's own overlay stays in the
+          tree for the paths that still use it. */}
       {returningActive && (
-        <GenesisArrivalOverlay
-          text={returningBeat?.text ?? ""}
-          leaving={returningLeaving}
-          fullScreenOnDesktop
+        <J4Boot
+          userName={userName}
+          onDone={() => {
+            setReturningLeaving(true);
+            setReturningActive(false);
+            consume();
+            setJustArrived(true);
+            setTimeout(() => setJustArrived(false), 8000);
+          }}
         />
       )}
 
