@@ -356,9 +356,20 @@ standing between "the architecture is ready" and "this feels like J4".
 ### The smallest slice that is real, in order
 
 1. **Give `focus` a consumer.** P2 emits `focus.nodeIds` and nothing renders it.
-   The Business Map canvas already draws nodes by id, so highlighting one is the
-   shortest path from the shipped contract to something an owner can see. **This
-   is the next implementation step and needs no new asset.**
+   **This is the next implementation step and needs no new asset** — but it is
+   two-stage, not one highlight, and that was found by reading the canvas rather
+   than assumed:
+
+   `BusinessMapCanvas` renders the **nine DOMAINS** as its ring (`key:
+   MapDomainKey`, `step(key)` drills in), not individual nodes. Entities appear
+   in the carousel *after* a domain is opened. So focusing `product:<id>` means
+   **open that node's domain, then highlight it within the carousel** — and the
+   node's domain is already on `MapNode.domain`, so no new resolution is needed.
+
+   The mechanism should be a small presentation-only store in the shape of
+   `lib/dashboard/genesisActivity.ts` (`subscribe`/`getSnapshot`/`set`), holding
+   node ids and nothing else: focus is temporary presentation state, must not be
+   persisted, and must not touch map data or the understanding.
 2. **Add `speaking` and `attention` to `GenesisActivityState`**, driven by the
    existing machine. Behaviour first, appearance later.
 3. **A desktop bottom-left zone** hosting the existing presence, with an explicit
