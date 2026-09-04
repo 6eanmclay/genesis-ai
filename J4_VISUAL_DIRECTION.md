@@ -137,6 +137,24 @@ comparing items, reacting, celebrating, and visually guiding the owner.
 primary surfaces stay accessible and usable while he is expanded, and the owner
 can move between them with J4 still present.
 
+**Built and verified 2026-09-04** (`b3abbf5`, checks in `b381743`). The dock
+opens the same conversation the Office opens — one mount, two presentations —
+as a non-modal panel anchored to his corner: no scrim, no scroll lock, no
+`aria-modal`, and the workspace stays scrollable behind him. The paragraph
+above is no longer only a requirement; `scripts/shoot-j4.ts` hit-tests every
+visible link while the panel is open and then clicks a real destination and
+waits to arrive. The panel intercepts zero links. Giving it `inset-0` turns
+all six links red, which is how we know the check would notice.
+
+Closing him is deliberately *hiding*, not unmounting. Talk Mode sends a spoken
+turn through the composer without ever expanding it, so the conversation stays
+mounted and merely goes `aria-hidden`. A test that asserts removal is wrong
+about the design, not about the code.
+
+**Not yet built:** the torso, arms, pointing and gesturing described above.
+Expanded J4 today is the head-and-visor character; he does not yet turn toward
+content or guide the owner through it.
+
 ---
 
 ## Visual language — state through behaviour, not labels
