@@ -58,3 +58,36 @@ export function isAllowedPlatformAdmin(
 
   return allowed.has(normalised);
 }
+
+/**
+ * Whether an email belongs to a platform operator, ACCORDING TO THIS
+ * DEPLOYMENT'S CONFIGURED ALLOWLIST.
+ *
+ * ============ WHY THE ENVIRONMENT READ MOVED HERE (2026-09-05) =========
+ *
+ * The allowlist had exactly one reader, lib/platformAdmin.ts, and an invariant
+ * in verify-authorization-family-db holding it that way: two implementations of
+ * one authorization decision agree until the day they do not, and the drifted
+ * one is the copy nobody is reading.
+ *
+ * Then the Growth Points ledger needed the same answer about a STORE OWNER
+ * rather than about whoever is signed in, and could not get it. Not for want of
+ * trying: lib/platformAdmin begins `import "server-only"`, which does not
+ * resolve under tsx, and the ledger is exercised by several verification suites
+ * that run there. So the ledger read the variable itself, and the invariant
+ * caught it — correctly. The check was right and the second reader was wrong.
+ *
+ * The fix is not a second reader with a comment promising to keep it in step.
+ * The question "is this email an operator?" is one question, so it gets one
+ * answer, in the module that already holds the rule and that anything can
+ * import. lib/platformAdmin keeps what is genuinely its own: reading the
+ * session, redirecting, and recording refusals.
+ *
+ * TAKES THE EMAIL RATHER THAN FINDING ONE. The ledger's caller may be a cron
+ * run, a webhook, or a queued job, where there is no session at all — and those
+ * execute real work that costs real points. An entitlement that only held while
+ * somebody was looking at a screen would fail exactly when it matters.
+ */
+export function isPlatformAdminEmail(email: string | null | undefined): boolean {
+  return isAllowedPlatformAdmin(email, process.env.PLATFORM_ADMIN_EMAILS ?? "");
+}

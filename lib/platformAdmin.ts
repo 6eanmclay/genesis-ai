@@ -1,7 +1,7 @@
 import "server-only";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
-import { isAllowedPlatformAdmin } from "@/lib/platformAdminPolicy";
+import { isAllowedPlatformAdmin, isPlatformAdminEmail } from "@/lib/platformAdminPolicy";
 
 // The decision lives in lib/platformAdminPolicy so the verification harness can
 // reach it — this module cannot be imported under tsx because of `server-only`,
@@ -21,7 +21,7 @@ export { isAllowedPlatformAdmin };
 // decision #2 — without touching any caller.
 export async function isPlatformAdmin(): Promise<boolean> {
   const session = await auth();
-  return isAllowedPlatformAdmin(session?.user?.email, process.env.PLATFORM_ADMIN_EMAILS ?? "");
+  return isPlatformAdminEmail(session?.user?.email);
 }
 
 // Same "redirect, don't return a boolean" shape requireStorePermission/

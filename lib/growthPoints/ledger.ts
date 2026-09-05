@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { GenesisActionType } from "@/lib/execution/genesisActions";
 import { growthPointCostFor } from "./catalog";
+import { isPlatformAdminEmail } from "@/lib/platformAdminPolicy";
 
 export interface GrowthPointGate {
   ok: boolean;
@@ -21,6 +22,32 @@ export interface GrowthPointGate {
 // means no free tier (Builder, Growth); a real number means any action
 // costing at or below it never touches the store's own balance. Kept as
 // a pure function so both call sites below apply the identical rule.
+// THE PLATFORM OPERATOR'S OWN BUSINESS (2026-09-05).
+//
+// Genesis runs its own store through Genesis. Metering the operator against
+// the customer credit system means the platform's own operational work stops
+// when a customer-facing balance runs out, which is a billing rule applied to
+// something that was never a customer.
+//
+// RESOLVED FROM THE STORE'S OWNER, not from the session. The session is not
+// available to a cron run, a webhook, or a queued job, and those execute real
+// actions too - an entitlement that only held while somebody was looking at a
+// screen would be the kind that fails exactly when it matters. Store.userId is
+// the owner and does not change.
+//
+// SAME SHAPE AS THE OTHER TWO, deliberately: it is a third `unlimitedSource`,
+// so a covered action still writes a real transaction at zero and the
+// description still names which mechanism covered it. Nothing is hidden, no
+// balance is faked, and the owner's own history stays readable.
+//
+// TAKES THE EMAIL THE CALLER ALREADY HAS. This first fetched the store
+// itself, which meant a second query on every authorize and every debit for
+// an answer that is nearly always no. All three callers had already loaded
+// the store a line earlier, so they select one more column instead.
+function isUnlimitedViaPlatform(ownerEmail: string | null | undefined): boolean {
+  return isPlatformAdminEmail(ownerEmail);
+}
+
 function isUnlimitedViaPlan(ceiling: number | null | undefined, cost: number): boolean {
   return ceiling !== null && ceiling !== undefined && cost <= ceiling;
 }
@@ -59,6 +86,7 @@ export async function checkGrowthPointBalance(
       growthPointBalance: true,
       businessPartnerTrialEndsAt: true,
       plan: { select: { unlimitedActionCostCeiling: true } },
+      user: { select: { email: true } },
     },
   });
   const balance = store?.growthPointBalance ?? 0;
@@ -66,6 +94,9 @@ export async function checkGrowthPointBalance(
     return { ok: true, cost, balance };
   }
   if (await isUnlimitedViaTrial(store?.businessPartnerTrialEndsAt, cost)) {
+    return { ok: true, cost, balance };
+  }
+  if (isUnlimitedViaPlatform(store?.user?.email)) {
     return { ok: true, cost, balance };
   }
   return { ok: balance >= cost, cost, balance };
@@ -97,6 +128,7 @@ export async function checkGrowthPointBalanceForActions(
       growthPointBalance: true,
       businessPartnerTrialEndsAt: true,
       plan: { select: { unlimitedActionCostCeiling: true } },
+      user: { select: { email: true } },
     },
   });
   const balance = store?.growthPointBalance ?? 0;
@@ -107,6 +139,10 @@ export async function checkGrowthPointBalanceForActions(
     if (cost === null) continue;
     if (isUnlimitedViaPlan(store?.plan?.unlimitedActionCostCeiling, cost)) continue;
     if (await isUnlimitedViaTrial(store?.businessPartnerTrialEndsAt, cost)) continue;
+    // THE GROUP RAIL MUST AGREE WITH THE SINGLE-ACTION RAIL. It carried the
+    // plan and trial exemptions and not this one, so the same work was
+    // covered approved individually and charged approved together.
+    if (isUnlimitedViaPlatform(store?.user?.email)) continue;
     totalCost += cost;
   }
 
@@ -139,7 +175,7 @@ export type DeductionPlan =
   /** Already charged for this execution. Do nothing at all. */
   | { kind: "already_charged" }
   /** Covered by a plan or trial: record it at zero, do not move the balance. */
-  | { kind: "covered"; source: "plan" | "trial" }
+  | { kind: "covered"; source: "plan" | "trial" | "platform" }
   /** Charge it. */
   | { kind: "charge"; cost: number }
   /**
@@ -151,7 +187,7 @@ export type DeductionPlan =
 
 export function planDeduction(params: {
   alreadyCharged: boolean;
-  unlimitedSource: "plan" | "trial" | null;
+  unlimitedSource: "plan" | "trial" | "platform" | null;
   balance: number;
   cost: number;
 }): DeductionPlan {
@@ -178,6 +214,7 @@ export async function deductGrowthPoints(params: {
         growthPointBalance: true,
         businessPartnerTrialEndsAt: true,
         plan: { select: { unlimitedActionCostCeiling: true } },
+        user: { select: { email: true } },
       },
     });
 
@@ -190,7 +227,9 @@ export async function deductGrowthPoints(params: {
       ? "plan"
       : (await isUnlimitedViaTrial(current?.businessPartnerTrialEndsAt, params.cost))
         ? "trial"
-        : null;
+        : isUnlimitedViaPlatform(current?.user?.email)
+          ? "platform"
+          : null;
 
     // Idempotency, checked INSIDE the transaction — the same discipline
     // creditGrowthPointsFromPurchase already used and this side lacked.
@@ -238,7 +277,14 @@ export async function deductGrowthPoints(params: {
           actionType: params.actionType,
           executionLogId: params.executionLogId,
           description:
-            unlimitedSource === "plan" ? "Included with your plan" : "Included with your Business Partner Preview",
+            unlimitedSource === "plan"
+              ? "Included with your plan"
+              : unlimitedSource === "trial"
+                ? "Included with your Business Partner Preview"
+                // NAMED, NOT MERGED. A platform-covered action reads as what
+                // it is in the owner's own history, rather than borrowing the
+                // wording of a plan they are not on.
+                : "Covered by the Genesis platform account",
         },
       });
       return;

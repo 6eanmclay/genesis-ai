@@ -268,13 +268,42 @@ async function main(): Promise<void> {
     const readers = execSync('git grep -l "PLATFORM_ADMIN_EMAILS" -- lib app', { encoding: "utf8" })
       .split("\n").filter(Boolean)
       .filter((f) => !f.startsWith("lib/config/"));
-    eq("exactly one module reads the platform-admin allowlist", readers, ["lib/platformAdmin.ts"]);
+    // ============ WHICH MODULE, AND WHY IT MOVED (2026-09-05) ====
+    //
+    // This named lib/platformAdmin.ts, and the invariant is unchanged:
+    // exactly ONE module decides who is an operator. What changed is which,
+    // and it moved for a reason this check itself found.
+    //
+    // The Growth Points ledger needed the same answer about a store's OWNER
+    // rather than about whoever is signed in. It could not ask
+    // lib/platformAdmin, which begins `import "server-only"` and so does not
+    // resolve under tsx, where several suites exercise the ledger. So the
+    // ledger read the variable itself and this assertion caught it - working
+    // exactly as intended.
+    //
+    // The answer was not to allow a second reader. One question gets one
+    // answer, in the module that already holds the rule and that anything can
+    // import; lib/platformAdmin keeps the session, the redirect and the
+    // refusal signal, which are genuinely its own. So the count is still one,
+    // and it is now the module the next assertion always said the parsing
+    // belonged in.
+    eq("exactly one module reads the platform-admin allowlist", readers, ["lib/platformAdminPolicy.ts"]);
 
-    const adminSrc = readFileSync("lib/platformAdmin.ts", "utf8");
+    const policySrc = readFileSync("lib/platformAdminPolicy.ts", "utf8");
     eq("and it parses it exactly once",
-      (adminSrc.match(/PLATFORM_ADMIN_EMAILS/g) ?? []).length, 1);
-    assert("the parsing itself lives in the testable policy module",
-      adminSrc.includes('from "@/lib/platformAdminPolicy"'));
+      (policySrc.match(/PLATFORM_ADMIN_EMAILS/g) ?? []).length, 1);
+    // The session-reading wrapper must go through the policy rather than
+    // keeping a copy of the rule beside it.
+    const adminSrc = readFileSync("lib/platformAdmin.ts", "utf8");
+    assert("the session wrapper asks the policy rather than restating it",
+      adminSrc.includes('from "@/lib/platformAdminPolicy"')
+      && !adminSrc.includes("PLATFORM_ADMIN_EMAILS"));
+    // And the ledger asks the same one, so a platform action is covered on
+    // every rail rather than on whichever one somebody remembered.
+    const ledgerSrc = readFileSync("lib/growthPoints/ledger.ts", "utf8");
+    assert("the spending rails ask the policy too",
+      ledgerSrc.includes('from "@/lib/platformAdminPolicy"')
+      && !ledgerSrc.includes("PLATFORM_ADMIN_EMAILS"));
 
     // The policy still holds — proven here too, so deleting the dead copy
     // cannot have taken the live behaviour with it.
