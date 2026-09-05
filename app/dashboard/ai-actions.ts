@@ -1236,6 +1236,23 @@ async function logChatTurnEvent(params: {
   requiresConfirmation?: boolean;
   likelyRephraseOf?: string | null;
   stageDurationsMs?: Record<string, number | null>;
+  /**
+   * WHICH STAGES FAILED, AND HOW — the signal whose absence hid a nine-day
+   * defect (2026-09-05).
+   *
+   * A stage that fails still records a duration, and nothing else. The unified
+   * triage call had been returning 400 on every turn since 2026-08-26 (an
+   * invalid tool schema, fixed in 2035762): it recorded ~150 ms and moved on,
+   * every turn fell through to PRIMARY's full-store regeneration, and the
+   * owner waited 22-27 seconds instead of talking to J4. In the telemetry that
+   * read as a fast stage.
+   *
+   * A rejected request is billed nothing, so it writes no AiUsageEvent either.
+   * The failure was therefore invisible in BOTH places that record model
+   * calls, and had to be inferred from a stage that looked suspiciously quick.
+   * A duration alone cannot distinguish "fast" from "refused".
+   */
+  stageFailures?: Record<string, { kind: string; status: number | null }>;
 }) {
   const session = await auth();
   if (!session?.user) return;
@@ -1255,6 +1272,7 @@ async function logChatTurnEvent(params: {
         requiresConfirmation: params.requiresConfirmation ?? false,
         likelyRephraseOf: params.likelyRephraseOf ?? null,
         stageDurationsMs: params.stageDurationsMs ?? null,
+        stageFailures: params.stageFailures ?? null,
       },
     }).catch(() => {})
   );
@@ -1282,6 +1300,8 @@ async function bailOnProviderFailure(params: {
   turnStartedAt: number;
   likelyRephraseOf: string | null;
   stageDurationsMs?: Record<string, number | null>;
+  /** Which stages refused, and how — see logChatTurnEvent's note. */
+  stageFailures?: Record<string, { kind: string; status: number | null }>;
 }): Promise<never> {
   const failureMessage = genesisModelFailureMessage(params.kind);
   await recordGenesisExecution({
@@ -1312,6 +1332,7 @@ async function bailOnProviderFailure(params: {
     outcome: "failure",
     likelyRephraseOf: params.likelyRephraseOf,
     stageDurationsMs: params.stageDurationsMs,
+    stageFailures: params.stageFailures,
   });
   revalidatePath(params.returnTo);
   redirectKeepingChatOpen(params.returnTo);
@@ -2018,6 +2039,25 @@ async function applyGenesisMessageToStore(
   // inferred one. One shared, mutated object rather than reconstructed per
   // call site — every exit point below just passes this same reference.
   const stageDurationsMs: Record<string, number | null> = {};
+  // A DURATION ALONE CANNOT TELL "FAST" FROM "REFUSED" (2026-09-05).
+  //
+  // The triage stage recorded ~150 ms on every turn for nine days and looked
+  // like the healthiest thing in the trace. It was a 400 — an invalid tool
+  // schema — rejected before it was billed, so it wrote no AiUsageEvent
+  // either, and every turn silently fell through to PRIMARY's full-store
+  // regeneration at 22-27 seconds.
+  //
+  // noteModelStage takes the OUTCOME rather than a number, so a stage cannot
+  // record how long it took without also recording whether it worked. That is
+  // the whole point: the previous shape made the omission the easy path.
+  const stageFailures: Record<string, { kind: string; status: number | null }> = {};
+  function noteModelStage(
+    name: string,
+    outcome: { ok: boolean; durationMs: number } & ({ ok: true } | { ok: false; kind: string; status: number | null }),
+  ): void {
+    stageDurationsMs[name] = outcome.durationMs;
+    if (!outcome.ok) stageFailures[name] = { kind: outcome.kind, status: outcome.status };
+  }
   const dbFetchStartedAt = Date.now();
 
   // Refused, never substituted — the rule lives in businessFromSlug.
@@ -2230,7 +2270,7 @@ async function applyGenesisMessageToStore(
       tools: buildStoreChatUnifiedTools(),
       tool_choice: { type: "auto" },
     }, { storeId: store.id, confirmedOverride, feature: "store_chat_unified_triage" });
-    stageDurationsMs.unifiedTriage = unifiedOutcome.durationMs;
+    noteModelStage("unifiedTriage", unifiedOutcome);
 
     const unifiedContent = unifiedOutcome.ok ? unifiedOutcome.message.content : [];
     // EVERY TOOL THE MODEL ASKED FOR, then what policy allows — the same plan
@@ -2279,6 +2319,7 @@ async function applyGenesisMessageToStore(
       outcome: "success",
       likelyRephraseOf,
       stageDurationsMs,
+      stageFailures,
     });
     revalidatePath(returnTo);
     redirectKeepingChatOpen(returnTo);
@@ -2334,6 +2375,7 @@ async function applyGenesisMessageToStore(
         outcome: "failure",
         likelyRephraseOf,
         stageDurationsMs,
+        stageFailures,
       });
       revalidatePath(returnTo);
       redirectKeepingChatOpen(returnTo);
@@ -2392,6 +2434,7 @@ async function applyGenesisMessageToStore(
       outcome: "success",
       likelyRephraseOf,
       stageDurationsMs,
+      stageFailures,
     });
     revalidatePath(returnTo);
     redirectKeepingChatOpen(returnTo);
@@ -2456,6 +2499,7 @@ async function applyGenesisMessageToStore(
         outcome: turnOutcome(completed, Boolean(partial)),
         likelyRephraseOf,
         stageDurationsMs,
+        stageFailures,
       });
       revalidatePath(returnTo);
       redirectKeepingChatOpen(returnTo);
@@ -2502,6 +2546,7 @@ async function applyGenesisMessageToStore(
         outcome: "failure",
         likelyRephraseOf,
         stageDurationsMs,
+        stageFailures,
       });
       revalidatePath(returnTo);
       redirectKeepingChatOpen(returnTo);
@@ -2523,7 +2568,7 @@ async function applyGenesisMessageToStore(
       format: zodOutputFormat(StoreChatPrimarySchema),
     },
   }, { storeId: store.id, confirmedOverride, feature: "store_chat_content_primary" });
-  stageDurationsMs.primary = primaryOutcome.durationMs;
+  noteModelStage("primary", primaryOutcome);
   if (!primaryOutcome.ok) {
     return bailOnProviderFailure({
       kind: primaryOutcome.kind,
@@ -2534,6 +2579,7 @@ async function applyGenesisMessageToStore(
       turnStartedAt,
       likelyRephraseOf,
       stageDurationsMs,
+      stageFailures,
     });
   }
 
@@ -2557,6 +2603,7 @@ async function applyGenesisMessageToStore(
       outcome: "failure",
       likelyRephraseOf,
       stageDurationsMs,
+      stageFailures,
     });
     throw new Error("Genesis couldn't process that request");
   }

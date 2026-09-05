@@ -372,17 +372,31 @@ async function main() {
   // EVERY TOOL SCHEMA MUST BE SOMETHING THE API WILL ACCEPT (2026-09-05)
   // ==========================================================================
   //
-  // FROM PRODUCTION, and the worst kind of outage: J4 heard, saved and
-  // transcribed the owner's message and then had no reply, on every turn, by
-  // text and by voice alike.
+  // FROM PRODUCTION, and it cost nine days before anyone could see it.
   //
   // request_sale's input_schema was built from a discriminated union.
-  // z.toJSONSchema turns a union into a top-level anyOf with no `type` and no
-  // `properties`, and a tool's input_schema must be type:"object". Anthropic
-  // rejected the tool list with a 400 - and because the list is sent with
-  // EVERY request, it rejected every conversation. The classifier called it
-  // invalid_request, which shows as "an unexpected problem generating a
-  // response": true, unactionable, and identical to a dozen other causes.
+  // z.toJSONSchema turns that into `{ $schema, oneOf }` - no top-level `type`
+  // and no `properties` - and a tool's input_schema must be type:"object".
+  // Sent against the real API on 2026-09-05, that shape returns:
+  //
+  //     400 tools.0.custom.input_schema.type: Field required
+  //
+  // The tool list goes up with EVERY request, so from 2026-08-26 the unified
+  // triage call was rejected on every single turn.
+  //
+  // WHAT THAT ACTUALLY BROKE, measured rather than assumed. Not the whole
+  // conversation - I claimed that once and it was wrong. Triage is the stage
+  // that both chooses J4's tools and answers plain conversation without
+  // touching the store, so its loss meant J4 had NO tools on this path, and
+  // every turn instead fell through to PRIMARY, which regenerates the entire
+  // store content model to say hello: ~21,500 tokens in, ~2,200 out, 22-27
+  // seconds. J4 still replied, which is exactly why it read as "slow" rather
+  // than "broken", and why nothing in the telemetry pointed here: a rejected
+  // request is billed nothing, so it wrote no usage row, and the stage
+  // recorded ~150 ms, which looks like the healthiest number in the trace.
+  //
+  // One malformed schema breaks every conversation, so this checks all of
+  // them rather than the one that broke.
   //
   // One malformed schema breaks every conversation, so this checks all of
   // them rather than the one that broke.

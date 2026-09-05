@@ -451,6 +451,35 @@ async function main(): Promise<void> {
       !emitted.has("creation.definitely_not_a_real_event" as never), "control");
   }
 
+  // ============ A DURATION WITHOUT AN OUTCOME (2026-09-05) ==============
+  //
+  // The chat turn recorded how long each stage took and nothing about whether
+  // it worked. The unified triage call had been returning 400 on every turn
+  // since 2026-08-26 - an invalid tool schema - and in the telemetry that read
+  // as a 150 ms stage, which looks like the fastest, healthiest thing in the
+  // trace. A rejected request is billed nothing, so it wrote no AiUsageEvent
+  // either. It was invisible in both places for nine days while every turn
+  // silently fell through to a full store regeneration at 22-27 seconds.
+  //
+  // This is a gap of exactly the kind this suite exists for: not a missing
+  // event, but a recorded one that cannot express failure. noteModelStage
+  // takes the outcome, so recording a duration without its verdict is no
+  // longer the easy path - and this asserts nobody has gone back to it.
+  {
+    const source = strip(readFileSync(join(process.cwd(), "app", "dashboard", "ai-actions.ts"), "utf8"));
+    const rawWrites = [...source.matchAll(/stageDurationsMs\.(\w+)\s*=\s*(\w+)\.durationMs/g)]
+      .map((m) => m[1]);
+    eq("no model stage records a duration without its outcome", rawWrites, []);
+    assert("and the turn carries stage failures at all",
+      source.includes("stageFailures"), "stageFailures");
+    // The control: the sweep must be able to SEE such a write, or it proves
+    // nothing. Same shape as the dead-event control above.
+    assert("this check can recognise the shape it forbids",
+      /stageDurationsMs\.(\w+)\s*=\s*(\w+)\.durationMs/.test(
+        "  stageDurationsMs.primary = primaryOutcome.durationMs;"),
+      "control");
+  }
+
   // Planted rows cleared: ProductEvent and Order are read by platform-wide
   // reporting and this lane shares one database.
   await prismaSystem.productEvent.deleteMany({ where: { storeId: store.id } });
