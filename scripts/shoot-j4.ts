@@ -159,7 +159,21 @@ async function main(): Promise<void> {
       const oneAtATime = JSON.stringify(climb) === JSON.stringify([0, 1, 2, 3, 4, 5, 6]);
       console.log(`systems came up: ${seen.join(" -> ")}`);
       console.log(`one at a time, never grouped: ${oneAtATime}`);
-    }
+
+      // AND THE IMAGES ACTUALLY LOAD. Counting data-on told me the sequence
+      // was running while every icon layer was fetching a 404 and nothing lit
+      // up at all. An attribute is a statement of intent; naturalWidth is
+      // whether the browser got a picture.
+      const layers = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-system] img')).map((el) => ({
+          src: (el as HTMLImageElement).src.split("/").pop(),
+          loaded: (el as HTMLImageElement).naturalWidth > 0,
+        })),
+      );
+      const broken = layers.filter((l) => !l.loaded).map((l) => l.src);
+      console.log(`icon layers found: ${layers.length}`);
+      console.log(`icon layers that actually loaded: ${layers.length - broken.length}` +
+        (broken.length ? ` — MISSING: ${broken.join(", ")}` : ""));    }
 
     await page.waitForSelector('[data-screen="business-map"]', { timeout: 60_000 });
     // WAIT FOR THE ARRIVAL EXPERIENCE TO CLEAR. It is a full-screen fixed

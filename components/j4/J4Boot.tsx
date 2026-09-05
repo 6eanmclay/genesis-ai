@@ -34,7 +34,18 @@ import { useEffect, useRef, useState } from "react";
  * which is what lets one set of coordinates address both.
  */
 const ART_OFF = "/brand/j4-off.png";
-const ART_ON = "/brand/j4-icons-on.png";
+/**
+ * ONE LAYER PER ICON, each a full-canvas transparent PNG carrying only that
+ * icon in its lit state, cut from the same registered master as the face.
+ *
+ * This replaced a single combined ON frame addressed by background-position.
+ * That frame was deleted in a cleanup while this still referenced it, so the
+ * reveals fetched a 404 and no icon ever visibly lit - and the check said
+ * "0 -> 1 -> ... -> 6" the whole time, because it was counting a data-on
+ * attribute rather than looking at the picture. Per-icon files cannot fail
+ * that way silently: a missing one is a missing image, not a silent no-op.
+ */
+const ICON_LAYER = (key: string) => `/brand/j4-icon-${key}.png`;
 /** The illuminated face, as a transparent layer over ART_OFF. */
 const ART_FACE = "/brand/j4-face-on.png";
 
@@ -198,26 +209,16 @@ export function J4Boot({
               const on = i < lit;
               return (
                 <div key={s.key} data-system={s.key} data-on={on ? "true" : "false"}>
-                  {/* THE ACTIVATION IS A REVEAL. This paints the ON artwork
-                      into a circle over the OFF one, aligned to this icon, and
-                      fades it in. Nothing is filtered, traced or redrawn - the
-                      icon that lights up is the artist's lit icon.
-
-                      backgroundSize is the inverse of the patch's own width,
-                      which is what makes the same fractional point land in both
-                      layers. */}
-                  <span
+                  {/* THE ACTIVATION IS A REVEAL: the grey icon is covered by
+                      its own lit version, in place, at full canvas size - so
+                      nothing moves and only that one icon changes. */}
+                  <img
+                    src={ICON_LAYER(s.key)}
+                    alt=""
                     aria-hidden="true"
-                    className="pointer-events-none absolute rounded-full"
+                    draggable={false}
+                    className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain"
                     style={{
-                      left: `${s.cx * 100}%`,
-                      top: `${s.cy * 100}%`,
-                      width: "13%",
-                      height: "13%",
-                      transform: "translate(-50%, -50%)",
-                      backgroundImage: `url(${ART_ON})`,
-                      backgroundSize: `${100 / 0.13}% auto`,
-                      backgroundPosition: `${s.cx * 100}% ${s.cy * 100}%`,
                       opacity: on ? 1 : 0,
                       transition: `opacity ${BOOT_TIMELINE.power}ms ease-out`,
                     }}
