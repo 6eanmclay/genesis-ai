@@ -486,6 +486,53 @@ export const RequestSaleInputSchema = z.discriminatedUnion("intent", [
   }),
 ]);
 
+/**
+ * WHAT ANTHROPIC IS SENT for request_sale, as opposed to what the handler
+ * validates against.
+ *
+ * A TOOL'S input_schema MUST BE type:"object". RequestSaleInputSchema is a
+ * discriminated union, and z.toJSONSchema turns it into `{ $schema, oneOf }` -
+ * measured, not assumed: no top-level `type` and no `properties` at all. That
+ * is not a shape a tool definition can take, and the tool list goes up with
+ * every request, so it was worth fixing on sight.
+ *
+ * ============ WHAT THIS DID *NOT* CAUSE (2026-09-05) ==================
+ *
+ * I said this was the cause of the chat outage - J4 hearing, saving and
+ * transcribing a turn and then having no reply. That was wrong, and it is
+ * recorded here because the wrong version is the memorable one: J4 started
+ * working again while this fix was still sitting uncommitted on a branch, so
+ * whatever broke the conversation, it was not this. The real cause was never
+ * established.
+ *
+ * The change stands on its own evidence - the schema shape above is measurably
+ * invalid - and on nothing more than that.
+ *
+ * So the wire shape is flat: `intent` decides which fields matter, and the
+ * rest are optional here. Strictness is not lost - the handler still parses
+ * with the discriminated union above, so a 'create' missing its name is still
+ * refused. What changed is only what the model is shown.
+ *
+ * The two are cross-checked at runtime by verify-tool-handlers: every key in
+ * either branch of the union must exist here, or the model would be unable to
+ * express something the handler requires.
+ */
+export const RequestSaleWireSchema = z.object({
+  intent: z.enum(["create", "end"]),
+  name: z.string().nullable().optional(),
+  kind: z.enum(["SALE", "CODE"]).nullable().optional(),
+  code: z.string().nullable().optional(),
+  discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]).nullable().optional(),
+  percentOff: z.number().int().min(1).max(100).nullable().optional(),
+  amountOffInCents: z.number().int().min(1).nullable().optional(),
+  include: z.enum(["all", "named"]).nullable().optional(),
+  includeNames: z.array(z.string()).nullable().optional(),
+  excludeNames: z.array(z.string()).nullable().optional(),
+  startsAt: z.string().nullable().optional(),
+  endsAt: z.string().nullable().optional(),
+  promotionName: z.string().nullable().optional(),
+});
+
 export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
   return [
     {
@@ -544,7 +591,7 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
         "intent 'end' — 'take the pyramid off sale', 'stop the spring sale', 'end that discount code'. Set promotionName to the name of the promotion as it appears in the 'Running now:' line of the business context above. If nothing is running, or the merchant names something that is not there, say so — do not create a new promotion instead. " +
         "You CANNOT change an existing promotion's discount, dates or products with this tool. If that is what they are asking for, tell them plainly that you can start one or end one, and never propose a NEW promotion as a way of changing an old one — that leaves both running. " +
         "Either way this PROPOSES the change for the merchant's own review and approval; it never changes a price immediately. Never tell the merchant to go and do it themselves; you can prepare the real thing for them to approve.",
-      input_schema: z.toJSONSchema(RequestSaleInputSchema) as Anthropic.Tool.InputSchema,
+      input_schema: z.toJSONSchema(RequestSaleWireSchema) as Anthropic.Tool.InputSchema,
     },
     {
       name: "toggle_order_fulfilled",

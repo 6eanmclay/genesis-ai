@@ -43,7 +43,7 @@ import {
   toolContextFor,
 } from "@/lib/dashboard/runToolTurn";
 import { TakeMeThereInputSchema } from "@/lib/execution/genesisTools";
-import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
+import { buildStoreChatUnifiedTools, RequestSaleInputSchema } from "@/lib/execution/genesisTools";
 import { queryRecords } from "@/lib/businessModel/reasoning";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { resolveBusiness } from "@/lib/businessContext";
@@ -368,6 +368,48 @@ async function main() {
   assert("the Office is deliberately absent from the map",
     !Object.hasOwn(NAV_DESTINATIONS, "office"),
     "mapping it to any href is how J4 said one place and went to another");
+  // ==========================================================================
+  // EVERY TOOL SCHEMA MUST BE SOMETHING THE API WILL ACCEPT (2026-09-05)
+  // ==========================================================================
+  //
+  // FROM PRODUCTION, and the worst kind of outage: J4 heard, saved and
+  // transcribed the owner's message and then had no reply, on every turn, by
+  // text and by voice alike.
+  //
+  // request_sale's input_schema was built from a discriminated union.
+  // z.toJSONSchema turns a union into a top-level anyOf with no `type` and no
+  // `properties`, and a tool's input_schema must be type:"object". Anthropic
+  // rejected the tool list with a 400 - and because the list is sent with
+  // EVERY request, it rejected every conversation. The classifier called it
+  // invalid_request, which shows as "an unexpected problem generating a
+  // response": true, unactionable, and identical to a dozen other causes.
+  //
+  // One malformed schema breaks every conversation, so this checks all of
+  // them rather than the one that broke.
+  const wireTools = buildStoreChatUnifiedTools();
+  const badSchemas = wireTools
+    .filter((t) => {
+      const schema = t.input_schema as unknown as Record<string, unknown>;
+      return schema?.type !== "object" || typeof schema?.properties !== "object";
+    })
+    .map((t) => t.name);
+  check("every tool schema is an object the API will accept", badSchemas, []);
+
+  // AND THE MODEL CAN EXPRESS EVERYTHING THE HANDLER DEMANDS. request_sale now
+  // has two shapes - a flat one on the wire, a discriminated union for
+  // parsing - so a field the union requires but the wire schema lacks would be
+  // impossible for the model to send and impossible to see in a schema check.
+  const wireSale = wireTools.find((t) => t.name === "request_sale");
+  const wireKeys = Object.keys(
+    ((wireSale?.input_schema as unknown as Record<string, unknown>)?.properties ??
+      {}) as Record<string, unknown>,
+  );
+  const unionKeys = new Set<string>();
+  for (const option of RequestSaleInputSchema.options) {
+    for (const key of Object.keys(option.shape)) unionKeys.add(key);
+  }
+  check("the model can express every field request_sale parses",
+    [...unionKeys].filter((k) => !wireKeys.includes(k)), []);
   // ==========================================================================
   // CONNECTIONS ARE UNDERSTANDING, AND THE TOOLS HAVE TO SAY SO (2026-09-04)
   // ==========================================================================
