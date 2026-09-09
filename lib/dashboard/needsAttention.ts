@@ -5,6 +5,7 @@ import { connectionHealthOf } from "@/lib/integrations/connectionHealth";
 import { CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
 import { getOperationalIssues } from "./operationalIssues";
 import { getWaitingCustomerIssues } from "./waitingCustomers";
+import { officeActionForExecution, LEGACY_BUSINESS_BASE } from "@/lib/j4/officeActions";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -19,13 +20,35 @@ export async function getRecentNegativeOutcomes(storeId: string): Promise<Attent
     orderBy: { createdAt: "desc" },
     take: 10,
   });
-  return rows.map((row) => ({
-    id: row.id,
-    kind: "recent-failure" as const,
-    severity: row.status as "FAILED" | "WARNING",
-    message: row.message,
-    occurredAt: row.createdAt,
-  }));
+  // ONLY WHAT THE OWNER CAN DO SOMETHING ABOUT (2026-09-09).
+  //
+  // This used to map every FAILED/WARNING row straight to the owner —
+  // `message: row.message`, no actionHref — and row.message is an internal
+  // exception string. Measured in production, that produced 25 of the Office's
+  // 26 dead urgent rows, including a raw
+  // `Provider error (billing): 400 {"type":"error"...}` and ten copies of
+  // `"warm cream base with copper-toned section bands" is not a real option`.
+  //
+  // Those are bug reports, not business intelligence, and no button belongs on
+  // them. lib/j4/officeActions.ts holds the one rule: an execution action is
+  // owner-facing exactly when a destination has been defined for it, so
+  // anything internal drops out here rather than arriving on a screen with
+  // nowhere to go. Same defect this file already fixed one function down, in
+  // getStaleExecutions on 2026-08-19.
+  return rows.flatMap((row) => {
+    const action = officeActionForExecution({ action: row.action, message: row.message }, LEGACY_BUSINESS_BASE);
+    if (action.kind !== "open") return [];
+    return [
+      {
+        id: row.id,
+        kind: "recent-failure" as const,
+        severity: row.status as "FAILED" | "WARNING",
+        message: row.message,
+        occurredAt: row.createdAt,
+        actionHref: action.href,
+      },
+    ];
+  });
 }
 
 // PENDING rows older than an hour whose executionId has no newer row —
@@ -97,13 +120,31 @@ export async function getStaleExecutions(storeId: string): Promise<AttentionItem
 
   return pendingRows
     .filter((row) => latestIdByExecutionId.get(row.executionId) === row.id)
-    .map((row) => ({
-      id: row.id,
-      kind: "stale-pending" as const,
-      severity: "WARNING" as const,
-      message: `${row.message} — still pending since ${row.createdAt.toLocaleDateString()}`,
-      occurredAt: row.createdAt,
-    }));
+    .flatMap((row) => {
+      // THE SAME GATE AS getRecentNegativeOutcomes (2026-09-09).
+      //
+      // AWAITING_A_HUMAN above already removes the two actions known to mean
+      // "waiting on a person". It is an explicit deny-list, so anything new is
+      // surfaced by default — and production still had six
+      // `genesis.recommendations.generate` rows stuck since 27 July on an
+      // owner's urgent list, plus a stalled PayPal capture with nowhere to go.
+      //
+      // officeActionForExecution inverts that default: no destination defined
+      // means not owner-facing. The deny-list stays because it carries its own
+      // distinct reasoning about PENDING, and the two agree.
+      const action = officeActionForExecution({ action: row.action, message: row.message }, LEGACY_BUSINESS_BASE);
+      if (action.kind !== "open") return [];
+      return [
+        {
+          id: row.id,
+          kind: "stale-pending" as const,
+          severity: "WARNING" as const,
+          message: `${row.message} — still pending since ${row.createdAt.toLocaleDateString()}`,
+          occurredAt: row.createdAt,
+          actionHref: action.href,
+        },
+      ];
+    });
 }
 
 /**

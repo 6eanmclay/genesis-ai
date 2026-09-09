@@ -182,8 +182,16 @@ async function main(): Promise<void> {
         m.art ? `${m.art.w}x${m.art.h} inside ${expected}px` : "no character element");
       check(`${width}: J4's artwork is square`,
         !!(m.art && Math.abs(m.art.w - m.art.h) <= 1), m.art ? `${m.art.w}x${m.art.h}` : "-");
-      check(`${width}: both of J4's layers loaded and have real width`,
-        m.paintedImages.length === 2 && m.paintedImages.every((i) => i.loaded && i.w > 0),
+      // ONE LAYER NOW, NOT TWO (2026-09-09).
+      //
+      // This asserted "both of J4's layers" because the character was a base
+      // plus a face lit over the visor. The new direction is a clean visor —
+      // no face asset at all — so two images would mean something had been
+      // composited back onto him. The count is the assertion, not a detail of
+      // it: expecting two here after the change would have gone green on an
+      // artwork rule Sean stated explicitly.
+      check(`${width}: J4 is one image, loaded, with real width`,
+        m.paintedImages.length === 1 && m.paintedImages.every((i) => i.loaded && i.w > 0),
         m.paintedImages.map((i) => `${i.src.split("/").pop()} ${i.loaded ? "loaded" : "MISSING"} ${i.w}px`).join(", ") || "no images");
 
       check(`${width}: the bar starts where J4 ends`,

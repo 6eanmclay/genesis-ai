@@ -26,6 +26,7 @@ import { extractAudioUrl, extractChangeList, extractImageUrl, extractImageUrls, 
 import { VoiceMemoButton } from "./VoiceMemoButton";
 import { J4SpeakButton } from "./J4SpeakButton";
 import { decideSpeak, NOTHING_SPOKEN, type SpokenState } from "@/lib/voice/spokenReplies";
+import { rowInteractionClass } from "@/lib/j4/officeActions";
 import { J4HandoffContext } from "@/app/dashboard/J4HandoffContext";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
@@ -119,17 +120,32 @@ interface TaskItem {
   summary: string;
   href: string | null;
   priority: string;
+  /**
+   * Why nothing can be pressed, when nothing can be pressed. Server-decided in
+   * lib/j4/officeActions.ts so the surface cannot invent a reason of its own.
+   */
+  because?: string;
 }
 interface DecisionItem {
   id: string;
   summary: string;
   createdAt: string;
   href: string | null;
+  /**
+   * Why nothing can be pressed, when nothing can be pressed. Server-decided in
+   * lib/j4/officeActions.ts so the surface cannot invent a reason of its own.
+   */
+  because?: string;
 }
 interface IdeaItem {
   id: string;
   summary: string;
   href: string | null;
+  /**
+   * Why nothing can be pressed, when nothing can be pressed. Server-decided in
+   * lib/j4/officeActions.ts so the surface cannot invent a reason of its own.
+   */
+  because?: string;
 }
 // One heading's worth of what J4 understands, already shaped and formatted on
 // the server (J4Surface). Deliberately plain strings: this crosses into a
@@ -148,6 +164,11 @@ interface InformationItem {
   summary: string;
   href: string | null;
   kind: "urgent" | "curiosity";
+  /**
+   * Why nothing can be pressed, when nothing can be pressed. Server-decided in
+   * lib/j4/officeActions.ts so the surface cannot invent a reason of its own.
+   */
+  because?: string;
 }
 
 // Temporary production tracing (2026-08-08) — carried over from the
@@ -647,11 +668,20 @@ function CategoryRow({
   title,
   summary,
   href,
+  because,
   dotClassName,
 }: {
   title?: string;
   summary: string;
   href: string | null;
+  /**
+   * Why there is nothing to press, when there is nothing to press.
+   *
+   * Only rendered on the inert branch. It exists so "no action" is a stated
+   * fact the owner can read rather than something they discover by tapping a
+   * row twice and concluding the product is broken.
+   */
+  because?: string;
   dotClassName: string;
 }) {
   const inner = (
@@ -663,13 +693,37 @@ function CategoryRow({
       </div>
     </div>
   );
-  const rowClassName = "block rounded-lg px-2 py-2.5 transition hover:bg-white/[.04]";
-  return href ? (
-    <a href={href} className={rowClassName}>
+  // A ROW THAT CANNOT BE PRESSED MUST NOT LOOK PRESSABLE (2026-09-09).
+  //
+  // Both branches used to carry `hover:bg-white/[.04]`. Measured in
+  // production, 198 of the rows on this surface had no href — so 198 rows lit
+  // up under the owner's finger and did nothing. Sean: "Do not make fake
+  // buttons just to make the UI look interactive... If an item genuinely
+  // cannot be acted upon yet, make that state explicit rather than pretending
+  // it is interactive."
+  //
+  // Nobody decided that hover; it was one shared class name. So the hover now
+  // lives only on the branch that can actually be followed, and the inert
+  // branch says why it is inert instead of implying it is a link.
+  // The affordance is DERIVED from whether there is anything to follow, in
+  // lib/j4/officeActions.ts, so a hover can never again be attached to a row
+  // that does nothing. See rowInteractionClass for why that decision does not
+  // live in this file.
+  const base = "block rounded-lg px-2 py-2.5";
+  if (href) {
+    return (
+      <a href={href} className={`${base} ${rowInteractionClass({ kind: "open", label: "", href })}`}>
+        {inner}
+      </a>
+    );
+  }
+  return (
+    <div className={`${base} ${rowInteractionClass({ kind: "none", because: because ?? "" })}`}>
       {inner}
-    </a>
-  ) : (
-    <div className={rowClassName}>{inner}</div>
+      {because && (
+        <p className="mt-1 pl-5 text-xs italic text-[rgba(244,242,251,0.42)]">{because}</p>
+      )}
+    </div>
   );
 }
 
@@ -2117,7 +2171,7 @@ export function J4Workspace({
           ) : (
             <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {tasks.map((t) => (
-                <CategoryRow key={t.id} title={t.title} summary={t.summary} href={t.href} dotClassName={taskPriorityDotClassName(t.priority)} />
+                <CategoryRow key={t.id} title={t.title} summary={t.summary} href={t.href} because={t.because} dotClassName={taskPriorityDotClassName(t.priority)} />
               ))}
             </div>
           )
@@ -2127,7 +2181,7 @@ export function J4Workspace({
           ) : (
             <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {ideas.map((o) => (
-                <CategoryRow key={o.id} summary={o.summary} href={o.href} dotClassName="bg-purple-500" />
+                <CategoryRow key={o.id} summary={o.summary} href={o.href} because={o.because} dotClassName="bg-purple-500" />
               ))}
             </div>
           )
@@ -2137,7 +2191,7 @@ export function J4Workspace({
           ) : (
             <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {decisions.map((d) => (
-                <CategoryRow key={d.id} summary={d.summary} href={d.href} dotClassName="bg-amber-400" />
+                <CategoryRow key={d.id} summary={d.summary} href={d.href} because={d.because} dotClassName="bg-amber-400" />
               ))}
             </div>
           )
@@ -2152,7 +2206,7 @@ export function J4Workspace({
           ) : (
             <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
               {information.map((i) => (
-                <CategoryRow key={i.id} summary={i.summary} href={i.href} dotClassName={i.kind === "urgent" ? "bg-red-500" : "bg-teal-400"} />
+                <CategoryRow key={i.id} summary={i.summary} href={i.href} because={i.because} dotClassName={i.kind === "urgent" ? "bg-red-500" : "bg-teal-400"} />
               ))}
             </div>
           )

@@ -18,6 +18,11 @@ import { messageStateOf } from "@/lib/j4/messageState";
 import { listConversations } from "@/lib/j4/conversations";
 import { buildContextEntries } from "@/lib/j4/contextTypes";
 import { proposalJ4Raised } from "@/lib/intelligence/proactive";
+import {
+  officeActionForObservation,
+  officeActionForExplanation,
+  type OfficeAction,
+} from "@/lib/j4/officeActions";
 
 // J4's real conversation, rendered on either of its two surfaces
 // (2026-08-14). Extracted from app/j4/page.tsx unchanged so that both the
@@ -273,7 +278,11 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
     }),
     prisma.cognitiveOutput.findMany({
       where: { storeId: store.id, kind: "explanation", status: "ACTIVE" },
-      select: { id: true, summary: true },
+      // actionHref is read now (2026-09-09). It was never selected, and the
+      // mapping below hardcoded `href: null` — so an explanation that DID
+      // carry a destination lost it on the way to the screen, and all 158 of
+      // them rendered inert. Reading the column is the whole fix for that half.
+      select: { id: true, summary: true, actionHref: true },
       orderBy: { generatedAt: "desc" },
     }),
     hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
@@ -359,9 +368,24 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   const messages = recentMessages.reverse();
   const urgentObservations = observations.filter((o) => o.genesisState === "urgent");
   const ideas = observations.filter((o) => o.genesisState === "opportunity");
+  // EVERY ROW SAYS WHETHER IT CAN BE ACTED ON (2026-09-09).
+  //
+  // `href: null` on the explanations was hardcoded, and all 158 of them
+  // rendered with a hover highlight and no destination. The decision now comes
+  // from lib/j4/officeActions.ts, which returns either a real destination or a
+  // stated reason there is none - so the surface can no longer imply an action
+  // it does not have, and cannot invent a reason of its own either.
+  const basePath = slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE;
+  const asRow = (id: string, summary: string, action: OfficeAction, kind: "urgent" | "curiosity") => ({
+    id,
+    summary,
+    href: action.kind === "open" ? action.href : null,
+    because: action.kind === "none" || action.kind === "internal" ? action.because : undefined,
+    kind,
+  });
   const information = [
-    ...urgentObservations.map((o) => ({ id: o.id, summary: o.summary, href: o.actionHref, kind: "urgent" as const })),
-    ...explanations.map((e) => ({ id: e.id, summary: e.summary, href: null, kind: "curiosity" as const })),
+    ...urgentObservations.map((o) => asRow(o.id, o.summary, officeActionForObservation(o, basePath), "urgent")),
+    ...explanations.map((e) => asRow(e.id, e.summary, officeActionForExplanation(e, basePath), "curiosity")),
   ];
   const hasUrgentIssue = urgentObservations.length > 0;
   const hasOpportunity = ideas.length > 0;
@@ -431,7 +455,15 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
           ? sectionHref(ACTION_SECTIONS[a.actionType].href, slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE)
           : null,
       }))}
-      ideas={ideas.map((o) => ({ id: o.id, summary: o.summary, href: o.actionHref }))}
+      ideas={ideas.map((o) => {
+        const action = officeActionForObservation(o, basePath);
+        return {
+          id: o.id,
+          summary: o.summary,
+          href: action.kind === "open" ? action.href : null,
+          because: action.kind === "none" ? action.because : undefined,
+        };
+      })}
       information={information}
       understanding={understanding ? toUnderstandingGroups(understanding, store.currency) : []}
       // Rendered on the server and handed down, so the layer stays a client

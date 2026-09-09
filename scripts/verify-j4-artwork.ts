@@ -138,17 +138,41 @@ function main(): void {
     return found[1];
   }
 
+  // THE PERSISTENT J4 HAS NO FACE LAYER ANY MORE (2026-09-09, Sean).
+  //
+  // "Black visor remains completely clean. Never put the symbol on the visor
+  // itself." So the calm pair is gone: one render, nothing composited over it,
+  // and state carried by a ring on the container instead. The checks that used
+  // to prove the face layer stayed inside the visor have nothing left to
+  // measure - what needs proving now is the opposite, that NOTHING is drawn on
+  // him at all. That is asserted directly below, against the component source,
+  // because "there is no second image" is a fact about the code rather than
+  // about pixels.
+  //
+  // The entrance keeps its pair and keeps its checks: J4Boot still lights a
+  // visor, and until that sequence is redesigned its invariants still hold.
+  // COUNT THE ASSETS HE REFERENCES, not the words in the file.
+  //
+  // The first version of these checks matched on source text, and both halves
+  // were wrong in opposite directions. One regex was written through a shell
+  // heredoc, which turned `\b` into a literal backspace byte - so it searched
+  // for `<img` followed by 0x08 and matched a tag that was plainly there zero
+  // times. The other matched the explanatory COMMENT naming the retired face
+  // file, and reported a face layer that does not exist. A test that reads
+  // prose is measuring my writing rather than the product.
+  //
+  // Asset paths are unambiguous and cannot appear in a sentence by accident,
+  // so those are what get counted.
+  const characterAssets = [...characterSrc.matchAll(/"\/brand\/([^"]+)"/g)].map((m) => m[1]);
+  record("the persistent J4 references exactly one asset",
+    characterAssets.length === 1, characterAssets.join(", ") || "none");
+  record("that one asset is the new render",
+    characterAssets[0] === "j4-v2.png", characterAssets[0] ?? "none");
+  record("no face layer is composited over the visor",
+    !characterAssets.some((a) => /face/.test(a)),
+    characterAssets.filter((a) => /face/.test(a)).join(", ") || "nothing is drawn on him");
+
   const pairs = [
-    {
-      label: "calm (the corner and the workspace)",
-      base: referenced(characterSrc, "BASE", "J4Character"),
-      face: referenced(characterSrc, "FACE", "J4Character"),
-      // A feathered ellipse around his face only, so the shell is untouched
-      // exactly - anything above zero here is a bleed onto his armour.
-      shellAllowance: 0,
-      face_x: [0.443, 0.730],
-      face_y: [0.345, 0.534],
-    },
     {
       label: "greeting (the entrance)",
       base: referenced(bootSrc, "ART_OFF", "J4Boot"),

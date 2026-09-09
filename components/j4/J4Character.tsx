@@ -78,8 +78,35 @@ export type J4Gaze = "ahead" | "left" | "right" | "down";
 // pixels at the artist's spacing, because they ARE the artist's pixels. Neither
 // master was modified to produce it. verify-j4-artwork proves both halves of
 // that on the files themselves.
-const BASE = "/brand/j4-character.png";
-const FACE = "/brand/j4-calm-face-on.png";
+const BASE = "/brand/j4-v2.png";
+
+/**
+ * State, as light AROUND J4 rather than marks ON him.
+ *
+ * ============ THE VISOR IS NEVER DRAWN ON (2026-09-09, Sean) ===========
+ *
+ * The new direction is explicit: "Black visor remains completely clean" and
+ * "Never put the symbol on the visor itself." That retires the face layer this
+ * component carried — `j4-calm-face-on.png`, the eyes and smile — and with it
+ * the OFF/ON mechanism that painted a second image inside the same box.
+ *
+ * So state moved outside the artwork entirely. This is one ring on the
+ * CONTAINER: no pixel of the render is covered, nothing is composited over the
+ * visor, and there is nothing here that could drift into being a face. It also
+ * keeps the earlier rule intact — no runtime-generated expressions — because a
+ * border colour is not an expression.
+ *
+ * The character's own emblem and ear module already glow in the render. This
+ * ring is the part that can change; those are the part that cannot.
+ */
+const STATE_RING: Record<J4State, string> = {
+  idle: "ring-[#4ade3a]/25",
+  listening: "ring-[#4ade3a]/80 animate-pulse",
+  thinking: "ring-[#4ade3a]/50 animate-pulse",
+  speaking: "ring-[#4ade3a]/90",
+  success: "ring-[#4ade3a]/70",
+  attention: "ring-amber-400/80",
+};
 
 export function J4Character({
   state = "idle",
@@ -125,17 +152,16 @@ export function J4Character({
         alt=""
         aria-hidden="true"
         draggable={false}
-        className="absolute inset-0 h-full w-full object-contain"
-      />
-      {/* THE LIGHT, IN THE SAME BOX. Same dimensions, same fit, same position —
-          so turning it on is turning a light on inside the same image. */}
-      <img
-        src={FACE}
-        alt=""
-        aria-hidden="true"
-        draggable={false}
         className="absolute inset-0 h-full w-full object-contain transition-opacity duration-300"
-        style={{ opacity: awake ? 1 : 0 }}
+        style={{ opacity: awake ? 1 : 0.55 }}
+      />
+      {/* STATE IS LIGHT AROUND HIM, NEVER MARKS ON HIM.
+          A ring outside the artwork, so the visor stays clean and no pixel of
+          the render is drawn over. Nothing here is a face and nothing here is
+          generated — it is one border whose colour and pulse follow state. */}
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-0 rounded-[22%] ring-1 transition-all duration-500 ${STATE_RING[state]}`}
       />
     </div>
   );
