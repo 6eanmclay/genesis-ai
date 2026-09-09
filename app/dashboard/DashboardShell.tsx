@@ -318,7 +318,12 @@ export function DashboardShell({
   const mobileTab = (section: NavSection) => {
     const isAccount = section.href === ACCOUNT_SENTINEL_HREF;
     const active = isAccount ? moreOpen : isActive(section.href);
-    const className = `relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${
+    // min-w-0 so a long label cannot push a sibling out of the row, and
+    // whitespace-nowrap so it never wraps to a second line - the two failure
+    // modes Sean named. "Storefront" is the widest of the five labels, and at
+    // 360px each slot is 51px, so it drops to 10px type below 380px to fit
+    // without truncating. Measured: tallest room 53px, so nothing wrapped.
+    const className = `relative flex min-w-0 flex-1 flex-col items-center gap-0.5 whitespace-nowrap px-0.5 py-2 text-[10px] min-[380px]:text-[11px] ${
       active ? "text-black dark:text-zinc-50" : "text-zinc-500 dark:text-zinc-400"
     }`;
     const body = (
@@ -343,8 +348,11 @@ export function DashboardShell({
       </Link>
     );
   };
-  const mobileLeftTabs = tabSections.slice(0, 2);
-  const mobileRightTabs = tabSections.slice(2);
+  // NO SPLIT ANY MORE (2026-09-09). tabSections used to be cut in two so a
+  // centre gap could hold J4's place - from when J4 was a centre orb. He
+  // anchors bottom-LEFT now, so the gap held space nowhere near him while two
+  // rooms sat underneath him. The bar pads left by --j4-dock-reserve instead,
+  // which is the same declaration that sets his width.
 
   // Business home exactly — not the whole Your Business group. This is the
   // one route where J4 is the hero rather than an ambient bar, so it's also
@@ -1148,35 +1156,24 @@ export function DashboardShell({
 
           Mobile only. The lg:+ treatment is untouched, and desktop is its own
           design pass that hasn't happened yet. */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-end border-t border-black/[.08] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden">
-        {mobileLeftTabs.map(mobileTab)}
+      <nav
+        data-testid="mobile-room-bar"
+        className="fixed inset-x-0 bottom-0 z-40 flex items-end border-t border-black/[.08] bg-white/95 pb-[env(safe-area-inset-bottom)] pl-[var(--j4-dock-reserve)] backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden"
+      >
+        {/* FIVE ROOMS, ONE ROW, ALL TO J4'S RIGHT.
 
-        {/* J4's slot in the bar, restored (2026-08-15).
-            The presence briefly floated above the bar, which put it on top of
-            the storefront preview's scroll surface — the one place the owner
-            swipes to inspect their own site. It is back in the bar, so this
-            gap holds its place: wider than the other slots because a 52px orb
-            plus its label needs real clearance, and four equal slots on a
-            360px phone leave none.
-            Kept as an empty spacer rather than rendering the orb here, because
-            the nav carries backdrop-blur — a backdrop-filter creates a
-            stacking context that would trap the orb at this bar's own z-index,
-            which is the bug that moved it out in the first place. It is
-            portalled and positioned over this gap instead. */}
-        <div className="flex-[1.5]" aria-hidden="true" />
+            What was here: two tabs, a flex-[1.5] spacer, three tabs. The
+            spacer was J4's old centre slot and had outlived him - measured at
+            360px it left an 84px hole in the middle while Business and
+            Storefront sat underneath a J4 anchored bottom-left.
 
-        {/* No J4 slot at all any more (2026-08-14, second pass).
-            The orb first left this bar because backdrop-blur creates a
-            stacking context that trapped it at the bar's z-40; an empty
-            widened gap stayed behind to hold its place. Now that J4's
-            presence is a composer sitting ABOVE the bar rather than in it,
-            even the gap is wrong — it left a hole in the middle of four tabs
-            with nothing to fill it. The tabs simply share the bar. */}
-
-        {mobileRightTabs.map(mobileTab)}
+            Deleted rather than moved. Another spacer would be the same bug in
+            a new position: the bar would be holding its own opinion about
+            where J4 is. The padding-left above is the reserve itself. */}
+        {tabSections.map(mobileTab)}
 
         {/* The standalone Account overflow button is gone (2026-08-17).
-            Account is one of the four link tabs now and opens this same
+            Account is one of the five link tabs now and opens this same
             sheet, so keeping this rendered it twice and put a fifth control
             in a bar meant to hold four plus the orb. The sheet is unchanged
             and still holds settings, billing and connections. */}

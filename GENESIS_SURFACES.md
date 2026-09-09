@@ -61,6 +61,30 @@ Genesis is not a dashboard full of tabs. It is a set of **places the owner goes 
 
 Two rooms, the partner, two rooms. **The navigation holds the business. J4 holds the work done on it.**
 
+> **The physical arrangement above is superseded, 2026-09-09.** The diagram is the
+> four-room bar with J4 in the centre slot. There are five rooms now (see the
+> amendment at the top), and J4 is anchored **bottom-left** with all five to his
+> right:
+>
+> ```
+> ┌────────────────────────────────────────────────┐
+> │ ( J4 )  Business  Storefront  Studio  Commerce  Account │
+> │  Office                                          │
+> └────────────────────────────────────────────────┘
+> ```
+>
+> This is a change of *placement only*. Everything the lock actually decides —
+> that J4 is never a tab, that Office is entered through him, that the bar holds
+> the business and J4 holds the work — is unchanged, and the arrangement above
+> expresses it more plainly than the centre slot did: the partner is beside the
+> rooms rather than filed among them.
+>
+> How much room he takes is one CSS declaration, `--j4-dock-reserve`, read by
+> both the dock and the bar. It exists because they used to decide separately:
+> J4 anchored bottom-left while the bar held a spacer in its centre, so two of
+> the five rooms sat underneath him and were untappable. See
+> `lib/dashboard/j4DockLayout.ts` and `scripts/verify-mobile-nav-layout.ts`.
+
 | Room | The question it answers | Entered by |
 |---|---|---|
 | **Storefront** | What does my business look like? | Navigation |
@@ -74,6 +98,11 @@ Two rooms, the partner, two rooms. **The navigation holds the business. J4 holds
 Two doors into one room is not a problem. **An "Office" tab sitting in the room bar is** — because it is the tab every owner would read as *the J4 tab*, which is the one thing this architecture forbids, reintroduced through the back door.
 
 Removing it makes the division honest: the bar is the business, and the partner keeps the work. It also gives the bar its physical symmetry, two rooms either side of the orb, which is what a control deck should look like and what a five-item bar could never be.
+
+> **The symmetry argument no longer applies, 2026-09-09.** It was an argument for
+> a centre orb, and J4 sits bottom-left now with five rooms beside him. It is
+> left here because it is not the reason the Office is not a tab — the reason is
+> the sentence before it, and that reason is untouched.
 
 **Office is still a room.** It has a stable name, a place, and a door. It is simply not a tab.
 

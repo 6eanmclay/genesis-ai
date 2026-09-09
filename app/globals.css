@@ -16,6 +16,33 @@
 :root {
   --background: #fafaf8;
   --foreground: #16171a;
+
+  /* HOW MUCH ROOM J4 TAKES. THE ONLY DECLARATION - see
+     lib/dashboard/j4DockLayout.ts for why this is one value and what reads it.
+
+     J4Dock uses it as its WIDTH; the mobile bar uses it as PADDING-LEFT. The
+     two used to decide separately and disagreed: J4 anchored bottom-left while
+     the bar held his place with a spacer in the CENTRE, so at 360px two of the
+     five rooms sat underneath him and an 84px gap sat empty in the middle.
+
+     Because the dock's width and the bar's padding are this same declaration,
+     they cannot drift. Making J4 bigger is this number, and the rooms move. */
+  --j4-dock-reserve: 104px;
+}
+
+@media (min-width: 390px) {
+  :root { --j4-dock-reserve: 116px; }
+}
+
+/* Desktop keeps him exactly the size he already was.
+
+   The old dock drew him at 124px above lg inside 32px of padding, so the
+   reserve is 124 + 32 and J4Dock restores those insets with lg: variants.
+   The dock keeps its exact former footprint here. Sean asked for a larger
+   J4 in the phone BAR; growing him on desktop as a side effect of sharing one
+   variable would be this change deciding something nobody asked it to. */
+@media (min-width: 1024px) {
+  :root { --j4-dock-reserve: 156px; }
 }
 
 @theme inline {

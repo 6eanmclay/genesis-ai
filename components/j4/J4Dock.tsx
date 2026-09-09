@@ -101,7 +101,17 @@ export function J4Dock({
       // throughout the application means he cannot be absent on a phone.
       // Scaled down rather than redesigned - the mobile pass is its own
       // phase and this is not it.
-      className="pointer-events-none fixed bottom-0 left-0 z-40 origin-bottom-left scale-[.68] sm:scale-[.8] lg:scale-100"
+      // WIDTH COMES FROM THE ONE DECLARATION (2026-09-09).
+      //
+      // This used to scale itself — scale-[.68] sm:scale-[.8] lg:scale-100 —
+      // while the mobile bar separately held a flex-[1.5] spacer in its CENTRE
+      // for a J4 that anchors bottom-LEFT. Measured at 360px, Business and
+      // Storefront both sat underneath him and an 84px gap sat empty in the
+      // middle: two components deciding the same thing and disagreeing.
+      //
+      // His width IS the reserve the navigation pads by now, so he cannot
+      // outgrow the space made for him. See lib/dashboard/j4DockLayout.ts.
+      className="pointer-events-none fixed bottom-0 left-0 z-40 w-[var(--j4-dock-reserve)]"
     >
       {/* ---- EXPANDED: emerges from this corner, never the centre -------- */}
       {expanded && (
@@ -144,10 +154,18 @@ export function J4Dock({
           wall of his room rather than a second occupant of the shelf. Talking
           to him is talking to him; the door is how you go further in.
       */}
-      <div className="pointer-events-auto px-3 pb-3 pt-2">
+      <div
+        // TIGHT ON A PHONE, UNCHANGED ON DESKTOP. Every pixel of padding here
+        // is a pixel of the reserve that is not J4, and on a 360px screen the
+        // reserve is competing with five rooms - so mobile spends 12px on
+        // chrome instead of 32 and gives the difference to the artwork. Above
+        // lg there is no bar to compete with and the original insets stay, so
+        // J4 does not move or resize on a desktop that never had this problem.
+        className="pointer-events-auto px-1 pb-1.5 pt-1 lg:px-3 lg:pb-3 lg:pt-2"
+      >
         <div
           data-testid="j4-corner"
-          className="relative rounded-[1.75rem] p-1"
+          className="relative rounded-[1.75rem] p-0.5 lg:p-1"
         >
           <button
             type="button"
@@ -158,12 +176,18 @@ export function J4Dock({
             // the shortcut for people who find it, not the only way in.
             onDoubleClick={() => setExpanded(true)}
             aria-label={`J4 \u2014 ${label}. Open the conversation.`}
-            className="block rounded-full transition-transform hover:scale-[1.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4ade3a]"
+            // w-full IS LOAD-BEARING. A <button> sizes to its content even at
+            // display:block, so `w-full` on J4 inside it asked for 100% of a
+            // width that depended on J4 - and Chrome resolved the pair to 0x0.
+            // The dock's own box still measured 104px, so every geometry
+            // assertion passed while the artwork was painted at nothing. The
+            // button has to take the width from the reserve first.
+            className="block w-full rounded-full transition-transform hover:scale-[1.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4ade3a]"
           >
             <J4Character
               state={state}
               gaze={justFocused ? "right" : "ahead"}
-              size={124}
+              size="fill"
               title={`J4 \u2014 ${label}`}
             />
           </button>

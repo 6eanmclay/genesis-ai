@@ -90,7 +90,17 @@ export function J4Character({
   state?: J4State;
   skin?: J4Skin;
   gaze?: J4Gaze;
-  size?: number;
+  /**
+   * A pixel size, or "fill" to take the width of whatever contains him.
+   *
+   * "fill" exists so the dock can size J4 from --j4-dock-reserve, the single
+   * declaration the navigation also reads. Before that, the dock scaled him
+   * independently of the space the bar held for him, and the two disagreed:
+   * two rooms ended up underneath him. Sizing from the reserve means he
+   * cannot outgrow the room made for him. The artwork is untouched - this is
+   * the box, not the picture.
+   */
+  size?: number | "fill";
   title?: string;
   /**
    * Whether his face is lit.
@@ -104,8 +114,8 @@ export function J4Character({
 }) {
   return (
     <div
-      className="relative select-none"
-      style={{ width: size, height: size }}
+      className={`relative select-none${size === "fill" ? " aspect-square w-full" : ""}`}
+      style={size === "fill" ? undefined : { width: size, height: size }}
       data-j4-state={state}
       data-j4-awake={awake ? "true" : "false"}
       title={title}
