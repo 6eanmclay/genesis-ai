@@ -18,6 +18,7 @@ import { messageStateOf } from "@/lib/j4/messageState";
 import { listConversations } from "@/lib/j4/conversations";
 import { buildContextEntries } from "@/lib/j4/contextTypes";
 import { proposalJ4Raised } from "@/lib/intelligence/proactive";
+import { officeFacts } from "@/lib/j4/officeFacts";
 import {
   officeActionForObservation,
   officeActionForExplanation,
@@ -383,6 +384,7 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
     because: action.kind === "none" || action.kind === "internal" ? action.because : undefined,
     kind,
   });
+  const understandingGroups = understanding ? toUnderstandingGroups(understanding, store.currency) : [];
   const information = [
     ...urgentObservations.map((o) => asRow(o.id, o.summary, officeActionForObservation(o, basePath), "urgent")),
     ...explanations.map((e) => asRow(e.id, e.summary, officeActionForExplanation(e, basePath), "curiosity")),
@@ -465,7 +467,31 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
         };
       })}
       information={information}
-      understanding={understanding ? toUnderstandingGroups(understanding, store.currency) : []}
+      understanding={understandingGroups}
+      // WHAT J4 IS HOLDING, COUNTED HERE (2026-09-09).
+      //
+      // Server-side and passed down once, like every other prop on this
+      // component — and built through lib/j4/officeFacts.ts, where a fact
+      // cannot exist without naming where its number came from. That is what
+      // keeps the Office's strip from becoming the reference's "Business
+      // Health 87", which has no calculation behind it.
+      facts={officeFacts(
+        {
+          activeProducts: understanding?.profile.offerings.activeCount ?? 0,
+          openTasks: openTasks.length,
+          pendingDecisions: pendingApprovals.length,
+          opportunities: ideas.length,
+          needsYou: urgentObservations.length,
+          // "Known" is how many areas J4 has ANY fact about — the groups that
+          // rendered a line rather than their own "I don't know this yet".
+          // Deliberately not a percentage: a proportion would imply the
+          // remainder is a task list, and some of these areas will never
+          // apply to a given business.
+          understandingKnown: understandingGroups.filter((g) => g.lines.length > 0).length,
+          understandingTotal: understandingGroups.length,
+        },
+        basePath,
+      )}
       // Rendered on the server and handed down, so the layer stays a client
       // component without needing to fetch or know about proposals itself.
       proposal={

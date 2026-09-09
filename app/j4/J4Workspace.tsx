@@ -27,6 +27,8 @@ import { VoiceMemoButton } from "./VoiceMemoButton";
 import { J4SpeakButton } from "./J4SpeakButton";
 import { decideSpeak, NOTHING_SPOKEN, type SpokenState } from "@/lib/voice/spokenReplies";
 import { rowInteractionClass } from "@/lib/j4/officeActions";
+import { OfficeBand } from "./OfficeBand";
+import type { OfficeFact } from "@/lib/j4/officeFacts";
 import { J4HandoffContext } from "@/app/dashboard/J4HandoffContext";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
@@ -859,6 +861,7 @@ export function J4Workspace({
   ideas,
   information,
   understanding,
+  facts = [],
   surface,
   proposal,
   conversations = [],
@@ -893,6 +896,15 @@ export function J4Workspace({
   ideas: IdeaItem[];
   information: InformationItem[];
   understanding: UnderstandingGroup[];
+  /**
+   * What J4 is holding for the owner, counted on the server.
+   *
+   * Built by lib/j4/officeFacts.ts, where a fact cannot be constructed
+   * without naming where its number came from - the guard against the
+   * reference artwork's "Business Health 87", which has no calculation
+   * behind it. This component never computes one.
+   */
+  facts?: OfficeFact[];
   surface: J4Surface;
   // J4's current proposal, server-rendered and handed down. Sits directly
   // above the composer, because the composer is how the owner argues with it
@@ -956,6 +968,11 @@ export function J4Workspace({
   // Office is the layer, so the layer honours the selection like the room
   // always did. Just Talk still pins the view, which is what it is for.
   const shownCategory: Category = talkingOnly ? "conversation" : activeCategory;
+
+  // THE OFFICE BAND IS THE IDENTITY when it is on screen. One flag, read by
+  // the band itself and by the two header pieces it replaces, so they cannot
+  // disagree about whether J4 has already been introduced on this surface.
+  const showsOfficeBand = !talkingOnly && !isLayer;
   const overallState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
   // WHAT J4 IS DOING, as opposed to what he has concluded. overallState above
   // is an ASSESSMENT - urgent, pending, opportunity - and putting that on his
@@ -1760,7 +1777,15 @@ export function J4Workspace({
               exactly the framing this is stepping away from.
 
               Kept for /j4 as its own page, which has no other J4 on it. */}
-          {!isLayer && (
+          {/* THE OFFICE HAS J4 IN IT NOW, so the header does not need a second,
+              smaller one — and this one was still the old orb, which Sean asked
+              to be replaced everywhere it appears. Two J4s on one screen, one
+              of them a thumbnail of the previous identity, is precisely the
+              "new picture pasted onto the old Office" being stepped away from.
+
+              Just Talk still gets it: the band is hidden there, so without this
+              the surface would have no J4 on it at all. */}
+          {!isLayer && !showsOfficeBand && (
           <div className="relative shrink-0">
             <GenesisAvatar className={GENESIS_AVATAR_SIZE.inline} />
             {/* Just Talk hides the operational status dot — a "something
@@ -1778,12 +1803,17 @@ export function J4Workspace({
             )}
           </div>
           )}
-          <div className="min-w-0">
-            <p className="text-base font-semibold tracking-wide text-[#f4f2fb]">J4</p>
-            <p className="truncate text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
-              Business Partner for {storeName}
-            </p>
-          </div>
+          {/* The band below says who he is and whose business this is, in
+              larger type and with his actual face. Repeating it here left the
+              Office opening on two headings that said the same thing. */}
+          {!showsOfficeBand && (
+            <div className="min-w-0">
+              <p className="text-base font-semibold tracking-wide text-[#f4f2fb]">J4</p>
+              <p className="truncate text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+                Business Partner for {storeName}
+              </p>
+            </div>
+          )}
           <J4WorkingPublisher />
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -1883,6 +1913,20 @@ export function J4Workspace({
           said they were: "views/filters within the Office, not additional
           navigation layers." Answering a quick question is Talk Mode's job,
           and Talk Mode never opens this panel at all. */}
+      {/* THE OFFICE IS A ROOM J4 IS IN (2026-09-09, Sean).
+          Only on the Office itself — the layer is a panel over the owner's
+          work and must not grow a second identity band above the one it
+          already has. Talk Mode shows nothing but the conversation, which is
+          the whole point of Talk Mode. */}
+      {showsOfficeBand && (
+        <OfficeBand
+          storeName={storeName}
+          state={j4State}
+          facts={facts}
+          onOpenView={(view: string) => setActiveCategory(view as Category)}
+        />
+      )}
+
       {!talkingOnly && (
         <div
           className="flex shrink-0 gap-1 overflow-x-auto border-b px-5 py-2"

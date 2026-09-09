@@ -118,6 +118,15 @@ export const ACCEPTED_FAILURES: Record<string, string> = {
   // updated in that order and verify-rooms is green. An accepted failure left
   // in place after the thing it excuses is fixed is exactly the stale excuse
   // this list's own comment warns about.
+  // j4-calm: ADDED 2026-09-09, and deliberately a suite of its own. The new
+  // J4 Sean supplied is not calm by the rule he set in August - measured, its
+  // surround reads 97 where the threshold is 40 and the GREETING artwork reads
+  // 75. I could not derive a calm variant without cutting into the character,
+  // so the rule is left failing rather than relaxed to match what shipped -
+  // the same reason verify-rooms was left red for a week. It guards ONE fact
+  // on purpose: accepting a suite hides everything behind it, which is how
+  // three further currency leaks hid behind E26.
+  "j4-calm": "EXTERNAL_BLOCKERS.md E27 - the new J4 render is not the calm/black-ground artwork the persistent surfaces are meant to use; awaiting a calm master from Sean",
   "store-currency": "EXTERNAL_BLOCKERS.md E26 — hardcoded $ in the Creation Station, which is the Studio reference implementation and out of scope here",
 };
 

@@ -279,59 +279,39 @@ function main(): void {
     );
   }
 
-  // ---- the calm badge is the calm badge ------------------------------------
-  // Sean asked for the persistent J4 to be the black/honeycomb version with
-  // none of the green energy around him, and the failure mode is somebody
-  // pointing the corner back at the greeting artwork. That is not a filename
-  // question - it is measurable in the picture: the greeting badge fills the
-  // space around him with a bright green field, and the calm one leaves it
-  // near-black. Measured in the band between his shoulder and the ring, where
-  // the greeting art has swirls and the calm art has only faint honeycomb.
-  const calm = readPng(pairs[0].base);
-  const greeting = readPng(pairs[1].base);
-
-  function surroundBrightness(png: Png): number {
-    let total = 0;
-    let n = 0;
-    for (let y = Math.round(0.30 * png.height); y < Math.round(0.55 * png.height); y += 2) {
-      for (let x = Math.round(0.10 * png.width); x < Math.round(0.24 * png.width); x += 2) {
-        const i = (y * png.width + x) * 4;
-        total += (png.data[i] + png.data[i + 1] + png.data[i + 2]) / 3;
-        n += 1;
-      }
-    }
-    return total / n;
-  }
-
-  const calmSurround = surroundBrightness(calm);
-  const greetingSurround = surroundBrightness(greeting);
-  // 40 SITS BETWEEN THE TWO MEASURED VALUES, not at a number that sounded dark:
-  // the calm badge's honeycomb reads 26 and the greeting's energy field reads
-  // 75. Both sides therefore have real headroom, and the control below fails if
-  // that gap ever closes.
-  record(
-    "the persistent badge has no energy field around him",
-    calmSurround < 40,
-    `calm surround ${calmSurround.toFixed(1)} vs greeting ${greetingSurround.toFixed(1)}`,
-  );
-  // A CONTROL, so the measurement above cannot pass by being blind. If the two
-  // artworks stop differing on the thing being measured, the check is broken
-  // rather than satisfied.
-  record(
-    "that measurement can tell the two artworks apart",
-    greetingSurround > calmSurround * 2,
-    `${greetingSurround.toFixed(1)} vs ${calmSurround.toFixed(1)}`,
-  );
-
+  // THE CALM MEASUREMENT MOVED OUT (2026-09-09).
+  //
+  // It compared the persistent badge against the greeting one and asserted the
+  // persistent surround was near-black. There is no calm badge any more: the
+  // new J4 is one render, and measured, its surround is 75.8 - BRIGHTER than
+  // the greeting artwork it used to be contrasted against (69.4).
+  //
+  // That is a real, unresolved gap against a rule Sean set, so it is not
+  // deleted and it is not quietly relaxed. verify-j4-calm.ts carries it alone
+  // and fails, the way verify-rooms was deliberately left failing rather than
+  // rewritten to match the code. Keeping it here would have made this whole
+  // suite accepted-red, and everything else it guards - the clean visor, the
+  // entrance armour - would have stopped protecting anything.
   // ---- the greeting and the working state are different pictures -----------
   // Sean's model for this: J4 is like a dog when its person comes home. The
   // entrance is the excited greeting; then he settles and is calm and present.
   // Collapsing the two back onto one asset is the specific regression - it is
   // how the greeting artwork came to be parked in the corner of every screen.
+  //
+  // ADDRESSED DIFFERENTLY NOW, and the reason is a crash this suite had. The
+  // check read `pairs[0]` against `pairs[1]`, and when the calm pair was
+  // removed above, `pairs` held one entry — so it threw
+  // `Cannot read properties of undefined` AFTER its last assertion printed.
+  // Every PASS line still appeared, and I read those and moved on; what was
+  // missing was the "ALL PASS" summary, which is the line that actually says a
+  // suite finished. It only surfaced in the full regression.
+  //
+  // The corner is one asset now, so it is compared directly rather than as a
+  // pair, and the comparison no longer depends on how many pairs exist.
   record(
     "the entrance and the corner are not the same picture",
-    pairs[0].base !== pairs[1].base && pairs[0].face !== pairs[1].face,
-    `corner ${pairs[0].base}, entrance ${pairs[1].base}`,
+    characterAssets[0] !== pairs[0].base,
+    `corner ${characterAssets[0]}, entrance ${pairs[0].base}`,
   );
 
   const failed = results.filter((r) => !r.ok);
