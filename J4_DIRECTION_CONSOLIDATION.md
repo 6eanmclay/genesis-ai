@@ -234,22 +234,58 @@ his phone.
 
 ---
 
-## C. WHAT I RECOMMEND DECIDING FIRST
+## C. THE FOUR DECISIONS — RESOLVED BY SEAN, 2026-09-09
 
-Not a plan — the four answers everything else depends on.
+Answered the same day they were raised. These are now binding, not proposals.
 
-1. **Facial states: two, or a state system?** If a system, it comes from
-   approved rendered artwork, never runtime drawing.
-2. **The surface→artwork map.** Exactly which asset each surface draws, given
-   Final Hybrid + cropped runtime + calm/greeting + future skins.
-3. **E25: four rooms or five?** Office IA cannot be specified without it.
-4. **Sequence.** Where the Intelligence/Office work sits against three customers
-   without receipts, the unconfirmed tool fix, and the queued diagnostics.
+**C1. Facial states: OFF and ON only.** No runtime-generated facial
+expressions. Any future additional state must be **approved artwork**, never
+drawn at runtime. This preserves the 2026-09-04 rule and the reason behind it.
 
-**The single cheapest high-value action right now is unrelated to design**: send
-J4 one message. It confirms or refutes nine days of broken tooling, and every
-capability claim in §5 rests on it.
+**C2. One canonical J4.** The **Final Hybrid** is the primary J4 identity. The
+established **cropped runtime asset** is the canonical runtime representation.
+Every other render — the Office hero, the suited J4, the concept sheets — is a
+**reference or marketing concept, not a competing runtime identity**. That
+settles the surface→artwork question: runtime has exactly one answer.
 
+**C3. E25 closed: FIVE primary tabs** — Business, Storefront, Studio, Commerce,
+Account. **Office is part of Business, not a sixth room.** The sixteen-item
+primary navigation in the Office reference is **not adopted**.
+
+> Applied 2026-09-09, in the order E25 itself required and only after his
+> decision: `GENESIS_SURFACES.md` amended (title and lock), `navConfig.ts`'s
+> comment corrected — it had claimed "Your Business is gone from this list"
+> for a week while Business sat first in that list — and `verify-rooms.ts`
+> updated to assert five. **The suite is green for the first time since
+> 2026-09-02.** Its J4 assertion is untouched: an Office *tab* would still
+> break the architecture at any room count.
+
+**C4. Sequence: reliability and customer obligations first.**
+
+1. **Send J4 a real message and confirm a successful tool call.** Only Sean can
+   do this — the harness signs into a database it creates itself, and there are
+   no production test credentials. Verified afterwards from production
+   telemetry, not assumed.
+2. **The three customers still missing receipts.**
+3. **Then** the Office reconstruction.
+
+### The standing constraints on that reconstruction
+
+Sean, verbatim: *"The goal of the Office redesign is not to invent a new J4
+system. It is to create the best interface for the J4 system we already have
+and are continuing to build."*
+
+- **One J4 conversation** shared by Dock and Office. **One composer mount.**
+- **Existing Growth Points economics.** Not re-priced by a new surface.
+- **Existing Task / J4 Suggestions / Today's Focus systems.** Office renders
+  them; it does not reimplement them.
+- **The frozen five-state Genesis Language** stands. No parallel state system.
+- **No invented metrics.** "Business Health 87" is removed unless a real
+  calculation and source exist.
+- **No capability claims without the capability.** "Search anything in your
+  business" is removed or deferred until it is real.
+- **No parallel systems**, at all. This is the rule the other bullets are
+  instances of.
 ---
 
 ## D. THE OFFICE REFERENCES SPECIFICALLY (added 2026-09-09, second batch)

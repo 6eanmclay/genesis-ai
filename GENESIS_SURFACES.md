@@ -1,8 +1,21 @@
-# Four rooms, the partner who is in all of them, and the Office he keeps
+# Five rooms, the partner who is in all of them, and the Office he keeps
 
 > ## J4 is not a place I go. J4 is who comes with me.
 >
 > Sean, 2026-08-14, naming this **the governing principle for the entire interface** — not one principle among several. Every decision below is an instance of it, and any future proposal that cannot be squared with it is the wrong proposal regardless of how well it is built.
+
+**AMENDED 2026-09-09 by Sean: the rooms are FIVE — Business, Storefront, Studio,
+Commerce, Account.** Business became a primary tab on 2026-09-01 because the
+Business Map needed a door, and this document went on saying four for a week.
+`verify-rooms.ts` was deliberately left FAILING that whole time rather than
+edited, because a lock quietly rewritten to match the code is not a lock. Sean
+resolved the divergence by deciding the count, not by relaxing the rule.
+
+**OFFICE IS PART OF BUSINESS.** It is not a sixth room, and the sixteen-item
+rail proposed by the 2026-09-09 Office references is explicitly not adopted.
+The non-negotiable below is untouched and is the reason: J4 is who comes with
+the owner, not a place they go, so an Office *tab* would still break the
+architecture no matter how many rooms there are.
 
 **The rooms model is locked, 2026-08-15.** It does not replace the surface model below; it resolves it. What was called *Business* was never one surface — it was four rooms wearing a single name. See **The rooms** immediately after the non-negotiable test. The rest of this document, written the day before, is unchanged and still governs: only the naming of Creation → Studio has moved.
 

@@ -44,10 +44,20 @@ export interface NavSection {
 // here is the single most likely way to break the architecture, because it is
 // the tab every owner would read as "the J4 tab."
 //
-// Arrival is not a room either. /dashboard stays the opening screen — the
-// business overview and J4's briefing — and the owner lands there rather than
-// navigating back to it. That is why "Your Business" is gone from this list
-// while its route is very much alive.
+// Arrival is not a room either at the level that matters: /dashboard stays the
+// opening screen — the business overview and J4's briefing — and the owner
+// lands there rather than navigating back to it.
+//
+// BUSINESS IS A TAB AS WELL, SINCE 2026-09-01, and this comment said the
+// opposite for a week. The Business Map needed a door, so Business became the
+// first entry here; the old sentence — "that is why 'Your Business' is gone
+// from this list" — was simply no longer true of the code beneath it. That
+// divergence was E25, and Sean closed it on 2026-09-09 by deciding the room
+// count rather than by anyone editing a lock to match the code: FIVE primary
+// tabs, Business — Storefront — Studio — Commerce — Account.
+//
+// OFFICE IS PART OF BUSINESS. It is not a sixth room and must never become a
+// tab, which is what the paragraph above this one is about.
 //
 // STUDIO JOINED 2026-08-16. It was held out of this list for exactly as long
 // as it had no route, because a tab that opens nothing is the one thing ruled

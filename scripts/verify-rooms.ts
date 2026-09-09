@@ -179,10 +179,21 @@ console.log("\n=== 5. The bar is untouched ===\n");
 // understand where they are." Distinctiveness lives inside the room; getting
 // there is always four labels and a tap. Room character must therefore be
 // incapable of changing the navigation.
-check("still exactly four primary tabs", PRIMARY_TAB_COUNT, 4);
-check("and they are the rooms Sean locked",
+// ============ FIVE, DECIDED BY SEAN 2026-09-09 (E25 closed) =========
+//
+// This asserted four and was left FAILING from 2026-09-02, because the
+// product shipped five and quietly editing a lock to match the code is how
+// a lock stops meaning anything. Sean resolved it rather than the suite:
+// five primary tabs, and OFFICE IS PART OF BUSINESS - not a sixth room, and
+// not the sixteen-item rail the Office references proposed.
+//
+// The J4 assertion below is the load-bearing half and is unchanged. Five
+// tabs is a room count; an Office TAB would still be the architecture
+// breaking, because J4 is who comes with the owner, not a place they go.
+check("still exactly five primary tabs", PRIMARY_TAB_COUNT, 5);
+check("and they are the rooms Sean decided",
   NAV_SECTIONS.slice(0, PRIMARY_TAB_COUNT).map((s) => s.label),
-  ["Storefront", "Studio", "Commerce", "Account"]);
+  ["Business", "Storefront", "Studio", "Commerce", "Account"]);
 assert("J4 is not one of them",
   !NAV_SECTIONS.some((s) => /j4|office/i.test(s.key) || /j4|office/i.test(s.label)),
   "the single most likely way to break the architecture");
