@@ -108,7 +108,11 @@ const LANES: Lane[] = [
  */
 const ACCEPTED_FAILURES: Record<string, string> = {
   "test-isolation": "pre-existing; Sean: leave the 51/52 test-isolation issue untouched",
-  rooms: "EXTERNAL_BLOCKERS.md E25 — five primary tabs against a rooms model locked at four; Sean's decision, and editing the lock to match the code is what must not happen",
+  // rooms: REMOVED 2026-09-09. E25 is resolved — Sean decided the count is
+  // five, so GENESIS_SURFACES.md, navConfig.ts's comment and the suite were
+  // updated in that order and verify-rooms is green. An accepted failure left
+  // in place after the thing it excuses is fixed is exactly the stale excuse
+  // this list's own comment warns about.
   "store-currency": "EXTERNAL_BLOCKERS.md E26 — hardcoded $ in the Creation Station, which is the Studio reference implementation and out of scope here",
 };
 
