@@ -25,6 +25,20 @@ export interface PendingApproval {
   // (deep-linking + Genesis's auto-opened context message) — lets a caller
   // join back to a GenesisObservation's summary without a new query.
   topicKey: string | null;
+  /**
+   * J4's own reasoning for asking, separate from what he is asking for.
+   *
+   * The schema's comment says it exactly: "J4's own reasoning, kept separate
+   * from `summary`. Summary says what..." The column has always been read —
+   * this loader selects the whole row — and was then dropped in the mapping,
+   * so the one field that answers "why does this matter" reached no screen
+   * until the Office briefing (2026-09-09).
+   *
+   * Nullable and stays nullable. An older proposal may carry none, and the
+   * briefing renders nothing rather than a stand-in sentence: inventing a
+   * rationale would be worse than showing none, because it would read as J4's.
+   */
+  rationale: string | null;
 }
 
 // Cheap indexed DB read, not an AI call — safe on every dashboard load,
@@ -72,6 +86,19 @@ export async function getPendingApprovals(storeId: string): Promise<PendingAppro
     lastFailedExecutionId: row.executionId,
     lastFailureMessage: row.executionId ? failureMessageByExecutionId.get(row.executionId) ?? null : null,
     topicKey: row.topicKey,
+    // J4'S OWN REASONING, CARRIED THROUGH (2026-09-09).
+    //
+    // The column has always been read - this function selects the whole row -
+    // and then dropped here, so the one field that answers "why does this
+    // matter" never reached a screen. The schema's own comment says what it is
+    // for: "J4's own reasoning, kept separate from `summary`. Summary says
+    // what..." The Office briefing shows it beneath the decision, which is the
+    // difference between "approve this" and "approve this, and here is why I
+    // am asking".
+    //
+    // Nullable and stays nullable: an older proposal may have none, and
+    // inventing a rationale for one would be worse than showing none.
+    rationale: row.rationale,
   }));
 }
 

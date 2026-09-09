@@ -19,6 +19,13 @@ import { listConversations } from "@/lib/j4/conversations";
 import { buildContextEntries } from "@/lib/j4/contextTypes";
 import { proposalJ4Raised } from "@/lib/intelligence/proactive";
 import { officeFacts } from "@/lib/j4/officeFacts";
+import { getHandledSince } from "@/lib/dashboard/handled";
+import {
+  buildBriefing,
+  summariseHandled,
+  surfaceShowsBriefing,
+  type HandledSummary,
+} from "@/lib/j4/officeBriefing";
 import {
   officeActionForObservation,
   officeActionForExplanation,
@@ -47,6 +54,16 @@ import {
 // The store's own currency, threaded rather than assumed. These lines are read
 // back to the owner as what J4 understands about their business, so a figure
 // carrying the wrong symbol is a claim about which money the business takes.
+/**
+ * How far back "already handled" looks.
+ *
+ * A fortnight: long enough that an owner who was away for a week still sees
+ * what happened, short enough that the list is what J4 has been doing lately
+ * rather than a history. The number travels with the figures to the screen -
+ * see HandledSummary.windowDays - so a count is never shown without its window.
+ */
+const HANDLED_WINDOW_DAYS = 14;
+
 const formatCents = formatMoney;
 
 function formatDate(value: string | Date): string {
@@ -253,7 +270,7 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   // into every AI call uncapped) — kept in sync deliberately, not by
   // coincidence.
   const CHAT_HISTORY_WINDOW = 50;
-  const [recentMessages, observations, explanations, pendingApprovals, openTasks, understanding] = await Promise.all([
+  const [recentMessages, observations, explanations, pendingApprovals, openTasks, understanding, handledRaw] = await Promise.all([
     prisma.storeMessage.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
@@ -274,7 +291,11 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
     // without a rail to say why.
     prisma.genesisObservation.findMany({
       where: { storeId: store.id, status: "ACTIVE" },
-      select: { id: true, genesisState: true, summary: true, actionHref: true },
+      // firstNoticedAt is SELECTED now (2026-09-09), not only ordered by. The
+      // briefing says how long a condition has been standing, and "this has
+      // been true for six weeks" is a fact from this column rather than a
+      // weight somebody chose — it is the whole of the within-kind ordering.
+      select: { id: true, genesisState: true, summary: true, actionHref: true, firstNoticedAt: true },
       orderBy: { firstNoticedAt: "desc" },
     }),
     prisma.cognitiveOutput.findMany({
@@ -315,6 +336,21 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
     hasPermission(role, PERMISSIONS.STORE_MANAGE)
       ? getBusinessUnderstanding(store.id)
       : Promise.resolve(null),
+    // WHAT J4 ALREADY HANDLED. Three cheap counts and one bounded read, and
+    // only where a briefing is actually rendered.
+    //
+    // The gate reads surfaceShowsBriefing rather than testing the surface
+    // here, because the comment at the top of this file records two bugs built
+    // on exactly that: a read gated on one opinion of what a surface shows,
+    // while the surface's own opinion moved on. J4Workspace calls the same
+    // function to decide whether to render it, so there is one answer rather
+    // than two that must be remembered.
+    //
+    // LAST IN THE ARRAY, matching its position in the destructure above. The
+    // first version of this sat in the middle and everything after it shifted
+    // by one — the understanding read received the handled rows, and the
+    // compiler caught it only because the two types happen to differ.
+    surfaceShowsBriefing(surface) ? getHandledSince(store.id, HANDLED_WINDOW_DAYS) : Promise.resolve(null),
   ]);
 
   // THE proposal on the table — one, never a stack (2026-08-14).
@@ -475,6 +511,32 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
       // cannot exist without naming where its number came from. That is what
       // keeps the Office's strip from becoming the reference's "Business
       // Health 87", which has no calculation behind it.
+      // WHAT J4 LEADS WITH, ordered on the server (2026-09-09).
+      //
+      // The ordering, the wording of the standing time and the decision about
+      // what counts as news all live in lib/j4/officeBriefing.ts, where they
+      // are testable in three lines. The client renders what it is handed and
+      // decides none of it — the same reason the row actions moved into
+      // officeActions.ts rather than staying as class names in a component.
+      briefingItems={buildBriefing(
+        {
+          decisions: pendingApprovals.map((a) => ({
+            id: a.id,
+            summary: a.summary,
+            // J4's own reasoning. Read from the database all along and dropped
+            // before it reached a screen until today.
+            rationale: a.rationale,
+            createdAt: a.createdAt,
+          })),
+          observations,
+        },
+        basePath,
+      )}
+      handled={
+        handledRaw
+          ? summariseHandled(handledRaw, basePath)
+          : ({ resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: HANDLED_WINDOW_DAYS } satisfies HandledSummary)
+      }
       facts={officeFacts(
         {
           activeProducts: understanding?.profile.offerings.activeCount ?? 0,

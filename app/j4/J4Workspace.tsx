@@ -28,6 +28,9 @@ import { J4SpeakButton } from "./J4SpeakButton";
 import { decideSpeak, NOTHING_SPOKEN, type SpokenState } from "@/lib/voice/spokenReplies";
 import { rowInteractionClass } from "@/lib/j4/officeActions";
 import { OfficeBand } from "./OfficeBand";
+import { OfficeBriefing } from "./OfficeBriefing";
+import type { BriefingItem, HandledSummary } from "@/lib/j4/officeBriefing";
+import { approveProposalInConversation } from "./proposal-actions";
 import type { OfficeFact } from "@/lib/j4/officeFacts";
 import { J4HandoffContext } from "@/app/dashboard/J4HandoffContext";
 
@@ -97,7 +100,7 @@ interface J4Signals {
 // as its own nav destination, which made the Office an incomplete picture of
 // what J4 knows. It is a reference view rather than a queue, so it carries no
 // count: there is nothing to clear.
-type Category = "conversation" | "tasks" | "ideas" | "decisions" | "information" | "understanding";
+type Category = "briefing" | "conversation" | "tasks" | "ideas" | "decisions" | "information" | "understanding";
 
 // Where this conversation is being rendered. "layer" is the persistent J4
 // over the business workspace (app/dashboard/J4Overlay.tsx); "room" is the
@@ -862,6 +865,8 @@ export function J4Workspace({
   information,
   understanding,
   facts = [],
+  briefingItems = [],
+  handled = { resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: 14 },
   surface,
   proposal,
   conversations = [],
@@ -905,6 +910,10 @@ export function J4Workspace({
    * behind it. This component never computes one.
    */
   facts?: OfficeFact[];
+  /** What J4 leads with on arrival, ordered on the server. */
+  briefingItems?: BriefingItem[];
+  /** What he already handled, internal executions excluded. */
+  handled?: HandledSummary;
   surface: J4Surface;
   // J4's current proposal, server-rendered and handed down. Sits directly
   // above the composer, because the composer is how the owner argues with it
@@ -936,7 +945,18 @@ export function J4Workspace({
   // resolve "this" — see lib/j4/workspaceContext.ts.
   const currentPath = usePathname();
   const router = useRouter();
-  const [activeCategory, setActiveCategory] = useState<Category>("conversation");
+  // THE OFFICE OPENS ON WHAT J4 FOUND (2026-09-09).
+  //
+  // It opened on "conversation", which meant 40 items J4 already knew were
+  // loaded on every visit and none of them were on screen. The layer keeps
+  // opening on the conversation: it is a panel summoned over the owner's work
+  // to talk, not a place they arrive at.
+  const [activeCategory, setActiveCategory] = useState<Category>(isLayer ? "conversation" : "briefing");
+
+  // Which decision is executing, so its button can say so rather than looking
+  // ignored while a real server action runs.
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [, startApproval] = useTransition();
   // Priority 4 — Just Talk (2026-08-08, scope frozen). A presentation-only
   // toggle over the exact same conversation/pipeline — no new route, no
   // new data, no change to handleSend/VoiceMemoButton/streamingStatus or
@@ -1718,6 +1738,9 @@ export function J4Workspace({
   }, [localMessages.length, lastMessageContentLength, shownCategory]);
 
   const categoryTabs: { key: Category; label: string; count: number }[] = [
+    // Present so the owner can come BACK to the briefing after opening a
+    // queue. Not a new place to go - it is where they already are.
+    ...(isLayer ? [] : [{ key: "briefing" as Category, label: "Briefing", count: 0 }]),
     { key: "conversation", label: "Conversation", count: 0 },
     { key: "tasks", label: "Tasks", count: tasks.length },
     { key: "ideas", label: "Ideas", count: ideas.length },
@@ -2014,7 +2037,31 @@ export function J4Workspace({
             />
           </div>
         )}
-        {shownCategory === "conversation" ? (
+        {shownCategory === "briefing" ? (
+          <OfficeBriefing
+            items={briefingItems}
+            handled={handled}
+            approvingId={approvingId}
+            onApprove={(id) => {
+              // The REAL approval, not a briefing-shaped copy of one.
+              // approveProposalInConversation runs approveGenesisAction and
+              // then writes J4's own account of what happened back into the
+              // conversation — so acting here still ends with him reporting
+              // the result, which is the last step of Sean's arc rather than
+              // a button that goes quiet.
+              setApprovingId(id);
+              startApproval(async () => {
+                try {
+                  await approveProposalInConversation(id, slug);
+                  router.refresh();
+                } finally {
+                  setApprovingId(null);
+                }
+              });
+            }}
+            onOpenConversation={() => setActiveCategory("conversation")}
+          />
+        ) : shownCategory === "conversation" ? (
           visibleMessages.length === 0 ? (
             <div className="text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
               <p className="font-medium text-[#f4f2fb]">Your business partner, always paying attention.</p>
