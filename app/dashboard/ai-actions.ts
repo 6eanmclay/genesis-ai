@@ -26,6 +26,7 @@ import { revalidatePath } from "next/cache";
 // applyGenesisMessageToStore, which would otherwise shadow this import.
 import { after as scheduleAfterResponse } from "next/server";
 import { auth } from "@/auth";
+import { toModelMessages } from "@/lib/conversation/messageContent";
 import { prisma } from "@/lib/prisma";
 import { ownerFactsFromDraft, recordOwnerFacts } from "@/lib/businessModel/ownerFacts";
 import { stateFact } from "@/lib/businessModel/statements";
@@ -2173,10 +2174,20 @@ async function applyGenesisMessageToStore(
   }
   contextParts.push(`\nUser's latest message: ${userMessage}`);
 
-  const conversationMessages = existingMessages.map((m) => ({
-    role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
-    content: m.content,
-  }));
+  // THE PHOTO WAS NEVER IN THE REQUEST (2026-09-09).
+  //
+  // This mapped every message to `content: m.content`, and an uploaded photo
+  // lives in `m.changes.imageUrls` - so J4 received the literal text
+  // "Uploaded 1 photos" and nothing else, and told Sean, honestly, that he
+  // could not make out its contents. The bytes were in Blob storage the whole
+  // time; the request simply never mentioned them.
+  //
+  // toModelMessages carries recent images as the SAME image block
+  // lib/businessAssets/classify.ts has used successfully since 2026-08-09 -
+  // not a new capability, and not a second system. Its caps are deliberate:
+  // history is re-sent every turn, so an uncapped image would be paid for
+  // again on every subsequent turn.
+  const conversationMessages = toModelMessages(existingMessages);
 
   // Response Modes plan (2026-08-07), Phase 1 — replaces four sequential
   // classifier calls (data-question, business-fact, campaign-request,
@@ -2221,16 +2232,22 @@ async function applyGenesisMessageToStore(
     conversationMessages.length > 0
       ? [
           ...conversationMessages.slice(0, -1),
-          {
-            role: conversationMessages[conversationMessages.length - 1].role,
-            content: [
-              {
-                type: "text" as const,
-                text: conversationMessages[conversationMessages.length - 1].content,
-                cache_control: { type: "ephemeral" as const },
-              },
-            ],
-          },
+          // A CACHE BREAKPOINT ON THE LAST TURN, WHATEVER SHAPE IT IS.
+          // This assumed the content was a string; a turn carrying an image
+          // is an array of blocks, and wrapping that in a text block would
+          // have stringified the image away - reintroducing the bug above
+          // through the caching path.
+          (() => {
+            const last = conversationMessages[conversationMessages.length - 1];
+            const blocks = typeof last.content === "string"
+              ? [{ type: "text" as const, text: last.content }]
+              : last.content;
+            const marked = blocks.map((b, i) =>
+              i === blocks.length - 1
+                ? { ...b, cache_control: { type: "ephemeral" as const } }
+                : b);
+            return { role: last.role, content: marked };
+          })(),
         ]
       : conversationMessages;
   // 2026-08-08 — J4 command execution fix: preClassifiedTool set means

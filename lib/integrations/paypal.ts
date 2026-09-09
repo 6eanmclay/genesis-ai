@@ -134,7 +134,15 @@ export const paypalConnector: IntegrationConnector = {
           storeId,
           provider: "PAYPAL",
           status: "CONNECTED",
-          externalAccountId: clientId,
+          // NOT THE CLIENT ID (2026-09-09). This stored the REST app's client
+          // id, which toStatusView puts in front of the owner - so they were
+          // shown a credential-adjacent string that tells them nothing about
+          // WHICH PayPal account is connected. Stripe's equivalent is
+          // acct_..., a real identity. PayPal has no whoami endpoint, but a
+          // capture carries payee.merchant_id, so the real identity is filled
+          // in from the first transaction we verify - see
+          // lib/payments/paypalVerification. Null until then, honestly.
+          externalAccountId: null,
           credentials: encryptedCredentials,
           connectedByUserId: userId,
           connectedAt: new Date(),
@@ -143,7 +151,15 @@ export const paypalConnector: IntegrationConnector = {
         },
         update: {
           status: "CONNECTED",
-          externalAccountId: clientId,
+          // NOT THE CLIENT ID (2026-09-09). This stored the REST app's client
+          // id, which toStatusView puts in front of the owner - so they were
+          // shown a credential-adjacent string that tells them nothing about
+          // WHICH PayPal account is connected. Stripe's equivalent is
+          // acct_..., a real identity. PayPal has no whoami endpoint, but a
+          // capture carries payee.merchant_id, so the real identity is filled
+          // in from the first transaction we verify - see
+          // lib/payments/paypalVerification. Null until then, honestly.
+          externalAccountId: null,
           credentials: encryptedCredentials,
           connectedByUserId: userId,
           connectedAt: new Date(),
