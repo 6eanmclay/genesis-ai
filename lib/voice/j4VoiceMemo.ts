@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { businessIntentFor } from "@/lib/businessIntent";
 import { growthCreditValueFor } from "@/lib/growthCreditCatalog";
 import type { GenesisModelScope } from "@/lib/genesisModel";
+import { readTranscript } from "@/lib/voice/transcriptQuality";
 
 // J4 Voice Memos — the transcription layer only. Understanding a memo's
 // content (what it means, what to do with it) is deliberately NOT this
@@ -68,7 +69,7 @@ export async function transcribeVoiceMemo(params: TranscribeVoiceMemoParams): Pr
   if (!apiKey) return null;
 
   const startedAt = Date.now();
-  let transcript: string | null = null;
+  let rawTranscript: string | null = null;
   try {
     const audioResponse = await fetch(params.audioUrl);
     if (!audioResponse.ok) return null;
@@ -87,11 +88,27 @@ export async function transcribeVoiceMemo(params: TranscribeVoiceMemoParams): Pr
     if (!response.ok) return null;
 
     const json = (await response.json()) as { text?: string };
-    transcript = json.text?.trim() || null;
+    rawTranscript = json.text?.trim() || null;
   } catch {
     return null;
   }
-  if (!transcript) return null;
+
+  // WHAT WHISPER RETURNED IS NOT ALWAYS WHAT WAS SAID (2026-09-09).
+  //
+  // Two real production turns: "OK. 834. OK. 834." (said once, looped by
+  // Whisper) and "Thank you for watching." (never said at all - its stock
+  // output on silence). Both were stored as genuine user messages and
+  // answered. Returning null here means NO user turn is created, which is
+  // the honest outcome for silence: the owner's conversation should not
+  // contain sentences they did not speak.
+  const reading = readTranscript(rawTranscript);
+  if (reading.kind === "silence") {
+    // Recorded, not swallowed - a transcription really was paid for, and a
+    // rise in these is how we would notice the microphone misbehaving.
+    await recordTranscriptionUsage(params.scope, Date.now() - startedAt);
+    return null;
+  }
+  const transcript = reading.text;
 
   const aiUsageEventId = await recordTranscriptionUsage(params.scope, Date.now() - startedAt);
   return { transcript, aiUsageEventId };

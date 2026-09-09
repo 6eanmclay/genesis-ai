@@ -25,6 +25,7 @@ import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { extractAudioUrl, extractChangeList, extractImageUrl, extractImageUrls, extractQuickReplies } from "./messageChanges";
 import { VoiceMemoButton } from "./VoiceMemoButton";
 import { J4SpeakButton } from "./J4SpeakButton";
+import { decideSpeak, NOTHING_SPOKEN, type SpokenState } from "@/lib/voice/spokenReplies";
 import { J4HandoffContext } from "@/app/dashboard/J4HandoffContext";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
@@ -1038,18 +1039,24 @@ export function J4Workspace({
   //
   // The id of the last spoken reply is remembered so a re-render, a
   // revalidation or a reconnect can never speak the same answer twice.
-  const spokenReplyIdRef = useRef<string | null>(null);
+  // WHAT WAS SPOKEN, NOT WHICH ROW SAID IT (2026-09-09).
+  //
+  // This remembered only the ID it had spoken, and the id CHANGES under the
+  // same words: a streamed reply is held as `optimistic-assistant-<ts>` and
+  // then revalidation replaces it with the persisted row's cuid. Identical
+  // text, new id, so it read as a new reply and J4 said everything twice -
+  // 12 of 15 turns in production, one of them four times.
+  //
+  // The decision moved to lib/voice/spokenReplies so the exact production
+  // sequence is testable without a browser, a microphone and a model turn.
+  const spokenRef = useRef<SpokenState>(NOTHING_SPOKEN);
   const lastEntry = localMessages[localMessages.length - 1];
   const onAssistantReply = j4Handoff.onAssistantReply;
   useEffect(() => {
     if (!onAssistantReply) return;
-    if (!lastEntry || lastEntry.role !== "assistant") return;
-    // An optimistic placeholder is empty until content streams in; speaking it
-    // would say nothing and end the turn early.
-    if (!lastEntry.content.trim()) return;
-    if (spokenReplyIdRef.current === lastEntry.id) return;
-    spokenReplyIdRef.current = lastEntry.id;
-    onAssistantReply(lastEntry.content);
+    const decision = decideSpeak(spokenRef.current, lastEntry);
+    spokenRef.current = decision.next;
+    if (decision.speak) onAssistantReply(decision.text);
   }, [lastEntry, onAssistantReply]);
 
   // Defense-in-depth for the same "typed text disappears while attachments

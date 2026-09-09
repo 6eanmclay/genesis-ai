@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, requireBusinessOrActive, approvalAccessibleTo } from "@/lib/permissions";
 import { performApproveGenesisAction, performRejectGenesisAction } from "@/app/dashboard/ai-actions";
 import { PROPOSAL_STATUS, parseDirections, reviseProposal } from "@/lib/storefront/proposals";
+import { recordConversationOutcome } from "@/lib/conversation/recordOutcome";
 
 // Deciding a proposal without leaving the conversation (2026-08-14).
 //
@@ -37,17 +38,11 @@ import { PROPOSAL_STATUS, parseDirections, reviseProposal } from "@/lib/storefro
 // real outcome into the one StoreMessage history before revalidating in
 // place. No redirect anywhere.
 
+// The rule itself lives in lib/conversation/recordOutcome so it can be proven
+// against a real database - this file is "use server", where a helper cannot
+// be exported for a test without becoming a server action.
 async function recordOutcome(storeId: string, content: string) {
-  // `content` is finished prose, not a prompt (2026-08-18).
-  //
-  // This used to write withJ4CopyRules(content), which pasted the entire
-  // WRITING STYLE block onto the end of every outcome message the owner reads
-  // — J4 appearing to explain its own punctuation rules after applying a
-  // proposal. withJ4CopyRules wraps a SYSTEM PROMPT so a model follows the
-  // rules; it is not a formatter for text that has already been written.
-  await prisma.storeMessage.create({
-    data: { storeId, role: "assistant", content },
-  });
+  await recordConversationOutcome(storeId, content);
 }
 
 /**

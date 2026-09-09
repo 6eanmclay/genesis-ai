@@ -1,5 +1,5 @@
 import { readdirSync } from "fs";
-import { runLanesInOrder, suiteNameFrom, type Lane, type LaneResult } from "@/scripts/run-all-suites";
+import { runLanesInOrder, suiteNameFrom, ACCEPTED_FAILURES, type Lane, type LaneResult } from "@/scripts/run-all-suites";
 import {
   httpLane,
   needsDatabase,
@@ -112,13 +112,17 @@ async function main(): Promise<void> {
   // them would make this command permanently red and therefore ignored; but
   // they must never be counted as passing either, which the tally does by
   // printing them on their own line.
+  // THE EXAMPLE COMES FROM THE REAL LIST (2026-09-09). This named "rooms",
+  // and when E25 was resolved and rooms stopped being an accepted failure the
+  // fixture broke - a red suite whose redness said nothing about the runner.
+  const ACCEPTED_EXAMPLE = Object.keys(ACCEPTED_FAILURES)[0];
   {
     const lanes = [lane("a"), lane("b")];
     const ran: string[] = [];
     const { halted } = await runLanesInOrder(lanes, async (l) => {
       ran.push(l.key);
       return l.key === "a"
-        ? result({ ok: false, reported: ["rooms"], failed: ["rooms"] })
+        ? result({ ok: false, reported: [ACCEPTED_EXAMPLE], failed: [ACCEPTED_EXAMPLE] })
         : result();
     }, quiet);
 
@@ -131,10 +135,10 @@ async function main(): Promise<void> {
     await runLanesInOrder([lane("a"), lane("b")], async (l) => {
       ran2.push(l.key);
       return l.key === "a"
-        ? result({ ok: false, reported: ["rooms-extra"], failed: ["rooms-extra"] })
+        ? result({ ok: false, reported: [ACCEPTED_EXAMPLE + "-extra"], failed: [ACCEPTED_EXAMPLE + "-extra"] })
         : result();
     }, quiet);
-    eq("a name merely resembling an accepted one still halts", ran2, ["a"]);
+    eq(`a name merely resembling "${ACCEPTED_EXAMPLE}" still halts`, ran2, ["a"]);
   }
 
   // ======================================================================

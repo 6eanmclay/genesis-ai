@@ -106,7 +106,12 @@ const LANES: Lane[] = [
  * is REPORTED as stale, because a suppression list nobody prunes is how a
  * real failure eventually hides behind an old excuse.
  */
-const ACCEPTED_FAILURES: Record<string, string> = {
+// EXPORTED so verify-run-all-suites can build its fixtures from the real
+// list rather than hardcoding a name. It hardcoded "rooms", and when E25 was
+// resolved and rooms left this list, the suite went red for a reason that had
+// nothing to do with what it tests. A fixture that names a member of a list
+// rots the moment the list changes.
+export const ACCEPTED_FAILURES: Record<string, string> = {
   "test-isolation": "pre-existing; Sean: leave the 51/52 test-isolation issue untouched",
   // rooms: REMOVED 2026-09-09. E25 is resolved — Sean decided the count is
   // five, so GENESIS_SURFACES.md, navConfig.ts's comment and the suite were
