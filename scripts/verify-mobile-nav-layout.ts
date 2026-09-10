@@ -80,11 +80,40 @@ async function measure(page: Page) {
       return { src: img.getAttribute("src") ?? "", loaded: img.complete && img.naturalWidth > 0, w: Math.round(r.width) };
     });
 
+    // NOTHING IN J4'S CORNER SITS ON TOP OF ANYTHING ELSE IN IT.
+    //
+    // Sean, from a production screenshot: an unexplained "P-A-N-D" under J4.
+    // It was the Expand control. j4-office is positioned against j4-corner,
+    // which includes the Expand button below the artwork, so trimming the
+    // dock's padding to make J4 larger brought the Office doorway down over
+    // the first two letters. "Expand" became "pand", and it read as a stray
+    // string from nowhere rather than a control being covered.
+    //
+    // Measured rather than eyeballed, and every control in the corner is
+    // included, so a future control cannot land on one either.
+    const dockControls = [...document.querySelectorAll('[data-testid="j4-corner"] [data-testid]')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        id: el.getAttribute("data-testid") ?? "",
+        text: (el.textContent ?? "").replace(/\s+/g, " ").trim(),
+        x: Math.round(r.x),
+        y: Math.round(r.y),
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+      };
+    });
+
     const items = nav
       ? [...nav.querySelectorAll('a,button')].map((el) => {
           const r = el.getBoundingClientRect();
           return {
             label: (el.textContent ?? '').trim(),
+            // The glyph itself, so two rooms cannot wear the same one.
+            // Compared as its path geometry rather than by name: an icon map
+            // that points two keys at one drawing is exactly the defect this
+            // catches, and the names would look different while the pictures
+            // were identical.
+            glyph: [...el.querySelectorAll('svg path')].map((pp) => pp.getAttribute('d') ?? '').join('|'),
             x: Math.round(r.x),
             y: Math.round(r.y),
             w: Math.round(r.width),
@@ -99,6 +128,7 @@ async function measure(page: Page) {
       corner: rects[2],
       office: rects[3],
       items,
+      dockControls,
       art,
       paintedImages,
       reserve: getComputedStyle(document.documentElement).getPropertyValue(varName).trim(),
@@ -197,6 +227,30 @@ async function main(): Promise<void> {
       check(`${width}: the bar starts where J4 ends`,
         (m.items[0]?.x ?? -1) >= expected, `first room x=${m.items[0]?.x}`);
 
+      // ---- no control in J4's corner covers another -----------------------
+      //
+      // The "P-A-N-D" Sean saw in production: the Office doorway had come to
+      // sit over the first letters of "Expand". A covered control reads as a
+      // stray string from nowhere, which is worse than a missing one.
+      const covered: string[] = [];
+      for (const a of m.dockControls) {
+        for (const b of m.dockControls) {
+          if (a.id === b.id || a.id === "j4-open") continue;
+          // j4-open is J4 himself and legitimately contains the others.
+          if (b.id === "j4-open") continue;
+          if (overlaps(a, b)) covered.push(`${a.id} over ${b.id}`);
+        }
+      }
+      check(`${width}: nothing in J4's corner covers anything else in it`,
+        covered.length === 0,
+        covered.length ? covered.join(", ") : m.dockControls.map((c) => c.id).join(", "));
+
+      // And every control that carries words shows all of them.
+      const clipped = m.dockControls.filter((c) => c.text.length > 0 && (c.w < 12 || c.h < 8));
+      check(`${width}: every labelled control in the corner has room for its label`,
+        clipped.length === 0,
+        clipped.length ? clipped.map((c) => `${c.id}="${c.text}" ${c.w}x${c.h}`).join(", ") : "all legible");
+
       // ---- the actual complaint -------------------------------------------
       check(`${width}: all ${PRIMARY_ROOMS} rooms are in the bar`,
         m.items.length === PRIMARY_ROOMS, m.items.map((i) => i.label).join(" | "));
@@ -218,6 +272,19 @@ async function main(): Promise<void> {
       const gaps = m.items.slice(1).map((it, i) => it.x - (m.items[i].x + m.items[i].w));
       check(`${width}: the rooms are one continuous row, no gaps`,
         gaps.every((g) => Math.abs(g) <= 1), `gaps ${gaps.join(",")}`);
+
+      // ---- every room is a different picture ------------------------------
+      //
+      // Business and Storefront both mapped to the house glyph, so the two
+      // primary rooms looked the same and said nothing about where they went.
+      // Sean: "Do not simply use two variations of the same house icon."
+      const glyphs = m.items.filter((i) => i.glyph.length > 0);
+      const duplicated = glyphs.filter((g, idx) => glyphs.findIndex((o) => o.glyph === g.glyph) !== idx);
+      check(`${width}: no two rooms share an icon`,
+        duplicated.length === 0,
+        duplicated.length ? duplicated.map((d) => d.label).join(" and ") + " share a glyph" : `${glyphs.length} distinct glyphs`);
+      check(`${width}: every room actually has an icon`,
+        glyphs.length === m.items.length, `${glyphs.length} of ${m.items.length} drawn`);
 
       // ---- Office belongs to J4, not to the navigation ---------------------
       check(`${width}: no room is called Office`,

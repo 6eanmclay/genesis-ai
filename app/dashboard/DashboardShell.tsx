@@ -38,12 +38,17 @@ import { useFreshLaunch, resetFreshLaunch } from "@/lib/dashboard/useFreshLaunch
 // "more" rather than throwing: a new nav section should never be able to
 // crash the tab bar just because nobody drew its icon.
 const NAV_ICONS: Record<string, J4IconName> = {
-  home: "home",
+  // Business and Storefront are different objects, not two houses
+  // (2026-09-09). Both mapped to "home", so the two primary rooms were
+  // indistinguishable in the bar. Business is the organisation; Storefront is
+  // the customer-facing shop, and "store" is the awning shopfront that has
+  // been in the icon set all along, unused by this map.
+  home: "business",
   // The four rooms (2026-08-17). Commerce reuses the orders glyph because
   // that is what it is mostly about; office and studio fall through to "more"
   // until they have drawn icons of their own, which is the fallback doing its
   // job rather than a gap.
-  website: "home",
+  website: "store",
   commerce: "orders",
   studio: "more",
   account: "settings",

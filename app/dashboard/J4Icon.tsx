@@ -18,6 +18,7 @@
 
 export type J4IconName =
   | "home"
+  | "business"
   | "products"
   | "orders"
   | "customers"
@@ -44,6 +45,26 @@ export type J4IconName =
 // the <svg> below so a single icon can never drift from the system.
 const PATHS: Record<J4IconName, React.ReactNode> = {
   home: <path d="M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />,
+  // THE BUSINESS ITSELF, not a house (2026-09-09).
+  //
+  // Business and Storefront both mapped to `home`, so the two primary rooms
+  // wore the same glyph and told an owner nothing about where either went.
+  // Sean: "Business = the business/company/organization itself... Storefront =
+  // the actual customer-facing shop. Do not simply use two variations of the
+  // same house icon."
+  //
+  // So this is a premises with floors - the organisation - and Storefront uses
+  // the awning shopfront below, which is the customer-facing shop. They are
+  // different objects rather than two drawings of one, which is the only way
+  // the distinction survives at 16px.
+  business: (
+    <>
+      <path d="M3 21h18" />
+      <path d="M5 21V6a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v15" />
+      <path d="M14 21V11h4a1 1 0 0 1 1 1v9" />
+      <path d="M8 9h3M8 13h3M8 17h3" />
+    </>
+  ),
   products: (
     <>
       <path d="M4 8h16v12H4z" />

@@ -167,6 +167,16 @@ export function J4Dock({
           data-testid="j4-corner"
           className="relative rounded-[1.75rem] p-0.5 lg:p-1"
         >
+          {/* THE ARTWORK'S OWN BOX, and the reason it exists (2026-09-09).
+              The Office doorway is positioned absolutely, and it used to be
+              positioned against j4-corner - which also contains the Expand
+              control BELOW the artwork. Trimming the dock's padding to make J4
+              larger brought the doorway down onto the first letters of
+              "Expand", and Sean saw "P-A-N-D" in production: not a stray
+              string, a covered control.
+              So the doorway now belongs to J4's square, which is what its
+              "inside the same square" comment always meant. */}
+          <div className="relative">
           <button
             type="button"
             data-testid="j4-open"
@@ -230,6 +240,8 @@ export function J4Dock({
               Office
             </span>
           </button>
+          </div>
+
           {/* NO MICROPHONE BUTTON (2026-09-04, Sean).
 
               A mic sitting next to J4 is the old model: an avatar beside the
