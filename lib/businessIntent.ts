@@ -103,6 +103,9 @@ const AI_FEATURE_INTENT: Record<AiFeature, BusinessIntentCategory> = {
   // "understand what's happening" work analyze_business already covers for
   // orders/revenue/customers, just for social presence.
   social_insight_generation: "analyze_business",
+  // Reading a reference the owner supplied is understanding, not production:
+  // it produces a proposal for them to judge and changes nothing by itself.
+  reference_design_analysis: "analyze_business",
 };
 
 export function businessIntentFor(feature: AiFeature): BusinessIntentCategory {

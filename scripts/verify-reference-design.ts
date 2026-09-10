@@ -9,6 +9,11 @@ import {
   type ReferenceReading,
 } from "@/lib/design/referenceObservation";
 import { REFINABLE_DIMENSIONS, REFINABLE_DIMENSION_KEYS } from "@/lib/storefront/dimensions";
+import {
+  ReferenceReadingSchema,
+  validateReading,
+  vocabularyForPrompt,
+} from "@/lib/design/analyzeReference";
 import { applyRefinementsToTheme } from "@/lib/execution/executables/refineStorefront";
 import { DEFAULT_THEME } from "@/lib/theme";
 
@@ -200,6 +205,82 @@ assert("every dimension a reading may use is a REFINABLE_DIMENSION",
   `${REFINABLE_DIMENSION_KEYS.length} dimensions`);
 assert("and a dimension that is not one is refused",
   !isUsableProposal({ dimension: "vibes", value: "premium" }));
+
+console.log("\n=== 7. Model output is untrusted input ===\n");
+// ============ WHAT IS PROVEN HERE, AND WHAT IS NOT =================
+//
+// Everything below is OFFLINE. It exercises the schema and the validator with
+// readings shaped exactly like a model's output, and proves the reading cannot
+// reach the approval card or the store unless it passes the same gate section
+// 5 established.
+//
+// It does NOT prove the model behaves. Whether a real vision call classifies
+// photography as `null` rather than reaching for cardStyle is a question about
+// a model, answerable only by spending money on a real call against a real
+// image - and asserted nowhere in this file, because a test that mimics the
+// model proves only that the mimicry was written to pass.
+
+// The schema is the first gate, and it is closed at the boundary: a dimension
+// that does not exist cannot even be parsed.
+const invented = ReferenceReadingSchema.safeParse({
+  inWords: "x",
+  observations: [{ id: "o1", what: "The grid is asymmetric", bearsOn: "gridRhythm" }],
+  proposals: [],
+});
+assert("an invented dimension is rejected by the schema itself",
+  !invented.success, invented.success ? "it parsed" : "rejected at the boundary");
+
+// null is a first-class answer, not an error case.
+const honest = ReferenceReadingSchema.safeParse({
+  inWords: "A large editorial photograph with a lot of negative space.",
+  observations: [{ id: "o1", what: "A large editorial photograph with substantial negative space", bearsOn: null }],
+  proposals: [],
+});
+assert("and bearsOn: null parses as a legitimate reading",
+  honest.success, honest.success ? "accepted" : JSON.stringify(honest.error?.issues?.[0]));
+
+// THE EXACT CASE SEAN NAMED. A model that saw photography and reached for the
+// nearest lever must be refused by the validator, not trusted.
+const reachedForTheNearestLever = validateReading({
+  inWords: "A large editorial photograph with a lot of negative space.",
+  observations: [
+    { id: "o1", what: "The reference uses a large editorial photograph with substantial negative space", bearsOn: null },
+  ],
+  proposals: [
+    { dimension: "cardStyle", value: "sharp", becauseOf: "o1", soThat: "it will feel more like theirs" },
+  ],
+});
+assert("a photography observation mapped onto cardStyle is rejected by the validator",
+  reachedForTheNearestLever.rejected.length === 1, reachedForTheNearestLever.rejected.join("; "));
+assert("and nothing from it is offered to the owner",
+  reachedForTheNearestLever.actionable.length === 0, `${reachedForTheNearestLever.actionable.length} actionable`);
+assert("while what J4 saw is still reported",
+  reachedForTheNearestLever.seenOnly.length === 1, reachedForTheNearestLever.seenOnly.join(" | "));
+
+// A partly-bad reading keeps its good half and names its bad half, rather
+// than being silently trimmed to look clean.
+const partly = validateReading({
+  inWords: "Big headings, an asymmetric grid.",
+  observations: [
+    { id: "o1", what: "The headings are far larger than the body text", bearsOn: "typeScale" },
+    { id: "o2", what: "The product grid is deliberately asymmetric", bearsOn: null },
+  ],
+  proposals: [
+    { dimension: "typeScale", value: "display", becauseOf: "o1", soThat: "your headings lead the page" },
+    { dimension: "sectionLayout", value: "split", becauseOf: "o2", soThat: "it feels more like their grid" },
+  ],
+});
+assert("the well-founded proposal survives", partly.actionable.length === 1, JSON.stringify(partly.actionable));
+assert("the unfounded one is named rather than dropped",
+  partly.rejected.length === 1, partly.rejected.join("; "));
+
+// And the prompt must carry the real vocabulary, not a copy that can drift.
+assert("the prompt is built from the live REFINABLE_DIMENSIONS",
+  REFINABLE_DIMENSION_KEYS.every((k) => vocabularyForPrompt().includes(k)),
+  `${REFINABLE_DIMENSION_KEYS.length} dimensions named in the prompt`);
+assert("and it states every permitted value",
+  REFINABLE_DIMENSIONS.spacing.values.every((v) => vocabularyForPrompt().includes(v)),
+  "a model cannot choose a value it was never shown");
 
 console.log(`\n${failures === 0 ? `ALL PASS` : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

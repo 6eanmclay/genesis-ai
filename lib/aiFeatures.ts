@@ -82,6 +82,11 @@ export const AI_FEATURES = [
   // data (lib/execution/socialInsight.ts), triggered after a Facebook/
   // Instagram/TikTok sync.
   "social_insight_generation",
+  // Reference Design Mode (2026-09-10) — reading an uploaded screenshot of a
+  // site the owner likes as DESIGN LANGUAGE, so their own storefront can be
+  // moved toward it through the ordinary refinement path. One vision call per
+  // uploaded reference; see lib/design/analyzeReference.ts.
+  "reference_design_analysis",
 ] as const;
 
 export type AiFeature = (typeof AI_FEATURES)[number];
