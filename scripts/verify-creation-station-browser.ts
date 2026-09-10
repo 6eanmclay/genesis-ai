@@ -1,6 +1,7 @@
 import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { waitForAppReady, waitForHydration } from "@/scripts/lib/appReadiness";
 import { verifyOAuthState, OAUTH_STATE_COOKIE } from "@/lib/integrations/oauthState";
 
 // THE CREATION STATION, IN A REAL BROWSER:
@@ -153,9 +154,20 @@ async function main() {
     console.log("\n1b. Choosing one is honest about what can actually be made");
 
     // Rotating changes what is focused -- the carousel is not decoration.
+    // The listbox answers arrow keys through a handler React attaches at
+    // hydration, so a keypress before that is simply discarded - no error, no
+    // movement. Same class as the form action that does nothing when clicked
+    // too early. Settled through the shared contract rather than slept on.
+    await waitForAppReady(page);
+    await waitForHydration(page, '[role="listbox"]');
     const firstFocused = await page.locator('[role="option"][aria-selected="true"]').getAttribute("aria-label");
     await page.locator('[role="listbox"]').press("ArrowRight");
-    await page.waitForTimeout(300);
+    await page.waitForFunction(
+      (before: string | null) =>
+        document.querySelector('[role="option"][aria-selected="true"]')?.getAttribute("aria-label") !== before,
+      firstFocused,
+      { timeout: 10_000 },
+    ).catch(() => {});
     const afterRotate = await page.locator('[role="option"][aria-selected="true"]').getAttribute("aria-label");
     assert("rotating focuses a different thing", firstFocused !== afterRotate,
       `${firstFocused} -> ${afterRotate}`);
@@ -224,6 +236,11 @@ async function main() {
     // could not scroll and Sean had to hunt for a safe strip. pan-y hands
     // vertical panning back to the browser while horizontal stays here.
     const stage = page.locator('[role="listbox"]');
+    // Read once the element is settled. Computed style on a node React is
+    // mid-way through replacing comes back empty for every property, which
+    // reads as "the rule was removed" rather than "the question was asked at
+    // the wrong moment".
+    await waitForHydration(page, '[role="listbox"]');
     const stageHtml = await stage.evaluate((el) => el.outerHTML.slice(0, 400));
     const touchAction = await stage.evaluate((el) =>
       getComputedStyle(el).getPropertyValue("touch-action"));
@@ -764,8 +781,28 @@ async function main() {
     // THE WHOLE POINT OF THE RESTRUCTURE, asserted end to end: this is an
     // entry-point change, and what it opens into must be unchanged.
     await page.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
+    await waitForAppReady(page);
     await page.locator(`a[href="/b/${store.slug}/studio/create?kind=t-shirt"]`).first().click();
-    await page.waitForURL("**/studio/create?kind=t-shirt", { timeout: 30_000 });
+    // ============ COMMITTED, THEN USABLE (2026-09-10) ================
+    //
+    // Two separate faults sat on this one line, and the first hid the second.
+    //
+    // The click did not navigate at all. The shell re-renders once more when
+    // the opening finishes, replacing the anchor between Playwright resolving
+    // it and clicking it - so the click landed on a node already detached, with
+    // no error. waitForAppReady above is what settles that.
+    //
+    // And then waitForURL's default is `waitUntil: "load"`, which never fires
+    // on this page. The URL was correct within three seconds and the wait still
+    // ran its full 30s - measured, not assumed: a diagnostic run reported the
+    // href resolved, the anchor gone, and the location already at
+    // /studio/create?kind=t-shirt while the wait was still pending.
+    //
+    // So the navigation is waited for as a NAVIGATION - committed - and
+    // usability is then asked of the application rather than of the load event.
+    // No timeout was increased.
+    await page.waitForURL("**/studio/create?kind=t-shirt", { timeout: 30_000, waitUntil: "commit" });
+    await waitForAppReady(page);
     check("it arrives at the Creation Station",
       new URL(page.url()).pathname, `/b/${store.slug}/studio/create`);
 
@@ -781,8 +818,12 @@ async function main() {
     // ------------------------------------------------------------------
     console.log("\n3c. Continuing a saved design opens that design");
     await page.goto(`${server.baseUrl}/b/${store.slug}/studio`, { waitUntil: "domcontentloaded" });
+    // Same two faults as 3b above: the anchor is replaced by the shell's own
+    // re-render, and `load` never fires on the page it opens.
+    await waitForAppReady(page);
     await page.locator(`a[href*="design=${draftId}"]`).first().click();
-    await page.waitForURL(`**/studio/create?garment=*design=${draftId}`, { timeout: 30_000 });
+    await page.waitForURL(`**/studio/create?garment=*design=${draftId}`, { timeout: 30_000, waitUntil: "commit" });
+    await waitForAppReady(page);
     const reopened = new URL(page.url());
     check("the blank travels", reopened.searchParams.get("garment"), "blank-71");
     check("and so does the draft", reopened.searchParams.get("design"), draftId);
@@ -862,10 +903,26 @@ async function main() {
     // conversation composer — which is ALWAYS MOUNTED on every dashboard page,
     // merely hidden — so the post saved empty and the assertion that caught it
     // was reporting a bug in the test, not in the product.
-    await page.locator('label:has-text("What is this post about") input').fill("Ring restock");
-    await page
-      .locator('label:has-text("The post") textarea')
-      .fill("Copper tensor rings are back in stock this week.");
+    // ============ THE NAME WENT IN AND CAME BACK EMPTY ===============
+    //
+    // Measured: the draft saved with name "" and the panel listed it as "X
+    // draft". The value is lost between the fill and the Save, because the
+    // shell re-renders once more after the opening finishes and React resets an
+    // uncontrolled field when its subtree is replaced - the same race as
+    // identity-split's rename and order-detail's search, a third time.
+    //
+    // Re-read immediately before saving, and retry the whole interaction if
+    // the field was reset underneath it. Driven by observing the wrong value,
+    // never by waiting longer.
+    await waitForAppReady(page);
+    const nameField = page.locator('label:has-text("What is this post about") input');
+    const bodyField = page.locator('label:has-text("The post") textarea');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await nameField.fill("Ring restock");
+      await bodyField.fill("Copper tensor rings are back in stock this week.");
+      if ((await nameField.inputValue()) === "Ring restock") break;
+      console.error("      NOTE  the post name was reset before saving; retrying");
+    }
     await page.locator("button", { hasText: /^Save draft$/ }).click();
     await page.waitForFunction(() => /Saved\./.test(document.body.innerText), undefined, { timeout: 20_000 });
 
@@ -907,7 +964,17 @@ async function main() {
 
     // One platform first, and the investment says so.
     await page.goto(`${server.baseUrl}/b/${store.slug}/studio/social?platform=x`, { waitUntil: "domcontentloaded" });
-    await page.locator('[data-platform-editor="x"] textarea').first().fill("Copper rings, back in stock.");
+    // Settle before typing. The same re-render that emptied the post's name
+    // above empties this editor, and the symptom arrives much later - as "the X
+    // post is untouched" failing, which reads like Facebook clobbered it rather
+    // than like the text never surviving the first place it was typed.
+    await waitForAppReady(page);
+    const xEditor = page.locator('[data-platform-editor="x"] textarea').first();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await xEditor.fill("Copper rings, back in stock.");
+      if ((await xEditor.inputValue()) === "Copper rings, back in stock.") break;
+      console.error("      NOTE  the X editor was reset while typing; retrying");
+    }
     let investment = (await page.locator("body").innerText()).replace(/\s+/g, " ");
     assert("one platform invests one Growth Point",
       /This will invest 1 Growth Point\b/.test(investment), investment.slice(0, 400));
@@ -1012,8 +1079,34 @@ async function main() {
     // BY NAME, NOT BY POSITION. There is more than one draft under X now, and
     // "the first link" quietly became "the newest piece" — a test that passes or
     // fails depending on what an earlier section happened to save.
-    await page.locator("#studio-social-panel a", { hasText: /Ring restock/ }).first().click();
-    await page.waitForURL(/studio\/social\?platform=x&post=/, { timeout: 20_000 });
+    // The assertions just above prove the link's text is in the panel, so a
+    // click that times out is an actionability problem, not a missing element -
+    // the same re-render that detaches an anchor between resolving it and
+    // clicking it. Settle first, then click.
+    await waitForAppReady(page);
+    // ============ BY ITS ID, WHICH IS WHAT IDENTIFIES IT =============
+    //
+    // This matched on the piece's NAME, and the name is the one thing about a
+    // draft the owner can change. Measured, the two anchors in this panel read
+    // "Restock, everywhere / 4 platforms" and "X draft / X · 48 of 280
+    // characters" - so the locator matched nothing and the click spent its
+    // whole timeout looking. The assertion above still passed, because it
+    // reads the WHOLE panel's text rather than the link's.
+    //
+    // The product's own answer is the postId: DraftGroup renders each row as
+    // socialDraftHref(basePath, platform, draft.postId), so the href IS the
+    // identity of the entity the link represents. This suite already holds
+    // that id - it read it out of the URL when the draft was saved - so it can
+    // ask for exactly the row it created rather than for a string that happens
+    // to be on screen.
+    //
+    // Stronger than what it replaces, and it survives a rename.
+    const savedPostId = savedUrl.searchParams.get("post") ?? "";
+    assert("the suite knows which draft it saved", savedPostId.length > 0, page.url());
+    await page.locator(`#studio-social-panel a[href*="post=${savedPostId}"]`).first()
+      .click({ timeout: 30_000 });
+    await page.waitForURL(/studio\/social\?platform=x&post=/, { timeout: 20_000, waitUntil: "commit" });
+    await waitForAppReady(page);
     // A CONTROLLED TEXTAREA'S VALUE IS A PROPERTY, NOT TEXT. innerText does not
     // contain it, so the first version of this read the whole page — and found
     // J4's always-mounted Office instead of the post. inputValue reads what is
