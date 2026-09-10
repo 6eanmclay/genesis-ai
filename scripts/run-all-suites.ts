@@ -126,6 +126,13 @@ export const ACCEPTED_FAILURES: Record<string, string> = {
   // the same reason verify-rooms was left red for a week. It guards ONE fact
   // on purpose: accepting a suite hides everything behind it, which is how
   // three further currency leaks hid behind E26.
+  // j4-assets: ADDED 2026-09-10. The shipped J4 render predates the visual
+  // system Sean locked that day - its helmet carries no diamond platform and
+  // its ear mark is not the signature mark. Left failing rather than written
+  // to match what shipped, and it guards ONE fact: the other fourteen checks
+  // stay green, including the byte-for-byte fingerprints of the three approved
+  // masters and the rule that the visor gets nothing.
+  "j4-assets": "EXTERNAL_BLOCKERS.md E28 - the runtime J4 predates the canonical three-asset system; needs a re-render carrying the diamond helmet insignia and the signature ear mark",
   "j4-calm": "EXTERNAL_BLOCKERS.md E27 - the new J4 render is not the calm/black-ground artwork the persistent surfaces are meant to use; awaiting a calm master from Sean",
   "store-currency": "EXTERNAL_BLOCKERS.md E26 — hardcoded $ in the Creation Station, which is the Studio reference implementation and out of scope here",
 };
