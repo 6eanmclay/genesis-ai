@@ -265,6 +265,30 @@ function spawnLane(lane: Lane): Promise<LaneResult> {
 }
 
 async function main(): Promise<void> {
+  // ============ THIS COMMAND TAKES NO ARGUMENTS (2026-09-10) ============
+  //
+  // It used to ACCEPT them silently, and `run-all-suites.ts --browser` looked
+  // exactly like it was doing what it says. It was not: `--browser` belongs to
+  // run-http-suites.ts, the orchestrator ignored it, the browser lane never
+  // ran, and the whole thing still cost 69 minutes because the http lane hung
+  // and burned its full 45-minute timeout before reporting 0/0.
+  //
+  // A flag that is quietly ignored is worse than one that errors, because the
+  // run still produces a confident-looking summary about suites it never
+  // touched. So: refuse, and say where the flag actually lives.
+  const args = process.argv.slice(2);
+  if (args.length > 0) {
+    console.error(
+      `\nrun-all-suites.ts takes no arguments (got: ${args.join(" ")}).\n\n` +
+        `  The browser suites:   npx tsx scripts/run-http-suites.ts --browser\n` +
+        `  Live-model suites:    npx tsx scripts/run-code-suites.ts --with-live\n` +
+        `  One suite by name:    npx tsx scripts/run-http-suites.ts --browser <substring>\n\n` +
+        `This orchestrator runs the four default lanes and nothing else, so a flag\n` +
+        `it silently swallowed would leave you certain about suites that never ran.`
+    );
+    process.exit(1);
+  }
+
   const suites = allSuites();
 
   const inventory = {

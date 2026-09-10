@@ -124,6 +124,41 @@ export async function waitForOwnServer(
       }
     }
 
+    // ============ A POISONED BUILD CACHE IS NOT A READY SERVER =========
+    //
+    // Found 2026-09-10, and it cost a full browser-lane run plus a bisect.
+    //
+    // `.next/dev` is SHARED by every server started in this directory. Hard-
+    // killing one mid-write (taskkill /F, which close() below must use on
+    // Windows) can leave it referencing a chunk that is no longer there. The
+    // next server then starts perfectly — "Ready in 365ms" — and fails every
+    // REQUEST with "An error occurred while loading instrumentation hook:
+    // ... ENOENT ... .next/dev/node_modules/...".
+    //
+    // The readiness check below accepts `status > 0`, so a server returning
+    // 500 to everything sails straight through it. Nine browser suites then
+    // failed on their own assertions and looked exactly like product
+    // regressions. Two of them were investigated as such.
+    //
+    // So the signature is caught HERE, where it is still one infrastructure
+    // fault rather than N mysterious product failures.
+    if (/loading instrumentation hook|ENOENT[^\n]*\.next[\\/]dev/i.test(serverOutput())) {
+      throw new Error(
+        [
+          "The dev server started but its build cache is corrupt, so every request fails.",
+          "",
+          "  Remedy:  rm -rf .next     (then re-run)",
+          "",
+          "Cause: .next/dev is shared by every server started in this directory, and a",
+          "hard-killed `next dev` can leave it referencing chunks that no longer exist.",
+          "NOTHING HERE WAS TESTED — do not read the suite failures below it as product",
+          "defects, which is exactly what happened the first time this appeared.",
+          "",
+          serverOutput().slice(-1200),
+        ].join("\n"),
+      );
+    }
+
     try {
       const response = await fetch(baseUrl, { method: "GET" });
       if (response.status > 0) return;
