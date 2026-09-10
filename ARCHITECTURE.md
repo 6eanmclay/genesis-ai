@@ -190,6 +190,40 @@ the thing that earns priority.
 - Never assume a full invocation. Assume the next one, and leave the queue in a
   state where the remainder is first in line.
 
+## Standing invariant: state verification is not render verification (2026-09-10)
+
+**Reading back what was just written proves persistence, not effect. For anything the owner can see, verification must measure the rendered result.**
+
+Found the hard way. For months Sean reported that telling J4 to change his website's font did nothing visible — the same font, or a near-identical substitute, while a colour moved instead. Every layer said it had worked:
+
+| Layer | What it said | Whether it was true |
+|---|---|---|
+| `ApprovalRequest.input` | `typography.headingFont: "Lora"` | true |
+| `Store.theme` column | `"Lora"` | true |
+| `updateThemeExecutable.verify()` | **verified** | true |
+| `--font-heading` CSS variable | `"Lora", sans-serif` | true |
+| Google Fonts `<link>` | loading Lora | true |
+| **The rendered heading** | **`Arial, Helvetica, sans-serif`** | **the font never changed** |
+
+`verify()` was correct the entire time. It read back the stored column, the column matched the input, and it reported verified — the contract in `lib/execution/verification.ts` was honoured exactly. It was true and useless, because the question it answers is "was it saved" and the owner's question is "did it change".
+
+The cause was one missing word, 37 times: Tailwind v4 treats an arbitrary `font-[…]` value as ambiguous between font-family and font-weight and resolves **nothing** without a type hint, so every `font-[var(--font-heading)]` in the app was inert. Ten files. No element on any page ever used the theme's typography.
+
+**The rule this leaves behind.** A `verify()` that reads back its own write is a *storage* check and must be described as one. When a change is something the owner will look at, the verification has to be a measurement of the rendered artefact, taken in a browser:
+
+| Property | What proves it |
+|---|---|
+| font family | `getComputedStyle(el).fontFamily` |
+| colour | `getComputedStyle(el).color` / `backgroundColor` |
+| corner radius | `getComputedStyle(el).borderRadius` |
+| image or hero size | `getBoundingClientRect()` |
+| section order | DOM order |
+| spacing | computed padding/margin |
+
+**The execution framework can be generic. The proof cannot be.** `DesignProperty` names what is changing and `canSatisfy` says whether an executable can change it — both are shared. The measurement is per-property and can never be inherited, because a generic "it worked" is exactly what was true for months while nothing worked. See `lib/design/designChange.ts`, whose `designOutcome` derives completion from *executed / changed / rendered* and reports a change the page does not show as a failure, in those words.
+
+**And the corollary for what J4 says.** The reply must be derived from the outcome, not written beside it. On 2026-09-05 eight `refine_storefront` executions failed on invented vocabulary values and J4 told Sean the storefront had been warmed up and given "a more characterful headline font". Generation is not verification, and a success message is not a result.
+
 ## Standing invariant: the mirrored registry (2026-08-21)
 
 **A hand-maintained registry that mirrors another registry, where the type system appears to enforce the mirror but cannot.** Found three times during the verification sprint, in three unrelated parts of the codebase, always with the same signature: the file documents the mirror, the compiler checks the *shape*, and nothing checks the *membership*.

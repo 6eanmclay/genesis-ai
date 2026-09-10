@@ -57,34 +57,120 @@ export function cannotSatisfy(action: OwningAction, properties: DesignProperty[]
 }
 
 /**
- * What design property a request is about, when that is unambiguous.
+ * ============ AMBIGUITY IS AN ANSWER (Sean, 2026-09-10) ================
  *
- * Deliberately narrow. This is not natural-language understanding - it is a
- * guard against one specific failure, where a request naming a property is
- * executed by an action that cannot change that property. Everything it is not
- * sure about returns [], and the model routes as before.
+ * "Keep classifyDesignRequest conservative for now. Do not make it guess. If
+ * the request is ambiguous, don't silently route it to an unrelated design
+ * action. Ask a clarification question or have J4 explain what it thinks the
+ * owner is asking for. That's much better than another version of the current
+ * problem where J4 confidently executes the wrong thing."
+ *
+ * So there are three outcomes rather than two, and the middle one is the point:
+ *
+ *   confident     the request names a property. Route it, and refuse any
+ *                 action that cannot change that property.
+ *   ambiguous     the request is plainly about the design and plainly does
+ *                 NOT name a property. J4 asks rather than picks.
+ *   unclassified  not a design request at all, or nothing this can tell.
+ *                 The model routes it exactly as it always did.
+ *
+ * The distinction between `ambiguous` and `unclassified` is what stops this
+ * from becoming the original defect wearing a new coat. Silence about a
+ * request it cannot read is honest; a guess is how "make it warmer" became
+ * eight failed executions and a claim of success.
  */
-export function classifyDesignRequest(text: string): DesignProperty[] {
-  const t = text.toLowerCase();
-  const found: DesignProperty[] = [];
+export type DesignRequest =
+  | { kind: "confident"; properties: DesignProperty[] }
+  | { kind: "ambiguous"; candidates: DesignProperty[]; question: string }
+  | { kind: "unclassified" };
 
-  // TYPOGRAPHY. "font" is the unambiguous word; typeface and lettering are the
-  // other two an owner actually uses. "font size" is deliberately excluded -
-  // that is a scale, which refine_storefront genuinely can do.
-  const wantsFont = /\b(font|typeface|lettering)\b/.test(t) && !/\bfont size\b|\bsize of the font\b/.test(t);
-  if (wantsFont) {
+/** The properties a request names, or none when it does not name any. */
+export function propertiesOf(request: DesignRequest): DesignProperty[] {
+  return request.kind === "confident" ? request.properties : [];
+}
+
+// Words that say "I want the design changed" without saying what.
+const VAGUE_DESIGN = /\b(look|looks|looking|feel|feels|vibe|style|design|prettier|nicer|better|elegant|modern|alive|boring|basic|bland|plain|cleaner|warmer|fresher)\b/;
+// Words that name a surface but not a property.
+const SURFACE = /\b(website|site|homepage|home page|page|storefront|shop)\b/;
+
+export function classifyDesignRequest(text: string): DesignRequest {
+  const t = text.toLowerCase();
+
+  // TYPOGRAPHY, named outright. "font size" is excluded deliberately - a scale
+  // is something refine_storefront genuinely can change.
+  const namesFont = /\b(font|typeface|lettering)\b/.test(t) && !/\bfont size\b|\bsize of the font\b/.test(t);
+  if (namesFont) {
     const heading = /\b(heading|headline|title|header)s?\b/.test(t);
     const body = /\b(body|paragraph|text|copy)\b/.test(t);
-    if (heading && !body) found.push({ group: "typography", field: "headingFont" });
-    else if (body && !heading) found.push({ group: "typography", field: "bodyFont" });
-    else {
-      // "change the font" with nothing narrowing it means both.
-      found.push({ group: "typography", field: "headingFont" });
-      found.push({ group: "typography", field: "bodyFont" });
-    }
+    if (heading && !body) return { kind: "confident", properties: [{ group: "typography", field: "headingFont" }] };
+    if (body && !heading) return { kind: "confident", properties: [{ group: "typography", field: "bodyFont" }] };
+    return {
+      kind: "confident",
+      properties: [
+        { group: "typography", field: "headingFont" },
+        { group: "typography", field: "bodyFont" },
+      ],
+    };
   }
 
-  return found;
+  // PLAINLY ABOUT THE DESIGN, PLAINLY NOT SPECIFIC. This is the case that used
+  // to be executed as whatever was nearest to hand.
+  if (VAGUE_DESIGN.test(t) && SURFACE.test(t)) {
+    return {
+      kind: "ambiguous",
+      candidates: [
+        { group: "typography", field: "headingFont" },
+        { group: "colors", field: "background" },
+        { group: "composition", field: "heroLayout" },
+      ],
+      question:
+        "Before I change anything — is it the type, the colours, or the layout that is bothering you? " +
+        "I would rather change the thing you meant than the thing I can reach quickest.",
+    };
+  }
+
+  return { kind: "unclassified" };
+}
+
+/**
+ * WHETHER A DESIGN MUTATION MAY RUN AT ALL.
+ *
+ * The gate the three states exist for. Note which way each one falls:
+ *
+ *   confident + capable    allowed
+ *   confident + incapable  refused, with the reason the owner gets told
+ *   ambiguous              refused, with a QUESTION instead of a change
+ *   unclassified           ALLOWED
+ *
+ * That last row is deliberate and is the one most likely to be "tidied" into
+ * a refusal later. This classifier reads a narrow band of requests; most of
+ * what reaches an executable it cannot read at all, and a gate that blocked
+ * everything it did not recognise would break every design change J4 makes
+ * rather than only the wrong ones. Silence means "I have nothing to add",
+ * never "I forbid it".
+ */
+export function mayExecuteDesignMutation(
+  request: DesignRequest,
+  action: OwningAction,
+):
+  | { allowed: true; properties: DesignProperty[] }
+  | { allowed: false; because: string; ask: string | null } {
+  if (request.kind === "ambiguous") {
+    return {
+      allowed: false,
+      because: "the request is about the design but does not say which part, and guessing is what produced the last defect",
+      ask: request.question,
+    };
+  }
+  if (request.kind === "unclassified") {
+    return { allowed: true, properties: [] };
+  }
+  const wrong = cannotSatisfy(action, request.properties);
+  if (wrong.length > 0) {
+    return { allowed: false, because: explainWrongAction(wrong, action), ask: null };
+  }
+  return { allowed: true, properties: request.properties };
 }
 
 /**

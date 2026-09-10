@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
 import { DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { designChange, isPerceptibleFontChange, reportChange, readProperty, designOutcome } from "@/lib/design/designChange";
-import { classifyDesignRequest, canSatisfy, cannotSatisfy } from "@/lib/design/designRouting";
+import { classifyDesignRequest, propertiesOf, mayExecuteDesignMutation } from "@/lib/design/designRouting";
 
 // "I CHANGED THE FONT" HAS TO BE TRUE (2026-09-09).
 //
@@ -54,41 +54,77 @@ async function main(): Promise<void> {
   check("a near-identical change is reported honestly, not as a win",
     /may not see a difference/.test(reportChange(near)), reportChange(near));
 
-  // ---- 2. a font request cannot be executed by something that cannot ----
+  // ---- 2. THE THREE STATES, and what each one is allowed to do ---------
   //
-  // Bug 2, kept separate from bug 1 at Sean's request. refine_storefront
-  // returns `{ ...current, presentation, composition }` - typography passes
-  // through untouched by construction - so a font request sent there cannot
-  // succeed no matter what value it carries.
-  console.log("\n=== a font request must reach something that can change a font ===\n");
+  // Sean: "A classifier is not a security gate over everything it doesn't
+  // understand. It is a routing aid for the narrow set of requests it
+  // recognizes." So the three states fall four different ways, and the last
+  // one is the one that must never be tightened:
+  //
+  //   confident + capable    execute
+  //   confident + incapable  refuse honestly and explain why
+  //   ambiguous              ask before changing anything
+  //   unclassified           do not interfere
+  console.log("\n=== 1. CONFIDENT: a named property routes and executes ===\n");
   for (const ask of [
+    "Change the heading font to Playfair Display.",
     "change the font",
     "can we change the font underneath wound by hand measured by cubit?",
-    "is there a font we can use on the homepage to make it look more alive?",
-    "change the font to Playfair Display",
     "I want a different typeface",
   ]) {
-    const props = classifyDesignRequest(ask);
-    const wrong = cannotSatisfy("refine_storefront", props);
-    check(`"${ask.slice(0, 44)}" is typography`, props.length > 0 && props.every((p) => p.group === "typography"),
-      props.map((p) => p.field).join(", ") || "unclassified");
-    check(`   and refine_storefront is refused it`, props.length > 0 && wrong.length === props.length);
-    check(`   while update_theme can take it`, props.every((p) => canSatisfy("update_theme", p)));
+    const req = classifyDesignRequest(ask);
+    check(`"${ask.slice(0, 42)}" is confident typography`,
+      req.kind === "confident" && propertiesOf(req).every((p) => p.group === "typography"),
+      req.kind === "confident" ? propertiesOf(req).map((p) => p.field).join(", ") : req.kind);
+
+    // Confident + incapable: refused, and the owner is told why.
+    const wrong = mayExecuteDesignMutation(req, "refine_storefront");
+    check("   refine_storefront is refused it", wrong.allowed === false,
+      wrong.allowed === false ? wrong.because.slice(0, 72) : "ALLOWED");
+    check("   and the refusal explains rather than just failing",
+      wrong.allowed === false && /font/i.test(wrong.because));
+
+    // Confident + capable: allowed.
+    const right = mayExecuteDesignMutation(req, "update_theme");
+    check("   update_theme may execute it", right.allowed === true);
   }
 
-  // It must not claim territory it has no business in. A colour or layout
-  // request is not typography, and an unclassified request is left alone
-  // rather than guessed at - a classifier that guessed would swap one wrong
-  // action for another.
+  console.log("\n=== 2. AMBIGUOUS: design intent, no property named -> ask ===\n");
   for (const ask of [
-    "make the background warmer",
-    "use copper tones",
-    "make the buttons rounder",
-    "change the layout",
-    "make the font size bigger",
+    "Make the website feel more modern.",
+    "the website looks boring",
+    "my homepage feels bland",
+    "can you make the site look better",
   ]) {
-    check(`"${ask}" is NOT routed as typography`, classifyDesignRequest(ask).length === 0,
-      classifyDesignRequest(ask).map((p) => p.field).join(", ") || "unclassified, as intended");
+    const req = classifyDesignRequest(ask);
+    check(`"${ask.slice(0, 42)}" is ambiguous`, req.kind === "ambiguous", req.kind);
+
+    // THE POINT: it cannot reach a mutation, whichever action received it.
+    for (const action of ["update_theme", "refine_storefront"] as const) {
+      const gate = mayExecuteDesignMutation(req, action);
+      check(`   no mutation runs via ${action}`, gate.allowed === false,
+        gate.allowed === false ? "refused" : "REACHED A MUTATION");
+    }
+    const gate = mayExecuteDesignMutation(req, "update_theme");
+    check("   and J4 asks a question instead",
+      gate.allowed === false && !!gate.ask && gate.ask.length > 20,
+      gate.allowed === false ? (gate.ask ?? "no question").slice(0, 76) : "-");
+  }
+
+  console.log("\n=== 3. UNCLASSIFIED: the classifier stays out of the way ===\n");
+  for (const ask of [
+    "how many orders did I get this week",
+    "add a product called Tensor Ring",
+    "make the buttons rounder",
+    "make the background warmer",
+    "make the font size bigger",
+    "what did you change yesterday",
+  ]) {
+    const req = classifyDesignRequest(ask);
+    check(`"${ask.slice(0, 42)}" is left alone`, req.kind === "unclassified", req.kind);
+    // And critically it does not BLOCK: normal J4 handling continues.
+    check("   normal handling continues",
+      mayExecuteDesignMutation(req, "refine_storefront").allowed === true);
   }
 
   // ---- 4 and 5. success is derived, never asserted ----------------------
