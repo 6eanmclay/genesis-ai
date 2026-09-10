@@ -10,7 +10,7 @@ import {
   commandLineOf,
   type OwnedServer,
 } from "@/scripts/lib/serverRegistry";
-import { assertServerServesRoute, isHealableStartupFailure } from "@/scripts/lib/testServer";
+import { assertServerServesRoute, isHealableStartupFailure, CANARY_ROUTE } from "@/scripts/lib/testServer";
 
 // ONE RUN CANNOT POISON THE NEXT, AND CANNOT TOUCH ANOTHER'S:
 //
@@ -179,27 +179,45 @@ async function main(): Promise<void> {
   const address = notFound.address();
   const canaryPort = typeof address === "object" && address ? address.port : 0;
 
-  let canaryError: unknown = null;
-  try {
-    // Deliberately short: sixty real seconds of a known-404 server proves
-    // nothing extra, and this suite should not cost a minute to say so.
-    await Promise.race([
-      assertServerServesRoute(`http://127.0.0.1:${canaryPort}`, "/api/cron/status"),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("TOO SLOW")), 70_000)),
-    ]);
-  } catch (error) {
-    canaryError = error;
-  }
+  const probe = async (path: string): Promise<unknown> => {
+    try {
+      await assertServerServesRoute(`http://127.0.0.1:${canaryPort}`, path);
+      return null;
+    } catch (error) {
+      return error;
+    }
+  };
+  const canaryError = await probe(CANARY_ROUTE);
+  const arbitraryError = await probe("/api/definitely-not-a-route-9c1f");
   notFound.close();
 
   assert("a persistent canary 404 fails rather than passing",
     canaryError !== null, "a server serving nothing must never be accepted");
   assert("and it is classified as a repairable build cache",
     isHealableStartupFailure(canaryError),
-    canaryError instanceof Error ? canaryError.message.split("\n")[1] ?? "" : String(canaryError));
-  assert("while an unrelated startup failure is NOT",
+    canaryError instanceof Error ? canaryError.message.split("\n")[0] : String(canaryError));
+
+  // ============ AND THE LIMIT, WHICH IS THE HARDER HALF ============
+  //
+  // The first version of this marked EVERY 404 healable, and
+  // verify-http-lane-integrity caught it within one lane run: its "a route
+  // that is not served is refused" assertion reads the message, and the
+  // marker had been prepended to the first line.
+  //
+  // The deeper fault was not the wording. The harness KNOWS the canary
+  // exists, so its absence says the build output is wrong; an arbitrary path
+  // being absent says only that it is absent. Wiping the cache over that
+  // would be a guess, and it would make proving "a missing route refuses"
+  // cost a full recompile.
+  assert("but an arbitrary missing route is NOT healable",
+    arbitraryError !== null && !isHealableStartupFailure(arbitraryError),
+    "only the route the harness requires can indict the build output");
+  assert("and the message still opens with what went wrong",
+    canaryError instanceof Error && canaryError.message.startsWith("REFUSING TO RUN"),
+    "the first line a person reads must not be a marker meant for a catch block");
+  assert("while an unrelated startup failure is NOT healable either",
     !isHealableStartupFailure(new Error("The dev server exited before it was ready (code 1)")),
-    "only the cache is healable — a dead server must still be reported, not retried blindly");
+    "a dead server must still be reported, not retried blindly");
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);

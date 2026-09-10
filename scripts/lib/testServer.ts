@@ -63,6 +63,12 @@ export interface TestServer {
  */
 export const POISONED_CACHE = "GENESIS_HARNESS_POISONED_CACHE";
 
+/**
+ * The one route the harness REQUIRES, and therefore the only 404 that can
+ * mean the build output is stale rather than that a path simply does not exist.
+ */
+export const CANARY_ROUTE = "/api/cron/status";
+
 /** Whether a startup failure is one the harness can repair by itself. */
 export function isHealableStartupFailure(error: unknown): boolean {
   return error instanceof Error && error.message.includes(POISONED_CACHE);
@@ -236,30 +242,31 @@ export async function assertServerServesRoute(baseUrl: string, path: string): Pr
   }
   throw new Error(
     [
-      // ============ THE SAME STALE CACHE, WEARING A 404 ==============
-      //
-      // Marked for self-healing, and the evidence is what the 404s look like.
-      // A route that has not compiled yet is SLOW - the request waits on the
-      // compiler. These come back in 32-35ms, over and over, for the full
-      // sixty seconds: the server is answering immediately and confidently
-      // that a route which exists on disk does not exist.
-      //
-      // That is a stale route manifest in the shared .next/dev, left behind by
-      // one of the ~28 servers a browser lane starts and kills in sequence -
-      // the same poisoned build output as the instrumentation-hook ENOENT, in
-      // a different disguise. It has now struck three different suites, one
-      // per lane run, never the same one twice, which is the signature of
-      // shared state rather than of any suite.
-      //
-      // So it takes the same one-shot remedy: clear the build output, start
-      // again. If the route is genuinely gone, the retry fails identically and
-      // says so, having cost one recompile.
-      POISONED_CACHE,
       `REFUSING TO RUN: the server is not serving ${path}.`,
       `It answered ${status}. That route answers 401 without credentials and never 404,`,
       "so a 404 means it is not being served at all and nothing beyond this point was tested.",
       "",
       "This is an infrastructure failure, NOT a wrong database.",
+      // ============ THE SAME STALE CACHE, WEARING A 404 ==============
+      //
+      // Marked for self-healing, and the evidence is what the 404s look like.
+      // A route that has not compiled yet is SLOW - the request waits on the
+      // compiler. These come back in 32-35ms, over and over, for the full
+      // sixty seconds: the server answering instantly and confidently that a
+      // route which exists on disk does not exist. That is a stale route
+      // manifest in the shared .next/dev, the same poisoned build output as
+      // the instrumentation-hook ENOENT in a different disguise.
+      //
+      // ONLY FOR THE CANARY, and that limit is the point. The harness knows
+      // /api/cron/status exists, so its absence says the build output is
+      // wrong. An ARBITRARY path being absent says only that it is absent -
+      // wiping the cache over that would be a guess, and it would make
+      // verify-http-lane-integrity's "a route that is not served is refused"
+      // cost a full recompile to prove something it already knew.
+      //
+      // Appended rather than prefixed: the first line a person reads must
+      // still be what went wrong, not a marker meant for a catch block.
+      ...(path === CANARY_ROUTE ? [POISONED_CACHE] : []),
     ].join("\n"),
   );
 }
@@ -486,7 +493,7 @@ async function startOwnServer(
   try {
     await waitForOwnServer(child, baseUrl, port, options.timeoutMs ?? 180_000, () => output.join(""));
     // Infrastructure first, then which database. Two facts, two messages.
-    await assertServerServesRoute(baseUrl, "/api/cron/status");
+    await assertServerServesRoute(baseUrl, CANARY_ROUTE);
     await assertServerUsesTestDatabase(baseUrl, db, canarySlug);
   } catch (error) {
     const log = output.join("").trim();
