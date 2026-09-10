@@ -741,7 +741,7 @@ export function GenesisAssistant({
       <div className="flex shrink-0 items-start justify-between border-b border-black/[.08] p-4 dark:border-white/[.145] lg:border-[rgba(139,124,246,0.18)]">
         <div>
           <div className="flex items-center gap-2">
-            <p className="font-[var(--font-heading,inherit)] font-semibold text-black dark:text-zinc-50 lg:text-[#f4f2fb]">
+            <p className="font-[family-name:var(--font-heading,inherit)] font-semibold text-black dark:text-zinc-50 lg:text-[#f4f2fb]">
               How can Genesis help today?
             </p>
             <GenesisStatusDot

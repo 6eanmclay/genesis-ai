@@ -40,7 +40,7 @@ export function GenesisGreeting({
 
   return (
     <p
-      className={`font-[var(--font-heading,inherit)] ${sizeClassName}`}
+      className={`font-[family-name:var(--font-heading,inherit)] ${sizeClassName}`}
       style={{ color: GENESIS_ATMOSPHERE.text }}
     >
       {greeting}

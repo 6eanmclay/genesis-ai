@@ -106,7 +106,7 @@ function BrandHeader({
               {eyebrow}
             </p>
           )}
-          <p className="font-[var(--font-heading)] text-2xl font-semibold text-black dark:text-zinc-50">
+          <p className="font-[family-name:var(--font-heading)] text-2xl font-semibold text-black dark:text-zinc-50">
             {name}
           </p>
         </div>

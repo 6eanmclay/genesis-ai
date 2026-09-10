@@ -46,7 +46,7 @@ export default async function BagPage({ params }: { params: Promise<{ slug: stri
   return (
     <div
       style={themeCssVars(theme)}
-      className="min-h-screen bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
+      className="min-h-screen bg-[var(--brand-background)] font-[family-name:var(--font-body)] text-[var(--brand-text)]"
     >
       <BagBar slug={slug} count={bagCount(bag)} canAcceptPayments={canAcceptPayments} />
       {/* Deliberately NOT rendered on the bag itself — a pill inviting somebody
@@ -54,7 +54,7 @@ export default async function BagPage({ params }: { params: Promise<{ slug: stri
           the Continue to Payment button. */}
 
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
-        <h1 className="font-[var(--font-heading)] text-2xl font-semibold">Your bag</h1>
+        <h1 className="font-[family-name:var(--font-heading)] text-2xl font-semibold">Your bag</h1>
 
         {/* A LINE THAT WENT AWAY IS SAID OUT LOUD. A product deactivated or
             deleted while it sat here simply stops being in the bag; a customer

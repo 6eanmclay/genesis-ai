@@ -114,7 +114,7 @@ export default async function ProductDetailPage({
   return (
     <div
       style={themeCssVars(theme)}
-      className="min-h-screen bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
+      className="min-h-screen bg-[var(--brand-background)] font-[family-name:var(--font-body)] text-[var(--brand-text)]"
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
       <BagBar slug={slug} count={bagItemCount} canAcceptPayments={canAcceptPayments} />
@@ -146,7 +146,7 @@ export default async function ProductDetailPage({
                 hero's h1 by original design — the h1/h2 scale lookup would
                 either inflate or shrink it depending on the chosen scale,
                 not preserve it. */}
-            <h1 className="font-[var(--font-heading)] text-3xl font-bold tracking-tight">
+            <h1 className="font-[family-name:var(--font-heading)] text-3xl font-bold tracking-tight">
               {product.name}
             </h1>
             <p className="mt-3">
@@ -203,7 +203,7 @@ export default async function ProductDetailPage({
 
             {richContent.keyFeatures.length > 0 && (
               <div className="mt-8">
-                <h2 className="font-[var(--font-heading)] text-lg font-semibold">
+                <h2 className="font-[family-name:var(--font-heading)] text-lg font-semibold">
                   Key Features
                 </h2>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--brand-text-secondary)]">
@@ -216,7 +216,7 @@ export default async function ProductDetailPage({
 
             {richContent.benefits.length > 0 && (
               <div className="mt-6">
-                <h2 className="font-[var(--font-heading)] text-lg font-semibold">Benefits</h2>
+                <h2 className="font-[family-name:var(--font-heading)] text-lg font-semibold">Benefits</h2>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--brand-text-secondary)]">
                   {richContent.benefits.map((benefit, i) => (
                     <li key={i}>{benefit}</li>
@@ -227,7 +227,7 @@ export default async function ProductDetailPage({
 
             {richContent.specifications.length > 0 && (
               <div className="mt-6">
-                <h2 className="font-[var(--font-heading)] text-lg font-semibold">
+                <h2 className="font-[family-name:var(--font-heading)] text-lg font-semibold">
                   Specifications
                 </h2>
                 <dl className="mt-2 divide-y divide-[var(--brand-text)]/[.08] text-sm">

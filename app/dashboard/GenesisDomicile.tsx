@@ -41,7 +41,7 @@ export function GenesisDomicile({
         <GenesisAvatar className={GENESIS_AVATAR_SIZE.domicile} />
       </div>
       <p
-        className="mt-8 font-[var(--font-heading,inherit)] text-2xl font-semibold"
+        className="mt-8 font-[family-name:var(--font-heading,inherit)] text-2xl font-semibold"
         style={{ color: GENESIS_ATMOSPHERE.text }}
       >
         Genesis

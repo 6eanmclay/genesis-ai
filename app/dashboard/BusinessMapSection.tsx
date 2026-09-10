@@ -229,7 +229,7 @@ export async function BusinessMapSection({
           thing first and more slowly; this is what remains on the page after
           it clears, so somebody who scrolls back still knows whose business
           they are looking at. */}
-      <h1 className="font-[var(--font-heading)] text-2xl font-semibold text-black dark:text-zinc-50">
+      <h1 className="font-[family-name:var(--font-heading)] text-2xl font-semibold text-black dark:text-zinc-50">
         Welcome back{ownerName ? `, ${ownerName.split(" ")[0]}` : ""}.
       </h1>
       <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">

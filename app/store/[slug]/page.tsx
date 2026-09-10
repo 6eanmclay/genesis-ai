@@ -352,7 +352,7 @@ export default async function StorefrontPage({
       return (
         <section key={id} id={id} className={bandClass}>
           <div className={`mx-auto grid max-w-3xl grid-cols-1 gap-4 px-8 sm:grid-cols-[1fr_2fr] sm:gap-10 ${sectionPadding}`}>
-            <h2 className={`font-[var(--font-heading)] ${h2Class}`}>{heading}</h2>
+            <h2 className={`font-[family-name:var(--font-heading)] ${h2Class}`}>{heading}</h2>
             <p className="text-[var(--brand-text-secondary)]">{body}</p>
           </div>
         </section>
@@ -366,7 +366,7 @@ export default async function StorefrontPage({
             <div
               className={`border border-[var(--brand-text)]/[.08] bg-[var(--brand-surface)] p-8 text-center ${cardRadius} ${shadow}`}
             >
-              <h2 className={`font-[var(--font-heading)] ${h2Class}`}>{heading}</h2>
+              <h2 className={`font-[family-name:var(--font-heading)] ${h2Class}`}>{heading}</h2>
               <p className="mt-4 text-[var(--brand-text-secondary)]">{body}</p>
             </div>
           </div>
@@ -378,7 +378,7 @@ export default async function StorefrontPage({
     return (
       <section key={id} id={id} className={bandClass}>
         <div className={`mx-auto max-w-3xl px-8 text-center ${sectionPadding}`}>
-          <h2 className={`font-[var(--font-heading)] ${h2Class}`}>{heading}</h2>
+          <h2 className={`font-[family-name:var(--font-heading)] ${h2Class}`}>{heading}</h2>
           <p className="mt-4 text-[var(--brand-text-secondary)]">{body}</p>
         </div>
       </section>
@@ -464,7 +464,7 @@ export default async function StorefrontPage({
                       <ProductImage product={product} className="h-full w-full object-cover" />
                     </div>
                     <div className="flex-1">
-                      <h3 className="font-[var(--font-heading)] font-semibold">
+                      <h3 className="font-[family-name:var(--font-heading)] font-semibold">
                         {product.name}
                       </h3>
                       {product.description && (
@@ -500,7 +500,7 @@ export default async function StorefrontPage({
                     <p className="text-xs font-medium uppercase tracking-wide text-[var(--brand-accent)]">
                       Featured
                     </p>
-                    <h3 className="mt-2 font-[var(--font-heading)] text-2xl font-semibold">
+                    <h3 className="mt-2 font-[family-name:var(--font-heading)] text-2xl font-semibold">
                       {products[0].name}
                     </h3>
                     {products[0].description && (
@@ -569,7 +569,7 @@ export default async function StorefrontPage({
           homepage.faq.length > 0 && (
             <section key={key} id={key} className="border-t border-[var(--brand-text)]/[.08]">
               <div className={`mx-auto max-w-2xl px-8 ${sectionPadding}`}>
-                <h2 className="text-center font-[var(--font-heading)] text-2xl font-semibold">
+                <h2 className="text-center font-[family-name:var(--font-heading)] text-2xl font-semibold">
                   Frequently Asked Questions
                 </h2>
                 <div className="mt-8 flex flex-col gap-3">
@@ -724,7 +724,7 @@ export default async function StorefrontPage({
             className={`mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-8 md:grid-cols-2 ${sectionPadding}`}
           >
             <div className="text-center md:text-left">
-              <h1 className={`font-[var(--font-heading)] ${h1Class}`}>{heading}</h1>
+              <h1 className={`font-[family-name:var(--font-heading)] ${h1Class}`}>{heading}</h1>
               <p className="mx-auto mt-4 max-w-xl text-lg text-[var(--brand-text-secondary)] md:mx-0">
                 {subheading}
               </p>
@@ -748,7 +748,7 @@ export default async function StorefrontPage({
         <header className="relative overflow-hidden border-b border-[var(--brand-text)]/[.08]">
           <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand-accent)]/10 via-transparent to-[var(--brand-primary)]/10" />
           <div className={`relative px-8 text-center ${sectionPadding}`}>
-            <h1 className={`font-[var(--font-heading)] ${h1Class}`}>{heading}</h1>
+            <h1 className={`font-[family-name:var(--font-heading)] ${h1Class}`}>{heading}</h1>
             <p className="mx-auto mt-4 max-w-xl text-lg text-[var(--brand-text-secondary)]">
               {subheading}
             </p>
@@ -761,7 +761,7 @@ export default async function StorefrontPage({
     if (heroLayout === "minimal") {
       return (
         <header className="border-b border-[var(--brand-text)]/[.08] px-8 py-10 text-center">
-          <h1 className="font-[var(--font-heading)] text-2xl font-semibold tracking-tight sm:text-3xl">
+          <h1 className="font-[family-name:var(--font-heading)] text-2xl font-semibold tracking-tight sm:text-3xl">
             {heading}
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-base text-[var(--brand-text-secondary)]">
@@ -775,7 +775,7 @@ export default async function StorefrontPage({
     // "centered" (default) — today's exact markup
     return (
       <header className={`border-b border-[var(--brand-text)]/[.08] px-8 text-center ${sectionPadding}`}>
-        <h1 className={`font-[var(--font-heading)] ${h1Class}`}>{heading}</h1>
+        <h1 className={`font-[family-name:var(--font-heading)] ${h1Class}`}>{heading}</h1>
         <p className="mx-auto mt-4 max-w-xl text-lg text-[var(--brand-text-secondary)]">
           {subheading}
         </p>
@@ -787,7 +787,7 @@ export default async function StorefrontPage({
   return (
     <div
       style={themeCssVars(theme)}
-      className="min-h-screen bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
+      className="min-h-screen bg-[var(--brand-background)] font-[family-name:var(--font-body)] text-[var(--brand-text)]"
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
       {!store.published && viewerRole && <PreviewModeBanner />}
@@ -832,7 +832,7 @@ export default async function StorefrontPage({
           unpredictably. */}
       <nav className="relative border-b border-[var(--brand-text)]/[.08] px-8 py-4">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <span className="font-[var(--font-heading)] text-lg font-semibold">{storeName}</span>
+          <span className="font-[family-name:var(--font-heading)] text-lg font-semibold">{storeName}</span>
           {navLinks.length > 0 && (
             <>
               <div className="hidden items-center gap-6 md:flex">
@@ -942,7 +942,7 @@ function ProductCard({
         </div>
       </Link>
       <div className="p-4">
-        <h3 className="font-[var(--font-heading)] font-semibold">{product.name}</h3>
+        <h3 className="font-[family-name:var(--font-heading)] font-semibold">{product.name}</h3>
         {product.description && (
           <p className="mt-1 line-clamp-2 text-sm text-[var(--brand-text-secondary)]">
             {product.description}

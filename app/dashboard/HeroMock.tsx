@@ -32,12 +32,12 @@ export function HeroMock({
   return (
     <div
       style={themeCssVars(theme)}
-      className="overflow-hidden rounded-xl border border-[var(--brand-text,#18181b)]/10 bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
+      className="overflow-hidden rounded-xl border border-[var(--brand-text,#18181b)]/10 bg-[var(--brand-background)] font-[family-name:var(--font-body)] text-[var(--brand-text)]"
     >
       {isSplit ? (
         <div className="grid grid-cols-2 items-center gap-4 p-5">
           <div>
-            <p className="font-[var(--font-heading)] text-xl font-bold leading-tight">{heading}</p>
+            <p className="font-[family-name:var(--font-heading)] text-xl font-bold leading-tight">{heading}</p>
             <p className="mt-1.5 text-xs text-[var(--brand-text-secondary)]">{subheading}</p>
             <span className="mt-3 inline-block rounded-full bg-[var(--brand-accent)] px-3 py-1 text-[11px] font-medium text-white">
               Shop Now
@@ -50,7 +50,7 @@ export function HeroMock({
         </div>
       ) : (
         <div className="p-6 text-center">
-          <p className="font-[var(--font-heading)] text-2xl font-bold leading-tight">{heading}</p>
+          <p className="font-[family-name:var(--font-heading)] text-2xl font-bold leading-tight">{heading}</p>
           <p className="mx-auto mt-2 max-w-xs text-xs text-[var(--brand-text-secondary)]">{subheading}</p>
           <span className="mt-3 inline-block rounded-full bg-[var(--brand-accent)] px-4 py-1.5 text-[11px] font-medium text-white">
             Shop Now

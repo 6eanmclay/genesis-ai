@@ -57,7 +57,7 @@ export function StorefrontPreview({ concept }: { concept: ExperienceConcept }) {
   return (
     <div
       style={themeCssVars(theme)}
-      className="min-h-screen bg-[var(--brand-background)] font-[var(--font-body)] text-[var(--brand-text)]"
+      className="min-h-screen bg-[var(--brand-background)] font-[family-name:var(--font-body)] text-[var(--brand-text)]"
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
 
@@ -66,11 +66,11 @@ export function StorefrontPreview({ concept }: { concept: ExperienceConcept }) {
           {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
           <img src={direction.logoUrl} alt="" className="h-full w-full object-cover" />
         </div>
-        <span className="font-[var(--font-heading)] text-sm font-semibold">{direction.name}</span>
+        <span className="font-[family-name:var(--font-heading)] text-sm font-semibold">{direction.name}</span>
       </nav>
 
       <header className="border-b border-[var(--brand-text)]/[.08] px-8 py-16 text-center">
-        <h1 className={`font-[var(--font-heading)] ${h1Class}`}>{direction.name}</h1>
+        <h1 className={`font-[family-name:var(--font-heading)] ${h1Class}`}>{direction.name}</h1>
         <p className="mx-auto mt-4 max-w-xl text-lg text-[var(--brand-text-secondary)]">{direction.description}</p>
       </header>
 

@@ -108,7 +108,7 @@ function BrandHeader({
               {eyebrow}
             </p>
           )}
-          <p className="font-[var(--font-heading)] text-2xl font-semibold text-black dark:text-zinc-50">
+          <p className="font-[family-name:var(--font-heading)] text-2xl font-semibold text-black dark:text-zinc-50">
             {name}
           </p>
         </div>
@@ -386,7 +386,7 @@ export async function HomeWorkspace({
         <div className="flex flex-wrap items-baseline gap-x-12 gap-y-5">
           {orderSummary.revenueInCents !== null && (
             <div>
-              <p className="font-[var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
+              <p className="font-[family-name:var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
                 {formatMoney(orderSummary.revenueInCents, store.currency)}
               </p>
               <p className="mt-1 text-xs text-zinc-500">
@@ -395,7 +395,7 @@ export async function HomeWorkspace({
             </div>
           )}
           <div>
-            <p className="font-[var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
+            <p className="font-[family-name:var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
               {orderSummary.orderCount}
             </p>
             <p className="mt-1 text-xs text-zinc-500">
@@ -404,7 +404,7 @@ export async function HomeWorkspace({
           </div>
           {inventorySnapshot && (
             <div>
-              <p className="font-[var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
+              <p className="font-[family-name:var(--font-heading)] text-4xl font-semibold text-black dark:text-zinc-50">
                 {inventorySnapshot.activeCount}
               </p>
               <p className="mt-1 text-xs text-zinc-500">active products</p>
@@ -414,8 +414,8 @@ export async function HomeWorkspace({
             <p
               className={
                 store.published
-                  ? "font-[var(--font-heading)] text-4xl font-semibold text-emerald-600 dark:text-emerald-400"
-                  : "font-[var(--font-heading)] text-4xl font-semibold text-zinc-400 dark:text-zinc-600"
+                  ? "font-[family-name:var(--font-heading)] text-4xl font-semibold text-emerald-600 dark:text-emerald-400"
+                  : "font-[family-name:var(--font-heading)] text-4xl font-semibold text-zinc-400 dark:text-zinc-600"
               }
             >
               {store.published ? "Live" : "Unpublished"}
