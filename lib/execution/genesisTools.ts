@@ -554,6 +554,12 @@ export function buildStoreChatUnifiedTools(): Anthropic.Tool[] {
       input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
     },
     {
+      name: "analyze_design_reference",
+      description:
+        "Call this when the merchant has just shown you a screenshot of a WEBSITE OR DESIGN they like and wants their own storefront moved toward it — 'I like this website', 'make mine look like this', 'this is the feel I want', 'what do you think of this design'. They must have uploaded a picture; this reads the picture they just sent. Do NOT call it for a photo of their own product, their logo, an invoice or any other business document — those are business assets and are already handled on upload. Do NOT call it when they describe a style in words with no picture ('make it more modern') — that is refine_storefront. This only READS and proposes; it changes nothing, so the merchant still has to approve anything you suggest.",
+      input_schema: z.toJSONSchema(EMPTY_INPUT_SCHEMA) as Anthropic.Tool.InputSchema,
+    },
+    {
       name: "capture_business_fact",
       description:
         "Call this when the merchant is stating a durable fact about their business you should remember — a goal they have, a challenge they're currently facing, a new employee, or a location — not a question, not a content-change request, not ordinary conversation. Fill in only what you can confidently infer from the actual message; leave optional fields null rather than guessing.",

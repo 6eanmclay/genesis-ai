@@ -77,6 +77,9 @@ export const TOOL_POLICY: Record<string, ToolPolicy> = {
    * already had.
    */
   show_upload_options: { permission: PERMISSIONS.GENESIS_CHAT, mutates: false },
+  // Reads an uploaded picture and proposes. Writes nothing: every change it
+  // suggests still goes through refine_storefront and the owner's approval.
+  analyze_design_reference: { permission: PERMISSIONS.GENESIS_CHAT, mutates: false },
 
   // ---- Everything below keeps store:manage, exactly as today. -------------
   capture_business_fact: { permission: PERMISSIONS.STORE_MANAGE, mutates: true },

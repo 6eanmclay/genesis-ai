@@ -84,7 +84,18 @@ console.log("\n=== 2. Nothing was loosened except what genuinely reads ===\n");
 // two moved and refuses the rest — so a later edit that "tidies" a proposal
 // tool down to products:manage because an employee happens to hold it has to
 // argue with a failing test rather than slip through a diff.
-const READ_ONLY = ["look_up_business_data", "take_me_there", "show_upload_options"];
+// analyze_design_reference joined this list on 2026-09-10, and it belongs here
+// on the same terms as the other three: it READS an already-uploaded picture
+// and produces a proposal. It writes nothing at all - no theme, no record, no
+// approval. Every change it suggests still has to travel refine_storefront and
+// be approved by the owner, which is the only path that can move a storefront.
+// If that ever stops being true, this line must fail before the tool ships.
+const READ_ONLY = [
+  "look_up_business_data",
+  "take_me_there",
+  "show_upload_options",
+  "analyze_design_reference",
+];
 check("exactly the read-only tools are readable by anyone who can chat",
   catalog.filter((n) => policyFor(n)?.permission === PERMISSIONS.GENESIS_CHAT).sort(),
   [...READ_ONLY].sort());

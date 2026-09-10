@@ -9,6 +9,9 @@ import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { getSurface } from "@/lib/design/surfaces";
 import { toGoalRecordData, toChallengeRecordData } from "@/lib/businessModel/factCapture";
 import { UPLOAD_INTENT_REPLY, extractRichContentImagePrompt } from "@/lib/dashboard/storeChatUnified";
+import { referentFor } from "@/lib/design/referenceUpload";
+import { analyzeReferenceImage } from "@/lib/design/analyzeReference";
+import { explainReading } from "@/lib/design/referenceObservation";
 import {
   AnswerSupplierEconomicsToolInputSchema,
   ApproveCompositionInputSchema,
@@ -230,6 +233,117 @@ const showUploadOptions: ToolHandler = async (ctx) => ({
   reply: ctx.conversationalReply || UPLOAD_INTENT_REPLY,
   kind: "upload_intent",
 });
+
+/**
+ * Read a screenshot the owner likes as design language.
+ *
+ * ============ ONE UPLOAD PATH, A DIFFERENT QUESTION (2026-09-10) ======
+ *
+ * There is no upload here. The picture arrived through the ordinary chat
+ * upload - uploadChatFile -> ingestBusinessAsset - and has already been asked
+ * "what business fact is this" by classifyAndExtractAsset. This asks the same
+ * row the opposite question: "what design principle is this".
+ *
+ * READS ONLY. It proposes and changes nothing; every suggestion still has to
+ * go through refine_storefront and the owner's approval, which is why
+ * toolPolicy records it as mutates: false.
+ *
+ * WHAT IT SAYS BACK is built from the validated reading rather than written
+ * beside it - observations in the reference's terms, recommendations in the
+ * store's, and anything J4 saw but cannot act on named as exactly that. A
+ * reply composed separately from the data could describe a change that will
+ * not happen, which is the failure the whole design-verification system
+ * exists to prevent.
+ */
+const analyzeDesignReference: ToolHandler = async (ctx) => {
+  const uploads = await prisma.businessRecord.findMany({
+    where: { storeId: ctx.storeId, entityType: "asset" },
+    // syncedAt, because that is what BusinessRecord actually carries - there
+    // is no createdAt on this model, and the compiler said so rather than a
+    // runtime surprise.
+    orderBy: { syncedAt: "desc" },
+    take: 10,
+    select: { id: true, data: true, syncedAt: true },
+  });
+
+  const referent = referentFor(
+    uploads.map((u) => {
+      const data = u.data as { storageUrl?: string; fileType?: string; originalFilename?: string };
+      return {
+        id: u.id,
+        storageUrl: data.storageUrl ?? "",
+        fileType: data.fileType ?? "",
+        originalFilename: data.originalFilename ?? "",
+        createdAt: u.syncedAt,
+      };
+    }),
+    new Date(),
+  );
+
+  if (!referent.found) {
+    // Said plainly, and logged as a failure: J4 was asked to look at something
+    // and could not. Recording it as a success would hide exactly the turns
+    // worth looking at.
+    return { handled: true, reply: referent.because, kind: "design_reference", outcome: "failure" };
+  }
+
+  ctx.status("Reading the design in that screenshot...");
+  const analysis = await analyzeReferenceImage({
+    imageUrl: referent.image.storageUrl,
+    storeId: ctx.storeId,
+  });
+
+  if (!analysis) {
+    return {
+      handled: true,
+      reply:
+        "I couldn't read that screenshot just now. Try sending it again, and if it keeps failing " +
+        "describe what you like about it instead and I'll work from that.",
+      kind: "design_reference",
+      outcome: "failure",
+    };
+  }
+
+  const lines: string[] = [analysis.reading.inWords, ""];
+  const chain = explainReading(analysis.reading);
+  if (chain.length > 0) {
+    lines.push("Here's what I noticed, and what I'd change because of it:", "");
+    for (const step of chain) {
+      lines.push(`- I saw: ${step.saw}`);
+      lines.push(`  I'd change: ${step.recommends} — ${step.soThat}`);
+    }
+  }
+  // SEEN, AND SAID TO BE UNCHANGEABLE. The honest half of the reading, and the
+  // reason bearsOn may be null at all: J4 tells the owner what it noticed even
+  // where it has no lever for it, rather than quietly reporting less than it saw.
+  if (analysis.seenOnly.length > 0) {
+    lines.push("", "I can see these too, but I can't change them yet:");
+    for (const seen of analysis.seenOnly) lines.push(`- ${seen}`);
+  }
+  if (chain.length === 0) {
+    lines.push(
+      "",
+      "Nothing in it maps onto something I can change on your storefront yet, so I'm not going to pretend otherwise.",
+    );
+  } else {
+    lines.push("", "Say the word and I'll put these in front of you properly before anything changes.");
+  }
+
+  return {
+    handled: true,
+    reply: lines.join("\n"),
+    kind: "design_reference",
+    metadata: {
+      referenceRecordId: referent.image.id,
+      observations: analysis.reading.observations.length,
+      actionable: analysis.actionable.length,
+      seenOnly: analysis.seenOnly.length,
+      // Named rather than dropped, so a turn that produced nothing usable is
+      // identifiable afterwards instead of looking like a quiet reference.
+      rejected: analysis.rejected,
+    },
+  };
+};
 
 /**
  * Remember something durable the owner said about their business.
@@ -2938,6 +3052,7 @@ export function makeLookUpBusinessData(deps?: {
  */
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   show_upload_options: showUploadOptions,
+  analyze_design_reference: analyzeDesignReference,
   capture_business_fact: captureBusinessFact,
   approve_pending_changes: makeApprovePendingChanges(),
   request_product_removal: requestProductRemoval,

@@ -14,6 +14,7 @@ import {
   validateReading,
   vocabularyForPrompt,
 } from "@/lib/design/analyzeReference";
+import { referentFor } from "@/lib/design/referenceUpload";
 import { applyRefinementsToTheme } from "@/lib/execution/executables/refineStorefront";
 import { DEFAULT_THEME } from "@/lib/theme";
 
@@ -281,6 +282,45 @@ assert("the prompt is built from the live REFINABLE_DIMENSIONS",
 assert("and it states every permitted value",
   REFINABLE_DIMENSIONS.spacing.values.every((v) => vocabularyForPrompt().includes(v)),
   "a model cannot choose a value it was never shown");
+
+console.log("\n=== 8. Which picture did they mean ===\n");
+// ============ NO SECOND UPLOAD MECHANISM =========================
+//
+// The screenshot arrives through the ordinary chat upload and is already a
+// BusinessRecord. All this decides is WHICH row "I like this website" refers
+// to - and it is resolved from the record's own timestamp rather than from
+// anything the model says, because a model asked to name an id will
+// eventually name one that does not exist, or one belonging to another upload.
+const now = new Date("2026-09-10T20:00:00Z");
+const at = (mins: number) => new Date(now.getTime() - mins * 60_000);
+const img = (id: string, mins: number, fileType = "image") => ({
+  id, storageUrl: `https://blob.example/${id}.png`, fileType,
+  originalFilename: `${id}.png`, createdAt: at(mins),
+});
+
+const newestWins = referentFor([img("older", 30), img("newest", 2), img("oldest", 55)], now);
+assert("the most recent image is the one they meant",
+  newestWins.found && newestWins.image.id === "newest",
+  newestWins.found ? newestWins.image.id : newestWins.because);
+
+const noImages = referentFor([img("a-contract", 5, "document")], now);
+assert("a document is not a design reference",
+  !noImages.found, noImages.found ? "it was accepted" : noImages.because);
+assert("and the refusal tells the owner what to do",
+  !noImages.found && noImages.because.includes("Upload a picture"), "");
+
+// NOT RESOLVED TO THE NEAREST CANDIDATE. An hour-old upload is not what "this"
+// means, and reading the wrong picture would produce a confident analysis of
+// something the owner was not talking about.
+const stale = referentFor([img("yesterday", 24 * 60)], now);
+assert("an old upload is not silently treated as 'this'",
+  !stale.found, stale.found ? "it was accepted" : "refused");
+assert("and J4 asks rather than guessing",
+  !stale.found && stale.because.includes("not sure which one you mean"), "");
+
+const nothing = referentFor([], now);
+assert("no uploads at all is refused with a reason", !nothing.found && nothing.because.length > 0,
+  nothing.found ? "" : nothing.because);
 
 console.log(`\n${failures === 0 ? `ALL PASS` : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
