@@ -1,6 +1,7 @@
 import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { waitForOfficeIntelligence } from "@/scripts/lib/appReadiness";
 
 // THE OFFICE'S SIX VIEWS, THROUGH A REAL BROWSER:
 //
@@ -132,9 +133,25 @@ async function signIn(page: Page, baseUrl: string, email: string): Promise<void>
  * mid-flight; reading `visible` through the attribute it already publishes for
  * assistive technology is the honest signal.
  */
+/**
+ * Is the OFFICE open - as opposed to merely mounted, or open as the panel?
+ *
+ * ============ THE LABEL IS NOT THE STATE (2026-09-10) ==============
+ *
+ * This used to find the overlay by aria-label="J4's Office". That label is
+ * conditional: J4Overlay renders `aria-label={isPanel ? "J4" : "J4's Office"}`,
+ * and since the panel/Office split the overlay sits in PANEL presentation until
+ * the Office is opened. So a closed Office had no such element at all, the
+ * control assertion "a closed Office is mounted" failed, and every check below
+ * it was comparing against a state it could not identify.
+ *
+ * `data-j4-presentation` is the shell's own state and is present in both
+ * presentations, which is what makes it the thing to read. aria-hidden still
+ * answers open-versus-closed exactly as before.
+ */
 async function officeIsOpen(page: Page): Promise<boolean> {
   return page.evaluate(() => {
-    const dialog = document.querySelector('[aria-label="J4\'s Office"]');
+    const dialog = document.querySelector('[data-j4-presentation="office"]');
     return dialog?.getAttribute("aria-hidden") === "false";
   });
 }
@@ -154,10 +171,22 @@ async function officeIsOpen(page: Page): Promise<boolean> {
  */
 async function officeText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const tab = Array.from(document.querySelectorAll("button")).find(
-      (b) => b.textContent?.trim() === "Understanding"
-    );
-    return tab?.closest("form")?.textContent ?? "";
+    // ============ SCOPED TO THE OFFICE, NOT TO A <form> ==============
+    //
+    // This used to walk up from the "Understanding" tab to its nearest form.
+    // The Office rebuild moved the category rail out of a form and into a
+    // plain container, so closest("form") returned null, this returned "", and
+    // EVERY marker assertion failed at once with "the tab highlighted but the
+    // view did not change". Six failures, one dead selector.
+    //
+    // The portal is the honest scope, and it is the one the doc comment above
+    // always described: J4Overlay renders the Office through createPortal, so
+    // its subtree is the Office and nothing else. The dashboard underneath -
+    // which renders the same business's tasks and observations, and is the
+    // reason a whole-page read proves nothing - is outside the portal
+    // entirely. Structural, and it cannot silently widen.
+    const office = document.querySelector("[data-j4-presentation]");
+    return office?.textContent ?? "";
   });
 }
 
@@ -177,8 +206,20 @@ async function officeText(page: Page): Promise<string> {
  * "the Office cannot be opened at all on desktop" is exactly the class of bug
  * this file exists to catch.
  */
+// THE MOBILE DOOR MOVED (2026-09-04). It was the "Office" label under
+// J4Summon's centre orb, and that orb is gone: "J4Summon put a blue Genesis orb
+// in the middle of the mobile bar and was, for a while, the only J4 on a phone.
+// It is now a second identity for the same partner... Sean's instruction is one
+// J4 throughout the application." J4Summon is no longer mounted at all, so
+// [aria-label="Open J4's Office"] is in a file nothing renders and the suite
+// waited 60s for an element that could never appear.
+//
+// The door itself was not removed - it moved into J4Dock, "a small doorway set
+// into its lower corner - a door in the side of the building". Addressed by its
+// testid rather than its label, because the label carries an em-dash and a
+// sentence of prose that will be reworded long before the control moves again.
 const OFFICE_DOOR = {
-  mobile: `[aria-label="Open J4's Office"]`,
+  mobile: '[data-testid="j4-office"]',
   desktop: 'button:has-text("J4 Portal")',
 } as const;
 
@@ -200,13 +241,19 @@ type Breakpoint = keyof typeof OFFICE_DOOR;
  */
 async function waitForWorkspace(page: Page, at: Breakpoint): Promise<void> {
   await page.waitForSelector(OFFICE_DOOR[at], { state: "visible", timeout: 60_000 });
+  // AND THE OVERLAY ITSELF. J4Overlay is always rendered but reaches the page
+  // through createPortal into document.body, so it arrives on its own schedule
+  // rather than with the door. Section 0's whole point is that a CLOSED Office
+  // is already mounted - asserting that the instant the door appears was
+  // measuring which of two client components hydrated first.
+  await page.waitForSelector("[data-j4-presentation]", { state: "attached", timeout: 30_000 });
 }
 
 /** Open the Office through the door this breakpoint actually offers. */
 async function openOffice(page: Page, at: Breakpoint): Promise<void> {
   await page.click(OFFICE_DOOR[at]);
   await page.waitForFunction(
-    () => document.querySelector(`[aria-label="J4's Office"]`)?.getAttribute("aria-hidden") === "false",
+    () => document.querySelector("[data-j4-presentation='office']")?.getAttribute("aria-hidden") === "false",
     undefined,
     { timeout: 15_000 }
   );
@@ -228,6 +275,11 @@ async function showView(page: Page, label: string): Promise<string> {
     label,
     { timeout: 15_000 }
   );
+  // AND THE INTELLIGENCE THAT FILLS IT. The tab switching is local state with
+  // no network in it, but the records the view shows are the progressive tier,
+  // loaded after mount. Reading between the two showed the empty state - which
+  // is a real state, correctly rendered, and simply not the one being asserted.
+  await waitForOfficeIntelligence(page);
   return officeText(page);
 }
 
@@ -317,9 +369,9 @@ async function main() {
     // -----------------------------------------------------------------------
     {
       const dialogExists = await page.evaluate(
-        () => document.querySelector('[aria-label="J4\'s Office"]') !== null
+        () => document.querySelector("[data-j4-presentation]") !== null
       );
-      assert("the Office is in the DOM before it is ever opened", dialogExists,
+      assert("the Office overlay is in the DOM before it is ever opened", dialogExists,
         "Talk Mode sends through its composer without opening it");
       check("and reports itself closed", await officeIsOpen(page), false);
       assert(
@@ -373,6 +425,50 @@ async function main() {
     };
     for (const key of Object.keys(MARKER) as ViewKey[]) {
       const text = await showView(page, TAB_LABEL[key]);
+      if (!text.includes(MARKER[key])) {
+        // SAY WHAT WAS THERE INSTEAD. "marker missing" cannot distinguish an
+        // Office that rendered nothing from one that rendered something else,
+        // and those need completely different fixes.
+        console.error(`      NOTE  ${TAB_LABEL[key]}: office subtree is ${text.length} chars: ${JSON.stringify(text.replace(/\s+/g, " ").trim().slice(0, 220))}`);
+        // IS OFFICE EMPTY, OR ARE WE EARLY? Sample the portal over time, and
+        // find out where the rail actually lives relative to it.
+        const diag = await page.evaluate(async (marker: string) => {
+          const read = () => {
+            const el = document.querySelector("[data-j4-presentation]");
+            return (el?.textContent ?? "").length;
+          };
+          const sizes = [read()];
+          for (let i = 0; i < 5; i++) {
+            await new Promise((r) => setTimeout(r, 1000));
+            sizes.push(read());
+          }
+          const tab = Array.from(document.querySelectorAll("button")).find(
+            (b) => b.textContent?.trim() === "Tasks"
+          );
+          const portal = document.querySelector("[data-j4-presentation]");
+          const chain: string[] = [];
+          let n: Element | null = tab ?? null;
+          while (n && chain.length < 8) {
+            const id = n.getAttribute("data-testid");
+            chain.push(n.tagName.toLowerCase() + (id ? `[${id}]` : ""));
+            n = n.parentElement;
+          }
+          return {
+            sizesOverTime: sizes,
+            railFound: !!tab,
+            railInsidePortal: !!(tab && portal && portal.contains(tab)),
+            railAncestors: chain.join(" < "),
+            markerAnywhereOnPage: document.body.textContent?.includes(marker) ?? false,
+            portalPresentation: portal?.getAttribute("data-j4-presentation") ?? "(none)",
+            portalHidden: portal?.getAttribute("aria-hidden") ?? "(none)",
+          };
+        }, MARKER[key]);
+        console.error(`      NOTE  portal size over 5s: ${JSON.stringify(diag.sizesOverTime)}`);
+        console.error(`      NOTE  rail found=${diag.railFound} insidePortal=${diag.railInsidePortal} presentation=${diag.portalPresentation} hidden=${diag.portalHidden}`);
+        console.error(`      NOTE  rail ancestors: ${diag.railAncestors}`);
+        console.error(`      NOTE  marker present anywhere on the page: ${diag.markerAnywhereOnPage}`);
+        break;
+      }
       assert(`${TAB_LABEL[key]} shows its own record`, text.includes(MARKER[key]),
         `marker ${MARKER[key]} missing — the tab highlighted but the view did not change`);
       const allowed = DESIGNED_OVERLAP[key] ?? [];
@@ -395,7 +491,13 @@ async function main() {
     console.log("\n3. Understanding is a standing picture, not a queue");
     // -----------------------------------------------------------------------
     {
-      const text = await showView(page, "Understanding");
+      // UNDERSTANDING IS THE ON-DEMAND TIER, and it is loaded only once its
+      // view is opened. Until it settles the panel says "Gathering everything I
+      // know about you" - a real state, correctly rendered, and not the one
+      // these assertions are about.
+      await showView(page, "Understanding");
+      await waitForOfficeIntelligence(page, { tier: "understanding" });
+      const text = await officeText(page);
       // Its own stated design: every group renders, including the ones J4 knows
       // nothing about, because "I don't know your suppliers yet" is real
       // information about what J4 understands.
@@ -468,17 +570,35 @@ async function main() {
       await page.reload({ waitUntil: "domcontentloaded" });
       await waitForWorkspace(page, "desktop");
 
-      // The mobile door is still in the DOM here — `md:hidden` hides it rather
-      // than removing it — so this also proves the two doors are genuinely
-      // exclusive, which is what stops a phone showing two J4 doorways.
-      const mobileDoorVisible = await page.isVisible(OFFICE_DOOR.mobile);
-      check("the mobile door is not shown on desktop", mobileDoorVisible, false);
+      // ============ THE DOORS ARE NO LONGER EXCLUSIVE (2026-09-04) ======
+      //
+      // This asserted the dock door is hidden on desktop, which was true while
+      // it lived in J4Summon's `md:hidden` phone bar. J4's corner is now his
+      // seat at EVERY breakpoint - "one J4 throughout the application" - so the
+      // dock door is deliberately present on desktop, alongside the J4 Portal
+      // pill. Asserting it away would be asserting the old shape of the
+      // product.
+      //
+      // What must not change is the fact underneath, and it is the same fact
+      // this section always existed to prove: however many doors there are,
+      // they all lead to ONE Office. So the check becomes that the dock door
+      // is genuinely present here and that opening through the OTHER door
+      // still lands in the same single Office - which is strictly stronger
+      // than the visibility check it replaces.
+      const dockDoors = await page.locator(OFFICE_DOOR.mobile).count();
+      check("the dock door is J4's seat at this breakpoint too", dockDoors, 1);
+      const offices = await page.locator("[data-j4-presentation]").count();
+      check("and there is exactly one Office in the document", offices, 1);
 
       check("it starts closed here too", await officeIsOpen(page), false);
       await openOffice(page, "desktop");
       check("and the pill opens it", await officeIsOpen(page), true);
+      check("still exactly one Office after the second door opened it",
+        await page.locator("[data-j4-presentation]").count(), 1);
 
-      const text = await showView(page, "Understanding");
+      await showView(page, "Understanding");
+      await waitForOfficeIntelligence(page, { tier: "understanding" });
+      const text = await officeText(page);
       assert("with the same six views behind it", text.includes("Assets I can use"),
         "one Office, two doors — never two Offices");
     }

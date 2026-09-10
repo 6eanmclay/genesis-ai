@@ -1059,14 +1059,48 @@ export function J4Workspace({
   // owner lands on the briefing, so this is wanted immediately - just not
   // BEFORE the shell. "Progressive" means after first paint, not on demand.
   const [intel, setIntel] = useState<OfficeIntelligence | null>(null);
+
+  // ============ THE LAYER NEEDS THIS TOO, JUST NOT YET (2026-09-10) =====
+  //
+  // This used to be `if (isLayer) return`, and that half was right: the layer
+  // renders on EVERY dashboard page, and Sean's rule is "don't accidentally
+  // make every dashboard page load the entire J4 intelligence progressively if
+  // that intelligence isn't needed there."
+  //
+  // But the Office the owner opens from the dock IS the layer. J4Surface stopped
+  // passing tasks/ideas/decisions/information as props when the progressive tier
+  // was introduced, and the layer was excluded from the load that replaced them
+  // - so those four views had no source of data at all and rendered "Nothing in
+  // Tasks right now." permanently. Not slowly: never.
+  //
+  // So the trigger is the view, not the surface. The layer costs nothing while
+  // the owner is talking to J4 on a product page, and loads the moment they
+  // open a view that IS the intelligence.
+  //
+  // THREE STATES, AND "not-needed" IS A REAL ONE. The conversation view does
+  // not use this tier at all, so on the layer it is genuinely never requested
+  // while J4 is just being talked to. Calling that "idle" made the signal
+  // unanswerable - anything waiting on it hung forever on a view that was
+  // already showing everything it would ever show. The question the attribute
+  // answers is "is the intelligence still pending?", and for the conversation
+  // the honest answer is no.
+  const needsIntelligence = !isLayer || activeCategory !== "conversation";
+  const [intelligenceState, setIntelligenceState] =
+    useState<"not-needed" | "loading" | "ready">("not-needed");
   useEffect(() => {
-    if (isLayer) return;
+    if (!needsIntelligence) return;
     let alive = true;
+    setIntelligenceState((s) => (s === "ready" ? s : "loading"));
     loadOfficeIntelligence(slug)
       .then((v) => { if (alive) setIntel(v); })
-      .catch(() => { if (alive) setIntel(null); });
+      .catch(() => { if (alive) setIntel(null); })
+      // SETTLED, NOT POPULATED. Readiness means the load finished, so an
+      // Office that is legitimately empty reports ready exactly like a full
+      // one. Anything that keyed on content would be a test waiting for rows
+      // to exist rather than for the load to be done.
+      .finally(() => { if (alive) setIntelligenceState("ready"); });
     return () => { alive = false; };
-  }, [isLayer, slug]);
+  }, [needsIntelligence, slug]);
 
   // Server-provided values still win when they are present, so the layer and
   // any caller that passes them directly are unchanged. This is an addition to
@@ -1812,6 +1846,33 @@ export function J4Workspace({
     <form
       ref={formRef}
       action={handleSend}
+      // ============ THE PROGRESSIVE TIER, MADE OBSERVABLE (2026-09-10) ====
+      //
+      // The tier split moved seven reads off the critical path and out of the
+      // server render, which was the right call and is why J4 can be spoken to
+      // immediately. What it did not do was leave anything able to say WHEN
+      // they had arrived: `intel` is React state, nothing in the DOM reflected
+      // it, and "loaded" and "genuinely empty" looked identical from outside.
+      //
+      // Six assertions in verify-office-browser failed on exactly that, and
+      // the only ways to test it without this were a sleep or a check for
+      // whether some string had turned up yet - a test waiting for rows to
+      // exist rather than for the load to be done.
+      //
+      // So it is stated, the same way [data-testid="j4-boot"] states the
+      // opening: an application-level lifecycle fact, not an inference from
+      // styling or content. `ready` means the load SETTLED - empty and full
+      // report it alike, and so does a failure.
+      data-office-intelligence={intelligenceState}
+      // AND THE ON-DEMAND TIER, for the same reason. Understanding is loaded
+      // only when its view is opened, and until it settles the panel shows
+      // "Gathering everything I know about you" - a real state, correctly
+      // rendered, and not the one an assertion about the groups is asking
+      // about. deepKnowledge is set even on failure, so a non-null value is
+      // the settled fact; empty groups report ready exactly like full ones.
+      data-office-understanding={
+        !needsDeepKnowledge ? "not-needed" : deepKnowledge === null ? "loading" : "ready"
+      }
       // The room owns the screen. The layer fills whatever the overlay gives
       // it and nothing more — a fixed element here would break out of the
       // sheet and cover the workspace it is supposed to sit over.

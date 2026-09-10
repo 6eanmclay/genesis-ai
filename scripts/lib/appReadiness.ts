@@ -186,6 +186,64 @@ export async function waitForAppReady(
   return { state: "bootFinished", waitedMs: Date.now() - started };
 }
 
+/** The Office's progressive intelligence tier, and its own completion state. */
+export const OFFICE_INTELLIGENCE = "[data-office-intelligence]";
+
+/**
+ * Wait until the Office's progressive intelligence has finished loading.
+ *
+ * ============ APPLICATION STATE WITH NO COMPLETION CONTRACT =========
+ *
+ * The tier split of 2026-09-09 moved seven reads - tasks, ideas, decisions,
+ * information, the briefing, the facts strip, the handled summary - off the
+ * server render and into a load that runs after mount. That is why J4 can be
+ * spoken to immediately, and it was the right call.
+ *
+ * What it did not leave behind was any way to know when those reads had
+ * ARRIVED. `intel` was React state; nothing in the DOM reflected it; and from
+ * outside, "still loading" and "loaded and legitimately empty" were the same
+ * page. Six assertions in verify-office-browser failed against that empty
+ * state, and the only ways to wait without this signal were a sleep or a poll
+ * for some string to appear - which is a test waiting for ROWS TO EXIST rather
+ * than for the LOAD TO BE DONE, and passes or fails on the fixture.
+ *
+ * `ready` means settled. Empty, full and failed all report it alike.
+ */
+export async function waitForOfficeIntelligence(
+  page: Page,
+  options: { timeoutMs?: number; tier?: "intelligence" | "understanding" } = {},
+): Promise<void> {
+  const attribute =
+    options.tier === "understanding" ? "data-office-understanding" : "data-office-intelligence";
+  try {
+    await page.waitForFunction(
+      (attr: string) => {
+        // "is the intelligence still pending?" - and `not-needed` answers it
+        // as honestly as `ready` does. The conversation view never requests
+        // this tier, so waiting for `ready` there would wait forever on a page
+        // already showing everything it will ever show.
+        const state = document.querySelector(`[${attr}]`)?.getAttribute(attr);
+        return state === "ready" || state === "not-needed";
+      },
+      attribute,
+      { timeout: options.timeoutMs ?? 30_000 },
+    );
+  } catch (error) {
+    // A bare timeout here is unreadable: "idle" (never asked for), "loading"
+    // (asked and hanging) and a missing element (not rendered at all) are
+    // three different faults, and the caller needs to know which.
+    const seen = await page.evaluate((attr: string) => {
+      const nodes = Array.from(document.querySelectorAll(`[${attr}]`));
+      return nodes.map((n) => n.getAttribute(attr));
+    }, attribute);
+    throw new Error(
+      `the Office's ${attribute} never reported ready — found ${seen.length} element(s) in state ${JSON.stringify(seen)}. ` +
+        `"not-needed" means the current view does not use this tier, "loading" means the load never settled, none means the workspace is not rendered. ` +
+        `Original: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+    );
+  }
+}
+
 /**
  * What is actually painted over a given element, if anything.
  *
