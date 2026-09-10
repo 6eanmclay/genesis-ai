@@ -2,6 +2,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { mkdirSync } from "fs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { waitForAppReady, waitForHydration } from "@/scripts/lib/appReadiness";
 
 // THE IDENTITY SCREEN, IN A REAL BROWSER, WITH THE WRONG BUSINESS ACTIVE:
 //
@@ -41,46 +42,25 @@ function assert(label: string, condition: boolean, detail = ""): void {
 }
 
 /**
- * Wait out the returning-owner arrival ritual.
+ * Wait out the returning-owner opening.
  *
- * A fixed, full-screen element at z-index 100. It intercepted the click on the
- * save button on the first run of this suite — and in an earlier milestone it
- * covered a whole screenshot that had passed every assertion beside it, because
- * computed styles read straight through an overlay. Same wait
- * scripts/verify-rooms-browser.ts uses, for the same reason.
+ * ============ WHY THIS IS NOW ONE LINE (2026-09-10) =================
+ *
+ * It used to look for "a fixed, full-screen div at z-index 100 with opacity
+ * above 0.01", with a 5s window for it to appear and a `.catch` on both waits.
+ * Every part of that was an inference about how the overlay happened to be
+ * drawn, and on 2026-09-04 the opening became J4Boot at z-[120].
+ *
+ * So the wait matched nothing, both catches swallowed it, and this suite went
+ * on to test a page with a full-screen overlay across it. The Save click
+ * landed on the boot sequence, the rename never happened, and the suite
+ * reported "the business in the URL was renamed — got Cubit & Coil" as though
+ * the product had lost the write. It had not; the click never reached it.
+ *
+ * waitForAppReady asks the lifecycle instead: the shell, then j4-boot's own
+ * existence. It does not catch — a readiness failure here means nothing below
+ * was tested, and that must stop the run rather than colour it.
  */
-const OVERLAY_UP = () =>
-  Array.from(document.querySelectorAll("div")).some((el) => {
-    const s = getComputedStyle(el);
-    return s.position === "fixed" && s.zIndex === "100" && parseFloat(s.opacity) > 0.01;
-  });
-
-async function dismissArrival(page: Page): Promise<void> {
-  // ============ WAIT FOR IT TO ARRIVE BEFORE WAITING FOR IT TO GO ====
-  //
-  // The first version only waited for the overlay to be ABSENT, which is
-  // trivially true before it mounts — so on the phone context it returned
-  // instantly, the ritual then played, and the screenshot came out as a
-  // picture of "Welcome back, Owner." with the page behind it. The suite
-  // caught it, which is the only reason this is a fixed race rather than a
-  // published screenshot of the wrong thing.
-  await page.waitForFunction(OVERLAY_UP, undefined, { timeout: 5_000 }).catch(() => {
-    // It may genuinely not play. Absence now is then the real answer.
-  });
-  await page
-    .waitForFunction(
-      () =>
-        !Array.from(document.querySelectorAll("div")).some((el) => {
-          const s = getComputedStyle(el);
-          return s.position === "fixed" && s.zIndex === "100" && parseFloat(s.opacity) > 0.01;
-        }),
-      undefined,
-      { timeout: 30_000 }
-    )
-    .catch(() => {
-      // Still up. The assertions below will fail visibly rather than quietly.
-    });
-}
 
 async function signIn(page: Page, baseUrl: string, email: string): Promise<void> {
   await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
@@ -145,7 +125,7 @@ async function main() {
     // ====================================================================
     await page.goto(`${server.baseUrl}/b/${target.slug}/brand`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('input[name="name"]', { timeout: 30_000 });
-    await dismissArrival(page);
+    await waitForAppReady(page);
 
     const shown = await page.inputValue('input[name="name"]');
     assert("the name field holds the business in the URL, not the active one",
@@ -190,17 +170,70 @@ async function main() {
     // the suite was clicking the chat box. Scoped through the form that holds
     // the name field, which is the only form that can be the right one.
     const identityForm = page.locator('form:has(input[name="name"])');
-    await identityForm.locator('input[name="name"]').fill(renamed);
-    await identityForm.locator('button[type="submit"]').first().click();
-    // The action revalidates and the field re-renders from the database.
-    await page.waitForFunction(
-      (expected) => {
-        const el = document.querySelector('input[name="name"]') as HTMLInputElement | null;
-        return el?.value === expected;
-      },
-      renamed,
-      { timeout: 30_000 },
-    ).catch(() => {});
+    // The form's action is a function React attaches at hydration. Clicking
+    // before that does nothing at all - no error, no request - and the suite
+    // then reports the unchanged name as a lost write.
+    await waitForHydration(page, 'form:has(input[name="name"])');
+
+    // ============ FILL AND SUBMIT AS ONE INTERACTION ==================
+    //
+    // EditStoreForm is `<form key={resetKey}>`, and the shell re-renders again
+    // after the opening finishes (DashboardShell sets `justArrived`, then
+    // clears it). A remount between the fill and the click resets the input to
+    // its defaultValue, so the submit carries the ORIGINAL name - the write
+    // succeeds, changes nothing, and the suite reports a lost rename. That is
+    // why this check passed on one run and failed on the next.
+    //
+    // So the value is re-read immediately before clicking, and the whole
+    // interaction is retried if the form was replaced underneath it.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await identityForm.locator('input[name="name"]').fill(renamed);
+      if ((await identityForm.locator('input[name="name"]').inputValue()) !== renamed) {
+        console.error("      NOTE  the form remounted mid-edit; retrying the interaction");
+        continue;
+      }
+      await identityForm.locator('button[type="submit"]').first().click();
+      // POLL THE FACT BEING ASSERTED. The old wait watched the input's own
+      // value for the string we had just typed into it, which is true the
+      // instant fill() returns and proves nothing whatsoever.
+      let renamedInDb = false;
+      for (let poll = 0; poll < 30 && !renamedInDb; poll++) {
+        const row = await prisma.store.findUnique({ where: { id: target.id }, select: { name: true } });
+        renamedInDb = row?.name === renamed;
+        if (!renamedInDb) await page.waitForTimeout(500);
+      }
+      if (renamedInDb) break;
+      console.error("      NOTE  submit landed but the name has not changed; retrying");
+    }
+    const submitBlockedBy = await page.evaluate(() => {
+      const form = document.querySelector('form:has(input[name="name"])');
+      const btn = form?.querySelector('button[type="submit"]') as HTMLElement | null;
+      if (!btn) return "no submit button";
+      const r = btn.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!top) return "nothing at the point";
+      if (btn.contains(top) || top.contains(btn)) return "clear";
+      const id = top.getAttribute("data-testid");
+      const cls = (top.getAttribute("class") ?? "").split(/\s+/).slice(0, 4).join(".");
+      const st = getComputedStyle(top);
+      return `${top.tagName.toLowerCase()}${id ? `[${id}]` : ""}${cls ? `.${cls}` : ""} pe=${st.pointerEvents} z=${st.zIndex}`;
+    });
+    console.log(`      NOTE  what sits over the identity form's submit button: ${submitBlockedBy}`);
+    // WHAT THE FORM SAID. editStore runs through execute(), which can refuse
+    // for reasons that have nothing to do with the click landing - and the
+    // suite used to report only "the name is still the old one", which reads
+    // like a lost write rather than a refused one.
+    const formSaid = await page.evaluate(() => {
+      const form = document.querySelector('form:has(input[name="name"])');
+      const scope = (form?.parentElement ?? document.body) as HTMLElement;
+      const text = (scope.innerText ?? "").replace(/\s+/g, " ").trim();
+      const alerts = Array.from(document.querySelectorAll('[role="alert"], [data-testid*="error"], [aria-live]'))
+        .map((n) => (n as HTMLElement).innerText.replace(/\s+/g, " ").trim())
+        .filter((t) => t.length > 0);
+      return { alerts: alerts.slice(0, 4), around: text.slice(0, 300) };
+    });
+    console.log(`      NOTE  alerts on the page: ${JSON.stringify(formSaid.alerts)}`);
+
 
     const [targetRow, otherRow] = await Promise.all([
       prisma.store.findUnique({ where: { id: target.id }, select: { name: true, slug: true } }),
@@ -225,7 +258,7 @@ async function main() {
     const small = await phone.newPage();
     await small.goto(`${server.baseUrl}/b/${target.slug}/brand`, { waitUntil: "domcontentloaded" });
     await small.waitForSelector('input[name="name"]', { timeout: 30_000 });
-    await dismissArrival(small);
+    await waitForAppReady(small);
 
     // GEOMETRY, NOT isVisible(). isVisible() has been true twice in this
     // project for something off the side of the viewport or under an overlay.
@@ -234,9 +267,29 @@ async function main() {
       !!nameBox && nameBox.x >= 0 && nameBox.x + nameBox.width <= 390,
       `x=${nameBox?.x} width=${nameBox?.width}`);
 
-    const brandHeading = small.locator("h2", { hasText: "Brand identity" }).first();
-    await brandHeading.scrollIntoViewIfNeeded();
-    const brandBox = await brandHeading.boundingBox();
+    // RE-RESOLVED, NOT HELD. The shell re-renders once more after the opening
+    // finishes — DashboardShell sets `justArrived` when J4Boot completes and
+    // clears it again a few seconds later — so a handle taken the instant the
+    // boot detaches can be pointing at a node React has already replaced, and
+    // the action fails with "Element is not attached to the DOM".
+    //
+    // Waiting a fixed number of seconds for that to pass would be exactly the
+    // guess this whole exercise removed. Re-resolving the locator is the fix:
+    // it asks the page again rather than assuming the first answer survived.
+    // The second failure is thrown, never swallowed.
+    const brandHeadingFor = () => small.locator("h2", { hasText: "Brand identity" }).first();
+    let brandBox: { x: number; y: number; width: number; height: number } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const h = brandHeadingFor();
+        await h.scrollIntoViewIfNeeded();
+        brandBox = await h.boundingBox();
+        break;
+      } catch (error) {
+        if (attempt === 2) throw error;
+        await brandHeadingFor().waitFor({ state: "attached", timeout: 10_000 });
+      }
+    }
     assert("and Brand identity is reachable by scrolling, inside the viewport",
       !!brandBox && brandBox.x >= 0 && brandBox.x + brandBox.width <= 390,
       `x=${brandBox?.x} width=${brandBox?.width}`);
@@ -247,7 +300,15 @@ async function main() {
       if (!h) return "no heading";
       const r = h.getBoundingClientRect();
       const top = document.elementFromPoint(r.left + Math.min(20, r.width / 2), r.top + r.height / 2);
-      return h.contains(top) || top?.contains(h) ? "clear" : (top?.tagName ?? "unknown");
+      if (h.contains(top) || top?.contains(h)) return "clear";
+      if (!top) return "unknown";
+      // NAME THE THING. "covered by DIV" is not a finding anybody can act on;
+      // the testid, classes and pointer-events are what say whether this is a
+      // real obstruction or a pass-through layer.
+      const id = top.getAttribute("data-testid");
+      const cls = (top.getAttribute("class") ?? "").split(/\s+/).slice(0, 4).join(".");
+      const s = getComputedStyle(top);
+      return `${top.tagName.toLowerCase()}${id ? `[${id}]` : ""}${cls ? `.${cls}` : ""} pe=${s.pointerEvents} z=${s.zIndex} pos=${s.position}`;
     });
     assert("with nothing painted over it", covered === "clear", `covered by ${covered}`);
 

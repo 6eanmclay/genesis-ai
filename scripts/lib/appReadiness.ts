@@ -49,23 +49,74 @@ import type { Page } from "playwright";
  * ============ THE LIFECYCLE, AS IT ACTUALLY IS =========================
  *
  *   1. NAVIGATED        the browser has left /login
- *   2. SHELL MOUNTED    DashboardShell has rendered its <main>
- *   3. BOOT PLAYING     [data-testid="j4-boot"] is attached  (fresh sign-in only)
- *   4. BOOT FINISHED    it has detached, and the shell underneath is exposed
- *   5. UNCOVERED        nothing full-screen sits over the page any more
+ *   2. SHELL RENDERED   <main> exists - SERVER-rendered, so this is early
+ *   3. SHELL HYDRATED   React has attached; handlers and form actions work
+ *   4. OPENING DECIDED  a client effect has decided whether to play J4Boot
+ *   5. BOOT PLAYING     [data-testid="j4-boot"] is attached
+ *   6. BOOT FINISHED    it has detached, and the page underneath is exposed
  *
- * Step 2 is what makes step 3 raceless, and it is the part the old waits got
- * wrong. J4Boot is rendered INSIDE the shell (`{returningActive && <J4Boot/>}`
- * in DashboardShell), so once <main> exists the boot either exists too or
- * never will. Waiting for "detached" before the shell mounts would resolve
- * instantly against an element that had not been created yet - a wait that
- * looks correct in the source and does nothing at runtime, which is precisely
- * the failure mode above. So there is no appearance window and no guess: the
- * shell's presence is the moment the question becomes answerable.
+ * STEPS 2 AND 3 ARE DIFFERENT, and conflating them cost two bugs in one hour.
+ * The first version of this file checked for the boot as soon as <main>
+ * existed, arguing that J4Boot renders inside the shell so the two must arrive
+ * together. A screenshot disproved it: <main> comes from the server, while
+ * J4Boot appears only after the client decides this is a fresh launch - which
+ * it cannot do during hydration without a markup mismatch, so it happens in an
+ * effect afterwards. The check ran too early, reported "noBoot", and the suite
+ * photographed the opening it had just declared absent.
+ *
+ * Step 3 also matters on its own: a form whose action is a function does
+ * nothing at all when clicked before hydration - no error, no request - which
+ * is what made identity-split's rename look like a lost write. See
+ * waitForHydration.
+ *
+ * Step 4 is the one place a bounded window is unavoidable, because "the effect
+ * has not run yet" and "the effect ran and chose not to play" are the same DOM.
+ * Nothing in the product distinguishes them today. It is a window for an
+ * EVENT, not a guess at a duration - once the boot appears, the rest of the
+ * lifecycle is followed to completion however long it takes. If the shell ever
+ * exposes the decision itself, this is the line that gets to disappear.
  *
  * The opening plays once per real sign-in, so `noBoot` is a legitimate,
  * common outcome and is reported rather than treated as an error.
  */
+
+/**
+ * Wait until React has actually hydrated the element that owns a form.
+ *
+ * ============ WHY A CLICK CAN LAND AND DO NOTHING =====================
+ *
+ * A client component's `<form action={formAction}>` is not a browser form
+ * submission - `formAction` is a function React attaches during hydration.
+ * Before that, the markup is on screen, the button is visible, nothing covers
+ * it, and Playwright clicks it perfectly happily. Nothing happens, and there
+ * is no error anywhere: no alert, no network request, no console message.
+ *
+ * That is what verify-identity-split-browser was reporting as "the business in
+ * the URL was renamed — got Cubit & Coil". The write was never attempted. It
+ * looked like a lost write, and it survived a rewrite of the overlay wait
+ * because the overlay was never the reason.
+ *
+ * THE FIBER IS THE FACT. React stores its fiber on the DOM node under a
+ * `__reactFiber$…` key, and it is there if and only if that subtree has been
+ * hydrated. Every other candidate signal is a proxy: `load` fires before
+ * hydration, `networkidle` is timing, and a fixed sleep is the guess this
+ * module exists to remove. This reads the thing itself.
+ */
+export async function waitForHydration(
+  page: Page,
+  selector: string,
+  options: { timeoutMs?: number } = {},
+): Promise<void> {
+  await page.waitForFunction(
+    (sel: string) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      return Object.keys(el).some((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactProps$"));
+    },
+    selector,
+    { timeout: options.timeoutMs ?? 30_000 },
+  );
+}
 
 /** The component's own marker. The one selector this contract depends on. */
 export const J4_BOOT = '[data-testid="j4-boot"]';
@@ -89,9 +140,10 @@ export type Readiness =
  */
 export async function waitForAppReady(
   page: Page,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; appearWindowMs?: number } = {},
 ): Promise<Readiness> {
   const timeoutMs = options.timeoutMs ?? 60_000;
+  const appearWindowMs = options.appearWindowMs ?? 4_000;
   const started = Date.now();
 
   // 2. THE SHELL, FIRST. Everything below is a question about the shell's
@@ -99,11 +151,36 @@ export async function waitForAppReady(
   //    silent no-op waits.
   await page.waitForSelector(APP_SHELL, { state: "attached", timeout: timeoutMs });
 
-  // 3/4. THE OPENING. Attached means it is playing; absent means it is not
-  //      playing and will not start, because it mounts with the shell.
-  const playing = (await page.locator(J4_BOOT).count()) > 0;
-  if (!playing) return { state: "noBoot", waitedMs: Date.now() - started };
+  // 2b. AND HYDRATED, WHICH IS NOT THE SAME THING.
+  //
+  //     The first version of this function checked for the boot the moment
+  //     <main> existed, on the reasoning that J4Boot renders inside the shell
+  //     so the two arrive together. THAT WAS WRONG, and a screenshot caught
+  //     it: <main> is server-rendered, while J4Boot only appears once the
+  //     client decides this is a fresh launch - which it cannot do during
+  //     hydration without a markup mismatch, so it happens in an effect
+  //     afterwards. Checking at <main> found no boot, reported "noBoot", and
+  //     the suite went on to photograph the opening it had just declared
+  //     absent. Exactly the failure this module was written to end, one layer
+  //     further in.
+  await waitForHydration(page, APP_SHELL, { timeoutMs: Math.max(1_000, timeoutMs - (Date.now() - started)) });
 
+  // 3. THE OPENING - and the one bounded wait in this file, stated plainly
+  //    rather than hidden. Whether the opening plays is decided in a client
+  //    effect, and "an effect that has not run yet" and "an effect that ran
+  //    and decided not to play" look identical in the DOM. Nothing in the
+  //    product distinguishes them today, so this allows a short window for it
+  //    to appear. It is a window for an EVENT, not a guess at a duration: if
+  //    the boot appears at any point inside it the full lifecycle is then
+  //    followed to completion, however long that takes.
+  const appeared = await page
+    .waitForSelector(J4_BOOT, { state: "attached", timeout: appearWindowMs })
+    .then(() => true)
+    .catch(() => false);
+  if (!appeared) return { state: "noBoot", waitedMs: Date.now() - started };
+
+  // 4. AND GONE. No catch: if the opening never finishes, nothing the caller
+  //    is about to measure means anything.
   const remaining = Math.max(1_000, timeoutMs - (Date.now() - started));
   await page.waitForSelector(J4_BOOT, { state: "detached", timeout: remaining });
   return { state: "bootFinished", waitedMs: Date.now() - started };
