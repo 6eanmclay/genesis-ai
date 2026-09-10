@@ -25,12 +25,21 @@ import type { ContextEntry } from "@/lib/j4/contextTypes";
 
 export function ContextPane({
   entries,
+  loading = false,
   conversationLabel,
   anchoredWork,
   onClose,
 }: {
   /** Built from the closed registry. Nothing else can appear here. */
   entries: ContextEntry[];
+  /**
+   * Whether the entries are still being fetched.
+   *
+   * Separate from an empty array on purpose: one means "J4 knows nothing about
+   * this business yet" and the other means "nobody has asked yet", and only one
+   * of them is true while the load is in flight.
+   */
+  loading?: boolean;
   /** Which conversation this is the context for. */
   conversationLabel: string;
   /** The conversation's anchored work, when it has some. Metadata, not a link. */
@@ -72,7 +81,17 @@ export function ContextPane({
         </div>
       )}
 
-      {entries.length === 0 ? (
+      {loading ? (
+        // NOT LOADED IS NOT NOTHING (2026-09-09). What J4 knows is built from
+        // getBusinessUnderstanding, 921ms against production, and it now loads
+        // when this pane is opened rather than on every page. The empty state
+        // below is a statement about the BUSINESS - showing it while the
+        // answer is still in flight tells the owner J4 knows nothing about
+        // them, which is false rather than merely slow.
+        <p className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
+          Gathering what I know…
+        </p>
+      ) : entries.length === 0 ? (
         // An honest empty state. J4 knowing nothing yet is a real answer, and
         // filler here would be the opposite of what this pane is for.
         <p className="text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>

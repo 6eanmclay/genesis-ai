@@ -190,13 +190,38 @@ assert("but the anchor is not actionable",
 // BUSINESS SCOPING IS UNTOUCHED. The entries are built from the understanding
 // the surface fetched for one business, so the pane has no business boundary of
 // its own to get wrong — and no query through which to widen one.
-const surface = read(["app", "j4", "J4Surface.tsx"]);
-assert("the entries are built from this render's understanding",
-  surface.includes("buildContextEntries(understanding)"),
-  "a second fetch here would be a second answer to what J4 knows");
-assert("which is the business-scoped one the surface already resolved",
-  surface.includes("getBusinessUnderstanding(store.id"),
+// MOVED, NOT WEAKENED (2026-09-09). The entries were built in J4Surface from
+// the understanding it had already fetched. That read measured 921ms against
+// production and blocked first paint on every dashboard page, so it moved to a
+// server action that loads when the pane is opened.
+//
+// What these assertions protect is unchanged and still worth protecting: ONE
+// answer to what J4 knows, and a business boundary the pane inherits rather
+// than re-derives. Both are now properties of the action, so that is what is
+// read - and the second of them caught a real defect the day it moved. Both
+// actions resolved the business themselves and both called
+// accessTo(slug, userId) against accessTo(userId, storeId): a silent empty
+// business for every owner on a /b/[slug] route.
+const loader = read(["app", "j4", "understanding-actions.ts"]);
+assert("the entries are still built from one understanding",
+  loader.includes("buildContextEntries(understanding)"),
+  "a second assembly here would be a second answer to what J4 knows");
+assert("which is fetched for one resolved business",
+  loader.includes("getBusinessUnderstanding(store.id"),
   "the pane inherits the business boundary rather than re-deriving it");
+assert("and the business is resolved by the shared resolver, not by hand",
+  loader.includes("resolveOfficeAccess(session.user.id, slug)") &&
+    !/accessTo\(/.test(loader),
+  "one resolver, so the argument order can only be wrong in one place");
+
+// THE PANE MUST NOT CLAIM AN EMPTY BUSINESS WHILE IT IS STILL LOADING.
+// Its empty state is a sentence about the OWNER'S BUSINESS - "Nothing recorded
+// yet" - so showing it before the answer arrives is a false statement rather
+// than a slow one. Now that the load is deferred, that distinction is load-
+// bearing rather than theoretical.
+assert("the pane can tell 'not loaded yet' from 'nothing known'",
+  pane.includes("loading") && /loading \?/.test(pane),
+  "a deferred load must not render the empty state");
 // CURRENT, NOT A SNAPSHOT. Nothing reconstructs what was known earlier.
 assert("nothing reconstructs a historical understanding",
   !/asOf|snapshot|atTime|historical/i.test(registry + pane),

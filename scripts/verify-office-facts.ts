@@ -26,8 +26,6 @@ const REAL = officeFacts(
     pendingDecisions: 0,
     opportunities: 53,
     needsYou: 34,
-    understandingKnown: 7,
-    understandingTotal: 11,
   },
   BASE,
 );
@@ -60,10 +58,20 @@ for (const f of REAL) {
   } else {
     // A view must be a category this surface actually has, or the click does
     // nothing — the dead-row problem in a new place.
-    const CATEGORIES = ["conversation", "tasks", "ideas", "decisions", "information", "understanding"];
+    const CATEGORIES = ["briefing", "conversation", "tasks", "ideas", "decisions", "information", "understanding"];
     check(`${f.label} opens a real Office view`, CATEGORIES.includes(f.target.view), f.target.view);
   }
 }
+
+// "KNOWN" IS GONE FROM THE STRIP, on purpose (2026-09-09). Its number came
+// from getBusinessUnderstanding - 921ms measured against production - so
+// rendering it here meant paying the Office's most expensive read for one
+// figure. It moved into the Understanding view, which loads on demand. This
+// asserts the move rather than trusting it: an edit that put it back would
+// silently restore 921ms to the critical path.
+check("no fact requires the 921ms understanding read",
+  !REAL.some((f) => /known/i.test(f.label)),
+  REAL.map((f) => f.label).join(", "));
 
 console.log("\n=== the Office band matches the locked decisions ===\n");
 // COMMENTS STRIPPED FIRST, and the reason is a bug this suite already had.

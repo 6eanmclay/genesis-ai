@@ -60,13 +60,19 @@ export interface OfficeFactInput {
   pendingDecisions: number;
   opportunities: number;
   needsYou: number;
-  /** How many areas of the business J4 has anything at all about. */
-  understandingKnown: number;
-  understandingTotal: number;
 }
 
 /**
  * The Office strip.
+ *
+ * "KNOWN" MOVED OUT (2026-09-09). The strip used to carry how many areas of
+ * the business J4 has any fact about. That count comes from
+ * getBusinessUnderstanding, which measured 921ms against production and is now
+ * loaded on demand - so keeping it here would have meant paying the single
+ * most expensive read in the Office to render one number in a strip.
+ *
+ * It was moved, not deleted: the Understanding view shows what J4 knows, which
+ * is where an owner goes to find out, and it loads when they go there.
  *
  * Category hrefs are the Office's own views rather than other rooms: an
  * opportunity J4 found lives in the Office, and sending the owner to a
@@ -105,12 +111,6 @@ export function officeFacts(input: OfficeFactInput, basePath: string): OfficeFac
       value: input.openTasks,
       target: { kind: "view", view: "tasks" },
       source: "open work items",
-    },
-    {
-      label: "Known",
-      value: input.understandingKnown,
-      target: { kind: "view", view: "understanding" },
-      source: `areas of your business J4 has anything about, of ${input.understandingTotal}`,
     },
   ];
   return facts.map((f) => ({ ...f, quiet: f.value === 0 }));

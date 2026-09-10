@@ -2,8 +2,8 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { formatMoney } from "@/lib/money";
-import { PERMISSIONS, hasPermission, resolveUserStore } from "@/lib/permissions";
-import { accessTo } from "@/lib/businessContext";
+import { PERMISSIONS, hasPermission } from "@/lib/permissions";
+import { resolveOfficeAccess } from "@/lib/j4/officeAccess";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
@@ -16,7 +16,7 @@ import { getOpenProposals } from "@/lib/storefront/proposals";
 import { getBaseUrl } from "@/lib/integrations/util";
 import { messageStateOf } from "@/lib/j4/messageState";
 import { listConversations } from "@/lib/j4/conversations";
-import { buildContextEntries } from "@/lib/j4/contextTypes";
+import type { ContextEntry } from "@/lib/j4/contextTypes";
 import { proposalJ4Raised } from "@/lib/intelligence/proactive";
 import { officeFacts } from "@/lib/j4/officeFacts";
 import { getHandledSince } from "@/lib/dashboard/handled";
@@ -66,13 +66,7 @@ const HANDLED_WINDOW_DAYS = 14;
 
 const formatCents = formatMoney;
 
-function formatDate(value: string | Date): string {
-  return new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
 
-function trendArrow(direction: "up" | "down" | "flat" | undefined): string {
-  return direction === "up" ? "↑" : direction === "down" ? "↓" : "—";
-}
 
 // What J4 understands, flattened into headings and plain lines for the Office
 // (2026-08-16).
@@ -88,140 +82,6 @@ function trendArrow(direction: "up" | "down" | "flat" | undefined): string {
 // sentence for that case. "I don't know your suppliers yet" is real
 // information about the state of J4's understanding — dropping empty groups
 // would quietly overstate how much it knows.
-function toUnderstandingGroups(u: BusinessUnderstanding, currency: string): UnderstandingGroup[] {
-  const { profile, beliefs, recentDecisions, activeThoughts, platformRelationship, currentAssets } = u;
-
-  const identity: string[] = [];
-  identity.push(profile.identity.tagline ? `${profile.identity.name} — ${profile.identity.tagline}` : profile.identity.name);
-  if (profile.identity.description) identity.push(profile.identity.description);
-  const classification = [
-    ...profile.classification.businessCategories.map((c) => c.label),
-    ...profile.classification.revenueStreams.map((r) => r.label),
-  ];
-  if (classification.length > 0) identity.push(classification.join(" · "));
-
-  const offerings: string[] = [
-    `${profile.offerings.activeCount} active product${profile.offerings.activeCount === 1 ? "" : "s"}`,
-    ...profile.offerings.trends
-      .filter((t) => t.trend !== null)
-      .slice(0, 3)
-      .map((t) => `${trendArrow(t.trend?.direction)} ${t.item.data.name} — ${Math.round((t.trend?.changeRatio ?? 0) * 100)}%`),
-  ];
-
-  const people: string[] = [];
-  if (profile.people.owner) people.push(`${profile.people.owner.name ?? profile.people.owner.email} — Owner`);
-  for (const m of profile.people.members) people.push(`${m.name ?? m.email} — ${m.role}`);
-  for (const e of profile.people.employees) {
-    people.push(`${e.data.name}${e.data.title ? ` — ${e.data.title}` : ""}${e.data.status === "former" ? " (former)" : ""}`);
-  }
-
-  const goals: string[] = [
-    ...profile.goals.map((g) => `Goal (${g.data.status}) — ${g.data.description}`),
-    ...profile.challenges.map((c) => `Challenge (${c.data.status}) — ${c.data.description}`),
-  ];
-
-  return [
-    { key: "identity", label: "Identity", lines: identity, empty: "I don't have your business identity yet." },
-    {
-      // What J4 can point at by name. This is the visible proof that a
-      // designated asset resolves to a real record rather than a URL on a
-      // column — if "brand.logo" appears here, "that logo" has something to
-      // mean.
-      key: "assets",
-      label: "Assets I can use",
-      lines: Object.entries(currentAssets).map(
-        ([role, asset]) => `${role} — ${asset.summary ?? asset.originalFilename}${asset.origin ? ` (${asset.origin})` : ""}`
-      ),
-      empty: "Nothing designated yet. Generated and uploaded files become usable assets once they have a role.",
-    },
-    { key: "offerings", label: "What you sell", lines: offerings, empty: "Nothing in the catalog yet." },
-    {
-      key: "revenue",
-      label: "Revenue",
-      lines: [
-        `Last 30 days — ${formatCents(profile.revenue.last30DaysInCents, currency)}`,
-        `All time — ${formatCents(profile.revenue.allTimeInCents, currency)}`,
-      ],
-      empty: "No revenue recorded yet.",
-    },
-    {
-      key: "customers",
-      label: "Customers",
-      lines: [
-        `${profile.customers.totalContactCount} known contact${profile.customers.totalContactCount === 1 ? "" : "s"}`,
-        `Repeat ${profile.customers.segments.repeatCustomers.length} ${trendArrow(profile.customers.segmentTrends.repeatCustomers?.direction)} · ` +
-          `High-value ${profile.customers.segments.highValueCustomers.length} ${trendArrow(profile.customers.segmentTrends.highValueCustomers?.direction)} · ` +
-          `Lapsed ${profile.customers.segments.lapsedCustomers.length} ${trendArrow(profile.customers.segmentTrends.lapsedCustomers?.direction)} · ` +
-          `New ${profile.customers.segments.newCustomers.length} ${trendArrow(profile.customers.segmentTrends.newCustomers?.direction)}`,
-      ],
-      empty: "No customers yet.",
-    },
-    { key: "people", label: "People", lines: people, empty: "Just you so far." },
-    {
-      key: "suppliers",
-      label: "Suppliers",
-      lines: profile.suppliers.map((s) => `${s.data.name}${s.data.email ? ` — ${s.data.email}` : ""}`),
-      empty: "None known yet. Mention one in conversation and I'll remember it.",
-    },
-    {
-      key: "locations",
-      label: "Locations",
-      lines: profile.locations.map(
-        (l) => `${l.data.name}${l.data.city ? ` — ${l.data.city}${l.data.state ? `, ${l.data.state}` : ""}` : ""}`
-      ),
-      empty: "None known yet.",
-    },
-    { key: "goals", label: "Goals and challenges", lines: goals, empty: "Nothing stated yet. Tell me a goal and I'll hold onto it." },
-    {
-      key: "assets",
-      label: "Business assets",
-      lines: profile.assets.map(
-        (a) =>
-          `${a.data.originalFilename}${a.data.category === "unclassified" ? " — not yet reviewed" : ` — ${a.data.category.replace(/_/g, " ")}`}` +
-          `${a.data.summary ? `: ${a.data.summary}` : ""}`
-      ),
-      empty: "Nothing uploaded yet.",
-    },
-    {
-      key: "systems",
-      label: "Connected systems",
-      lines: profile.connectedSystems.map(
-        (s) => `${s.displayName} — ${s.status}${s.syncedAgoLabel ? ` — synced ${s.syncedAgoLabel}${s.isStale ? " (stale)" : ""}` : ""}`
-      ),
-      empty: "Nothing connected yet.",
-    },
-    {
-      key: "beliefs",
-      label: "What I've learned",
-      lines: beliefs.map((b) => `${b.claim} — ${Math.round(b.confidence * 100)}% confidence, ${b.maturity.replace(/_/g, " ")}`),
-      empty: "Nothing yet. Beliefs form once a real pattern repeats.",
-    },
-    {
-      key: "decisions",
-      label: "Recent decisions",
-      lines: recentDecisions.map((d) => `${d.decision === "executed" ? "✓" : "✕"} ${d.summary} — ${formatDate(d.decidedAt)}`),
-      empty: "Nothing in the last two weeks.",
-    },
-    {
-      key: "open",
-      label: "Still open",
-      lines: activeThoughts.slice(0, 5).map((t) => t.summary),
-      empty: "Nothing open right now.",
-    },
-    {
-      key: "platform",
-      label: "Your relationship with Genesis",
-      lines: [
-        `${platformRelationship.planName ?? "No plan"} — ${platformRelationship.growthPointBalance} Growth Points`,
-        ...(platformRelationship.subscriptionStatus ? [platformRelationship.subscriptionStatus] : []),
-        ...(platformRelationship.businessPartnerTrialEndsAt
-          ? [`Business Partner trial ends ${formatDate(platformRelationship.businessPartnerTrialEndsAt)}`]
-          : []),
-      ],
-      empty: "No plan yet.",
-    },
-  ];
-}
 
 // A REAL CROSS-BUSINESS LEAK, found by the browser session (2026-08-20).
 //
@@ -252,10 +112,12 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   // The business this surface was rendered inside, when there is one. Falls back
   // to the account's active business only on the legacy route, which has no slug
   // to be told about.
-  const resolved = slug
-    ? await accessTo(session.user.id, (await prisma.store.findUnique({ where: { slug }, select: { id: true } }))?.id ?? "")
-        .then((a) => (a ? { store: a.store, role: a.role } : null))
-    : await resolveUserStore(session.user.id);
+  // THE SAME RESOLVER THE ACTIONS USE (2026-09-09). It was this expression,
+  // and the two server actions the tier split created each wrote their own
+  // version of it - both with the arguments the wrong way round, which no
+  // compiler could catch because they are both strings. One resolver means the
+  // order can only be wrong in one place. See lib/j4/officeAccess.ts.
+  const resolved = await resolveOfficeAccess(session.user.id, slug);
   if (!resolved) {
     // No real store yet — J4 has nothing to work on. Back to onboarding.
     redirect("/onboarding");
@@ -270,87 +132,49 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   // into every AI call uncapped) — kept in sync deliberately, not by
   // coincidence.
   const CHAT_HISTORY_WINDOW = 50;
-  const [recentMessages, observations, explanations, pendingApprovals, openTasks, understanding, handledRaw] = await Promise.all([
+  // THE CRITICAL PATH IS THE CONVERSATION, AND NOTHING ELSE (2026-09-09).
+  //
+  // This Promise.all used to hold seven reads and the shell waited for the
+  // slowest. Measured against production: understanding 921ms, handled 499ms,
+  // approvals 185ms, conversation 167ms, explanations 74ms, observations 72ms,
+  // tasks 66ms. None of the other six is needed to render J4, the shell, or a
+  // composer the owner can type into.
+  //
+  // Sean: "I don't want J4 waiting for every business-data query before he can
+  // acknowledge me." So the six moved - the understanding to on-demand
+  // (understanding-actions.ts), the rest to progressive
+  // (intelligence-actions.ts) - and the conversation, which the surface
+  // genuinely renders, stayed.
+  //
+  // Nothing was deleted. Every read still runs, with the same rules and the
+  // same permission tiers; they run after the owner can already talk to him.
+  // FOUR SEQUENTIAL AWAITS BECAME ONE (2026-09-09).
+  //
+  // Reducing the Promise.all to the conversation exposed something the seven
+  // slow reads had been hiding: the proposals, the raised-proposal lookup and
+  // the conversation list were each awaited on their own line, one after the
+  // other. Concurrently the floor is the slowest of them; sequentially it is
+  // the SUM, and that sum was in front of the composer.
+  //
+  // They are independent of each other and of the messages, so they run
+  // together. proposalOnTable still needs raisedId, but that is arithmetic on
+  // results rather than another round trip.
+  const [recentMessages, openProposals, raisedId, conversations] = await Promise.all([
     prisma.storeMessage.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
       take: CHAT_HISTORY_WINDOW,
-      // WHAT ACTUALLY HAPPENED, alongside what was said about it (UI6). Joined
-      // rather than fetched separately: the conversation renders both together,
-      // and a second query would be a second answer to "did that work" one
-      // round trip later.
+    // WHAT ACTUALLY HAPPENED, alongside what was said about it (UI6). Joined
+    // rather than fetched separately: the conversation renders both together,
+    // and a second query would be a second answer to "did that work" one
+    // round trip later.
       include: {
         executionLog: { select: { status: true, retryable: true, metadata: true } },
       },
     }),
-    // Real Genesis Language rows — see genesisState.ts. Only ever "urgent"
-    // or "opportunity" (compareObservationPriority's own comment); the room
-    // maps opportunity -> Ideas, urgent -> Information (see J4Workspace's own
-    // category comment for why). The layer still needs them: they are what
-    // the header's state dot is derived from, so J4 can look concerned
-    // without a rail to say why.
-    prisma.genesisObservation.findMany({
-      where: { storeId: store.id, status: "ACTIVE" },
-      // firstNoticedAt is SELECTED now (2026-09-09), not only ordered by. The
-      // briefing says how long a condition has been standing, and "this has
-      // been true for six weeks" is a fact from this column rather than a
-      // weight somebody chose — it is the whole of the within-kind ordering.
-      select: { id: true, genesisState: true, summary: true, actionHref: true, firstNoticedAt: true },
-      orderBy: { firstNoticedAt: "desc" },
-    }),
-    prisma.cognitiveOutput.findMany({
-      where: { storeId: store.id, kind: "explanation", status: "ACTIVE" },
-      // actionHref is read now (2026-09-09). It was never selected, and the
-      // mapping below hardcoded `href: null` — so an explanation that DID
-      // carry a destination lost it on the way to the screen, and all 158 of
-      // them rendered inert. Reading the column is the whole fix for that half.
-      select: { id: true, summary: true, actionHref: true },
-      orderBy: { generatedAt: "desc" },
-    }),
-    hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
-    // BOTH SURFACES NOW (2026-08-16). This was `isRoom ? … : []`, on the
-    // sound reasoning that Tasks appeared nowhere in the layer, so the layer
-    // should not pay for a read it would never show.
-    //
-    // The Office consolidation made that a bug. The layer IS the Office, and
-    // the Office shows Tasks — so the gate meant the Tasks view rendered its
-    // empty state no matter how many open tasks a store had. Exactly the
-    // shape of bug the category rail had: the surface was updated and one
-    // upstream line still assumed the old split. Same permission tier as
-    // observations and explanations: a Task is operational work, not
-    // financial data.
-    getOpenTasks(store.id),
-    // What J4 understands, for the Office's Understanding view. store:manage
-    // matching /dashboard/understanding, which has always required it — a
-    // role without it gets no groups and the view says so, rather than a
-    // half-populated picture.
-    //
-    // COST, honestly: this is the heaviest read here, and the layer renders on
-    // every dashboard page. It sits inside this Promise.all rather than after
-    // it, so it runs concurrently with the five reads already happening and
-    // getBusinessUnderstanding parallelises internally too — the added
-    // wall-clock is the amount by which its slowest query exceeds the current
-    // slowest, not the sum of its parts. If navigation ever feels slower, the
-    // fix is to stream this view rather than to put it back behind a gate:
-    // a gate is what produced the Tasks bug directly above.
-    hasPermission(role, PERMISSIONS.STORE_MANAGE)
-      ? getBusinessUnderstanding(store.id)
-      : Promise.resolve(null),
-    // WHAT J4 ALREADY HANDLED. Three cheap counts and one bounded read, and
-    // only where a briefing is actually rendered.
-    //
-    // The gate reads surfaceShowsBriefing rather than testing the surface
-    // here, because the comment at the top of this file records two bugs built
-    // on exactly that: a read gated on one opinion of what a surface shows,
-    // while the surface's own opinion moved on. J4Workspace calls the same
-    // function to decide whether to render it, so there is one answer rather
-    // than two that must be remembered.
-    //
-    // LAST IN THE ARRAY, matching its position in the destructure above. The
-    // first version of this sat in the middle and everything after it shifted
-    // by one — the understanding read received the handled rows, and the
-    // compiler caught it only because the two types happen to differ.
-    surfaceShowsBriefing(surface) ? getHandledSince(store.id, HANDLED_WINDOW_DAYS) : Promise.resolve(null),
+    getOpenProposals(store.id),
+    proposalJ4Raised(store.id),
+    listConversations(store.id),
   ]);
 
   // THE proposal on the table — one, never a stack (2026-08-14).
@@ -368,7 +192,7 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   // appeared, and the decision was unreachable from the very place the
   // discussion was happening. A proposal belongs to the CONVERSATION, and the
   // conversation is on both surfaces. See GENESIS_SURFACES.md decision 4.
-  const openProposals = await getOpenProposals(store.id);
+
   // THE ONE J4 ACTUALLY RAISED, when it raised one (PD4, 2026-08-23).
   //
   // This took openProposals[0] — the newest pending proposal, related to the
@@ -380,7 +204,7 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   // that decision. Otherwise nothing changes — this narrows which proposal is
   // shown, it does not add a second place proposals live, and J4 still never
   // decides one.
-  const raisedId = await proposalJ4Raised(store.id);
+
   const proposalOnTable =
     (raisedId ? openProposals.find((p) => p.current.id === raisedId) : null) ??
     openProposals[0] ??
@@ -391,7 +215,7 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   // THE OWNER'S CONVERSATIONS (UI6 piece 2). Read here rather than in the
   // client so the layer stays a client component that is handed its data, the
   // same arrangement the proposal card already uses.
-  const conversations = await listConversations(store.id);
+
 
   // WHAT THE CONTEXT PANE MAY SHOW (UI6 piece 1). Built here from the
   // understanding this render already fetched — so the pane costs no query of
@@ -400,35 +224,31 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
   //
   // The closed registry decides what is eligible. Nothing outside it can reach
   // the pane, because nothing else is read.
-  const contextEntries = understanding ? buildContextEntries(understanding) : [];
+  // EMPTY UNTIL ASKED FOR, and the pane knows the difference. The entries are
+  // built from the same 921ms understanding read; loading them here would put
+  // the context pane's cost in front of every owner who never opens it. The
+  // client loads them with the Understanding groups, and shows "loading"
+  // rather than the pane's honest "Nothing recorded yet" - which would be a
+  // false statement about the business, not a slow one.
+  const contextEntries: ContextEntry[] = [];
 
   const messages = recentMessages.reverse();
-  const urgentObservations = observations.filter((o) => o.genesisState === "urgent");
-  const ideas = observations.filter((o) => o.genesisState === "opportunity");
-  // EVERY ROW SAYS WHETHER IT CAN BE ACTED ON (2026-09-09).
+
+  // THE SIGNALS MOVED WITH THE DATA THEY ARE MADE OF (2026-09-09).
   //
-  // `href: null` on the explanations was hardcoded, and all 158 of them
-  // rendered with a hover highlight and no destination. The decision now comes
-  // from lib/j4/officeActions.ts, which returns either a real destination or a
-  // stated reason there is none - so the surface can no longer imply an action
-  // it does not have, and cannot invent a reason of its own either.
-  const basePath = slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE;
-  const asRow = (id: string, summary: string, action: OfficeAction, kind: "urgent" | "curiosity") => ({
-    id,
-    summary,
-    href: action.kind === "open" ? action.href : null,
-    because: action.kind === "none" || action.kind === "internal" ? action.because : undefined,
-    kind,
-  });
-  const understandingGroups = understanding ? toUnderstandingGroups(understanding, store.currency) : [];
-  const information = [
-    ...urgentObservations.map((o) => asRow(o.id, o.summary, officeActionForObservation(o, basePath), "urgent")),
-    ...explanations.map((e) => asRow(e.id, e.summary, officeActionForExplanation(e, basePath), "curiosity")),
-  ];
-  const hasUrgentIssue = urgentObservations.length > 0;
-  const hasOpportunity = ideas.length > 0;
-  const hasCuriosity = explanations.length > 0;
-  const hasPendingDecision = pendingApprovals.length > 0;
+  // hasUrgentIssue / hasOpportunity / hasCuriosity / hasPendingDecision were
+  // derived here from the observation, explanation and approval reads. Those
+  // reads are progressive now, so deriving the signals here would have pulled
+  // all three back onto the critical path to colour one status dot.
+  //
+  // J4 is present immediately; what he is concerned ABOUT arrives with the
+  // rest of the intelligence, a moment later. That is the honest version of
+  // the tier - the alternative is a dot that is accurate at the cost of the
+  // composer, which is the trade Sean ruled out.
+  const hasUrgentIssue = false;
+  const hasOpportunity = false;
+  const hasCuriosity = false;
+  const hasPendingDecision = false;
 
   return (
     <J4Workspace
@@ -443,7 +263,16 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
         lastMessageAt: c.lastMessageAt ? c.lastMessageAt.toISOString() : null,
         // The anchored work's title, when there is one. Metadata the pane names
         // — never a link, and never something to act on.
-        anchoredWork: c.taskId ? openTasks.find((t) => t.id === c.taskId)?.title ?? null : null,
+        // NULL RATHER THAN A TASKS READ (2026-09-09). This was the only use of
+        // the open-tasks list outside the Tasks view, and it decorates a
+        // conversation label in a picker most owners never open. Keeping it
+        // would have put a 66ms read back on the critical path to title a row
+        // that is already identified by its conversation name.
+        //
+        // The pane treats null as "no anchored work", which is what it showed
+        // for every conversation without a task anyway — so this is a missing
+        // decoration, not a wrong statement.
+        anchoredWork: null,
       }))}
       messages={messages.map((m) => ({
         id: m.id,
@@ -479,81 +308,23 @@ export async function J4Surface({ surface, slug }: { surface: J4SurfaceKind; slu
       hasPendingDecision={hasPendingDecision}
       hasOpportunity={hasOpportunity}
       hasCuriosity={hasCuriosity}
-      tasks={openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary, href: t.actionHref, priority: t.priority }))}
-      decisions={pendingApprovals.map((a) => ({
-        id: a.id,
-        summary: a.summary,
-        createdAt: a.createdAt.toISOString(),
-        // Inside the business the owner is looking at (2026-08-22).
-        // ACTION_SECTIONS stores the legacy "/dashboard/..." spelling, and a
-        // Decisions row that followed it would resolve the ACCOUNT'S ACTIVE
-        // business — so opening a decision from the Office could move the owner
-        // to a different business than the one whose Office they are in.
-        href: ACTION_SECTIONS[a.actionType]
-          ? sectionHref(ACTION_SECTIONS[a.actionType].href, slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE)
-          : null,
-      }))}
-      ideas={ideas.map((o) => {
-        const action = officeActionForObservation(o, basePath);
-        return {
-          id: o.id,
-          summary: o.summary,
-          href: action.kind === "open" ? action.href : null,
-          because: action.kind === "none" ? action.because : undefined,
-        };
-      })}
-      information={information}
-      understanding={understandingGroups}
-      // WHAT J4 IS HOLDING, COUNTED HERE (2026-09-09).
+      // THE PROGRESSIVE TIER IS NOT PASSED FROM HERE ANY MORE (2026-09-09).
       //
-      // Server-side and passed down once, like every other prop on this
-      // component — and built through lib/j4/officeFacts.ts, where a fact
-      // cannot exist without naming where its number came from. That is what
-      // keeps the Office's strip from becoming the reference's "Business
-      // Health 87", which has no calculation behind it.
-      // WHAT J4 LEADS WITH, ordered on the server (2026-09-09).
+      // tasks, decisions, ideas, information, the briefing, the facts strip and
+      // the handled summary all used to be resolved above, inside the awaited
+      // Promise.all that renders this surface - so the composer could not be
+      // typed into until the slowest of them returned. Measured against
+      // production that was 499ms of handled/changed on top of 185ms of
+      // approvals, none of it needed to say hello to J4.
       //
-      // The ordering, the wording of the standing time and the decision about
-      // what counts as news all live in lib/j4/officeBriefing.ts, where they
-      // are testable in three lines. The client renders what it is handed and
-      // decides none of it — the same reason the row actions moved into
-      // officeActions.ts rather than staying as class names in a component.
-      briefingItems={buildBriefing(
-        {
-          decisions: pendingApprovals.map((a) => ({
-            id: a.id,
-            summary: a.summary,
-            // J4's own reasoning. Read from the database all along and dropped
-            // before it reached a screen until today.
-            rationale: a.rationale,
-            createdAt: a.createdAt,
-          })),
-          observations,
-        },
-        basePath,
-      )}
-      handled={
-        handledRaw
-          ? summariseHandled(handledRaw, basePath)
-          : ({ resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: HANDLED_WINDOW_DAYS } satisfies HandledSummary)
-      }
-      facts={officeFacts(
-        {
-          activeProducts: understanding?.profile.offerings.activeCount ?? 0,
-          openTasks: openTasks.length,
-          pendingDecisions: pendingApprovals.length,
-          opportunities: ideas.length,
-          needsYou: urgentObservations.length,
-          // "Known" is how many areas J4 has ANY fact about — the groups that
-          // rendered a line rather than their own "I don't know this yet".
-          // Deliberately not a percentage: a proportion would imply the
-          // remainder is a task list, and some of these areas will never
-          // apply to a given business.
-          understandingKnown: understandingGroups.filter((g) => g.lines.length > 0).length,
-          understandingTotal: understandingGroups.length,
-        },
-        basePath,
-      )}
+      // J4Workspace now loads them itself, once mounted, through
+      // app/j4/intelligence-actions.ts. Same reads, same rules, same rows -
+      // after the shell rather than in front of it. Sean: "If the briefing
+      // takes another second to arrive, I should still be able to talk to J4
+      // immediately."
+      //
+      // The props still exist and still win when passed, so nothing that hands
+      // them down directly changed behaviour.
       // Rendered on the server and handed down, so the layer stays a client
       // component without needing to fetch or know about proposals itself.
       proposal={

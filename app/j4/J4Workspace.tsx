@@ -31,6 +31,8 @@ import { OfficeBand } from "./OfficeBand";
 import { OfficeBriefing } from "./OfficeBriefing";
 import type { BriefingItem, HandledSummary } from "@/lib/j4/officeBriefing";
 import { approveProposalInConversation } from "./proposal-actions";
+import { loadDeepKnowledge, type DeepKnowledge } from "./understanding-actions";
+import { loadOfficeIntelligence, type OfficeIntelligence } from "./intelligence-actions";
 import type { OfficeFact } from "@/lib/j4/officeFacts";
 import { J4HandoffContext } from "@/app/dashboard/J4HandoffContext";
 
@@ -859,14 +861,14 @@ export function J4Workspace({
   hasPendingDecision,
   hasOpportunity,
   hasCuriosity,
-  tasks,
-  decisions,
-  ideas,
-  information,
+  tasks: tasksProp = [],
+  decisions: decisionsProp = [],
+  ideas: ideasProp = [],
+  information: informationProp = [],
   understanding,
-  facts = [],
-  briefingItems = [],
-  handled = { resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: 14 },
+  facts: factsProp = [],
+  briefingItems: briefingItemsProp = [],
+  handled: handledProp = { resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: 14 },
   surface,
   proposal,
   conversations = [],
@@ -896,11 +898,11 @@ export function J4Workspace({
   uploadAsset: (formData: FormData) => void;
   uploadPhotoBatch: (formData: FormData) => void;
   uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
-  tasks: TaskItem[];
-  decisions: DecisionItem[];
-  ideas: IdeaItem[];
-  information: InformationItem[];
-  understanding: UnderstandingGroup[];
+  tasks?: TaskItem[];
+  decisions?: DecisionItem[];
+  ideas?: IdeaItem[];
+  information?: InformationItem[];
+  understanding?: UnderstandingGroup[];
   /**
    * What J4 is holding for the owner, counted on the server.
    *
@@ -1036,6 +1038,60 @@ export function J4Workspace({
   // server response, no J4 path. The only writer is the control the owner
   // presses, which is what "owner-initiated" has to mean to be testable.
   const [contextOpen, setContextOpen] = useState(false);
+
+  // ON DEMAND, AND ONLY ONCE (2026-09-09).
+  //
+  // getBusinessUnderstanding measured 921ms against production and used to sit
+  // in the awaited Promise.all that renders this surface - so every owner paid
+  // it on every dashboard page, whether or not they ever opened the two views
+  // that use it. Null means "nobody has asked yet", which is deliberately not
+  // the same as an empty result: the context pane's empty state is a sentence
+  // about the BUSINESS, and showing it while the answer was still loading
+  // would be a false statement rather than a slow one.
+  // THE PROGRESSIVE TIER (2026-09-09).
+  //
+  // Everything J4 found - the briefing, the facts strip, the four queues -
+  // loads AFTER the shell, so the composer is usable while it arrives. Sean's
+  // rule: "If the briefing takes another second to arrive, I should still be
+  // able to talk to J4 immediately."
+  //
+  // Deliberately not gated on which view is open, unlike deepKnowledge: the
+  // owner lands on the briefing, so this is wanted immediately - just not
+  // BEFORE the shell. "Progressive" means after first paint, not on demand.
+  const [intel, setIntel] = useState<OfficeIntelligence | null>(null);
+  useEffect(() => {
+    if (isLayer) return;
+    let alive = true;
+    loadOfficeIntelligence(slug)
+      .then((v) => { if (alive) setIntel(v); })
+      .catch(() => { if (alive) setIntel(null); });
+    return () => { alive = false; };
+  }, [isLayer, slug]);
+
+  // Server-provided values still win when they are present, so the layer and
+  // any caller that passes them directly are unchanged. This is an addition to
+  // where the data can come from, not a replacement for it.
+  const briefingItems = intel?.briefingItems ?? briefingItemsProp;
+  const handled = intel?.handled ?? handledProp;
+  const facts = intel?.facts ?? factsProp;
+  const tasks = intel?.tasks ?? tasksProp;
+  const ideas = intel?.ideas ?? ideasProp;
+  const decisions = intel?.decisions ?? decisionsProp;
+  const information = intel?.information ?? informationProp;
+  const intelligenceLoading = !isLayer && intel === null;
+
+  const [deepKnowledge, setDeepKnowledge] = useState<DeepKnowledge | null>(null);
+  const [loadingDeep, setLoadingDeep] = useState(false);
+  const needsDeepKnowledge = shownCategory === "understanding" || contextOpen;
+  useEffect(() => {
+    if (!needsDeepKnowledge || deepKnowledge !== null || loadingDeep) return;
+    setLoadingDeep(true);
+    loadDeepKnowledge(slug)
+      .then(setDeepKnowledge)
+      .catch(() => setDeepKnowledge({ groups: [], contextEntries: [] }))
+      .finally(() => setLoadingDeep(false));
+  }, [needsDeepKnowledge, deepKnowledge, loadingDeep, slug]);
+
 
   const [localMessages, setLocalMessages] = useState<Message[]>(messages);
   // What the owner is reading: one conversation, or the ungrouped history.
@@ -2012,7 +2068,13 @@ export function J4Workspace({
         {shownCategory === "conversation" && contextOpen && (
           <div className="mb-3">
             <ContextPane
-              entries={contextEntries}
+              // The lazily-loaded entries once they arrive, and the prop as a
+              // fallback for any caller still passing them directly. `?? []`
+              // would be wrong here: it collapses "still loading" into "J4
+              // knows nothing", which is the pane's honest empty state saying
+              // something untrue. loadingDeep below distinguishes them.
+              entries={deepKnowledge ? deepKnowledge.contextEntries : contextEntries}
+              loading={deepKnowledge === null && loadingDeep}
               conversationLabel={
                 conversationId
                   ? conversations.find((c) => c.id === conversationId)?.name ?? "This conversation"
@@ -2312,7 +2374,17 @@ export function J4Workspace({
           // than an oversight: "I don't know your suppliers yet" is real
           // information about what J4 understands, and hiding empty groups
           // would quietly overstate how much it knows.
-          understanding.length === 0 ? (
+          deepKnowledge === null ? (
+            // NOT LOADED IS NOT EMPTY (2026-09-09). This read is 921ms against
+            // production and now loads when the owner opens this view rather
+            // than before every page. While it is in flight the honest thing
+            // to say is that it is coming — the empty state below is a claim
+            // about the BUSINESS, and showing it here would tell the owner J4
+            // knows nothing when the truth is that nobody has asked yet.
+            <p className="px-2 py-2.5 text-sm text-[rgba(244,242,251,0.5)]">
+              Gathering everything I know about your business…
+            </p>
+          ) : deepKnowledge.groups.length === 0 ? (
             // No groups at all means the caller could not read them — a role
             // without store:manage, matching what the Understanding page has
             // always required. Not the same as J4 knowing nothing, which is
@@ -2320,7 +2392,7 @@ export function J4Workspace({
             <CategoryEmptyState label="Understanding" />
           ) : (
           <div className="flex w-full min-w-0 max-w-full flex-col gap-5">
-            {understanding.map((group) => (
+            {deepKnowledge.groups.map((group) => (
               <div key={group.key} className="min-w-0">
                 <p
                   className="text-[11px] font-semibold uppercase tracking-wide"

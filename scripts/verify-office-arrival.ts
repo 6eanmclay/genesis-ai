@@ -235,6 +235,53 @@ async function main(): Promise<void> {
       await page.screenshot({ path: `verification-screenshots/arrival-${label}.png` });
     }
 
+    // ---- J4 DOES NOT WAIT FOR THE BUSINESS DATA ---------------------------
+    //
+    // Sean's rule, and the one thing the tier split exists to guarantee: "If
+    // the briefing takes another second to arrive, I should still be able to
+    // talk to J4 immediately."
+    //
+    // Racing it would be useless — locally the briefing lands about 13ms after
+    // the composer, so a test that just compared the two would pass or fail on
+    // machine noise and prove nothing either way. So the progressive load is
+    // STALLED on purpose: every server-action POST is held for five seconds,
+    // and the composer must still take a message inside two. If the conversation
+    // ever becomes downstream of the intelligence, this cannot pass.
+    console.log("\n=== the composer does not wait for the intelligence ===\n");
+    await page.route("**/j4", async (route) => {
+      const isServerAction = route.request().method() === "POST";
+      if (isServerAction) await new Promise((r) => setTimeout(r, 5000));
+      await route.continue();
+    });
+
+    const stalledStart = Date.now();
+    await page.goto(`${server.baseUrl}/j4`, { waitUntil: "commit" });
+    const composer = page.locator('textarea[name="message"]').first();
+    let acceptedWhileStalled = -1;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      try {
+        await composer.fill("are you there?", { timeout: 500 });
+        if ((await composer.inputValue()) === "are you there?") {
+          acceptedWhileStalled = Date.now() - stalledStart;
+          break;
+        }
+      } catch {
+        // still hydrating
+      }
+      await page.waitForTimeout(25);
+    }
+    const briefingPresentThen = await page.evaluate(
+      () => !!document.querySelector('[data-testid="briefing-items"]'),
+    );
+    check("J4 takes a message while the intelligence is still loading",
+      acceptedWhileStalled >= 0 && acceptedWhileStalled < 2000,
+      `${acceptedWhileStalled}ms with the progressive load stalled by 5s`);
+    check("and the intelligence genuinely had not arrived yet",
+      !briefingPresentThen,
+      briefingPresentThen ? "the briefing was already there — the stall did not work" : "briefing absent, as intended");
+    await page.unroute("**/j4");
+    await composer.fill("").catch(() => {});
+
     // ---- THE LOOP CLOSES: approve -> execute -> J4 reports back ----------
     //
     // Sean's rule, in full: "If the owner approves -> execute it for real. If

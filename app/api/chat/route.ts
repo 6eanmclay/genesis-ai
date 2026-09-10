@@ -25,6 +25,7 @@ import { callGenesisModel } from "@/lib/genesisModel";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { recordGenesisExecution } from "@/lib/execution/genesis";
 import { logProductEvent, findLikelyRephraseOf } from "@/lib/telemetry/events";
+import { createFirstTokenClock } from "@/lib/telemetry/firstToken";
 import { buildTurnContext } from "@/lib/dashboard/chatTurnContext";
 import { businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import {
@@ -98,6 +99,29 @@ async function logStreamedChatTurn(params: {
   outcome: "success" | "failure";
   likelyRephraseOf: string | null;
   kind: string;
+  /**
+   * HOW LONG BEFORE J4 SAID ANYTHING AT ALL, in ms from the start of the turn.
+   *
+   * ============ THE MEASUREMENT ALREADY EXISTED (2026-09-09) ==========
+   *
+   * `firstTokenAtMs` is set on the first onTextDelta of the real streaming
+   * call - the genuine first model output on the rail production actually
+   * uses - and it was going to a console line and the dev tracer. Both are
+   * ephemeral. So the number that answers "why does J4 feel slow" existed on
+   * every turn and survived none of them.
+   *
+   * Sean: "the ~30-second wait for the first reaction is not acceptable. We
+   * need to optimize time-to-first-response and time-to-first-audio, not just
+   * total completion time." That cannot be optimised against a number nobody
+   * keeps, and it must not be optimised against a proxy from the other rail:
+   * ai-actions.ts has stage timings, and production turns do not go through it.
+   *
+   * NULL IS NOT ZERO, and the type says so. A turn where the model never
+   * emitted text has no time-to-first-token; recording 0 there would read as
+   * "instant" and would quietly improve any average it entered. Null is
+   * carried through to the row so the absence stays visible.
+   */
+  firstTokenAtMs: number | null;
 }) {
   const session = await auth();
   if (!session?.user) return;
@@ -111,7 +135,16 @@ async function logStreamedChatTurn(params: {
     attemptKey: params.storeId,
     outcome: params.outcome,
     durationMs: params.durationMs,
-    metadata: { requiresConfirmation: false, likelyRephraseOf: params.likelyRephraseOf, kind: params.kind, streamed: true },
+    metadata: {
+      requiresConfirmation: false,
+      likelyRephraseOf: params.likelyRephraseOf,
+      kind: params.kind,
+      streamed: true,
+      // Written even when null, deliberately: a missing key and a recorded
+      // "there was no first token" are different facts, and only one of them
+      // can be told apart from a turn that predates this field.
+      firstTokenAtMs: params.firstTokenAtMs,
+    },
   }).catch(() => {});
 }
 
@@ -130,6 +163,15 @@ function diagLog(requestId: string, turnStartedAt: number, event: string, meta?:
 
 export async function POST(request: Request) {
   const turnStartedAt = Date.now();
+  // TURN-SCOPED, because it is a property of the turn rather than of the call
+  // that happens to set it. It was declared inside the streaming block, which
+  // meant the three exit paths that log the turn could not see it - and those
+  // are exactly the places it has to be recorded.
+  //
+  // The rule itself lives in lib/telemetry/firstToken.ts so it can be tested
+  // against a known, controlled delay: inline here, the only way to exercise
+  // it was a real streaming model call.
+  const firstTokenClock = createFirstTokenClock(turnStartedAt);
   const body = (await request.json().catch(() => null)) as
     | {
         message?: string;
@@ -414,7 +456,6 @@ export async function POST(request: Request) {
         // a materially different number than total call time, and needs to
         // be measured separately, not conflated. Logged below alongside the
         // rest of this turn's real timing.
-        let firstTokenAtMs: number | null = null;
         diagLog(requestId, turnStartedAt, "unified_call_started");
         const unifiedRequestMessages = [...cachedConversationMessages, { role: "user" as const, content: unifiedContextParts.join("\n") }];
         // Real production investigation (2026-08-08) — Sean's real iPhone
@@ -451,9 +492,7 @@ export async function POST(request: Request) {
             // received from the SDK's own stream event — nothing is
             // accumulated or batched server-side first.
             onTextDelta: (delta) => {
-              if (firstTokenAtMs === null) {
-                firstTokenAtMs = Date.now() - turnStartedAt;
-              }
+              firstTokenClock.markDelta();
               deltaIndex += 1;
               diagLog(requestId, turnStartedAt, "unified_delta", { i: deltaIndex, len: delta.length });
               streamedAnyText = true;
@@ -461,8 +500,8 @@ export async function POST(request: Request) {
             },
           }
         );
-        diagLog(requestId, turnStartedAt, "unified_delta_summary", { totalDeltas: deltaIndex, firstTokenAtMs });
-        console.log(`[genesis-chat-ttft] ttftMs=${firstTokenAtMs ?? "n/a"} sinceUnifiedCallStartMs=${Date.now() - turnStartedAt}`);
+        diagLog(requestId, turnStartedAt, "unified_delta_summary", { totalDeltas: deltaIndex, firstTokenAtMs: firstTokenClock.value() });
+        console.log(`[genesis-chat-ttft] ttftMs=${firstTokenClock.value() ?? "n/a"} sinceUnifiedCallStartMs=${Date.now() - turnStartedAt}`);
         diagLog(requestId, turnStartedAt, "unified_call_finished", {
           ok: unifiedOutcome.ok,
           stopReason: unifiedOutcome.ok ? unifiedOutcome.message.stop_reason : null,
@@ -545,7 +584,7 @@ export async function POST(request: Request) {
             // pretending nothing was said would leave a half-sentence hanging.
             emit({ type: "token", delta: streamedAnyText ? `\n\n${declineMessage}` : declineMessage });
             emit({ type: "done", changes: null });
-            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "tool_refused" });
+            await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, firstTokenAtMs: firstTokenClock.value(), kind: "tool_refused" });
             controller.close();
             return;
           }
@@ -591,7 +630,7 @@ export async function POST(request: Request) {
           diagLog(requestId, turnStartedAt, "db_write_done", { kind: "conversational" });
           emit({ type: "done", changes: null });
           diagLog(requestId, turnStartedAt, "stream_done_emitted", { kind: "conversational" });
-          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, kind: "conversational" });
+          await logStreamedChatTurn({ userId, storeId: store.id, durationMs: Date.now() - turnStartedAt, outcome: "success", likelyRephraseOf, firstTokenAtMs: firstTokenClock.value(), kind: "conversational" });
           controller.close();
           diagLog(requestId, turnStartedAt, "controller_closed", { kind: "conversational" });
           return;
@@ -620,7 +659,7 @@ export async function POST(request: Request) {
           // not on the Server Action path, which has nowhere to put them. One
           // implementation, two callers.
           onDelta: (delta) => {
-            if (firstTokenAtMs === null) firstTokenAtMs = Date.now() - turnStartedAt;
+            firstTokenClock.markDelta();
             streamedAnyText = true;
             emit({ type: "token", delta });
           },
@@ -737,6 +776,7 @@ export async function POST(request: Request) {
             durationMs: Date.now() - turnStartedAt,
             // A partial turn is a failure however well the tools that ran went.
             outcome: turnOutcome(completed, Boolean(unfinished)),
+            firstTokenAtMs: firstTokenClock.value(),
             likelyRephraseOf,
             kind: turnKind(completed),
           });
