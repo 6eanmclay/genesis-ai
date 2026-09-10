@@ -10,6 +10,7 @@ import {
   commandLineOf,
   type OwnedServer,
 } from "@/scripts/lib/serverRegistry";
+import { assertServerServesRoute, isHealableStartupFailure } from "@/scripts/lib/testServer";
 
 // ONE RUN CANNOT POISON THE NEXT, AND CANNOT TOUCH ANOTHER'S:
 //
@@ -160,6 +161,45 @@ async function main(): Promise<void> {
     !existsSync(join(process.cwd(), ".next", "dev", "package.json")) || true,
     "build output only");
   void rmSync;
+
+  // ------------------------------------------------------------------
+  console.log("\n=== 6. A canary 404 is recognised as a repairable cache, not a verdict ===\n");
+  // ------------------------------------------------------------------
+  // The stale cache's second disguise. A route that has not compiled yet is
+  // SLOW - the request waits on the compiler. A stale route MANIFEST answers
+  // instantly and confidently that a route which exists on disk does not, and
+  // that is what struck verify-office-arrival for a full sixty seconds at
+  // 32-35ms per request.
+  //
+  // Asserted against a server that genuinely 404s everything, so the claim is
+  // about the classification rather than about a comment describing it.
+  const { createServer } = await import("http");
+  const notFound = createServer((_req, res) => { res.statusCode = 404; res.end("nope"); });
+  await new Promise<void>((resolve) => notFound.listen(0, "127.0.0.1", resolve));
+  const address = notFound.address();
+  const canaryPort = typeof address === "object" && address ? address.port : 0;
+
+  let canaryError: unknown = null;
+  try {
+    // Deliberately short: sixty real seconds of a known-404 server proves
+    // nothing extra, and this suite should not cost a minute to say so.
+    await Promise.race([
+      assertServerServesRoute(`http://127.0.0.1:${canaryPort}`, "/api/cron/status"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("TOO SLOW")), 70_000)),
+    ]);
+  } catch (error) {
+    canaryError = error;
+  }
+  notFound.close();
+
+  assert("a persistent canary 404 fails rather than passing",
+    canaryError !== null, "a server serving nothing must never be accepted");
+  assert("and it is classified as a repairable build cache",
+    isHealableStartupFailure(canaryError),
+    canaryError instanceof Error ? canaryError.message.split("\n")[1] ?? "" : String(canaryError));
+  assert("while an unrelated startup failure is NOT",
+    !isHealableStartupFailure(new Error("The dev server exited before it was ready (code 1)")),
+    "only the cache is healable — a dead server must still be reported, not retried blindly");
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);

@@ -61,7 +61,12 @@ export interface TestServer {
  * Recovery is attempted ONCE. A cache that is corrupt again immediately is not
  * a stale cache, and pretending otherwise would loop.
  */
-const POISONED_CACHE = "GENESIS_HARNESS_POISONED_CACHE";
+export const POISONED_CACHE = "GENESIS_HARNESS_POISONED_CACHE";
+
+/** Whether a startup failure is one the harness can repair by itself. */
+export function isHealableStartupFailure(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(POISONED_CACHE);
+}
 
 /**
  * Wait for OUR server, and notice when it dies.
@@ -231,6 +236,25 @@ export async function assertServerServesRoute(baseUrl: string, path: string): Pr
   }
   throw new Error(
     [
+      // ============ THE SAME STALE CACHE, WEARING A 404 ==============
+      //
+      // Marked for self-healing, and the evidence is what the 404s look like.
+      // A route that has not compiled yet is SLOW - the request waits on the
+      // compiler. These come back in 32-35ms, over and over, for the full
+      // sixty seconds: the server is answering immediately and confidently
+      // that a route which exists on disk does not exist.
+      //
+      // That is a stale route manifest in the shared .next/dev, left behind by
+      // one of the ~28 servers a browser lane starts and kills in sequence -
+      // the same poisoned build output as the instrumentation-hook ENOENT, in
+      // a different disguise. It has now struck three different suites, one
+      // per lane run, never the same one twice, which is the signature of
+      // shared state rather than of any suite.
+      //
+      // So it takes the same one-shot remedy: clear the build output, start
+      // again. If the route is genuinely gone, the retry fails identically and
+      // says so, having cost one recompile.
+      POISONED_CACHE,
       `REFUSING TO RUN: the server is not serving ${path}.`,
       `It answered ${status}. That route answers 401 without credentials and never 404,`,
       "so a 404 means it is not being served at all and nothing beyond this point was tested.",
@@ -473,7 +497,7 @@ async function startOwnServer(
     // is nothing in it to lose, and the only alternative is a fatal error whose
     // remedy is a person typing the same deletion. Once only - a cache corrupt
     // again immediately is not a stale one.
-    if (!healedAlready && error instanceof Error && error.message.includes(POISONED_CACHE)) {
+    if (!healedAlready && isHealableStartupFailure(error)) {
       console.log("  the dev build cache was corrupt; clearing .next/dev and starting again");
       try {
         const { rmSync } = await import("fs");
