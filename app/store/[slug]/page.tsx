@@ -323,9 +323,12 @@ export default async function StorefrontPage({
   const h2Class = headingScaleClass(theme, "h2");
   const imageFrame = imageFrameClass(theme, cardRadius);
 
-  const buyButtonClass = `flex-1 ${buttonRadius} bg-[var(--brand-accent)] px-4 py-2 text-center text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50`;
+  // data-design hooks: see lib/design/designProperties.ts. Each names the
+  // element that genuinely carries one design property, so a rendered
+  // measurement has something exact to read rather than a guessed selector.
+  const buyButtonClass = `design-button flex-1 ${buttonRadius} bg-[var(--brand-accent)] px-4 py-2 text-center text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50`;
   const detailsLinkClass = `flex-1 ${buttonRadius} border border-[var(--brand-text)]/[.15] px-4 py-2 text-center text-sm transition-colors hover:bg-[var(--brand-text)]/[.05]`;
-  const cardClass = `group overflow-hidden ${cardRadius} border border-[var(--brand-text)]/[.08] bg-[var(--brand-surface)] ${shadow} transition-shadow`;
+  const cardClass = `design-card group overflow-hidden ${cardRadius} border border-[var(--brand-text)]/[.08] bg-[var(--brand-surface)] ${shadow} transition-shadow`;
 
   const secondaryCtaTarget = sectionOrder[0] ? `#${sectionOrder[0]}` : "#products";
 
@@ -351,7 +354,7 @@ export default async function StorefrontPage({
     if (layout === "split") {
       return (
         <section key={id} id={id} className={bandClass}>
-          <div className={`mx-auto grid max-w-3xl grid-cols-1 gap-4 px-8 sm:grid-cols-[1fr_2fr] sm:gap-10 ${sectionPadding}`}>
+          <div className={`design-section mx-auto grid max-w-3xl grid-cols-1 gap-4 px-8 sm:grid-cols-[1fr_2fr] sm:gap-10 ${sectionPadding}`}>
             <h2 className={`font-[family-name:var(--font-heading)] ${h2Class}`}>{heading}</h2>
             <p className="text-[var(--brand-text-secondary)]">{body}</p>
           </div>
@@ -721,7 +724,7 @@ export default async function StorefrontPage({
       return (
         <header className="border-b border-[var(--brand-text)]/[.08]">
           <div
-            className={`mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-8 md:grid-cols-2 ${sectionPadding}`}
+            className={`design-hero mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-8 md:grid-cols-2 ${sectionPadding}`}
           >
             <div className="text-center md:text-left">
               <h1 className={`font-[family-name:var(--font-heading)] ${h1Class}`}>{heading}</h1>
@@ -730,7 +733,7 @@ export default async function StorefrontPage({
               </p>
               {renderHeroCta()}
             </div>
-            <div className={`aspect-square w-full overflow-hidden ${imageFrame}`}>
+            <div className={`design-hero-image aspect-square w-full overflow-hidden ${imageFrame}`}>
               {heroImage ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={heroImage} alt={storeName} className="h-full w-full object-cover" />
@@ -787,7 +790,7 @@ export default async function StorefrontPage({
   return (
     <div
       style={themeCssVars(theme)}
-      className="min-h-screen bg-[var(--brand-background)] font-[family-name:var(--font-body)] text-[var(--brand-text)]"
+      className="design-ground min-h-screen bg-[var(--brand-background)] font-[family-name:var(--font-body)] text-[var(--brand-text)]"
     >
       {fontsUrl && <link rel="stylesheet" href={fontsUrl} />}
       {!store.published && viewerRole && <PreviewModeBanner />}

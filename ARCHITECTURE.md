@@ -222,6 +222,22 @@ The cause was one missing word, 37 times: Tailwind v4 treats an arbitrary `font-
 
 **The execution framework can be generic. The proof cannot be.** `DesignProperty` names what is changing and `canSatisfy` says whether an executable can change it — both are shared. The measurement is per-property and can never be inherited, because a generic "it worked" is exactly what was true for months while nothing worked. See `lib/design/designChange.ts`, whose `designOutcome` derives completion from *executed / changed / rendered* and reports a change the page does not show as a failure, in those words.
 
+**A measurement that reads nothing is not a product diagnosis.** Generalising the above to eight property families took four rounds, and in every round the instrument was wrong more often than the product. `background` was measured on `body`, which returns a real, plausible colour that no theme change ever moves — and the first report blamed the feature. `imageTreatment` was measured as `object-fit` on a product-card image, a property that treatment never sets on an element it never touches. `buttonStyle` was refined to `pill`, which is already the default, so the page rendered the same radius twice and was correct to. `sectionLayout` was read off `#products`, a container chosen for having the right-sounding id. And a fixture supplying two fields of `HomepageContent` instead of twelve returned HTTP 500 for every load, turning eleven measurements into `NO ELEMENT` at once — a broken instrument reporting a broken product.
+
+Sean's rule, which is why the states below are five and not two: **"If the feature exists but our measurement can't see it, fix the measurement. If the feature cannot actually execute, mark it incapable. If it executes but produces no rendered change, that's a failed verification. Those are three different states."** A boolean cannot hold that distinction, and `proven: boolean` held three false claims within an hour of being written — asserted from intent, before anything had been run.
+
+| State | Means | Statement about |
+|---|---|---|
+| `proven` | two valid readings that differ, **and both are recorded** | the product — it works |
+| `failed` | the instrument worked, the mutation ran, the value did not move | the product — a defect |
+| `unproven` | the instrument saw nothing: no element, or an empty read | the **measurement**, not the product |
+| `measured` | a value reads, but no before/after has been run | the measurement |
+| `incapable` | no executable can mutate this at all | the executables |
+
+Three properties in `lib/design/designProperties.ts` sat at `NO ELEMENT` for two full runs, and none of them was broken: the buy button renders only for a store that can take payments, the hero image only on the one layout with an image slot, the text sections only when there is content. **A fixture too bare to show a property cannot be used to conclude anything about it.** So `unproven` is deliberately not adjacent to `failed` — it means nobody has looked yet, and it may never absorb a failure. `scripts/verify-design-evidence.ts` sabotages that boundary in both directions.
+
+**The registry gets no vote in its own verification.** `verify-design-properties.ts` mutates each property on a real page, derives a state from the two browser readings alone, and only then compares. The first version read `if (reg.proven)` and therefore skipped every property that had not yet claimed to work — the check that existed to catch false claims tested only the entries already believed. A judge that can see the claim it is judging will agree with it.
+
 **And the corollary for what J4 says.** The reply must be derived from the outcome, not written beside it. On 2026-09-05 eight `refine_storefront` executions failed on invented vocabulary values and J4 told Sean the storefront had been warmed up and given "a more characterful headline font". Generation is not verification, and a success message is not a result.
 
 ## Standing invariant: the mirrored registry (2026-08-21)
