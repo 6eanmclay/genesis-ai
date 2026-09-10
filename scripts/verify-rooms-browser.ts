@@ -1,6 +1,7 @@
 import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { waitForAppReady } from "@/scripts/lib/appReadiness";
 
 // THE ROOMS, AS THEY ACTUALLY RENDER:
 //
@@ -77,37 +78,25 @@ async function mainFontVariant(page: Page): Promise<string> {
 }
 
 /**
- * Clear the returning-owner arrival ritual, if it is playing.
+ * Clear the returning-owner opening, if it is playing.
  *
- * It is a full-screen overlay, so every screenshot this suite took was a
- * picture of the ritual rather than of the room underneath — the assertions
- * passed the whole time, because computed styles are readable through it, and
- * the images were quietly worthless. Skipped through its own real control
- * rather than hidden with CSS, so what is captured is a state the owner
- * genuinely reaches.
+ * ============ THE SAME BUG, TWICE (2026-09-10) ======================
+ *
+ * This function's own comment records why it exists: "every screenshot this
+ * suite took was a picture of the ritual rather than of the room underneath -
+ * the assertions passed the whole time, because computed styles are readable
+ * through it, and the images were quietly worthless."
+ *
+ * That fix identified the overlay as "a fixed, full-screen element at z-index
+ * 100". On 2026-09-04 the opening became J4Boot at z-[120], so the wait
+ * matched nothing, the .catch swallowed it, and THE BUG CAME BACK - with the
+ * comment above still in place describing a fix that no longer worked.
+ *
+ * An approximation of an application state is a fix with an expiry date on it.
+ * waitForAppReady asks the lifecycle instead, and does not catch.
  */
 async function dismissArrival(page: Page): Promise<void> {
-  // WAITED OUT, NOT CLICKED. The first attempt looked for the overlay's "Skip"
-  // control — which DashboardShell never passes for this ritual, so there is no
-  // such button and the wait was a no-op that changed nothing.
-  //
-  // It clears itself when its beat sequence finishes, and it plays once per
-  // real sign-in, so one wait here covers every screenshot below. Identified by
-  // what it actually is: a fixed, full-screen element at z-index 100.
-  await page
-    .waitForFunction(
-      () =>
-        !Array.from(document.querySelectorAll("div")).some((el) => {
-          const s = getComputedStyle(el);
-          return s.position === "fixed" && s.zIndex === "100" && parseFloat(s.opacity) > 0.01;
-        }),
-      undefined,
-      { timeout: 30_000 }
-    )
-    .catch(() => {
-      // Still up after 30s. Screenshots below will show it, and that is a
-      // visible, honest failure rather than a silently wrong picture.
-    });
+  await waitForAppReady(page);
 }
 
 async function visit(page: Page, url: string): Promise<void> {
@@ -423,7 +412,13 @@ async function main() {
     const sectionsIn = async (path: string) => {
       await visit(page, `${base}${path}`);
       return page.evaluate(() => {
-        const rooms = ["Storefront", "Studio", "Commerce", "Account"];
+        // FIVE ROOMS (2026-09-09). Sean settled the count at five and Business
+        // became one of them; this list still named four, so "Business" was
+        // read as a SECTION of whichever room was open. Studio then reported a
+        // section row it does not have. verify-rooms.ts was updated at the time
+        // and this inner helper was missed - the same fact written in two
+        // places, which is the drift the mirrored-registry invariant is about.
+        const rooms = ["Business", "Storefront", "Studio", "Commerce", "Account"];
         return Array.from(new Set(
           Array.from(document.querySelectorAll("nav a, nav button"))
             .map((el) => el.textContent?.replace(/\d+$/, "").trim() ?? "")

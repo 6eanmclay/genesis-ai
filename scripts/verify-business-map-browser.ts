@@ -2,6 +2,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { mkdirSync } from "fs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { waitForAppReady } from "@/scripts/lib/appReadiness";
 
 // THE BUSINESS MAP, IN A REAL BROWSER:
 //
@@ -51,12 +52,6 @@ function assert(label: string, condition: boolean, detail = ""): void {
   }
 }
 
-const overlayUp = () =>
-  Array.from(document.querySelectorAll("div")).some((el) => {
-    const s = getComputedStyle(el);
-    return s.position === "fixed" && s.zIndex === "100" && parseFloat(s.opacity) > 0.01;
-  });
-
 async function signIn(page: Page, baseUrl: string, email: string): Promise<void> {
   await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
   await page.fill('input[type="email"]', email);
@@ -74,18 +69,8 @@ async function signIn(page: Page, baseUrl: string, email: string): Promise<void>
 }
 
 async function settle(page: Page): Promise<void> {
-  await page.waitForFunction(overlayUp, undefined, { timeout: 6_000 }).catch(() => {});
-  await page
-    .waitForFunction(
-      () =>
-        !Array.from(document.querySelectorAll("div")).some((el) => {
-          const s = getComputedStyle(el);
-          return s.position === "fixed" && s.zIndex === "100" && parseFloat(s.opacity) > 0.01;
-        }),
-      undefined,
-      { timeout: 30_000 },
-    )
-    .catch(() => {});
+  // The opening, through the shared contract rather than a z-index guess.
+  await waitForAppReady(page);
 }
 
 /**
@@ -235,13 +220,16 @@ async function main() {
     console.log("\n=== 1. The welcome plays, and the map is what follows ===\n");
     // ====================================================================
     await page.goto(home, { waitUntil: "domcontentloaded" });
-    const arrivalSeen = await page
-      .waitForFunction(overlayUp, undefined, { timeout: 10_000 })
-      .then(() => true)
-      .catch(() => false);
-    assert("the Genesis arrival experience still plays", arrivalSeen,
-      "no full-screen arrival layer appeared — it must not have been removed");
-    await settle(page);
+    // THE OPENING IS J4's NOW (2026-09-04). The invariant is unchanged - an
+    // opening must still play on a real sign-in, and its removal would be a
+    // silent loss - but it is asserted against the component that plays it
+    // rather than against a z-index. The old check looked for a fixed div at
+    // z-index 100; J4Boot renders at z-[120], so it had quietly become a test
+    // that could only fail.
+    const opening = await waitForAppReady(page);
+    assert("the arrival experience still plays on a real sign-in",
+      opening.state === "bootFinished",
+      `readiness reported ${opening.state} — the opening must not have been removed`);
 
     await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 });
     assert("signing in lands on a screen that has the map",
@@ -265,9 +253,18 @@ async function main() {
 
     // Sean: "The center of the Business Map should not say 'J4' as text. The
     // center is the J4 orb."
-    assert("the centre is the canonical orb, not a drawing of one",
-      (await orb.locator('img[alt="Genesis"]').count()) === 1,
+    // THE CENTRE IS THE BUSINESS, NOT J4 (2026-09-04, Sean). This asserted
+    // img[alt="Genesis"] - the map's own J4 - and the rule is now the opposite
+    // of what it was checking: "one J4 identity in the application. A second J4
+    // floating in the middle of the map is exactly the competing representation
+    // that rule exists to stop." So the check is inverted, not deleted: the hub
+    // must be there, and it must not be a second J4.
+    assert("the centre renders the business hub",
+      (await orb.count()) === 1 && String(await orb.innerHTML().catch(() => "")).length > 0,
       String(await orb.innerHTML().catch(() => "")).slice(0, 120));
+    assert("and it is NOT a second J4 on the map",
+      (await orb.locator('img[alt="Genesis"]').count()) === 0,
+      "the map must not carry a competing J4 identity");
     assert("and it says nothing at all at the top level",
       ((await orb.textContent()) ?? "").trim() === "",
       ((await orb.textContent()) ?? "").trim());
@@ -301,7 +298,7 @@ async function main() {
     assert("entering a branch does not re-create the orb",
       await page.evaluate(() =>
         (document.querySelector('[data-testid="map-centre"]') as HTMLElement & { __orb?: string })?.__orb === "same-orb"));
-    assert("the orb is still the orb", (await orb.locator('img[alt="Genesis"]').count()) === 1);
+    assert("the hub is still the hub", (await orb.count()) === 1);
     {
       const s = await stageBox();
       const o = await orbBox();
@@ -631,8 +628,7 @@ async function main() {
       const emptyText = await page.locator('[data-testid="entity-empty"]').innerText();
       assert("in plain words", /doesn't know anything about goals yet/i.test(emptyText),
         emptyText.slice(0, 200));
-      assert("and the orb is still there while it says so",
-        (await orb.locator('img[alt="Genesis"]').count()) === 1);
+      assert("and the hub is still there while it says so", (await orb.count()) === 1);
 
       await page.getByRole("button", { name: "Whole business" }).click();
       await page.waitForTimeout(400);
