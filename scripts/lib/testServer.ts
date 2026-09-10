@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "child_process";
+import { recordServer, forgetServer, reapAbandonedServers } from "./serverRegistry";
 import { startRealPostgres, type RealPostgres } from "./realPostgres";
 import { TEST_DATABASE_ENV } from "./requireTestDatabase";
 import { reserveFreePort } from "./freePort";
@@ -47,6 +48,20 @@ export interface TestServer {
   db: RealPostgres;
   close(): Promise<void>;
 }
+
+/**
+ * Marks the one startup failure this harness can fix by itself.
+ *
+ * `.next/dev` is build output owned by this repository, so deleting it costs a
+ * recompile and nothing else - there is no state in it a person could want. It
+ * is therefore the rare case where automatic recovery is the honest response
+ * rather than a way of hiding a fault: the alternative is a fatal error whose
+ * only remedy is a human typing the same `rm -rf`.
+ *
+ * Recovery is attempted ONCE. A cache that is corrupt again immediately is not
+ * a stale cache, and pretending otherwise would loop.
+ */
+const POISONED_CACHE = "GENESIS_HARNESS_POISONED_CACHE";
 
 /**
  * Wait for OUR server, and notice when it dies.
@@ -143,11 +158,13 @@ export async function waitForOwnServer(
     // So the signature is caught HERE, where it is still one infrastructure
     // fault rather than N mysterious product failures.
     if (/loading instrumentation hook|ENOENT[^\n]*\.next[\\/]dev/i.test(serverOutput())) {
+      // Thrown with a recognisable marker rather than only reported, so
+      // startOwnServer can heal it: the cache is harness-owned build output,
+      // and rebuilding it is always safe. See POISONED_CACHE.
       throw new Error(
         [
+          POISONED_CACHE,
           "The dev server started but its build cache is corrupt, so every request fails.",
-          "",
-          "  Remedy:  rm -rf .next     (then re-run)",
           "",
           "Cause: .next/dev is shared by every server started in this directory, and a",
           "hard-killed `next dev` can leave it referencing chunks that no longer exist.",
@@ -196,8 +213,16 @@ export async function waitForOwnServer(
  * arrive before it exists. A route that is still absent after this is absent.
  */
 export async function assertServerServesRoute(baseUrl: string, path: string): Promise<void> {
+  // SIXTY SECONDS, AND THE NUMBER IS NOT ARBITRARY. Ten was, and it turned a
+  // cold Turbopack compile into a fatal "the route is not served" - which then
+  // struck whichever suite happened to run first after a cleared .next. It hit
+  // verify-mobile-reliability once and verify-design-properties the next time,
+  // and both were read as defects in those suites before the pattern showed
+  // itself. This window is for an EVENT - the route's first compile - not a
+  // guess at how fast the machine is, and a route that is still absent at the
+  // end of it is genuinely absent.
   let status: number | string = "no answer";
-  for (let attempt = 0; attempt < 10; attempt++) {
+  for (let attempt = 0; attempt < 60; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 1000));
     const response = await fetch(`${baseUrl}${path}`).catch(() => null);
     if (!response) continue;
@@ -338,7 +363,24 @@ export async function startTestServer(options: { timeoutMs?: number } = {}): Pro
   return startOwnServer(options);
 }
 
-async function startOwnServer(options: { timeoutMs?: number } = {}): Promise<TestServer> {
+async function startOwnServer(
+  options: { timeoutMs?: number } = {},
+  healedAlready = false,
+): Promise<TestServer> {
+  // ============ WHAT AN INTERRUPTED RUN LEFT BEHIND ==================
+  //
+  // Before anything else, because the failure it prevents is "Another next dev
+  // server is already running", which is fatal and reads as though this run
+  // did something wrong. Only servers THIS harness recorded and which are
+  // still, verifiably, those servers are touched - see serverRegistry.
+  const reaped = reapAbandonedServers();
+  if (reaped.killed.length > 0) {
+    console.log(
+      `  reaped ${reaped.killed.length} dev server(s) abandoned by an interrupted run: ` +
+        reaped.killed.map((s) => `pid ${s.pid} on ${s.port}`).join(", "),
+    );
+  }
+
   // A REAL Postgres, not PGlite: a Next server opens a connection pool, and
   // PGlite drops the connection the moment a second one appears.
   const db = await startRealPostgres();
@@ -375,7 +417,12 @@ async function startOwnServer(options: { timeoutMs?: number } = {}): Promise<Tes
   child.stdout?.on("data", (chunk: Buffer) => output.push(chunk.toString()));
   child.stderr?.on("data", (chunk: Buffer) => output.push(chunk.toString()));
 
+  // OWNED FROM THE MOMENT IT EXISTS, so an interrupted run leaves a record
+  // rather than a mystery. See scripts/lib/serverRegistry.ts.
+  if (child.pid) recordServer({ pid: child.pid, port, startedAt: Date.now(), owner: process.pid });
+
   const close = async () => {
+    if (child.pid) forgetServer(child.pid);
     // Windows needs the whole TREE killed, and it needs to be AWAITED.
     //
     // Both matter, and both cost a run to learn. `next dev` under a shell is a
@@ -420,6 +467,23 @@ async function startOwnServer(options: { timeoutMs?: number } = {}): Promise<Tes
   } catch (error) {
     const log = output.join("").trim();
     await close();
+    // ============ HEAL A POISONED CACHE, ONCE ========================
+    //
+    // Scoped to .next/dev, which is this repository's own build output: there
+    // is nothing in it to lose, and the only alternative is a fatal error whose
+    // remedy is a person typing the same deletion. Once only - a cache corrupt
+    // again immediately is not a stale one.
+    if (!healedAlready && error instanceof Error && error.message.includes(POISONED_CACHE)) {
+      console.log("  the dev build cache was corrupt; clearing .next/dev and starting again");
+      try {
+        const { rmSync } = await import("fs");
+        const { join } = await import("path");
+        rmSync(join(process.cwd(), ".next", "dev"), { recursive: true, force: true });
+      } catch {
+        // If it cannot be removed the retry will fail the same way and say so.
+      }
+      return startOwnServer(options, true);
+    }
     throw new Error(
       [
         error instanceof Error ? error.message : String(error),
@@ -430,5 +494,27 @@ async function startOwnServer(options: { timeoutMs?: number } = {}): Promise<Tes
     );
   }
 
-  return { baseUrl, db, close };
+  // ============ AND WHEN THIS PROCESS IS ASKED TO STOP ===============
+  //
+  // `finally` remains the normal path and is not replaced. This is the path it
+  // cannot cover: a Ctrl-C or a SIGTERM unwinds nothing, so without this the
+  // server outlives the run that owns it - which is the whole reason the
+  // registry above exists. Belt and braces, deliberately: this closes the
+  // server now, and the registry catches the case where even this does not run
+  // (SIGKILL, a hard task stop, the machine losing power).
+  //
+  // once: true, so a suite starting several servers does not stack handlers,
+  // and each server removes its own on close.
+  const onSignal = () => {
+    void close().finally(() => process.exit(130));
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  const closeAndUnhook = async () => {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    await close();
+  };
+
+  return { baseUrl, db, close: closeAndUnhook };
 }

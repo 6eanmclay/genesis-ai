@@ -18,6 +18,10 @@
 
 # next.js
 /.next/
+
+# the harness's own bookkeeping: which dev servers a run owns, so an
+# interrupted run can be reaped by the next one. Machine-local, never shared.
+/.next-harness/
 /out/
 
 # production
