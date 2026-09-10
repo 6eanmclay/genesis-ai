@@ -2,6 +2,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { mkdirSync } from "fs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { waitForAppReady } from "@/scripts/lib/appReadiness";
 
 // CLICKING A SALE AND SEEING WHAT TO PACK, IN A REAL BROWSER:
 //
@@ -268,10 +269,39 @@ async function main() {
       const search = page.getByLabel("Search orders");
       await search.waitFor({ state: "visible", timeout: 60_000 });
 
-      // The name a merchant reads off an email, typed the way people type it.
-      await search.fill("gabriel");
-      await page.getByRole("button", { name: "Search", exact: true }).click();
-      await page.waitForURL(/[?&]q=gabriel/, { timeout: 30_000 });
+      // ============ THE SEARCH WENT OUT EMPTY (2026-09-10) =============
+      //
+      // In the lane this failed with "navigated to .../orders?q=" - the form
+      // submitted, and carried NOTHING. The name was typed and then lost
+      // between the fill and the click, because the shell re-renders once more
+      // after the opening finishes and React resets an uncontrolled input to
+      // its defaultValue when its subtree is replaced.
+      //
+      // Standalone it passed, because the timing differed - which is what made
+      // it look like lane contention. It is not: it is the same race that made
+      // identity-split's rename look like a lost write, in a different form.
+      //
+      // So the value is re-read immediately before submitting, and the whole
+      // interaction is retried if the field was reset underneath it. No timing
+      // slack: the retry is driven by observing the wrong value, not by waiting
+      // longer in the hope of a better one.
+      // Not waitForHydration: this is a plain <form method="get"> and works
+      // with no JavaScript at all, so hydration is not the gate. What resets
+      // the field is the shell's own re-render when the opening completes, so
+      // that is what gets waited for - and it is not swallowed.
+      await waitForAppReady(page);
+      let searched = false;
+      for (let attempt = 0; attempt < 3 && !searched; attempt++) {
+        await search.fill("gabriel");
+        if ((await search.inputValue()) !== "gabriel") continue;
+        await page.getByRole("button", { name: "Search", exact: true }).click();
+        searched = await page
+          .waitForURL(/[?&]q=gabriel/, { timeout: 15_000 })
+          .then(() => true)
+          .catch(() => false);
+        if (!searched) console.error(`      NOTE  search submitted as ${page.url()} — retrying`);
+      }
+      assert("the search actually carried the typed name", searched, page.url());
 
       const found = page.locator(`a[href$="/orders/${order.id}"]`).first();
       await found.waitFor({ state: "visible", timeout: 30_000 });
