@@ -4,6 +4,8 @@ import {
   uncitedProposals,
   refinementsFrom,
   explainReading,
+  misattributedProposals,
+  seenButNotActionable,
   type ReferenceReading,
 } from "@/lib/design/referenceObservation";
 import { REFINABLE_DIMENSIONS, REFINABLE_DIMENSION_KEYS } from "@/lib/storefront/dimensions";
@@ -111,9 +113,16 @@ const orphaned: ReferenceReading = {
 };
 assert("a proposal citing an observation that does not exist is reported",
   uncitedProposals(orphaned).length === 1, uncitedProposals(orphaned).join(", "));
-assert("and the explanation says so rather than inventing one",
-  explainReading(orphaned)[0].saw.includes("no longer present"),
-  explainReading(orphaned)[0].saw);
+// STRONGER THAN SHOWING A PLACEHOLDER. An earlier version rendered "(an
+// observation that is no longer present)" on the card, which is honest but
+// still puts an unbacked change in front of the owner to approve. Once the
+// citation became the execution gate, such a proposal cannot execute - so it
+// must not be offered either. A card the owner can approve must describe a
+// change that would actually happen.
+assert("and it never reaches the approval card",
+  explainReading(orphaned).length === 0, `${explainReading(orphaned).length} lines`);
+assert("nor the execution path",
+  refinementsFrom(orphaned).length === 0, JSON.stringify(refinementsFrom(orphaned)));
 
 console.log("\n=== 4. The owner is shown saw -> recommends -> why ===\n");
 const explained = explainReading(GOOD);
@@ -129,7 +138,61 @@ assert("and why it is worth doing",
 assert("and every explained line corresponds to a real refinement",
   explained.length === refinements.length, `${explained.length} explained, ${refinements.length} applied`);
 
-console.log("\n=== 5. The vocabulary is the existing one, not a copy of it ===\n");
+console.log("\n=== 5. Seen, but outside the vocabulary: said, never acted on ===\n");
+// ============ THE HONEST ANSWER TO A REAL OBSERVATION ============
+//
+// A good reference contains more design than ten dimensions have words for.
+// Sean: "I would rather J4 say 'I can see this, but I can't change it yet'
+// than pretend it can control something it cannot... enforced structurally,
+// not just through prompting."
+const beyond: ReferenceReading = {
+  inWords: "A staggered, asymmetric grid with the navigation pinned to the top.",
+  observations: [
+    { id: "b1", what: "The product grid is deliberately asymmetric, with staggered rows", bearsOn: null },
+    { id: "b2", what: "The navigation stays pinned as the page scrolls", bearsOn: null },
+    { id: "b3", what: "There is a lot of air between sections", bearsOn: "spacing" },
+  ],
+  proposals: [
+    { dimension: "spacing", value: "spacious", becauseOf: "b3", soThat: "the store breathes the way theirs does" },
+  ],
+};
+assert("an observation outside the vocabulary is still reported to the owner",
+  seenButNotActionable(beyond).length === 2, seenButNotActionable(beyond).join(" | "));
+assert("and it produces no executable proposal",
+  refinementsFrom(beyond).length === 1 && refinementsFrom(beyond)[0].dimension === "spacing",
+  JSON.stringify(refinementsFrom(beyond)));
+assert("while the one it CAN act on still goes through",
+  explainReading(beyond).length === 1, `${explainReading(beyond).length} explained`);
+
+// THE "CLOSEST AVAILABLE DIMENSION" MOVE, which is how an observation about
+// photography quietly becomes a change to card corners: a real change, made
+// for a stated reason that was never true.
+const mapped: ReferenceReading = {
+  ...beyond,
+  proposals: [
+    { dimension: "cardStyle", value: "sharp", becauseOf: "b1", soThat: "it feels more like their grid" },
+  ],
+};
+assert("mapping an unactionable observation onto the nearest dimension is refused",
+  misattributedProposals(mapped).length === 1, misattributedProposals(mapped).join("; "));
+assert("and that proposal cannot reach the execution path",
+  refinementsFrom(mapped).length === 0, JSON.stringify(refinementsFrom(mapped)));
+assert("nor appear on the approval card",
+  explainReading(mapped).length === 0, `${explainReading(mapped).length} lines`);
+
+// And the subtler one: a REAL dimension, a REAL value, cited from an
+// observation about something else entirely.
+const swapped: ReferenceReading = {
+  ...beyond,
+  proposals: [
+    { dimension: "buttonStyle", value: "pill", becauseOf: "b3", soThat: "it looks softer" },
+  ],
+};
+assert("citing a spacing observation for a button change is refused",
+  misattributedProposals(swapped).length === 1, misattributedProposals(swapped).join("; "));
+assert("and it too cannot execute", refinementsFrom(swapped).length === 0);
+
+console.log("\n=== 6. The vocabulary is the existing one, not a copy of it ===\n");
 // A second vocabulary would not fail loudly - it would drift. So this asserts
 // the module reads the live one rather than a snapshot beside it.
 assert("every dimension a reading may use is a REFINABLE_DIMENSION",

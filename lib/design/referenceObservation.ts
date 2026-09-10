@@ -121,6 +121,54 @@ export function uncitedProposals(reading: ReferenceReading): string[] {
 }
 
 /**
+ * Proposals that do not match the observation they claim to come from.
+ *
+ * ============ "I CAN SEE THIS, BUT I CANNOT CHANGE IT" =============
+ *
+ * A good reference contains more design than this vocabulary has words for -
+ * an asymmetric grid, a sticky nav, a photographic treatment, motion. Ten
+ * dimensions will not cover it, and the honest answer when J4 sees one of
+ * those is to say so and propose nothing.
+ *
+ * Sean: "I would rather J4 say 'I can see this, but I can't change it yet'
+ * than pretend it can control something it cannot... This should also remain
+ * enforced structurally, not just through prompting."
+ *
+ * So it is enforced by the citation, and it closes two doors with one rule:
+ *
+ *   bearsOn: null   the observation is declared unactionable, so NOTHING may
+ *                   cite it. A model that describes a sticky nav and then
+ *                   proposes ctaEmphasis is caught here rather than believed.
+ *
+ *   bearsOn: X      a proposal citing it must be about X. This is the
+ *                   "map it to the closest available dimension" move, which is
+ *                   how an observation about photography quietly becomes a
+ *                   change to card corners - a real change, made for a stated
+ *                   reason that was never true.
+ *
+ * A prompt can ask for both. Only this can refuse them.
+ */
+export function misattributedProposals(reading: ReferenceReading): string[] {
+  const byId = new Map(reading.observations.map((o) => [o.id, o]));
+  return reading.proposals.flatMap((p) => {
+    const observation = byId.get(p.becauseOf);
+    if (!observation) return [];
+    if (observation.bearsOn === null) {
+      return [`"${observation.what}" is marked as something this vocabulary cannot act on, but ${p.dimension} cites it`];
+    }
+    if (observation.bearsOn !== p.dimension) {
+      return [`"${observation.what}" bears on ${observation.bearsOn}, but it is cited for a change to ${p.dimension}`];
+    }
+    return [];
+  });
+}
+
+/** What J4 saw and cannot act on. Shown to the owner, never silently dropped. */
+export function seenButNotActionable(reading: ReferenceReading): string[] {
+  return reading.observations.filter((o) => o.bearsOn === null).map((o) => o.what);
+}
+
+/**
  * The refinement changes an approved reading would apply.
  *
  * Exactly the `{ dimension, value }` shape refine_storefront's own schema
@@ -131,9 +179,25 @@ export function uncitedProposals(reading: ReferenceReading): string[] {
  * value reaches the store.
  */
 export function refinementsFrom(reading: ReferenceReading): { dimension: string; value: string }[] {
-  return reading.proposals
-    .filter(isUsableProposal)
-    .map((p) => ({ dimension: p.dimension, value: p.value }));
+  return actionableProposals(reading).map((p) => ({ dimension: p.dimension, value: p.value }));
+}
+
+/**
+ * The proposals that may actually be executed, and the single gate they pass.
+ *
+ * Both rules apply here rather than only where they are reported, because a
+ * check that names a violation and then lets it through is a comment. A
+ * proposal must use real vocabulary AND come honestly from the observation it
+ * cites; failing either, it does not reach the store and does not appear on
+ * the approval card.
+ */
+export function actionableProposals(reading: ReferenceReading): DesignProposal[] {
+  const byId = new Map(reading.observations.map((o) => [o.id, o]));
+  return reading.proposals.filter((p) => {
+    if (!isUsableProposal(p)) return false;
+    const observation = byId.get(p.becauseOf);
+    return !!observation && observation.bearsOn === p.dimension;
+  });
 }
 
 /**
@@ -153,7 +217,10 @@ export interface ExplainedChange {
 
 export function explainReading(reading: ReferenceReading): ExplainedChange[] {
   const byId = new Map(reading.observations.map((o) => [o.id, o]));
-  return reading.proposals.filter(isUsableProposal).map((p) => ({
+  // The same gate execution uses. A line on the approval card that would not
+  // actually be applied is the "changed_but_unverified" failure moved one step
+  // earlier: an owner approving a sentence, and a store that does not move.
+  return actionableProposals(reading).map((p) => ({
     saw: byId.get(p.becauseOf)?.what ?? "(an observation that is no longer present)",
     recommends: `${REFINABLE_DIMENSIONS[p.dimension].label}: ${p.value}`,
     soThat: p.soThat,
