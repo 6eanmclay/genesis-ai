@@ -1,6 +1,7 @@
 import { chromium, type Browser, type Page } from "playwright";
 import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
+import { waitForAppReady } from "@/scripts/lib/appReadiness";
 
 // A FEATURE ISN'T FINISHED JUST BECAUSE IT WORKS ON DESKTOP:
 //
@@ -170,6 +171,11 @@ async function main() {
     const context = await browser.newContext({ viewport: PHONE, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
     const page = await context.newPage();
     await signIn(page, server.baseUrl, owner.email!);
+    // The opening plays once per sign-in and covers the whole screen. Every
+    // measurement below is a geometry question, and geometry read through a
+    // full-screen overlay is geometry of the overlay. Not swallowed: if the
+    // app never becomes ready, nothing here was tested.
+    await waitForAppReady(page, { timeoutMs: 90_000 });
 
     // -----------------------------------------------------------------------
     console.log("\n1. No screen the owner runs their business from slides sideways");
@@ -278,31 +284,78 @@ async function main() {
     // The mobile shell pins a presence bar to the bottom of the screen. Any
     // content that ends underneath it is content the owner cannot read or tap,
     // and it is invisible on a desktop where the bar does not exist.
-    const behindTheBar = await page.evaluate(() => {
-      const bars = Array.from(document.querySelectorAll("*")).filter((el) => {
-        const s = getComputedStyle(el);
-        return s.position === "fixed" && parseFloat(s.bottom || "0") === 0 && el.getBoundingClientRect().height > 0;
-      });
-      if (bars.length === 0) return { bar: false, covered: 0 };
+    // ============ THE DOCKED CHROME, BY NAME (2026-09-10) ==============
+    //
+    // This used to select "every element with position: fixed and bottom: 0",
+    // which is a description of an implementation rather than of the thing the
+    // rule is about. J4Overlay renders `fixed inset-0 z-[60] touch-none` and
+    // stays mounted with pointer-events: none when the Office is closed - so
+    // it matched, it is full-height, and barTop became 0.
+    //
+    // Everything after that was arithmetic on a fabricated boundary: with the
+    // bar's top at 0, any element scrolled above the viewport "straddles" it.
+    // The suite reported a 226px order card at y=-9 as 217px of content hidden
+    // behind chrome, and its reachability probe landed at y=-7 - outside the
+    // viewport - where elementFromPoint correctly returns null. Three failing
+    // numbers, none of them about the dock.
+    //
+    // Sean's rule is about the DOCK, so the dock is what gets named. Measured
+    // across 320/360/375/390/414/430: dock top 704-716, room bar top 789-790,
+    // zero content covered at every width.
+    const DOCKED_CHROME = '[data-testid="j4-dock"], [data-testid="mobile-room-bar"]';
+    const behindTheBar = await page.evaluate((sel: string) => {
+      const bars = Array.from(document.querySelectorAll(sel)).filter(
+        (el) => el.getBoundingClientRect().height > 0
+      );
+      if (bars.length === 0) return { bar: false, covered: 0, blocked: 0, worst: "" };
       const barTop = Math.min(...bars.map((b) => b.getBoundingClientRect().top));
       const doc = document.documentElement;
       // Did the page leave room? Scroll to the very bottom and see whether the
-      // last real content still clears the bar.
+      // last real content still clears the chrome.
       window.scrollTo(0, doc.scrollHeight);
       const last = Array.from(document.querySelectorAll("main li, main p, main button")).filter(
         (el) => el.getBoundingClientRect().height > 0
       );
-      const covered = last.filter((el) => {
+      const straddling = last.filter((el) => {
         const r = el.getBoundingClientRect();
-        return r.bottom > barTop && r.top < barTop;
-      }).length;
-      return { bar: true, covered };
-    });
-    assert("the mobile shell really does pin a bar", behindTheBar.bar, JSON.stringify(behindTheBar));
+        return r.bottom > barTop && r.top < barTop && r.bottom > 0;
+      });
+      // VISUAL OVERLAP AND TOUCH BLOCKAGE ARE DIFFERENT FACTS, so they are
+      // counted separately. The dock wrapper is pointer-events: none, so its
+      // footprint can sit over content without intercepting a fingertip; the
+      // room bar is pointer-events: auto and genuinely does take the touch.
+      const blocked = straddling.filter((el) => {
+        const r = el.getBoundingClientRect();
+        const y = Math.min(r.top + r.height / 2, barTop + 4);
+        if (y < 0 || y > window.innerHeight) return false;
+        const hit = document.elementFromPoint(Math.round(r.left + Math.min(20, r.width / 2)), Math.round(y));
+        return !!hit && !el.contains(hit) && !hit.contains(el);
+      });
+      const first = straddling[0];
+      return {
+        bar: true,
+        covered: straddling.length,
+        blocked: blocked.length,
+        worst: first
+          ? `${first.tagName.toLowerCase()} y=${Math.round(first.getBoundingClientRect().top)} bottom=${Math.round(first.getBoundingClientRect().bottom)} barTop=${Math.round(barTop)}`
+          : "",
+      };
+    }, DOCKED_CHROME);
+    assert("the mobile shell really does pin its docked chrome", behindTheBar.bar, JSON.stringify(behindTheBar));
     assert(
       "and the page reserves room so nothing ends underneath it",
       behindTheBar.covered === 0,
-      `${behindTheBar.covered} element(s) overlapped — the page needs bottom padding for the bar`
+      `${behindTheBar.covered} element(s) overlapped — the page needs bottom padding for the bar${behindTheBar.worst ? ` (${behindTheBar.worst})` : ""}`
+    );
+    // The stricter half of Sean's rule, stated separately because it is a
+    // separate fact: "The fixed J4 dock must never cover usable page content or
+    // interactive controls." Content can be visually overlapped by a
+    // pointer-events: none layer and still be perfectly usable; content whose
+    // touch is intercepted is not. A failure here is the real UX bug.
+    assert(
+      "and nothing underneath it has its touch taken by the chrome",
+      behindTheBar.blocked === 0,
+      `${behindTheBar.blocked} element(s) unreachable behind the dock or room bar`
     );
 
     // -----------------------------------------------------------------------
