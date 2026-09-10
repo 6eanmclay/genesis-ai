@@ -112,6 +112,20 @@ async function main() {
   assert("and carries the timestamp", after.fulfilledAt !== null,
     "a fulfilled order with no timestamp is a half-applied write");
 
+  // ============ SHIPPED IS NOT DELIVERED (2026-09-10) ==============
+  //
+  // Sean: "Do not mark the order delivered — delivery remains dependent on
+  // carrier/tracking confirmation." The lifecycle is Paid -> Fulfilled/Shipped
+  // -> Delivered, and only the carrier can supply the last step: stageOf reads
+  // deliveredAt ABOVE trackingNumber precisely so a real delivery outranks a
+  // posted parcel.
+  //
+  // Attaching a number is the merchant saying it went out, which is a claim
+  // they can honestly make. Saying it arrived is a claim about a fact nobody
+  // here has, and telling a buyer their parcel was delivered when it is still
+  // in the post is worse than saying nothing.
+  eq("attaching tracking does NOT mark it delivered", after.deliveredAt, null);
+
   // EMAIL IS NOT CONFIGURED IN A TEST DATABASE, and the message says so rather
   // than implying the buyer was told.
   assert("the merchant is told the customer was NOT emailed",
@@ -135,6 +149,24 @@ async function main() {
   }
   assert("run() refuses an implausible number rather than storing it",
     rejected.includes("does not look like a tracking number"), rejected);
+
+  // ============ A REFUSED SAVE MUST NOT LOOK LIKE A SHIPMENT =========
+  //
+  // The check above proves the NUMBER was not stored. It says nothing about
+  // fulfilment, and those are separate writes in the same statement - so a
+  // future change that moved the validation, or set fulfilment before it, would
+  // leave an order marked fulfilled with no tracking on it and this suite would
+  // still be green.
+  //
+  // That state is worse than a plain failure: the order leaves the merchant's
+  // outstanding list, the buyer is waiting for a parcel nobody has been asked
+  // to post, and the one screen that would have shown the problem now reads
+  // "fulfilled". So the absence is asserted rather than assumed.
+  const junkAfter = await prisma.order.findUniqueOrThrow({ where: { id: junk.id } });
+  eq("and the refused order is still unfulfilled", junkAfter.fulfillmentStatus, "unfulfilled");
+  eq("with no fulfilment timestamp", junkAfter.fulfilledAt, null);
+  eq("and no tracking number", junkAfter.trackingNumber, null);
+  eq("and it was certainly not delivered", junkAfter.deliveredAt, null);
 
   // ========================================================================
   console.log("\n=== 4. It never overwrites tracking a buyer may be watching ===\n");
