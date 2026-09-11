@@ -1,4 +1,4 @@
-import { readOwnerFacts } from "./ownerFacts";
+import { readOwnerFactsWithProvenance, type FactWithProvenance } from "./ownerFacts";
 import { currentFacts } from "./factLifecycle";
 import { prisma } from "@/lib/prisma";
 import { getProfitability, type Profitability } from "./profitability";
@@ -69,6 +69,44 @@ export interface BusinessProfile {
     // answer and is never filled in from the copy above.
     offering: string | null;
     intent: string | null;
+  };
+  /**
+   * WHO SAID THE SIX CLAIMS ABOVE, CARRIED RATHER THAN DISCARDED (2026-09-11).
+   *
+   * ============ THE DISTINCTION THE APPLICATION THREW AWAY ==============
+   *
+   * ownerFacts.ts already records why this matters, and it is not
+   * hypothetical: "In production ALL 48 brand-claim rows are INFERENCE,
+   * promoted from the generated blueprint on 2026-08-25. A function named
+   * `readOwnerFacts` currently returns no owner facts of those four types
+   * anywhere — and nothing downstream could tell."
+   *
+   * `readOwnerFactsWithProvenance` was written for exactly that, and the
+   * Business Map and the brand screen both use it. This file did not: it
+   * called the flattening reader, so the canonical model handed all
+   * TWENTY-NINE of its consumers six bare strings with no author — including
+   * the Understanding surface, whose entire job is to say what J4 believes
+   * and why.
+   *
+   * Sean, approving the Business Map milestone: "The database already knows
+   * the distinction between owner-provided information and J4 inference; the
+   * application layer currently throws that distinction away... Treat
+   * provenance preservation as a required part of the J4 Business Map
+   * foundation, not optional UI metadata."
+   *
+   * ADDITIVE ON PURPOSE. `identity` keeps its six strings unchanged, so no
+   * existing consumer has to move; this sits beside it for the ones that need
+   * to know who is talking. Null means no fact of that type exists — distinct
+   * from a fact whose own `provenance` column is null, which is an honest
+   * unknown about a real statement.
+   */
+  identityProvenance: {
+    offering: FactWithProvenance | null;
+    intent: FactWithProvenance | null;
+    targetAudience: FactWithProvenance | null;
+    brandPersonality: FactWithProvenance | null;
+    brandVoice: FactWithProvenance | null;
+    sellingProposition: FactWithProvenance | null;
   };
   classification: {
     businessCategories: { slug: string; label: string }[];
@@ -251,7 +289,7 @@ export async function getBusinessProfile(
     currentFacts(storeId, "location"),
     queryRecords(storeId, "asset"),
     queryRecords(storeId, "socialAccount"),
-    readOwnerFacts(storeId),
+    readOwnerFactsWithProvenance(storeId),
     getRevenue(storeId, { since: thirtyDaysAgo }),
     getRevenue(storeId),
     getTopContacts(storeId),
@@ -283,21 +321,32 @@ export async function getBusinessProfile(
       //
       // Null means the owner never told us. It is never filled from
       // `description` or from `visionStatement`, whatever those happen to say.
-      offering: ownerFacts.offering,
-      intent: ownerFacts.intent,
+      offering: ownerFacts.offering?.statement ?? null,
+      intent: ownerFacts.intent?.statement ?? null,
       // THE FOUR CLAIMS, READ FROM FACTS (2026-08-24, D1-A). They used to be
       // read out of blueprint.brandIdentity, where they had no author and could
       // not be corrected. Everything that reasons from them reads them here.
-      targetAudience: ownerFacts.targetAudience,
-      brandPersonality: ownerFacts.brandPersonality,
-      brandVoiceAndTone: ownerFacts.brandVoice,
-      uniqueSellingProposition: ownerFacts.sellingProposition,
+      targetAudience: ownerFacts.targetAudience?.statement ?? null,
+      brandPersonality: ownerFacts.brandPersonality?.statement ?? null,
+      brandVoiceAndTone: ownerFacts.brandVoice?.statement ?? null,
+      uniqueSellingProposition: ownerFacts.sellingProposition?.statement ?? null,
       brandStory: brandIdentity?.brandStory ?? null,
       missionStatement: brandIdentity?.missionStatement ?? null,
       visionStatement: brandIdentity?.visionStatement ?? null,
       brandPromise: brandIdentity?.brandPromise ?? null,
       coreValues: brandIdentity?.coreValues ?? [],
 
+    },
+    // THE SAME SIX RECORDS, NOT A SECOND READ. Both this and the strings above
+    // are projections of one `readOwnerFactsWithProvenance` result, so the
+    // statement and its author can never come from different rows.
+    identityProvenance: {
+      offering: ownerFacts.offering,
+      intent: ownerFacts.intent,
+      targetAudience: ownerFacts.targetAudience,
+      brandPersonality: ownerFacts.brandPersonality,
+      brandVoice: ownerFacts.brandVoice,
+      sellingProposition: ownerFacts.sellingProposition,
     },
     classification: {
       businessCategories: store.businessCategories.map((slug) => ({

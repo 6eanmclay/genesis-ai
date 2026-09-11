@@ -294,6 +294,58 @@ async function run(prisma: Db, mod: Mods) {
   eq("beside the generated description, not merged into it",
     profile.identity.description, "A rustic candle house.");
 
+  // ============ AND THE CANONICAL MODEL SAYS WHO SAID IT =============
+  //
+  // This file's own header records the problem: "In production ALL 48
+  // brand-claim rows are INFERENCE, promoted from the generated blueprint on
+  // 2026-08-25. A function named `readOwnerFacts` currently returns no owner
+  // facts of those four types anywhere — and nothing downstream could tell."
+  //
+  // readOwnerFactsWithProvenance was written for exactly that and the Business
+  // Map uses it. getBusinessProfile did not — it called the flattening reader,
+  // so the canonical model handed all of its consumers six bare strings with
+  // no author, including the surface whose whole job is saying what J4
+  // believes and why.
+  //
+  // Sean: "Treat provenance preservation as a required part of the J4 Business
+  // Map foundation, not optional UI metadata."
+  assert("the profile carries WHO said each owner claim",
+    profile.identityProvenance !== undefined,
+    "identityProvenance is the canonical model's answer to 'says who?'");
+
+  eq("an owner-stated claim is attributed to the owner",
+    profile.identityProvenance.offering?.provenance, "OWNER");
+  eq("and the statement comes from the SAME record as the string above",
+    profile.identityProvenance.offering?.statement, profile.identity.offering);
+
+  // A CLAIM J4 CONCLUDED IS NEVER REPORTED AS OWNER-STATED. The production
+  // case, reproduced: a brand claim promoted from the generated blueprint.
+  // Written directly, because that is how the real ones got there: stateFact
+  // is OWNER by construction and cannot produce this row. The production
+  // promotion on 2026-08-25 wrote 48 of these.
+  await prisma.businessRecord.create({
+    data: {
+      storeId: store.id,
+      entityType: "targetAudience",
+      sourceProvider: "genesis_blueprint",
+      externalId: "targetAudience",
+      data: { statement: "People who lift at 5am" },
+      provenance: "INFERENCE",
+    },
+  });
+  const inferred = await getBusinessProfile(store.id);
+  eq("an inferred claim still reaches the model as a statement",
+    inferred.identity.targetAudience, "People who lift at 5am");
+  eq("but is attributed to J4, not the owner",
+    inferred.identityProvenance.targetAudience?.provenance, "INFERENCE");
+  assert("so nothing downstream can mistake it for something the owner said",
+    inferred.identityProvenance.targetAudience?.provenance !== "OWNER");
+
+  // AND A CLAIM NOBODY HAS MADE IS NULL, not an empty attribution.
+  assert("a claim with no record has no author either",
+    inferred.identityProvenance.brandVoice === null,
+    String(inferred.identityProvenance.brandVoice));
+
   const digest = await digestFor(store.id);
   eq("the digest carries offering", digest.offering, "Performance gym clothing and accessories");
   assert("and renders it where J4 will read it",
