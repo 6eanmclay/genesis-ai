@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   officeActionForExecution,
   officeActionForExplanation,
@@ -10,6 +11,7 @@ import {
   rowInteractionClass,
   offersHover,
   type OfficeAction,
+  type OwnerRequirement,
 } from "@/lib/j4/officeActions";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 
@@ -148,6 +150,14 @@ console.log("\n=== an inert row cannot wear a hover ===\n");
 const INERT: OfficeAction[] = [
   { kind: "none", because: "nothing yet" },
   { kind: "internal", because: "not owner-facing" },
+  // THE NEW STATE JOINS THE INERT LIST, not the interactive one.
+  //
+  // This is the assertion that matters most about needs_owner. The state
+  // exists to say "I need photographs of your product and I cannot make
+  // them" — a sentence with nowhere to go. If it were interactive by
+  // default it would wear a hover with nothing behind it, which is the
+  // 198-row defect rebuilt in a shape nobody would think to check.
+  { kind: "needs_owner", missing: "capability", what: "authentic product photography", because: "J4 cannot photograph a physical object" },
 ];
 for (const a of INERT) {
   const cls = rowInteractionClass(a);
@@ -157,7 +167,53 @@ const liveClass = rowInteractionClass({ kind: "open", label: "Reconnect", href: 
 check("a followable row DOES get one", offersHover(liveClass), liveClass);
 check("execute gets one too", offersHover(rowInteractionClass({ kind: "execute", label: "Approve", intent: "approve" })));
 
-// ---- 10. the two lists cannot both claim an action ----------------------
+// ---- 10. needs_owner is a state, not a fallback -------------------------
+//
+// Sean, 2026-09-10: "Do not make it a generic fallback for anything J4 cannot
+// execute... The four states should remain meaningfully different."
+//
+// Two of those properties are the type's to hold and are checked here. The
+// third — that a PRODUCER does not reach for it whenever something is hard —
+// is not a property of this module and is checked where the producer lives.
+console.log("\n=== needs_owner is precise, not a shrug ===\n");
+
+const needsCapability: OfficeAction = {
+  kind: "needs_owner",
+  missing: "capability",
+  what: "authentic product photography",
+  because: "J4 cannot photograph a physical object",
+};
+check("with no destination it is NOT interactive", !isInteractive(needsCapability));
+check("and wears no hover", !offersHover(rowInteractionClass(needsCapability)),
+  rowInteractionClass(needsCapability));
+
+const needsInformation: OfficeAction = {
+  kind: "needs_owner",
+  missing: "information",
+  what: "which of these two products you actually want to lead with",
+  because: "J4 has no basis to choose between them",
+  provideAt: { label: "Open products", href: "/b/x/products" },
+};
+check("WITH a real destination it IS interactive", isInteractive(needsInformation));
+check("and only then wears a hover", offersHover(rowInteractionClass(needsInformation)),
+  rowInteractionClass(needsInformation));
+
+// All four kinds of missing thing are representable and distinct. They are
+// resolved differently — a decision is settled, a capability is supplied —
+// so collapsing them would lose the only information that says what to do.
+const REQUIREMENTS: OwnerRequirement[] = ["information", "decision", "permission", "capability"];
+check("all four owner requirements are distinct", new Set(REQUIREMENTS).size === 4);
+
+// The bar, held by the types rather than by intention. A needs_owner that
+// cannot name what it needs is exactly the shape a lazy fallback takes, so
+// `what` and `because` are required fields and this proves they still are.
+const unionSrc = readFileSync(join(process.cwd(), "lib", "j4", "officeActions.ts"), "utf8");
+const needsOwnerBlock = unionSrc.slice(unionSrc.indexOf('kind: "needs_owner"'), unionSrc.indexOf("provideAt?:"));
+check("what is required, not optional", /\bwhat: string;/.test(needsOwnerBlock) && !/\bwhat\?:/.test(needsOwnerBlock));
+check("because is required, not optional", /\bbecause: string;/.test(needsOwnerBlock) && !/\bbecause\?:/.test(needsOwnerBlock));
+check("and the destination is the ONLY optional part", /provideAt\?:/.test(unionSrc));
+
+// ---- 11. the two lists cannot both claim an action ----------------------
 const overlap = ownerFacingDestinations().filter((d) => internalActions().includes(d.action));
 check("no action is both owner-facing and internal", overlap.length === 0, overlap.map((o) => o.action).join(", ") || "disjoint");
 

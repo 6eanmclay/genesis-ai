@@ -60,19 +60,90 @@ import { LEGACY_BUSINESS_BASE, sectionHref } from "@/lib/dashboard/navConfig";
  * a REASON, because "nothing to do here" is information the owner is owed.
  */
 
+/**
+ * WHAT IS MISSING, WHEN THE MISSING THING IS THE OWNER.
+ *
+ * Sean, 2026-09-10: "Preserve the distinction between: J4 needs information
+ * from the owner / J4 needs a decision from the owner / J4 needs
+ * permission-authorization / J4 lacks a capability entirely. Those may
+ * eventually deserve different metadata even if they initially share the
+ * needs_owner action kind."
+ *
+ * So the distinction is carried from the start rather than retrofitted. These
+ * four are not degrees of the same thing — they fail differently and they are
+ * resolved differently:
+ *
+ *   information  J4 would act if it knew something only the owner knows.
+ *   decision     J4 has options and no authority to choose between them.
+ *   permission   J4 knows what to do and is not allowed to do it yet.
+ *   capability   J4 cannot do this at all, by anyone's permission.
+ *
+ * "capability" is the one that carries the product's whole argument: J4 cannot
+ * manufacture the owner's authenticity, expertise, or raw material, and an
+ * Office that hides that is claiming to be the source rather than the
+ * multiplier.
+ */
+export type OwnerRequirement = "information" | "decision" | "permission" | "capability";
+
 /** What the owner can do about one surfaced item. */
 export type OfficeAction =
   /** A real destination that exists. */
   | { kind: "open"; label: string; href: string }
   /** A real execution, run through the engine that already exists. */
   | { kind: "execute"; label: string; intent: "approve" | "reject" }
+  /**
+   * J4 knows what needs to happen and the owner is the missing source.
+   *
+   * NOT a fallback for anything J4 cannot execute. Sean: "Do not turn every
+   * limitation, failure, or uncertainty into needs_owner." The bar is that J4
+   * has identified a REAL business need AND can name what it needs from the
+   * owner. Something J4 merely failed at is a failure; something J4 has not
+   * understood is `none`; something with a page to visit is `open`.
+   *
+   * The fields enforce the bar as far as types can. `what` and `because` are
+   * required, so a needs_owner that cannot say what it needs or why J4 cannot
+   * supply it is unrepresentable — which is exactly the shape a lazy fallback
+   * would take.
+   */
+  | {
+      kind: "needs_owner";
+      /** Which of the four kinds of missing thing this is. */
+      missing: OwnerRequirement;
+      /** What J4 needs from the owner, named specifically. */
+      what: string;
+      /** Why J4 cannot supply it itself. */
+      because: string;
+      /**
+       * Where the owner can supply it — ONLY when such a place really exists.
+       *
+       * Sean: "Do not turn needs_owner into another button just for the sake
+       * of having an action. It is a first-class state because the owner is
+       * the missing capability." Optional is the mechanism: there is no
+       * destination unless a real one was given, so the common case (bring me
+       * photographs of your product) renders as a statement and nothing else.
+       */
+      provideAt?: { label: string; href: string };
+    }
   /** Genuinely nothing to do YET, said out loud rather than implied. */
   | { kind: "none"; because: string }
   /** Never owner-facing: an internal record that must not reach the Office. */
   | { kind: "internal"; because: string };
 
-/** Whether this action may be rendered as something to press. */
+/**
+ * Whether this action may be rendered as something to press.
+ *
+ * needs_owner is deliberately NOT interactive by default. The 198 fake-hover
+ * rows were one shared class on both branches of CategoryRow, and a new state
+ * that returned a blanket `true` here would rebuild that defect in a costume
+ * nobody would recognise: a row saying "I need photographs from you" is a
+ * sentence, not a button, and lighting it up under a finger promises a
+ * destination that does not exist.
+ *
+ * So it is pressable when, and only when, somebody gave it somewhere to go —
+ * the same rule `open` has always followed, applied to a different shape.
+ */
 export function isInteractive(action: OfficeAction): boolean {
+  if (action.kind === "needs_owner") return action.provideAt !== undefined;
   return action.kind === "open" || action.kind === "execute";
 }
 
