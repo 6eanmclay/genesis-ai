@@ -26,7 +26,16 @@ import { prisma } from "@/lib/prisma";
 export interface HandledSince {
   resolvedByJ4: number;
   decisionsSettled: number;
-  successes: { action: string; message: string }[];
+  /**
+   * Executions that ran, with the evidence of whether they were confirmed.
+   *
+   * `status` and `verified` are REQUIRED here rather than optional. The query
+   * selects them, and a type that merely permitted them would let a future
+   * caller drop the pair while still compiling — at which case every change
+   * would silently count as "could not check", which reads as honest and is
+   * actually just missing data.
+   */
+  successes: { action: string; message: string; status: string; verified: boolean }[];
   windowDays: number;
 }
 
@@ -49,9 +58,23 @@ export async function getHandledSince(storeId: string, windowDays: number): Prom
     // asked for. 300 is comfortably above the 238 the busiest real store
     // produced in that window, so the summary is complete in practice and
     // cannot degrade into a slow query if that ever stops being true.
+    // SUCCESS *AND* WARNING, with the verification evidence attached.
+    //
+    // This read used to be `status: "SUCCESS"` selecting `action, message`,
+    // and both halves of that were losing evidence the database already had:
+    //
+    //   - `verified` was never selected, so a change confirmed by a real
+    //     read-back and one nobody could check arrived identical.
+    //   - WARNING rows were excluded entirely, and WARNING is precisely
+    //     "the write ran and verification did not confirm it" — the one
+    //     outcome an owner most needs to see. It was being filed as nothing.
+    //
+    // VERIFICATION_HARDENING_CONTRACT.md §3: the (status, verified) pair IS
+    // the three-state verification result. Selecting one without the other
+    // cannot express it.
     prisma.executionLog.findMany({
-      where: { storeId, status: "SUCCESS", createdAt: { gte: since } },
-      select: { action: true, message: true },
+      where: { storeId, status: { in: ["SUCCESS", "WARNING"] }, createdAt: { gte: since } },
+      select: { action: true, message: true, status: true, verified: true },
       orderBy: { createdAt: "desc" },
       take: 300,
     }),

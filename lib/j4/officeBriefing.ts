@@ -126,8 +126,40 @@ export interface HandledSummary {
   resolvedByJ4: number;
   /** Decisions the owner settled. */
   decisionsSettled: number;
-  /** Real changes to the business, internal executions excluded. */
-  changes: { action: string; label: string; n: number }[];
+  /**
+   * Real changes to the business, internal executions excluded.
+   *
+   * ============ WHAT DONE MAY CLAIM (2026-09-11) =========================
+   *
+   * Sean: "A DONE item may only claim what the system can substantiate...
+   * If verification did not happen, do not imply that it did."
+   *
+   * Nothing here is invented. The evidence was already persisted and the query
+   * was throwing it away: getHandledSince selected `action, message` and
+   * filtered to status SUCCESS, so DONE could not tell a verified change from
+   * one nobody could check, and never saw a verification failure at all.
+   *
+   * VERIFICATION_HARDENING_CONTRACT.md §3 already defines three states, stored
+   * as the (status, verified) pair, and the pair is unambiguous because
+   * `verify` is a REQUIRED member of Executable — an executable nobody wrote a
+   * check for does not compile, so "unavailable" can never mean "we never
+   * looked":
+   *
+   *   SUCCESS + verified true    verified      a real read-back confirmed it
+   *   WARNING + verified false   notConfirmed  the check ran and did not confirm
+   *   SUCCESS + verified false   couldNotCheck the mechanism was unavailable
+   *
+   * Counted separately rather than summed, because collapsing them is exactly
+   * the false claim this splits apart.
+   */
+  changes: {
+    action: string;
+    label: string;
+    n: number;
+    verified: number;
+    notConfirmed: number;
+    couldNotCheck: number;
+  }[];
   /** How far back this looks, so the number is never a bare figure. */
   windowDays: number;
 }
@@ -239,24 +271,40 @@ export function summariseHandled(
   input: {
     resolvedByJ4: number;
     decisionsSettled: number;
-    successes: { action: string; message: string }[];
+    /**
+     * Raw ExecutionLog rows. `status` and `verified` together ARE the
+     * verification state — see HandledSummary.changes for the mapping.
+     */
+    successes: { action: string; message: string; status?: string; verified?: boolean }[];
     windowDays: number;
   },
   basePath: string,
 ): HandledSummary {
-  const counts = new Map<string, { label: string; n: number }>();
+  const counts = new Map<string, { label: string; n: number; verified: number; notConfirmed: number; couldNotCheck: number }>();
   for (const s of input.successes) {
     const decision = officeActionForExecution(s, basePath);
     if (decision.kind !== "open") continue;
-    const cur = counts.get(s.action) ?? { label: decision.label, n: 0 };
+    const cur = counts.get(s.action) ?? { label: decision.label, n: 0, verified: 0, notConfirmed: 0, couldNotCheck: 0 };
     cur.n += 1;
+
+    // THE PAIR DECIDES, and an absent pair claims nothing.
+    //
+    // A row written before this read them, or any caller that does not supply
+    // them, counts as couldNotCheck rather than verified. The default has to
+    // fall on the side of the smaller claim: defaulting to verified would
+    // manufacture confirmation out of a missing field, which is the single
+    // thing this whole change exists to prevent.
+    if (s.status === "WARNING") cur.notConfirmed += 1;
+    else if (s.verified === true) cur.verified += 1;
+    else cur.couldNotCheck += 1;
+
     counts.set(s.action, cur);
   }
   return {
     resolvedByJ4: input.resolvedByJ4,
     decisionsSettled: input.decisionsSettled,
     changes: [...counts]
-      .map(([action, v]) => ({ action, label: v.label, n: v.n }))
+      .map(([action, v]) => ({ action, label: v.label, n: v.n, verified: v.verified, notConfirmed: v.notConfirmed, couldNotCheck: v.couldNotCheck }))
       .sort((a, b) => b.n - a.n),
     windowDays: input.windowDays,
   };

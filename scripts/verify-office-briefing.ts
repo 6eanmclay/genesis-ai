@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildBriefing,
   summariseHandled,
@@ -147,6 +149,73 @@ check("every change names the act rather than a raw action id",
   handled.changes.every((c) => c.label.length > 0 && c.label !== c.action),
   handled.changes.map((c) => c.label).join(" / "));
 check("the window is carried with the numbers", handled.windowDays === 14, String(handled.windowDays));
+
+// ============ DONE CLAIMS ONLY WHAT IT CAN SUBSTANTIATE ===============
+//
+// Sean: "Do not label a count 'verified' unless verification actually
+// occurred... No evidence → no claim."
+//
+// The three verification states are the (status, verified) pair from
+// VERIFICATION_HARDENING_CONTRACT.md §3. They were already persisted; the
+// query selected neither field, so a confirmed change and one nobody could
+// check arrived at the Office identical, and WARNING rows — "it ran and did
+// not confirm" — were filtered out entirely.
+console.log("\n=== DONE separates confirmed from unconfirmed ===\n");
+const evidence = summariseHandled(
+  {
+    resolvedByJ4: 0,
+    decisionsSettled: 0,
+    windowDays: 14,
+    successes: [
+      { action: EXECUTION_ACTIONS.PRODUCT_EDIT, message: "x", status: "SUCCESS", verified: true },
+      { action: EXECUTION_ACTIONS.PRODUCT_EDIT, message: "x", status: "SUCCESS", verified: false },
+      { action: EXECUTION_ACTIONS.PRODUCT_EDIT, message: "x", status: "WARNING", verified: false },
+      { action: EXECUTION_ACTIONS.PRODUCT_CREATE, message: "x", status: "SUCCESS", verified: true },
+    ],
+  },
+  BASE,
+);
+const edits = evidence.changes.find((c) => c.action === EXECUTION_ACTIONS.PRODUCT_EDIT);
+check("the three states stay distinct",
+  edits?.verified === 1 && edits?.notConfirmed === 1 && edits?.couldNotCheck === 1,
+  `verified=${edits?.verified} notConfirmed=${edits?.notConfirmed} couldNotCheck=${edits?.couldNotCheck}`);
+check("and they account for every execution, none double-counted",
+  (edits?.verified ?? 0) + (edits?.notConfirmed ?? 0) + (edits?.couldNotCheck ?? 0) === edits?.n,
+  `${edits?.n} total`);
+
+// A WARNING IS "IT RAN AND DID NOT CONFIRM", and it must reach the owner.
+check("a verification failure is reported, not filtered away",
+  (edits?.notConfirmed ?? 0) === 1, `${edits?.notConfirmed} not confirmed`);
+
+// THE UNCONFIRMED ONE IS NEVER COUNTED AS VERIFIED. This is the whole claim.
+check("an unverified execution is never counted as verified",
+  edits?.verified === 1, `${edits?.verified} claimed verified out of ${edits?.n}`);
+
+// MISSING EVIDENCE FALLS TO THE SMALLER CLAIM. A row that carries no pair
+// cannot be confirmed, and defaulting the other way would manufacture
+// confirmation out of an absent field.
+const noEvidence = summariseHandled(
+  {
+    resolvedByJ4: 0, decisionsSettled: 0, windowDays: 14,
+    successes: [{ action: EXECUTION_ACTIONS.PRODUCT_EDIT, message: "x" } as never],
+  },
+  BASE,
+);
+check("no evidence means no verification claim",
+  noEvidence.changes[0]?.verified === 0 && noEvidence.changes[0]?.couldNotCheck === 1,
+  `verified=${noEvidence.changes[0]?.verified} couldNotCheck=${noEvidence.changes[0]?.couldNotCheck}`);
+
+// AND THERE IS NO `succeeded` FIELD FOR A CALLER TO SET. Success is whatever
+// the counts say; nothing can assert it beside them.
+check("no caller can set a success flag",
+  !Object.keys(evidence.changes[0] ?? {}).some((k) => /succeed|success|ok\b/i.test(k)),
+  Object.keys(evidence.changes[0] ?? {}).join(", "));
+
+// SUMMARISING CANNOT MUTATE. Pure function, no database reachable from it.
+const briefingSrc = readFileSync(join(process.cwd(), "lib", "j4", "officeBriefing.ts"), "utf8");
+check("building DONE cannot mutate anything",
+  !/from "@\/lib\/prisma"/.test(briefingSrc) && !/\bprisma\./.test(briefingSrc),
+  "officeBriefing has no database access");
 
 console.log("\n=== an empty business says so honestly ===\n");
 const nothing = buildBriefing({ now: NOW, decisions: [], observations: [] }, BASE);

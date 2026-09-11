@@ -336,18 +336,23 @@ function Handled({ handled }: { handled: HandledSummary }) {
 
   return (
     <section data-testid="briefing-handled" className="rounded-xl border border-white/[.06] bg-white/[.015] p-3.5">
-      {/* ============ DONE, AND WHAT IT CANNOT YET SAY ==================
-          Sean: "DONE must distinguish what was requested, what was executed,
-          what was observed, and whether success was actually verified."
+      {/* ============ DONE, AND WHAT IT CAN ACTUALLY SUBSTANTIATE =======
+          Sean: "A DONE item may only claim what the system can substantiate.
+          If verification did not happen, do not imply that it did."
 
-          HandledSummary carries none of those four. It counts executions that
-          really happened, which is true but is not the same claim. The four-way
-          distinction exists today only in ExecutionReport, on the Reference
-          Design path, where `succeeded` is derived from a real rendered check.
+          The four questions, and where each answer really comes from:
 
-          So this renders what it actually knows and no more. Labelling these
-          counts "verified" would be manufacturing a verification claim from
-          storage state, which is the exact thing that path exists to prevent. */}
+            requested   ExecutionLog.action — the act that was asked for
+            executed    the row exists, with a status
+            observed    ExecutionLog.message, what the executable reported
+            verified    the (status, verified) pair, three states, from a
+                        real read-back that `verify` makes mandatory
+
+          No verification layer was built for this. All four were already
+          persisted; the query was discarding two of them. What is NOT claimed:
+          request and execution are not recorded separately for actions with no
+          approval gate, so a row means "asked for and attempted", and the
+          summary does not pretend to split them. */}
       <h3 className="text-[10px] font-medium uppercase tracking-[.12em] text-white/35">
         Done &middot; last {handled.windowDays} days
       </h3>
@@ -365,9 +370,23 @@ function Handled({ handled }: { handled: HandledSummary }) {
           </li>
         )}
         {handled.changes.map((c) => (
-          <li key={c.action} data-testid="handled-change">
+          <li key={c.action} data-testid="handled-change" data-verified={c.verified} data-unconfirmed={c.notConfirmed} data-unchecked={c.couldNotCheck}>
             <strong className="font-mono tabular-nums text-[#4ade3a]">{c.n}</strong>{" "}
             {describeChange(c.action, c.n)}
+            {/* WHAT WAS ACTUALLY CONFIRMED, and nothing more.
+                Each clause is a real count from the (status, verified) pair.
+                A change nobody could check says so plainly rather than
+                sitting silently among the confirmed ones. */}
+            <span data-testid="handled-verification" className="text-white/40">
+              {" — "}
+              {[
+                c.verified > 0 ? `${c.verified} verified` : null,
+                c.notConfirmed > 0 ? `${c.notConfirmed} not confirmed` : null,
+                c.couldNotCheck > 0 ? `${c.couldNotCheck} I could not check` : null,
+              ]
+                .filter(Boolean)
+                .join(", ")}
+            </span>
           </li>
         ))}
       </ul>

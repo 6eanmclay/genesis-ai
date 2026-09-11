@@ -94,6 +94,14 @@ async function readBriefing(page: Page) {
       rows,
       handled: handled ? (handled.textContent ?? "").replace(/\s+/g, " ").trim() : null,
       changes: document.querySelectorAll('[data-testid="handled-change"]').length,
+      // WHAT DONE ACTUALLY CLAIMS, read off the page rather than from the
+      // summary that produced it.
+      changeEvidence: [...document.querySelectorAll('[data-testid="handled-change"]')].map((el) => ({
+        verified: Number(el.getAttribute("data-verified") ?? "-1"),
+        unconfirmed: Number(el.getAttribute("data-unconfirmed") ?? "-1"),
+        unchecked: Number(el.getAttribute("data-unchecked") ?? "-1"),
+        text: (el.textContent ?? "").replace(/\s+/g, " ").trim(),
+      })),
       // Nothing on this surface may look pressable without being pressable.
       fakeHovers: [...document.querySelectorAll('[data-testid="work-action-none"]')].filter((el) =>
         /hover:/.test((el as HTMLElement).className),
@@ -360,6 +368,28 @@ async function main(): Promise<void> {
         /last 14 days/i.test(b.handled ?? ""), b.handled?.slice(0, 40) ?? "");
       // One product.edit is news; a chat turn and an internal finding are not.
       check(`${width}: internal executions did not become news`, b.changes === 1, `${b.changes} change lines`);
+
+      // ---- DONE CLAIMS ONLY WHAT IT CAN SUBSTANTIATE ------------------
+      //
+      // The fixture's product.edit is logged with verified:false, which is
+      // "verification unavailable" — execution succeeded and the mechanism to
+      // confirm it was not there. DONE must say that, not count it as a
+      // confirmed change and not stay silent about it.
+      const ev = b.changeEvidence[0];
+      check(`${width}: a change carries its verification evidence`,
+        ev !== undefined && ev.verified >= 0 && ev.unconfirmed >= 0 && ev.unchecked >= 0,
+        JSON.stringify(ev ?? null));
+      check(`${width}: an unverified change is NOT claimed as verified`,
+        ev?.verified === 0, `${ev?.verified} claimed verified`);
+      check(`${width}: and the page says out loud that it could not check`,
+        /could not check/i.test(ev?.text ?? ""), ev?.text ?? "none");
+      check(`${width}: the counts on the page add up to the change count`,
+        (ev?.verified ?? 0) + (ev?.unconfirmed ?? 0) + (ev?.unchecked ?? 0) === 1,
+        JSON.stringify(ev ?? null));
+      // THE WORD "VERIFIED" NEVER APPEARS OVER AN UNVERIFIED COUNT.
+      check(`${width}: nothing unverified is labelled verified`,
+        !/\b\d+ verified/.test(ev?.text ?? "") || (ev?.verified ?? 0) > 0,
+        ev?.text ?? "none");
 
       // FULL PAGE, not the viewport. The viewport stops at DECIDE, so the task
       // rows in NOTICED — the whole point of this fix — were off the bottom of
