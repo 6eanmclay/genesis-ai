@@ -288,21 +288,25 @@ const analyzeDesignReference: ToolHandler = async (ctx) => {
   }
 
   ctx.status("Reading the design in that screenshot...");
-  const analysis = await analyzeReferenceImage({
+  const outcome = await analyzeReferenceImage({
     imageUrl: referent.image.storageUrl,
     storeId: ctx.storeId,
   });
 
-  if (!analysis) {
+  if (!outcome.ok) {
+    // TWO DIFFERENT ANSWERS, AND THEY MUST NOT LOOK ALIKE. "That is a logo,
+    // not a website" is J4 working correctly and declining; "I could not read
+    // it" is J4 failing. Only the second is logged as a failure - recording a
+    // correct refusal as a failure would bury it among real problems.
     return {
       handled: true,
-      reply:
-        "I couldn't read that screenshot just now. Try sending it again, and if it keeps failing " +
-        "describe what you like about it instead and I'll work from that.",
+      reply: outcome.refused,
       kind: "design_reference",
-      outcome: "failure",
+      outcome: "failed" in outcome ? "failure" : "success",
+      metadata: { referenceRecordId: referent.image.id, refused: true },
     };
   }
+  const analysis = outcome.analysis;
 
   const lines: string[] = [analysis.reading.inWords, ""];
   const chain = explainReading(analysis.reading);

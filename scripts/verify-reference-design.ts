@@ -15,6 +15,11 @@ import {
   vocabularyForPrompt,
 } from "@/lib/design/analyzeReference";
 import { referentFor } from "@/lib/design/referenceUpload";
+import {
+  verdictFor,
+  ReferenceEligibilitySchema,
+  type ReferenceKind,
+} from "@/lib/design/referenceEligibility";
 import { applyRefinementsToTheme } from "@/lib/execution/executables/refineStorefront";
 import { DEFAULT_THEME } from "@/lib/theme";
 
@@ -321,6 +326,67 @@ assert("and J4 asks rather than guessing",
 const nothing = referentFor([], now);
 assert("no uploads at all is refused with a reason", !nothing.found && nothing.because.length > 0,
   nothing.found ? "" : nothing.because);
+
+console.log("\n=== 9. Is it a design reference at all ===\n");
+// ============ THE BOUNDARY THE FIRST LIVE RUN PROVED WE NEEDED ======
+//
+// A mascot logo produced four structurally perfect proposals - every gate
+// green, zero rejected - including a button style read off the logo's own
+// label. The reading was internally honest and about the wrong KIND of
+// picture, which no amount of internal consistency can catch.
+//
+// So this is a separate question asked before the reading, and its own schema
+// has no dimension field, no value field and no proposals: it cannot produce a
+// design instruction even if something downstream tried to use it.
+const kinds: { looksLike: ReferenceKind; expected: boolean }[] = [
+  { looksLike: "website_or_app_screenshot", expected: true },
+  { looksLike: "product_photo", expected: false },
+  { looksLike: "logo_or_mascot", expected: false },
+  { looksLike: "document_or_text", expected: false },
+  { looksLike: "person_or_place", expected: false },
+  { looksLike: "other", expected: false },
+];
+for (const k of kinds) {
+  const verdict = verdictFor({ what: "a picture", looksLike: k.looksLike, confidence: "clear" });
+  assert(`${k.looksLike} is ${k.expected ? "accepted" : "refused"}`,
+    verdict.eligible === k.expected,
+    verdict.eligible ? "eligible" : verdict.because.slice(0, 60));
+}
+
+// UNSURE IS A REFUSAL, and the asymmetry is deliberate: a wrongly refused
+// screenshot costs one more upload; a wrongly accepted product photo costs a
+// storefront changed on the strength of something that was never a design
+// decision.
+const hedged = verdictFor({ what: "a picture", looksLike: "website_or_app_screenshot", confidence: "unsure" });
+assert("an unsure screenshot is refused rather than analysed",
+  !hedged.eligible, hedged.eligible ? "accepted" : "refused");
+assert("and the refusal says it would rather ask than guess",
+  !hedged.eligible && hedged.because.includes("rather ask"), "");
+
+// Every refusal must tell the owner what to do instead - a dead end is not an
+// answer, it is a shrug.
+for (const k of kinds.filter((x) => !x.expected)) {
+  const verdict = verdictFor({ what: "a picture", looksLike: k.looksLike, confidence: "clear" });
+  assert(`the ${k.looksLike} refusal tells them what to send instead`,
+    !verdict.eligible && /screenshot/i.test(verdict.because), "");
+}
+
+// AND IT CANNOT CARRY A DESIGN INSTRUCTION. The data-shape argument, asserted
+// rather than described: the schema refuses anything shaped like a proposal.
+const smuggledThroughEligibility = ReferenceEligibilitySchema.safeParse({
+  what: "a screenshot",
+  looksLike: "website_or_app_screenshot",
+  confidence: "clear",
+  proposals: [{ dimension: "cardStyle", value: "sharp" }],
+});
+assert("the eligibility schema strips anything shaped like a proposal",
+  smuggledThroughEligibility.success &&
+    !("proposals" in (smuggledThroughEligibility.data as Record<string, unknown>)),
+  "eligibility must not be able to produce executable values");
+const inventedKind = ReferenceEligibilitySchema.safeParse({
+  what: "a screenshot", looksLike: "website_but_also_a_logo", confidence: "clear",
+});
+assert("and a kind outside the closed list is rejected", !inventedKind.success, "");
 
 console.log(`\n${failures === 0 ? `ALL PASS` : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

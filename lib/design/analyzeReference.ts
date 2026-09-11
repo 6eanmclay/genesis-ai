@@ -10,6 +10,12 @@ import {
   seenButNotActionable,
   type ReferenceReading,
 } from "./referenceObservation";
+import {
+  ASSESS_REFERENCE_SYSTEM_PROMPT,
+  ReferenceEligibilitySchema,
+  verdictFor,
+  type ReferenceEligibility,
+} from "./referenceEligibility";
 
 /**
  * READING A SCREENSHOT THE OWNER LIKES, AS DESIGN LANGUAGE.
@@ -156,10 +162,43 @@ export function validateReading(reading: ReferenceReading): ReferenceAnalysis {
  * Returns null when the call fails or produces nothing parseable. A caller
  * must not present a null as "the reference had no design worth noting".
  */
+export type ReferenceOutcome =
+  /** The picture is a design reference, and here is the reading of it. */
+  | { ok: true; analysis: ReferenceAnalysis }
+  /** It is not a design reference. `because` is written for the owner. */
+  | { ok: false; refused: string }
+  /** Something went wrong. Not the same as "there was nothing to see". */
+  | { ok: false; failed: true; refused: string };
+
 export async function analyzeReferenceImage(params: {
   imageUrl: string;
   storeId: string;
-}): Promise<ReferenceAnalysis | null> {
+}): Promise<ReferenceOutcome> {
+  // ============ IS IT A DESIGN REFERENCE AT ALL? =====================
+  //
+  // INSIDE this function rather than beside it, because that is the narrowest
+  // point where an ineligible picture can be stopped: every route to a
+  // ReferenceReading goes through here, so there is no caller that can forget
+  // the check or choose to skip it.
+  //
+  // The first live run proved why it is needed. A mascot logo produced four
+  // structurally perfect proposals - every gate green - including a button
+  // style read off the logo's own label. The reading was internally honest
+  // and about the wrong kind of picture, which is precisely the thing no
+  // amount of internal consistency can catch. See referenceEligibility.ts.
+  const eligibility = await assessReferenceImage(params);
+  if (!eligibility) {
+    return {
+      ok: false,
+      failed: true,
+      refused:
+        "I couldn't get a proper look at that image just now. Try sending it again, and if it keeps failing " +
+        "describe what you like about it instead and I'll work from that.",
+    };
+  }
+  const verdict = verdictFor(eligibility);
+  if (!verdict.eligible) return { ok: false, refused: verdict.because };
+
   const outcome = await callGenesisModel(
     {
       model: "claude-opus-4-8",
@@ -183,8 +222,50 @@ export async function analyzeReferenceImage(params: {
     { storeId: params.storeId, feature: "reference_design_analysis" },
   );
 
-  if (!outcome.ok || !outcome.message.parsed_output) return null;
+  if (!outcome.ok || !outcome.message.parsed_output) {
+    return {
+      ok: false,
+      failed: true,
+      refused:
+        "I couldn't read that screenshot just now. Try sending it again, and if it keeps failing describe what " +
+        "you like about it instead and I'll work from that.",
+    };
+  }
   // Straight into the same validation the offline suite exercises. The model
   // has no privileged path to the approval card.
-  return validateReading(outcome.message.parsed_output as ReferenceReading);
+  return { ok: true, analysis: validateReading(outcome.message.parsed_output as ReferenceReading) };
+}
+
+/**
+ * Ask only what KIND of picture this is.
+ *
+ * Its own call, and its own schema with no field capable of naming a dimension
+ * or a value - so the eligibility step cannot produce a design instruction
+ * even by accident. One extra vision call per reference, which is the price of
+ * not reading a mascot as guidance for somebody's buttons.
+ */
+export async function assessReferenceImage(params: {
+  imageUrl: string;
+  storeId: string;
+}): Promise<ReferenceEligibility | null> {
+  const outcome = await callGenesisModel(
+    {
+      model: "claude-opus-4-8",
+      max_tokens: 400,
+      system: ASSESS_REFERENCE_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "url", url: params.imageUrl } },
+            { type: "text", text: "What kind of image is this?" },
+          ],
+        },
+      ],
+      output_config: { effort: "low", format: zodOutputFormat(ReferenceEligibilitySchema) },
+    },
+    { storeId: params.storeId, feature: "reference_design_analysis" },
+  );
+  if (!outcome.ok || !outcome.message.parsed_output) return null;
+  return outcome.message.parsed_output as ReferenceEligibility;
 }
