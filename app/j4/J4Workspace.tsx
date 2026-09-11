@@ -2330,7 +2330,7 @@ export function J4Workspace({
                         {stateLabel}
                       </span>
                     )}
-                    {referenceCard && <ReferenceProposalCard presentation={referenceCard} />}
+                    {referenceCard && <ReferenceProposalCard presentation={referenceCard} messageId={m.id} />}
                     {quickReplies && quickReplies.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {quickReplies.map((option) => (

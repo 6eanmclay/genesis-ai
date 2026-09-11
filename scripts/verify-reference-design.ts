@@ -16,6 +16,7 @@ import {
 } from "@/lib/design/analyzeReference";
 import { referentFor } from "@/lib/design/referenceUpload";
 import { readFileSync } from "fs";
+import { approveSelection, reportFor } from "@/lib/design/referenceExecution";
 import {
   presentReading,
   selectedRefinements,
@@ -482,9 +483,110 @@ for (const [name, source] of [["referencePresentation", presentationSource], ["R
     !/from "@\/lib\/prisma"|prismaSystem|refineStorefront|executeExecutable|"use server"/.test(source),
     "Show/Choose must be non-mutating by construction, not by current wiring");
 }
-assert("the card's apply control is inert and says so",
-  /disabled/.test(cardSource) && /isn&rsquo;t connected yet/.test(cardSource),
-  "an inert control that looked finished would be a prototype screen");
+// THE CARD NOW HAS EXACTLY ONE MUTATION PATH, and this pins it there. Before
+// the Execute phase it had none and this asserted an inert button; that is no
+// longer the truth, so the assertion states the new boundary rather than the
+// old one: one server action, reached only from the apply handler, and the
+// presentation module still pure (asserted above).
+assert("the card's only mutation is the explicit apply action",
+  (cardSource.match(/applyReferenceDesign/g) ?? []).length === 2 &&
+    !/refineStorefront|prisma/.test(cardSource),
+  "approval must be one named call, not a path through the component");
+assert("and it cannot name a dimension or a value",
+  !/typeScale|spacious|cardStyle|dimension:/.test(cardSource),
+  "the client sends indexes; the server resolves them against the gate");
+
+console.log("\n=== 11. Approval: only what the owner ticked, resolved server-side ===\n");
+// ============ THE CLIENT SENDS INDEXES, NOT CHANGES ===============
+//
+// A tampered request can only ever pick a different subset of what J4 actually
+// proposed - it cannot introduce a dimension, a value, a bearsOn: null
+// observation or an unbacked proposal, because none of those are in
+// actionableProposals to be indexed at all.
+
+const one = approveSelection(GOOD, [1]);
+assert("approving one proposal executes exactly that one",
+  one.approved && one.execution.refinements.length === 1 &&
+    one.execution.refinements[0].dimension === "spacing",
+  one.approved ? JSON.stringify(one.execution.refinements) : one.because);
+
+const two = approveSelection(GOOD, [0, 2]);
+assert("approving two executes exactly those two, once each",
+  two.approved && two.execution.refinements.length === 2 &&
+    two.execution.refinements[0].dimension === "typeScale" &&
+    two.execution.refinements[1].dimension === "imageTreatment",
+  two.approved ? JSON.stringify(two.execution.refinements) : two.because);
+assert("and a deselected proposal is absent from the payload",
+  two.approved && !two.execution.refinements.some((r) => r.dimension === "spacing"), "");
+assert("the same index twice is still one refinement",
+  (() => { const r = approveSelection(GOOD, [0, 0, 0]); return r.approved && r.execution.refinements.length === 1; })(), "");
+
+// NOTHING IS APPROVED BY DEFAULT. An empty selection is the owner choosing
+// nothing, which is a real answer - never "apply everything".
+const none = approveSelection(GOOD, []);
+assert("an empty selection executes nothing", !none.approved, none.approved ? "IT EXECUTED" : "refused");
+assert("and says so rather than applying everything",
+  !none.approved && none.because.includes("Nothing was selected"), "");
+
+// BYPASS ATTEMPTS. Each is a real shape a tampered request could take.
+const outOfRange = approveSelection(GOOD, [99]);
+assert("an index outside the offered choices executes nothing",
+  !outOfRange.approved, outOfRange.approved ? "IT EXECUTED" : "refused");
+assert("a negative index executes nothing", !approveSelection(GOOD, [-1]).approved, "");
+const mixedValid = approveSelection(GOOD, [0, 99]);
+assert("a valid index alongside an invalid one applies only the valid",
+  mixedValid.approved && mixedValid.execution.refinements.length === 1 &&
+    mixedValid.execution.ignored.length === 1,
+  mixedValid.approved ? `ignored ${JSON.stringify(mixedValid.execution.ignored)}` : mixedValid.because);
+
+// bearsOn: null AND INVALID PROPOSALS CANNOT BE INDEXED AT ALL. `beyond` has
+// two unactionable observations and one usable proposal; every index the
+// client could send resolves within actionableProposals or nowhere.
+const beyondApproval = approveSelection(beyond, [0, 1, 2]);
+assert("bearsOn: null cannot be reached by any index",
+  beyondApproval.approved && beyondApproval.execution.refinements.length === 1 &&
+    beyondApproval.execution.refinements[0].dimension === "spacing",
+  beyondApproval.approved ? JSON.stringify(beyondApproval.execution.refinements) : beyondApproval.because);
+const invalidApproval = approveSelection({
+  ...GOOD,
+  proposals: [
+    { dimension: "cardStyle", value: "#0A0A0A", becauseOf: "o1", soThat: "x" },
+    { dimension: "spacing", value: "spacious", becauseOf: "o1", soThat: "x" },
+  ] as never,
+}, [0, 1]);
+assert("an invented value and a mismatched citation cannot execute",
+  !invalidApproval.approved, invalidApproval.approved ? "THEY EXECUTED" : "refused");
+
+console.log("\n=== 12. The report keeps four facts apart ===\n");
+// Sean: "what was requested, what was actually executed, what verification
+// observed, and whether the change succeeded" - and a failure must never be
+// described as a completed change. On 2026-09-05 eight executions failed and
+// J4 reported "a more characterful headline font". The request became the
+// report; these four fields are why it cannot again.
+const failed = reportFor({ requested: ["Spacing → spacious"], executed: [], rendered: null, failure: "the value was refused" });
+assert("a failed execution is not reported as done",
+  !failed.succeeded && failed.executed.length === 0, JSON.stringify(failed.executed));
+assert("and says so in the owner's words",
+  /could not make/.test(failed.sentence) && /Nothing on your storefront has moved/.test(failed.sentence),
+  failed.sentence);
+assert("while still naming what was requested", failed.requested.length === 1, "");
+
+const unseen = reportFor({ requested: ["Spacing → spacious"], executed: ["Spacing → spacious"], rendered: null });
+assert("a change nobody could verify is not called verified",
+  unseen.observed === null && /could not check the live page/.test(unseen.sentence), unseen.sentence);
+assert("but it IS reported as executed", unseen.succeeded && unseen.executed.length === 1, "");
+
+const notRendered = reportFor({ requested: ["Spacing → spacious"], executed: ["Spacing → spacious"], rendered: false });
+assert("a change the page does not show is NOT a success",
+  !notRendered.succeeded, "storage moved, the page did not");
+assert("and the sentence says exactly that",
+  /still not showing it/.test(notRendered.sentence), notRendered.sentence);
+
+const verified = reportFor({ requested: ["Spacing → spacious"], executed: ["Spacing → spacious"], rendered: true });
+assert("only a rendered-confirmed change claims the live page",
+  verified.succeeded && verified.observed === "the rendered page shows the change" &&
+    /I can see it on your live page/.test(verified.sentence),
+  verified.sentence);
 
 console.log(`\n${failures === 0 ? `ALL PASS` : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

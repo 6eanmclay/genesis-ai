@@ -4,6 +4,7 @@ import { mkdirSync } from "fs";
 import { startTestServer } from "@/scripts/lib/testServer";
 import { waitForAppReady, waitForOfficeIntelligence } from "@/scripts/lib/appReadiness";
 import { presentReading } from "@/lib/design/referencePresentation";
+import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import type { ReferenceReading } from "@/lib/design/referenceObservation";
 
 // WHAT THE OWNER ACTUALLY SEES, IN A REAL BROWSER:
@@ -108,7 +109,9 @@ async function main(): Promise<void> {
         storeId: store.id,
         role: "assistant",
         content: "Here's what I noticed in that screenshot.",
-        changes: { designReference: presentReading(READING) } as object,
+        // Both keys: the card draws `designReference`, the server re-runs the
+        // gate against `designReading` at approval time.
+        changes: { designReference: presentReading(READING), designReading: READING } as object,
       },
     });
 
@@ -223,31 +226,77 @@ async function main(): Promise<void> {
     assert("and ticking an already-ticked choice creates no duplicate",
       (await applyLabel()).includes("2 changes"), await applyLabel());
 
-    // ============ 8. THE APPLY CONTROL IS HONESTLY INERT =============
+    // ============ 8. NOTHING HAS CHANGED BEFORE THE CLICK ============
+    //
+    // Opening the card, viewing it and ticking boxes are all done by now.
+    // Approval is the click and nothing else, so the store must still be
+    // untouched at this exact point.
     const apply = page.locator('[data-testid="reference-apply"]');
-    assert("apply is disabled", await apply.isDisabled(), "");
-    assert("and the card says applying is not connected yet",
-      /applying isn.t connected yet/i.test(cardText), cardText.slice(-160));
-    await apply.click({ force: true }).catch(() => {});
-    await page.waitForTimeout(1500);
-
-    // ============ 9. NOTHING CHANGED =================================
-    const themeAfter = JSON.stringify(
+    assert("apply says what it will do", /Apply 2 changes/.test(await apply.innerText()), await apply.innerText());
+    assert("and the card says nothing changes until it is pressed",
+      /Nothing changes until you press this/i.test(cardText), cardText.slice(-160));
+    const themeBeforeClick = JSON.stringify(
       (await prisma.store.findUniqueOrThrow({ where: { id: store.id }, select: { theme: true } })).theme,
     );
-    assert("the store's theme is byte-identical after all of that",
-      themeAfter === themeBefore, themeAfter === themeBefore ? "unchanged" : "IT CHANGED");
+    assert("viewing and selecting changed nothing",
+      themeBeforeClick === themeBefore, themeBeforeClick === themeBefore ? "unchanged" : "IT CHANGED");
+
+    // ONE CHOICE DESELECTED, so the execution must carry exactly one.
+    await inputs.nth(1).uncheck();
+    assert("one change selected before approving",
+      (await apply.innerText()).includes("1 change"), await apply.innerText());
+
+    // ============ 9. APPROVAL -> EXECUTION ===========================
+    await apply.click();
+    const reportEl = page.locator('[data-testid="reference-report"]');
+    await reportEl.waitFor({ state: "visible", timeout: 60_000 });
+    const reportText = await reportEl.innerText();
+    console.log(`
+  J4's report: ${reportText}`);
+    assert("J4 reports back after approving", reportText.length > 0, reportText);
+
+    const themeAfter = (await prisma.store.findUniqueOrThrow({
+      where: { id: store.id }, select: { theme: true },
+    })).theme as { composition?: Record<string, string>; presentation?: Record<string, string> } | null;
+    assert("exactly the approved change was executed",
+      themeAfter?.composition?.typeScale === "display",
+      `typeScale ${themeAfter?.composition?.typeScale}`);
+    assert("and the deselected one was NOT",
+      themeAfter?.presentation?.spacing !== "spacious",
+      `spacing ${themeAfter?.presentation?.spacing} (must not be spacious)`);
+
+    const executed = await prisma.executionLog.count({
+      // The real action name, from EXECUTION_ACTIONS rather than guessed:
+      // "refine_storefront" found nothing and said 0 rows, which would have
+      // read as "it was not recorded" when it was recorded all along.
+      where: { storeId: store.id, action: EXECUTION_ACTIONS.STORE_REFINE_STOREFRONT },
+    });
+    assert("recorded through the existing execution infrastructure", executed >= 1, `${executed} refine_storefront rows`);
+
+    // ============ 9b. RENDERED VERIFICATION ==========================
+    //
+    // The storefront itself, in a browser, because storage agreeing with the
+    // request proves persistence and not effect - the standing invariant in
+    // ARCHITECTURE.md. typeScale: display renders a bigger h1, so the h1's
+    // computed font-size is the fact.
+    const shopper = await context.newPage();
+    await shopper.goto(`${server.baseUrl}/store/${store.slug}`, { waitUntil: "domcontentloaded" });
+    await shopper.evaluate(() => document.fonts.ready);
+    const renderedSize = await shopper.evaluate(() => {
+      const h1 = document.querySelector("h1");
+      return h1 ? Math.round(parseFloat(getComputedStyle(h1).fontSize)) : 0;
+    });
+    console.log(`  rendered h1 font-size after the approved change: ${renderedSize}px`);
+    assert("the live storefront actually renders the change",
+      renderedSize >= 48, `h1 is ${renderedSize}px — display scale renders larger than standard`);
+    await shopper.screenshot({ path: `${SHOTS}/reference-executed-storefront.png` });
+    await shopper.close();
     // BEFORE AND AFTER, not "is it zero". A live store is not inert: Genesis
     // raises its own state issues and records its own reads, so this store had
     // 1 approval and 5 execution rows before the card was ever on screen. The
     // question is whether SHOW/CHOOSE added any, and a zero-check answered a
     // different one - it failed here while the product was behaving perfectly.
-    const approvalsAfter = await prisma.approvalRequest.count({ where: { storeId: store.id } });
-    assert("the card created no approval request",
-      approvalsAfter === approvalsBefore, `${approvalsBefore} before, ${approvalsAfter} after`);
-    const executionsAfter = await prisma.executionLog.count({ where: { storeId: store.id } });
-    assert("and recorded no execution",
-      executionsAfter === executionsBefore, `${executionsBefore} before, ${executionsAfter} after`);
+    void approvalsBefore; void executionsBefore;
 
     await page.screenshot({ path: `${SHOTS}/reference-card-after-click.png`, fullPage: true });
     console.log(`\n  screenshots: ${SHOTS}/reference-card.png, ${SHOTS}/reference-card-after-click.png`);

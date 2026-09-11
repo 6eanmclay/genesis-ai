@@ -342,7 +342,15 @@ const analyzeDesignReference: ToolHandler = async (ctx) => {
     // does - one structured field on the turn J4 wrote, not a second message
     // system. Built from the SAME validated reading the reply is built from,
     // so the card and the sentence above it cannot describe different changes.
-    messageChanges: { designReference: presentReading(analysis.reading) },
+    // TWO KEYS, DELIBERATELY. `designReference` is what the card draws and is
+    // shaped for the eye; `designReading` is the validated reading itself, and
+    // it is what the server re-runs the gate against at approval time. The
+    // client never sends a change - it sends indexes into a list the server
+    // rebuilds - so a tampered request cannot introduce one.
+    messageChanges: {
+      designReference: presentReading(analysis.reading),
+      designReading: analysis.reading,
+    },
     metadata: {
       referenceRecordId: referent.image.id,
       observations: analysis.reading.observations.length,

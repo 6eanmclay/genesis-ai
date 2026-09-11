@@ -1,12 +1,17 @@
 "use server";
 
+import { refineStorefrontExecutable } from "@/lib/execution/executables/refineStorefront";
+import { ReferenceReadingSchema } from "@/lib/design/analyzeReference";
+import { approveSelection, reportFor, type ExecutionReport } from "@/lib/design/referenceExecution";
+import type { ReferenceReading } from "@/lib/design/referenceObservation";
+
 import { redirect, unstable_rethrow } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { parsePackagedWeight, parsePackagedDimensions } from "@/lib/shipping/packagedWeight";
 import { auth, signOut } from "@/auth";
 import { RecoverableError, toActionState, type ActionState } from "@/lib/actionState";
 import { prisma } from "@/lib/prisma";
-import { PERMISSIONS, requireBusinessOrActive } from "@/lib/permissions";
+import { PERMISSIONS, requireBusinessOrActive, getStoreRole, hasPermission } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE, businessBasePath } from "@/lib/dashboard/navConfig";
 import { getConnector } from "@/lib/integrations/registry";
 import { execute } from "@/lib/execution/engine";
@@ -679,4 +684,80 @@ export async function revokeAuthority(slug: string | undefined, formData: FormDa
   await revokeDelegatedAuthority(storeId, actionType);
 
   redirect("/dashboard/marketing");
+}
+
+/**
+ * Apply the reference-design changes the owner explicitly ticked.
+ *
+ * ============ THE CLIENT CANNOT NAME A CHANGE (2026-09-10) ============
+ *
+ * It sends the id of the message the card was drawn from and a list of
+ * INDEXES. This re-reads the reading stored on that message, re-runs the same
+ * gate the card was built from, and resolves the indexes against the result.
+ *
+ * So a tampered request can only ever select a different subset of what J4
+ * actually proposed. It cannot introduce a dimension, a value, a bearsOn: null
+ * observation or an unbacked proposal, because none of those are in
+ * actionableProposals to be indexed in the first place.
+ *
+ * Approval is this call and nothing else. Opening the card, viewing it or
+ * ticking a box does not reach here — the only caller is a control whose sole
+ * job is to say yes.
+ */
+export async function applyReferenceDesign(
+  messageId: string,
+  selectedIndexes: number[]
+): Promise<{ ok: true; report: ExecutionReport } | { ok: false; error: string }> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: "You need to be signed in." };
+
+  const message = await prisma.storeMessage.findUnique({
+    where: { id: messageId },
+    select: { storeId: true, changes: true },
+  });
+  if (!message) return { ok: false, error: "I couldn't find that suggestion any more." };
+
+  const role = await getStoreRole(session.user.id, message.storeId);
+  if (!role || !hasPermission(role, PERMISSIONS.STORE_MANAGE)) {
+    return { ok: false, error: "You don't have permission to change this storefront." };
+  }
+
+  // THE READING AS IT WAS STORED, re-validated. Model output was untrusted
+  // when it arrived and it is untrusted again now: a row edited in the
+  // meantime must not become an execution.
+  const changes = message.changes as Record<string, unknown> | null;
+  const parsed = ReferenceReadingSchema.safeParse(changes?.designReading);
+  if (!parsed.success) {
+    return { ok: false, error: "That suggestion is no longer readable, so I won't act on it." };
+  }
+
+  const approval = approveSelection(parsed.data as ReferenceReading, selectedIndexes);
+  if (!approval.approved) return { ok: false, error: approval.because };
+
+  const result = await execute(
+    refineStorefrontExecutable,
+    {
+      target: "wholeStorefront",
+      changes: approval.execution.refinements,
+      reason: "The owner approved these changes after J4 read a reference screenshot they supplied.",
+      summary: `Apply ${approval.execution.requested.join(", ")} from the reference.`,
+    },
+    { storeId: message.storeId }
+  );
+
+  revalidatePath("/dashboard");
+
+  // THE REPORT IS DERIVED FROM WHAT HAPPENED. `rendered: null` is the honest
+  // answer here and not a placeholder: this deployment has no browser, so the
+  // live page genuinely has not been looked at. designOutcome's own wording
+  // for that case is "have a look and tell me if you cannot see it", which is
+  // the truth rather than a claim of success.
+  const succeeded = result.status === "SUCCESS";
+  const report = reportFor({
+    requested: approval.execution.requested,
+    executed: succeeded ? approval.execution.requested : [],
+    rendered: null,
+    failure: succeeded ? null : result.message,
+  });
+  return { ok: true, report };
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { applyReferenceDesign } from "@/app/dashboard/actions";
 import { GENESIS_ATMOSPHERE } from "@/lib/dashboard/genesisAtmosphere";
 import type { ReferencePresentation } from "@/lib/design/referencePresentation";
 
@@ -28,15 +29,45 @@ import type { ReferencePresentation } from "@/lib/design/referencePresentation";
 // Sean: "Show/Choose must be completely non-mutating... approval must not call
 // refine_storefront, mutate the theme, or write an execution result."
 //
-// This component holds selection in local state and calls nothing. There is no
-// server action imported, no fetch, no mutation of any kind — which makes the
-// claim a property of the file rather than a promise about it. The confirm
-// control is deliberately inert and SAYS SO, rather than looking finished: a
-// button that appears to apply changes and does not is the kind of prototype
-// screen this project does not ship.
+// Selection is local state and changes nothing. The ONE mutation is the Apply
+// click, which sends the ticked INDEXES and nothing else — the server re-reads
+// the stored reading, re-runs the same gate this card was built from, and
+// resolves those numbers itself. So this component cannot name a dimension or
+// a value, and a tampered request can only ever pick a different subset of
+// what J4 actually proposed.
+//
+// What comes back is J4's derived report, shown verbatim: a failure says it
+// failed rather than restating the request in the past tense.
 
-export function ReferenceProposalCard({ presentation }: { presentation: ReferencePresentation }) {
+export function ReferenceProposalCard({
+  presentation,
+  messageId,
+}: {
+  presentation: ReferencePresentation;
+  /** The message this card was drawn from. Absent = nothing to apply against. */
+  messageId?: string;
+}) {
   const [chosen, setChosen] = useState<number[]>(() => presentation.choices.map((c) => c.index));
+  const [pending, startTransition] = useTransition();
+  const [report, setReport] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // ============ APPROVAL IS THIS CLICK AND NOTHING ELSE =============
+  //
+  // Not opening the card, not viewing it, not ticking a box. Those change what
+  // WOULD be applied; only this says to apply it. The payload is the indexes
+  // the owner ticked - the server re-runs the gate and resolves them itself,
+  // so this component cannot name a dimension or a value even if it tried.
+  const apply = () => {
+    if (!messageId || chosen.length === 0) return;
+    startTransition(async () => {
+      const result = await applyReferenceDesign(messageId, chosen);
+      setReport(
+        result.ok
+          ? { ok: result.report.succeeded, text: result.report.sentence }
+          : { ok: false, text: result.error },
+      );
+    });
+  };
 
   const toggle = (index: number) =>
     setChosen((current) =>
@@ -126,18 +157,34 @@ export function ReferenceProposalCard({ presentation }: { presentation: Referenc
         <div className="mt-4 border-t pt-3" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
           <button
             type="button"
-            disabled
+            onClick={apply}
+            disabled={!messageId || pending || chosen.length === 0 || !!report?.ok}
             data-testid="reference-apply"
-            className="rounded-full px-4 py-1.5 text-[12px] font-medium opacity-50"
-            style={{ backgroundColor: "rgba(255,255,255,0.08)", color: GENESIS_ATMOSPHERE.text }}
+            className="rounded-full px-4 py-1.5 text-[12px] font-medium disabled:opacity-50"
+            style={{ backgroundColor: "rgba(74,222,58,0.18)", color: GENESIS_ATMOSPHERE.text }}
           >
-            Apply {chosen.length} change{chosen.length === 1 ? "" : "s"}
+            {pending
+              ? "Applying..."
+              : `Apply ${chosen.length} change${chosen.length === 1 ? "" : "s"}`}
           </button>
-          {/* SAYS WHAT IT IS. An inert control that looked finished would be a
-              prototype screen; one that explains itself is an honest edge. */}
-          <p className="mt-2 text-[11px] text-zinc-500">
-            Choosing is live — applying isn&rsquo;t connected yet, so nothing here changes your store.
-          </p>
+          {/* WHAT ACTUALLY HAPPENED, in J4's own derived words. Never the
+              request echoed back: a failure says it failed, and a change the
+              live page has not been checked for says that too. */}
+          {report && (
+            <p
+              data-testid="reference-report"
+              data-ok={report.ok ? "true" : "false"}
+              className="mt-2 text-[12px]"
+              style={{ color: report.ok ? GENESIS_ATMOSPHERE.text : "#f87171" }}
+            >
+              {report.text}
+            </p>
+          )}
+          {!report && (
+            <p className="mt-2 text-[11px] text-zinc-500">
+              Nothing changes until you press this.
+            </p>
+          )}
         </div>
       )}
     </div>
