@@ -249,6 +249,59 @@ async function main() {
       .blueprint as { marketingAssets: { seoTitle: string } }).marketingAssets.seoTitle,
     "Old title");
 
+  // ==========================================================================
+  console.log("\n=== 8. The two actions raised to auto, and the ones that were not ===\n");
+  // ==========================================================================
+  //
+  // 2026-09-11. update_homepage_content and update_store_content moved from
+  // always_ask to auto. What that means precisely: an OWNER may now grant
+  // delegated authority for them, and J4 may act under that grant without
+  // asking each time. It does NOT mean they run unguarded — every gate proven
+  // above still applies to them, which is what this section checks rather than
+  // assumes.
+  const RAISED = ["update_homepage_content", "update_store_content"] as const;
+  for (const key of RAISED) {
+    check(`${key} is delegable`, GENESIS_ACTIONS[key].maxAuthorityTier, "auto");
+    check(`${key} is autonomous today`, GENESIS_ACTIONS[key].authorizationTier, "auto");
+    check(`${key} stays in the content category`, GENESIS_ACTIONS[key].category, "content");
+    // Autonomy without verification would be the worst combination available.
+    assert(`${key} can still read back what it wrote`,
+      typeof GENESIS_ACTIONS[key].executable.verify === "function");
+    // Reversible: the revert path needs the values that were there before.
+    assert(`${key} still captures what it is replacing`,
+      typeof GENESIS_ACTIONS[key].getCurrentValues === "function");
+  }
+
+  // AND THE BOUNDARY DID NOT MOVE WITH THEM. Raising two content actions must
+  // not have widened anything else — asserted against the registry rather than
+  // trusted, because "I only changed two lines" is exactly what a regression
+  // says about itself.
+  const nowAuto = Object.entries(GENESIS_ACTIONS)
+    .filter(([, d]) => (d as { authorizationTier: string }).authorizationTier === "auto")
+    .map(([k]) => k)
+    .sort();
+  check("exactly four actions are autonomous, and these are they", nowAuto,
+    ["communicate_finding", "update_homepage_content", "update_seo", "update_store_content"]);
+
+  const dangerous = Object.entries(GENESIS_ACTIONS).filter(
+    ([, d]) => ["money", "destructive"].includes((d as { category: string }).category),
+  );
+  assert("every money and destructive action still stops for approval",
+    dangerous.every(([, d]) => (d as { authorizationTier: string }).authorizationTier === "always_ask"),
+    dangerous.map(([k]) => k).join(", "));
+  assert("and none of them can even be granted",
+    dangerous.every(([, d]) => (d as { maxAuthorityTier: string }).maxAuthorityTier === "always_ask"),
+    `${dangerous.length} hard-capped`);
+
+  // A DESTRUCTIVE ACTION CANNOT BE GRANTED, through the real grant path.
+  let destructiveRefused = false;
+  try {
+    await grantDelegatedAuthority({ storeId: store.id, actionType: "delete_product", grantedByUserId: owner.id });
+  } catch {
+    destructiveRefused = true;
+  }
+  assert("granting delete_product is refused outright", destructiveRefused);
+
   await prisma.$disconnect();
   await db.close();
 

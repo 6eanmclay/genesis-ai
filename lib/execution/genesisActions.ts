@@ -898,8 +898,30 @@ export const GENESIS_ACTIONS: Record<
       customSection: blueprint?.homepageContent?.customSection ?? null,
     }),
     category: "content",
-    authorizationTier: "always_ask",
-    maxAuthorityTier: "always_ask",
+    // ============ RAISED TO AUTO (2026-09-11) ======================
+    //
+    // Both halves change together. `authorizationTier` is what J4 does today;
+    // `maxAuthorityTier` is the highest this action may ever be trusted with,
+    // and it was ALSO always_ask - so raising only the first would leave a
+    // tier above its own cap, which verify-authority-boundary now refuses.
+    //
+    // WHAT EARNED IT, checked before the edit rather than asserted after:
+    //   reversible        getCurrentValues captures previousValues, and the
+    //                     revert path writes a new ApprovalRequest rather than
+    //                     rewriting history
+    //   authorized        requiredPermission STORE_MANAGE, which only OWNER
+    //                     holds - an employee cannot reach it
+    //   scoped target     prisma.store.update on ctx.storeId; the target is
+    //                     the store and is already on ExecutionLog
+    //   real read-back    verify re-reads blueprint and reports NAMED
+    //                     mismatches through verifyBlueprintSection, so a
+    //                     write that does not land becomes WARNING
+    //   append-only log   ExecutionLog is never updated, only inserted
+    //
+    // Category "content" has always permitted auto; nothing about the ceiling
+    // changed. Money and destructive remain hard-capped at always_ask.
+    authorizationTier: "auto",
+    maxAuthorityTier: "auto",
   },
   update_store_content: {
     executable: updateStoreContentExecutable,
@@ -918,8 +940,30 @@ export const GENESIS_ACTIONS: Record<
       contactPageCopy: blueprint?.storeContent?.contactPageCopy ?? "",
     }),
     category: "content",
-    authorizationTier: "always_ask",
-    maxAuthorityTier: "always_ask",
+    // ============ RAISED TO AUTO (2026-09-11) ======================
+    //
+    // Both halves change together. `authorizationTier` is what J4 does today;
+    // `maxAuthorityTier` is the highest this action may ever be trusted with,
+    // and it was ALSO always_ask - so raising only the first would leave a
+    // tier above its own cap, which verify-authority-boundary now refuses.
+    //
+    // WHAT EARNED IT, checked before the edit rather than asserted after:
+    //   reversible        getCurrentValues captures previousValues, and the
+    //                     revert path writes a new ApprovalRequest rather than
+    //                     rewriting history
+    //   authorized        requiredPermission STORE_MANAGE, which only OWNER
+    //                     holds - an employee cannot reach it
+    //   scoped target     prisma.store.update on ctx.storeId; the target is
+    //                     the store and is already on ExecutionLog
+    //   real read-back    verify re-reads blueprint and reports NAMED
+    //                     mismatches through verifyBlueprintSection, so a
+    //                     write that does not land becomes WARNING
+    //   append-only log   ExecutionLog is never updated, only inserted
+    //
+    // Category "content" has always permitted auto; nothing about the ceiling
+    // changed. Money and destructive remain hard-capped at always_ask.
+    authorizationTier: "auto",
+    maxAuthorityTier: "auto",
   },
   update_design_direction: {
     executable: updateDesignDirectionExecutable,
