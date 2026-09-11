@@ -13,6 +13,9 @@ import { LEGACY_BUSINESS_BASE, businessBasePath, sectionHref } from "@/lib/dashb
 import { officeFacts, type OfficeFact } from "@/lib/j4/officeFacts";
 import { buildBriefing, summariseHandled, type BriefingItem, type HandledSummary } from "@/lib/j4/officeBriefing";
 import { officeActionForObservation, officeActionForExplanation } from "@/lib/j4/officeActions";
+import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
+import { declaredRead } from "@/lib/businessModel/declaredReads";
+import { officeWork, type OfficeWork } from "@/lib/j4/officeWork";
 
 /**
  * EVERYTHING J4 FOUND, LOADED AFTER THE OWNER CAN ALREADY TALK TO HIM.
@@ -57,6 +60,24 @@ import { officeActionForObservation, officeActionForExplanation } from "@/lib/j4
  * resolved the store and the role.
  */
 export interface OfficeIntelligence {
+  /**
+   * THE NEW SHAPE, CARRIED BESIDE THE OLD ONE ON PURPOSE (2026-09-10).
+   *
+   * Sean: "Keep the transitional old OfficeIntelligence fields alongside the
+   * new work list only as deliberately scoped transitional payload... do not
+   * redesign the Office UI yet. This commit is the underlying architecture and
+   * contract work only."
+   *
+   * So nothing renders this yet. It is the proven seam: one list, every item
+   * carrying the action that decides which of the five sections it belongs to.
+   * The UI commit switches rendering onto it and deletes the six fields below,
+   * at which point the duplication ends.
+   *
+   * Measured, not estimated: 5.5 KB against the legacy fields' 56.9 KB on a
+   * 120-product store — +10%, and payload bytes are network-independent, so
+   * unlike the timings that figure is a real one.
+   */
+  work: OfficeWork;
   briefingItems: BriefingItem[];
   handled: HandledSummary;
   facts: OfficeFact[];
@@ -69,9 +90,11 @@ export interface OfficeIntelligence {
 const HANDLED_WINDOW_DAYS = 14;
 
 function empty(): OfficeIntelligence {
+  const handled = { resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: HANDLED_WINDOW_DAYS };
   return {
+    work: { items: [], handled },
     briefingItems: [],
-    handled: { resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: HANDLED_WINDOW_DAYS },
+    handled,
     facts: [],
     tasks: [],
     ideas: [],
@@ -96,23 +119,66 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
 
   const basePath = slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE;
 
-  const [observations, explanations, pendingApprovals, openTasks, activeProductCount, handledRaw] = await Promise.all([
-    prisma.genesisObservation.findMany({
-      where: { storeId: store.id, status: "ACTIVE" },
-      select: { id: true, genesisState: true, summary: true, actionHref: true, firstNoticedAt: true },
-      orderBy: { firstNoticedAt: "desc" },
-    }),
-    prisma.cognitiveOutput.findMany({
-      where: { storeId: store.id, kind: "explanation", status: "ACTIVE" },
-      select: { id: true, summary: true, actionHref: true },
-      orderBy: { generatedAt: "desc" },
-    }),
-    // Same permission tier as before the move.
-    hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
-    getOpenTasks(store.id),
-    prisma.product.count({ where: { storeId: store.id, active: true } }),
-    getHandledSince(store.id, HANDLED_WINDOW_DAYS),
-  ]);
+  // ============ ONE PROMISE.ALL, AND WHY THE UNDERSTANDING IS IN IT =====
+  //
+  // Measured before wiring (scripts/measure-office-assembly.ts), because Sean
+  // gated this on evidence rather than on the shape looking right.
+  //
+  // In production the Office's own reads are 499ms (getHandledSince dominates)
+  // and the assembler is 921ms. IN PARALLEL the tier costs the slower of the
+  // two — 921ms — so the real cost of the Office knowing the business is
+  // +422ms, not +921ms. Awaiting the understanding before starting these reads
+  // would cost the full 1420ms, which is why it belongs in this array and not
+  // on a line above it.
+  //
+  // Localhost measured 156ms against 5ms, a ratio of 31 where production is
+  // 1.85 — the round trips that dominate the Office's reads simply are not
+  // there. So the local numbers are NOT quoted as the cost of this change.
+  const [observations, explanations, pendingApprovals, openTasks, activeProductCount, handledRaw, understanding] =
+    await Promise.all([
+      // DECLARED. BUSINESS_UNDERSTANDING_CONTRACT.md invariant 3: a direct read
+      // is legitimate when it is said out loud. Observations are outstanding
+      // WORK — what J4 has noticed and not yet resolved — which is deliberately
+      // not part of the canonical business model. "Two decisions are waiting" is
+      // true for an afternoon; "this business sells three products" is true
+      // until the owner changes it, and folding the first into the second would
+      // churn the Map's input every time a task closed.
+      declaredRead("presentation", "outstanding observations are working state, not business facts", () =>
+        prisma.genesisObservation.findMany({
+          where: { storeId: store.id, status: "ACTIVE" },
+          select: { id: true, genesisState: true, summary: true, actionHref: true, firstNoticedAt: true },
+          orderBy: { firstNoticedAt: "desc" },
+        }),
+      ),
+      // DECLARED, AND DELIBERATELY STILL HERE. The canonical model carries
+      // explanations in activeThoughts and now carries their actionHref too
+      // (f94ceaf) — but capped at the 20 most recent thoughts of ALL kinds,
+      // where this reads every active explanation. Switching the legacy field
+      // to the canonical one would quietly show the owner fewer rows, which is
+      // a product change wearing an architecture commit's clothes.
+      //
+      // The new work list DOES read them from the canonical model. The two
+      // therefore differ in cardinality for exactly as long as this transition
+      // lasts, and the UI commit is where "should 158 inert explanations reach
+      // an owner at all" gets decided on purpose rather than by a cap.
+      declaredRead("presentation", "the Office lists every active explanation; the canonical model carries the 20 most recent thoughts of all kinds", () =>
+        prisma.cognitiveOutput.findMany({
+          where: { storeId: store.id, kind: "explanation", status: "ACTIVE" },
+          select: { id: true, summary: true, actionHref: true },
+          orderBy: { generatedAt: "desc" },
+        }),
+      ),
+      // Same permission tier as before the move.
+      hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
+      getOpenTasks(store.id),
+      declaredRead("presentation", "a count for one Office fact row, not a fact about the catalogue", () =>
+        prisma.product.count({ where: { storeId: store.id, active: true } }),
+      ),
+      getHandledSince(store.id, HANDLED_WINDOW_DAYS),
+      // THE CANONICAL MODEL. Not assembled here — asked for, from the one
+      // assembler, exactly as the Business Map and the Understanding view do.
+      getBusinessUnderstanding(store.id),
+    ]);
 
   const urgent = observations.filter((o) => o.genesisState === "urgent");
   const ideas = observations.filter((o) => o.genesisState === "opportunity");
@@ -125,15 +191,38 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     kind,
   });
 
+  const briefingItems = buildBriefing(
+    {
+      decisions: pendingApprovals.map((a) => ({ id: a.id, summary: a.summary, rationale: a.rationale, createdAt: a.createdAt })),
+      observations,
+    },
+    basePath,
+  );
+  const handled = summariseHandled(handledRaw, basePath);
+
   return {
-    briefingItems: buildBriefing(
+    // ============ THE DERIVED SEAM, NOT RENDERED YET ==================
+    //
+    // The canonical understanding goes in, the work comes out, and this file
+    // decides nothing about it: officeWork owns which section an item belongs
+    // to, and it decides that from the item's own action.
+    //
+    // buildBriefing's output is reused rather than re-derived — the briefing
+    // already applied officeActions' rules to decisions and observations, and
+    // applying them a second time here is precisely how two rails come to
+    // disagree about the same row.
+    work: officeWork(
+      understanding,
       {
-        decisions: pendingApprovals.map((a) => ({ id: a.id, summary: a.summary, rationale: a.rationale, createdAt: a.createdAt })),
-        observations,
+        decisions: briefingItems.filter((i) => i.kind === "decision"),
+        observations: briefingItems.filter((i) => i.kind !== "decision"),
+        tasks: [],
+        handled,
       },
       basePath,
     ),
-    handled: summariseHandled(handledRaw, basePath),
+    briefingItems,
+    handled,
     facts: officeFacts(
       {
         activeProducts: activeProductCount,

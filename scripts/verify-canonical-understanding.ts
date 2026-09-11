@@ -285,6 +285,61 @@ async function main() {
     assert("the superseded record still exists",
       Boolean(first.ok && first.value.recordId),
       "history is preserved — that is the fact lifecycle, unchanged");
+
+    // ==================================================================
+    console.log("\n=== GATE 10 — the Office reads the canonical model ===\n");
+    // ==================================================================
+    //
+    // THE HOLE THIS CLOSES (2026-09-10). Invariant 2 says "a reasoning consumer
+    // reads the canonical model and nothing else". The Office is a reasoning
+    // consumer by any definition — it decides what J4 wants to do about the
+    // business — and it was reading six sources directly, none declared.
+    //
+    // Nine gates were green the whole time, because every one of them sweeps
+    // for calls to the nine named CANON_PROVIDES. A consumer that skips the
+    // providers and goes straight to prisma is invisible to all of them. The
+    // contract's TEXT covered this; the contract's ENFORCEMENT did not.
+    //
+    // So this gate asks a different question — not "did you call a provider you
+    // should not have", but "did you assemble business knowledge for yourself".
+    const officeSrc = codeOnly(read("app", "j4", "intelligence-actions.ts"));
+
+    assert("the Office reads the canonical understanding",
+      officeSrc.includes("getBusinessUnderstanding("),
+      "it assembled from six separate readers instead");
+
+    // COUNTED, not proximity-matched. Gate 4 learned this twice in one
+    // milestone: a presence check on a file with several of something can
+    // never notice one going missing.
+    const rawReads = (officeSrc.match(/\bprisma\.[a-zA-Z]+\.[a-zA-Z]+\(/g) ?? []).length;
+    const declarations = (officeSrc.match(/declaredRead\(/g) ?? []).length;
+    assert("every direct read it still makes is declared",
+      declarations >= rawReads,
+      `${rawReads} raw prisma read(s), ${declarations} declaration(s) — work-layer data outside the business model must say why`);
+
+    // THE WORK LAYER IS NOT A SECOND ASSEMBLER, checked at the source rather
+    // than trusted. A module whose business knowledge arrives through a
+    // parameter cannot drift from the canonical model; one that can fetch can.
+    const workSrc = codeOnly(read("lib", "j4", "officeWork.ts"));
+    assert("the work layer has no database access",
+      !/from "@\/lib\/prisma"/.test(workSrc) && !/\bprisma(System)?\./.test(workSrc),
+      "OfficeWork must derive, never fetch");
+    assert("and it does not assemble an understanding either",
+      !workSrc.includes("getBusinessUnderstanding("),
+      "it receives one as an argument — that is the whole distinction");
+    assert("its business knowledge arrives as a parameter",
+      /understanding: BusinessUnderstanding/.test(workSrc));
+
+    // NEGATIVE CONTROLS. Each gate above must be able to fail, proven against
+    // synthetic sources rather than by trusting that it would.
+    const undeclared = 'const x = await prisma.genesisObservation.findMany({});';
+    const declared = 'const x = await declaredRead("presentation", "why", () => prisma.genesisObservation.findMany({}));';
+    const rawIn = (s: string) => (s.match(/\bprisma\.[a-zA-Z]+\.[a-zA-Z]+\(/g) ?? []).length;
+    const decIn = (s: string) => (s.match(/declaredRead\(/g) ?? []).length;
+    assert("the detector CAN see an undeclared read", rawIn(undeclared) > decIn(undeclared));
+    assert("and CAN see a declared one", decIn(declared) >= rawIn(declared));
+    assert("the work-layer detector CAN see a prisma import",
+      /from "@\/lib\/prisma"/.test('import { prisma } from "@/lib/prisma";'));
   } finally {
     await db.close();
   }
