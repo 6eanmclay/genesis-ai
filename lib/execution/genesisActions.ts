@@ -247,7 +247,7 @@ const AUTHORITY_TIER_RANK: Record<AuthorizationTier, number> = {
 //   money         — always_ask, hard: no action here may ever be delegated
 //                   through this mechanism.
 //   destructive   — always_ask, hard: same.
-const CATEGORY_MAX_TIER: Record<GenesisActionCategory, AuthorizationTier> = {
+export const CATEGORY_MAX_TIER: Record<GenesisActionCategory, AuthorizationTier> = {
   content: "auto",
   operations: "auto",
   integration: "auto_below_limit",
