@@ -28,6 +28,8 @@ import { VoiceMemoButton } from "./VoiceMemoButton";
 import { J4SpeakButton } from "./J4SpeakButton";
 import { decideSpeak, NOTHING_SPOKEN, type SpokenState } from "@/lib/voice/spokenReplies";
 import { rowInteractionClass } from "@/lib/j4/officeActions";
+import type { RecordProvenance } from "@prisma/client";
+import { PROVENANCE_LABEL } from "@/lib/businessModel/provenance";
 import { OfficeBand } from "./OfficeBand";
 import { OfficeBriefing } from "./OfficeBriefing";
 import type { BriefingItem, HandledSummary } from "@/lib/j4/officeBriefing";
@@ -160,11 +162,48 @@ interface IdeaItem {
 // client component, so no Dates, no Prisma rows, and no nested model objects
 // that would need re-deriving here. The Understanding page owns the full,
 // linkable version; this is the same material read as a briefing.
+/**
+ * ONE THING J4 UNDERSTANDS, WITH THE EVIDENCE BEHIND IT (2026-09-11).
+ *
+ * The surface whose whole job is "what does J4 believe, and why" rendered
+ * `lines: string[]`. Every fact arrived as prose with no author, no
+ * confidence, and no handle — so an owner could not tell their own words from
+ * J4's conclusions, and had nothing to point at in order to correct one.
+ *
+ * Each field is NULLABLE and null is the default, because the alternative is
+ * the UI inventing attribution. A fact whose source J4 does not actually know
+ * says nothing about its source rather than guessing plausibly.
+ */
+export interface UnderstandingFact {
+  /** What J4 understands, in the same words it always used. */
+  text: string;
+  /**
+   * Where it came from. Null when the canonical model genuinely does not
+   * record one — never a default, never inferred from the group it sits in.
+   */
+  source: RecordProvenance | null;
+  /**
+   * How sure J4 is, 0..1, and ONLY where a real confidence is computed.
+   * Null everywhere else: a number nobody calculated is the invented metric
+   * this codebase refuses elsewhere.
+   */
+  confidence: number | null;
+  /**
+   * The record this fact IS, when it is one.
+   *
+   * The handle a correction will need. Carried now so the correction surface
+   * has something real to address later — and deliberately NOT accompanied by
+   * a correction control in this slice, because the action does not exist yet
+   * and a button for it would be a fake one.
+   */
+  recordId: string | null;
+}
+
 export interface UnderstandingGroup {
   key: string;
   label: string;
-  lines: string[];
-  /** Shown in place of the lines when J4 genuinely knows nothing here yet. */
+  facts: UnderstandingFact[];
+  /** Shown in place of the facts when J4 genuinely knows nothing here yet. */
   empty: string;
 }
 interface InformationItem {
@@ -2502,16 +2541,32 @@ export function J4Workspace({
                 >
                   {group.label}
                 </p>
-                {group.lines.length === 0 ? (
+                {group.facts.length === 0 ? (
                   <p className="mt-1 text-sm" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                     {group.empty}
                   </p>
                 ) : (
-                  <div className="mt-1 flex flex-col gap-1">
-                    {group.lines.map((line, i) => (
-                      <p key={i} className="min-w-0 break-words text-sm text-[#f4f2fb]">
-                        {line}
-                      </p>
+                  <div className="mt-1 flex flex-col gap-1.5">
+                    {group.facts.map((f, i) => (
+                      <div key={i} data-testid="understanding-fact" data-source={f.source ?? ""} data-record={f.recordId ?? ""}>
+                        <p className="min-w-0 break-words text-sm text-[#f4f2fb]">{f.text}</p>
+                        {/* WHO SAID IT, AND HOW SURE — only when J4 really
+                            knows. The label comes from PROVENANCE_LABEL, the
+                            one place those words are defined, so this surface
+                            cannot invent an attribution or soften one. A fact
+                            with no recorded source renders no source line at
+                            all rather than something plausible. */}
+                        {(f.source || f.confidence !== null) && (
+                          <p
+                            data-testid="understanding-evidence"
+                            className="mt-0.5 text-[11.5px] leading-snug text-white/40"
+                          >
+                            {f.source ? PROVENANCE_LABEL[f.source] : null}
+                            {f.source && f.confidence !== null ? " · " : null}
+                            {f.confidence !== null ? `${Math.round(f.confidence * 100)}% sure` : null}
+                          </p>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}

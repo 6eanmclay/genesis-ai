@@ -149,6 +149,55 @@ async function signIn(page: Page, baseUrl: string, email: string): Promise<void>
  * presentations, which is what makes it the thing to read. aria-hidden still
  * answers open-versus-closed exactly as before.
  */
+/**
+ * EVERY FACT ON THE UNDERSTANDING VIEW CARRIES ITS EVIDENCE (2026-09-11).
+ *
+ * The surface rendered `lines: string[]` - prose with no author, no confidence
+ * and no handle, on the one view whose job is saying what J4 believes and why.
+ *
+ * Read off the RENDERED PAGE rather than from the mapper, because a source the
+ * mapper computes and the view drops is the same failure as never computing
+ * it. Run at both breakpoints: the panel is a different layout at each, and a
+ * check at one width reports a surface half the owners cannot see.
+ */
+async function assertUnderstandingEvidence(page: Page, width: number): Promise<void> {
+  const evidence = await page.evaluate(() => {
+    const facts = [...document.querySelectorAll('[data-testid="understanding-fact"]')];
+    return {
+      total: facts.length,
+      withSource: facts.filter((f) => (f.getAttribute("data-source") ?? "") !== "").length,
+      withRecord: facts.filter((f) => (f.getAttribute("data-record") ?? "") !== "").length,
+      // An evidence line on a fact with no source would be the UI inventing
+      // an attribution - the one thing this slice exists to prevent.
+      orphanEvidence: facts.filter(
+        (f) => (f.getAttribute("data-source") ?? "") === "" && !!f.querySelector('[data-testid="understanding-evidence"]'),
+      ).length,
+      sources: [...new Set(facts.map((f) => f.getAttribute("data-source") ?? "").filter(Boolean))],
+      // The handle is carried; the action does not exist yet, so no control
+      // may claim to perform it.
+      controls: facts.filter((f) => !!f.querySelector("button")).length,
+      shownLabels: [...document.querySelectorAll('[data-testid="understanding-evidence"]')]
+        .map((e) => (e.textContent ?? "").trim()).slice(0, 4),
+    };
+  });
+
+  assert(`${width}: facts render as facts, not prose`, evidence.total > 0, `${evidence.total} facts`);
+  assert(`${width}: some of them say where they came from`,
+    evidence.withSource > 0, `${evidence.withSource} of ${evidence.total} carry a source`);
+  assert(`${width}: and some carry a real record handle`,
+    evidence.withRecord > 0, `${evidence.withRecord} of ${evidence.total}`);
+  assert(`${width}: every source shown is a real provenance value`,
+    evidence.sources.every((s) => ["CONNECTOR", "OWNER", "DOCUMENT", "DERIVED", "INFERENCE", "GENERATED"].includes(s)),
+    evidence.sources.join(", "));
+  assert(`${width}: a fact with no source shows no attribution`,
+    evidence.orphanEvidence === 0, `${evidence.orphanEvidence} facts attributed without a source`);
+  assert(`${width}: nothing offers a correction it cannot perform`,
+    evidence.controls === 0, `${evidence.controls} controls on facts`);
+  assert(`${width}: the attribution is in the owner's words, not the enum's`,
+    evidence.shownLabels.every((l) => !/OWNER|INFERENCE|CONNECTOR|DERIVED|GENERATED/.test(l)),
+    evidence.shownLabels.join(" | "));
+}
+
 async function officeIsOpen(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const dialog = document.querySelector('[data-j4-presentation="office"]');
@@ -520,6 +569,8 @@ async function main() {
           )?.textContent?.trim() ?? ""
       );
       check("and it carries no count", understandingTabText, "Understanding");
+
+      await assertUnderstandingEvidence(page, 390);
     }
 
     // -----------------------------------------------------------------------
@@ -601,6 +652,15 @@ async function main() {
       const text = await officeText(page);
       assert("with the same six views behind it", text.includes("Assets I can use"),
         "one Office, two doors — never two Offices");
+
+      // The same evidence, at the other breakpoint. The panel is a different
+      // layout here, and a check at one width reports a surface half the
+      // owners cannot see.
+      await assertUnderstandingEvidence(page, 1280);
+      // PHOTOGRAPHED. A DOM assertion in this repository once passed underneath
+      // a full-screen overlay; attribution the owner cannot read is the same
+      // class of pass.
+      await page.screenshot({ path: "verification-screenshots/understanding-evidence.png" });
     }
 
     await context.close();
