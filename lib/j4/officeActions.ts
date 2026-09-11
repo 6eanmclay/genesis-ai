@@ -105,7 +105,32 @@ export type OfficeAction =
    * Both still require the owner to say yes. The difference is whether there
    * is a decision to make or simply work to release.
    */
-  | { kind: "execute"; label: string; intent: "approve" | "reject"; offer: "act" | "decide" }
+  | {
+      kind: "execute";
+      label: string;
+      intent: "approve" | "reject";
+      offer: "act" | "decide";
+      /**
+       * THE OTHER REAL ANSWERS TO THIS SAME QUESTION (2026-09-11).
+       *
+       * Sean: "The owner must see the actual available options... Do not
+       * invent options. Do not collapse multiple real options into a single
+       * generic button."
+       *
+       * A decision arrived carrying only Approve, so the owner could say yes
+       * and had nowhere to say no — on a surface whose own copy reads "Your
+       * call". officeActionForDecision had returned the pair since it was
+       * written; nothing ever called it, and BriefingItem.action could hold
+       * only one action anyway.
+       *
+       * Carried ON the action rather than beside it, so an option cannot be
+       * dropped on the way to the screen without dropping the action itself.
+       * Optional and never padded: `offer: "act"` has no alternatives because
+       * there is no second answer to invent, and a decision with one real
+       * option would correctly render one.
+       */
+      alternatives?: readonly { label: string; intent: "approve" | "reject" }[];
+    }
   /**
    * J4 knows what needs to happen and the owner is the missing source.
    *
@@ -279,11 +304,24 @@ export function officeActionForExecution(
  * which is what Sean means by a decision having a path to action rather than
  * a link to a screen where the decision is repeated.
  */
-export function officeActionForDecision(): OfficeAction[] {
-  return [
-    { kind: "execute", label: "Approve", intent: "approve", offer: "decide" },
-    { kind: "execute", label: "Not now", intent: "reject", offer: "decide" },
-  ];
+export function officeActionForDecision(): OfficeAction {
+  return {
+    kind: "execute",
+    label: "Approve",
+    intent: "approve",
+    offer: "decide",
+    // ONE ACTION CARRYING BOTH ANSWERS, not two actions a caller has to
+    // remember to keep together. It returned an ARRAY until 2026-09-11 and
+    // nothing called it — buildBriefing built its own single action inline —
+    // so the pair existed in this file and never reached a screen.
+    //
+    // "Reject", not "Not now". performRejectGenesisAction sets the row to
+    // REJECTED and DELETES the recommendation behind it, specifically so it
+    // stops nagging. "Not now" promises it will come back; it will not, and a
+    // label that understates what a control does is the same class of problem
+    // as a button that does nothing.
+    alternatives: [{ label: "Reject", intent: "reject" }],
+  };
 }
 
 /**

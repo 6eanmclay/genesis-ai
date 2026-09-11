@@ -31,7 +31,7 @@ import { rowInteractionClass } from "@/lib/j4/officeActions";
 import { OfficeBand } from "./OfficeBand";
 import { OfficeBriefing } from "./OfficeBriefing";
 import type { BriefingItem, HandledSummary } from "@/lib/j4/officeBriefing";
-import { approveProposalInConversation } from "./proposal-actions";
+import { approveProposalInConversation, rejectProposalInConversation } from "./proposal-actions";
 import { loadDeepKnowledge, type DeepKnowledge } from "./understanding-actions";
 import { loadOfficeIntelligence, type OfficeIntelligence } from "./intelligence-actions";
 import type { OfficeFact } from "@/lib/j4/officeFacts";
@@ -959,6 +959,22 @@ export function J4Workspace({
   // Which decision is executing, so its button can say so rather than looking
   // ignored while a real server action runs.
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  // WHICH answer is running, so only the pressed button changes its words.
+  const [decidingIntent, setDecidingIntent] = useState<"approve" | "reject" | null>(null);
+  /**
+   * Bumped when a decision settles, so the work list is re-read.
+   *
+   * router.refresh() refreshes SERVER components; the Office's work arrives
+   * from loadOfficeIntelligence inside a client effect, so a refresh left the
+   * list exactly as it was. An owner could reject something and watch it stay
+   * on screen — the "button that goes quiet" shape, with the database already
+   * changed underneath it.
+   *
+   * Pre-existing and not specific to reject: approve had the same hole, and it
+   * went unnoticed because the fixture's approve fails validation and the row
+   * is SUPPOSED to stay.
+   */
+  const [workEpoch, setWorkEpoch] = useState(0);
   const [, startApproval] = useTransition();
   // Priority 4 — Just Talk (2026-08-08, scope frozen). A presentation-only
   // toggle over the exact same conversation/pipeline — no new route, no
@@ -1101,7 +1117,7 @@ export function J4Workspace({
       // to exist rather than for the load to be done.
       .finally(() => { if (alive) setIntelligenceState("ready"); });
     return () => { alive = false; };
-  }, [needsIntelligence, slug]);
+  }, [needsIntelligence, slug, workEpoch]);
 
   // Server-provided values still win when they are present, so the layer and
   // any caller that passes them directly are unchanged. This is an addition to
@@ -2171,21 +2187,34 @@ export function J4Workspace({
             work={work}
             loading={intelligenceLoading}
             handled={handled}
-            approvingId={approvingId}
-            onApprove={(id) => {
-              // The REAL approval, not a briefing-shaped copy of one.
-              // approveProposalInConversation runs approveGenesisAction and
-              // then writes J4's own account of what happened back into the
-              // conversation — so acting here still ends with him reporting
-              // the result, which is the last step of Sean's arc rather than
-              // a button that goes quiet.
+            decidingId={approvingId}
+            decidingIntent={decidingIntent}
+            onDecide={(id, intent) => {
+              // BOTH ANSWERS RUN A REAL SERVER ACTION, and the same pair the
+              // conversation already uses — approveProposalInConversation and
+              // rejectProposalInConversation. Neither is a briefing-shaped
+              // copy, and neither redirects: the dashboard's own
+              // approve/reject both end in redirect("/dashboard"), which is
+              // the navigation this layer exists to prevent.
+              //
+              // Each writes J4's own account of what happened back into the
+              // conversation, so saying no is recorded as plainly as saying
+              // yes rather than a row quietly disappearing.
               setApprovingId(id);
+              setDecidingIntent(intent);
               startApproval(async () => {
                 try {
-                  await approveProposalInConversation(id, slug);
+                  if (intent === "approve") {
+                    await approveProposalInConversation(id, slug);
+                  } else {
+                    await rejectProposalInConversation(id, slug);
+                  }
                   router.refresh();
                 } finally {
                   setApprovingId(null);
+                  setDecidingIntent(null);
+                  // Re-read the work list: the decision has really changed.
+                  setWorkEpoch((n) => n + 1);
                 }
               });
             }}

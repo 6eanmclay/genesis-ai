@@ -171,6 +171,19 @@ async function main(): Promise<void> {
         status: "PENDING_APPROVAL",
       },
     });
+    // A SECOND DECISION, so the reject path has its own row and is not reading
+    // the wreckage of the approve test.
+    await prisma.approvalRequest.create({
+      data: {
+        storeId: store.id,
+        actionType: "update_store_content",
+        input: {},
+        previousValues: {},
+        summary: "Rewrite the returns policy",
+        rationale: "You have had two questions about returns this month.",
+        status: "PENDING_APPROVAL",
+      },
+    });
     // Something already handled, and something internal that must NOT appear.
     await prisma.genesisObservation.create({
       data: {
@@ -513,6 +526,75 @@ async function main(): Promise<void> {
     );
 
     await page.screenshot({ path: "verification-screenshots/arrival-after-approve.png" });
+
+    // ---- AND THE OTHER ANSWER, WHICH THE OWNER NEVER HAD ----------------
+    //
+    // The surface said "Your call" and offered only Approve. Saying no runs a
+    // real server action too — performRejectGenesisAction, the same primitive
+    // four dashboard surfaces already use — and the promise is the same as the
+    // approve path: the row really changes, and J4 says so.
+    console.log("\n=== reject -> recorded -> J4 says so ===\n");
+    await page.goto(`${server.baseUrl}/j4`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-testid="work-action-alternative"]', { timeout: 30_000 });
+
+    const rejectId = (await prisma.approvalRequest.findFirst({
+      where: { storeId: store.id, status: "PENDING_APPROVAL", summary: "Rewrite the returns policy" },
+      select: { id: true },
+    }))?.id;
+    check("the second decision is pending before rejecting", !!rejectId, rejectId ?? "not found");
+
+    // BOTH CONTROLS ARE ON THE ROW, read from the page rather than assumed.
+    const controls = await page.evaluate((summary: string) => {
+      const row = [...document.querySelectorAll('[data-testid="work-row"]')]
+        .find((el) => (el.textContent ?? "").includes(summary));
+      if (!row) return null;
+      return {
+        primary: row.querySelector('[data-testid="work-action-execute"]')?.textContent?.trim() ?? null,
+        alternatives: [...row.querySelectorAll('[data-testid="work-action-alternative"]')].map((b) => ({
+          label: (b.textContent ?? "").trim(),
+          intent: b.getAttribute("data-intent"),
+        })),
+      };
+    }, "Rewrite the returns policy");
+    check("the decision renders BOTH answers", controls?.alternatives.length === 1,
+      `primary=${controls?.primary}, alternatives=${JSON.stringify(controls?.alternatives)}`);
+    check("and the second answer is a real reject",
+      controls?.alternatives[0]?.intent === "reject", controls?.alternatives[0]?.intent ?? "none");
+    check("and it is not worded as a deferral",
+      !/not now|later|snooze/i.test(controls?.alternatives[0]?.label ?? ""),
+      controls?.alternatives[0]?.label ?? "none");
+
+    const messagesBeforeReject = await prisma.storeMessage.count({ where: { storeId: store.id } });
+    await page.evaluate((summary: string) => {
+      const row = [...document.querySelectorAll('[data-testid="work-row"]')]
+        .find((el) => (el.textContent ?? "").includes(summary));
+      (row?.querySelector('[data-testid="work-action-alternative"]') as HTMLButtonElement | null)?.click();
+    }, "Rewrite the returns policy");
+    await page.waitForTimeout(6000);
+
+    const rejected = rejectId
+      ? await prisma.approvalRequest.findUnique({ where: { id: rejectId }, select: { status: true, decidedAt: true } })
+      : null;
+    check("rejecting reaches the real engine", rejected?.status === "REJECTED", `status ${rejected?.status}`);
+    check("  and the decision is recorded as decided", !!rejected?.decidedAt, String(rejected?.decidedAt ?? "none"));
+
+    const messagesAfterReject = await prisma.storeMessage.count({ where: { storeId: store.id } });
+    check("J4 says out loud that it was set aside",
+      messagesAfterReject > messagesBeforeReject,
+      `${messagesBeforeReject} -> ${messagesAfterReject} messages`);
+
+    // NOTHING WAS APPLIED. A rejection must not execute the thing it rejected.
+    const executedFromReject = await prisma.approvalRequest.count({
+      where: { storeId: store.id, status: "EXECUTED", summary: "Rewrite the returns policy" },
+    });
+    check("and nothing was executed by saying no", executedFromReject === 0, `${executedFromReject} executed`);
+
+    const stillOnScreen = await page.evaluate((summary: string) =>
+      [...document.querySelectorAll('[data-testid="work-row"]')].some((el) =>
+        (el.textContent ?? "").includes(summary)), "Rewrite the returns policy");
+    check("a rejected decision leaves the list", !stillOnScreen, stillOnScreen ? "still on screen" : "gone");
+
+    await page.screenshot({ path: "verification-screenshots/arrival-after-reject.png" });
     await page.close();
   } finally {
     if (browser) await browser.close();

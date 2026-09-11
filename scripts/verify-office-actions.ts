@@ -130,9 +130,47 @@ check("no reason is blank", everyReasonIsWritten);
 // ---- 7. a decision is decided, not navigated to -------------------------
 console.log("\n=== a decision carries a real execution ===\n");
 const decision = officeActionForDecision();
-check("a decision offers approve and reject",
-  decision.length === 2 && decision.every((d) => d.kind === "execute"),
-  decision.map((d) => (d.kind === "execute" ? `${d.label}/${d.intent}` : d.kind)).join(", "));
+check("a decision is one execute action", decision.kind === "execute", decision.kind);
+check("  whose primary answer is approve",
+  decision.kind === "execute" && decision.intent === "approve",
+  decision.kind === "execute" ? decision.intent : decision.kind);
+check("  and which is a DECISION, not work to release",
+  decision.kind === "execute" && decision.offer === "decide",
+  decision.kind === "execute" ? decision.offer : decision.kind);
+
+// BOTH ANSWERS SURVIVE. The owner could say yes and had nowhere to say no,
+// on a surface whose own copy reads "Your call" — because this function
+// returned the pair and nothing ever called it.
+const alts = decision.kind === "execute" ? (decision.alternatives ?? []) : [];
+check("a decision carries its other real answer", alts.length === 1, `${alts.length} alternative(s)`);
+check("  and that answer is reject",
+  alts[0]?.intent === "reject", alts[0] ? `${alts[0].label}/${alts[0].intent}` : "none");
+
+// NOTHING IS INVENTED TO FILL A PAIR. Every alternative must be one of the two
+// intents the execution engine actually accepts — there is no third answer to
+// a pending approval, and a label with no intent behind it is a fake button.
+check("no option exists that the engine cannot run",
+  alts.every((a) => a.intent === "approve" || a.intent === "reject"),
+  alts.map((a) => a.intent).join(", "));
+check("and no option duplicates the primary",
+  alts.every((a) => a.intent !== (decision.kind === "execute" ? decision.intent : null)),
+  alts.map((a) => a.intent).join(", "));
+
+// THE LABEL MATCHES WHAT THE CONTROL DOES. performRejectGenesisAction sets the
+// row to REJECTED and deletes the recommendation behind it so it stops
+// nagging. "Not now" promised it would come back.
+check("the reject label does not promise a return",
+  !/not now|later|snooze|remind/i.test(alts[0]?.label ?? ""),
+  alts[0]?.label ?? "none");
+
+// AND ASKING FOR THE OPTIONS CHANGES NOTHING. A pure function over constants:
+// no prisma import in the module, so rendering a decision cannot mutate one.
+const actionsSrc = readFileSync(join(process.cwd(), "lib", "j4", "officeActions.ts"), "utf8");
+check("deciding what the options ARE cannot mutate anything",
+  !/from "@\/lib\/prisma"/.test(actionsSrc) && !/\bprisma\./.test(actionsSrc),
+  "officeActions has no database access");
+check("and the same call twice gives the same answer",
+  JSON.stringify(officeActionForDecision()) === JSON.stringify(officeActionForDecision()));
 
 // ---- 8. the type itself forbids the fake button -------------------------
 console.log("\n=== only a real action is interactive ===\n");

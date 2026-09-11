@@ -91,18 +91,27 @@ const SECTIONS: { key: OfficeSection; title: string; blurb: string; empty: strin
 export function OfficeBriefing({
   work,
   handled,
-  onApprove,
-  approvingId,
+  onDecide,
+  decidingId,
+  decidingIntent,
   onOpenConversation,
   loading = false,
 }: {
   /** The one list. Null while the progressive tier is still loading. */
   work: OfficeWork | null;
   handled: HandledSummary;
-  /** Runs approveGenesisAction — the same server action the conversation uses. */
-  onApprove: (id: string) => void;
-  /** The decision currently being executed, so the button can say so. */
-  approvingId: string | null;
+  /**
+   * Settles a decision, either way.
+   *
+   * ONE handler taking the intent, rather than an onApprove beside an
+   * onReject: a caller cannot wire the yes and forget the no, which is the
+   * shape the surface was already in.
+   */
+  onDecide: (id: string, intent: "approve" | "reject") => void;
+  /** The decision currently being settled, so its buttons can say so. */
+  decidingId: string | null;
+  /** Which answer is running, so only that button changes its words. */
+  decidingIntent: "approve" | "reject" | null;
   onOpenConversation: () => void;
   loading?: boolean;
 }) {
@@ -136,7 +145,11 @@ export function OfficeBriefing({
               <ol className="mt-3 flex flex-col gap-2.5">
                 {items.map((item) => (
                   <li key={item.id}>
-                    <WorkRow item={item} onApprove={onApprove} approving={approvingId === item.id} />
+                    <WorkRow
+                      item={item}
+                      onDecide={onDecide}
+                      deciding={decidingId === item.id ? decidingIntent : null}
+                    />
                   </li>
                 ))}
               </ol>
@@ -177,12 +190,13 @@ const MISSING_LABEL = {
 
 function WorkRow({
   item,
-  onApprove,
-  approving,
+  onDecide,
+  deciding,
 }: {
   item: WorkItem;
-  onApprove: (id: string) => void;
-  approving: boolean;
+  onDecide: (id: string, intent: "approve" | "reject") => void;
+  /** The answer currently running on THIS row, or null. */
+  deciding: "approve" | "reject" | null;
 }) {
   const { action } = item;
   return (
@@ -245,19 +259,40 @@ function WorkRow({
             happened yet. */}
         {action.kind === "execute" && (
           <div data-testid={action.offer === "decide" ? "work-decide" : "work-ready"}>
-            <button
-              type="button"
-              data-testid="work-action-execute"
-              data-offer={action.offer}
-              disabled={approving}
-              onClick={() => onApprove(item.id)}
-              className="inline-flex items-center gap-1.5 rounded-full bg-[#4ade3a] px-3.5 py-1.5 text-[12.5px] font-semibold text-[#06210a] transition hover:brightness-110 disabled:opacity-60"
-            >
-              {approving ? "Doing it…" : action.label}
-            </button>
+            {/* EVERY REAL ANSWER, NOT JUST THE FIRST. The owner could say yes
+                and had nowhere to say no, on a surface whose own copy reads
+                "Your call". Each control runs a real server action; there is
+                no option here that the execution engine cannot carry out. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                data-testid="work-action-execute"
+                data-offer={action.offer}
+                data-intent={action.intent}
+                disabled={deciding !== null}
+                onClick={() => onDecide(item.id, action.intent)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-[#4ade3a] px-3.5 py-1.5 text-[12.5px] font-semibold text-[#06210a] transition hover:brightness-110 disabled:opacity-60"
+              >
+                {deciding === action.intent ? "Doing it…" : action.label}
+              </button>
+
+              {(action.alternatives ?? []).map((alt) => (
+                <button
+                  key={alt.intent}
+                  type="button"
+                  data-testid="work-action-alternative"
+                  data-intent={alt.intent}
+                  disabled={deciding !== null}
+                  onClick={() => onDecide(item.id, alt.intent)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3.5 py-1.5 text-[12.5px] font-medium text-white/70 transition hover:border-white/30 hover:bg-white/[.04] disabled:opacity-60"
+                >
+                  {deciding === alt.intent ? "Setting it aside…" : alt.label}
+                </button>
+              ))}
+            </div>
             {action.offer === "decide" && (
               <p data-testid="decide-nothing-yet" className="mt-1.5 text-[12px] text-white/35">
-                Nothing changes until you approve this.
+                Nothing changes until you choose.
               </p>
             )}
           </div>

@@ -1,4 +1,4 @@
-import { officeActionForObservation, officeActionForExecution, type OfficeAction } from "./officeActions";
+import { officeActionForObservation, officeActionForExecution, officeActionForDecision, type OfficeAction } from "./officeActions";
 
 /**
  * WHAT J4 LEADS WITH WHEN THE OWNER WALKS IN.
@@ -186,7 +186,12 @@ export function buildBriefing(input: BriefingInput, basePath: string): BriefingI
       // A pending approval is a real choice with alternatives, so it offers a
       // DECISION rather than work to release. That is what files it under
       // DECIDE rather than READY TO GO.
-      action: { kind: "execute", label: "Approve", intent: "approve", offer: "decide" },
+      //
+      // FROM officeActionForDecision, not built here. This line used to
+      // construct its own single action, which is why the owner only ever saw
+      // Approve: the function that has always returned both answers was never
+      // called by anything.
+      action: officeActionForDecision(),
     });
   }
 
