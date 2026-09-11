@@ -89,8 +89,23 @@ export type OwnerRequirement = "information" | "decision" | "permission" | "capa
 export type OfficeAction =
   /** A real destination that exists. */
   | { kind: "open"; label: string; href: string }
-  /** A real execution, run through the engine that already exists. */
-  | { kind: "execute"; label: string; intent: "approve" | "reject" }
+  /**
+   * A real execution, run through the engine that already exists.
+   *
+   * `offer` is what separates READY TO GO from DECIDE, and it is carried on
+   * the action because Sean's rule for the Office is that "the action's own
+   * kind must determine where it appears". Deriving the section from where a
+   * row came from instead would put that knowledge back in the producer, and
+   * two producers would eventually disagree about which pile a thing is in.
+   *
+   *   "act"     J4 recommends one thing and can do it. Approving runs it.
+   *   "decide"  A real choice with real alternatives, which is why the pair
+   *             from officeActionForDecision() carries approve AND reject.
+   *
+   * Both still require the owner to say yes. The difference is whether there
+   * is a decision to make or simply work to release.
+   */
+  | { kind: "execute"; label: string; intent: "approve" | "reject"; offer: "act" | "decide" }
   /**
    * J4 knows what needs to happen and the owner is the missing source.
    *
@@ -266,8 +281,8 @@ export function officeActionForExecution(
  */
 export function officeActionForDecision(): OfficeAction[] {
   return [
-    { kind: "execute", label: "Approve", intent: "approve" },
-    { kind: "execute", label: "Not now", intent: "reject" },
+    { kind: "execute", label: "Approve", intent: "approve", offer: "decide" },
+    { kind: "execute", label: "Not now", intent: "reject", offer: "decide" },
   ];
 }
 

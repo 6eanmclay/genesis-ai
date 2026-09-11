@@ -137,7 +137,7 @@ check("a decision offers approve and reject",
 // ---- 8. the type itself forbids the fake button -------------------------
 console.log("\n=== only a real action is interactive ===\n");
 check("open is interactive", isInteractive({ kind: "open", label: "x", href: "/y" }));
-check("execute is interactive", isInteractive({ kind: "execute", label: "x", intent: "approve" }));
+check("execute is interactive", isInteractive({ kind: "execute", label: "x", intent: "approve", offer: "act" }));
 check("none is NOT interactive", !isInteractive({ kind: "none", because: "x" }));
 check("internal is NOT interactive", !isInteractive({ kind: "internal", because: "x" }));
 
@@ -165,7 +165,7 @@ for (const a of INERT) {
 }
 const liveClass = rowInteractionClass({ kind: "open", label: "Reconnect", href: "/x" });
 check("a followable row DOES get one", offersHover(liveClass), liveClass);
-check("execute gets one too", offersHover(rowInteractionClass({ kind: "execute", label: "Approve", intent: "approve" })));
+check("execute gets one too", offersHover(rowInteractionClass({ kind: "execute", label: "Approve", intent: "approve", offer: "decide" })));
 
 // ---- 10. needs_owner is a state, not a fallback -------------------------
 //

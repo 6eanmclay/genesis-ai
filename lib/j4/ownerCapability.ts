@@ -185,7 +185,9 @@ export function actionForNeed(need: BusinessNeed, basePath: string): OfficeActio
         because: `"${need.id}" names the tool "${need.tool}", which is not in the catalogue - Genesis has not built this yet, and it is not the owner's to supply`,
       };
     }
-    return { kind: "execute", label: need.what, intent: "approve" };
+    // "act": J4 recommends this one thing and can do it. Not a choice between
+    // alternatives, which is what `offer: "decide"` is for.
+    return { kind: "execute", label: need.what, intent: "approve", offer: "act" };
   }
 
   // 3. NEITHER. Not a boundary, not a tool: J4 has noticed something and has

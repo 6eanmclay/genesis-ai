@@ -183,7 +183,10 @@ export function buildBriefing(input: BriefingInput, basePath: string): BriefingI
       standingDays: daysSince(d.createdAt, now),
       // A decision is settled here, not navigated to. approveGenesisAction is
       // the same server action the conversation already uses.
-      action: { kind: "execute", label: "Approve", intent: "approve" },
+      // A pending approval is a real choice with alternatives, so it offers a
+      // DECISION rather than work to release. That is what files it under
+      // DECIDE rather than READY TO GO.
+      action: { kind: "execute", label: "Approve", intent: "approve", offer: "decide" },
     });
   }
 
