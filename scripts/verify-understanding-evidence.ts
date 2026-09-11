@@ -82,7 +82,7 @@ function understandingWith(opts: {
       connectedSystems: [{ displayName: "Stripe", status: "CONNECTED", syncedAgoLabel: "2 minutes ago", isStale: false }],
     },
     beliefs: opts.withBelief
-      ? [{ claim: "Repeat buyers come back within 30 days", confidence: 0.72, maturity: "well_supported" }]
+      ? [{ id: "belief_1", claim: "Repeat buyers come back within 30 days", confidence: 0.72, maturity: "well_supported" }]
       : [],
     recentDecisions: [],
     activeThoughts: [],
@@ -182,6 +182,49 @@ const noOfferingIdentity = noOffering.find((g) => g.key === "identity")!;
 check("no record means no row, rather than an empty one",
   !noOfferingIdentity.facts.some((f) => f.text.startsWith("Offers:")),
   noOfferingIdentity.facts.map((f) => f.text).join(" | "));
+
+// ---- 9. correction is offered only where a mechanism exists -------------
+//
+// Sean: "No fake 'Correct' button. If the existing mechanism cannot support a
+// particular correction from the surface, expose that limitation honestly
+// rather than inventing behaviour."
+//
+// The Understanding surface shows several KINDS of fact and they are corrected
+// by different machinery. contradictBelief handles exactly one of them.
+console.log("\n=== only a belief offers a correction, because only a belief has one ===\n");
+
+const belief2 = groups.find((g) => g.key === "beliefs")?.facts[0];
+check("a belief carries a real correction mechanism",
+  belief2?.correction?.mechanism === "belief", JSON.stringify(belief2?.correction ?? null));
+check("  addressed by the belief's own id, not its wording",
+  typeof belief2?.correction?.id === "string" && belief2.correction.id.length > 0,
+  belief2?.correction?.id ?? "none");
+
+// EVERYTHING ELSE OFFERS NOTHING. The six claims use the fact lifecycle, which
+// is a different mechanism and not this slice; a derived figure cannot be
+// corrected at all, because disagreeing with revenue means the ORDERS are
+// wrong rather than the sentence.
+const correctable = all.filter((f) => f.correction !== null);
+check("nothing else claims to be correctable",
+  correctable.length === 1, `${correctable.length} facts offer a correction`);
+check("  the six owner claims offer none, honestly",
+  identity.facts.every((f) => f.correction === null),
+  identity.facts.filter((f) => f.correction).map((f) => f.text).join(" | ") || "none do");
+check("  and neither does a derived figure",
+  groups.find((g) => g.key === "revenue")?.facts.every((f) => f.correction === null) ?? false);
+
+// THE CONTROL CANNOT EXIST WITHOUT THE MECHANISM. Rendered from f.correction,
+// so a fact with no mechanism has nothing to render a button from.
+check("the view renders a correction only from the mechanism",
+  /f\.correction && \(/.test(ui) && /data-testid="understanding-correct"/.test(ui),
+  "a fake button is unrepresentable, not merely avoided");
+
+// AND IT RE-READS RATHER THAN HIDING THE ROW. A local edit that agrees with
+// the database is the same class of claim as a success message standing in
+// for a result.
+check("a correction re-reads what J4 now understands",
+  /setDeepKnowledge\(null\)/.test(ui),
+  "the row must go because the belief is retired, not because the UI hid it");
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${failed.length === 0 ? `ALL PASS (${results.length})` : `${failed.length} of ${results.length} FAILED`}`);

@@ -63,6 +63,67 @@ export interface DeepKnowledge {
   contextEntries: ContextEntry[];
 }
 
+/**
+ * THE OWNER SAYS A BELIEF IS WRONG (2026-09-11).
+ *
+ * ============ THE SAME MECHANISM, NOT A SECOND ONE ====================
+ *
+ * This calls `contradictBelief` — the identical function the
+ * `contradict_belief` tool calls from chat. Nothing about the belief model,
+ * the DISMISSED status, the retirement record or the owner-only rule is
+ * re-decided here; this is a second DOOR to one mechanism, not a second
+ * mechanism.
+ *
+ * AND IT IS THE MORE PRECISE DOOR. The chat tool receives a claim as TEXT,
+ * because that is all a language model has, so it matches on the wording and
+ * refuses outright when two beliefs read alike — `contradict_belief_ambiguous`
+ * exists for exactly that case. The Understanding surface already holds the
+ * belief's id, so from here there is no matching step and therefore no wrong
+ * belief to retire by accident.
+ *
+ * OWNER ONLY, and not by this file's say-so: contradictBelief checks
+ * `store.userId !== params.userId` itself and answers `not_permitted`. The
+ * authorisation is repeated here anyway because a server action is a public
+ * endpoint, and the two guards answer different questions — may you see this
+ * business at all, and are you the person whose beliefs these are.
+ */
+export async function correctBelief(
+  beliefId: string,
+  /** The owner's own words for why it is wrong. Stored verbatim, never parsed. */
+  note: string | null,
+  slug?: string,
+): Promise<{ ok: true } | { ok: false; because: string }> {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const resolved = await resolveOfficeAccess(session.user.id, slug);
+  if (!resolved) return { ok: false, because: "I could not work out which business that belongs to." };
+  const { store, role } = resolved;
+  if (!hasPermission(role, PERMISSIONS.STORE_MANAGE)) {
+    return { ok: false, because: "You do not have permission to change what I believe about this business." };
+  }
+
+  const { contradictBelief } = await import("@/lib/intelligence/beliefReview");
+  const outcome = await contradictBelief({
+    storeId: store.id,
+    beliefId,
+    userId: session.user.id,
+    note: note?.trim() ? note.trim() : undefined,
+  });
+
+  if (outcome.ok) return { ok: true };
+  // SAID PLAINLY, in the refusal's own terms. The tool description is explicit
+  // that a refused write must be reported as refused rather than implied to
+  // have worked.
+  return {
+    ok: false,
+    because:
+      outcome.refusal === "not_permitted"
+        ? "Only the business owner can tell me one of my own conclusions is wrong."
+        : "I could not find that belief any more — it may already have been retired.",
+  };
+}
+
 export async function loadDeepKnowledge(slug?: string): Promise<DeepKnowledge> {
   const session = await auth();
   if (!session?.user) redirect("/login");

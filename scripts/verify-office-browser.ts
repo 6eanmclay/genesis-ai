@@ -173,9 +173,17 @@ async function assertUnderstandingEvidence(page: Page, width: number): Promise<v
         (f) => (f.getAttribute("data-source") ?? "") === "" && !!f.querySelector('[data-testid="understanding-evidence"]'),
       ).length,
       sources: [...new Set(facts.map((f) => f.getAttribute("data-source") ?? "").filter(Boolean))],
-      // The handle is carried; the action does not exist yet, so no control
-      // may claim to perform it.
+      // A CONTROL MAY NOT EXIST WITHOUT A MECHANISM (2026-09-11).
+      //
+      // This asserted ZERO controls while contradictBelief was unreachable
+      // from here. A real mechanism now exists for beliefs, so the intent is
+      // unchanged and the measurement is not: a control is legitimate exactly
+      // when its fact carries a correction, and orphaned means a button on a
+      // fact that has no way to perform one.
       controls: facts.filter((f) => !!f.querySelector("button")).length,
+      orphanControls: facts.filter(
+        (f) => !!f.querySelector("button") && !f.querySelector('[data-testid="understanding-correct"]'),
+      ).length,
       shownLabels: [...document.querySelectorAll('[data-testid="understanding-evidence"]')]
         .map((e) => (e.textContent ?? "").trim()).slice(0, 4),
     };
@@ -191,8 +199,8 @@ async function assertUnderstandingEvidence(page: Page, width: number): Promise<v
     evidence.sources.join(", "));
   assert(`${width}: a fact with no source shows no attribution`,
     evidence.orphanEvidence === 0, `${evidence.orphanEvidence} facts attributed without a source`);
-  assert(`${width}: nothing offers a correction it cannot perform`,
-    evidence.controls === 0, `${evidence.controls} controls on facts`);
+  assert(`${width}: no control exists without a mechanism behind it`,
+    evidence.orphanControls === 0, `${evidence.orphanControls} controls with nothing to perform`);
   assert(`${width}: the attribution is in the owner's words, not the enum's`,
     evidence.shownLabels.every((l) => !/OWNER|INFERENCE|CONNECTOR|DERIVED|GENERATED/.test(l)),
     evidence.shownLabels.join(" | "));
@@ -380,6 +388,23 @@ async function main() {
         genesisState: "opportunity",
         summary: `${MARKER.ideas} — worth trying.`,
         status: "ACTIVE",
+      },
+    });
+    // A BELIEF J4 HOLDS, so the Understanding view has something the owner can
+    // actually disagree with. Two of them, worded alike on purpose: the point
+    // of addressing a correction by id is that the similar one survives.
+    const belief = await prisma.belief.create({
+      data: {
+        storeId: store.id, topicKey: "office.test.belief", claim: "ZZBELIEFMARKER restocks on Mondays",
+        category: "operations", confidence: 0.64, evidenceCount: 4, status: "ACTIVE",
+        firstObservedAt: new Date(Date.now() - 30 * 86_400_000), lastConfirmedAt: new Date(),
+      },
+    });
+    const lookalikeBelief = await prisma.belief.create({
+      data: {
+        storeId: store.id, topicKey: "office.test.belief2", claim: "ZZBELIEFMARKER restocks on Mondays and Thursdays",
+        category: "operations", confidence: 0.51, evidenceCount: 3, status: "ACTIVE",
+        firstObservedAt: new Date(Date.now() - 30 * 86_400_000), lastConfirmedAt: new Date(),
       },
     });
     // Information — an urgent observation.
@@ -657,6 +682,63 @@ async function main() {
       // layout here, and a check at one width reports a surface half the
       // owners cannot see.
       await assertUnderstandingEvidence(page, 1280);
+
+      // ---- THE OWNER TELLS J4 IT IS WRONG, FOR REAL -----------------
+      //
+      // Slice 3. Until now the only way to correct a belief was to SAY SO in
+      // chat, where the tool matches on the claim's wording and refuses
+      // outright when two beliefs read alike. The surface holds the id.
+      //
+      // What is proven is the round trip: the control exists only where a
+      // mechanism does, pressing it reaches contradictBelief, the belief is
+      // retired in the DATABASE, and the reloaded understanding no longer
+      // contains it. Not a success message — a changed answer.
+      const controls = await page.evaluate(() =>
+        [...document.querySelectorAll('[data-testid="understanding-correct"]')].map((b) => ({
+          belief: b.getAttribute("data-belief") ?? "",
+          label: (b.textContent ?? "").trim(),
+        })),
+      );
+      assert("both beliefs offer a correction", controls.length === 2, JSON.stringify(controls));
+      assert("each is addressed by its own belief id",
+        new Set(controls.map((c) => c.belief)).size === 2, JSON.stringify(controls.map((c) => c.belief)));
+      assert("and the control says what it does",
+        controls.every((c) => /wrong/i.test(c.label)), controls.map((c) => c.label).join(" | "));
+
+      const beforeRow = await prisma.belief.findUniqueOrThrow({ where: { id: belief.id } });
+      check("BEFORE: the belief is active", beforeRow.status, "ACTIVE");
+
+      await page.click(`[data-testid="understanding-correct"][data-belief="${belief.id}"]`);
+      await page.waitForTimeout(5000);
+
+      const afterRow = await prisma.belief.findUniqueOrThrow({ where: { id: belief.id } });
+      check("AFTER: the correction reached the database", afterRow.status, "DISMISSED");
+      assert("and it is recorded as the OWNER disagreeing",
+        afterRow.retiredReason?.startsWith("dismissed by the owner") ?? false, String(afterRow.retiredReason));
+
+      // THE LOOK-ALIKE SURVIVED. A correction addressed by id cannot take the
+      // wrong belief, which is precisely the case the chat tool has to refuse.
+      check("the similarly-worded belief is untouched",
+        (await prisma.belief.findUniqueOrThrow({ where: { id: lookalikeBelief.id } })).status, "ACTIVE");
+
+      // AND THE SURFACE RE-READ, rather than hiding the row locally.
+      const remaining = await page.evaluate(() =>
+        [...document.querySelectorAll('[data-testid="understanding-correct"]')].map((b) => b.getAttribute("data-belief") ?? ""),
+      );
+      assert("the corrected belief is gone from the surface",
+        !remaining.includes(belief.id), remaining.join(", ") || "none left");
+      assert("and the other one is still there",
+        remaining.includes(lookalikeBelief.id), remaining.join(", ") || "none left");
+
+      // SCROLLED TO THE BELIEFS, because the panel scrolls inside itself and
+      // "What I've learned" is below the fold. A screenshot that cannot show
+      // the control is not evidence of it.
+      await page.evaluate(() => {
+        const btn = document.querySelector('[data-testid="understanding-correct"]');
+        btn?.scrollIntoView({ block: "center" });
+      });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: "verification-screenshots/understanding-corrected.png" });
       // PHOTOGRAPHED. A DOM assertion in this repository once passed underneath
       // a full-screen overlay; attribution the owner cannot read is the same
       // class of pass.

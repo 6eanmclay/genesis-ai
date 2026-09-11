@@ -34,7 +34,7 @@ import { OfficeBand } from "./OfficeBand";
 import { OfficeBriefing } from "./OfficeBriefing";
 import type { BriefingItem, HandledSummary } from "@/lib/j4/officeBriefing";
 import { approveProposalInConversation, rejectProposalInConversation } from "./proposal-actions";
-import { loadDeepKnowledge, type DeepKnowledge } from "./understanding-actions";
+import { loadDeepKnowledge, correctBelief, type DeepKnowledge } from "./understanding-actions";
 import { loadOfficeIntelligence, type OfficeIntelligence } from "./intelligence-actions";
 import type { OfficeFact } from "@/lib/j4/officeFacts";
 import { J4HandoffContext } from "@/app/dashboard/J4HandoffContext";
@@ -197,6 +197,26 @@ export interface UnderstandingFact {
    * and a button for it would be a fake one.
    */
   recordId: string | null;
+  /**
+   * HOW THIS FACT CAN BE CORRECTED — when a real mechanism exists (2026-09-11).
+   *
+   * Null for almost everything, and that is the honest answer rather than a
+   * gap. The Understanding surface shows several KINDS of fact and they are
+   * corrected by different machinery:
+   *
+   *   a belief          contradictBelief() — J4's own conclusion, retired by
+   *                     the owner. Real, owner-only, and wired here.
+   *   the six claims    the fact lifecycle (stateFact supersession), which is
+   *                     a different mechanism and is NOT this slice.
+   *   a derived figure  not correctable at all. "Revenue last 30 days" is
+   *                     computed from real orders; disagreeing with it means
+   *                     the orders are wrong, not the sentence.
+   *
+   * Carrying the mechanism ON the fact is what makes the fake button
+   * unrepresentable: a control cannot be rendered for a fact that has no way
+   * to be corrected, because there is nothing to render it from.
+   */
+  correction: { mechanism: "belief"; id: string } | null;
 }
 
 export interface UnderstandingGroup {
@@ -1176,6 +1196,17 @@ export function J4Workspace({
   const intelligenceLoading = !isLayer && intel === null;
 
   const [deepKnowledge, setDeepKnowledge] = useState<DeepKnowledge | null>(null);
+  /**
+   * Bumped when a belief is retired, so the understanding is RE-READ.
+   *
+   * The row must disappear because J4 no longer holds that belief, not because
+   * the surface hid it. A local edit that happens to agree with the database is
+   * the same class of claim as a success message standing in for a result.
+   */
+  const [deepEpoch, setDeepEpoch] = useState(0);
+  const [correctingId, setCorrectingId] = useState<string | null>(null);
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
+  const [, startCorrection] = useTransition();
   const [loadingDeep, setLoadingDeep] = useState(false);
   const needsDeepKnowledge = shownCategory === "understanding" || contextOpen;
   useEffect(() => {
@@ -1185,7 +1216,7 @@ export function J4Workspace({
       .then(setDeepKnowledge)
       .catch(() => setDeepKnowledge({ groups: [], contextEntries: [] }))
       .finally(() => setLoadingDeep(false));
-  }, [needsDeepKnowledge, deepKnowledge, loadingDeep, slug]);
+  }, [needsDeepKnowledge, deepKnowledge, loadingDeep, slug, deepEpoch]);
 
 
   const [localMessages, setLocalMessages] = useState<Message[]>(messages);
@@ -2565,6 +2596,49 @@ export function J4Workspace({
                             {f.source && f.confidence !== null ? " · " : null}
                             {f.confidence !== null ? `${Math.round(f.confidence * 100)}% sure` : null}
                           </p>
+                        )}
+                        {/* CORRECTION, ONLY WHERE A MECHANISM EXISTS.
+                            Rendered from f.correction, so a fact with no way
+                            to be corrected has nothing to render a control
+                            from — the fake button is unrepresentable rather
+                            than merely avoided. A derived figure gets none
+                            because disagreeing with it means the orders are
+                            wrong, not the sentence. */}
+                        {f.correction && (
+                          <button
+                            type="button"
+                            data-testid="understanding-correct"
+                            data-belief={f.correction.id}
+                            disabled={correctingId === f.correction.id}
+                            onClick={() => {
+                              const id = f.correction!.id;
+                              setCorrectingId(id);
+                              startCorrection(async () => {
+                                try {
+                                  const r = await correctBelief(id, null, slug);
+                                  setCorrectionError(r.ok ? null : r.because);
+                                  // RE-READ, rather than hide the row locally.
+                                  // The belief is retired in the database; the
+                                  // surface must show what J4 now understands,
+                                  // not a local edit that agrees with it.
+                                  if (r.ok) {
+                                    // CLEARED, not just re-requested. The
+                                    // effect returns early while a previous
+                                    // answer is cached, so bumping an epoch
+                                    // alone would have re-rendered the stale
+                                    // belief and looked like it worked.
+                                    setDeepKnowledge(null);
+                                    setDeepEpoch((n) => n + 1);
+                                  }
+                                } finally {
+                                  setCorrectingId(null);
+                                }
+                              });
+                            }}
+                            className="mt-1 rounded-full border border-white/15 px-2.5 py-0.5 text-[11px] text-white/60 transition hover:border-white/30 hover:bg-white/[.04] disabled:opacity-50"
+                          >
+                            {correctingId === f.correction.id ? "Noting that…" : "That's wrong"}
+                          </button>
                         )}
                       </div>
                     ))}

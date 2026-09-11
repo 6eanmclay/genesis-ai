@@ -498,6 +498,106 @@ async function main() {
   check("a claim cannot reach another business's belief",
     (await prisma.belief.findUniqueOrThrow({ where: { id: elsewhere.id } })).status, "ACTIVE");
 
+  // ==========================================================================
+  console.log("\n=== 9. The Understanding surface can correct one, end to end ===\n");
+  // ==========================================================================
+  //
+  // Slice 3. The owner could only tell J4 a belief was wrong by SAYING SO in
+  // chat, where the tool has to match on the claim's wording and refuses
+  // outright when two beliefs read alike. The surface already holds the id.
+  //
+  // What is proven here is the round trip through REAL persistence: the belief
+  // reaches the surface with a correction handle, the correction retires it in
+  // the database, and asking J4 again returns an understanding that no longer
+  // contains it. Not a success message — a changed answer.
+  const { toUnderstandingGroups } = await import("@/lib/j4/understandingGroups");
+
+  const live = await prisma.belief.create({
+    data: {
+      storeId: store.id,
+      topicKey: "slice3:cadence",
+      claim: "They restock on Mondays",
+      category: "operations",
+      confidence: 0.61,
+      evidenceCount: 4,
+      status: "ACTIVE",
+      firstObservedAt: daysAgo(30),
+      lastConfirmedAt: daysAgo(1),
+    },
+  });
+
+  // Only what the mapper reads. The BELIEFS are real, out of the database —
+  // everything else is the minimum shell needed to call it, because this
+  // section is about the belief round trip and not about the other fourteen
+  // groups.
+  const shell = {
+    profile: {
+      identity: { name: "Belief Co", tagline: null, description: null, targetAudience: null, brandPersonality: null, brandVoiceAndTone: null, uniqueSellingProposition: null, offering: null, intent: null },
+      identityProvenance: { offering: null, intent: null, targetAudience: null, brandPersonality: null, brandVoice: null, sellingProposition: null },
+      classification: { businessCategories: [], revenueStreams: [] },
+      offerings: { activeCount: 0, trends: [], items: [], performance: [] },
+      revenue: { last30DaysInCents: 0, allTimeInCents: 0 },
+      customers: { totalContactCount: 0, segments: { repeatCustomers: [], highValueCustomers: [], lapsedCustomers: [], newCustomers: [] }, segmentTrends: {} },
+      people: { owner: null, members: [], employees: [] },
+      suppliers: [], locations: [], goals: [], challenges: [], assets: [], connectedSystems: [],
+    },
+    recentDecisions: [], activeThoughts: [], currentAssets: {},
+    platformRelationship: { planName: null, growthPointBalance: 0, subscriptionStatus: null, businessPartnerTrialEndsAt: null },
+  };
+
+  const groupsFor = async () =>
+    toUnderstandingGroups({ ...shell, beliefs: await getBeliefs(store.id) } as never, "USD")
+      .find((g) => g.key === "beliefs")!;
+
+  const before = await groupsFor();
+  const target = before.facts.find((f) => f.text.startsWith("They restock on Mondays"));
+  assert("BEFORE: the belief reaches the surface", !!target, target?.text ?? "absent");
+  check("and carries a correction addressed by its own id", target?.correction?.id, live.id);
+
+  // SABOTAGE-ADJACENT, AND THE POINT OF THE ID: a second belief that reads
+  // similarly must not be the one retired. The chat tool refuses this case
+  // outright as ambiguous; from the surface there is no matching step at all.
+  const lookalike = await prisma.belief.create({
+    data: {
+      storeId: store.id, topicKey: "slice3:cadence2", claim: "They restock on Mondays and Thursdays",
+      category: "operations", confidence: 0.5, evidenceCount: 3, status: "ACTIVE",
+      firstObservedAt: daysAgo(30), lastConfirmedAt: daysAgo(1),
+    },
+  });
+
+  const corrected = await contradictBelief({
+    storeId: store.id,
+    beliefId: target!.correction!.id,
+    userId: owner.id,
+    note: "We moved to Wednesdays in July",
+  });
+  assert("the correction reaches the real mechanism", corrected.ok, JSON.stringify(corrected));
+
+  // AFTER: persisted, and the understanding genuinely changed.
+  const retiredRow = await prisma.belief.findUniqueOrThrow({ where: { id: live.id } });
+  check("AFTER: the belief is retired in the database", retiredRow.status, "DISMISSED");
+  // THE PREFIX IS DELIBERATE AND MY FIRST EXPECTATION WAS WRONG.
+  // contradictBelief records "dismissed by the owner: <their words>" so that a
+  // later reader can tell the owner DISAGREED from the evidence having decayed
+  // — which is one of the four silent failures this suite exists to prevent.
+  // What matters is that their sentence survives inside it, unedited.
+  assert("the record says the OWNER dismissed it",
+    retiredRow.retiredReason?.startsWith("dismissed by the owner:") ?? false, String(retiredRow.retiredReason));
+  assert("and their own words are kept verbatim inside it",
+    retiredRow.retiredReason?.includes("We moved to Wednesdays in July") ?? false, String(retiredRow.retiredReason));
+
+  const after = await groupsFor();
+  assert("and J4's understanding no longer contains it",
+    !after.facts.some((f) => f.text.startsWith("They restock on Mondays —")),
+    after.facts.map((f) => f.text).join(" | ") || "no beliefs left");
+
+  // THE LOOK-ALIKE SURVIVED. A correction cannot silently take the wrong fact.
+  check("the similarly-worded belief is untouched",
+    (await prisma.belief.findUniqueOrThrow({ where: { id: lookalike.id } })).status, "ACTIVE");
+  assert("and is still on the surface",
+    after.facts.some((f) => f.text.startsWith("They restock on Mondays and Thursdays")),
+    after.facts.map((f) => f.text).join(" | "));
+
   await prisma.store.deleteMany({ where: { id: { in: [store.id, other.id] } } });
   await prisma.user.deleteMany({ where: { id: { in: [owner.id, employee.id] } } });
 

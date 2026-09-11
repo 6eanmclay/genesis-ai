@@ -76,13 +76,20 @@ function trendArrow(direction: "up" | "down" | "flat" | undefined): string {
  */
 function fact(
   text: string,
-  evidence?: { source?: RecordProvenance | null; confidence?: number | null; recordId?: string | null },
+  evidence?: {
+    source?: RecordProvenance | null;
+    confidence?: number | null;
+    recordId?: string | null;
+    /** Only ever supplied where a real correction mechanism exists. */
+    correction?: UnderstandingFact["correction"];
+  },
 ): UnderstandingFact {
   return {
     text,
     source: evidence?.source ?? null,
     confidence: evidence?.confidence ?? null,
     recordId: evidence?.recordId ?? null,
+    correction: evidence?.correction ?? null,
   };
 }
 
@@ -257,8 +264,18 @@ export function toUnderstandingGroups(u: BusinessUnderstanding, currency: string
       // THE ONE PLACE A REAL CONFIDENCE EXISTS. It is computed, so it is shown;
       // nowhere else gets one. INFERENCE by nature: "You concluded this
       // yourself. Nothing outside this system asserted it, so it may be wrong."
+      // THE ONE KIND THE OWNER CAN CORRECT FROM HERE. contradictBelief takes a
+      // beliefId, which the canonical model already carries - the chat tool has
+      // to fuzzy-match claim TEXT only because a language model has no id to
+      // work from, and it refuses outright when two beliefs read alike. From
+      // this surface there is no matching to get wrong.
       facts: beliefs.map((b) =>
-        fact(`${b.claim} — ${b.maturity.replace(/_/g, " ")}`, { source: "INFERENCE", confidence: b.confidence }),
+        fact(`${b.claim} — ${b.maturity.replace(/_/g, " ")}`, {
+          source: "INFERENCE",
+          confidence: b.confidence,
+          recordId: b.id,
+          correction: { mechanism: "belief", id: b.id },
+        }),
       ),
       empty: "Nothing yet. Beliefs form once a real pattern repeats.",
     },
