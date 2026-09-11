@@ -22,7 +22,8 @@ import { GenesisAvatar } from "@/app/dashboard/GenesisAvatar";
 import { J4Character } from "@/components/j4/J4Character";
 import { useJ4State } from "@/components/j4/useJ4State";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
-import { extractAudioUrl, extractChangeList, extractImageUrl, extractImageUrls, extractQuickReplies } from "./messageChanges";
+import { extractAudioUrl, extractChangeList, extractImageUrl, extractImageUrls, extractQuickReplies, extractReferencePresentation } from "./messageChanges";
+import { ReferenceProposalCard } from "./ReferenceProposalCard";
 import { VoiceMemoButton } from "./VoiceMemoButton";
 import { J4SpeakButton } from "./J4SpeakButton";
 import { decideSpeak, NOTHING_SPOKEN, type SpokenState } from "@/lib/voice/spokenReplies";
@@ -2207,6 +2208,10 @@ export function J4Workspace({
                 // own comment on why this stays real conversational
                 // context, not a separate "active batch" flag).
                 const quickReplies = m.role === "assistant" && isLastMessage ? extractQuickReplies(m.changes) : null;
+                // The reference card, rendered from the message J4 attached it to.
+                // Any turn can carry one, not only the newest: an owner scrolling back
+                // should still see what J4 saw and what it proposed.
+                const referenceCard = m.role === "assistant" ? extractReferencePresentation(m.changes) : null;
                 const isStreamingPlaceholder = isLastMessage && m.role === "assistant" && m.content === "";
                 // Null for an ordinary reply and for anything with no execution
                 // row — which is most of the history, and must not read as a
@@ -2325,6 +2330,7 @@ export function J4Workspace({
                         {stateLabel}
                       </span>
                     )}
+                    {referenceCard && <ReferenceProposalCard presentation={referenceCard} />}
                     {quickReplies && quickReplies.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {quickReplies.map((option) => (

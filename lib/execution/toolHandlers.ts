@@ -12,6 +12,7 @@ import { UPLOAD_INTENT_REPLY, extractRichContentImagePrompt } from "@/lib/dashbo
 import { referentFor } from "@/lib/design/referenceUpload";
 import { analyzeReferenceImage } from "@/lib/design/analyzeReference";
 import { explainReading } from "@/lib/design/referenceObservation";
+import { presentReading } from "@/lib/design/referencePresentation";
 import {
   AnswerSupplierEconomicsToolInputSchema,
   ApproveCompositionInputSchema,
@@ -337,6 +338,11 @@ const analyzeDesignReference: ToolHandler = async (ctx) => {
     handled: true,
     reply: lines.join("\n"),
     kind: "design_reference",
+    // THE CARD TRAVELS WITH THE MESSAGE, the same way a photo's URL already
+    // does - one structured field on the turn J4 wrote, not a second message
+    // system. Built from the SAME validated reading the reply is built from,
+    // so the card and the sentence above it cannot describe different changes.
+    messageChanges: { designReference: presentReading(analysis.reading) },
     metadata: {
       referenceRecordId: referent.image.id,
       observations: analysis.reading.observations.length,

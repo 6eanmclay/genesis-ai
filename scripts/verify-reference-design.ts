@@ -15,6 +15,11 @@ import {
   vocabularyForPrompt,
 } from "@/lib/design/analyzeReference";
 import { referentFor } from "@/lib/design/referenceUpload";
+import { readFileSync } from "fs";
+import {
+  presentReading,
+  selectedRefinements,
+} from "@/lib/design/referencePresentation";
 import {
   verdictFor,
   ReferenceEligibilitySchema,
@@ -387,6 +392,99 @@ const inventedKind = ReferenceEligibilitySchema.safeParse({
   what: "a screenshot", looksLike: "website_but_also_a_logo", confidence: "clear",
 });
 assert("and a kind outside the closed list is rejected", !inventedKind.success, "");
+
+console.log("\n=== 10. Show/Choose: what J4 saw, and what it wants to change ===\n");
+// ============ THE TWO MUST NOT LOOK LIKE ONE ======================
+//
+// Sean: "prove that J4 can show the owner exactly what it saw and what it
+// wants to change, without pretending those two things are the same."
+
+// (1) A normal reference with actionable proposals.
+const shown = presentReading(GOOD);
+assert("every actionable proposal becomes a choice", shown.choices.length === 3, `${shown.choices.length}`);
+assert("and each choice carries the OBSERVATION verbatim",
+  shown.choices[0].saw === "The headings are much larger than the body text", shown.choices[0].saw);
+assert("and the change in the store's own vocabulary",
+  shown.choices[0].label === "Type scale" && shown.choices[0].value === "display",
+  `${shown.choices[0].label} / ${shown.choices[0].value}`);
+assert("and why the two are connected", shown.choices[0].why.length > 0, shown.choices[0].why);
+// (6) Citation visible alongside: saw and change are separate fields on the
+// same choice, so a card cannot render one without the other.
+assert("saw and change are separate fields, not one sentence",
+  shown.choices.every((c) => c.saw.length > 0 && c.value.length > 0 && c.saw !== c.value), "");
+
+// (2) Actionable and non-actionable together.
+const mixed = presentReading(beyond);
+assert("an actionable observation becomes a choice", mixed.choices.length === 1, `${mixed.choices.length}`);
+assert("and the unactionable ones are shown, not dropped",
+  mixed.seenButUnchangeable.length === 2, mixed.seenButUnchangeable.join(" | "));
+// (5) bearsOn: null is never selectable - and structurally so. They are
+// strings with no index into anything, not disabled choices.
+assert("an unactionable observation carries no index into the proposals",
+  mixed.seenButUnchangeable.every((s) => typeof s === "string"), "");
+assert("and none of them appears among the choices",
+  mixed.choices.every((c) => !mixed.seenButUnchangeable.includes(c.saw)), "");
+
+// (3) Zero actionable proposals.
+const emptyReading = presentReading({
+  inWords: "A staggered asymmetric grid with pinned navigation.",
+  observations: [
+    { id: "n1", what: "The grid is deliberately asymmetric", bearsOn: null },
+    { id: "n2", what: "The navigation stays pinned while scrolling", bearsOn: null },
+  ],
+  proposals: [],
+});
+assert("a reference with nothing actionable says so", emptyReading.nothingActionable, "");
+assert("offers no choices at all", emptyReading.choices.length === 0, `${emptyReading.choices.length}`);
+assert("but still shows what J4 saw", emptyReading.seenButUnchangeable.length === 2, "");
+
+// (4) Invalid proposals cannot reach the approval surface.
+const invalidOnCard = presentReading({
+  ...GOOD,
+  proposals: [
+    { dimension: "cardStyle", value: "#0A0A0A", becauseOf: "o1", soThat: "x" },
+    { dimension: "buttonStyle", value: "pill", becauseOf: "o-missing", soThat: "x" },
+    { dimension: "spacing", value: "spacious", becauseOf: "o1", soThat: "x" },
+  ] as never,
+});
+assert("an invented value never becomes a choice",
+  invalidOnCard.choices.every((c) => c.value !== "#0A0A0A"), JSON.stringify(invalidOnCard.choices));
+assert("a proposal citing a missing observation never becomes a choice",
+  invalidOnCard.choices.every((c) => c.label !== "Button style"), "");
+assert("and one cited from the wrong observation never becomes a choice",
+  invalidOnCard.choices.length === 0,
+  `spacing cited o1, which bears on typeScale — ${invalidOnCard.choices.length} choices`);
+
+// THE CARD AND THE EXECUTION PATH READ THE SAME LIST. The index is the link,
+// so a tick resolves to the proposal the gate approved rather than to a
+// parallel UI structure that could drift from it.
+const everything = selectedRefinements(GOOD, shown.choices.map((c) => c.index));
+assert("selecting every choice yields exactly the gate's refinements",
+  JSON.stringify(everything) === JSON.stringify(refinementsFrom(GOOD)),
+  JSON.stringify(everything));
+const someOnly = selectedRefinements(GOOD, [0, 2]);
+assert("and selecting some yields only those",
+  someOnly.length === 2 && someOnly[0].dimension === "typeScale" && someOnly[1].dimension === "imageTreatment",
+  JSON.stringify(someOnly));
+assert("an index nobody could have been shown resolves to nothing",
+  selectedRefinements(GOOD, [99, -1]).length === 0, "never to a neighbour");
+assert("and the same choice ticked twice is still one refinement",
+  selectedRefinements(GOOD, [1, 1]).length === 1, "");
+
+// (7) Approving at this stage produces no mutation - a property of the code.
+// These modules import nothing that can write: no prisma, no server action,
+// no executable. A test that merely observed "nothing changed" would prove
+// only that this run did not; this proves it cannot.
+const presentationSource = readFileSync("lib/design/referencePresentation.ts", "utf8");
+const cardSource = readFileSync("app/j4/ReferenceProposalCard.tsx", "utf8");
+for (const [name, source] of [["referencePresentation", presentationSource], ["ReferenceProposalCard", cardSource]] as const) {
+  assert(`${name} imports nothing that can write to a store`,
+    !/from "@\/lib\/prisma"|prismaSystem|refineStorefront|executeExecutable|"use server"/.test(source),
+    "Show/Choose must be non-mutating by construction, not by current wiring");
+}
+assert("the card's apply control is inert and says so",
+  /disabled/.test(cardSource) && /isn&rsquo;t connected yet/.test(cardSource),
+  "an inert control that looked finished would be a prototype screen");
 
 console.log(`\n${failures === 0 ? `ALL PASS` : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
