@@ -78,11 +78,17 @@ async function readBriefing(page: Page) {
     // no test ever read them together.
     const bandEl = document.querySelector('[data-testid="office-fact-needs-you"]');
     const bandNeedsYou = bandEl ? Number((bandEl.textContent ?? "").replace(/[^\d]/g, "")) : null;
+    const taskEl = document.querySelector('[data-testid="office-fact-tasks"]');
+    const bandTasks = taskEl ? Number((taskEl.textContent ?? "").replace(/[^\d]/g, "")) : null;
 
     const handled = document.querySelector('[data-testid="briefing-handled"]');
     return {
       present: !!root,
       bandNeedsYou,
+      bandTasks,
+      taskRowIds: [...document.querySelectorAll('[data-testid="work-row"]')]
+        .map((el) => el.getAttribute("data-work-id") ?? "")
+        .filter((id) => id.startsWith("task:")),
       bandNeedsYouSource: bandEl?.getAttribute("title") ?? null,
       sections,
       rows,
@@ -312,6 +318,19 @@ async function main(): Promise<void> {
         /only you can provide/i.test(b.bandNeedsYouSource ?? ""),
         b.bandNeedsYouSource ?? "no source");
 
+      // ---- EVERY COUNTED TASK IS ON THE SCREEN ----------------------
+      //
+      // The strip reported three open tasks while officeWork was handed
+      // `tasks: []`, so they were counted here and rendered nowhere. Read off
+      // the same page now: the number in the strip and the task rows actually
+      // painted below it.
+      check(`${width}: every task the strip counts is rendered as a row`,
+        b.bandTasks === b.taskRowIds.length,
+        `strip ${b.bandTasks} vs ${b.taskRowIds.length} task rows`);
+      check(`${width}: a counted task cannot be absent from the sections`,
+        !((b.bandTasks ?? 0) > 0 && b.taskRowIds.length === 0),
+        `strip ${b.bandTasks}, rows ${b.taskRowIds.length}`);
+
       // The same invariant for DECIDE, since its count is derived the same way.
       const decideRows = b.rows.filter((r) => r.section === "decide");
       const decideSection = b.sections.find((s) => s.key === "decide");
@@ -329,7 +348,30 @@ async function main(): Promise<void> {
       // One product.edit is news; a chat turn and an internal finding are not.
       check(`${width}: internal executions did not become news`, b.changes === 1, `${b.changes} change lines`);
 
-      await page.screenshot({ path: `verification-screenshots/arrival-${label}.png` });
+      // FULL PAGE, not the viewport. The viewport stops at DECIDE, so the task
+      // rows in NOTICED — the whole point of this fix — were off the bottom of
+      // the evidence. A screenshot that cannot show the thing under test is not
+      // evidence of it.
+      await page.screenshot({ path: `verification-screenshots/arrival-${label}.png`, fullPage: true });
+
+      // AND THE BOTTOM OF THE LIST, which fullPage does NOT reach.
+      //
+      // The Office is a fixed overlay that scrolls inside itself, so the
+      // document is never taller than the viewport and `fullPage` returns the
+      // same first screen. The NOTICED section — where every task row lands —
+      // was simply off the bottom of the evidence, which is how a screenshot
+      // comes to "confirm" something it cannot show.
+      const scrolled = await page.evaluate(() => {
+        const root = document.querySelector('[data-testid="office-briefing"]');
+        let el: HTMLElement | null = root as HTMLElement | null;
+        while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement;
+        if (!el) return false;
+        el.scrollTop = el.scrollHeight;
+        return true;
+      });
+      check(`${width}: the list scrolls, so the lower sections are reachable`, scrolled);
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `verification-screenshots/arrival-${label}-noticed.png` });
     }
 
     // ---- J4 DOES NOT WAIT FOR THE BUSINESS DATA ---------------------------

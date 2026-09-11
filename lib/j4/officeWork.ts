@@ -1,7 +1,7 @@
 import type { BusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { actionForNeed, type BusinessNeed } from "./ownerCapability";
-import { officeActionForExplanation, type OfficeAction } from "./officeActions";
+import { officeActionForExplanation, officeActionForTask, type OfficeAction } from "./officeActions";
 import type { BriefingItem, HandledSummary } from "./officeBriefing";
 
 /**
@@ -77,8 +77,33 @@ import type { OfficeSection, WorkItem, OfficeWork } from "./officeSections";
 export interface WorkingState {
   decisions: BriefingItem[];
   observations: BriefingItem[];
-  tasks: BriefingItem[];
+  /**
+   * Open tasks, as they come out of the database.
+   *
+   * NOT BriefingItem[]. That was the shape here until 2026-09-11, and because
+   * buildBriefing has no task branch there was nothing to put in it — so the
+   * caller passed `tasks: []` and three real open tasks were counted in the
+   * strip while appearing in no section at all.
+   *
+   * Taking the row itself means the omission cannot recur silently: there is
+   * no empty array that typechecks as "all of them".
+   */
+  tasks: { id: string; title: string; summary: string; actionHref?: string | null }[];
   handled: HandledSummary;
+}
+
+/**
+ * The id a task carries once it is work.
+ *
+ * Prefixed, like `need:`, so "counted but missing" is a testable claim rather
+ * than an eyeball comparison: every open task must appear as workIdForTask(id)
+ * in work.items, and scripts/verify-office-work.ts asserts exactly that.
+ *
+ * Nothing approves a task, so unlike a decision — whose id IS the approval id
+ * the server action needs — prefixing here costs nothing.
+ */
+export function workIdForTask(taskId: string): string {
+  return `task:${taskId}`;
 }
 
 
@@ -150,13 +175,27 @@ export function officeWork(
 
   // FROM THE WORKING STATE. Already carrying their own actions, decided by the
   // rules in officeActions.ts - this does not re-decide one of them.
-  for (const item of [...state.decisions, ...state.observations, ...state.tasks]) {
+  for (const item of [...state.decisions, ...state.observations]) {
     items.push({
       id: item.id,
       headline: item.headline,
       why: item.why,
       standingDays: item.standingDays,
       action: item.action,
+    });
+  }
+
+  // OPEN TASKS, through the same action layer as everything else.
+  //
+  // The title is what J4 found and the summary is why it matters - the same
+  // two roles every other row uses, rather than a third way of saying them.
+  for (const task of state.tasks) {
+    items.push({
+      id: workIdForTask(task.id),
+      headline: task.title,
+      why: task.summary.trim() ? task.summary : null,
+      standingDays: null,
+      action: officeActionForTask(task, basePath),
     });
   }
 

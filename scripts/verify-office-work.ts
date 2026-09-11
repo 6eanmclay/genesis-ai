@@ -5,10 +5,12 @@ import {
   needsFor,
   sectionFor,
   itemsIn,
+  workIdForTask,
   type OfficeSection,
   type WorkingState,
 } from "@/lib/j4/officeWork";
 import { ASSET_ROLES } from "@/lib/businessModel/assets";
+import { isInteractive } from "@/lib/j4/officeActions";
 import type { OfficeAction } from "@/lib/j4/officeActions";
 import type { BusinessUnderstanding } from "@/lib/businessModel/understanding";
 
@@ -164,6 +166,67 @@ check("handled is carried through, not invented",
 check("and it is NOT in the item list",
   !mixed.items.some((i) => i.id === "handled"),
   "four sections filter the list; DONE is retrospective and separate");
+
+// ---- 6a. every open task is in the list, or it is not counted -----------
+//
+// THE DEFECT THIS EXISTS TO END. The strip reported three open tasks while
+// officeWork was handed `tasks: []`, so they were counted in one place and
+// absent from the list every section filters. Nothing failed: the count was
+// true, the sections were true, and no test read them together.
+//
+// Sean's rule: "If J4 says there are 3 open tasks, those tasks must exist as
+// actual work.items and be classified into one of the five arrival states."
+console.log("\n=== a counted task cannot be a missing task ===\n");
+
+const TASKS = [
+  { id: "t1", title: "Reconnect QuickBooks", summary: "It stopped syncing nine days ago.", actionHref: "/dashboard/connections" },
+  { id: "t2", title: "Write your returns policy", summary: "Customers ask and there is nothing to point at.", actionHref: null },
+  { id: "t3", title: "Confirm your shipping origin", summary: "", actionHref: null },
+];
+
+const withTasks = officeWork(understandingWith({ activeProducts: 0, hasPhoto: true }), { ...emptyState, tasks: TASKS }, BASE);
+
+check("every open task reaches work.items",
+  TASKS.every((t) => withTasks.items.some((i) => i.id === workIdForTask(t.id))),
+  `${TASKS.length} tasks, ${withTasks.items.filter((i) => i.id.startsWith("task:")).length} in the list`);
+
+// COUNTED IMPLIES PRESENT, as one predicate rather than two numbers that
+// happen to match today.
+const countedTaskIds = TASKS.map((t) => workIdForTask(t.id));
+const presentTaskIds = withTasks.items.filter((i) => i.id.startsWith("task:")).map((i) => i.id);
+check("nothing is counted while silently disappearing",
+  countedTaskIds.every((id) => presentTaskIds.includes(id)) && presentTaskIds.length === countedTaskIds.length,
+  `counted ${countedTaskIds.length}, present ${presentTaskIds.length}`);
+
+// AND EACH ONE IS CLASSIFIED BY THE SAME FUNCTION AS EVERYTHING ELSE.
+for (const t of TASKS) {
+  const item = withTasks.items.find((i) => i.id === workIdForTask(t.id));
+  const section = item ? sectionFor(item.action) : null;
+  check(`"${t.title}" lands in a real section`, section !== null, String(section));
+}
+
+// A task with somewhere to go is followable; one without says why and wears
+// no control. The same rule every other row obeys — not a task-specific one.
+const navigable = withTasks.items.find((i) => i.id === workIdForTask("t1"));
+check("a task with a destination is followable",
+  navigable?.action.kind === "open" && navigable.action.href === `${BASE}/connections`,
+  navigable?.action.kind === "open" ? navigable.action.href : String(navigable?.action.kind));
+const inert = withTasks.items.find((i) => i.id === workIdForTask("t2"));
+check("a task with nowhere to go says so instead",
+  inert?.action.kind === "none" && inert.action.because.length > 20,
+  inert?.action.kind === "none" ? inert.action.because : String(inert?.action.kind));
+check("  and is not pressable", inert !== undefined && !isInteractive(inert.action));
+
+// NOT AN EXECUTE. A Task carries actionType and trustLevel, so it looks
+// runnable; nothing in the Office runs one, and a button would be a fake one.
+check("no task claims to be executable",
+  !withTasks.items.filter((i) => i.id.startsWith("task:")).some((i) => i.action.kind === "execute"),
+  "tasks navigate; they do not execute yet");
+
+// The summary becomes the why, and an empty one becomes nothing rather than
+// an empty line pretending to be a reason.
+const blank = withTasks.items.find((i) => i.id === workIdForTask("t3"));
+check("an empty summary renders as no reason at all", blank?.why === null, String(blank?.why));
 
 // ---- 6b. the client may import the contract safely ----------------------
 //

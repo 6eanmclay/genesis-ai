@@ -189,6 +189,11 @@ function WorkRow({
     <div
       data-testid="work-row"
       data-action={action.kind}
+      // The work id, so a suite can prove that what the strip counts is what
+      // the page renders. A task carries a `task:` prefix, which is how
+      // "counted but missing" became a testable claim after three real open
+      // tasks were counted in the strip and rendered in no section at all.
+      data-work-id={item.id}
       className="rounded-xl border border-white/[.07] bg-white/[.02] p-3.5"
     >
       <p className="break-words text-[14.5px] leading-snug text-[#f4f2fb]">{item.headline}</p>

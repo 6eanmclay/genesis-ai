@@ -208,7 +208,10 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     {
       decisions: briefingItems.filter((i) => i.kind === "decision"),
       observations: briefingItems.filter((i) => i.kind !== "decision"),
-      tasks: [],
+      // THE REAL ONES. This was `tasks: []` from 5689a99 until 2026-09-11,
+      // which is why the strip could report three open tasks that appeared in
+      // no section — counted, and absent from the list the sections filter.
+      tasks: openTasks,
       handled,
     },
     basePath,

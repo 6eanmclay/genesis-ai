@@ -328,6 +328,41 @@ export function officeActionForObservation(
 }
 
 /**
+ * What an owner can do about one open task.
+ *
+ * ============ THE ROW TYPE THIS MODULE NEVER GOVERNED (2026-09-11) =====
+ *
+ * Every other Office row has been through here since the 198 fake buttons
+ * were removed. Tasks were not. They were mapped straight from the database
+ * row - `href: t.actionHref` - and the Tasks view renders `because={t.because}`
+ * against a field nothing has ever set, so that prop has always been
+ * undefined.
+ *
+ * That gap is why an open task had no OfficeAction, which is why it could not
+ * be placed in one of the five arrival sections, which is why the strip could
+ * count three tasks the arrival surface never showed.
+ *
+ * NOT AN EXECUTE, DELIBERATELY. A Task carries `actionType` and `trustLevel`,
+ * so it looks like something that could be run from here. Nothing in the
+ * Office runs one today - the Tasks view offers navigation and nothing else -
+ * and giving it a button because the column exists would be inventing the
+ * lever Sean ruled out. When a task genuinely becomes executable it changes
+ * here, once, and moves itself into READY TO GO.
+ */
+export function officeActionForTask(
+  task: { actionHref?: string | null },
+  basePath: string,
+): OfficeAction {
+  if (task.actionHref) {
+    return { kind: "open", label: "Open", href: sectionHref(task.actionHref, basePath) };
+  }
+  return {
+    kind: "none",
+    because: "I am holding this for you. There is no screen I can send you to for it yet.",
+  };
+}
+
+/**
  * The interaction affordance a row is allowed to wear.
  *
  * THIS LIVES HERE, NOT IN THE COMPONENT, ON PURPOSE. The 198 fake buttons were
