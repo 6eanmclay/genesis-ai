@@ -200,6 +200,20 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
   );
   const handled = summariseHandled(handledRaw, basePath);
 
+  // DERIVED ONCE, READ TWICE. The strip and the sections both need this list,
+  // and computing it in two places is exactly how "2 NEEDS YOU" came to sit
+  // above "Nothing is waiting on you right now".
+  const work = officeWork(
+    understanding,
+    {
+      decisions: briefingItems.filter((i) => i.kind === "decision"),
+      observations: briefingItems.filter((i) => i.kind !== "decision"),
+      tasks: [],
+      handled,
+    },
+    basePath,
+  );
+
   return {
     // ============ THE DERIVED SEAM, NOT RENDERED YET ==================
     //
@@ -211,27 +225,21 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     // already applied officeActions' rules to decisions and observations, and
     // applying them a second time here is precisely how two rails come to
     // disagree about the same row.
-    work: officeWork(
-      understanding,
-      {
-        decisions: briefingItems.filter((i) => i.kind === "decision"),
-        observations: briefingItems.filter((i) => i.kind !== "decision"),
-        tasks: [],
-        handled,
-      },
-      basePath,
-    ),
+    work,
     briefingItems,
     handled,
+    // THE STRIP READS THE SAME LIST THE SECTIONS DO. Its "Needs you" and
+    // "Decisions" counts are no longer passed in — officeFacts derives them
+    // from `work` with the same itemsIn the sections use, so the number above
+    // a section and the rows inside it cannot describe different sets.
     facts: officeFacts(
       {
         activeProducts: activeProductCount,
         openTasks: openTasks.length,
-        pendingDecisions: pendingApprovals.length,
         opportunities: ideas.length,
-        needsYou: urgent.length,
       },
       basePath,
+      work,
     ),
     tasks: openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary, href: t.actionHref, priority: t.priority })),
     ideas: ideas.map((o) => {

@@ -1,3 +1,6 @@
+import { itemsIn } from "./officeSections";
+import type { OfficeAction } from "./officeActions";
+
 /**
  * WHAT J4 ACTUALLY KNOWS, AS NUMBERS THAT CAME FROM SOMEWHERE.
  *
@@ -54,12 +57,35 @@ export interface OfficeFact {
   quiet?: boolean;
 }
 
+/**
+ * The counts that do NOT come from the work list.
+ *
+ * ============ WHY TWO OF THEM LEFT THIS TYPE (2026-09-11) ==============
+ *
+ * The strip said "2 NEEDS YOU" directly above a section reading "Nothing is
+ * waiting on you right now". Both were green in every suite, because they were
+ * different components counting different things through the same two words:
+ *
+ *   the strip     urgent observations - `needsYou: urgent.length`
+ *   the section   items whose action is needs_owner
+ *
+ * Neither was computing wrongly. They disagreed because "needs you" had two
+ * meanings and nothing forced them together, which is the same one-fact-two-
+ * paths shape this codebase keeps finding.
+ *
+ * The fix is not a corrected number, which would drift again the moment either
+ * side changed. `needsYou` and `pendingDecisions` are GONE from this type, so a
+ * caller can no longer supply them at all - they are derived from the same
+ * work list the sections filter, by the same `itemsIn`, and a strip that
+ * disagrees with its section is now unrepresentable rather than merely fixed.
+ *
+ * What stays here is what has no section to agree with: the catalogue, open
+ * tasks, and opportunities.
+ */
 export interface OfficeFactInput {
   activeProducts: number;
   openTasks: number;
-  pendingDecisions: number;
   opportunities: number;
-  needsYou: number;
 }
 
 /**
@@ -80,7 +106,17 @@ export interface OfficeFactInput {
  * Sean named. Products is a real room because a product is a real thing
  * elsewhere.
  */
-export function officeFacts(input: OfficeFactInput, basePath: string): OfficeFact[] {
+export function officeFacts(
+  input: OfficeFactInput,
+  basePath: string,
+  /**
+   * The same list the Office's sections filter.
+   *
+   * Structurally typed, so this module needs nothing from officeWork and
+   * cannot drag the derivation layer anywhere it should not go.
+   */
+  work: { items: { action: OfficeAction }[] },
+): OfficeFact[] {
   const facts: OfficeFact[] = [
     {
       label: "Products",
@@ -95,14 +131,22 @@ export function officeFacts(input: OfficeFactInput, basePath: string): OfficeFac
       source: "things J4 noticed that could be worth doing",
     },
     {
+      // ONE SOURCE OF TRUTH WITH THE SECTION BELOW IT. Same list, same filter,
+      // same function — so the number and the rows cannot describe different
+      // sets. And it now means what the section means: what only the owner can
+      // supply, not every urgent thing J4 found.
       label: "Needs you",
-      value: input.needsYou,
-      target: { kind: "view", view: "information" },
-      source: "problems J4 found that are waiting on you",
+      value: itemsIn(work, "needs_you").length,
+      // THE DESTINATION MOVED WITH THE MEANING. It pointed at the Information
+      // view, which does not show needs_owner items at all — so following a
+      // non-zero count landed on a screen that could not contain what was
+      // counted. The section that holds them is on the arrival surface.
+      target: { kind: "view", view: "briefing" },
+      source: "things only you can provide, decide or unblock",
     },
     {
       label: "Decisions",
-      value: input.pendingDecisions,
+      value: itemsIn(work, "decide").length,
       target: { kind: "view", view: "decisions" },
       source: "actions J4 has prepared and is holding for your approval",
     },

@@ -222,15 +222,20 @@ async function main() {
   const [observations, explanations, approvals, tasks, productCount, handledRaw] = await officeReads();
   const ideas = observations.filter((o) => o.genesisState === "opportunity");
   const urgent = observations.filter((o) => o.genesisState === "urgent");
+  // Derived before the legacy payload, because officeFacts now reads the same
+  // work list the Office's sections filter rather than taking loose counts.
+  const handledSummary = summariseHandled(handledRaw, "/dashboard");
+  const work = officeWork(u, { decisions: [], observations: [], tasks: [], handled: handledSummary }, "/dashboard");
   const legacy = {
     briefingItems: buildBriefing(
       { decisions: approvals.map((a) => ({ id: a.id, summary: a.summary, rationale: a.rationale, createdAt: a.createdAt })), observations },
       "/dashboard",
     ),
-    handled: summariseHandled(handledRaw, "/dashboard"),
+    handled: handledSummary,
     facts: officeFacts(
-      { activeProducts: productCount, openTasks: tasks.length, pendingDecisions: approvals.length, opportunities: ideas.length, needsYou: urgent.length },
+      { activeProducts: productCount, openTasks: tasks.length, opportunities: ideas.length },
       "/dashboard",
+      work,
     ),
     tasks: tasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary, href: t.actionHref, priority: t.priority })),
     ideas: ideas.map((o) => ({ id: o.id, summary: o.summary, href: officeActionForObservation(o, "/dashboard").kind === "open" ? "x" : null })),
@@ -240,7 +245,6 @@ async function main() {
       ...explanations.map((e) => ({ id: e.id, summary: e.summary, href: officeActionForExplanation(e, "/dashboard").kind === "open" ? "x" : null, kind: "curiosity" })),
     ],
   };
-  const work = officeWork(u, { decisions: [], observations: [], tasks: [], handled: legacy.handled }, "/dashboard");
 
   const legacyBytes = Buffer.byteLength(JSON.stringify(legacy));
   const workBytes = Buffer.byteLength(JSON.stringify(work));

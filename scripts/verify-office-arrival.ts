@@ -71,9 +71,19 @@ async function readBriefing(page: Page) {
         visible: r.width > 0 && r.height > 0,
       };
     });
+    // THE STRIP, READ FROM THE SAME SCREEN AS THE SECTIONS.
+    //
+    // This is the assertion that was missing when "2 NEEDS YOU" sat above
+    // "Nothing is waiting on you right now": both halves were green because
+    // no test ever read them together.
+    const bandEl = document.querySelector('[data-testid="office-fact-needs-you"]');
+    const bandNeedsYou = bandEl ? Number((bandEl.textContent ?? "").replace(/[^\d]/g, "")) : null;
+
     const handled = document.querySelector('[data-testid="briefing-handled"]');
     return {
       present: !!root,
+      bandNeedsYou,
+      bandNeedsYouSource: bandEl?.getAttribute("title") ?? null,
       sections,
       rows,
       handled: handled ? (handled.textContent ?? "").replace(/\s+/g, " ").trim() : null,
@@ -285,6 +295,29 @@ async function main(): Promise<void> {
       const needsRows = b.rows.filter((r) => r.action === "needs_owner");
       const needsSection = b.sections.find((s) => s.key === "needs_you");
       check(`${width}: NEEDS YOU is present even with nothing in it`, !!needsSection, "the section must not vanish");
+
+      // ---- THE STRIP AND THE SECTION, ON ONE SCREEN ------------------
+      //
+      // The defect a screenshot caught and no assertion did: the strip read
+      // "2 NEEDS YOU" directly above a section reading "Nothing is waiting on
+      // you right now". Read together now, from the rendered page, because
+      // that is the only place the contradiction was ever visible.
+      check(`${width}: the strip's NEEDS YOU count equals the rows below it`,
+        b.bandNeedsYou === needsRows.length,
+        `strip ${b.bandNeedsYou} vs ${needsRows.length} rows`);
+      check(`${width}: a non-zero strip count cannot sit above an empty section`,
+        !((b.bandNeedsYou ?? 0) > 0 && needsRows.length === 0),
+        `strip ${b.bandNeedsYou}, rows ${needsRows.length}`);
+      check(`${width}: and the strip says what it now means`,
+        /only you can provide/i.test(b.bandNeedsYouSource ?? ""),
+        b.bandNeedsYouSource ?? "no source");
+
+      // The same invariant for DECIDE, since its count is derived the same way.
+      const decideRows = b.rows.filter((r) => r.section === "decide");
+      const decideSection = b.sections.find((s) => s.key === "decide");
+      check(`${width}: DECIDE's rendered count matches its rows`,
+        decideSection?.count === decideRows.length,
+        `section says ${decideSection?.count}, ${decideRows.length} rows`);
       for (const r of needsRows) {
         check(`${width}: a needs-you row names what J4 needs`, !!r.needsWhat, r.needsWhat ?? "MISSING");
         check(`${width}: and why J4 cannot supply it`, !!r.needsBecause, r.needsBecause ?? "MISSING");
