@@ -52,6 +52,39 @@ export interface ConfirmationOrder {
    * line above is the whole truth and this stays empty.
    */
   items: ConfirmationLine[];
+  /**
+   * WHEN THE ORDER WAS ACTUALLY PLACED (2026-09-11).
+   *
+   * Added so "is this receipt late" is a FACT about the order rather than a
+   * flag a caller passes. A boolean argument would mean the recovery script
+   * and the backstop sweep each had to remember to set it, and the failure
+   * mode of forgetting is the exact thing Sean ruled out: an eight-week-old
+   * purchase confirmed to the customer as though it just happened.
+   *
+   * Derived, so it cannot be got wrong by whoever sends.
+   */
+  placedAt: Date;
+}
+
+/**
+ * How old a receipt has to be before it announces itself as late.
+ *
+ * 48 hours, and the number is chosen against the real delivery paths rather
+ * than picked for feel:
+ *
+ *   inline      seconds after the order commits
+ *   backstop    declares 15 minutes, currently triggered daily (E3)
+ *
+ * So the slowest LEGITIMATE send is a little over 24 hours. Forty-eight puts
+ * the threshold clear of that with room to spare, which means a normal order
+ * can never trip the late wording, and a genuine recovery — the oldest of the
+ * three waiting customers is eight weeks out — always does.
+ */
+export const LATE_RECEIPT_AFTER_MS = 48 * 60 * 60 * 1000;
+
+/** Whether this receipt is reaching the customer late. A fact, not a choice. */
+export function isLateReceipt(placedAt: Date, now: Date = new Date()): boolean {
+  return now.getTime() - placedAt.getTime() > LATE_RECEIPT_AFTER_MS;
 }
 
 /** One line of a receipt. */
@@ -109,8 +142,11 @@ export type ConfirmationOutcome =
 export function buildConfirmationEmail(params: {
   order: ConfirmationOrder;
   store: ConfirmationStore;
+  /** Injected so lateness is testable without waiting eight weeks. */
+  now?: Date;
 }): { to: string; subject: string; html: string; fromName: string } {
   const { order, store } = params;
+  const now = params.now ?? new Date();
   const total = formatMoney(order.amountInCents, store.currency);
 
   // Shipping is mentioned only when the customer actually chose a service.
@@ -147,14 +183,35 @@ export function buildConfirmationEmail(params: {
         ].join("")
       : "";
 
+  // ============ A LATE RECEIPT SAYS SO (2026-09-11) =================
+  //
+  // Sean: "Do not send the normal fresh-order confirmation to an eight-week-old
+  // customer as though the purchase just happened... brief and honest... Do not
+  // over-apologize and do not imply the order itself is new."
+  //
+  // Three real people have been waiting six to eight weeks for these. The
+  // normal template opens "Thank you — X has received your order", which for
+  // them would be false about the one thing they would check.
+  //
+  // THE NORMAL TEMPLATE IS UNTOUCHED. This is an additional branch, not an
+  // edit to the existing wording, so a current order produces exactly the
+  // bytes it produced before.
+  const late = isLateReceipt(order.placedAt, now);
+
   return {
     to: order.buyerEmail,
-    subject: `Your order from ${store.name}`,
+    // THE SUBJECT CHANGES TOO, and it has to. "Your order from X" landing
+    // eight weeks after the purchase reads in an inbox as a NEW order, which
+    // is precisely what the body is about to say it is not. "Receipt" is the
+    // accurate word for what this is.
+    subject: late ? `Your receipt from ${store.name}` : `Your order from ${store.name}`,
     // The store's own name in front of the address, so the customer sees who
     // they bought from rather than a platform they have never heard of.
     fromName: store.name,
     html: [
-      `<p>Thank you — ${store.name} has received your order.</p>`,
+      late
+        ? `<p>Your order was received successfully, but our receipt notification was not sent when it should have been. We're sorry this receipt is reaching you late. Your order details are below for your records.</p>`
+        : `<p>Thank you — ${store.name} has received your order.</p>`,
       itemLines
         ? `<p><strong>Your order</strong> — ${total}</p>${itemLines}`
         : `<p><strong>${order.productName}</strong> — ${total}</p>`,
@@ -162,7 +219,12 @@ export function buildConfirmationEmail(params: {
       // The reference a human can quote back. Without it a customer with a
       // problem has nothing to give anyone.
       `<p>Order reference: ${order.externalOrderId}</p>`,
-      `<p>You'll hear from us again when it ships.</p>`,
+      // OMITTED ON A LATE RECEIPT. "You'll hear from us again when it ships"
+      // is a promise about the future; for an order placed eight weeks ago it
+      // may already have shipped, and telling that customer to expect a
+      // notice they have missed or will never get is a second false claim
+      // stacked on the one this variant exists to correct.
+      late ? "" : `<p>You'll hear from us again when it ships.</p>`,
     ]
       .filter(Boolean)
       .join("\n"),
@@ -250,7 +312,7 @@ export async function sendOrderConfirmation(
     operation: "email.confirmationSentAt",
     storeId,
     perform: async () => {
-      await send(buildConfirmationEmail({ order, store: order.store }));
+      await send(buildConfirmationEmail({ order: { ...order, placedAt: order.createdAt }, store: order.store }));
       return { result: { sent: true } };
     },
   });

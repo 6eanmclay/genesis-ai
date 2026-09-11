@@ -100,6 +100,8 @@ const ORDER = {
   selectedShippingService: null,
   selectedShippingEstDays: null,
   items: [] as { productName: string; quantity: number; subtotalInCents: number }[],
+  // Recent, so this fixture exercises the NORMAL receipt template.
+  placedAt: new Date(),
 };
 
 const receipt = buildConfirmationEmail({

@@ -1,4 +1,4 @@
-import { buildConfirmationEmail } from "@/lib/orders/orderConfirmation";
+import { buildConfirmationEmail, isLateReceipt } from "@/lib/orders/orderConfirmation";
 import { labelPurchaseMessage } from "@/lib/orders/notifyCustomerShipped";
 
 // What the customer is told, and who it is about. No database, no email:
@@ -45,6 +45,9 @@ const ORDER = {
   // existing assertion below describes. The itemised branch is exercised
   // separately, in section 7.
   items: [] as { productName: string; quantity: number; subtotalInCents: number }[],
+  // Recent, so every existing assertion below keeps exercising the NORMAL
+  // template. The late variant is asserted separately.
+  placedAt: new Date(),
 };
 const STORE = { name: "Cubit & Coil", currency: "USD" };
 
@@ -142,6 +145,65 @@ console.log("\n5. The owner is told when the customer was not");
   // And only the ones that genuinely need the owner to act say so.
   const alreadyTold = labelPurchaseMessage({ ...label, notification: { notified: false, reason: "already_notified" } });
   assert("a repeat does not ask the owner to do anything", !alreadyTold.includes("yourself"), alreadyTold);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n6. A late receipt says so, and does not pretend the order is new");
+{
+  // Sean, 2026-09-11: "Do not send the normal fresh-order confirmation to an
+  // eight-week-old customer as though the purchase just happened... Do not
+  // over-apologize and do not imply the order itself is new."
+  //
+  // Three real people are waiting six to eight weeks for these.
+  const NOW = new Date("2026-09-11T12:00:00Z");
+  const eightWeeksAgo = new Date(NOW.getTime() - 56 * 24 * 60 * 60 * 1000);
+  const late = buildConfirmationEmail({ order: { ...ORDER, placedAt: eightWeeksAgo }, store: STORE, now: NOW });
+
+  assert("it acknowledges the receipt is late",
+    late.html.includes("reaching you late"), late.html.slice(0, 120));
+  assert("it says the ORDER was received, not that it just arrived",
+    late.html.includes("Your order was received successfully"), late.html.slice(0, 120));
+  assert("it does NOT open with the fresh-order thank-you",
+    !late.html.includes("has received your order"), late.html.slice(0, 120));
+
+  // THE SUBJECT MATTERS AS MUCH AS THE BODY. "Your order from X" landing eight
+  // weeks later reads in an inbox as a new order.
+  check("the subject calls it a receipt", late.subject, "Your receipt from Cubit & Coil");
+
+  // NOT AN APOLOGY LETTER. One sorry, and no grovelling.
+  const sorries = (late.html.match(/sorry|apolog/gi) ?? []).length;
+  assert("it apologises once, not repeatedly", sorries === 1, `${sorries} apologies`);
+
+  // AND IT MAKES NO PROMISE IT CANNOT KEEP. The order may already have shipped.
+  assert("it does not promise a shipping notice that may already be gone",
+    !late.html.includes("when it ships"), late.html);
+
+  // The details the customer actually needs are unchanged.
+  assert("the order details are still there", late.html.includes(ORDER.externalOrderId), late.html);
+  check("and it still goes to the buyer", late.to, ORDER.buyerEmail);
+
+  // ============ THE NORMAL TEMPLATE IS UNTOUCHED ====================
+  //
+  // Sean: "Keep the existing normal receipt template unchanged for current
+  // orders." Asserted as BYTE EQUALITY against a fresh order rather than by
+  // reading the diff, because that is the claim.
+  const fresh = buildConfirmationEmail({ order: { ...ORDER, placedAt: NOW }, store: STORE, now: NOW });
+  assert("a fresh order still gets the original opening",
+    fresh.html.includes(`Thank you — ${STORE.name} has received your order.`), fresh.html.slice(0, 120));
+  check("and the original subject", fresh.subject, "Your order from Cubit & Coil");
+  assert("and still promises the shipping notice", fresh.html.includes("when it ships"), fresh.html);
+  assert("a fresh receipt never mentions lateness", !/late|sorry/i.test(fresh.html), fresh.html);
+
+  // THE THRESHOLD IS A FACT, NOT A FLAG. A caller cannot ask for the late
+  // wording on a new order, or suppress it on an old one.
+  const justUnder = new Date(NOW.getTime() - 47 * 60 * 60 * 1000);
+  const justOver = new Date(NOW.getTime() - 49 * 60 * 60 * 1000);
+  assert("47 hours old is still a normal receipt", !isLateReceipt(justUnder, NOW));
+  assert("49 hours old is a late one", isLateReceipt(justOver, NOW));
+  // The slowest legitimate send is the daily backstop, a little over 24h, so a
+  // normal order can never reach the threshold.
+  assert("a backstop send a day later is NOT late",
+    !isLateReceipt(new Date(NOW.getTime() - 25 * 60 * 60 * 1000), NOW));
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

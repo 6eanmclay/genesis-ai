@@ -93,7 +93,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const preview = buildConfirmationEmail({ order, store: order.store });
+  const preview = buildConfirmationEmail({ order: { ...order, placedAt: order.createdAt }, store: order.store });
   console.log("");
   console.log("  would send to  " + preview.to);
   console.log("  from name      " + preview.fromName);
