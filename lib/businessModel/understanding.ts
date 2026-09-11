@@ -49,6 +49,19 @@ export interface ActiveThought {
   // null for every other kind, and null for rows written before this
   // column existed.
   confidence: number | null;
+  // WHERE THE OWNER GOES ABOUT IT, when the row records one.
+  //
+  // Added 2026-09-10, and the reason is a duplicate rather than a feature.
+  // app/j4/intelligence-actions.ts was reading cognitiveOutput ACTIVE for a
+  // second time — the same table this select already reads — for one column
+  // this select did not carry. Two reads of one table because of a missing
+  // field is the cheapest kind of divergence to create and the hardest to
+  // notice: nothing disagreed, there was just more of it.
+  //
+  // Null is the honest answer for kinds that have nowhere to send anyone, and
+  // lib/j4/officeActions.ts already treats null as "no destination" rather
+  // than inventing one.
+  actionHref: string | null;
   generatedAt: string;
 }
 
@@ -370,7 +383,7 @@ export async function getBusinessUnderstanding(
       where: { storeId, status: "ACTIVE" },
       orderBy: { generatedAt: "desc" },
       take: 20,
-      select: { id: true, kind: true, summary: true, priority: true, confidence: true, generatedAt: true },
+      select: { id: true, kind: true, summary: true, priority: true, confidence: true, actionHref: true, generatedAt: true },
     }),
     prisma.store.findUnique({
       where: { id: storeId },
@@ -528,6 +541,7 @@ export async function getBusinessUnderstanding(
       summary: o.summary,
       priority: o.priority,
       confidence: o.confidence,
+      actionHref: o.actionHref,
       generatedAt: o.generatedAt.toISOString(),
     })),
     platformRelationship: {
