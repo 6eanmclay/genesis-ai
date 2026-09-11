@@ -165,6 +165,69 @@ check("and it is NOT in the item list",
   !mixed.items.some((i) => i.id === "handled"),
   "four sections filter the list; DONE is retrospective and separate");
 
+// ---- 6b. the client may import the contract safely ----------------------
+//
+// THE BUG THIS EXISTS TO PREVENT, because it already happened once.
+// OfficeBriefing.tsx is a client component. It imported `itemsIn` from
+// officeWork.ts, which value-imports ASSET_ROLES from businessModel/assets.ts,
+// which imports prisma — so asking "which section is this row in" dragged the
+// database client into the browser bundle. No type error, no console error:
+// the Office panel simply never painted, and a 30s selector timed out.
+//
+// So the contract the client needs lives in a module with NO value imports at
+// all, and that is asserted rather than remembered.
+console.log("\n=== the section contract is safe for a browser ===\n");
+const sectionsSrc = readFileSync(join(process.cwd(), "lib", "j4", "officeSections.ts"), "utf8");
+const valueImports = [...sectionsSrc.matchAll(/^import\s+(?!type\b)[^;]+;/gm)].map((m) => m[0].trim());
+check("officeSections has no value imports", valueImports.length === 0,
+  valueImports.join(" | ") || "type-only imports, nothing survives compilation");
+check("and it certainly does not reach prisma", !/from "@\/lib\/prisma"/.test(sectionsSrc));
+
+const briefingSrc = readFileSync(join(process.cwd(), "app", "j4", "OfficeBriefing.tsx"), "utf8");
+check("the client component imports the contract, not the derivation",
+  /from "@\/lib\/j4\/officeSections"/.test(briefingSrc) &&
+    !/^import\s+\{[^}]*\}\s+from\s+"@\/lib\/j4\/officeWork"/m.test(briefingSrc),
+  "a value import from officeWork puts prisma in the browser bundle");
+
+// ---- 7. the rendered Office covers every section ------------------------
+//
+// A MIRRORED REGISTRY, guarded the day it was written. ARCHITECTURE.md:
+// "A registry that mirrors another must carry a runtime cross-check asserting
+// every referenced name resolves in the registry it mirrors."
+//
+// OfficeBriefing.tsx holds its own SECTIONS array. If a section is added to
+// the OfficeSection union and not to that array, every item routed there
+// becomes invisible — work the owner is never shown, with nothing failing.
+// That is strictly worse than a crash.
+console.log("\n=== the Office renders every section that exists ===\n");
+const uiSrc = readFileSync(join(process.cwd(), "app", "j4", "OfficeBriefing.tsx"), "utf8");
+const rendered = [...uiSrc.matchAll(/key:\s*"(needs_you|ready_to_go|decide|noticed)"/g)].map((m) => m[1]);
+
+for (const s of SECTIONS) {
+  check(`${s} has a section in the Office`, rendered.includes(s), rendered.join(", ") || "none found");
+}
+check("and the Office invents no section that does not exist",
+  rendered.every((r) => (SECTIONS as string[]).includes(r)),
+  rendered.filter((r) => !(SECTIONS as string[]).includes(r)).join(", ") || "none");
+
+// NEEDS YOU MUST SAY BOTH THINGS. Sean: "NEEDS YOU must explicitly state what
+// J4 needs from the owner and why." Checked at the source, because a row that
+// renders one and silently drops the other still looks fine on screen.
+check("a needs_owner row renders what J4 needs", /needs-what/.test(uiSrc));
+check("  and why J4 cannot supply it", /needs-because/.test(uiSrc));
+// The destination is conditional on it existing — not a disabled control.
+check("  and offers a destination only when there is one",
+  /action\.provideAt\s*&&/.test(uiSrc),
+  "no unconditional provideAt link");
+
+// AND THE INERT ROW STILL CANNOT WEAR A CONTROL. The 198 fake buttons were a
+// UI-level decision, so this is checked at the UI level: the `none` branch
+// renders a <p>, and there is no Link or button anywhere inside it.
+const noneBranch = uiSrc.slice(uiSrc.indexOf('action.kind === "none"'), uiSrc.indexOf("work-action-none") + 400);
+check("the inert row renders no control",
+  !/<Link|<button/.test(noneBranch),
+  "an item J4 cannot act on must not be pressable");
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${failed.length === 0 ? `ALL PASS (${results.length})` : `${failed.length} of ${results.length} FAILED`}`);
 if (failed.length) console.log(failed.map((f) => `  - ${f.name}`).join("\n"));

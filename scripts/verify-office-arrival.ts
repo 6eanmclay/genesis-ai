@@ -26,22 +26,47 @@ function check(name: string, ok: boolean, detail = ""): void {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`);
 }
 
+/**
+ * ============ READING THE FIVE STATES, NOT THE FIVE KINDS (2026-09-11) =
+ *
+ * The arrival surface is now organised by what J4 can DO about a row rather
+ * than by what the row IS. So this reads `data-action` and the section each
+ * row sits in, where it used to read `data-kind`.
+ *
+ * The assertions below keep their INTENT exactly — a decision still has to
+ * offer execution rather than navigation, an unfixable problem still has to
+ * say why instead of wearing a button, nothing inert may look pressable. What
+ * changed is where those rows now live, and that is the product change Sean
+ * approved rather than a test being loosened to fit.
+ */
 async function readBriefing(page: Page) {
   return page.evaluate(() => {
     const root = document.querySelector('[data-testid="office-briefing"]');
-    const rows = [...document.querySelectorAll('[data-testid^="briefing-row-"]')].map((el) => {
-      const open = el.querySelector('[data-testid="briefing-action-open"]');
-      const exec = el.querySelector('[data-testid="briefing-action-execute"]');
-      const none = el.querySelector('[data-testid="briefing-action-none"]');
-      const why = el.querySelector('[data-testid="briefing-why"]');
+    const sections = [...document.querySelectorAll('[data-testid^="office-section-"]')].map((el) => ({
+      key: (el.getAttribute("data-testid") ?? "").replace("office-section-", ""),
+      count: Number(el.getAttribute("data-count") ?? "0"),
+      top: Math.round(el.getBoundingClientRect().y),
+    }));
+    const rows = [...document.querySelectorAll('[data-testid="work-row"]')].map((el) => {
+      const section = el.closest('[data-testid^="office-section-"]');
+      const open = el.querySelector('[data-testid="work-action-open"]');
+      const exec = el.querySelector('[data-testid="work-action-execute"]');
+      const none = el.querySelector('[data-testid="work-action-none"]');
+      const needs = el.querySelector('[data-testid="work-needs-owner"]');
+      const why = el.querySelector('[data-testid="work-why"]');
       const r = el.getBoundingClientRect();
       return {
-        kind: el.getAttribute("data-kind") ?? "",
-        headline: (el.querySelector("p:nth-of-type(2)")?.textContent ?? "").trim(),
+        action: el.getAttribute("data-action") ?? "",
+        section: (section?.getAttribute("data-testid") ?? "").replace("office-section-", ""),
+        headline: (el.querySelector("p")?.textContent ?? "").trim(),
         why: why ? (why.textContent ?? "").trim() : null,
-        action: open ? "open" : exec ? "execute" : none ? "none" : "MISSING",
+        // WHICH CONTROL IS ACTUALLY PAINTED, read from the DOM rather than
+        // inferred from the action — the two agreeing is the thing under test.
+        control: open ? "open" : exec ? "execute" : needs ? "needs_owner" : none ? "none" : "MISSING",
         href: open?.getAttribute("href") ?? null,
         noneText: none ? (none.textContent ?? "").trim() : null,
+        needsWhat: (el.querySelector('[data-testid="needs-what"]')?.textContent ?? "").trim() || null,
+        needsBecause: (el.querySelector('[data-testid="needs-because"]')?.textContent ?? "").trim() || null,
         top: Math.round(r.y),
         visible: r.width > 0 && r.height > 0,
       };
@@ -49,11 +74,12 @@ async function readBriefing(page: Page) {
     const handled = document.querySelector('[data-testid="briefing-handled"]');
     return {
       present: !!root,
+      sections,
       rows,
       handled: handled ? (handled.textContent ?? "").replace(/\s+/g, " ").trim() : null,
       changes: document.querySelectorAll('[data-testid="handled-change"]').length,
       // Nothing on this surface may look pressable without being pressable.
-      fakeHovers: [...document.querySelectorAll('[data-testid="briefing-action-none"]')].filter((el) =>
+      fakeHovers: [...document.querySelectorAll('[data-testid="work-action-none"]')].filter((el) =>
         /hover:/.test((el as HTMLElement).className),
       ).length,
     };
@@ -198,33 +224,71 @@ async function main(): Promise<void> {
 
       const duplicated = onScreen.filter((h, i) => onScreen.indexOf(h) !== i);
       check(`${width}: nothing is listed twice`, duplicated.length === 0, duplicated.join(" | ") || "no duplicates");
-      check(`${width}: all of them are actually painted`, b.rows.every((r) => r.visible), b.rows.map((r) => r.kind).join(", "));
+      check(`${width}: all of them are actually painted`, b.rows.every((r) => r.visible), b.rows.map((r) => r.action).join(", "));
 
-      const order = b.rows.map((r) => r.kind);
-      check(`${width}: the decision J4 is blocked on comes first`, order[0] === "decision", order.join(" -> "));
-      check(`${width}: a fixable problem outranks an unfixable one`,
-        order.indexOf("problem_actionable") < order.indexOf("problem_inert"), order.join(" -> "));
-      check(`${width}: problems come before opportunities`,
-        order.indexOf("problem_actionable") < order.indexOf("opportunity_inert"), order.join(" -> "));
+      // ---- THE FIVE STATES, IN THE APPROVED ORDER --------------------
+      //
+      // NEEDS YOU first, because what only the owner can supply is the
+      // bottleneck J4 cannot multiply. Read from the painted geometry, not
+      // from the array — a section rendered out of order on screen while the
+      // data is in order is exactly the class of bug a DOM read catches and
+      // a unit test cannot.
+      const sectionOrder = b.sections.map((s) => s.key);
+      check(`${width}: the Office renders all four action sections`,
+        sectionOrder.join(",") === "needs_you,ready_to_go,decide,noticed", sectionOrder.join(" -> "));
+      check(`${width}: and they are painted in that order`,
+        b.sections.every((s, i) => i === 0 || b.sections[i - 1].top <= s.top),
+        b.sections.map((s) => `${s.key}@${s.top}`).join(" "));
       check(`${width}: what is on screen is in the order the module returned`,
         b.rows.every((r, i) => i === 0 || b.rows[i - 1].top <= r.top),
-        b.rows.map((r) => `${r.kind}@${r.top}`).join(" "));
+        b.rows.map((r) => `${r.action}@${r.top}`).join(" "));
 
-      const decision = b.rows.find((r) => r.kind === "decision");
+      // EVERY ROW IS FILED BY ITS OWN ACTION. This is the whole architectural
+      // claim, checked against the rendered page: a row's section is not a
+      // property of where it came from.
+      const misfiled = b.rows.filter((r) => {
+        const expected =
+          r.action === "needs_owner" ? "needs_you"
+          : r.action === "execute" ? ["ready_to_go", "decide"]
+          : ["noticed"];
+        return Array.isArray(expected) ? !expected.includes(r.section) : r.section !== expected;
+      });
+      check(`${width}: every row sits in the section its action dictates`,
+        misfiled.length === 0,
+        misfiled.map((r) => `${r.action} in ${r.section}`).join(" | ") || `${b.rows.length} rows, all filed by action`);
+
+      const decision = b.rows.find((r) => r.action === "execute");
       check(`${width}: the decision shows J4's own reasoning`,
         decision?.why === "Your bios are empty, so search and social have nothing to show.",
         decision?.why ?? "none");
       check(`${width}: the decision offers to execute, not to navigate`,
-        decision?.action === "execute", decision?.action ?? "none");
+        decision?.control === "execute", decision?.control ?? "none");
+      check(`${width}: and it is filed under DECIDE`, decision?.section === "decide", decision?.section ?? "none");
 
-      const live = b.rows.find((r) => r.kind === "problem_actionable");
+      const live = b.rows.find((r) => r.action === "open");
       check(`${width}: a fixable problem carries a real destination`,
-        live?.action === "open" && !!live.href?.endsWith("/connections"), live?.href ?? live?.action ?? "none");
+        live?.control === "open" && !!live.href?.endsWith("/connections"), live?.href ?? live?.control ?? "none");
 
-      const inert = b.rows.find((r) => r.kind === "problem_inert");
+      const inert = b.rows.find((r) => r.action === "none");
       check(`${width}: an unfixable one says why instead of offering a button`,
-        inert?.action === "none" && (inert.noneText?.length ?? 0) > 20, inert?.noneText ?? inert?.action ?? "none");
+        inert?.control === "none" && (inert.noneText?.length ?? 0) > 20, inert?.noneText ?? inert?.control ?? "none");
+      check(`${width}: and it is filed under NOTICED, not hidden`,
+        inert?.section === "noticed", inert?.section ?? "none");
       check(`${width}: nothing inert is styled as pressable`, b.fakeHovers === 0, `${b.fakeHovers} with a hover`);
+
+      // ---- NEEDS YOU SAYS BOTH THINGS, OR IS HONESTLY EMPTY ----------
+      //
+      // This fixture seeds no capability gap, so the section is expected to be
+      // empty here — and an empty section must still be PRESENT and say so,
+      // rather than disappearing. A section that vanishes when empty teaches
+      // an owner it does not exist.
+      const needsRows = b.rows.filter((r) => r.action === "needs_owner");
+      const needsSection = b.sections.find((s) => s.key === "needs_you");
+      check(`${width}: NEEDS YOU is present even with nothing in it`, !!needsSection, "the section must not vanish");
+      for (const r of needsRows) {
+        check(`${width}: a needs-you row names what J4 needs`, !!r.needsWhat, r.needsWhat ?? "MISSING");
+        check(`${width}: and why J4 cannot supply it`, !!r.needsBecause, r.needsBecause ?? "MISSING");
+      }
 
       check(`${width}: what J4 handled is shown`, !!b.handled, b.handled?.slice(0, 70) ?? "absent");
       check(`${width}: the handled figures carry their window`,
@@ -271,7 +335,7 @@ async function main(): Promise<void> {
       await page.waitForTimeout(25);
     }
     const briefingPresentThen = await page.evaluate(
-      () => !!document.querySelector('[data-testid="briefing-items"]'),
+      () => !!document.querySelector('[data-testid="work-row"]'),
     );
     check("J4 takes a message while the intelligence is still loading",
       acceptedWhileStalled >= 0 && acceptedWhileStalled < 2000,
@@ -299,7 +363,7 @@ async function main(): Promise<void> {
     console.log("\n=== approve -> execute -> report back ===\n");
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${server.baseUrl}/j4`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector('[data-testid="briefing-action-execute"]', { timeout: 30_000 });
+    await page.waitForSelector('[data-testid="work-action-execute"]', { timeout: 30_000 });
 
     const messagesBefore = await prisma.storeMessage.count({ where: { storeId: store.id } });
     const approvalId = (await prisma.approvalRequest.findFirst({
@@ -320,7 +384,7 @@ async function main(): Promise<void> {
     page.on("pageerror", (e) => errors.push(String(e).split("\n")[0].slice(0, 160)));
     const urlBefore = page.url();
 
-    await page.click('[data-testid="briefing-action-execute"]');
+    await page.click('[data-testid="work-action-execute"]');
     // The button says it is working, then the surface refreshes.
     await page.waitForTimeout(6000);
 
@@ -348,7 +412,7 @@ async function main(): Promise<void> {
       (latest?.content ?? "").replace(/\s+/g, " ").slice(0, 90));
 
     const stillListed = await page.evaluate((summary: string) =>
-      [...document.querySelectorAll('[data-testid^="briefing-row-"]')].some((el) =>
+      [...document.querySelectorAll('[data-testid="work-row"]')].some((el) =>
         (el.textContent ?? "").includes(summary),
       ), "Publish the updated homepage copy");
 

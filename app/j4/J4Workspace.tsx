@@ -1107,6 +1107,11 @@ export function J4Workspace({
   // any caller that passes them directly are unchanged. This is an addition to
   // where the data can come from, not a replacement for it.
   const briefingItems = intel?.briefingItems ?? briefingItemsProp;
+  // THE ONE LIST the Office is now organised by. Null until the progressive
+  // tier lands, so the arrival surface can tell "I have not looked yet" from
+  // "nothing is waiting on you" rather than rendering the second while the
+  // first is true.
+  const work = intel?.work ?? null;
   const handled = intel?.handled ?? handledProp;
   const facts = intel?.facts ?? factsProp;
   const tasks = intel?.tasks ?? tasksProp;
@@ -2163,7 +2168,8 @@ export function J4Workspace({
         )}
         {shownCategory === "briefing" ? (
           <OfficeBriefing
-            items={briefingItems}
+            work={work}
+            loading={intelligenceLoading}
             handled={handled}
             approvingId={approvingId}
             onApprove={(id) => {

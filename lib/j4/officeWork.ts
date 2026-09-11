@@ -54,20 +54,17 @@ import type { BriefingItem, HandledSummary } from "./officeBriefing";
  *                  business, read from the model of the business.
  */
 
-/** Where an item appears in the Office. Derived from its action, never chosen. */
-export type OfficeSection = "needs_you" | "ready_to_go" | "decide" | "noticed";
-
-/** One thing in the Office, and what can be done about it. */
-export interface WorkItem {
-  id: string;
-  /** What J4 found, in his words. Never rewritten here. */
-  headline: string;
-  /** Why it matters, from a real field or not at all. */
-  why: string | null;
-  /** How long this has been true, when the row records it. */
-  standingDays: number | null;
-  action: OfficeAction;
-}
+// THE CONTRACT LIVES NEXT DOOR, AND THE CLIENT IMPORTS IT FROM THERE.
+//
+// This module reads a BusinessUnderstanding, so it value-imports ASSET_ROLES,
+// which reaches prisma. A client component that imported `itemsIn` from here
+// therefore pulled the database client into the browser bundle and the Office
+// silently never painted. officeSections.ts holds the part a browser may have.
+//
+// Re-exported so every existing server caller and suite is unchanged.
+export { sectionFor, itemsIn } from "./officeSections";
+export type { OfficeSection, WorkItem, OfficeWork } from "./officeSections";
+import type { OfficeSection, WorkItem, OfficeWork } from "./officeSections";
 
 /**
  * The volatile half: what is outstanding right now.
@@ -84,55 +81,6 @@ export interface WorkingState {
   handled: HandledSummary;
 }
 
-export interface OfficeWork {
-  /**
-   * ONE list. Every section is a filter over it.
-   *
-   * Sean: "make these filters over one OfficeWork/action list, not five
-   * independent data queries. The action's own kind must determine where it
-   * appears." Five queries is how the seven tabs came to disagree about what
-   * was outstanding; one list cannot.
-   */
-  items: WorkItem[];
-  /**
-   * DONE, which is genuinely not a filter over the list above.
-   *
-   * Said plainly rather than forced into the same shape: the other four
-   * sections are outstanding work and this is a retrospective summary of work
-   * that is finished. Modelling a completed execution as a WorkItem with some
-   * inert action would be contorting the type to make a slogan true.
-   */
-  handled: HandledSummary;
-}
-
-/**
- * Which section an action belongs to, and the only thing that decides it.
- *
- * `internal` returns null and renders nowhere - the rule officeActions.ts
- * already holds, restated here as placement rather than as visibility.
- */
-export function sectionFor(action: OfficeAction): OfficeSection | null {
-  switch (action.kind) {
-    // What only the owner can provide. FIRST in the Office, because it is the
-    // bottleneck J4 cannot multiply.
-    case "needs_owner":
-      return "needs_you";
-    case "execute":
-      return action.offer === "decide" ? "decide" : "ready_to_go";
-    // Seen, with somewhere to go or with a reason there is nowhere. Both are
-    // things J4 noticed and cannot act on itself.
-    case "open":
-    case "none":
-      return "noticed";
-    case "internal":
-      return null;
-  }
-}
-
-/** The items in one section. A filter, never a second query. */
-export function itemsIn(work: OfficeWork, section: OfficeSection): WorkItem[] {
-  return work.items.filter((i) => sectionFor(i.action) === section);
-}
 
 /**
  * The needs this business actually has, read from what is known about it.
