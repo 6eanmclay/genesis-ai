@@ -3045,6 +3045,30 @@ async function applyGenesisMessageToStore(
               executionId: result.executionId,
               decidedByUserId: userId,
               decidedAt: new Date(),
+              // ============ WHICH WARRANT AUTHORISED THIS (2026-09-11) ======
+              //
+              // This row used to leave decisionMode at its "human" default,
+              // which made a change J4 published on its own indistinguishable
+              // from one the owner read and clicked Approve on. The marketing
+              // page rendered "You approved this" over exactly these rows.
+              //
+              // "chat_auto" rather than "autonomous" because the two are not
+              // the same warrant and the difference is the whole point:
+              //
+              //   human        the owner read this and decided it
+              //   chat_auto    J4 acted on the registry tier while the owner
+              //                was PRESENT — signed in, in this conversation.
+              //                No DelegatedAuthority grant is involved or
+              //                consulted.
+              //   autonomous   J4 acted under an explicit, un-revoked grant,
+              //                with no human present (genesisAutonomy.ts)
+              //
+              // decidedByUserId stays the present owner: it records WHO was
+              // here, which is true and worth keeping. decisionMode is what
+              // says they did not decide it.
+              //
+              // Recording only — nothing about what executes changed.
+              decisionMode: "chat_auto",
             },
           });
           await completeTasksForAction(store.id, actionType);

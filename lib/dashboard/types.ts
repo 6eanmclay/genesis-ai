@@ -24,7 +24,13 @@ export interface ActivityItem {
   // ApprovalRequest, so the feed can distinguish "you approved this" from
   // "Genesis handled this automatically" without touching the underlying
   // (append-only, never rewritten) ExecutionLog.message itself.
-  decisionMode?: "human" | "autonomous";
+  //
+  // THREE VALUES, NOT TWO (2026-09-11). "chat_auto" is J4 acting on the
+  // registry tier while the owner was present; "autonomous" is J4 acting
+  // under a delegated grant with nobody there. Both are "Genesis handled
+  // this", and NEITHER is "you approved this" — which is what the missing
+  // third value used to render as. See ApprovalRequest.decisionMode.
+  decisionMode?: "human" | "chat_auto" | "autonomous";
   // Genesis Experience Principles, "Spoken, not logged" — set only for
   // genesis.communicate_finding rows, whose `message` above has already
   // been swapped for the real CognitiveOutput.summary (see

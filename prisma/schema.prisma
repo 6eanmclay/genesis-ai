@@ -1998,13 +1998,30 @@ model ApprovalRequest {
   // — see the Phase 5 plan for why that's an honest null, not a gap).
   topicKey             String?
   // Phase 6 — frozen snapshot of HOW this request was decided, never
-  // recomputed. "human" = a real owner/employee click (approveGenesisAction/
-  // rejectGenesisAction/revertApprovalRequest). "autonomous" = Genesis
-  // itself decided, under a specific granted DelegatedAuthority row
-  // (delegatedAuthorityId below) — never the model's own judgment about
-  // whether it's allowed, only a deterministic grant lookup performed in
-  // code before execution. See lib/execution/genesisAutonomy.ts.
-  decisionMode         String    @default("human") // human | autonomous
+  // recomputed. WHICH WARRANT AUTHORISED IT, in other words, and there are
+  // three that can reach this row (2026-09-11):
+  //
+  //   "human"       a real owner/employee click (approveGenesisAction/
+  //                 rejectGenesisAction/revertApprovalRequest)
+  //   "chat_auto"   J4 acted on the registry's authorizationTier while the
+  //                 owner was PRESENT — signed in, in the conversation that
+  //                 produced it (app/dashboard/ai-actions.ts). No
+  //                 DelegatedAuthority is involved: the owner's own live
+  //                 session is the authority. decidedByUserId records who
+  //                 was there; it does NOT mean they decided it.
+  //   "autonomous"  J4 decided, with no human present, under a specific
+  //                 granted DelegatedAuthority row (delegatedAuthorityId
+  //                 below) — never the model's own judgment about whether
+  //                 it's allowed, only a deterministic grant lookup
+  //                 performed in code before execution. See
+  //                 lib/execution/genesisAutonomy.ts.
+  //
+  // chat_auto rows spent their first months as "human", which is why the
+  // owner-facing history said "You approved this" over changes no owner had
+  // seen. A fourth kind — system/CRON execution — never reaches here at all:
+  // it writes no ApprovalRequest and is identified by ExecutionLog.actorType
+  // "SYSTEM". See scripts/verify-authority-warrants.ts.
+  decisionMode         String    @default("human") // human | chat_auto | autonomous
   // The specific grant that authorized an autonomous decision, snapshotted
   // at decision time so "why was Genesis allowed to do this" is answerable
   // forever, even after the grant is later revoked. Null for "human" rows.

@@ -38,9 +38,20 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
             )}
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               {truncate(item.message)}
+              {/* TWO WARRANTS, NAMED SEPARATELY (2026-09-11). Saying only
+                  "no approval needed" collapsed a change J4 made under
+                  authority the owner granted into one J4 made because the
+                  owner happened to be in the room. A chat_auto row used to
+                  render no badge at all, which read as the owner's own
+                  action. See ApprovalRequest.decisionMode. */}
               {item.decisionMode === "autonomous" && (
                 <span className="ml-1.5 text-xs text-zinc-500">
-                  — handled automatically, no approval needed
+                  — handled automatically, under authority you granted
+                </span>
+              )}
+              {item.decisionMode === "chat_auto" && (
+                <span className="ml-1.5 text-xs text-zinc-500">
+                  — published during your conversation, with no approval step
                 </span>
               )}
             </p>

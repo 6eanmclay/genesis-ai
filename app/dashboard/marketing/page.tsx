@@ -135,14 +135,37 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
 
       {canManageAuthority && (
         <>
+          {/* ============ WHAT THIS BUTTON ACTUALLY CONTROLS (2026-09-11) ===
+              This section used to say, with no grant in place, "Genesis will
+              always ask before changing your SEO title or description." That
+              was not true. It described the delegated path only, and update_seo
+              is registered `authorizationTier: "auto"` — so in a conversation,
+              where the owner is signed in and present, Genesis publishes SEO
+              changes as part of the turn without a separate approval, and this
+              button never touched that.
+
+              Two warrants, so two sentences. The button is scoped to the one
+              it genuinely governs rather than being quietly widened to cover
+              both, because which of them revocation SHOULD cover is a real
+              product decision and not one to make in a label. */}
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis&apos;s authority
           </h2>
-          <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
-            {seoAuthorityGrant
-              ? "Genesis can publish SEO improvements automatically, without waiting for your approval."
-              : "Genesis will always ask before changing your SEO title or description."}
-          </p>
+          <dl className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
+            <dt className="font-medium text-black dark:text-zinc-50">While you&apos;re away</dt>
+            <dd>
+              {seoAuthorityGrant
+                ? "Genesis can publish SEO improvements on its own, without waiting for your approval."
+                : "Genesis will ask before changing your SEO title or description."}
+            </dd>
+            <dt className="mt-3 font-medium text-black dark:text-zinc-50">While you&apos;re here</dt>
+            <dd>
+              In a conversation, Genesis can publish an SEO change as part of its reply,
+              with no separate approval step — it decides when a change is worth checking
+              with you first. Anything it publishes appears under &ldquo;Recently
+              handled&rdquo; below, where you can revert it.
+            </dd>
+          </dl>
           <form action={(seoAuthorityGrant ? revokeAuthority : grantAuthority).bind(null, slug)} className="mt-3">
             <input type="hidden" name="actionType" value="update_seo" />
             <SubmitButton
@@ -153,7 +176,9 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
                   : "rounded-full bg-[var(--brand-accent,var(--foreground))] px-4 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
               }
             >
-              {seoAuthorityGrant ? "Ask before publishing SEO changes" : "Let Genesis publish SEO improvements automatically"}
+              {seoAuthorityGrant
+                ? "Ask before publishing SEO changes while I'm away"
+                : "Let Genesis publish SEO improvements while I'm away"}
             </SubmitButton>
           </form>
         </>
@@ -171,10 +196,16 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
                 className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]"
               >
                 <p className="text-sm text-black dark:text-zinc-50">{decision.summary}</p>
+                {/* "You approved this" was rendered over every change J4
+                    published on its own during a conversation, because those
+                    rows carried decisionMode's "human" default. They now
+                    record "chat_auto" and say so. */}
                 <p className="mt-1 text-xs text-zinc-500">
                   {decision.decisionMode === "autonomous"
-                    ? "Handled by Genesis automatically"
-                    : "You approved this"}
+                    ? "Genesis did this on its own, under the authority you granted"
+                    : decision.decisionMode === "chat_auto"
+                      ? "Genesis published this during your conversation"
+                      : "You approved this"}
                   {decision.decidedAt ? ` — ${decision.decidedAt.toLocaleDateString()}` : ""}
                 </p>
                 <RevertDecisionButton action={revertApprovalRequest.bind(null, decision.id)} />

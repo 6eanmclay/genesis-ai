@@ -21,8 +21,12 @@
 // (chat/route.ts and ai-actions.ts all create proposals without one).
 //
 // decisionMode does NOT work for this and it is worth saying why, because it
-// looks like it should: it is "human" for both, since it records who APPROVES
-// a proposal, not who proposed it.
+// looks like it should: it records WHICH WARRANT authorised a proposal, not
+// who proposed it. A conversational proposal J4 publishes itself is
+// "chat_auto" and one the owner clicks through is "human" — same origin,
+// different warrants — while a proposal J4 raised unprompted can be any of
+// the three depending on how it was later decided. Origin and authority are
+// genuinely separate questions, and decisionMode answers the other one.
 
 /** The shape any origin question needs — nothing more. */
 export interface ProposalOrigin {

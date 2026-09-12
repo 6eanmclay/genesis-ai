@@ -195,7 +195,7 @@ export async function getRecentActivity(
       })
     : [];
   const decisionModeByExecutionId = new Map(
-    approvals.map((a) => [a.executionId, a.decisionMode as "human" | "autonomous"])
+    approvals.map((a) => [a.executionId, a.decisionMode as "human" | "chat_auto" | "autonomous"])
   );
 
   // Genesis Experience Principles, "Spoken, not logged" — a
