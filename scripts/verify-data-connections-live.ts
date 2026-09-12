@@ -293,6 +293,17 @@ async function main(): Promise<void> {
       sectionOf(barePage, "What that lets J4 do", ["Where it comes from"]).includes("Connect"),
       "named, with what would produce it");
 
+    // A COUNT IS NOT A SENTENCE (2026-09-12). "0 still ahead" was accurate and
+    // read like a database value. Connected-but-empty now says so in words and
+    // keeps its available state — the capability really is working, there is
+    // simply nothing in it. Asserted as an absence because the presence
+    // depends on whether a fixture's dates happen to be in the future.
+    for (const [name, page] of [["bare", barePage], ["fed", fedPage]] as const) {
+      assert(`${name}: a zero is never rendered as a bare count`,
+        !page.includes("0 still ahead") && !page.includes("0 outstanding"),
+        "communicate availability without implying activity");
+    }
+
     // ======================================================================
     console.log("\n=== 5. No credential reaches the page ===\n");
     // ======================================================================

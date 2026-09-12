@@ -57,6 +57,8 @@ console.log("\n=== every number is traceable ===\n");
 check("every fact names its source", everyFactIsSourced(REAL));
 const unsourced = REAL.filter((f) => f.source.trim().length === 0);
 check("no fact has a blank source", unsourced.length === 0, unsourced.map((f) => f.label).join(", ") || "all sourced");
+
+
 for (const f of REAL) console.log(`      ${String(f.value).padStart(4)}  ${f.label.padEnd(14)} ${f.source}`);
 
 // ============ THE STRIP AND THE SECTION COUNT THE SAME THINGS =========

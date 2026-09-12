@@ -100,7 +100,11 @@ export function OfficeBand({
       {/* WHAT HE IS HOLDING FOR THEM. Real counts, each leading somewhere. */}
       <div
         data-testid="office-facts"
-        className="relative grid grid-cols-3 gap-px border-t border-white/[.06] bg-white/[.05] sm:grid-cols-6"
+        // TWO ACROSS ON A PHONE, five on a wide screen — one column per fact,
+        // so each number sits directly above its own reason rather than being
+        // squeezed into a sixth of a row with a sentence it cannot hold. The
+        // strip was 3/6 when a cell was a number and a word.
+        className="relative grid grid-cols-2 gap-px border-t border-white/[.06] bg-white/[.05] sm:grid-cols-3 lg:grid-cols-5"
       >
         {facts.map((fact) => (
           <FactCell key={fact.label} fact={fact} onOpenView={onOpenView} />
@@ -111,12 +115,27 @@ export function OfficeBand({
 }
 
 /**
- * One number, and the one thing it leads to.
+ * One number, what it is, and where it came from.
  *
  * A route renders as a real link and a view as a button, because they are
  * different acts and the browser should treat them differently - a link can be
- * opened in a new tab, a view cannot. The `title` is the fact's own source
- * sentence, so "where did this number come from" is answerable in place.
+ * opened in a new tab, a view cannot.
+ *
+ * ============ THE SOURCE IS ON THE SURFACE NOW (2026-09-12) ========
+ *
+ * It was the `title` attribute and nothing else, which meant "where did this
+ * number come from" was answerable only by a mouse hovering a desktop. On the
+ * phone the reasoning simply did not exist. The number was shown and its
+ * justification was not, which is the same defect as every other place in this
+ * codebase where evidence was computed and then dropped at the last step.
+ *
+ * Data & Connections set the vocabulary this follows: say what is known, and
+ * say where each piece came from, in the open. The Office keeps its own dark
+ * ground — it is J4's room, and the shared chrome unifies the system without
+ * flattening the rooms — but the discipline is the same one.
+ *
+ * `title` is KEPT as well as rendered: it is a real affordance for a pointer,
+ * and verify-office-arrival reads it to prove the strip says what it means.
  */
 function FactCell({
   fact,
@@ -128,7 +147,16 @@ function FactCell({
   const testId = `office-fact-${fact.label.toLowerCase().replace(/\s+/g, "-")}`;
   const inner = (
     <>
+      {/* THE NUMBER HAS ITS OWN HANDLE (2026-09-12). verify-office-arrival
+          read the strip's counts by stripping non-digits from the whole
+          cell's text — fine when a cell was a number and a word, wrong the
+          moment the source sentence joined it, because the product is called
+          J4 and "things J4 noticed" turns a 3 into 34. The reader now takes
+          this element, which is still the rendered number on the real screen
+          and not an attribute the UI could set independently of what it
+          shows. */}
       <span
+        data-testid={`${testId}-value`}
         className={`font-mono text-[17px] leading-none tabular-nums ${
           fact.quiet ? "text-white/25" : "text-[#4ade3a]"
         }`}
@@ -137,6 +165,16 @@ function FactCell({
       </span>
       <span className="text-[10.5px] uppercase tracking-[.1em] text-white/40 group-hover:text-white/65">
         {fact.label}
+      </span>
+      {/* NO DIGITS IN HERE, EVER — enforced by noSourceCarriesADigit. The
+          strip's counts are read off this cell's textContent by stripping
+          non-digits, and that reader is what catches a count contradicting
+          the section beneath it. */}
+      <span
+        data-testid={`${testId}-source`}
+        className="text-[11px] leading-snug text-white/30 group-hover:text-white/45"
+      >
+        {fact.source}
       </span>
     </>
   );

@@ -76,9 +76,19 @@ async function readBriefing(page: Page) {
     // This is the assertion that was missing when "2 NEEDS YOU" sat above
     // "Nothing is waiting on you right now": both halves were green because
     // no test ever read them together.
+    //
+    // READ FROM THE ELEMENT THAT SHOWS THE NUMBER (2026-09-12), not from the
+    // whole cell's text. The assertion below is unchanged and so is what it
+    // proves; only where it gets the digits moved, and it had to: each cell
+    // now also carries its source sentence on the surface instead of hiding
+    // it in a `title` nobody on a phone can reach, and the product is called
+    // J4 — "things J4 noticed" made a 3 read as 34 under the old
+    // strip-every-non-digit approach. Still the rendered number on the real
+    // screen, just the element that actually renders it.
     const bandEl = document.querySelector('[data-testid="office-fact-needs-you"]');
-    const bandNeedsYou = bandEl ? Number((bandEl.textContent ?? "").replace(/[^\d]/g, "")) : null;
-    const taskEl = document.querySelector('[data-testid="office-fact-tasks"]');
+    const bandValueEl = document.querySelector('[data-testid="office-fact-needs-you-value"]');
+    const bandNeedsYou = bandValueEl ? Number((bandValueEl.textContent ?? "").replace(/[^\d]/g, "")) : null;
+    const taskEl = document.querySelector('[data-testid="office-fact-tasks-value"]');
     const bandTasks = taskEl ? Number((taskEl.textContent ?? "").replace(/[^\d]/g, "")) : null;
 
     const handled = document.querySelector('[data-testid="briefing-handled"]');

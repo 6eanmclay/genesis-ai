@@ -165,6 +165,7 @@ export function everyFactIsSourced(facts: OfficeFact[]): boolean {
   return facts.every((f) => f.source.trim().length > 0 && Number.isFinite(f.value));
 }
 
+
 /**
  * The four words the Office is organised around.
  *

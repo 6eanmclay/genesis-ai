@@ -216,19 +216,33 @@ export async function buildDataConnections(
   // produce it, because hiding a capability an owner could have is its own
   // kind of dishonesty.
   const capabilities: DerivedCapability[] = [
+    // ============ ZERO IS NOT A SENTENCE (2026-09-12) =================
+    //
+    // "0 still ahead" was technically accurate and read like a database value
+    // rather than anything an owner could use. Sean's rule: communicate
+    // availability without implying activity, and never invent activity or
+    // soften the underlying truth.
+    //
+    // So the connected-but-empty case gets its own wording and keeps its
+    // available state — the capability really is working; there is simply
+    // nothing in it. What it must not become is a number dressed up as news.
     {
       label: "Money owed to you",
       available: summaries.invoice !== null,
-      detail: summaries.invoice
-        ? `${summaries.invoice.outstandingCount} outstanding, ${summaries.invoice.overdueCount} overdue.`
-        : "Connect QuickBooks or Xero and J4 can tell you what is outstanding and overdue.",
+      detail: !summaries.invoice
+        ? "Connect QuickBooks or Xero and J4 can tell you what is outstanding and overdue."
+        : summaries.invoice.outstandingCount === 0
+          ? "Nothing outstanding. J4 watches your invoices as they come in."
+          : `${summaries.invoice.outstandingCount} outstanding, ${summaries.invoice.overdueCount} overdue.`,
     },
     {
       label: "What is ahead",
       available: summaries.appointment !== null,
-      detail: summaries.appointment
-        ? `${summaries.appointment.upcomingCount} still ahead. J4 plans around what is booked.`
-        : "Connect Google Calendar and J4 can plan around what is booked.",
+      detail: !summaries.appointment
+        ? "Connect Google Calendar and J4 can plan around what is booked."
+        : summaries.appointment.upcomingCount === 0
+          ? "Nothing upcoming. J4 plans around your calendar as things are booked."
+          : `${summaries.appointment.upcomingCount} still ahead. J4 plans around what is booked.`,
     },
     {
       label: "How your campaigns did",
