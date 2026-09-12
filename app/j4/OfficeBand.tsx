@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { J4Character, type J4State } from "@/components/j4/J4Character";
 import { OFFICE_ARC, type OfficeFact } from "@/lib/j4/officeFacts";
+import type { QuickAction } from "@/lib/j4/officeQuickActions";
 
 /**
  * J4'S OFFICE, AS A PLACE HE IS IN.
@@ -36,11 +37,19 @@ export function OfficeBand({
   storeName,
   state,
   facts,
+  quickActions = [],
   onOpenView,
 }: {
   storeName: string;
   state: J4State;
   facts: OfficeFact[];
+  /**
+   * What the owner can START — verbs, where `facts` are nouns.
+   *
+   * Defaulted to empty so a caller that has not loaded intelligence yet
+   * renders a band with no action row rather than a row of nothing.
+   */
+  quickActions?: QuickAction[];
   /** An Office category is a view of THIS surface, never a navigation away. */
   onOpenView: (view: string) => void;
 }) {
@@ -110,6 +119,26 @@ export function OfficeBand({
           <FactCell key={fact.label} fact={fact} onOpenView={onOpenView} />
         ))}
       </div>
+
+      {/* WHAT YOU CAN START. Below the counts on purpose: the strip is what J4
+          is holding for the owner, and this is what the owner can pick up. A
+          row that restated the strip would be the second parallel
+          representation this Office is currently migrating away from.
+
+          There is no fixed set and no overflow. Everything here passed a real
+          permission gate and a real state gate in officeQuickActions — which
+          is why an empty row simply does not render rather than showing
+          disabled buttons. */}
+      {quickActions.length > 0 && (
+        <div
+          data-testid="office-quick-actions"
+          className="relative flex flex-wrap gap-2 border-t border-white/[.06] px-4 py-3 sm:px-6"
+        >
+          {quickActions.map((action) => (
+            <QuickActionButton key={action.key} action={action} onOpenView={onOpenView} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -191,6 +220,63 @@ function FactCell({
   const view = fact.target.view;
   return (
     <button type="button" data-testid={testId} title={fact.source} onClick={() => onOpenView(view)} className={className}>
+      {inner}
+    </button>
+  );
+}
+
+/**
+ * One thing the owner can start, with the reason it is on offer.
+ *
+ * A route is a real link and a view is a button, the same distinction
+ * FactCell draws and for the same reason. `because` is rendered, not
+ * hovered — the Office's own rule since 2026-09-12: the number is on the
+ * surface, so the reason for it is too.
+ *
+ * A limitation renders as its own line and is never a disabled state. The
+ * marketing room genuinely works; it simply cannot send or measure a campaign
+ * until an email platform is connected, and saying so is more useful than
+ * greying out a door that opens.
+ */
+function QuickActionButton({
+  action,
+  onOpenView,
+}: {
+  action: QuickAction;
+  onOpenView: (view: string) => void;
+}) {
+  const testId = `office-action-${action.key}`;
+  const inner = (
+    <>
+      <span className="text-[13px] font-medium text-white/90 group-hover:text-white">
+        {action.label}
+      </span>
+      <span className="text-[11px] leading-snug text-white/35 group-hover:text-white/55">
+        {action.because}
+      </span>
+      {action.limitation && (
+        <span
+          data-testid={`${testId}-limitation`}
+          className="text-[11px] leading-snug text-[#E2A33C]/75"
+        >
+          {action.limitation}
+        </span>
+      )}
+    </>
+  );
+  const className =
+    "group flex max-w-[19rem] flex-col items-start gap-0.5 rounded-lg border border-[#4ade3a]/20 bg-[#4ade3a]/[.06] px-3 py-2 text-left transition hover:border-[#4ade3a]/40 hover:bg-[#4ade3a]/[.10]";
+
+  if (action.target.kind === "route") {
+    return (
+      <Link href={action.target.href} data-testid={testId} className={className}>
+        {inner}
+      </Link>
+    );
+  }
+  const view = action.target.view;
+  return (
+    <button type="button" data-testid={testId} onClick={() => onOpenView(view)} className={className}>
       {inner}
     </button>
   );

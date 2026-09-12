@@ -11,6 +11,7 @@ import { getHandledSince } from "@/lib/dashboard/handled";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { LEGACY_BUSINESS_BASE, businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import { officeFacts, type OfficeFact } from "@/lib/j4/officeFacts";
+import { officeQuickActions, type QuickAction } from "@/lib/j4/officeQuickActions";
 import { buildBriefing, summariseHandled, type BriefingItem, type HandledSummary } from "@/lib/j4/officeBriefing";
 import { officeActionForObservation, officeActionForExplanation } from "@/lib/j4/officeActions";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
@@ -78,6 +79,12 @@ export interface OfficeIntelligence {
    * unlike the timings that figure is a real one.
    */
   work: OfficeWork;
+  /**
+   * What the owner can START from here — verbs, where the facts strip is
+   * nouns. Derived from the same reads this function already performs, so it
+   * adds no query to a measured path. See lib/j4/officeQuickActions.ts.
+   */
+  quickActions: QuickAction[];
   briefingItems: BriefingItem[];
   handled: HandledSummary;
   facts: OfficeFact[];
@@ -93,6 +100,7 @@ function empty(): OfficeIntelligence {
   const handled = { resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: HANDLED_WINDOW_DAYS };
   return {
     work: { items: [], handled },
+    quickActions: [],
     briefingItems: [],
     handled,
     facts: [],
@@ -217,6 +225,22 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     basePath,
   );
 
+  // THE VERBS, from the same reads the nouns came from. Permissions from the
+  // role this function already resolved; catalogue size, order history and
+  // campaign availability all from data already in hand — nothing here costs
+  // a query, which matters because this whole function sits behind the
+  // needsIntelligence gate for measured reasons.
+  const quickActions = officeQuickActions({
+    basePath,
+    canManageStore: hasPermission(role, PERMISSIONS.STORE_MANAGE),
+    canViewOrders: hasPermission(role, PERMISSIONS.ORDERS_VIEW),
+    activeProducts: activeProductCount,
+    allTimeOrderCount: understanding.recentBusiness.orders.allTimeOrderCount,
+    // null means nothing is connected that could produce campaign
+    // performance, which is exactly the limitation the action states.
+    hasCampaignSource: understanding.connectedSummaries.campaign !== null,
+  });
+
   return {
     // ============ THE DERIVED SEAM, NOT RENDERED YET ==================
     //
@@ -229,6 +253,7 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     // applying them a second time here is precisely how two rails come to
     // disagree about the same row.
     work,
+    quickActions,
     briefingItems,
     handled,
     // THE STRIP READS THE SAME LIST THE SECTIONS DO. Its "Needs you" and

@@ -2155,6 +2155,13 @@ export function J4Workspace({
           storeName={storeName}
           state={j4State}
           facts={facts}
+          // PASS-THROUGH ONLY (2026-09-12). The quick actions are derived
+          // server-side in loadOfficeIntelligence, beside the facts and from
+          // the same reads; this component neither computes nor decides
+          // anything about them. Undefined until intelligence loads, which is
+          // why OfficeBand defaults the prop rather than requiring it — the
+          // needsIntelligence gate is untouched.
+          quickActions={intel?.quickActions}
           onOpenView={(view: string) => setActiveCategory(view as Category)}
         />
       )}
