@@ -27,13 +27,12 @@ import { ReferenceProposalCard } from "./ReferenceProposalCard";
 import { VoiceMemoButton } from "./VoiceMemoButton";
 import { J4SpeakButton } from "./J4SpeakButton";
 import { decideSpeak, NOTHING_SPOKEN, type SpokenState } from "@/lib/voice/spokenReplies";
-import { rowInteractionClass } from "@/lib/j4/officeActions";
 import type { RecordProvenance } from "@prisma/client";
 import { PROVENANCE_LABEL } from "@/lib/businessModel/provenance";
 import { OfficeBand } from "./OfficeBand";
 import { inCategory, categoryDotFor, type WorkItem } from "@/lib/j4/officeSections";
-import { OfficeBriefing } from "./OfficeBriefing";
-import type { BriefingItem, HandledSummary } from "@/lib/j4/officeBriefing";
+import { OfficeBriefing, WorkRow } from "./OfficeBriefing";
+import type { HandledSummary } from "@/lib/j4/officeBriefing";
 import { approveProposalInConversation, rejectProposalInConversation } from "./proposal-actions";
 import { loadDeepKnowledge, correctBelief, type DeepKnowledge } from "./understanding-actions";
 import { loadOfficeIntelligence, type OfficeIntelligence } from "./intelligence-actions";
@@ -125,39 +124,6 @@ export type J4Surface = "layer" | "room";
 // inside the room keeps working and the URL stays clean.
 const ROOM_ENTERED_FROM_KEY = "j4:enteredFrom";
 
-interface TaskItem {
-  id: string;
-  title: string;
-  summary: string;
-  href: string | null;
-  priority: string;
-  /**
-   * Why nothing can be pressed, when nothing can be pressed. Server-decided in
-   * lib/j4/officeActions.ts so the surface cannot invent a reason of its own.
-   */
-  because?: string;
-}
-interface DecisionItem {
-  id: string;
-  summary: string;
-  createdAt: string;
-  href: string | null;
-  /**
-   * Why nothing can be pressed, when nothing can be pressed. Server-decided in
-   * lib/j4/officeActions.ts so the surface cannot invent a reason of its own.
-   */
-  because?: string;
-}
-interface IdeaItem {
-  id: string;
-  summary: string;
-  href: string | null;
-  /**
-   * Why nothing can be pressed, when nothing can be pressed. Server-decided in
-   * lib/j4/officeActions.ts so the surface cannot invent a reason of its own.
-   */
-  because?: string;
-}
 // One heading's worth of what J4 understands, already shaped and formatted on
 // the server (J4Surface). Deliberately plain strings: this crosses into a
 // client component, so no Dates, no Prisma rows, and no nested model objects
@@ -226,17 +192,6 @@ export interface UnderstandingGroup {
   facts: UnderstandingFact[];
   /** Shown in place of the facts when J4 genuinely knows nothing here yet. */
   empty: string;
-}
-interface InformationItem {
-  id: string;
-  summary: string;
-  href: string | null;
-  kind: "urgent" | "curiosity";
-  /**
-   * Why nothing can be pressed, when nothing can be pressed. Server-decided in
-   * lib/j4/officeActions.ts so the surface cannot invent a reason of its own.
-   */
-  because?: string;
 }
 
 // Temporary production tracing (2026-08-08) — carried over from the
@@ -721,11 +676,6 @@ function UploadAssetButton({
   );
 }
 
-function taskPriorityDotClassName(priority: string): string {
-  if (priority === "FAILED") return "bg-red-500";
-  if (priority === "WARNING") return "bg-amber-400";
-  return "bg-purple-500"; // "opportunity"
-}
 
 // Deliberately plain rows in a document-like list, not cards mimicking
 // GenesisDomicile/ObservationsPanel's own framed-widget treatment — this
@@ -751,98 +701,32 @@ function taskPriorityDotClassName(priority: string): string {
 function CategoryView({
   label,
   items,
-  withTitle = false,
+  onDecide,
+  decidingId,
+  decidingIntent,
 }: {
   label: string;
   items: WorkItem[];
-  withTitle?: boolean;
+  onDecide: (id: string, intent: "approve" | "reject") => void;
+  decidingId: string | null;
+  decidingIntent: "approve" | "reject" | null;
 }) {
   if (items.length === 0) return <CategoryEmptyState label={label} />;
   return (
-    <div
-      className="flex w-full min-w-0 max-w-full flex-col divide-y"
-      style={{ borderColor: GENESIS_ATMOSPHERE.border }}
-    >
+    <div className="flex w-full min-w-0 max-w-full flex-col gap-2">
       {items.map((item) => (
-        <CategoryRow
+        <WorkRow
           key={item.id}
-          title={withTitle ? item.headline : undefined}
-          summary={withTitle ? (item.why ?? "") : item.headline}
-          href={item.action.kind === "open" ? item.action.href : null}
-          because={
-            item.action.kind === "none" || item.action.kind === "internal"
-              ? item.action.because
-              : undefined
-          }
-          dotClassName={categoryDotFor(item)}
+          item={item}
+          onDecide={onDecide}
+          deciding={decidingId === item.id ? decidingIntent : null}
+          kindDot={categoryDotFor(item)}
         />
       ))}
     </div>
   );
 }
 
-function CategoryRow({
-  title,
-  summary,
-  href,
-  because,
-  dotClassName,
-}: {
-  title?: string;
-  summary: string;
-  href: string | null;
-  /**
-   * Why there is nothing to press, when there is nothing to press.
-   *
-   * Only rendered on the inert branch. It exists so "no action" is a stated
-   * fact the owner can read rather than something they discover by tapping a
-   * row twice and concluding the product is broken.
-   */
-  because?: string;
-  dotClassName: string;
-}) {
-  const inner = (
-    <div className="flex items-start gap-2.5">
-      <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dotClassName}`} aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        {title && <p className="break-words text-sm font-medium text-[#f4f2fb]">{title}</p>}
-        <p className={`break-words text-sm ${title ? "mt-0.5 text-[rgba(244,242,251,0.62)]" : "text-[#f4f2fb]"}`}>{summary}</p>
-      </div>
-    </div>
-  );
-  // A ROW THAT CANNOT BE PRESSED MUST NOT LOOK PRESSABLE (2026-09-09).
-  //
-  // Both branches used to carry `hover:bg-white/[.04]`. Measured in
-  // production, 198 of the rows on this surface had no href — so 198 rows lit
-  // up under the owner's finger and did nothing. Sean: "Do not make fake
-  // buttons just to make the UI look interactive... If an item genuinely
-  // cannot be acted upon yet, make that state explicit rather than pretending
-  // it is interactive."
-  //
-  // Nobody decided that hover; it was one shared class name. So the hover now
-  // lives only on the branch that can actually be followed, and the inert
-  // branch says why it is inert instead of implying it is a link.
-  // The affordance is DERIVED from whether there is anything to follow, in
-  // lib/j4/officeActions.ts, so a hover can never again be attached to a row
-  // that does nothing. See rowInteractionClass for why that decision does not
-  // live in this file.
-  const base = "block rounded-lg px-2 py-2.5";
-  if (href) {
-    return (
-      <a href={href} className={`${base} ${rowInteractionClass({ kind: "open", label: "", href })}`}>
-        {inner}
-      </a>
-    );
-  }
-  return (
-    <div className={`${base} ${rowInteractionClass({ kind: "none", because: because ?? "" })}`}>
-      {inner}
-      {because && (
-        <p className="mt-1 pl-5 text-xs italic text-[rgba(244,242,251,0.42)]">{because}</p>
-      )}
-    </div>
-  );
-}
 
 function CategoryEmptyState({ label }: { label: string }) {
   return <p className="px-2 py-2.5 text-sm text-[rgba(244,242,251,0.5)]">Nothing in {label} right now.</p>;
@@ -1239,6 +1123,43 @@ export function J4Workspace({
   const decisions = work ? inCategory(work, "decisions") : [];
   const information = work ? inCategory(work, "information") : [];
   const intelligenceLoading = !isLayer && intel === null;
+
+  // ONE DECIDER, FOR EVERY SURFACE THAT SHOWS THE SAME ITEM (2026-09-12).
+  //
+  // The briefing owned this handler and the category views had no controls at
+  // all, so a decision could be read in Decisions and only answered in
+  // Briefing. Hoisting it means both render the same WorkRow running the same
+  // server actions — not a second copy that could answer differently.
+  const decideOnWorkItem = (id: string, intent: "approve" | "reject") => {
+              // BOTH ANSWERS RUN A REAL SERVER ACTION, and the same pair the
+              // conversation already uses — approveProposalInConversation and
+              // rejectProposalInConversation. Neither is a briefing-shaped
+              // copy, and neither redirects: the dashboard's own
+              // approve/reject both end in redirect("/dashboard"), which is
+              // the navigation this layer exists to prevent.
+              //
+              // Each writes J4's own account of what happened back into the
+              // conversation, so saying no is recorded as plainly as saying
+              // yes rather than a row quietly disappearing.
+              setApprovingId(id);
+              setDecidingIntent(intent);
+              startApproval(async () => {
+                try {
+                  if (intent === "approve") {
+                    await approveProposalInConversation(id, slug);
+                  } else {
+                    await rejectProposalInConversation(id, slug);
+                  }
+                  router.refresh();
+                } finally {
+                  setApprovingId(null);
+                  setDecidingIntent(null);
+                  // Re-read the work list: the decision has really changed.
+                  setWorkEpoch((n) => n + 1);
+                }
+              });
+  };
+
 
   const [deepKnowledge, setDeepKnowledge] = useState<DeepKnowledge | null>(null);
   /**
@@ -2311,35 +2232,7 @@ export function J4Workspace({
             handled={handled}
             decidingId={approvingId}
             decidingIntent={decidingIntent}
-            onDecide={(id, intent) => {
-              // BOTH ANSWERS RUN A REAL SERVER ACTION, and the same pair the
-              // conversation already uses — approveProposalInConversation and
-              // rejectProposalInConversation. Neither is a briefing-shaped
-              // copy, and neither redirects: the dashboard's own
-              // approve/reject both end in redirect("/dashboard"), which is
-              // the navigation this layer exists to prevent.
-              //
-              // Each writes J4's own account of what happened back into the
-              // conversation, so saying no is recorded as plainly as saying
-              // yes rather than a row quietly disappearing.
-              setApprovingId(id);
-              setDecidingIntent(intent);
-              startApproval(async () => {
-                try {
-                  if (intent === "approve") {
-                    await approveProposalInConversation(id, slug);
-                  } else {
-                    await rejectProposalInConversation(id, slug);
-                  }
-                  router.refresh();
-                } finally {
-                  setApprovingId(null);
-                  setDecidingIntent(null);
-                  // Re-read the work list: the decision has really changed.
-                  setWorkEpoch((n) => n + 1);
-                }
-              });
-            }}
+            onDecide={decideOnWorkItem}
             onOpenConversation={() => setActiveCategory("conversation")}
           />
         ) : shownCategory === "conversation" ? (
@@ -2543,18 +2436,18 @@ export function J4Workspace({
             </div>
           )
         ) : shownCategory === "tasks" ? (
-          <CategoryView label="Tasks" items={tasks} withTitle />
+          <CategoryView label="Tasks" items={tasks} onDecide={decideOnWorkItem} decidingId={approvingId} decidingIntent={decidingIntent} />
         ) : shownCategory === "ideas" ? (
-          <CategoryView label="Ideas" items={ideas} />
+          <CategoryView label="Ideas" items={ideas} onDecide={decideOnWorkItem} decidingId={approvingId} decidingIntent={decidingIntent} />
         ) : shownCategory === "decisions" ? (
-          <CategoryView label="Decisions" items={decisions} />
+          <CategoryView label="Decisions" items={decisions} onDecide={decideOnWorkItem} decidingId={approvingId} decidingIntent={decidingIntent} />
         ) : shownCategory === "information" ? (
           // Made an explicit branch (2026-08-16). Information used to be the
           // final `else`, which quietly meant "any category that isn't one of
           // the four above" — so adding Understanding to the union would have
           // rendered Information under it, with no type error to say so. Each
           // category now names itself.
-          <CategoryView label="Information" items={information} />
+          <CategoryView label="Information" items={information} onDecide={decideOnWorkItem} decidingId={approvingId} decidingIntent={decidingIntent} />
         ) : (
           // Understanding. Grouped rather than listed, because it is the one
           // category that is not a queue of comparable items — "revenue" and

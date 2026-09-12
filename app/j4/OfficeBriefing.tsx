@@ -188,15 +188,35 @@ const MISSING_LABEL = {
   capability: "I cannot do this one",
 } as const;
 
-function WorkRow({
+/**
+ * One work item, and the action it owns.
+ *
+ * EXPORTED 2026-09-12 so the Office's category views render the same row.
+ * They used to render a link-or-nothing of their own, which meant the
+ * Decisions view listed decisions with no way to decide them — the controls
+ * existed, in the briefing, on the same items. Two renderers over one model is
+ * how an action and the item it belongs to drift apart, so there is one.
+ */
+export function WorkRow({
   item,
   onDecide,
   deciding,
+  kindDot,
 }: {
   item: WorkItem;
   onDecide: (id: string, intent: "approve" | "reject") => void;
   /** The answer currently running on THIS row, or null. */
   deciding: "approve" | "reject" | null;
+  /**
+   * The category colour, for surfaces that group by kind rather than by
+   * response.
+   *
+   * The briefing does not pass one: its sections already say what each group
+   * is. A category view does, because a FAILED task and an opportunity sit in
+   * the same list there and must not read the same — the distinction
+   * OfficeWork now carries expressly to keep.
+   */
+  kindDot?: string;
 }) {
   const { action } = item;
   return (
@@ -210,7 +230,16 @@ function WorkRow({
       data-work-id={item.id}
       className="rounded-xl border border-white/[.07] bg-white/[.02] p-3.5"
     >
-      <p className="break-words text-[14.5px] leading-snug text-[#f4f2fb]">{item.headline}</p>
+      <p className="flex items-start gap-2 break-words text-[14.5px] leading-snug text-[#f4f2fb]">
+        {kindDot && (
+          <span
+            data-testid="work-kind-dot"
+            className={`mt-[7px] inline-block h-1.5 w-1.5 shrink-0 rounded-full ${kindDot}`}
+            aria-hidden="true"
+          />
+        )}
+        {item.headline}
+      </p>
 
       {/* WHY, ONLY WHEN THERE IS A WHY. Null renders nothing at all — never a
           stand-in sentence, which is the rule officeBriefing.ts enforces and

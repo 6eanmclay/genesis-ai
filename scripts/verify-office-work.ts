@@ -429,6 +429,93 @@ check("a capability gap is not quietly filed under Tasks",
   needs.length > 0 && !idsIn("tasks").some((id) => id.startsWith("need:")),
   `${needs.length} need(s)`);
 
+// ============================================================================
+console.log("\n=== 9. The inline action is the item's own, and nobody else's ===\n");
+// ============================================================================
+//
+// Commit 3 renders each OfficeAction beside the WorkItem that owns it, by
+// reusing the briefing's WorkRow rather than giving the category views a row
+// of their own. These assert the properties that keeps true.
+
+// ---- a dead entry point cannot become a valid action --------------------
+//
+// An `open` action IS a link the owner can press. One with an empty href is a
+// control that goes nowhere, which is worse than no control at all — the
+// whole reason `none` exists is to say "there is nowhere to go" out loud.
+// ITS OWN FIXTURE, because fiveSources deliberately has no open actions — the
+// inert pair is what proves the collapse. A check that ran over an empty list
+// and reported "0 open action(s)" would pass forever without testing anything,
+// which is the shape this suite has caught twice already.
+const withOpen = officeWork(
+  understandingWith({ activeProducts: 2, hasPhoto: true }),
+  {
+    ...emptyState,
+    observations: [
+      {
+        id: "obs-open",
+        kind: "problem_actionable" as const,
+        headline: "Three orders have no tracking",
+        why: null,
+        standingDays: 1,
+        action: officeActionForObservation({ summary: "z", actionHref: "/dashboard/orders" }, CATEGORY_BASE),
+        genesisState: "urgent" as const,
+      },
+    ],
+  },
+  CATEGORY_BASE,
+);
+const everyOpen = withOpen.items.filter((i) => i.action.kind === "open");
+check("there is an open action to check at all", everyOpen.length > 0, `${everyOpen.length}`);
+check("every open action has somewhere real to go",
+  everyOpen.every((i) => i.action.kind === "open" && i.action.href.trim().length > 0),
+  `${everyOpen.length} open action(s)`);
+check("  and each one is inside the business being viewed",
+  everyOpen.every((i) => i.action.kind === "open" && i.action.href.startsWith(CATEGORY_BASE)),
+  everyOpen.map((i) => (i.action.kind === "open" ? i.action.href : "")).join(" ") || "none to check");
+
+// ---- none really is the absence of a control ---------------------------
+const inertItems = fiveSources.items.filter((i) => i.action.kind === "none");
+check("an inert item carries a reason instead of a control",
+  inertItems.every((i) => i.action.kind === "none" && i.action.because.trim().length > 0),
+  `${inertItems.length} inert item(s)`);
+
+// ---- permissions still gate what reaches the list ----------------------
+//
+// The decisions in this list are pending approvals, and loadOfficeIntelligence
+// only fetches them for somebody allowed to see them. Asserted against the
+// real source, because the gate is upstream of anything this module can see.
+const intelSrc = readFileSync(join(process.cwd(), "app", "j4", "intelligence-actions.ts"), "utf8");
+check("pending approvals are still permission-gated before they become work",
+  /hasPermission\(role, PERMISSIONS\.ANALYTICS_VIEW\)\s*\?\s*getPendingApprovals/.test(intelSrc),
+  "an unpermitted reader gets an empty list, not a filtered view");
+check("and the Office still refuses a reader without chat permission",
+  /hasPermission\(role, PERMISSIONS\.GENESIS_CHAT\)/.test(intelSrc));
+
+// ---- one renderer, one list -------------------------------------------
+//
+// The category views render the same WorkRow the briefing does. A second row
+// component over the same items is how an action and the item it belongs to
+// drift apart, and it is what this commit removed.
+const workspaceSrc = readFileSync(join(process.cwd(), "app", "j4", "J4Workspace.tsx"), "utf8");
+check("the category views render the briefing's own row",
+  /import \{ OfficeBriefing, WorkRow \} from "\.\/OfficeBriefing";/.test(workspaceSrc),
+  "one action renderer");
+check("  and there is no second row component beside it",
+  !/function CategoryRow\(/.test(workspaceSrc),
+  "CategoryRow rendered a link-or-nothing of its own");
+// THE FOUR, DISTINCTLY. Counting call sites was the first version and it
+// proved nothing: swapping one category name for another left four calls and
+// a green check, with two views rendering the same list. Its own sabotage
+// caught that.
+const readCategories = [...workspaceSrc.matchAll(/inCategory\(work, "([a-z]+)"\)/g)].map((m) => m[1]).sort();
+check("  every category is read from the work list, and each exactly once",
+  JSON.stringify(readCategories) === JSON.stringify(["decisions", "ideas", "information", "tasks"]),
+  readCategories.join(" "));
+check("  and the six legacy arrays are gone from the payload",
+  !/briefingItems:|information:|ideas:/.test(readFileSync(join(process.cwd(), "app", "j4", "intelligence-actions.ts"), "utf8").replace(/\/\/.*$/gm, "")),
+  "no legacy field survives in OfficeIntelligence");
+
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${failed.length === 0 ? `ALL PASS (${results.length})` : `${failed.length} of ${results.length} FAILED`}`);
 if (failed.length) console.log(failed.map((f) => `  - ${f.name}`).join("\n"));

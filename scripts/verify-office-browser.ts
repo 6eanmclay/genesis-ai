@@ -551,6 +551,72 @@ async function main() {
       check(`${TAB_LABEL[key]} shows nothing belonging to another view`, leaked, []);
     }
 
+    // ======================================================================
+    // THE ACTION IS ON THE ITEM THAT OWNS IT (2026-09-12)
+    // ======================================================================
+    //
+    // The category views used to render a link-or-nothing of their own, so the
+    // Decisions view listed decisions with no way to decide them — the
+    // controls existed, on the same items, in the briefing. They render the
+    // one WorkRow now, which means there is a single action renderer over a
+    // single list rather than an action model per surface.
+    //
+    // Read off the rendered page, because the claim is about what an owner can
+    // press and where it sits, not about what a function returns.
+    {
+      await showView(page, TAB_LABEL.decisions);
+      const rows = await page.evaluate(() => {
+        const portal = document.querySelector("[data-j4-presentation='office']");
+        return [...(portal?.querySelectorAll('[data-testid="work-row"]') ?? [])].map((row) => ({
+          workId: row.getAttribute("data-work-id") ?? "",
+          action: row.getAttribute("data-action") ?? "",
+          // A control is something the owner can press INSIDE this row.
+          controls: [...row.querySelectorAll("button, a[href]")].map((c) =>
+            (c.getAttribute("data-testid") ?? c.tagName.toLowerCase()),
+          ),
+          hasDot: !!row.querySelector('[data-testid="work-kind-dot"]'),
+        }));
+      });
+
+      assert("Decisions renders its items as work rows", rows.length > 0, `${rows.length} rows`);
+
+      // 1 + 6. THE CONTROL BELONGS TO THE ROW, and the row is a WorkItem.
+      const executes = rows.filter((r) => r.action === "execute");
+      assert("a decision carries its own answer controls",
+        executes.length > 0 && executes.every((r) => r.controls.includes("work-action-execute")),
+        JSON.stringify(executes.slice(0, 2)));
+      assert("  and every control sits inside the row whose work id it belongs to",
+        executes.every((r) => r.workId.length > 0),
+        executes.map((r) => r.workId).join(" "));
+
+      // 3. NONE MEANS NO CONTROL. Not a dimmed button, not a dead link.
+      const inert = rows.filter((r) => r.action === "none" || r.action === "internal");
+      check("an item J4 cannot act on offers nothing to press",
+        inert.filter((r) => r.controls.length > 0).map((r) => r.workId), []);
+
+      // THE KIND COLOUR SURVIVED THE MOVE. Commit 2 carried taskPriority and
+      // genesisState expressly so a FAILED task could not read as an
+      // opportunity; rendering the briefing's row here must not lose it.
+      assert("category rows still carry their kind colour",
+        rows.every((r) => r.hasDot), `${rows.filter((r) => !r.hasDot).length} without a dot`);
+
+      // AND THE SAME ITEM IN THE BRIEFING IS THE SAME ITEM. One list, two
+      // surfaces — if these diverge, a parallel collection has appeared.
+      const briefingIds = await page.evaluate(async () => {
+        const tab = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Briefing");
+        tab?.click();
+        await new Promise((r) => setTimeout(r, 800));
+        const portal = document.querySelector("[data-j4-presentation='office']");
+        return [...(portal?.querySelectorAll('[data-testid="work-row"]') ?? [])].map(
+          (row) => row.getAttribute("data-work-id") ?? "",
+        );
+      });
+      const decisionIds = executes.map((r) => r.workId);
+      assert("a decision shown in Decisions is the same work item shown in Briefing",
+        decisionIds.every((id) => briefingIds.includes(id)),
+        `decisions ${decisionIds.join(" ")} / briefing ${briefingIds.join(" ")}`);
+    }
+
     // And the overlap is a real requirement, not a tolerance: if the proposal
     // ever stopped appearing in the conversation, the owner would be asked to
     // decide something in a place they were never taken to.
