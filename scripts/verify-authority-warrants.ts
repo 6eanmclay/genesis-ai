@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { startRealPostgres } from "@/scripts/lib/realPostgres";
 import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
@@ -66,6 +66,31 @@ function assert(label: string, ok: boolean, detail = ""): void {
 
 const root = process.cwd();
 const read = (...p: string[]) => readFileSync(join(root, ...p), "utf8");
+
+function sourceFiles(dir: string, acc: string[] = []): string[] {
+  for (const e of readdirSync(join(root, dir))) {
+    if (e === "node_modules" || e.startsWith(".")) continue;
+    const rel = `${dir}/${e}`;
+    if (statSync(join(root, rel)).isDirectory()) sourceFiles(rel, acc);
+    else if (e.endsWith(".ts") || e.endsWith(".tsx")) acc.push(rel);
+  }
+  return acc;
+}
+
+/** Every migration's SQL, concatenated — swept, never sampled. */
+function migrationSql(): string {
+  const base = join(root, "prisma", "migrations");
+  return readdirSync(base)
+    .filter((d) => statSync(join(base, d)).isDirectory())
+    .map((d) => {
+      try {
+        return readFileSync(join(base, d, "migration.sql"), "utf8");
+      } catch {
+        return "";
+      }
+    })
+    .join("\n");
+}
 /** Comments explain intent; code is the evidence. */
 const codeOnly = (src: string) =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -341,6 +366,91 @@ async function main(): Promise<void> {
   assert("  whose message names the shortfall rather than authority",
     /Growth Point/i.test(brokeLog?.message ?? ""),
     brokeLog?.message ?? "(no log row)");
+
+  // ======================================================================
+  console.log("\n=== 3c. No store is grandfathered into authority ===\n");
+  // ======================================================================
+  //
+  // ============ THE MIGRATION DECISION (2026-09-12) ===================
+  //
+  // Tightening the gate left every existing store unauthorised, because until
+  // then nothing required a grant. Sean's decision: they stay that way. No
+  // migration, no one-time grant, no "you used to have this" notification.
+  //
+  //   A previous implementation behaviour is not an owner's authorization.
+  //
+  // The tempting version of kindness here is to read a store's own history —
+  // it was auto-publishing yesterday, so surely it may today — and that is
+  // precisely the inference the rule forbids. What J4 did under a permission
+  // model that turned out to be wrong is evidence about the model, not
+  // consent from the owner. This is the same standing rule as never inferring
+  // that money arrived because an order exists.
+  const legacy = await prisma.store.create({
+    data: {
+      userId: owner.id,
+      name: "Legacy Co",
+      slug: `legacy-${++n}-${Date.now()}`,
+      tagline: "t",
+      description: "d",
+      currency: "USD",
+      growthPointBalance: 500,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+      blueprint: { marketingAssets: { seoTitle: "Old title", seoMetaDescription: "Old desc" } },
+    },
+  });
+  // A REAL HISTORY OF THE OLD BEHAVIOUR: SEO this store published on its own,
+  // in conversation, with nobody ever having granted anything.
+  await prisma.approvalRequest.create({
+    data: {
+      storeId: legacy.id,
+      actionType: "update_seo",
+      input: seoInput as object,
+      previousValues: {} as object,
+      summary: "Genesis has an SEO update for you",
+      authorizationTier: "auto",
+      groupId: `legacy-${Date.now()}`,
+      status: "EXECUTED",
+      decisionMode: "chat_auto",
+      decidedByUserId: owner.id,
+      decidedAt: new Date("2026-08-01T00:00:00Z"),
+    },
+  });
+  check("this store really does carry prior autonomous history",
+    await prisma.approvalRequest.count({
+      where: { storeId: legacy.id, decisionMode: "chat_auto", status: "EXECUTED" },
+    }),
+    1);
+  check("  and still holds no grant", await prisma.delegatedAuthority.count({ where: { storeId: legacy.id } }), 0);
+  check("HISTORY CONFERS NOTHING — it is not authorised",
+    (await autonomyAuthorizedFor(legacy.id, "update_seo")) === null, true);
+  assert("  so the absent-owner path refuses it exactly like a new store",
+    (await tryExecuteAutonomousAction({
+      storeId: legacy.id,
+      actionType: "update_seo",
+      input: seoInput,
+      summary: "Genesis acted on its own",
+      topicKey: null,
+      cognitiveOutputId: null,
+    } as never)) === false);
+  check("  and nothing was written", await seoTitleOf(legacy.id), "Old title");
+  check("  and no grant was conjured on its behalf",
+    await prisma.delegatedAuthority.count({ where: { storeId: legacy.id } }), 0);
+
+  // ONE PRODUCTION WRITER, AND IT IS THE OWNER'S OWN BUTTON. Asserted as a
+  // sweep rather than trusted: a grant created anywhere else — a migration, a
+  // backfill script, an onboarding convenience — would be authority nobody
+  // gave, which is the whole thing this decision rules out.
+  const productionGrantWriters = [...sourceFiles("app"), ...sourceFiles("lib")].filter((f) => {
+    const src = codeOnly(read(...f.split("/")));
+    return /delegatedAuthority\.(create|upsert|createMany)|grantDelegatedAuthority\(/.test(src);
+  });
+  check("only the grant helper and the owner's own action can create a grant",
+    productionGrantWriters.sort(),
+    ["app/dashboard/actions.ts", "lib/execution/genesisAutonomy.ts"]);
+  const migrations = migrationSql();
+  assert("no migration inserts a grant",
+    !/insert\s+into\s+"?DelegatedAuthority"?/i.test(migrations),
+    `${migrations.length} chars of migration SQL swept`);
 
   // ======================================================================
   console.log("\n=== 4. HUMAN stays distinguishable from both ===\n");

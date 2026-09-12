@@ -29,12 +29,14 @@ This is essentially your Auto-Execute and Always-Require-Approval tiers, already
 
 ### Mapping your 5 levels onto what's real
 
+> **Corrected 2026-09-12.** The Auto-Execute row's original parenthetical — that a ceiling permitting `auto` could be enough on its own, "with no per-action grant needed" — described the exact loophole that later shipped: `proposeAction` authorising itself on the tier alone, so an owner's "Ask before publishing SEO changes" did not reach the conversation. Both halves are now required on every path. See *Standing invariant: no autonomous mutation without explicit authorization* in [ARCHITECTURE.md](./ARCHITECTURE.md). The strikethrough is left visible rather than deleted, because the sentence is the origin of the defect.
+
 | Your level | Maps to | Status |
 |---|---|---|
 | **Inform** | `authorityExempt: true` actions (e.g. `communicate_finding`) — no `ApprovalRequest`, nothing to approve, J4 just states something | Real, already used |
 | **Recommend** | `authorizationTier: "always_ask"`, no active `DelegatedAuthority` grant | Real, this is what ~every action does today |
 | **Prepare** | *Not clearly distinct from Recommend today* — an `ApprovalRequest.input` is already the fully-computed proposed change, not a half-finished draft. Whether "Prepare" means something genuinely different (e.g., J4 assembles a multi-step draft — written copy, a generated image — and holds it ready across several turns before the final confirm) is a real product distinction I don't want to silently resolve. **Flagged as an open question in §5.** |
-| **Auto-Execute** | `authorizationTier: "auto"` + an active `DelegatedAuthority` grant (or a category/action where the ceiling already permits `auto` with no per-action grant needed, matching how `operations` was deliberately raised to `auto` for `goal.update_status`/`challenge.resolve`) | Real mechanism, barely used |
+| **Auto-Execute** | `authorizationTier: "auto"` **and** an active `DelegatedAuthority` grant — both, always. ~~or a category/action where the ceiling already permits `auto` with no per-action grant needed~~ | Real mechanism, barely used |
 | **Always Require Approval** | `CATEGORY_MAX_TIER` locked to `always_ask` for `money`/`destructive` — hard, code-level, no grant can ever override it | Real, already enforced |
 
 ### Resolved: trust stays action-based, not category-based

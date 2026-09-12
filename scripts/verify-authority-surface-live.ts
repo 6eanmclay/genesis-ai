@@ -146,6 +146,28 @@ async function main(): Promise<void> {
 
     const never = await makeOwner("never");
 
+    // A STORE THAT USED TO AUTO-PUBLISH (2026-09-12). Before the gate
+    // tightened, SEO published itself in conversation with no grant anywhere.
+    // Sean's migration decision is that such a store stays unauthorised — no
+    // backfill, no one-time grant — so the screen must show it exactly as it
+    // shows a store created this morning. History is not consent.
+    const legacy = await makeOwner("legacy");
+    await db.prisma.approvalRequest.create({
+      data: {
+        storeId: legacy.store.id,
+        actionType: "update_seo",
+        input: { seoTitle: "T", seoMetaDescription: "D" } as object,
+        previousValues: {} as object,
+        summary: "Genesis has an SEO update for you",
+        authorizationTier: "auto",
+        groupId: `legacy-${stamp}`,
+        status: "EXECUTED",
+        decisionMode: "chat_auto",
+        decidedByUserId: legacy.session.userId,
+        decidedAt: new Date("2026-08-01T00:00:00Z"),
+      },
+    });
+
     const pageFor = async (o: { session: { fetch: (p: string) => Promise<Response> }; store: { slug: string } }) => {
       const res = await o.session.fetch(`/b/${o.store.slug}/authority`);
       if (res.status !== 200) throw new Error(`/authority answered ${res.status}`);
@@ -225,6 +247,21 @@ async function main(): Promise<void> {
     assert("  and is not described as revoked",
       !neverPage.includes("Revoked"),
       "never granted and turned off are different answers");
+
+    // A STORE WITH THE OLD BEHAVIOUR IN ITS HISTORY LOOKS THE SAME.
+    const legacyPage = await pageFor(legacy);
+    check("a store that used to auto-publish still holds no grant",
+      await db.prisma.delegatedAuthority.count({ where: { storeId: legacy.store.id } }), 0);
+    assert("  and the screen shows it as not granted",
+      awayRow(legacyPage).includes("Not granted"),
+      awayRow(legacyPage));
+    assert("  and asking first in conversation",
+      sectionOf(legacyPage, "While you're here").includes("Asks first"),
+      "prior autonomous history is evidence about the old model, not the owner's consent");
+    assert("  it is indistinguishable from a store created today",
+      sectionOf(legacyPage, "While you're away").replace(/\d/g, "") ===
+        sectionOf(neverPage, "While you're away").replace(/\d/g, ""),
+      "if these ever diverge, something is reading history as authority");
 
     // ======================================================================
     console.log("\n=== 2. The two warrants are described separately ===\n");
