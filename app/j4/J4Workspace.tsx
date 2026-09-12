@@ -31,6 +31,7 @@ import { rowInteractionClass } from "@/lib/j4/officeActions";
 import type { RecordProvenance } from "@prisma/client";
 import { PROVENANCE_LABEL } from "@/lib/businessModel/provenance";
 import { OfficeBand } from "./OfficeBand";
+import { inCategory, categoryDotFor, type WorkItem } from "@/lib/j4/officeSections";
 import { OfficeBriefing } from "./OfficeBriefing";
 import type { BriefingItem, HandledSummary } from "@/lib/j4/officeBriefing";
 import { approveProposalInConversation, rejectProposalInConversation } from "./proposal-actions";
@@ -731,6 +732,55 @@ function taskPriorityDotClassName(priority: string): string {
 // is the Portal's own category browser, not a second copy of a dashboard
 // panel. A title is only shown for Tasks (the one category with a real,
 // separate title field); everything else leads with its summary.
+/**
+ * One category view, over the one work list.
+ *
+ * ============ FOUR BLOCKS BECAME ONE (2026-09-12) =================
+ *
+ * Tasks, Ideas, Decisions and Information rendered four near-identical
+ * blocks over four separately-assembled arrays, each with its own hardcoded
+ * dot colour. The arrays are gone — every category is a filter over
+ * OfficeWork now — and the colour comes from the item's own carried facts,
+ * so a FAILED task is still red and an opportunity is still purple without
+ * this component knowing what either of those means.
+ *
+ * A title is shown only for Tasks, which is the one category whose rows have
+ * a real title distinct from their summary. That was true before and is
+ * unchanged.
+ */
+function CategoryView({
+  label,
+  items,
+  withTitle = false,
+}: {
+  label: string;
+  items: WorkItem[];
+  withTitle?: boolean;
+}) {
+  if (items.length === 0) return <CategoryEmptyState label={label} />;
+  return (
+    <div
+      className="flex w-full min-w-0 max-w-full flex-col divide-y"
+      style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+    >
+      {items.map((item) => (
+        <CategoryRow
+          key={item.id}
+          title={withTitle ? item.headline : undefined}
+          summary={withTitle ? (item.why ?? "") : item.headline}
+          href={item.action.kind === "open" ? item.action.href : null}
+          because={
+            item.action.kind === "none" || item.action.kind === "internal"
+              ? item.action.because
+              : undefined
+          }
+          dotClassName={categoryDotFor(item)}
+        />
+      ))}
+    </div>
+  );
+}
+
 function CategoryRow({
   title,
   summary,
@@ -921,13 +971,8 @@ export function J4Workspace({
   hasPendingDecision,
   hasOpportunity,
   hasCuriosity,
-  tasks: tasksProp = [],
-  decisions: decisionsProp = [],
-  ideas: ideasProp = [],
-  information: informationProp = [],
   understanding,
   facts: factsProp = [],
-  briefingItems: briefingItemsProp = [],
   handled: handledProp = { resolvedByJ4: 0, decisionsSettled: 0, changes: [], windowDays: 14 },
   surface,
   proposal,
@@ -958,10 +1003,6 @@ export function J4Workspace({
   uploadAsset: (formData: FormData) => void;
   uploadPhotoBatch: (formData: FormData) => void;
   uploadVoiceMemo: (formData: FormData) => Promise<{ transcript: string; audioUrl: string } | undefined>;
-  tasks?: TaskItem[];
-  decisions?: DecisionItem[];
-  ideas?: IdeaItem[];
-  information?: InformationItem[];
   understanding?: UnderstandingGroup[];
   /**
    * What J4 is holding for the owner, counted on the server.
@@ -972,8 +1013,6 @@ export function J4Workspace({
    * behind it. This component never computes one.
    */
   facts?: OfficeFact[];
-  /** What J4 leads with on arrival, ordered on the server. */
-  briefingItems?: BriefingItem[];
   /** What he already handled, internal executions excluded. */
   handled?: HandledSummary;
   surface: J4Surface;
@@ -1178,21 +1217,27 @@ export function J4Workspace({
     return () => { alive = false; };
   }, [needsIntelligence, slug, workEpoch]);
 
-  // Server-provided values still win when they are present, so the layer and
-  // any caller that passes them directly are unchanged. This is an addition to
-  // where the data can come from, not a replacement for it.
-  const briefingItems = intel?.briefingItems ?? briefingItemsProp;
   // THE ONE LIST the Office is now organised by. Null until the progressive
   // tier lands, so the arrival surface can tell "I have not looked yet" from
   // "nothing is waiting on you" rather than rendering the second while the
   // first is true.
   const work = intel?.work ?? null;
-  const handled = intel?.handled ?? handledProp;
+  // DONE lives on the work list itself, and always did — OfficeWork carries
+  // `handled` because a retrospective summary is genuinely not a filter over
+  // outstanding items. The separate field beside it was a duplicate.
+  const handled = work?.handled ?? handledProp;
   const facts = intel?.facts ?? factsProp;
-  const tasks = intel?.tasks ?? tasksProp;
-  const ideas = intel?.ideas ?? ideasProp;
-  const decisions = intel?.decisions ?? decisionsProp;
-  const information = intel?.information ?? informationProp;
+  // THE FOUR CATEGORY VIEWS, now filters over the one list (2026-09-12).
+  //
+  // They were six parallel arrays assembled separately from the sections
+  // below them, which is the shape every count disagreement in this Office
+  // has come from. inCategory reads facts each item carries — an
+  // observation's own state, the explanation discriminator, a task's own
+  // priority — never an id, an href or the order things were pushed.
+  const tasks = work ? inCategory(work, "tasks") : [];
+  const ideas = work ? inCategory(work, "ideas") : [];
+  const decisions = work ? inCategory(work, "decisions") : [];
+  const information = work ? inCategory(work, "information") : [];
   const intelligenceLoading = !isLayer && intel === null;
 
   const [deepKnowledge, setDeepKnowledge] = useState<DeepKnowledge | null>(null);
@@ -2498,50 +2543,18 @@ export function J4Workspace({
             </div>
           )
         ) : shownCategory === "tasks" ? (
-          tasks.length === 0 ? (
-            <CategoryEmptyState label="Tasks" />
-          ) : (
-            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
-              {tasks.map((t) => (
-                <CategoryRow key={t.id} title={t.title} summary={t.summary} href={t.href} because={t.because} dotClassName={taskPriorityDotClassName(t.priority)} />
-              ))}
-            </div>
-          )
+          <CategoryView label="Tasks" items={tasks} withTitle />
         ) : shownCategory === "ideas" ? (
-          ideas.length === 0 ? (
-            <CategoryEmptyState label="Ideas" />
-          ) : (
-            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
-              {ideas.map((o) => (
-                <CategoryRow key={o.id} summary={o.summary} href={o.href} because={o.because} dotClassName="bg-purple-500" />
-              ))}
-            </div>
-          )
+          <CategoryView label="Ideas" items={ideas} />
         ) : shownCategory === "decisions" ? (
-          decisions.length === 0 ? (
-            <CategoryEmptyState label="Decisions" />
-          ) : (
-            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
-              {decisions.map((d) => (
-                <CategoryRow key={d.id} summary={d.summary} href={d.href} because={d.because} dotClassName="bg-amber-400" />
-              ))}
-            </div>
-          )
+          <CategoryView label="Decisions" items={decisions} />
         ) : shownCategory === "information" ? (
           // Made an explicit branch (2026-08-16). Information used to be the
           // final `else`, which quietly meant "any category that isn't one of
           // the four above" — so adding Understanding to the union would have
           // rendered Information under it, with no type error to say so. Each
           // category now names itself.
-          information.length === 0 ? (
-            <CategoryEmptyState label="Information" />
-          ) : (
-            <div className="flex w-full min-w-0 max-w-full flex-col divide-y" style={{ borderColor: GENESIS_ATMOSPHERE.border }}>
-              {information.map((i) => (
-                <CategoryRow key={i.id} summary={i.summary} href={i.href} because={i.because} dotClassName={i.kind === "urgent" ? "bg-red-500" : "bg-teal-400"} />
-              ))}
-            </div>
-          )
+          <CategoryView label="Information" items={information} />
         ) : (
           // Understanding. Grouped rather than listed, because it is the one
           // category that is not a queue of comparable items — "revenue" and

@@ -63,8 +63,8 @@ import type { BriefingItem, HandledSummary } from "./officeBriefing";
 //
 // Re-exported so every existing server caller and suite is unchanged.
 export { sectionFor, itemsIn } from "./officeSections";
-export type { OfficeSection, WorkItem, OfficeWork } from "./officeSections";
-import type { OfficeSection, WorkItem, OfficeWork } from "./officeSections";
+export type { OfficeSection, WorkItem, OfficeWork, TaskPriority } from "./officeSections";
+import type { OfficeSection, WorkItem, OfficeWork, TaskPriority } from "./officeSections";
 
 /**
  * The volatile half: what is outstanding right now.
@@ -88,7 +88,7 @@ export interface WorkingState {
    * Taking the row itself means the omission cannot recur silently: there is
    * no empty array that typechecks as "all of them".
    */
-  tasks: { id: string; title: string; summary: string; actionHref?: string | null }[];
+  tasks: { id: string; title: string; summary: string; actionHref?: string | null; priority: TaskPriority }[];
   handled: HandledSummary;
 }
 
@@ -159,6 +159,12 @@ export function officeWork(
       why: null,
       standingDays: null,
       action: officeActionForExplanation({ actionHref: thought.actionHref }, basePath),
+      genesisState: null,
+      // THE FACT THIS LOOP ALREADY TESTED AND THREW AWAY. `thought.kind !==
+      // "explanation"` two lines up is what let this item in; keeping it is
+      // what lets Information tell an explanation from a task later.
+      cognitiveKind: thought.kind,
+      taskPriority: null,
     });
   }
 
@@ -170,6 +176,11 @@ export function officeWork(
       why: null,
       standingDays: null,
       action: actionForNeed(need, basePath),
+      // A capability gap is neither an observation nor a CognitiveOutput. Its
+      // action is needs_owner, which is what places it.
+      genesisState: null,
+      cognitiveKind: null,
+      taskPriority: null,
     });
   }
 
@@ -182,6 +193,12 @@ export function officeWork(
       why: item.why,
       standingDays: item.standingDays,
       action: item.action,
+      // CARRIED, NOT RE-DERIVED. buildBriefing already holds the observation's
+      // own state; reading it here is what makes Ideas and Information
+      // reconstructible from this list instead of from a second array.
+      genesisState: item.genesisState,
+      cognitiveKind: null,
+      taskPriority: null,
     });
   }
 
@@ -196,6 +213,16 @@ export function officeWork(
       why: task.summary.trim() ? task.summary : null,
       standingDays: null,
       action: officeActionForTask(task, basePath),
+      // A TASK IS NEITHER. Both null is what a task IS here, and it is the
+      // only item that carries neither fact — which is what makes a task with
+      // a `none` action distinguishable from an inert explanation, the exact
+      // collision that stopped this migration the first time.
+      genesisState: null,
+      cognitiveKind: null,
+      // THE ONE FACT A TASK CARRIES. Red for FAILED, amber for WARNING,
+      // purple otherwise — dropping it made every task purple, so a failed
+      // one read as an opportunity.
+      taskPriority: task.priority,
     });
   }
 

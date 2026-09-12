@@ -145,7 +145,7 @@ async function main() {
     });
   }
 
-  console.log(`\n=== 120 products, 400 orders, 87 observations, 158 explanations ===\n`);
+  console.log(`\n=== 120 products, 400 orders, 87 observations: observations.map((o) => ({ ...o, genesisState: o.genesisState as "opportunity" | "urgent" })), 158 explanations ===\n`);
   console.log("Localhost Postgres. Absolute numbers are NOT production numbers.\n");
 
   const RUNS = 5;
@@ -228,7 +228,7 @@ async function main() {
   const work = officeWork(u, { decisions: [], observations: [], tasks: [], handled: handledSummary }, "/dashboard");
   const legacy = {
     briefingItems: buildBriefing(
-      { decisions: approvals.map((a) => ({ id: a.id, summary: a.summary, rationale: a.rationale, createdAt: a.createdAt })), observations },
+      { decisions: approvals.map((a) => ({ id: a.id, summary: a.summary, rationale: a.rationale, createdAt: a.createdAt })), observations: observations.map((o) => ({ ...o, genesisState: o.genesisState as "opportunity" | "urgent" })) },
       "/dashboard",
     ),
     handled: handledSummary,

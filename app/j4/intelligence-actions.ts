@@ -12,11 +12,11 @@ import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { LEGACY_BUSINESS_BASE, businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import { officeFacts, type OfficeFact } from "@/lib/j4/officeFacts";
 import { officeQuickActions, type QuickAction } from "@/lib/j4/officeQuickActions";
-import { buildBriefing, summariseHandled, type BriefingItem, type HandledSummary } from "@/lib/j4/officeBriefing";
-import { officeActionForObservation, officeActionForExplanation } from "@/lib/j4/officeActions";
+import { buildBriefing, summariseHandled } from "@/lib/j4/officeBriefing";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { declaredRead } from "@/lib/businessModel/declaredReads";
-import { officeWork, type OfficeWork } from "@/lib/j4/officeWork";
+import { officeWork, type OfficeWork, type TaskPriority } from "@/lib/j4/officeWork";
+import type { ObservationState } from "@/lib/dashboard/genesisObservations";
 
 /**
  * EVERYTHING J4 FOUND, LOADED AFTER THE OWNER CAN ALREADY TALK TO HIM.
@@ -85,13 +85,7 @@ export interface OfficeIntelligence {
    * adds no query to a measured path. See lib/j4/officeQuickActions.ts.
    */
   quickActions: QuickAction[];
-  briefingItems: BriefingItem[];
-  handled: HandledSummary;
   facts: OfficeFact[];
-  tasks: { id: string; title: string; summary: string; href: string | null; priority: string; because?: string }[];
-  ideas: { id: string; summary: string; href: string | null; because?: string }[];
-  decisions: { id: string; summary: string; createdAt: string; href: string | null; because?: string }[];
-  information: { id: string; summary: string; href: string | null; kind: "urgent" | "curiosity"; because?: string }[];
 }
 
 const HANDLED_WINDOW_DAYS = 14;
@@ -101,13 +95,7 @@ function empty(): OfficeIntelligence {
   return {
     work: { items: [], handled },
     quickActions: [],
-    briefingItems: [],
-    handled,
     facts: [],
-    tasks: [],
-    ideas: [],
-    decisions: [],
-    information: [],
   };
 }
 
@@ -142,7 +130,7 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
   // Localhost measured 156ms against 5ms, a ratio of 31 where production is
   // 1.85 — the round trips that dominate the Office's reads simply are not
   // there. So the local numbers are NOT quoted as the cost of this change.
-  const [observations, explanations, pendingApprovals, openTasks, activeProductCount, handledRaw, understanding] =
+  const [observations, pendingApprovals, openTasks, activeProductCount, handledRaw, understanding] =
     await Promise.all([
       // DECLARED. BUSINESS_UNDERSTANDING_CONTRACT.md invariant 3: a direct read
       // is legitimate when it is said out loud. Observations are outstanding
@@ -168,14 +156,6 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       // The new work list DOES read them from the canonical model. The two
       // therefore differ in cardinality for exactly as long as this transition
       // lasts, and the UI commit is where "should 158 inert explanations reach
-      // an owner at all" gets decided on purpose rather than by a cap.
-      declaredRead("presentation", "the Office lists every active explanation; the canonical model carries the 20 most recent thoughts of all kinds", () =>
-        prisma.cognitiveOutput.findMany({
-          where: { storeId: store.id, kind: "explanation", status: "ACTIVE" },
-          select: { id: true, summary: true, actionHref: true },
-          orderBy: { generatedAt: "desc" },
-        }),
-      ),
       // Same permission tier as before the move.
       hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
       getOpenTasks(store.id),
@@ -188,21 +168,20 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       getBusinessUnderstanding(store.id),
     ]);
 
-  const urgent = observations.filter((o) => o.genesisState === "urgent");
+  // KEPT: the strip's own "opportunities" count, which officeFacts takes as
+  // an input. The urgent/explanation splits that used to live beside it are
+  // gone — Information is a filter over work now, not a second array.
   const ideas = observations.filter((o) => o.genesisState === "opportunity");
 
-  const asRow = (id: string, summary: string, action: ReturnType<typeof officeActionForObservation>, kind: "urgent" | "curiosity") => ({
-    id,
-    summary,
-    href: action.kind === "open" ? action.href : null,
-    because: action.kind === "none" || action.kind === "internal" ? action.because : undefined,
-    kind,
-  });
 
   const briefingItems = buildBriefing(
     {
       decisions: pendingApprovals.map((a) => ({ id: a.id, summary: a.summary, rationale: a.rationale, createdAt: a.createdAt })),
-      observations,
+      // NARROWED WHERE THE ROW LEAVES THE DATABASE. genesisState is a text
+      // column, so Prisma types it `string`; the domain has exactly two
+      // values and buildBriefing now depends on that. Asserting it here, at
+      // the one boundary, beats widening the type all the way down.
+      observations: observations.map((o) => ({ ...o, genesisState: o.genesisState as ObservationState })),
     },
     basePath,
   );
@@ -219,7 +198,10 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       // THE REAL ONES. This was `tasks: []` from 5689a99 until 2026-09-11,
       // which is why the strip could report three open tasks that appeared in
       // no section — counted, and absent from the list the sections filter.
-      tasks: openTasks,
+      // NARROWED AT THE BOUNDARY, like the observations above: Task.priority
+      // is a text column so Prisma types it `string`, and the Office renders
+      // its three values as three colours.
+      tasks: openTasks.map((t) => ({ ...t, priority: t.priority as TaskPriority })),
       handled,
     },
     basePath,
@@ -254,8 +236,6 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     // disagree about the same row.
     work,
     quickActions,
-    briefingItems,
-    handled,
     // THE STRIP READS THE SAME LIST THE SECTIONS DO. Its "Needs you" and
     // "Decisions" counts are no longer passed in — officeFacts derives them
     // from `work` with the same itemsIn the sections use, so the number above
@@ -269,28 +249,5 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       basePath,
       work,
     ),
-    tasks: openTasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary, href: t.actionHref, priority: t.priority })),
-    ideas: ideas.map((o) => {
-      const action = officeActionForObservation(o, basePath);
-      return {
-        id: o.id,
-        summary: o.summary,
-        href: action.kind === "open" ? action.href : null,
-        because: action.kind === "none" ? action.because : undefined,
-      };
-    }),
-    decisions: pendingApprovals.map((a) => ({
-      id: a.id,
-      summary: a.summary,
-      createdAt: a.createdAt.toISOString(),
-      // Inside the business being viewed — the hazard J4Surface documents:
-      // the legacy spelling resolves the ACCOUNT'S active business, so a
-      // decision followed without rebasing can move the owner elsewhere.
-      href: ACTION_SECTIONS[a.actionType] ? sectionHref(ACTION_SECTIONS[a.actionType].href, basePath) : null,
-    })),
-    information: [
-      ...urgent.map((o) => asRow(o.id, o.summary, officeActionForObservation(o, basePath), "urgent")),
-      ...explanations.map((e) => asRow(e.id, e.summary, officeActionForExplanation(e, basePath), "curiosity")),
-    ],
   };
 }

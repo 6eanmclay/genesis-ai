@@ -9,6 +9,8 @@ import {
   type OfficeSection,
   type WorkingState,
 } from "@/lib/j4/officeWork";
+import { inCategory, categoryFor, categoryDotFor } from "@/lib/j4/officeSections";
+import { officeActionForDecision, officeActionForObservation } from "@/lib/j4/officeActions";
 import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { isInteractive } from "@/lib/j4/officeActions";
 import type { OfficeAction } from "@/lib/j4/officeActions";
@@ -135,6 +137,7 @@ const mixed = officeWork(understandingWith({ activeProducts: 0, hasPhoto: true }
   ...emptyState,
   decisions: ALL.map((action, i) => ({
     id: `i${i}`, kind: "decision" as const, headline: `h${i}`, why: null, standingDays: null, action,
+    genesisState: null,
   })),
 }, BASE);
 
@@ -179,9 +182,9 @@ check("and it is NOT in the item list",
 console.log("\n=== a counted task cannot be a missing task ===\n");
 
 const TASKS = [
-  { id: "t1", title: "Reconnect QuickBooks", summary: "It stopped syncing nine days ago.", actionHref: "/dashboard/connections" },
-  { id: "t2", title: "Write your returns policy", summary: "Customers ask and there is nothing to point at.", actionHref: null },
-  { id: "t3", title: "Confirm your shipping origin", summary: "", actionHref: null },
+  { id: "t1", title: "Reconnect QuickBooks", summary: "It stopped syncing nine days ago.", actionHref: "/dashboard/connections", priority: "opportunity" as const },
+  { id: "t2", title: "Write your returns policy", summary: "Customers ask and there is nothing to point at.", actionHref: null, priority: "opportunity" as const },
+  { id: "t3", title: "Confirm your shipping origin", summary: "", actionHref: null, priority: "opportunity" as const },
 ];
 
 const withTasks = officeWork(understandingWith({ activeProducts: 0, hasPhoto: true }), { ...emptyState, tasks: TASKS }, BASE);
@@ -290,6 +293,141 @@ const noneBranch = uiSrc.slice(uiSrc.indexOf('action.kind === "none"'), uiSrc.in
 check("the inert row renders no control",
   !/<Link|<button/.test(noneBranch),
   "an item J4 cannot act on must not be pressable");
+
+
+// ============================================================================
+console.log("\n=== 8. Every Office category rebuilds from work alone ===\n");
+// ============================================================================
+//
+// THE INVARIANT THE MIGRATION HAD TO EARN (2026-09-12):
+//
+//   OfficeWork must contain enough information to reconstruct every existing
+//   Office category without consulting the legacy fields.
+//
+// It did not, twice, and each miss was found by asking this question rather
+// than by trusting the shape. officeActionForObservation receives
+// { actionHref, summary } and never sees genesisState, so an opportunity and
+// an urgent observation produced identical items; explanations and tasks did
+// the same to each other. Both facts existed upstream and were dropped at
+// this boundary. They are carried now — plus Task.priority, which is what
+// keeps a FAILED task from rendering as an opportunity.
+//
+// Every assertion below reads a fact the item CARRIES. None parses an id,
+// inspects an href, or depends on the order items were pushed.
+
+const CATEGORY_BASE = "/b/iron-gym";
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+const fiveSources = officeWork(
+  understandingWith({ activeProducts: 2, hasPhoto: false }),
+  {
+    ...emptyState,
+    decisions: [
+      {
+        id: "approval-1",
+        kind: "decision" as const,
+        headline: "Publish the updated homepage copy",
+        why: null,
+        standingDays: 2,
+        action: officeActionForDecision(),
+        genesisState: null,
+      },
+    ],
+    observations: [
+      {
+        id: "obs-opportunity",
+        kind: "opportunity_inert" as const,
+        headline: "Your bios are empty",
+        why: null,
+        standingDays: 1,
+        // NO HREF — the case that used to collapse. Both of these become
+        // `none`, so the action alone cannot tell them apart.
+        action: officeActionForObservation({ summary: "x" }, CATEGORY_BASE),
+        genesisState: "opportunity" as const,
+      },
+      {
+        id: "obs-urgent",
+        kind: "problem_inert" as const,
+        headline: "Three orders have no tracking",
+        why: null,
+        standingDays: 4,
+        action: officeActionForObservation({ summary: "y" }, CATEGORY_BASE),
+        genesisState: "urgent" as const,
+      },
+    ],
+    tasks: [
+      { id: "t-failed", title: "Fix the failed sync", summary: "It failed", actionHref: null, priority: "FAILED" as const },
+      { id: "t-open", title: "Add a photo", summary: "Needed", actionHref: null, priority: "opportunity" as const },
+    ],
+  },
+  CATEGORY_BASE,
+);
+
+const idsIn = (c: "tasks" | "ideas" | "decisions" | "information") =>
+  inCategory(fiveSources, c).map((i) => i.id).sort();
+
+// ---- 1. every category is derivable ----------------------------------
+check("Decisions rebuilds from work", same(idsIn("decisions"), ["approval-1"]), idsIn("decisions").join(" "));
+check("Ideas rebuilds from work", same(idsIn("ideas"), ["obs-opportunity"]), idsIn("ideas").join(" "));
+check("Tasks rebuilds from work", same(idsIn("tasks"), ["task:t-failed", "task:t-open"]), idsIn("tasks").join(" "));
+check("Information rebuilds from work", same(idsIn("information"), ["obs-urgent"]), idsIn("information").join(" "));
+
+// ---- 2. Ideas and Information stay distinguishable --------------------
+check("an opportunity is never filed under Information",
+  !idsIn("information").includes("obs-opportunity"));
+check("an urgent observation is never filed under Ideas",
+  !idsIn("ideas").includes("obs-urgent"));
+
+// ---- 3. the exact collapse that stopped this migration ----------------
+const opp = fiveSources.items.find((i) => i.id === "obs-opportunity")!;
+const urg = fiveSources.items.find((i) => i.id === "obs-urgent")!;
+check("both really do have a `none` action",
+  opp.action.kind === "none" && urg.action.kind === "none",
+  `${opp.action.kind} / ${urg.action.kind}`);
+check("  and the same section",
+  sectionFor(opp.action) === sectionFor(urg.action),
+  String(sectionFor(opp.action)));
+check("  yet they land in different categories",
+  categoryFor(opp) !== categoryFor(urg),
+  `${categoryFor(opp)} vs ${categoryFor(urg)}`);
+
+// ---- 4. a failed task is not an opportunity ---------------------------
+const failedTask = fiveSources.items.find((i) => i.id === "task:t-failed")!;
+const openTask = fiveSources.items.find((i) => i.id === "task:t-open")!;
+check("a failed task keeps its own priority", failedTask.taskPriority === "FAILED", String(failedTask.taskPriority));
+check("  and does not render as an opportunity",
+  categoryDotFor(failedTask) !== categoryDotFor(openTask),
+  `${categoryDotFor(failedTask)} vs ${categoryDotFor(openTask)}`);
+check("  it is red, as it was", categoryDotFor(failedTask) === "bg-red-500", categoryDotFor(failedTask));
+check("  an opportunity task is purple, as it was", categoryDotFor(openTask) === "bg-purple-500", categoryDotFor(openTask));
+check("  an urgent observation stays red", categoryDotFor(urg) === "bg-red-500", categoryDotFor(urg));
+check("  and an opportunity observation stays purple", categoryDotFor(opp) === "bg-purple-500", categoryDotFor(opp));
+
+// ---- 5. action semantics are unchanged --------------------------------
+//
+// Categories are a SECOND axis over the same items, never a replacement for
+// the first: every item is still placed in its section by its action alone.
+check("every item still has a section decided by its action alone",
+  fiveSources.items.every((i) => sectionFor(i.action) === sectionFor(i.action)),
+  `${fiveSources.items.length} items`);
+check("the sections still hold what they held",
+  itemsIn(fiveSources, "decide").length === 1 && itemsIn(fiveSources, "noticed").length >= 2,
+  `decide ${itemsIn(fiveSources, "decide").length}, noticed ${itemsIn(fiveSources, "noticed").length}`);
+
+// ---- 6. nothing orphaned, nothing double-counted ----------------------
+const categorised = fiveSources.items.filter((i) => categoryFor(i) !== null);
+const needs = fiveSources.items.filter((i) => i.action.kind === "needs_owner");
+check("every item is either categorised or a capability gap",
+  categorised.length + needs.length === fiveSources.items.length,
+  `${categorised.length} + ${needs.length} of ${fiveSources.items.length}`);
+const summed = (["tasks", "ideas", "decisions", "information"] as const)
+  .map((c) => inCategory(fiveSources, c).length)
+  .reduce((a, b) => a + b, 0);
+check("the four categories sum to the categorised items",
+  summed === categorised.length, `${summed} vs ${categorised.length}`);
+check("a capability gap is not quietly filed under Tasks",
+  needs.length > 0 && !idsIn("tasks").some((id) => id.startsWith("need:")),
+  `${needs.length} need(s)`);
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${failed.length === 0 ? `ALL PASS (${results.length})` : `${failed.length} of ${results.length} FAILED`}`);

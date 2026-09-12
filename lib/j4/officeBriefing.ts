@@ -1,4 +1,5 @@
 import { officeActionForObservation, officeActionForExecution, officeActionForDecision, type OfficeAction } from "./officeActions";
+import type { ObservationState } from "@/lib/dashboard/genesisObservations";
 
 /**
  * WHAT J4 LEADS WITH WHEN THE OWNER WALKS IN.
@@ -119,6 +120,17 @@ export interface BriefingItem {
   standingDays: number | null;
   /** What the owner can do, decided by lib/j4/officeActions.ts. */
   action: OfficeAction;
+  /**
+   * The observation's own state, carried rather than re-derived (2026-09-12).
+   *
+   * `kind` above already encodes it — problem_* means urgent, opportunity_*
+   * means opportunity — but that is an encoding, and officeWork needs the
+   * fact. Threading the original avoids a second place where "which state was
+   * this" is answered by parsing a string somebody could rename.
+   *
+   * Null for decisions, which are not observations.
+   */
+  genesisState: ObservationState | null;
 }
 
 export interface HandledSummary {
@@ -169,7 +181,10 @@ export interface BriefingInput {
   observations: {
     id: string;
     summary: string;
-    genesisState: string;
+    // THE REAL TYPE, not `string` (2026-09-12). It was widened, and a widened
+    // type is how a field gets carried without anybody being sure what is in
+    // it. officeWork now depends on this value meaning what it says.
+    genesisState: ObservationState;
     actionHref?: string | null;
     firstNoticedAt?: Date | string | null;
   }[];
@@ -213,6 +228,7 @@ export function buildBriefing(input: BriefingInput, basePath: string): BriefingI
       // The rationale, or nothing. Never a stand-in sentence.
       why: d.rationale?.trim() ? d.rationale.trim() : null,
       standingDays: daysSince(d.createdAt, now),
+      genesisState: null,
       // A decision is settled here, not navigated to. approveGenesisAction is
       // the same server action the conversation already uses.
       // A pending approval is a real choice with alternatives, so it offers a
@@ -245,6 +261,7 @@ export function buildBriefing(input: BriefingInput, basePath: string): BriefingI
       why: standingFor(days),
       standingDays: days,
       action,
+      genesisState: o.genesisState,
     });
   }
 
