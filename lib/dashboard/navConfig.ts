@@ -183,6 +183,20 @@ export const NAV_SECTIONS: NavSection[] = [
   // does not appear for an employee — the permission existed and was read by
   // nothing until now.
   { key: "access", label: "Access", href: "/dashboard/access", permission: "employees:manage" },
+  // WHAT J4 MAY DO WITHOUT ASKING (2026-09-11). Beside Access deliberately:
+  // Access is which PEOPLE may do what, this is what the PARTNER may do, and
+  // an owner looking for one is looking for the other.
+  //
+  // In the account area rather than a room, because this is configured and
+  // not visited — the same reason settings and billing are here. It is not a
+  // capability inside Storefront or Commerce; it is a statement about all of
+  // them, and putting it inside any one room would say the opposite.
+  //
+  // authority:manage, which only OWNER holds. The screen itself renders for
+  // anyone with store:manage and simply shows no controls — the state is not
+  // a secret, the ability to change it is the permission — but an employee
+  // has no reason to be sent there by a nav entry.
+  { key: "authority", label: "Genesis's authority", href: "/dashboard/authority", permission: "authority:manage" },
   { key: "settings", label: "Settings", href: "/dashboard/settings", permission: "store:manage" },
 ];
 

@@ -75,6 +75,19 @@ const WORKSPACES = {
     label: "Access",
     showing: "who can get into this business and what each of them is allowed to do",
   },
+  "/dashboard/authority": {
+    // Added 2026-09-11 with the screen itself — and caught by this registry's
+    // own suite when it wasn't, which is the fourth time that has happened and
+    // the reason the check exists.
+    //
+    // Worth J4 knowing precisely, more than most: this is the screen about
+    // what J4 itself may do without asking. An owner reading it is deciding
+    // how much to trust their partner, and a partner that could not tell
+    // where they were standing would be answering that question badly.
+    label: "Genesis's authority",
+    showing:
+      "what Genesis may do without asking — what it does while the owner is here in a conversation, and what they have delegated for when they are away",
+  },
   "/dashboard/promotions": {
     // Added 2026-09-02, the same omission as Studio and Catalog before it, and
     // found the same way — by a suite that finally had a runner. J4 can create

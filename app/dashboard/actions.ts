@@ -668,13 +668,24 @@ export async function saveReturnAddress(slug: string | undefined, formData: Form
 // app/dashboard/marketing/page.tsx) — grantDelegatedAuthority itself throws
 // if the actionType turns out not to be delegable, so this can't silently
 // grant something it shouldn't.
+// BACK TO THE SCREEN THAT ASKED, FOR THE BUSINESS THAT ASKED (2026-09-11).
+//
+// Both of these redirected to the literal string "/dashboard/marketing",
+// which was two separate wrongs once the authority surface existed. The grant
+// itself was always correct — requireBusinessOrActive resolves the slug — but
+// an owner who granted authority from /b/<slug> was then dropped onto the
+// ACTIVE business's page, which may be a different business entirely. That is
+// the same slug-dropping defect every other action in this file already fixed;
+// these two were simply never revisited.
+//
+// Nothing about who may grant what changed here. This is navigation.
 export async function grantAuthority(slug: string | undefined, formData: FormData) {
   const { storeId, userId } = await requireBusinessOrActive(PERMISSIONS.AUTHORITY_MANAGE, slug);
   const actionType = formData.get("actionType") as string;
 
   await grantDelegatedAuthority({ storeId, actionType, grantedByUserId: userId });
 
-  redirect("/dashboard/marketing");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/authority`);
 }
 
 export async function revokeAuthority(slug: string | undefined, formData: FormData) {
@@ -683,7 +694,7 @@ export async function revokeAuthority(slug: string | undefined, formData: FormDa
 
   await revokeDelegatedAuthority(storeId, actionType);
 
-  redirect("/dashboard/marketing");
+  redirect(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/authority`);
 }
 
 /**

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
@@ -15,9 +16,7 @@ import {
   startTaskConversation,
   dismissAttentionCard,
 } from "../ai-actions";
-import { grantAuthority, revokeAuthority } from "../actions";
 import { AttentionCardList } from "../AttentionCardList";
-import { SubmitButton } from "../SubmitButton";
 import { RevertDecisionButton } from "../RevertDecisionButton";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
@@ -135,52 +134,34 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
 
       {canManageAuthority && (
         <>
-          {/* ============ WHAT THIS BUTTON ACTUALLY CONTROLS (2026-09-11) ===
-              This section used to say, with no grant in place, "Genesis will
-              always ask before changing your SEO title or description." That
-              was not true. It described the delegated path only, and update_seo
-              is registered `authorizationTier: "auto"` — so in a conversation,
-              where the owner is signed in and present, Genesis publishes SEO
-              changes as part of the turn without a separate approval, and this
-              button never touched that.
+          {/* ============ ONE SURFACE, NOT TWO (2026-09-11) ===============
+              The grant control used to live here, and for a while it was the
+              only owner-facing account of Genesis's authority anywhere in the
+              product — describing the delegated path only, while SEO is the
+              one action registered at tier "auto" and therefore published on
+              the spot in conversation.
 
-              Two warrants, so two sentences. The button is scoped to the one
-              it genuinely governs rather than being quietly widened to cover
-              both, because which of them revocation SHOULD cover is a real
-              product decision and not one to make in a label. */}
+              It moved to /authority, which shows both warrants together. What
+              stays here is the current state and a way to get there: an owner
+              on the Marketing page should be able to see whether Genesis has
+              this authority without leaving, and should find the whole picture
+              in exactly one place when they want to change it. Two controls
+              for one grant would be two answers to the same question. */}
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis&apos;s authority
           </h2>
-          <dl className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
-            <dt className="font-medium text-black dark:text-zinc-50">While you&apos;re away</dt>
-            <dd>
-              {seoAuthorityGrant
-                ? "Genesis can publish SEO improvements on its own, without waiting for your approval."
-                : "Genesis will ask before changing your SEO title or description."}
-            </dd>
-            <dt className="mt-3 font-medium text-black dark:text-zinc-50">While you&apos;re here</dt>
-            <dd>
-              In a conversation, Genesis can publish an SEO change as part of its reply,
-              with no separate approval step — it decides when a change is worth checking
-              with you first. Anything it publishes appears under &ldquo;Recently
-              handled&rdquo; below, where you can revert it.
-            </dd>
-          </dl>
-          <form action={(seoAuthorityGrant ? revokeAuthority : grantAuthority).bind(null, slug)} className="mt-3">
-            <input type="hidden" name="actionType" value="update_seo" />
-            <SubmitButton
-              pendingText={seoAuthorityGrant ? "Revoking..." : "Granting..."}
-              className={
-                seoAuthorityGrant
-                  ? "rounded-full border border-black/[.08] px-4 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-300 dark:hover:bg-white/[.05]"
-                  : "rounded-full bg-[var(--brand-accent,var(--foreground))] px-4 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-              }
-            >
-              {seoAuthorityGrant
-                ? "Ask before publishing SEO changes while I'm away"
-                : "Let Genesis publish SEO improvements while I'm away"}
-            </SubmitButton>
-          </form>
+          <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
+            {seoAuthorityGrant
+              ? "While you're away, Genesis can publish SEO improvements on its own."
+              : "While you're away, Genesis will ask before changing your SEO title or description."}
+          </p>
+          <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
+            <Link href={`${basePath}/authority`} className="underline underline-offset-2">
+              Genesis&apos;s authority
+            </Link>{" "}
+            has the full picture — including what Genesis does while you&apos;re here in
+            a conversation, which is a separate thing and is always on.
+          </p>
         </>
       )}
 
