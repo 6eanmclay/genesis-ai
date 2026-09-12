@@ -16,6 +16,9 @@ import {
   syncExecutable,
 } from "@/lib/execution/adapters/integrationExecutable";
 import { ConnectorCard } from "../ConnectorCard";
+import { Panel, Eyebrow, SectionTitle, Figure, StateDot } from "../GenesisChrome";
+import { buildDataConnections } from "@/lib/dashboard/dataConnections";
+import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 
 interface ExecutionLogDisplay {
@@ -181,12 +184,20 @@ export async function ConnectionsScreen({
   const { store } = await requireBusinessPageOrActive(PERMISSIONS.CONNECTIONS_MANAGE, slug);
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
 
-  const [resolved, gaps] = await Promise.all([
+  // THE SUMMARIES COME FROM THE ONE CANONICAL ASSEMBLER, never a second read
+  // of the same question — see CANONICAL_UNDERSTANDING_PLAN.md. This screen
+  // shows what J4 can do with what is connected, so it has to be looking at
+  // exactly what J4 looks at.
+  const [resolved, gaps, understanding] = await Promise.all([
     Promise.all(CONNECTOR_CATALOG.map((entry) => resolveEntry(store.id, entry))),
     declaredRead("presentation", "the connections page shows which are missing", () =>
       getConnectionGaps(store.id)
     ),
+    declaredRead("presentation", "Data & Connections shows what the connections let J4 do", () =>
+      getBusinessUnderstanding(store.id)
+    ),
   ]);
+  const model = await buildDataConnections(store.id, understanding.connectedSummaries);
   const resolvedById = new Map(resolved.map((r) => [r.entry.id, r]));
 
   const flashEntry = resolved.find(
@@ -206,12 +217,169 @@ export async function ConnectionsScreen({
 
   return (
     <div style={themeCssVars(theme)} className="min-h-screen p-8 lg:min-h-0">
-      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Connections</h1>
+      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Data &amp; Connections</h1>
       <p className="mt-2 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
-        Connect the software you already use so Genesis can understand what&apos;s happening in your
-        business — answer questions, summarize your data, and surface what matters — while each tool
-        keeps handling its own day-to-day work.
+        Connect the software you already use and J4 learns from it. Each tool keeps doing its own
+        day-to-day work; what changes is how much J4 understands about your business.
       </p>
+
+      {/* ============ WHAT J4 KNOWS (2026-09-12) ======================
+          The band the old page could not render, and the reason this is the
+          first surface of the rebuild: a connector list with statuses cannot
+          make the argument that connecting something FEEDS something.
+
+          Every figure here is a real row count. The reference composition
+          showed "24,831 Data Points" and "Data Health 92%" — the first is a
+          countable thing so a count is honest; the second has no denominator
+          anywhere in this system and is not rendered at all. See
+          DATA_AND_CONNECTIONS.md. */}
+      <section className="mt-8">
+        <SectionTitle
+          sub="Everything below came from a tool you connected. Nothing here is estimated."
+        >
+          What J4 knows
+        </SectionTitle>
+        {model.knows.length === 0 ? (
+          <Panel className="p-5">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Nothing yet — no connected tool has sent J4 any business data. That is an accurate
+              description of this business, not a problem with the connection.
+            </p>
+          </Panel>
+        ) : (
+          <Panel className="p-5">
+            <div className="flex flex-wrap items-start gap-x-10 gap-y-5">
+              <Figure value={model.totalRecords.toLocaleString()} label="records J4 has read" />
+              {model.knows.map((k) => (
+                <Figure
+                  key={k.entityType}
+                  value={k.count.toLocaleString()}
+                  label={
+                    <>
+                      {k.label}
+                      <span className="text-zinc-400 dark:text-zinc-600"> · {k.providers.join(", ")}</span>
+                    </>
+                  }
+                />
+              ))}
+            </div>
+          </Panel>
+        )}
+      </section>
+
+      {/* WHAT IT BUYS. The consumption points are real — these are the same
+          summaries getBusinessUnderstanding() hands J4 to reason over. A
+          capability with nothing behind it is still named, with what would
+          produce it: hiding a capability an owner could have is its own kind
+          of dishonesty. */}
+      <section className="mt-8">
+        <SectionTitle sub="What J4 can do because of what is connected — and what it still cannot.">
+          What that lets J4 do
+        </SectionTitle>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {model.capabilities.map((c) => (
+            <Panel key={c.label} accent={c.available} className="p-4">
+              <div className="flex items-center gap-2">
+                <StateDot state={c.available ? "connected" : "not_connected"} />
+                <span className="text-sm font-medium text-black dark:text-zinc-50">{c.label}</span>
+              </div>
+              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{c.detail}</p>
+            </Panel>
+          ))}
+        </div>
+      </section>
+
+      {/* THE TWO POPULATIONS, and the correction the reference needs.
+          In the reference image every tool flows into the brain. Here most do
+          not, deliberately: Stripe, PayPal, Printful, Twilio and AliExpress
+          implement no sync at all. A rail that has written no records is
+          working perfectly, and saying otherwise is the exact defect
+          ConnectionEvidence.syncs was added to end. */}
+      <section className="mt-8">
+        {/* THE COUNT IS DERIVED, and it was not always. This sentence first
+            said "Nine tools can send J4 business data" — a number I typed from
+            the connector REGISTRY while the list beside it renders the
+            CATALOG, which is a different set: Stripe and PayPal live on
+            Payments, EasyPost behind shipping. The column showed eight. An
+            invented figure sitting directly above the real list, on the page
+            whose entire purpose is not doing that. Caught by this section's
+            own sabotage. */}
+        <SectionTitle
+          sub={`${model.sources.length} of these can send J4 business data. The rest do a job without reporting back, which is how they are built.`}
+        >
+          Where it comes from
+        </SectionTitle>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Panel className="p-5">
+            <Eyebrow>Feeds J4</Eyebrow>
+            <ul className="mt-3 flex flex-col divide-y divide-black/[.06] dark:divide-white/[.08]">
+              {model.sources.map((s) => (
+                <li key={s.entry.id} className="flex items-baseline justify-between gap-3 py-2">
+                  <span className="flex items-center gap-2 text-sm text-black dark:text-zinc-50">
+                    <StateDot state={s.health.state} />
+                    {s.entry.name}
+                  </span>
+                  <span className="text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+                    {s.recordsProduced > 0
+                      ? `${s.recordsProduced.toLocaleString()} records`
+                      : s.health.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+          <Panel className="p-5">
+            <Eyebrow>Does a job, doesn&apos;t report back</Eyebrow>
+            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+              Payments, fulfilment, messaging and sourcing. These never send J4 records, by design —
+              nothing is missing when they don&apos;t.
+            </p>
+            <ul className="mt-3 flex flex-col divide-y divide-black/[.06] dark:divide-white/[.08]">
+              {model.rails.map((r) => (
+                <li key={r.entry.id} className="flex items-baseline justify-between gap-3 py-2">
+                  <span className="flex items-center gap-2 text-sm text-black dark:text-zinc-50">
+                    <StateDot state={r.health.state} />
+                    {r.entry.name}
+                  </span>
+                  <span className="text-right text-xs text-zinc-500 dark:text-zinc-400">
+                    {r.health.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </div>
+      </section>
+
+      {/* WHAT IS ACTUALLY WRONG. raisesAttention is the health model's own
+          answer to "should this interrupt the owner" — not a threshold
+          invented for a screen. The provider's own message is shown verbatim,
+          never rewritten. */}
+      {model.needsAttention.length > 0 && (
+        <section className="mt-8">
+          <SectionTitle>Needs you</SectionTitle>
+          <div className="flex flex-col gap-3">
+            {model.needsAttention.map((c) => (
+              <Panel key={c.entry.id} className="p-4">
+                <div className="flex items-center gap-2">
+                  <StateDot state={c.health.state} />
+                  <span className="text-sm font-medium text-black dark:text-zinc-50">
+                    {c.entry.name} — {c.health.label}
+                  </span>
+                </div>
+                {c.health.detail ? (
+                  <p className="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">{c.health.detail}</p>
+                ) : null}
+                {c.health.providerError ? (
+                  <p className="mt-1.5 font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                    {c.health.providerError}
+                  </p>
+                ) : null}
+              </Panel>
+            ))}
+          </div>
+        </section>
+      )}
 
       {integrationError && flashEntry && (
         <div className="mt-4 max-w-md rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/30">
