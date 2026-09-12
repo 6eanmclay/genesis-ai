@@ -898,30 +898,32 @@ export const GENESIS_ACTIONS: Record<
       customSection: blueprint?.homepageContent?.customSection ?? null,
     }),
     category: "content",
-    // ============ RAISED TO AUTO (2026-09-11) ======================
+    // ============ EXECUTION-ONLY, AND WHY (2026-09-11) =============
     //
-    // Both halves change together. `authorizationTier` is what J4 does today;
-    // `maxAuthorityTier` is the highest this action may ever be trusted with,
-    // and it was ALSO always_ask - so raising only the first would leave a
-    // tier above its own cap, which verify-authority-boundary now refuses.
+    // Raised to auto and reverted the same day. The tier was not wrong on its
+    // own terms - this action is reversible, owner-permissioned, store-scoped
+    // and reads its own write back.
     //
-    // WHAT EARNED IT, checked before the edit rather than asserted after:
-    //   reversible        getCurrentValues captures previousValues, and the
-    //                     revert path writes a new ApprovalRequest rather than
-    //                     rewriting history
-    //   authorized        requiredPermission STORE_MANAGE, which only OWNER
-    //                     holds - an employee cannot reach it
-    //   scoped target     prisma.store.update on ctx.storeId; the target is
-    //                     the store and is already on ExecutionLog
-    //   real read-back    verify re-reads blueprint and reports NAMED
-    //                     mismatches through verifyBlueprintSection, so a
-    //                     write that does not land becomes WARNING
-    //   append-only log   ExecutionLog is never updated, only inserted
+    // I FIRST SAID NOTHING IN PRODUCTION COULD SELECT IT. That was wrong, and
+    // the correction is the reason this comment is long. ai-actions.ts calls
+    // proposeAction("update_homepage_content", ...) on the chat path, and
+    // proposeAction executes immediately when authorizationTier is "auto".
     //
-    // Category "content" has always permitted auto; nothing about the ceiling
-    // changed. Money and destructive remain hard-capped at always_ask.
-    authorizationTier: "auto",
-    maxAuthorityTier: "auto",
+    // Which makes the raise MORE consequential than I described, not less:
+    // that gate reads the registry tier and nothing else. It never checks a
+    // delegated grant. So "auto" here would have meant J4 rewriting homepage
+    // content the first time a chat turn generated any, with no owner having
+    // delegated anything - a different and larger claim than the grant-gated
+    // autonomy tryExecuteAutonomousAction provides.
+    //
+    // Reverted because whether J4 gets that is a product decision about what
+    // it may change unprompted, and it comes BEFORE any tier is raised again.
+    // The model still has no way to ADDRESS this action by name: it is not in
+    // ProposedActionSchema and not a chat tool (the model names tools like
+    // edit_store_content; GENESIS_ACTIONS is a separate namespace). What it
+    // had was an execution path, not a decision.
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
   },
   update_store_content: {
     executable: updateStoreContentExecutable,
@@ -940,30 +942,32 @@ export const GENESIS_ACTIONS: Record<
       contactPageCopy: blueprint?.storeContent?.contactPageCopy ?? "",
     }),
     category: "content",
-    // ============ RAISED TO AUTO (2026-09-11) ======================
+    // ============ EXECUTION-ONLY, AND WHY (2026-09-11) =============
     //
-    // Both halves change together. `authorizationTier` is what J4 does today;
-    // `maxAuthorityTier` is the highest this action may ever be trusted with,
-    // and it was ALSO always_ask - so raising only the first would leave a
-    // tier above its own cap, which verify-authority-boundary now refuses.
+    // Raised to auto and reverted the same day. The tier was not wrong on its
+    // own terms - this action is reversible, owner-permissioned, store-scoped
+    // and reads its own write back.
     //
-    // WHAT EARNED IT, checked before the edit rather than asserted after:
-    //   reversible        getCurrentValues captures previousValues, and the
-    //                     revert path writes a new ApprovalRequest rather than
-    //                     rewriting history
-    //   authorized        requiredPermission STORE_MANAGE, which only OWNER
-    //                     holds - an employee cannot reach it
-    //   scoped target     prisma.store.update on ctx.storeId; the target is
-    //                     the store and is already on ExecutionLog
-    //   real read-back    verify re-reads blueprint and reports NAMED
-    //                     mismatches through verifyBlueprintSection, so a
-    //                     write that does not land becomes WARNING
-    //   append-only log   ExecutionLog is never updated, only inserted
+    // I FIRST SAID NOTHING IN PRODUCTION COULD SELECT IT. That was wrong, and
+    // the correction is the reason this comment is long. ai-actions.ts calls
+    // proposeAction("update_store_content", ...) on the chat path, and
+    // proposeAction executes immediately when authorizationTier is "auto".
     //
-    // Category "content" has always permitted auto; nothing about the ceiling
-    // changed. Money and destructive remain hard-capped at always_ask.
-    authorizationTier: "auto",
-    maxAuthorityTier: "auto",
+    // Which makes the raise MORE consequential than I described, not less:
+    // that gate reads the registry tier and nothing else. It never checks a
+    // delegated grant. So "auto" here would have meant J4 rewriting the
+    // store's policy copy the first time a chat turn generated any, with no
+    // owner having delegated anything - a different and larger claim than the
+    // grant-gated autonomy tryExecuteAutonomousAction provides.
+    //
+    // Reverted because whether J4 gets that is a product decision about what
+    // it may change unprompted, and it comes BEFORE any tier is raised again.
+    // The model still has no way to ADDRESS this action by name: it is not in
+    // ProposedActionSchema and not a chat tool (the model names tools like
+    // edit_store_content; GENESIS_ACTIONS is a separate namespace). What it
+    // had was an execution path, not a decision.
+    authorizationTier: "always_ask",
+    maxAuthorityTier: "always_ask",
   },
   update_design_direction: {
     executable: updateDesignDirectionExecutable,

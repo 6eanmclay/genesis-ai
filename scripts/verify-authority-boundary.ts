@@ -1,6 +1,8 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { GENESIS_ACTIONS, CATEGORY_MAX_TIER } from "@/lib/execution/genesisActions";
+import { ProposedActionSchema, PROPOSABLE_ACTION_TYPES } from "@/lib/intelligence/cognitiveLayer";
+import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
 
 // WHAT J4 IS ALLOWED TO DO, AND WHAT STOPS IT (2026-09-11).
 //
@@ -13,7 +15,7 @@ import { GENESIS_ACTIONS, CATEGORY_MAX_TIER } from "@/lib/execution/genesisActio
 // somebody was careful, which is exactly the kind of true that stops being
 // true quietly.
 //
-// These are the five invariants Sean asked to lock BEFORE any autonomy is
+// These are the invariants Sean asked to lock BEFORE any autonomy is
 // widened. Each FAILS CLOSED: a new action, a new server action or a new
 // executable that does not satisfy them breaks this suite rather than
 // shipping.
@@ -193,7 +195,15 @@ for (const f of executableFiles) {
   for (const m of src.match(SUB_ENTITY_WRITE) ?? []) {
     // A write keyed on a name, title or slug would be a language-resolved
     // target reaching a mutation.
-    if (/where:\s*\{[^}]*(name|title|slug|claim|summary)\s*:/.test(m)) {
+    //
+    // THIS ASSERTION WAS DEAD UNTIL 2026-09-11. The word boundary below was
+    // written through a shell heredoc, which turned `\b` into a literal
+    // backspace BYTE (0x08) — so the pattern demanded a control character no
+    // source file contains, and could never match anything. It reported
+    // "every sub-entity write is keyed on an id" by being incapable of
+    // finding a counter-example. Found by `file`, which called the script
+    // "with overstriking"; the sabotage below now proves it can fail.
+    if (/where:\s*\{[^}]*\b(name|title|slug|claim|summary)\s*:/.test(m)) {
       byName.push(`${f}: ${m.replace(/\s+/g, " ").slice(0, 70)}`);
     }
   }
@@ -256,6 +266,152 @@ check("every non-public server-action file reaches a chokepoint",
 const staleExemptions = Object.keys(PUBLIC_BY_DESIGN).filter((f) => !serverActionFiles.includes(f));
 check("no exemption names a file that is not a server action any more",
   staleExemptions.length === 0, staleExemptions.join(", ") || "all four are real");
+
+// ===========================================================================
+console.log("\n=== 6. Nothing is autonomous that production cannot select ===\n");
+// ===========================================================================
+//
+// THE INVARIANT THE AUDIT DID NOT HAVE, AND THE ONE THAT WOULD HAVE CAUGHT ME.
+//
+// update_homepage_content and update_store_content were raised to auto in
+// e09f793. Every existing invariant passed, because every existing invariant
+// asked whether the tier was PERMISSIBLE. None asked whether it was
+// REACHABLE — whether anything in production can actually select the action
+// the registry has just made autonomous. An action that is auto and
+// unreachable is a permission granted to nobody: it reads as capability in
+// every report and is capability in none.
+//
+// ============ AND I GOT THE FIRST ANSWER WRONG ==========================
+//
+// I told Sean nothing could select those two actions. That was false, and
+// writing this invariant is what found it. app/dashboard/ai-actions.ts calls
+// its own proposeAction("update_homepage_content", ...) on the chat path, and
+// proposeAction executes IMMEDIATELY when definition.authorizationTier is
+// "auto". So the raise did have an effect — a larger one than I claimed it
+// had, because that path never checks a delegated grant at all.
+//
+// That is the second lesson and the more useful one: "autonomous" is not one
+// path. There are two, with DIFFERENT gates.
+//
+//   tryExecuteAutonomousAction   requires an owner's explicit grant
+//   proposeAction (chat)         requires only the registry tier
+//
+// An invariant that knew about one and not the other would have gone on
+// reporting confidently about a world it half-modelled — which is the exact
+// failure it exists to prevent. Both are derived below.
+//
+// So this traces the whole path, from the real registrations rather than a
+// list kept beside them:
+//
+//   decision namespace  →  callable action  →  executable  →  policy
+//
+// Four things can select an action, and they are genuinely different — the
+// conflation is what made the original mistake easy:
+//
+//   A. ProposedActionSchema — what Reason may PROPOSE. The proposal decision
+//      layer; its literals are read off the discriminated union itself.
+//   B. the chat tool catalogue — what the model may CALL mid-conversation.
+//      A separate namespace that overlaps GENESIS_ACTIONS only where a tool
+//      is named for an action; most tools are not.
+//   C. production code that selects an action ITSELF, with no model in the
+//      loop, and hands it to a path that can execute without asking —
+//      communicate_finding via communicateFinding, and every key
+//      ai-actions.ts proposes into the conversational auto-execute gate.
+//
+// GENESIS_ACTIONS is none of these. It is the EXECUTION namespace: what can
+// be executed once something has decided to.
+const proposable = (
+  ProposedActionSchema as unknown as { options: { shape: { actionType: { value: string } } }[] }
+).options.map((o) => o.shape.actionType.value);
+check("A. the proposal layer yields real literals", proposable.length > 0, proposable.join(" "));
+check("  and every one of them is a registered action",
+  proposable.every((k) => Object.hasOwn(GENESIS_ACTIONS, k)),
+  proposable.filter((k) => !Object.hasOwn(GENESIS_ACTIONS, k)).join(", ") || `${proposable.length} proposable`);
+
+// THE LIST BESIDE THE SCHEMA HAS TO AGREE WITH THE SCHEMA. cognitiveLayer
+// keeps PROPOSABLE_ACTION_TYPES by hand so growthPointCosts can price exactly
+// what Reason can propose. `satisfies` proves each entry is a real action; it
+// does not prove the list matches the union. If they drift, this invariant is
+// reading one world and production is pricing another.
+check("  and the hand-kept proposable list matches it",
+  [...PROPOSABLE_ACTION_TYPES].slice().sort().join(" ") === proposable.slice().sort().join(" "),
+  [...PROPOSABLE_ACTION_TYPES].join(" "));
+
+const chatToolNames = buildStoreChatUnifiedTools().map((t) => t.name);
+const chatSelectable = chatToolNames.filter((n) => Object.hasOwn(GENESIS_ACTIONS, n));
+check("B. the chat catalogue yields real tools", chatToolNames.length > 0, `${chatToolNames.length} tools`);
+// NOT A DEFECT — A BOUNDARY. Most chat tools are not GENESIS_ACTIONS keys,
+// because a tool is a conversational capability and an action is an execution
+// record. The overlap is the part of the decision namespace that names the
+// execution namespace directly, and it is what makes those actions selectable.
+check("  and the overlap with the execution namespace is real",
+  chatSelectable.length > 0, chatSelectable.join(" "));
+
+// C. PRODUCTION SELECTING AN ACTION ON ITS OWN. Two stages, both derived: the
+// file has to reach a path that can execute WITHOUT ASKING, AND name an
+// action key where that path can receive it. Either alone is worthless —
+// dashboards filter rows by actionType without executing anything, and the
+// autonomy module mentions plenty of keys it never selects.
+//
+// BOTH UNASKED-EXECUTION PATHS, or this is the half-model again:
+//   tryExecuteAutonomousAction   the grant-gated path (cognitiveLayer)
+//   authorityExemptAction        the additive carve-out (communicateFinding)
+//   authorizationTier === "auto" the conversational auto-execute gate in
+//                                ai-actions.ts, which acts on the registry
+//                                tier alone
+const ENTRY_POINT =
+  /tryExecuteAutonomousAction\(|authorityExemptAction|authorizationTier\s*===\s*"auto"/;
+// A key is SELECTED when it is bound to actionType or passed by name into a
+// propose-style call — `proposeAction("update_seo", ...)` is how the chat
+// path names one, and a positional argument is not an `actionType:` property.
+const ACTION_TYPE_BINDING = /(?:actionType\s*[:=]\s*|propose[A-Za-z]*\(\s*)"([a-z_]+)"/g;
+const selectionSites: { file: string; keys: string[] }[] = [];
+for (const f of [...sourceFiles("app"), ...sourceFiles("lib")]) {
+  const src = codeOnly(read(...f.split("/")));
+  if (!ENTRY_POINT.test(src)) continue;
+  const keys = [...new Set(
+    [...src.matchAll(ACTION_TYPE_BINDING)].map((m) => m[1]).filter((k) => Object.hasOwn(GENESIS_ACTIONS, k)),
+  )];
+  if (keys.length) selectionSites.push({ file: f, keys });
+}
+check("C. production selects at least one action by name itself",
+  selectionSites.length > 0,
+  selectionSites.map((s) => `${s.file} → ${s.keys.join(" ")}`).join("; "));
+
+const reachable = new Set([...proposable, ...chatSelectable, ...selectionSites.flatMap((s) => s.keys)]);
+const whereFrom = (k: string): string =>
+  [
+    proposable.includes(k) ? "proposal" : "",
+    chatSelectable.includes(k) ? "chat tool" : "",
+    selectionSites.some((s) => s.keys.includes(k)) ? "production code" : "",
+  ].filter(Boolean).join(" + ") || "NOTHING";
+
+// AUTONOMOUS MEANS "RUNS WITHOUT ASKING", which includes auto_below_limit —
+// an action that executes on its own under a threshold is still an action
+// nobody approved.
+const autonomous = actions.filter(([, d]) => RANK[d.authorizationTier] >= RANK.auto_below_limit);
+check("the registry has autonomous actions to check at all", autonomous.length > 0,
+  autonomous.map(([k]) => k).join(" "));
+
+for (const [key, d] of autonomous) {
+  console.log(`      ${key}: ${d.authorizationTier} ← ${whereFrom(key)}`);
+}
+
+const unreachable = autonomous.filter(([k]) => !reachable.has(k));
+check("EVERY AUTONOMOUS ACTION IS REACHABLE FROM A PRODUCTION DECISION PATH",
+  unreachable.length === 0,
+  unreachable.map(([k, d]) => `${k} is ${d.authorizationTier} but nothing can select it`).join("; ") ||
+    autonomous.map(([k]) => `${k} ← ${whereFrom(k)}`).join("; "));
+
+// AND THE PATH ENDS SOMEWHERE REAL. Reachable is only half of it: the
+// decision has to arrive at an executable that exists and names its execution
+// action, or the trace stops in mid-air.
+for (const [key, d] of autonomous) {
+  const executed = (d.executable as { action?: unknown }).action;
+  check(`  ${key}: the path ends at an executable`,
+    typeof executed === "string" && executed.length > 0,
+    typeof executed === "string" ? executed : typeof executed);
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${failed.length === 0 ? `ALL PASS (${results.length})` : `${failed.length} of ${results.length} FAILED`}`);

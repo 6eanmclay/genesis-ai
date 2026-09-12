@@ -7,10 +7,22 @@ import { requireTestDatabase, TEST_DATABASE_ENV } from "@/scripts/lib/requireTes
 //   powershell -File scripts/run-unelevated.ps1 \
 //     -Command "npx tsx scripts/verify-autonomy-browser.ts" -OutFile out.txt
 //
-// update_homepage_content and update_store_content moved from always_ask to
-// auto in e09f793. verify-autonomy-live proves the five gates against a
-// standalone Postgres; what had never been shown is the same path running
-// beside a real Next server on the database that server is reading.
+// RETARGETED THE SAME DAY IT WAS WRITTEN, AND THE REASON MATTERS.
+//
+// The first version proved this against update_homepage_content and
+// update_store_content, which had just been raised to auto in e09f793. That
+// raise was reverted: the tier was defensible on its own terms and still
+// wrong, because nothing in production could ever select either action — no
+// chat tool, no ProposedActionSchema member, no production caller. They were
+// autonomous in the registry and unreachable in the product.
+//
+// So this now proves the same path against update_seo, which is genuinely
+// autonomous AND genuinely reachable (Reason proposes it; see invariant 6 in
+// verify-authority-boundary.ts). Nothing about the proof is weakened by the
+// change — the gates, the read-back, the customer-visible result and the
+// destructive control are all still here. Section 4 changed subject rather
+// than disappearing: it now proves the two reverted actions STAY
+// execution-only, which is what the revert actually asserts.
 //
 // ============ THE BINDING THAT DEFEATED THE FIRST ATTEMPT =============
 //
@@ -47,24 +59,17 @@ const uniq = () => Math.random().toString(36).slice(2);
 /**
  * A SCHEMA-VALID input, because gate 4 is input validation.
  *
- * The first version passed `{ heroHeading }`, which is not a field this action
- * has at all — so inputSchema.safeParse refused it and
- * tryExecuteAutonomousAction returned false. That looked exactly like an
- * authority refusal and was nothing of the kind, which is why the no-grant
- * case below uses a VALID input too: a refusal that could be caused by a
- * malformed fixture proves nothing about authority.
+ * An earlier version of this file passed a field the action does not have at
+ * all, so inputSchema.safeParse refused it and tryExecuteAutonomousAction
+ * returned false. That looked exactly like an authority refusal and was
+ * nothing of the kind — which is why the no-grant case below uses a VALID
+ * input too: a refusal that could be caused by a malformed fixture proves
+ * nothing about authority.
  */
-const VALID_HOMEPAGE = {
-        primaryCallToAction: "ZZAFTERCTA",
-        secondaryCallToAction: null,
-        aboutUs: "Hand-wound in a small workshop.",
-        whyChooseUs: "Every ring is measured by cubit.",
-        featuredCollections: [],
-        faq: [],
-        newsletterSection: "",
-        footerContent: "",
-        customSection: null,
-      };
+const VALID_SEO = {
+  seoTitle: "ZZAFTERSEO",
+  seoMetaDescription: "Hand-wound rings, measured by cubit.",
+};
 
 async function main(): Promise<void> {
   const server = await startTestServer();
@@ -99,22 +104,20 @@ async function main(): Promise<void> {
         slug: `auto-${uniq()}`,
         published: true,
         currency: "USD",
-        // AUTONOMY IS NOT THE ONLY GATE. Publishing a storefront change costs
-        // Growth Points, and a store with none gets a FAILED execution whose
-        // message says so — the correct behaviour, and exactly what
-        // ai-actions.ts predicts for "insufficient Growth Points for a paid
-        // auto-execute action". Without this the suite reports an authority
-        // failure that is really an empty wallet.
+        // AUTONOMY IS NOT THE ONLY GATE. Publishing a change costs Growth
+        // Points, and a store with none gets a FAILED execution whose message
+        // says so — the correct behaviour, and exactly what ai-actions.ts
+        // predicts for "insufficient Growth Points for a paid auto-execute
+        // action". Without this the suite reports an authority failure that is
+        // really an empty wallet.
         growthPointBalance: 500,
-        blueprint: { homepageContent: { primaryCallToAction: "ZZBEFORECTA" } } as never,
+        blueprint: { marketingAssets: { seoTitle: "ZZBEFORESEO", seoMetaDescription: "Before." } } as never,
       },
     });
-    // SEEDED HERE, not in section 5. The storefront's shop section returns
-    // null when a store has no active products (page.tsx: `if
-    // (products.length === 0) return null`), and primaryCallToAction is that
-    // section's button label — so with no product the field J4 changes is
-    // simply not on the page, and the rendered check times out against
-    // perfectly correct behaviour.
+    // SEEDED FOR SECTION 5, which needs a real product for delete_product to
+    // be refused ON. Section 3b no longer depends on it: the field J4 changes
+    // here is the page's own title, which a store renders with or without a
+    // catalogue.
     const product = await prismaSystem.product.create({
       data: { storeId: store.id, name: "ZZDONOTDELETE", priceInCents: 1000, active: true },
     });
@@ -128,35 +131,35 @@ async function main(): Promise<void> {
     // ======================================================================
     const withoutGrant = await tryExecuteAutonomousAction({
       storeId: store.id,
-      actionType: "update_homepage_content",
-      input: { ...VALID_HOMEPAGE, primaryCallToAction: "ZZSHOULDNOTLAND" },
+      actionType: "update_seo",
+      input: { ...VALID_SEO, seoTitle: "ZZSHOULDNOTLAND" },
       summary: "Genesis acted on its own",
       topicKey: null,
       cognitiveOutputId: null,
     } as never);
-    check("a newly autonomous action still needs the owner's grant", withoutGrant, false);
+    check("an autonomous-capable action still needs the owner's grant", withoutGrant, false);
     check("and nothing was written",
       ((await prismaSystem.store.findUniqueOrThrow({ where: { id: store.id }, select: { blueprint: true } }))
-        .blueprint as { homepageContent: { primaryCallToAction: string } }).homepageContent.primaryCallToAction,
-      "ZZBEFORECTA");
+        .blueprint as { marketingAssets: { seoTitle: string } }).marketingAssets.seoTitle,
+      "ZZBEFORESEO");
 
     // ======================================================================
     console.log("\n=== 2. Granted, J4 acts without asking ===\n");
     // ======================================================================
     await grantDelegatedAuthority({
       storeId: store.id,
-      actionType: "update_homepage_content",
+      actionType: "update_seo",
       grantedByUserId: owner.id,
     });
     const ran = await tryExecuteAutonomousAction({
       storeId: store.id,
-      actionType: "update_homepage_content",
-      input: VALID_HOMEPAGE,
+      actionType: "update_seo",
+      input: VALID_SEO,
       summary: "Genesis acted on its own",
       topicKey: null,
       cognitiveOutputId: null,
     } as never);
-    check("update_homepage_content runs under a grant", ran, true);
+    check("update_seo runs under a grant", ran, true);
     // NOTHING IS LEFT WAITING FOR THE OWNER — which is not the same as
     // nothing being recorded, and my first assertion confused the two.
     //
@@ -172,7 +175,7 @@ async function main(): Promise<void> {
       0);
     check("and the action is recorded as already decided",
       (await prismaSystem.approvalRequest.findFirstOrThrow({
-        where: { storeId: store.id, actionType: "update_homepage_content" },
+        where: { storeId: store.id, actionType: "update_seo" },
         select: { status: true },
       })).status,
       "EXECUTED");
@@ -181,7 +184,7 @@ async function main(): Promise<void> {
     console.log("\n=== 3. It landed, and J4 read it back ===\n");
     // ======================================================================
     const log = await prismaSystem.executionLog.findFirstOrThrow({
-      where: { storeId: store.id, action: "store.update_homepage_content" },
+      where: { storeId: store.id, action: "store.update_seo" },
       orderBy: { createdAt: "desc" },
     });
     check("the execution is SUCCESS", log.status, "SUCCESS");
@@ -191,31 +194,37 @@ async function main(): Promise<void> {
     check("recorded as Genesis acting, not as a person", log.actorType, "GENESIS");
     check("and the store really changed",
       ((await prismaSystem.store.findUniqueOrThrow({ where: { id: store.id }, select: { blueprint: true } }))
-        .blueprint as { homepageContent: { primaryCallToAction: string } }).homepageContent.primaryCallToAction,
-      "ZZAFTERCTA");
+        .blueprint as { marketingAssets: { seoTitle: string } }).marketingAssets.seoTitle,
+      "ZZAFTERSEO");
 
     // ======================================================================
     console.log("\n=== 3b. And a customer sees it ===\n");
     // ======================================================================
     //
-    // primaryCallToAction is the storefront's shop-button label
-    // (app/store/[slug]/page.tsx: `homepage?.primaryCallToAction || "Shop Now"`),
-    // so the field J4 just changed on its own authority is one a customer reads.
+    // seoTitle IS the storefront's page title (app/store/[slug]/page.tsx,
+    // generateMetadata: `marketing?.seoTitle || store.name`), so the field J4
+    // just changed on its own authority is one a visitor reads in the tab and
+    // a search result reads in the listing.
     //
-    // WAITING FOR THE PAGE, not for the navigation. The first version read
-    // page.innerText("body") straight after domcontentloaded and got an empty
+    // WAITING FOR THE PAGE, not for the navigation. An earlier version read
+    // the rendered text straight after domcontentloaded and got an empty
     // string, which I mistook for a broken fixture and removed the whole
-    // rendered half over. Fetching the same URL returned 24KB of correct HTML:
-    // the page was never the problem, the read was simply too early.
+    // rendered half over. Fetching the same URL returned 24KB of correct
+    // HTML: the page was never the problem, the read was simply too early.
     const browser = await chromium.launch();
     try {
       const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
       await page.goto(`${server.baseUrl}/store/${store.slug}`, { waitUntil: "domcontentloaded" });
-      await page.waitForSelector("text=ZZAFTERCTA", { timeout: 30_000 });
-      const body = (await page.innerText("body")).replace(/\s+/g, " ");
+      // The wait is allowed to time out: the assertion below is what decides,
+      // and a swallowed timeout here would otherwise become a crash that says
+      // less than a FAIL line does.
+      await page
+        .waitForFunction("document.title.includes('ZZAFTERSEO')", undefined, { timeout: 30_000 })
+        .catch(() => {});
+      const title = await page.title();
       assert("the autonomous change is on the page a customer sees",
-        body.includes("ZZAFTERCTA"), body.slice(0, 200));
-      assert("and what it replaced is gone", !body.includes("ZZBEFORECTA"), body.slice(0, 200));
+        title.includes("ZZAFTERSEO"), title);
+      assert("and what it replaced is gone", !title.includes("ZZBEFORESEO"), title);
       await page.screenshot({ path: "verification-screenshots/autonomy-storefront.png" });
       await page.close();
     } finally {
@@ -223,33 +232,26 @@ async function main(): Promise<void> {
     }
 
     // ======================================================================
-    console.log("\n=== 4. The second raised action behaves the same ===\n");
+    console.log("\n=== 4. THE REVERT — execution-only stays execution-only ===\n");
     // ======================================================================
-    await grantDelegatedAuthority({
-      storeId: store.id,
-      actionType: "update_store_content",
-      grantedByUserId: owner.id,
-    });
-    const ranStore = await tryExecuteAutonomousAction({
-      storeId: store.id,
-      actionType: "update_store_content",
-      input: {
-        shippingPolicy: "Ships in two days.",
-        returnPolicy: "ZZAFTERRETURNS",
-        privacyPolicy: "We keep your details.",
-        termsAndConditions: "Be kind.",
-        contactPageCopy: "Say hello.",
-      },
-      summary: "Genesis acted on its own",
-      topicKey: null,
-      cognitiveOutputId: null,
-    } as never);
-    check("update_store_content runs under a grant", ranStore, true);
-    const storeLog = await prismaSystem.executionLog.findFirstOrThrow({
-      where: { storeId: store.id, action: "store.update_store_content" },
-      orderBy: { createdAt: "desc" },
-    });
-    check("and it too was verified by read-back", storeLog.verified, true);
+    //
+    // update_homepage_content and update_store_content were autonomous for
+    // part of one day. Nothing in production could select either, so the
+    // capability was granted to nobody. This is that revert asserted rather
+    // than remembered: both are capped at always_ask, so the owner cannot
+    // delegate them even deliberately, and they cannot run on their own.
+    for (const actionType of ["update_homepage_content", "update_store_content"] as const) {
+      let refused = false;
+      try {
+        await grantDelegatedAuthority({ storeId: store.id, actionType, grantedByUserId: owner.id });
+      } catch {
+        refused = true;
+      }
+      assert(`${actionType} cannot be delegated`, refused);
+      check(`  and its cap says so permanently`,
+        (GENESIS_ACTIONS as Record<string, { maxAuthorityTier: string }>)[actionType].maxAuthorityTier,
+        "always_ask");
+    }
 
     // ======================================================================
     console.log("\n=== 5. THE CONTROL — destructive still stops ===\n");

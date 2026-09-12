@@ -250,38 +250,53 @@ async function main() {
     "Old title");
 
   // ==========================================================================
-  console.log("\n=== 8. The two actions raised to auto, and the ones that were not ===\n");
+  console.log("\n=== 8. What is autonomous, and the two that were reverted ===\n");
   // ==========================================================================
   //
-  // 2026-09-11. update_homepage_content and update_store_content moved from
-  // always_ask to auto. What that means precisely: an OWNER may now grant
-  // delegated authority for them, and J4 may act under that grant without
-  // asking each time. It does NOT mean they run unguarded — every gate proven
-  // above still applies to them, which is what this section checks rather than
-  // assumes.
-  const RAISED = ["update_homepage_content", "update_store_content"] as const;
-  for (const key of RAISED) {
-    check(`${key} is delegable`, GENESIS_ACTIONS[key].maxAuthorityTier, "auto");
-    check(`${key} is autonomous today`, GENESIS_ACTIONS[key].authorizationTier, "auto");
+  // 2026-09-11, WRITTEN TWICE IN ONE DAY. update_homepage_content and
+  // update_store_content moved from always_ask to auto, and this section
+  // asserted they had. Both were reverted the same day, so it now asserts the
+  // opposite — deliberately, in the same place, rather than being deleted.
+  //
+  // Why they were reverted is worth keeping here, because the reason is not
+  // the obvious one. They ARE reachable: ai-actions.ts proposes both on the
+  // chat path, and proposeAction executes immediately when authorizationTier
+  // is "auto" — a gate that checks the registry tier and NOTHING ELSE, not
+  // even a delegated grant. So "auto" on these two would have meant J4
+  // rewriting homepage and policy copy the first time a chat turn generated
+  // any, with nobody having delegated anything. Whether J4 gets that is a
+  // product decision, and it comes before the tier moves again.
+  const REVERTED = ["update_homepage_content", "update_store_content"] as const;
+  for (const key of REVERTED) {
+    check(`${key} cannot be delegated`, GENESIS_ACTIONS[key].maxAuthorityTier, "always_ask");
+    check(`${key} is not autonomous`, GENESIS_ACTIONS[key].authorizationTier, "always_ask");
     check(`${key} stays in the content category`, GENESIS_ACTIONS[key].category, "content");
-    // Autonomy without verification would be the worst combination available.
+    // THE PROPERTIES THAT MADE THE RAISE DEFENSIBLE ARE STILL TRUE, and still
+    // asserted: the revert is about the decision path, not about these
+    // actions being unsafe. Whatever reopens this question should find the
+    // evidence intact rather than have to rebuild it.
     assert(`${key} can still read back what it wrote`,
       typeof GENESIS_ACTIONS[key].executable.verify === "function");
-    // Reversible: the revert path needs the values that were there before.
     assert(`${key} still captures what it is replacing`,
       typeof GENESIS_ACTIONS[key].getCurrentValues === "function");
   }
 
-  // AND THE BOUNDARY DID NOT MOVE WITH THEM. Raising two content actions must
-  // not have widened anything else — asserted against the registry rather than
-  // trusted, because "I only changed two lines" is exactly what a regression
-  // says about itself.
+  // AND THE BOUNDARY IS WHERE THE REVERT LEFT IT. Asserted against the
+  // registry rather than trusted, because "I only changed two lines" is
+  // exactly what a regression says about itself.
+  //
+  // A DELIBERATE LIST, NOT A MIRRORED REGISTRY. It is not derived, and that
+  // is the point: changing what J4 may do without asking should force
+  // somebody to edit this line and justify it. Reachability — whether
+  // anything in production can actually select these — is invariant 6 in
+  // verify-authority-boundary.ts, which derives its side from the real
+  // catalogues.
   const nowAuto = Object.entries(GENESIS_ACTIONS)
     .filter(([, d]) => (d as { authorizationTier: string }).authorizationTier === "auto")
     .map(([k]) => k)
     .sort();
-  check("exactly four actions are autonomous, and these are they", nowAuto,
-    ["communicate_finding", "update_homepage_content", "update_seo", "update_store_content"]);
+  check("exactly two actions are autonomous, and these are they", nowAuto,
+    ["communicate_finding", "update_seo"]);
 
   const dangerous = Object.entries(GENESIS_ACTIONS).filter(
     ([, d]) => ["money", "destructive"].includes((d as { category: string }).category),
