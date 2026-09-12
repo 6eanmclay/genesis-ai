@@ -82,14 +82,20 @@ export async function AuthorityScreen({ slug, basePath }: { slug?: string; baseP
       <section className="mt-8">
         <h2 className="text-lg font-semibold text-black dark:text-zinc-50">While you&apos;re here</h2>
         <p className="mt-1 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">
-          In a conversation, Genesis can carry out some changes as part of its reply,
-          with no separate approval step — you&apos;re present, so there is no second
-          place to say yes. Genesis still decides when a change is worth checking with
-          you first, and stops to ask when it is.
+          In a conversation, Genesis can carry out a change you&apos;ve authorised as
+          part of its reply, without a separate approval step — you&apos;re present, so
+          there is no second place to say yes. It still decides when a change is worth
+          checking with you first, and stops to ask when it is.
         </p>
+        {/* THE SENTENCE THIS SECTION USED TO CARRY WAS "this is not something
+            you have granted, and the controls below do not turn it off". True
+            when written, and the reason Sean changed the model: the clearest
+            "no" the product offers was a preference about being away. Being
+            here now authenticates the owner and nothing more. */}
         <p className="mt-2 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">
-          This is not something you have granted, and the controls below do not turn it
-          off.
+          Being here is not the same as having said yes. Anything you haven&apos;t
+          authorised below, Genesis asks about first — in conversation exactly as it
+          would while you&apos;re away.
         </p>
         {surface.whileHere.length === 0 ? (
           <p className="mt-3 text-sm text-zinc-500">
@@ -100,8 +106,14 @@ export async function AuthorityScreen({ slug, basePath }: { slug?: string; baseP
             {surface.whileHere.map((c) => (
               <li key={c.actionType} className="flex items-center justify-between gap-3 px-3 py-2.5">
                 <span className="text-sm text-black dark:text-zinc-50">{c.label}</span>
-                <span className="rounded-full bg-black/[.05] px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-white/[.06] dark:text-zinc-400">
-                  Always on
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    c.authorized
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : "bg-black/[.05] text-zinc-600 dark:bg-white/[.06] dark:text-zinc-400"
+                  }`}
+                >
+                  {c.authorized ? "Goes ahead" : "Asks first"}
                 </span>
               </li>
             ))}
@@ -113,8 +125,9 @@ export async function AuthorityScreen({ slug, basePath }: { slug?: string; baseP
       <section className="mt-10">
         <h2 className="text-lg font-semibold text-black dark:text-zinc-50">While you&apos;re away</h2>
         <p className="mt-1 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">
-          When you are not here, Genesis acts only on authority you have given it,
-          for the specific capability you gave it. You can take it back at any time.
+          Genesis acts on its own only for capabilities you have authorised, one
+          capability at a time. You can take any of them back at any time, and taking
+          one back stops it everywhere — including in conversation with you.
         </p>
         <ul className="mt-3 flex max-w-xl flex-col gap-3">
           {surface.whileAway.map((c) => (
@@ -128,10 +141,10 @@ export async function AuthorityScreen({ slug, basePath }: { slug?: string; baseP
               </div>
               <p className="mt-1 text-xs text-zinc-500">
                 {c.grantState === "granted"
-                  ? `Genesis can do this while you're away. Granted ${c.grantedAt?.toLocaleDateString() ?? ""}.`
+                  ? `Genesis can do this without asking, here or while you're away. Authorised ${c.grantedAt?.toLocaleDateString() ?? ""}.`
                   : c.grantState === "revoked"
-                    ? `You turned this off${c.revokedAt ? ` on ${c.revokedAt.toLocaleDateString()}` : ""}. Genesis will not do it while you're away.`
-                    : "Genesis will not do this while you're away."}
+                    ? `You turned this off${c.revokedAt ? ` on ${c.revokedAt.toLocaleDateString()}` : ""}. Genesis asks before doing it, here and while you're away.`
+                    : "Genesis asks before doing this, here and while you're away."}
               </p>
               {c.hasControl && canManageAuthority ? (
                 <form
@@ -148,8 +161,8 @@ export async function AuthorityScreen({ slug, basePath }: { slug?: string; baseP
                     }
                   >
                     {c.grantState === "granted"
-                      ? "Ask before doing this while I'm away"
-                      : "Let Genesis do this while I'm away"}
+                      ? "Ask before doing this"
+                      : "Let Genesis do this without asking"}
                   </SubmitButton>
                 </form>
               ) : (
@@ -166,14 +179,16 @@ export async function AuthorityScreen({ slug, basePath }: { slug?: string; baseP
             </li>
           ))}
         </ul>
-        {/* THE OPEN QUESTION, IN THE OWNER'S LANGUAGE. Revoking closes the
-            away-from-desk path and nothing else. Whether it SHOULD also cover
-            what Genesis does in conversation has not been decided, and a
-            screen that stayed quiet about it would be answering it by
-            implication. */}
+        {/* THE QUESTION THIS SCREEN ASKED, NOW ANSWERED (2026-09-11). This
+            note used to say the opposite — that turning a capability off
+            applied to being away and did not change conversation — because
+            that was the behaviour. Sean decided the owner's "ask me" should be
+            an authority boundary rather than an away-mode preference, and
+            ai-actions.ts now consults the same grant. The sentence changed
+            because the system did. */}
         <p className="mt-3 max-w-xl text-xs text-zinc-500">
-          Turning one of these off applies to when you&apos;re away. It does not change
-          what Genesis does in a conversation with you — see above.
+          Turning one of these off applies everywhere: Genesis will ask first whether
+          or not you&apos;re in a conversation with it.
         </p>
       </section>
 

@@ -11,36 +11,46 @@ import { TEST_DATABASE_ENV } from "@/scripts/lib/requireTestDatabase";
 // ============ WHY THIS EXISTS ========================================
 //
 // The two-path audit found that "autonomous" was never one thing. Two
-// different production paths execute without the owner clicking anything,
-// and they do not share a single gate — neither is a subset of the other:
+// production paths execute without the owner clicking anything, and they did
+// not share a gate — neither was a subset of the other. The conversational
+// one ran on the registry tier alone, so an owner who had pressed "Ask before
+// publishing SEO changes" still got SEO published the moment they mentioned
+// it, because that button writes a revocation and that path read none.
 //
-//   PRESENT-OWNER   the owner is signed in and in the conversation.
-//                   ai-actions.ts -> proposeAction -> execute, gated on the
-//                   registry's authorizationTier and the caller's own live
-//                   session permission. No DelegatedAuthority is read.
-//   GRANT           the owner is absent. genesisAutonomy.ts ->
-//                   tryExecuteAutonomousAction -> execute, gated on the
-//                   action's CAP plus an explicit, un-revoked grant, which
-//                   execute() then re-verifies by object identity.
-//   SYSTEM          the CRON path only (scheduler.ts), connector syncs, no
-//                   GENESIS_ACTIONS mutation, forced actorType "SYSTEM".
-//   EXEMPT          communicate_finding, and only it.
+// ============ PRESENCE IS NOT PERMISSION (2026-09-11) ================
 //
-// And in every case the CATEGORY CEILING is the absolute ceiling — no
-// warrant reaches past it.
+// Sean's decision, and the invariant this file now exists to hold:
 //
-// This file locks those semantics. It does not change them: which warrant
-// revocation ought to cover is a product decision that has not been made.
+//   Owner presence can provide authentication and context, but never
+//   silently substitutes for revoked autonomous authority.
+//
+// So there is ONE authorisation question — autonomyAuthorizedFor, the cap
+// plus an active, un-revoked grant — and both paths ask it. What presence
+// still decides is the CONTEXT an execution is recorded under:
+//
+//   chat_auto    authorised, and the owner was here. execute() still runs
+//                requireStorePermission, so the caller's own session
+//                permission constrains it: presence authenticates.
+//   autonomous   authorised, nobody here. genesisAutonomy.ts, with the grant
+//                row re-verified inside execute() by object identity.
+//   human        the owner decided it.
+//   system       CRON only, connector syncs, no GENESIS_ACTIONS mutation.
+//   exempt       communicate_finding, and only it.
+//
+// And in every case the CATEGORY CEILING is the absolute ceiling — no warrant
+// reaches past it, which is now enforced inside the one authorisation
+// function rather than separately per path.
 //
 // ============ WHAT IS PROVEN BY RUNNING, AND WHAT IS NOT =============
 //
-// The grant warrant is exercised end to end against a real Postgres — grant,
-// execute, revoke, refuse. The present-owner warrant CANNOT be: its execute()
-// goes through requireStorePermission, which calls auth() for a real signed-in
-// session, and the only production caller is a chat turn behind a live model
-// call. So it is proven in two honest halves — its gate evaluated against the
-// real registry, and its recording asserted against the real source — and the
-// halves are labelled as such rather than dressed up as an end-to-end run.
+// The authorisation question itself is exercised end to end against a real
+// Postgres, in every state: absent, granted, revoked. So is the absent-owner
+// path. The conversational path's own execute() CANNOT be: it goes through
+// requireStorePermission, which calls auth() for a real signed-in session,
+// and its only production caller is a chat turn behind a live model call. Its
+// gate is therefore proven where it can be — the shared function at runtime,
+// and the call site against the real source — and labelled as such rather
+// than dressed up as an end-to-end run.
 
 let failures = 0;
 function check(label: string, actual: unknown, expected: unknown): void {
@@ -66,7 +76,7 @@ async function main(): Promise<void> {
   process.env[TEST_DATABASE_ENV] = "1";
   process.env.DATABASE_URL = db.url;
 
-  const { tryExecuteAutonomousAction, grantDelegatedAuthority, revokeDelegatedAuthority } =
+  const { tryExecuteAutonomousAction, grantDelegatedAuthority, revokeDelegatedAuthority, autonomyAuthorizedFor } =
     await import("@/lib/execution/genesisAutonomy");
   const { GENESIS_ACTIONS, CATEGORY_MAX_TIER } = await import("@/lib/execution/genesisActions");
   const { prismaSystem: prisma } = await import("@/lib/prisma");
@@ -194,17 +204,29 @@ async function main(): Promise<void> {
   check("  and nothing was written", await seoTitleOf(s2.id), "ZZWARRANT");
 
   // ======================================================================
-  console.log("\n=== 3. PRESENT-OWNER — the tier is the authority, not a grant ===\n");
+  console.log("\n=== 3. PRESENT-OWNER — eligible is not authorised ===\n");
   // ======================================================================
   //
-  // Gate half: evaluated against the real registry.
+  // ============ PRESENCE IS NOT PERMISSION (2026-09-11) ===============
+  //
+  // This section asserted the opposite until today, and correctly: the chat
+  // path opened on the registry tier alone and read no grant, so an owner who
+  // had pressed "Ask before publishing SEO changes" still got SEO published
+  // in conversation. Sean's decision made the owner's no an authority
+  // boundary rather than an away-mode preference.
+  //
+  // The tier still says which capabilities MAY run unattended. What changed is
+  // that both paths now ask the same second question — autonomyAuthorizedFor,
+  // one function, one grant row, one revocation.
   const s3 = await makeStore();
   check("this store has granted Genesis nothing",
     await prisma.delegatedAuthority.count({ where: { storeId: s3.id } }), 0);
-  assert("present-owner + auto tier -> the gate is OPEN with no grant",
+  assert("update_seo is still ELIGIBLE to run inside a conversation",
     presentOwnerGate("update_seo"),
-    "the registry tier alone opens it; DelegatedAuthority is never read on this path");
-  assert("  while the grant path refuses the identical action and store",
+    "the tier half of the gate — eligibility, which is not permission");
+  check("but with no grant it is NOT authorised, present or absent",
+    (await autonomyAuthorizedFor(s3.id, "update_seo")) === null, true);
+  assert("  so the absent-owner path refuses",
     (await tryExecuteAutonomousAction({
       storeId: s3.id,
       actionType: "update_seo",
@@ -212,15 +234,41 @@ async function main(): Promise<void> {
       summary: "Genesis acted on its own",
       topicKey: null,
       cognitiveOutputId: null,
-    } as never)) === false,
-    "same action, same store, same moment — the two warrants genuinely differ");
+    } as never)) === false);
 
-  // THE PATH READS NO GRANT. A negative asserted across the whole file, which
-  // is the only honest way to prove an absence.
+  // ONE AUTHORISATION, BOTH CONTEXTS. Asserted as the same function rather
+  // than two expressions that happen to agree today.
   const chatSrc = codeOnly(read("app", "dashboard", "ai-actions.ts"));
-  assert("the present-owner path never consults DelegatedAuthority",
-    !/delegatedAuthority|getActiveDelegatedAuthority|revokedAt/.test(chatSrc),
-    "if this starts failing, revocation has begun covering this path — a product decision");
+  assert("the conversational path consults the same authorisation",
+    /autonomyAuthorizedFor\(/.test(chatSrc),
+    "the chat gate reads the grant the away path reads");
+  assert("  and it is the tier AND the grant, not either alone",
+    /authorizationTier === "auto"[\s\S]{0,200}autonomyAuthorizedFor\(/.test(chatSrc),
+    "eligibility and permission are different questions and both must hold");
+  const autonomySrc = codeOnly(read("lib", "execution", "genesisAutonomy.ts"));
+  assert("  and the away path consults it too",
+    /const grant = await autonomyAuthorizedFor\(/.test(autonomySrc),
+    "one function, so the two cannot drift apart again");
+  assert("  which is where the category ceiling reaches both",
+    /maxAuthorityTier === "always_ask"[\s\S]{0,80}return null/.test(autonomySrc),
+    "money and destructive can have no grant to find");
+
+  // AND THE GRANT MAKES IT AUTHORISED AGAIN — the same row, for both contexts.
+  await grantDelegatedAuthority({ storeId: s3.id, actionType: "update_seo", grantedByUserId: owner.id });
+  assert("an active grant authorises it", (await autonomyAuthorizedFor(s3.id, "update_seo")) !== null);
+  await revokeDelegatedAuthority(s3.id, "update_seo");
+  check("and revoking withdraws that authorisation",
+    (await autonomyAuthorizedFor(s3.id, "update_seo")) === null, true);
+  assert("  revoked, the absent-owner path refuses too",
+    (await tryExecuteAutonomousAction({
+      storeId: s3.id,
+      actionType: "update_seo",
+      input: seoInput,
+      summary: "Genesis acted on its own",
+      topicKey: null,
+      cognitiveOutputId: null,
+    } as never)) === false);
+  check("  and nothing was written", await seoTitleOf(s3.id), "Old title");
 
   // Recording half: asserted against the real source, because this path
   // cannot be driven without a session and a live model call.
@@ -249,6 +297,50 @@ async function main(): Promise<void> {
   assert("CONTROL: the human decision paths really are in this file",
     humanDecisionPaths.test(chatSrc),
     "otherwise the assertion above is reading a file with no human path to distinguish from");
+
+  // ======================================================================
+  console.log("\n=== 3b. Authority is not the only gate — Growth Points ===\n");
+  // ======================================================================
+  //
+  // Authorisation says J4 MAY. Growth Points say whether it can afford to,
+  // and the engine charges both warrants identically because both pass
+  // opts.actionType into execute(). Worth proving rather than assuming: an
+  // empty wallet refusing looks exactly like an authority refusal from the
+  // outside, and this suite would happily report one as the other.
+  const broke = await prisma.store.create({
+    data: {
+      userId: owner.id,
+      name: "Broke Co",
+      slug: `broke-${++n}-${Date.now()}`,
+      tagline: "t",
+      description: "d",
+      currency: "USD",
+      growthPointBalance: 0,
+      blueprint: { marketingAssets: { seoTitle: "Old title", seoMetaDescription: "Old desc" } },
+    },
+  });
+  await grantDelegatedAuthority({ storeId: broke.id, actionType: "update_seo", grantedByUserId: owner.id });
+  assert("this store IS authorised", (await autonomyAuthorizedFor(broke.id, "update_seo")) !== null);
+  // Returns true — "handled", meaning it did not fall through to a second
+  // PENDING row — while the execution itself failed. The distinction the
+  // ExecutionLog below is what actually settles.
+  await tryExecuteAutonomousAction({
+    storeId: broke.id,
+    actionType: "update_seo",
+    input: seoInput,
+    summary: "Genesis acted on its own",
+    topicKey: null,
+    cognitiveOutputId: null,
+  } as never);
+  check("but with no Growth Points the change does not land", await seoTitleOf(broke.id), "Old title");
+  const brokeLog = await prisma.executionLog.findFirst({
+    where: { storeId: broke.id, action: "store.update_seo" },
+    orderBy: { createdAt: "desc" },
+  });
+  check("  and it is recorded as a FAILED execution, not a refusal", brokeLog?.status, "FAILED");
+  assert("  whose message names the shortfall rather than authority",
+    /Growth Point/i.test(brokeLog?.message ?? ""),
+    brokeLog?.message ?? "(no log row)");
 
   // ======================================================================
   console.log("\n=== 4. HUMAN stays distinguishable from both ===\n");

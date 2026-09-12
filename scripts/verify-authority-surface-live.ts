@@ -11,9 +11,16 @@ import { signIn } from "@/scripts/lib/httpSession";
 // The screen this covers replaced a sentence that was false: with no grant in
 // place the Marketing page told owners "Genesis will always ask before
 // changing your SEO title or description," while update_seo is registered at
-// tier "auto" and the chat path publishes it on the spot. A screen about
+// tier "auto" and the chat path published it on the spot. A screen about
 // authority that misdescribes authority is worse than no screen, so this one
 // is asserted against REAL database state rather than trusted.
+//
+// THE BEHAVIOUR THEN CHANGED UNDERNEATH IT (2026-09-11). Sean decided the
+// owner's "ask me" is an authority boundary rather than an away-mode
+// preference, so the conversational path now consults the same grant. Several
+// assertions here flipped with it — deliberately, and each says so — because
+// a suite that kept passing through that change would have been asserting
+// wording rather than truth.
 //
 // Three grant states, three real stores, one signed-in owner per store, and
 // the assertions read the HTML a real Next server rendered.
@@ -73,8 +80,8 @@ function sectionOf(page: string, heading: string): string {
  * different question — on a store with one grant and two ungranted
  * capabilities, every badge string appears somewhere. And update_seo appears
  * TWICE by design, once under each warrant: searching the page for its label
- * found the "While you're here" row, which has no grant state at all and
- * correctly says "Always on". Callers pass the section they mean.
+ * found the "While you're here" row rather than the delegated one. Callers
+ * pass the section they mean.
  */
 function rowFor(page: string, label: string): string {
   const start = page.indexOf(label);
@@ -180,28 +187,38 @@ async function main(): Promise<void> {
       sectionOf(grantedPage, "While you're here").includes("Publish SEO improvements") &&
         sectionOf(grantedPage, "While you're away").includes("Publish SEO improvements"),
       "one capability, two authorities");
-    assert("  and the present-owner row carries no grant state",
-      sectionOf(grantedPage, "While you're here").includes("Always on") &&
-        !sectionOf(grantedPage, "While you're here").includes("Granted"),
+    // THE PRESENT-OWNER ROW FOLLOWS THE SAME AUTHORISATION (2026-09-11).
+    // It used to read "Always on" regardless of any grant, which was true of
+    // the behaviour and is exactly what Sean changed: presence authenticates,
+    // it does not authorise.
+    assert("  the present-owner row says it goes ahead when authorised",
+      sectionOf(grantedPage, "While you're here").includes("Goes ahead"),
       sectionOf(grantedPage, "While you're here"));
+    assert("  and says it asks first when not",
+      sectionOf(neverPage, "While you're here").includes("Asks first") &&
+        !sectionOf(neverPage, "While you're here").includes("Goes ahead"),
+      sectionOf(neverPage, "While you're here"));
+    assert("  and a revoked capability asks in conversation too",
+      sectionOf(revokedPage, "While you're here").includes("Asks first"),
+      "the whole point of the decision: revoking reaches the conversation");
 
     const awayRow = (page: string) =>
       rowFor(sectionOf(page, "While you're away"), "Publish SEO improvements");
     assert("an active grant renders as granted",
       /\bGranted\b/.test(awayRow(grantedPage)) && !awayRow(grantedPage).includes("Not granted"),
       awayRow(grantedPage));
-    assert("  and says Genesis can act while the owner is away",
-      /Genesis can do this while you're away/.test(grantedPage));
-    assert("  and offers to take it back",
-      grantedPage.includes("Ask before doing this while I'm away"));
+    assert("  and says Genesis can act without asking, in both contexts",
+      /Genesis can do this without asking, here or while you're away/.test(grantedPage));
+    assert("  and offers to take it back, unqualified",
+      grantedPage.includes("Ask before doing this"));
 
     assert("a revoked grant renders as revoked", revokedPage.includes("Revoked"));
-    assert("  and says Genesis will not act",
-      /will not do it while you're away/.test(revokedPage));
-    assert("  and offers to grant it again",
-      revokedPage.includes("Let Genesis do this while I'm away"));
+    assert("  and says Genesis asks in both contexts",
+      /asks before doing it, here and while you're away/.test(revokedPage));
+    assert("  and offers to authorise it again",
+      revokedPage.includes("Let Genesis do this without asking"));
     assert("  a revoked grant is NOT shown as active",
-      !/Genesis can do this while you're away/.test(revokedPage),
+      !/Genesis can do this without asking/.test(revokedPage),
       "a revoked row reading as granted is the worst version of this screen");
 
     assert("no grant at all renders as not granted", neverPage.includes("Not granted"));
@@ -215,21 +232,23 @@ async function main(): Promise<void> {
     for (const [name, page] of [["granted", grantedPage], ["revoked", revokedPage], ["never", neverPage]] as const) {
       assert(`${name}: both warrants are on the page`,
         page.includes("While you're here") && page.includes("While you're away"));
-      assert(`${name}: the present-owner warrant is not described as something granted`,
-        /This is not something you have granted/.test(page));
+      assert(`${name}: presence is not offered as permission`,
+        /Being here is not the same as having said yes/.test(page),
+        "the invariant, in the owner's own language");
     }
 
-    // THE ONE SENTENCE THIS SCREEN EXISTS TO STOP BEING FALSE. Revoking closes
-    // the away path and nothing else, and the page must not imply otherwise.
-    assert("the screen never claims a revoke disables chat-auto",
-      /does not change what Genesis does in a conversation/.test(revokedPage),
-      "the unresolved product decision has to stay visible, not be answered by omission");
+    // THE SENTENCE THE DECISION TURNED AROUND. This screen used to promise the
+    // opposite — that turning a capability off applied to being away and did
+    // not change what happened in conversation — because that was the
+    // behaviour. Both changed together, and the test changed with them.
+    assert("revoking is described as applying everywhere",
+      /Turning one of these off applies everywhere/.test(revokedPage),
+      "the owner's 'ask me' is an authority boundary now, not an away-mode preference");
     assert("  and says so on the ungranted page too",
-      /does not change what Genesis does in a conversation/.test(neverPage),
-      "an owner who never granted anything is the likeliest to assume Genesis does nothing");
-    assert("  the screen never says Genesis will always ask",
-      !/always ask/i.test(neverPage),
-      "that is the exact sentence that was false");
+      /Turning one of these off applies everywhere/.test(neverPage));
+    assert("  and the screen never claims a revoke leaves conversation untouched",
+      !/does not change what Genesis does in a conversation/.test(revokedPage),
+      "that sentence was accurate until the behaviour changed under it");
 
     // ======================================================================
     console.log("\n=== 3. Exempt is not dressed up as a permission ===\n");
@@ -285,18 +304,25 @@ async function main(): Promise<void> {
       afterRevoke.includes("Revoked"),
       "if this fails the screen is reading something other than the real grant");
     assert("  and the active sentence is gone",
-      !/Genesis can do this while you're away/.test(afterRevoke));
+      !/Genesis can do this without asking/.test(afterRevoke));
+    assert("  and the conversational row flips to asking first",
+      sectionOf(afterRevoke, "While you're here").includes("Asks first"),
+      "one grant row, both contexts — the database is the single answer");
 
     // ======================================================================
     console.log("\n=== 6. Marketing points here rather than competing ===\n");
     // ======================================================================
     const marketing = textOf(await (await granted.session.fetch(`/b/${granted.store.slug}/marketing`)).text());
-    assert("Marketing still reports the away-state", /While you're away/.test(marketing));
-    assert("  and links to the one authority surface",
-      /has the full picture/.test(marketing));
-    assert("  and no longer claims Genesis will always ask",
-      !/always ask/i.test(marketing),
-      "the sentence this whole slice started from");
+    // Reads the ungranted copy: section 5 revoked this store's grant, and the
+    // page follows the database rather than the state it was created in.
+    assert("Marketing still reports the capability's real state",
+      /Genesis will ask before changing your SEO title or description/.test(marketing),
+      marketing.slice(marketing.indexOf("Genesis's authority"), marketing.indexOf("Genesis's authority") + 260));
+    assert("  and sends the owner to the one place it can be changed",
+      /is where you change this/.test(marketing));
+    assert("  and describes both contexts with one answer",
+      /in a conversation or while you're away/.test(marketing),
+      "the page that started this said Genesis would always ask, and it was false");
   } finally {
     await server.close();
   }

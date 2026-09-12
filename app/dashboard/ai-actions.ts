@@ -67,7 +67,7 @@ import { checkGrowthPointBalanceForActions } from "@/lib/growthPoints/ledger";
 import { runDeterministicObservationSweep } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { GENESIS_ACTIONS, type GenesisActionContext, type GenesisActionType } from "@/lib/execution/genesisActions";
-import { buildActionContext } from "@/lib/execution/genesisAutonomy";
+import { buildActionContext, autonomyAuthorizedFor } from "@/lib/execution/genesisAutonomy";
 import { driftFor, explainDrift, type DriftedField } from "@/lib/execution/approvalDrift";
 import {
   supersedePendingApproval,
@@ -3007,14 +3007,46 @@ async function applyGenesisMessageToStore(
       // BUSINESS_ASSETS_ARCHITECTURE.md M3 — conversational auto-execute.
       // definition.authorizationTier is a real, deliberate per-action trust
       // decision (see genesisActions.ts's own comments on which actions
-      // have actually earned this — today, only update_seo) — this never
-      // second-guesses that decision, it just acts on it immediately
-      // instead of waiting for a click the owner already said isn't needed
-      // for this specific action. authorityExempt actions are excluded:
-      // they carry no real ApprovalRequest identity to resolve (see
+      // have actually earned this): it says this capability MAY run without a
+      // separate approval. authorityExempt actions are excluded — they carry
+      // no real ApprovalRequest identity to resolve (see
       // GenesisActionDefinition's own comment on that field).
+      //
+      // ============ AND THE OWNER HAS TO HAVE SAID YES (2026-09-11) ====
+      //
+      // The tier used to be the whole gate here, which meant an owner who had
+      // pressed "Ask before publishing SEO changes" still got SEO published
+      // the moment they mentioned it in conversation. That button writes a
+      // DelegatedAuthority revocation, and this path had never read one — so
+      // the clearest "no" the product offers was silently a preference about
+      // being away rather than an authority boundary.
+      //
+      // Sean's decision: revoking means J4 may no longer do that capability
+      // autonomously, present or absent. PRESENCE IS NOT PERMISSION. Being
+      // signed in authenticates the owner and establishes who Genesis is
+      // talking to — requireStorePermission inside execute() still does
+      // exactly that, and still constrains this to what the caller may do.
+      // What it does not do is stand in for authority the owner withdrew.
+      //
+      // Two conditions, and they answer different questions. The tier asks
+      // "may this capability ever run unattended"; autonomyAuthorizedFor asks
+      // "has this owner authorised it, right now" — the same function, the
+      // same grant row, the same revocation the absent-owner path consults.
+      // A scope note, because it would be easy to over-read this: the grant
+      // is per capability, so an owner who has authorised SEO has authorised
+      // every conversational SEO change. Nobody is being asked to re-grant
+      // per message.
+      //
+      // FALLING THROUGH IS THE POINT. Without authorisation this does not
+      // fail — `executed` stays false, the ApprovalRequest created above
+      // stays PENDING_APPROVAL, and the owner is asked. Exactly the path an
+      // always_ask action already takes.
       let executed = false;
-      if (definition.authorizationTier === "auto" && !definition.authorityExempt) {
+      const autonomyGrant =
+        definition.authorizationTier === "auto" && !definition.authorityExempt
+          ? await autonomyAuthorizedFor(store.id, actionType)
+          : null;
+      if (autonomyGrant) {
         const result = await execute(definition.executable, parsedInput.data, {
           storeId: store.id,
           actorType: "GENESIS",

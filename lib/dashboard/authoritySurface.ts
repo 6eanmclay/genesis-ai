@@ -34,10 +34,23 @@ export interface AuthorityCapability {
   label: string;
   category: string;
   /**
-   * J4 may execute this while the owner is PRESENT, with no separate
-   * approval — the literal gate app/dashboard/ai-actions.ts evaluates.
+   * This capability MAY run inside a conversation with no separate approval —
+   * the tier half of the gate app/dashboard/ai-actions.ts evaluates.
+   *
+   * Eligibility, not permission. Since 2026-09-11 the same authorisation the
+   * absent-owner path requires applies here too, so a capability can be
+   * eligible and still ask every time because the owner has not granted it or
+   * has revoked it. `authorized` is the other half.
    */
   chatAuto: boolean;
+  /**
+   * The owner has authorised this capability to run without them deciding —
+   * an active, un-revoked DelegatedAuthority row.
+   *
+   * ONE ANSWER FOR BOTH CONTEXTS. Presence changes which warrant an execution
+   * is recorded under; it does not change whether it is allowed.
+   */
+  authorized: boolean;
   /**
    * An owner CAN delegate this for when they are away — the literal first
    * gate lib/execution/genesisAutonomy.ts evaluates.
@@ -158,6 +171,7 @@ export function buildAuthoritySurface(grants: GrantRow[]): AuthoritySurface {
       label: labelFor(actionType),
       category: def.category,
       chatAuto,
+      authorized: grantState === "granted",
       grantable,
       exempt,
       grantState,

@@ -30,6 +30,43 @@ async function getActiveDelegatedAuthority(storeId: string, actionType: string) 
   });
 }
 
+/**
+ * Is this capability authorised to execute WITHOUT the owner deciding, right now?
+ *
+ * ============ PRESENCE IS NOT PERMISSION (2026-09-11) ================
+ *
+ * One question, asked by both autonomous paths, because it turned out they
+ * were asking different ones. The chat path used to execute on the registry
+ * tier alone: an owner who had pressed "Ask before publishing SEO changes"
+ * still got SEO published, because that button wrote a DelegatedAuthority
+ * revocation and the conversational path never read one. The owner's explicit
+ * no was a preference about being away rather than an authority boundary.
+ *
+ * Sean's decision: revoking means J4 may no longer perform that capability
+ * autonomously, present or absent. Being signed in and in the conversation
+ * authenticates the owner and says who Genesis is talking to. It does not
+ * confer the authority to change the business without asking.
+ *
+ * So this answers the AUTHORISATION question and nothing else. Whether the
+ * owner happens to be here is a separate question about CONTEXT, and it
+ * decides which warrant an execution is recorded under (chat_auto vs
+ * autonomous) — never whether it may happen at all.
+ *
+ * Returns the grant rather than a boolean because the absent-owner path needs
+ * the row itself: execute() re-verifies it by object identity, and the
+ * ApprovalRequest snapshots its id so "why was Genesis allowed to do this"
+ * survives a later revocation.
+ */
+export async function autonomyAuthorizedFor(storeId: string, actionType: string) {
+  const definition = GENESIS_ACTIONS[actionType as GenesisActionType];
+  // Not a delegable action type at all — the concept of authority doesn't
+  // exist for it, regardless of anything else. This is the category ceiling
+  // reaching through: CATEGORY_MAX_TIER caps money and destructive at
+  // always_ask at module load, so no grant for one can ever exist to find.
+  if (!definition || definition.maxAuthorityTier === "always_ask") return null;
+  return getActiveDelegatedAuthority(storeId, actionType);
+}
+
 // Phase 3 Milestone 6 — gained an optional `record` param, populating the
 // new businessRecord context field for the record-scoped operations
 // actions (update_goal_status/resolve_challenge), the same way `product`
@@ -170,13 +207,13 @@ export async function tryExecuteAutonomousAction(
     params;
 
   const definition = GENESIS_ACTIONS[actionType];
-  if (!definition || definition.maxAuthorityTier === "always_ask") {
-    // Not a delegable action type at all — the concept of authority doesn't
-    // exist for it, regardless of anything else.
-    return false;
-  }
+  if (!definition) return false;
 
-  const grant = await getActiveDelegatedAuthority(storeId, actionType);
+  // THE SAME QUESTION THE CHAT PATH NOW ASKS, from the same function rather
+  // than a second expression of it. This used to be two lines here — the cap
+  // check and the grant lookup — and nothing anywhere else; that is how the
+  // conversational path came to authorise itself on the registry tier alone.
+  const grant = await autonomyAuthorizedFor(storeId, actionType);
   if (!grant) return false;
 
   // Re-derive the store's owner and confirm the account itself still holds

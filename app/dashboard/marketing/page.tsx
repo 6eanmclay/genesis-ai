@@ -150,17 +150,20 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
           <h2 className="mt-8 text-lg font-semibold text-black dark:text-zinc-50">
             Genesis&apos;s authority
           </h2>
+          {/* "which is a separate thing and is always on" is what this said
+              until 2026-09-11, and it was true: the conversational path ran on
+              the registry tier alone. It now consults the same authorisation,
+              so there is one answer here rather than two. */}
           <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
             {seoAuthorityGrant
-              ? "While you're away, Genesis can publish SEO improvements on its own."
-              : "While you're away, Genesis will ask before changing your SEO title or description."}
+              ? "Genesis can publish SEO improvements without asking — in a conversation with you, or while you're away."
+              : "Genesis will ask before changing your SEO title or description, in a conversation or while you're away."}
           </p>
           <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
             <Link href={`${basePath}/authority`} className="underline underline-offset-2">
               Genesis&apos;s authority
             </Link>{" "}
-            has the full picture — including what Genesis does while you&apos;re here in
-            a conversation, which is a separate thing and is always on.
+            is where you change this, and shows everything else Genesis may do.
           </p>
         </>
       )}
