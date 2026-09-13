@@ -20,7 +20,41 @@ function generateCode(): string {
   return randomBytes(5).toString("hex").toUpperCase().slice(0, 8);
 }
 
-export async function getOrCreateReferralCode(userId: string): Promise<string> {
+/**
+ * The code this user already has, or null. READS ONLY.
+ *
+ * ============ A GET MUST NOT MINT ONE (2026-09-13) =====================
+ *
+ * Until today the only thing that ever created a referral code was the Growth
+ * Points page rendering. Next's own guidance is unambiguous — "Mutations (e.g.
+ * logging out users, updating databases, invalidating caches) should never be
+ * a side-effect, either in Server or Client Components" (docs/01-app/02-guides/
+ * data-security.md) — and it names the consequence this case actually has:
+ * side-effects in a page "might be triggered when the route is prefetched, not
+ * when the user visits the page".
+ *
+ * Which also defeated the design's own reason for being lazy. The header above
+ * says codes are "generated lazily here on first access — most users never
+ * share one, so this never runs at signup"; a prefetched nav link mints one
+ * for a user who never opened the page, so the write happened for exactly the
+ * people it was meant to spare.
+ */
+export async function readReferralCode(userId: string): Promise<string | null> {
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { referralCode: true },
+  });
+  return user.referralCode;
+}
+
+/**
+ * Make sure this user has a code, creating one if not.
+ *
+ * WAS getOrCreateReferralCode, AND THE RENAME IS THE POINT: it writes, so it
+ * belongs to a write lifecycle. Its callers are signup (app/api/register) and
+ * a Server Action the owner presses — never a render.
+ */
+export async function ensureReferralCode(userId: string): Promise<string> {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { referralCode: true } });
   if (user.referralCode) return user.referralCode;
 

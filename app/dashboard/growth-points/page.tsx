@@ -2,9 +2,9 @@ import Link from "next/link";
 import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getGrowthPointHistory, getGrowthPointUsageByAction, getReferralsSent } from "@/lib/growthPoints/ownerQueries";
-import { getOrCreateReferralCode } from "@/lib/growthPoints/referral";
+import { readReferralCode } from "@/lib/growthPoints/referral";
 import { growthPointPackages } from "@/lib/growthPoints/purchaseCatalog";
-import { purchaseGrowthPoints, addGrowthPointsForTesting } from "./actions";
+import { purchaseGrowthPoints, addGrowthPointsForTesting, createReferralLink } from "./actions";
 import { SubmitButton } from "../SubmitButton";
 import { isPlatformAdmin } from "@/lib/platformAdmin";
 import { billingReturnNotice } from "@/lib/billing/returnNotice";
@@ -77,10 +77,10 @@ export async function GrowthPointsScreen({
     getGrowthPointHistory(store.id, 20),
     getGrowthPointUsageByAction(store.id),
     getReferralsSent(userId),
-    getOrCreateReferralCode(userId),
+    readReferralCode(userId),
   ]);
 
-  const referralLink = `${process.env.NEXTAUTH_URL ?? ""}/signup?ref=${referralCode}`;
+  const referralLink = referralCode ? `${process.env.NEXTAUTH_URL ?? ""}/signup?ref=${referralCode}` : null;
   const rewardedReferrals = referrals.filter((r) => r.status === "REWARDED").length;
   const packages = growthPointPackages();
 
@@ -256,9 +256,26 @@ export async function GrowthPointsScreen({
         Share your link — when someone you invite finishes their first real conversation with J4, you both
         earn Growth Points.
       </p>
-      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-black/[.08] bg-zinc-50 px-4 py-3 text-sm dark:border-white/[.1] dark:bg-zinc-900/50">
-        <code className="text-black dark:text-zinc-50">{referralLink}</code>
-      </div>
+      {/* ============ A LINK IS READ; MAKING ONE IS PRESSED ==============
+          This page used to call getOrCreateReferralCode while rendering, so a
+          GET minted a code — and a prefetched nav link could mint one for
+          somebody who never opened the page. Signup now creates a code for
+          every new account, and accounts older than that create theirs here,
+          deliberately. The read is a read. */}
+      {referralLink ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-black/[.08] bg-zinc-50 px-4 py-3 text-sm dark:border-white/[.1] dark:bg-zinc-900/50">
+          <code className="text-black dark:text-zinc-50" data-testid="referral-link">{referralLink}</code>
+        </div>
+      ) : (
+        <form action={createReferralLink.bind(null, slug)} className="mt-3">
+          <SubmitButton
+            pendingText="Creating..."
+            className="rounded-full border border-black/[.08] px-4 py-2 text-sm text-black transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-50 dark:hover:bg-white/[.05]"
+          >
+            Create my invite link
+          </SubmitButton>
+        </form>
+      )}
       {referrals.length > 0 && (
         <ul className="mt-3 flex flex-col divide-y divide-black/[.05] rounded-xl border border-black/[.08] dark:divide-white/[.08] dark:border-white/[.1]">
           {referrals.map((r) => (

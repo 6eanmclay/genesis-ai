@@ -7,6 +7,8 @@ import { createGrowthPointCheckoutSession } from "@/lib/billing/checkout";
 import { adjustGrowthPointBalance } from "@/lib/growthPoints/ledger";
 import { isPlatformAdmin } from "@/lib/platformAdmin";
 import { prisma } from "@/lib/prisma";
+import { ensureReferralCode } from "@/lib/growthPoints/referral";
+import { businessBasePath, LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 
 // MIGRATED to explicit business context (2026-08-20, BUSINESS_CONTEXT.md Phase
 // C). `slug` is bound by the page under /b/[slug]; the legacy page passes
@@ -60,4 +62,21 @@ export async function addGrowthPointsForTesting(slug: string | undefined, formDa
 
   revalidatePath("/dashboard/growth-points");
   redirect("/dashboard/growth-points");
+}
+
+// THE OWNER ASKS FOR THEIR INVITE LINK, AND THAT IS A WRITE (2026-09-13).
+//
+// Creating a referral code used to happen while the Growth Points page
+// rendered. Next's own guidance: "Mutations ... should never be a side-effect,
+// either in Server or Client Components", and a prefetched link can trigger
+// one for somebody who never visited. Signup now creates a code for every new
+// account; this is how the accounts that predate that get theirs — pressed, on
+// purpose, by the person whose link it is.
+//
+// Gated exactly as this page is. The code belongs to the USER, not the
+// business, so the business only decides which page they pressed it on.
+export async function createReferralLink(slug?: string) {
+  const { userId } = await requireBusinessOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
+  await ensureReferralCode(userId);
+  revalidatePath(`${slug ? businessBasePath(slug) : LEGACY_BUSINESS_BASE}/growth-points`);
 }

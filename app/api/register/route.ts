@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/auth/normalizeEmail";
-import { recordReferralSignup } from "@/lib/growthPoints/referral";
+import { ensureReferralCode, recordReferralSignup } from "@/lib/growthPoints/referral";
 import { checkPassword } from "@/lib/auth/passwordPolicy";
 import { guard } from "@/lib/http/guard";
 
@@ -112,6 +112,20 @@ export async function POST(request: Request) {
     if (ref) {
       await recordReferralSignup(ref, user.id).catch(() => {});
     }
+
+    // THEIR OWN CODE, CREATED BY THE WRITE THAT CREATES THEM (2026-09-13).
+    //
+    // Until today the only thing that had ever minted a referral code was the
+    // Growth Points page rendering — a database write as a side-effect of a
+    // GET, which Next's own guidance rules out and which a prefetched nav link
+    // could trigger for someone who never opened the page.
+    //
+    // Signup is the write lifecycle that should own it: this route already
+    // creates the user and already records the relationship above. Best-effort
+    // for the same reason recordReferralSignup is — an account must never fail
+    // to be created over a code nobody has asked for yet. Anyone who signed up
+    // before this creates theirs from the page, on purpose, with a button.
+    await ensureReferralCode(user.id).catch(() => {});
 
     return NextResponse.json(
       { id: user.id, email: user.email, name: user.name },
