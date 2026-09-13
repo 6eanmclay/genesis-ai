@@ -8,6 +8,7 @@ import { purchaseGrowthPoints, addGrowthPointsForTesting } from "./actions";
 import { SubmitButton } from "../SubmitButton";
 import { isPlatformAdmin } from "@/lib/platformAdmin";
 import { billingReturnNotice } from "@/lib/billing/returnNotice";
+import { formatPlatformPrice } from "@/lib/billing/platformPricing";
 
 // Growth Points Economy (Chapter 2) — the owner's own real economy view:
 // current balance, real point history, real usage by action, their own
@@ -277,6 +278,21 @@ export async function GrowthPointsScreen({
                     +{pkg.pointAmount}
                   </p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">Growth Points</p>
+                  {/* ============ THE BUTTON BELOW TAKES MONEY (2026-09-13) ==
+                      This card showed a label, a point count and "Invest", and
+                      the owner first saw what they were paying on Stripe's own
+                      checkout page. priceInCents has been populated for all
+                      four packs since 2026-08-05 and its own comment calls it
+                      "Display only" — stored so this page could show it.
+
+                      USD deliberately, never store.currency: provision-pricing
+                      creates every one of these Prices with currency "usd", so
+                      a GBP shop still pays dollars here. */}
+                  {formatPlatformPrice(pkg.priceInCents) && (
+                    <p className="mt-2 text-sm font-medium text-black dark:text-zinc-50" data-testid="pack-price">
+                      {formatPlatformPrice(pkg.priceInCents)}
+                    </p>
+                  )}
                 </div>
                 <button
                   type="submit"

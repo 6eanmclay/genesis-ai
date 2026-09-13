@@ -4,6 +4,7 @@ import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { manageBilling, subscribeToPlan } from "./actions";
 import { SubmitButton } from "../SubmitButton";
 import { billingReturnNotice } from "@/lib/billing/returnNotice";
+import { formatPlatformMonthlyPrice } from "@/lib/billing/platformPricing";
 
 // Chapter 5 (Payments) — the owner's own account/subscription surface.
 // Deliberately thin: real plan status + a real Stripe Billing Portal
@@ -149,6 +150,16 @@ export async function BillingScreen({
                         {plan.monthlyGrowthPointAllowance !== null && (
                           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                             +{plan.monthlyGrowthPointAllowance} Growth Points every month
+                          </p>
+                        )}
+                        {/* THE SAME OMISSION AS THE GROWTH POINT PACKS. This
+                            card submitted into a live subscription checkout
+                            while naming no price. Plan.priceInCents is
+                            nullable on purpose, so a plan without a cached
+                            price shows none rather than a zero or a guess. */}
+                        {formatPlatformMonthlyPrice(plan.priceInCents) && (
+                          <p className="mt-2 text-sm font-medium text-black dark:text-zinc-50" data-testid="plan-price">
+                            {formatPlatformMonthlyPrice(plan.priceInCents)}
                           </p>
                         )}
                       </div>
