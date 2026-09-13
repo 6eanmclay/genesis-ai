@@ -1,6 +1,7 @@
 import { platformStripe } from "./stripeClient";
 import { getOrCreateStripeCustomer } from "./customer";
 import { getBaseUrl } from "@/lib/integrations/util";
+import { billingReturnUrl } from "./returnPath";
 
 // Chapter 5 (Payments) — "billing and account management" answered by
 // leaning on Stripe's own hosted Billing Portal rather than building
@@ -9,7 +10,7 @@ import { getBaseUrl } from "@/lib/integrations/util";
 // cancel) with a real Stripe surface, not a maintained clone of it.
 export async function createBillingPortalSession(
   storeId: string,
-  opts: { baseUrl?: string } = {}
+  opts: { baseUrl?: string; slug?: string } = {}
 ): Promise<string> {
   const [customerId, baseUrl] = await Promise.all([
     getOrCreateStripeCustomer(storeId),
@@ -18,7 +19,7 @@ export async function createBillingPortalSession(
 
   const session = await platformStripe.billingPortal.sessions.create({
     customer: customerId,
-    return_url: `${baseUrl}/dashboard/billing`,
+    return_url: billingReturnUrl({ baseUrl, slug: opts.slug, page: "billing" }),
   });
 
   return session.url;

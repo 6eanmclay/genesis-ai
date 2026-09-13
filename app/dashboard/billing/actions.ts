@@ -14,12 +14,15 @@ import { createPlanSubscriptionCheckoutSession } from "@/lib/billing/checkout";
 // Points are credited to that business's balance.
 export async function manageBilling(slug?: string) {
   const { storeId } = await requireBusinessOrActive(PERMISSIONS.BILLING_MANAGE, slug);
-  const url = await createBillingPortalSession(storeId);
+  // THE BUSINESS THEY ARE LOOKING AT, carried into Stripe's return_url so
+  // the portal sends them back to it rather than to whichever one the account
+  // last chose. See lib/billing/returnPath.ts.
+  const url = await createBillingPortalSession(storeId, { slug });
   redirect(url);
 }
 
 export async function subscribeToPlan(slug: string | undefined, planId: string) {
   const { storeId } = await requireBusinessOrActive(PERMISSIONS.BILLING_MANAGE, slug);
-  const url = await createPlanSubscriptionCheckoutSession(storeId, planId);
+  const url = await createPlanSubscriptionCheckoutSession(storeId, planId, { slug });
   redirect(url);
 }

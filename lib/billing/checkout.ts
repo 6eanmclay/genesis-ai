@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { platformStripe } from "./stripeClient";
 import { getOrCreateStripeCustomer } from "./customer";
 import { getBaseUrl } from "@/lib/integrations/util";
+import { billingReturnUrl } from "./returnPath";
 import { growthPointPackage } from "@/lib/growthPoints/purchaseCatalog";
 
 // Chapter 5 (Payments) — mirrors app/store/[slug]/actions.ts's own
@@ -18,7 +19,7 @@ export async function createGrowthPointCheckoutSession(
   // getBaseUrl()'s own headers() call would throw) verify this function
   // directly — every real call site (a server action) omits it and gets
   // the real, request-derived base URL, unchanged.
-  opts: { baseUrl?: string } = {}
+  opts: { baseUrl?: string; slug?: string } = {}
 ): Promise<string> {
   const pkg = growthPointPackage(packageKey);
   if (!pkg) {
@@ -34,8 +35,8 @@ export async function createGrowthPointCheckoutSession(
     mode: "payment",
     customer: customerId,
     line_items: [{ price: pkg.stripePriceId, quantity: 1 }],
-    success_url: `${baseUrl}/dashboard/growth-points?purchase=success`,
-    cancel_url: `${baseUrl}/dashboard/growth-points?purchase=cancelled`,
+    success_url: billingReturnUrl({ baseUrl, slug: opts.slug, page: "growth-points", query: "purchase=success" }),
+    cancel_url: billingReturnUrl({ baseUrl, slug: opts.slug, page: "growth-points", query: "purchase=cancelled" }),
     metadata: { storeId, packageKey, pointAmount: String(pkg.pointAmount) },
   });
 
@@ -54,7 +55,7 @@ export async function createGrowthPointCheckoutSession(
 export async function createPlanSubscriptionCheckoutSession(
   storeId: string,
   planId: string,
-  opts: { baseUrl?: string } = {}
+  opts: { baseUrl?: string; slug?: string } = {}
 ): Promise<string> {
   const plan = await prisma.plan.findUnique({ where: { id: planId } });
   if (!plan?.stripePriceId) {
@@ -70,8 +71,8 @@ export async function createPlanSubscriptionCheckoutSession(
     mode: "subscription",
     customer: customerId,
     line_items: [{ price: plan.stripePriceId, quantity: 1 }],
-    success_url: `${baseUrl}/dashboard/billing?subscribe=success`,
-    cancel_url: `${baseUrl}/dashboard/billing?subscribe=cancelled`,
+    success_url: billingReturnUrl({ baseUrl, slug: opts.slug, page: "billing", query: "subscribe=success" }),
+    cancel_url: billingReturnUrl({ baseUrl, slug: opts.slug, page: "billing", query: "subscribe=cancelled" }),
     metadata: { storeId, planId },
   });
 

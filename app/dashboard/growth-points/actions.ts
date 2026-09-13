@@ -17,7 +17,9 @@ import { prisma } from "@/lib/prisma";
 // Points are credited to that business's balance.
 export async function purchaseGrowthPoints(slug: string | undefined, packageKey: string) {
   const { storeId } = await requireBusinessOrActive(PERMISSIONS.BILLING_MANAGE, slug);
-  const url = await createGrowthPointCheckoutSession(storeId, packageKey);
+  // Same carry as billing's own actions — the points are credited to this
+  // business, so the owner is returned to this business. lib/billing/returnPath.ts.
+  const url = await createGrowthPointCheckoutSession(storeId, packageKey, { slug });
   redirect(url);
 }
 
