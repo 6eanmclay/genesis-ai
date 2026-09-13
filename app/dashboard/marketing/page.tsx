@@ -5,6 +5,7 @@ import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
+import { getVisitorSources, ATTRIBUTION_KIND_LABELS } from "@/lib/dashboard/visitorSources";
 import {
   approveGenesisAction,
   rejectGenesisAction,
@@ -34,11 +35,22 @@ import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
 //
 // `basePath` is what every link inside uses, so a page rendered for one business
 // never links into another.
+/**
+ * Whether the whole recorded window is one day.
+ *
+ * A store with a single visit has firstSeenAt === lastSeenAt, and rendering
+ * "between 13/09/2026 and 13/09/2026" would be a range that is not a range.
+ * The n=1 state is a first-class state here, not a degenerate case of n>1.
+ */
+function sameDay(a: Date, b: Date): boolean {
+  return a.toDateString() === b.toDateString();
+}
+
 export async function MarketingScreen({ slug, basePath }: { slug?: string; basePath: string }) {
   const { store, role } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const canManageAuthority = hasPermission(role, PERMISSIONS.AUTHORITY_MANAGE);
 
-  const [subscribers, pendingApprovals, seoAuthorityGrant, recentSeoDecisions, dismissedCardIds] = await Promise.all([
+  const [subscribers, pendingApprovals, seoAuthorityGrant, recentSeoDecisions, dismissedCardIds, visitorSources] = await Promise.all([
     prisma.newsletterSignup.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
@@ -58,6 +70,11 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
       take: 5,
     }),
     getDismissedCardIds(store.id),
+    // WHERE VISITORS CAME FROM (2026-09-13). Real rows that have been
+    // accumulating since 2026-09-01 with nothing reading them — see
+    // MARKETING.md and lib/dashboard/visitorSources.ts, which carries the
+    // four rules the production read established.
+    getVisitorSources(store.id),
   ]);
   const seoApprovals = pendingApprovals.filter((a) => a.actionType === "update_seo");
   // Phase 2 Milestone 1 — brandKeywords/instagramBio/facebookDescription/
@@ -128,6 +145,126 @@ export async function MarketingScreen({ slug, basePath }: { slug?: string; baseP
               currentPath={`${basePath}/marketing`}
               slug={slug}
             />
+          </div>
+        </>
+      )}
+
+      {/* ============ WHERE YOUR VISITORS CAME FROM (2026-09-13) ==========
+          The attribution pipeline has recorded every storefront arrival since
+          2026-09-01 and no screen has ever shown an owner a row of it. This is
+          that screen, and MARKETING.md is the contract — including what it
+          refuses: no conversion rate, no "top channel", no campaign table, no
+          host grouping, no full referring URLs.
+
+          The counts come from lib/dashboard/visitorSources.ts, which carries
+          the four rules the production read decided. Two matter here: orders
+          are counted by attributionKind rather than attributionSource, and
+          the kinds are ordered by their own size so the dominant one leads
+          without this file naming it. */}
+      <h2 className="mt-10 text-lg font-semibold text-black dark:text-zinc-50">
+        Where your visitors came from
+      </h2>
+      {visitorSources.totalVisits === 0 ? (
+        /* AN ESTABLISHED ZERO, not an absence. The query ran and this store
+           has no visits — said as that, rather than as an empty list that
+           could equally mean nothing is being recorded. */
+        <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
+          No visits recorded yet. Once somebody opens your storefront, this is
+          where you&apos;ll see how they found it.
+        </p>
+      ) : (
+        <>
+          <p className="mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
+            {visitorSources.totalVisits === 1 ? "1 visit" : `${visitorSources.totalVisits} visits`}
+            {visitorSources.firstSeenAt && visitorSources.lastSeenAt
+              ? sameDay(visitorSources.firstSeenAt, visitorSources.lastSeenAt)
+                ? ` on ${visitorSources.firstSeenAt.toLocaleDateString()}`
+                : ` between ${visitorSources.firstSeenAt.toLocaleDateString()} and ${visitorSources.lastSeenAt.toLocaleDateString()}`
+              : ""}
+            . This is every arrival recorded, not a sample.
+          </p>
+
+          <div className="mt-4 max-w-md rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              How the source was known
+            </p>
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {visitorSources.byKind.map((row) => (
+                <li key={row.kind} className="flex items-baseline justify-between gap-3 text-sm">
+                  <span className="text-black dark:text-zinc-50">
+                    {ATTRIBUTION_KIND_LABELS[row.kind]}
+                  </span>
+                  <span className="tabular-nums text-zinc-600 dark:text-zinc-400">{row.visits}</span>
+                </li>
+              ))}
+            </ul>
+
+            {/* HOSTS EXACTLY AS RECORDED. Four Facebook hosts stay four rows —
+                lib/attribution/classify.ts: "A HOST IS RECORDED AS THE HOST IT
+                IS". Grouping them here would put back at the read the guess the
+                recorder refuses to make. */}
+            <p className="mt-4 text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Sites they came from
+            </p>
+            {visitorSources.sources.length === 0 ? (
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                None of these visits named a site they came from.
+              </p>
+            ) : (
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {visitorSources.sources.map((row) => (
+                  <li
+                    key={`${row.kind}:${row.source}`}
+                    className="flex items-baseline justify-between gap-3 text-sm"
+                  >
+                    <span className="text-black dark:text-zinc-50">{row.source}</span>
+                    <span className="tabular-nums text-zinc-600 dark:text-zinc-400">{row.visits}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* ORDERS BY attributionKind. An order attributed as direct has no
+              host and still belongs in this count — filtering on the source
+              column would drop it and undercount what the recorder captured. */}
+          <div className="mt-3 max-w-md rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+            {/* "Orders that carry a source" until the render was looked at,
+                which put the row "No source recorded" underneath a heading
+                promising the opposite. An order carries attribution when
+                attributionForCheckout MATCHED IT TO A VISIT — and that visit
+                may well have had no nameable source. Matched to a visit is the
+                true claim, and the one both rows sit under honestly. */}
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Where your orders came from
+            </p>
+            {visitorSources.attributedOrders === 0 ? (
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                {visitorSources.totalOrders === 0
+                  ? "No orders yet."
+                  : `None of your ${visitorSources.totalOrders} orders were matched to a visit.`}
+              </p>
+            ) : (
+              <>
+                <p className="mt-1 text-sm text-black dark:text-zinc-50">
+                  {visitorSources.attributedOrders} of {visitorSources.totalOrders}{" "}
+                  {visitorSources.totalOrders === 1 ? "order was" : "orders were"} matched to a visit
+                </p>
+                <ul className="mt-2 flex flex-col gap-1.5">
+                  {visitorSources.orderSources.map((row) => (
+                    <li
+                      key={`${row.kind}:${row.source ?? ""}`}
+                      className="flex items-baseline justify-between gap-3 text-sm"
+                    >
+                      <span className="text-black dark:text-zinc-50">
+                        {row.source ?? ATTRIBUTION_KIND_LABELS[row.kind]}
+                      </span>
+                      <span className="tabular-nums text-zinc-600 dark:text-zinc-400">{row.orders}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
         </>
       )}
