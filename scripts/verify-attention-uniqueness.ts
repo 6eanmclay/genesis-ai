@@ -267,6 +267,17 @@ async function main(): Promise<void> {
     // The backfill cannot produce one, so it is injected directly — which is
     // also the only way a real one could appear: a future producer emitting a
     // second card id for a record the first already names.
+    //
+    // THE INDEX COMES OFF FIRST (2026-09-13). Since the Step 5 migration this
+    // database enforces the canonical key, so the injection below is refused
+    // outright — which is the constraint working, and also the end of this
+    // suite's ability to test the detector. The index is dropped for the
+    // injection and restored after, because the population this detector
+    // exists to examine is one that has NOT yet had the constraint applied:
+    // that is the only place a duplicate can be sitting.
+    await prisma.$executeRawUnsafe(
+      `DROP INDEX IF EXISTS "DismissedAttentionCard_storeId_source_sourceId_key"`,
+    );
     const secondSpelling = await prisma.dismissedAttentionCard.create({
       data: {
         storeId: storeA.id,
@@ -306,6 +317,24 @@ async function main(): Promise<void> {
     await prisma.dismissedAttentionCard.delete({ where: { id: secondSpelling.id } });
     check("and it goes quiet again when the duplicate is removed",
       evidence(await read()).duplicates.length === 0);
+
+    // AND THE CONSTRAINT GOES BACK ON, which also proves the population this
+    // suite built is one the Step 5 migration would accept.
+    //
+    // ASSERTED ON THE OUTCOME, not written as `check(..., true)` — a bare true
+    // would have been a line that passes whatever happens, since a throwing
+    // CREATE would end the run before reaching it.
+    let restored: string | null = null;
+    try {
+      await prisma.$executeRawUnsafe(
+        `CREATE UNIQUE INDEX "DismissedAttentionCard_storeId_source_sourceId_key" ON "DismissedAttentionCard"("storeId", "source", "sourceId")`,
+      );
+    } catch (e) {
+      restored = e instanceof Error ? e.message : String(e);
+    }
+    check("the canonical constraint can be established over this population",
+      restored === null,
+      restored ?? "no duplicate survives to block it");
 
     const failed = results.filter((r) => !r.ok);
     console.log(`\n${failed.length === 0 ? `ALL PASS (${results.length})` : `${failed.length} of ${results.length} FAILED`}`);

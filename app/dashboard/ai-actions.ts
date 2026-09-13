@@ -3787,22 +3787,46 @@ export async function dismissAttentionCard(
   // looking at, and left the card they clicked exactly where it was.
   const { storeId, userId } = await requireBusinessOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
 
-  await prisma.dismissedAttentionCard.upsert({
-    where: { storeId_cardId: { storeId, cardId } },
-    create: {
-      storeId, cardId, dismissedByUserId: userId,
-      source: ref?.source ?? null,
-      sourceId: ref?.id ?? null,
-    },
-    update: {
-      dismissedAt: new Date(), dismissedByUserId: userId,
-      // WRITTEN ON UPDATE TOO, so a row that predates the migration and could
-      // not be mapped gains its canonical identity the next time the owner
-      // sets the same thing aside. Never cleared back to null by an update
-      // that has no ref — a card without one is a card with no canonical row.
-      ...(ref ? { source: ref.source, sourceId: ref.id } : {}),
-    },
-  });
+  // ============ THE CANONICAL KEY DECIDES, NOT THE CARD ID =============
+  //
+  // Sean, Step 5: "The writer must stop relying on presentation cardId as the
+  // identity of the deferred state... cardId may remain as legacy/presentation
+  // compatibility data where necessary, but it must no longer determine
+  // whether two canonical deferrals are the same."
+  //
+  // So there are two writes here, and which one runs is decided by whether a
+  // real row exists behind the card — never by which surface is asking.
+  if (ref) {
+    await prisma.dismissedAttentionCard.upsert({
+      // (storeId, source, sourceId). A second presentation spelling for the
+      // same item therefore UPDATES the owner's existing deferral instead of
+      // creating a second one, which is the whole point of the constraint this
+      // ships with rather than an accident of it.
+      where: { storeId_source_sourceId: { storeId, source: ref.source, sourceId: ref.id } },
+      create: { storeId, cardId, source: ref.source, sourceId: ref.id, dismissedByUserId: userId },
+      update: {
+        // dismissedAt MOVES, and nothing else does. Seven days from the most
+        // recent "not now", measured off the same column it always was.
+        dismissedAt: new Date(),
+        dismissedByUserId: userId,
+        // cardId IS DELIBERATELY NOT UPDATED. It is compatibility data now,
+        // and rewriting it could collide with another row's (storeId, cardId)
+        // — the first spelling recorded is as good a presentation label as any
+        // and the identity no longer depends on it.
+      },
+    });
+  } else {
+    // NO CANONICAL ROW BEHIND IT. `issue:` and `discovery:` cards are the
+    // arrival's own populations, and under the identity contract they have no
+    // canonical source. They keep the exact behaviour they have always had —
+    // manufacturing an identity for them to satisfy the new schema would be
+    // inventing the thing this whole change removes.
+    await prisma.dismissedAttentionCard.upsert({
+      where: { storeId_cardId: { storeId, cardId } },
+      create: { storeId, cardId, dismissedByUserId: userId },
+      update: { dismissedAt: new Date(), dismissedByUserId: userId },
+    });
+  }
 
   // /b/[slug] belongs on this list. Without it every business-route path fell
   // through to "/dashboard", so the page the owner was actually on was never

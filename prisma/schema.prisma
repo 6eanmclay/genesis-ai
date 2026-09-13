@@ -2242,13 +2242,22 @@ model DismissedAttentionCard {
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
+  /// KEPT, AND NO LONGER THE IDENTITY (2026-09-13). The presentation id still
+  /// has to be unique per business — two rows with one card id would be two
+  /// records of one card — but it no longer decides whether two deferrals are
+  /// the same thing. That is the canonical key below.
   @@unique([storeId, cardId])
   @@index([storeId, dismissedAt])
-  /// NOT UNIQUE, deliberately, in this commit. (storeId, source, sourceId) is
-  /// the key the shared layer will eventually want, but adding the constraint
-  /// here would make the migration able to FAIL on production data instead of
-  /// merely describing it. Prove the population first, constrain it after.
-  @@index([storeId, source, sourceId])
+  /// ONE LIVE DEFERRAL PER UNDERLYING ITEM, PER BUSINESS.
+  ///
+  /// The invariant the evidence in 75ef90b said was already true: zero
+  /// duplicate canonical keys, and structurally impossible to create one while
+  /// a card id remains a pure function of its record.
+  ///
+  /// NULLs are distinct in Postgres, so this binds only the mapped rows and
+  /// leaves every legacy `issue:`/`discovery:` row — which has no canonical
+  /// source under the identity contract — entirely alone.
+  @@unique([storeId, source, sourceId])
 }
 
 // BUSINESS_ASSETS_ARCHITECTURE.md M1 — the unified representation of "one
