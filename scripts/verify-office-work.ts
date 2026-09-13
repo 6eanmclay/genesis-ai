@@ -523,6 +523,81 @@ check("  and the six legacy arrays are gone from the payload",
   "no legacy field survives in OfficeIntelligence");
 
 
+// ============================================================================
+console.log("\n=== 10. One path: work -> category -> count -> view ===\n");
+// ============================================================================
+//
+// Sean, 2026-09-12: "The count displayed for every Office category must come
+// from the canonical OfficeWork collection, not from a second raw-observations
+// calculation."
+//
+// It did not. The strip's OPPORTUNITIES was computed from the raw observation
+// rows before officeWork ran, while the Ideas tab counted work.items — one
+// predicate down two paths, agreeing by coincidence. The strip no longer
+// carries that count and the raw filter is deleted.
+
+const tabWork = officeWork(
+  understandingWith({ activeProducts: 2, hasPhoto: true }),
+  {
+    ...emptyState,
+    observations: [
+      { id: "idea-1", kind: "opportunity_inert" as const, headline: "bios are empty", why: null,
+        standingDays: 1, action: officeActionForObservation({ summary: "a" }, CATEGORY_BASE),
+        genesisState: "opportunity" as const, proposedChange: null },
+      { id: "idea-2", kind: "opportunity_actionable" as const, headline: "repeat buyers", why: null,
+        standingDays: 2, action: officeActionForObservation({ summary: "b", actionHref: "/dashboard/marketing" }, CATEGORY_BASE),
+        genesisState: "opportunity" as const, proposedChange: null },
+      { id: "urgent-1", kind: "problem_inert" as const, headline: "health claims", why: null,
+        standingDays: 3, action: officeActionForObservation({ summary: "c" }, CATEGORY_BASE),
+        genesisState: "urgent" as const, proposedChange: null },
+    ],
+  },
+  CATEGORY_BASE,
+);
+
+// THE COUNT IS THE MEMBERSHIP. Not "equals" by coincidence — the same call.
+for (const category of ["tasks", "ideas", "decisions", "information"] as const) {
+  const members = inCategory(tabWork, category);
+  check(`${category}: the count is the length of the list the view renders`,
+    members.length === tabWork.items.filter((i) => categoryFor(i) === category).length,
+    `${members.length}`);
+}
+check("Ideas holds exactly the opportunity observations",
+  JSON.stringify(inCategory(tabWork, "ideas").map((i) => i.id).sort()) === JSON.stringify(["idea-1", "idea-2"]),
+  inCategory(tabWork, "ideas").map((i) => i.id).join(" "));
+
+// ---- THE PERTURBATION THAT WOULD HAVE EXPOSED THE OLD DIVERGENCE --------
+//
+// The old strip counted raw observations; the tab counted work. Any change
+// that reached one population and not the other made them disagree, and no
+// suite could see it because nothing read them together.
+//
+// There is no longer a second population to perturb: the only way to change
+// the count is to change the list the view renders. Removing an idea from
+// work must move BOTH, because they are the same call.
+const withoutAnIdea = {
+  ...tabWork,
+  items: tabWork.items.filter((i) => i.id !== "idea-1"),
+};
+check("removing an Idea from work drops the count",
+  inCategory(withoutAnIdea, "ideas").length === inCategory(tabWork, "ideas").length - 1,
+  `${inCategory(tabWork, "ideas").length} -> ${inCategory(withoutAnIdea, "ideas").length}`);
+check("  and drops it from the view's membership",
+  !inCategory(withoutAnIdea, "ideas").some((i) => i.id === "idea-1"),
+  inCategory(withoutAnIdea, "ideas").map((i) => i.id).join(" "));
+check("  while every other category is untouched",
+  inCategory(withoutAnIdea, "information").length === inCategory(tabWork, "information").length &&
+    inCategory(withoutAnIdea, "tasks").length === inCategory(tabWork, "tasks").length,
+  "removing an idea is not allowed to move anything else");
+
+// AND AN OBSERVATION THAT IS NOT AN IDEA CANNOT INFLATE THE IDEAS COUNT —
+// the shape of the old bug, where a strip counted one population and a view
+// rendered another.
+check("an urgent observation never reaches Ideas",
+  !inCategory(tabWork, "ideas").some((i) => i.id === "urgent-1"),
+  "it is Information, by its own carried state");
+
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${failed.length === 0 ? `ALL PASS (${results.length})` : `${failed.length} of ${results.length} FAILED`}`);
 if (failed.length) console.log(failed.map((f) => `  - ${f.name}`).join("\n"));

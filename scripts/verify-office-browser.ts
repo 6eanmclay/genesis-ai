@@ -560,6 +560,50 @@ async function main() {
       check(`${TAB_LABEL[key]} shows nothing belonging to another view`, leaked, []);
     }
 
+    // ======================================================================
+    // THE NUMBER ON THE TAB IS THE LIST BENEATH IT (2026-09-12)
+    // ======================================================================
+    //
+    // The strip used to print OPPORTUNITIES from the raw observation rows
+    // while the Ideas tab counted work.items — the same population reached
+    // two ways, agreeing by coincidence, forty pixels apart and under two
+    // different words. The strip no longer carries category counts; the tabs
+    // own them and read the canonical list.
+    //
+    // Asserted on the rendered page, because "one path" is only true if what
+    // the owner reads on the tab is what the owner sees in the view.
+    {
+      for (const key of ["tasks", "ideas", "decisions", "information"] as ViewKey[]) {
+        await showView(page, TAB_LABEL[key]);
+        const seen = await page.evaluate((label: string) => {
+          const portal = document.querySelector("[data-j4-presentation='office']");
+          const tab = [...(portal?.querySelectorAll("button") ?? [])].find(
+            (b) => (b.textContent ?? "").trim().startsWith(label),
+          );
+          const digits = (tab?.textContent ?? "").replace(/[^\d]/g, "");
+          return {
+            tabCount: digits === "" ? 0 : Number(digits),
+            rows: portal?.querySelectorAll('[data-testid="work-row"]').length ?? 0,
+          };
+        }, TAB_LABEL[key]);
+        check(`${TAB_LABEL[key]}: the tab's count is the number of rows it shows`,
+          seen.tabCount, seen.rows);
+      }
+
+      // THE OTHER HALF OF THIS — that the strip no longer counts any of these
+      // categories — is asserted in verify-office-arrival, and it has to be.
+      // This suite opens the Office as the LAYER over the business workspace
+      // (`surface="layer"`, from BusinessWorkspace), and the layer renders no
+      // OfficeBand at all: `showsOfficeBand = !talkingOnly && !isLayer`. A
+      // strip assertion here reads an empty node list and proves nothing about
+      // the strip — which is exactly what the first version of it did.
+      assert("this surface is the layer, which has no strip to read",
+        (await page.evaluate(() =>
+          document.querySelector("[data-j4-presentation='office']")
+            ?.querySelectorAll('[data-testid="office-facts"]').length ?? -1)) === 0,
+        "the rendered-strip assertions live in verify-office-arrival, on the room");
+    }
+
 
     // ======================================================================
     // A DECISION SHOWS WHAT IT WOULD CHANGE (2026-09-12)

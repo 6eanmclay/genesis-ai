@@ -84,8 +84,6 @@ export interface OfficeFact {
  */
 export interface OfficeFactInput {
   activeProducts: number;
-  openTasks: number;
-  opportunities: number;
 }
 
 /**
@@ -125,38 +123,16 @@ export function officeFacts(
       source: "active products in your catalogue",
     },
     {
-      label: "Opportunities",
-      value: input.opportunities,
-      target: { kind: "view", view: "ideas" },
-      source: "things J4 noticed that could be worth doing",
-    },
-    {
       // ONE SOURCE OF TRUTH WITH THE SECTION BELOW IT. Same list, same filter,
       // same function — so the number and the rows cannot describe different
-      // sets. And it now means what the section means: what only the owner can
-      // supply, not every urgent thing J4 found.
+      // sets. What only the owner can supply, not every urgent thing J4 found.
       label: "Needs you",
       value: itemsIn(work, "needs_you").length,
-      // THE DESTINATION MOVED WITH THE MEANING. It pointed at the Information
-      // view, which does not show needs_owner items at all — so following a
-      // non-zero count landed on a screen that could not contain what was
-      // counted. The section that holds them is on the arrival surface.
       target: { kind: "view", view: "briefing" },
       source: "things only you can provide, decide or unblock",
     },
-    {
-      label: "Decisions",
-      value: itemsIn(work, "decide").length,
-      target: { kind: "view", view: "decisions" },
-      source: "actions J4 has prepared and is holding for your approval",
-    },
-    {
-      label: "Tasks",
-      value: input.openTasks,
-      target: { kind: "view", view: "tasks" },
-      source: "open work items",
-    },
   ];
+
   return facts.map((f) => ({ ...f, quiet: f.value === 0 }));
 }
 

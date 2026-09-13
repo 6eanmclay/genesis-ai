@@ -88,18 +88,36 @@ async function readBriefing(page: Page) {
     const bandEl = document.querySelector('[data-testid="office-fact-needs-you"]');
     const bandValueEl = document.querySelector('[data-testid="office-fact-needs-you-value"]');
     const bandNeedsYou = bandValueEl ? Number((bandValueEl.textContent ?? "").replace(/[^\d]/g, "")) : null;
-    const taskEl = document.querySelector('[data-testid="office-fact-tasks-value"]');
-    const bandTasks = taskEl ? Number((taskEl.textContent ?? "").replace(/[^\d]/g, "")) : null;
+    // THE COUNT MOVED TO THE TAB THAT OWNS IT (2026-09-12).
+    //
+    // This number used to come from the strip's TASKS fact, and the strip no
+    // longer carries it: a count whose destination sits forty pixels below
+    // belongs to that destination. The assertion it feeds is unchanged in
+    // meaning and in strength — the thing it caught was a count with no rows
+    // under it, and that is still exactly what it reads.
+    //
+    // The tab's own text, because that is the number the owner actually sees.
+    // A tab reads "Tasks" alone at zero and "Tasks 3" otherwise, so an absent
+    // number is a real zero rather than a missing element.
+    const tabEl = [...document.querySelectorAll("button")].find((b) =>
+      /^Tasks\s*\d*$/.test((b.textContent ?? "").replace(/\s+/g, " ").trim()),
+    );
+    const tabTasks = tabEl ? Number((tabEl.textContent ?? "").replace(/[^\d]/g, "") || "0") : null;
 
     const handled = document.querySelector('[data-testid="briefing-handled"]');
     return {
       present: !!root,
       bandNeedsYou,
-      bandTasks,
+      tabTasks,
       taskRowIds: [...document.querySelectorAll('[data-testid="work-row"]')]
         .map((el) => el.getAttribute("data-work-id") ?? "")
         .filter((id) => id.startsWith("task:")),
       bandNeedsYouSource: bandEl?.getAttribute("title") ?? null,
+      // EVERY LABEL THE STRIP PAINTS, in order. Read from the label span
+      // rather than the cell, so a source sentence mentioning a task cannot
+      // be mistaken for a fact counting tasks.
+      bandLabels: [...document.querySelectorAll('[data-testid="office-facts"] [data-testid$="-value"]')]
+        .map((v) => (v.nextElementSibling?.textContent ?? "").trim()),
       sections,
       rows,
       handled: handled ? (handled.textContent ?? "").replace(/\s+/g, " ").trim() : null,
@@ -352,15 +370,43 @@ async function main(): Promise<void> {
       // ---- EVERY COUNTED TASK IS ON THE SCREEN ----------------------
       //
       // The strip reported three open tasks while officeWork was handed
-      // `tasks: []`, so they were counted here and rendered nowhere. Read off
-      // the same page now: the number in the strip and the task rows actually
-      // painted below it.
-      check(`${width}: every task the strip counts is rendered as a row`,
-        b.bandTasks === b.taskRowIds.length,
-        `strip ${b.bandTasks} vs ${b.taskRowIds.length} task rows`);
+      // `tasks: []`, so they were counted here and rendered nowhere.
+      //
+      // THE COUNT MOVED, THE CONTRADICTION-DETECTOR DID NOT (2026-09-12).
+      // Tasks is no longer a strip fact; the Tasks tab owns that number. So
+      // this reads the tab instead — and it is a stronger check than the one
+      // it replaces, because the tab's count comes from the canonical work
+      // list through categoryFor while these rows come from the same list
+      // through sectionFor. Two independent filters over one collection: if
+      // the count and the rows ever disagree, the single source is not single.
+      check(`${width}: every task the tab counts is rendered as a row`,
+        b.tabTasks === b.taskRowIds.length,
+        `tab ${b.tabTasks} vs ${b.taskRowIds.length} task rows`);
       check(`${width}: a counted task cannot be absent from the sections`,
-        !((b.bandTasks ?? 0) > 0 && b.taskRowIds.length === 0),
-        `strip ${b.bandTasks}, rows ${b.taskRowIds.length}`);
+        !((b.tabTasks ?? 0) > 0 && b.taskRowIds.length === 0),
+        `tab ${b.tabTasks}, rows ${b.taskRowIds.length}`);
+      // AND THE TAB WAS ACTUALLY FOUND. A missing tab reads as null, which
+      // satisfies the second check above for free — `(null ?? 0) > 0` is
+      // false, so the contradiction it looks for can never be found. That is
+      // the vacuous-assertion shape this suite has already caught in itself
+      // twice, so the reader is asserted rather than assumed.
+      check(`${width}: the Tasks tab is on the arrival screen to be read`,
+        b.tabTasks !== null, `tabTasks=${b.tabTasks}`);
+
+      // ---- AND THE STRIP NO LONGER COUNTS WHAT A TAB OWNS ------------
+      //
+      // The other half of the same correction, asserted on the rendered band
+      // because that is where the duplicate was visible: OPPORTUNITIES sat in
+      // the strip counting raw observation rows while the Ideas tab counted
+      // the work list — one population, two paths, two words, forty pixels
+      // apart. Only the room paints this band, which is why it is proven here
+      // and not in verify-office-browser, where the Office is a layer.
+      check(`${width}: the strip is exactly the two facts no tab can say`,
+        JSON.stringify(b.bandLabels) === JSON.stringify(["Products", "Needs you"]),
+        b.bandLabels.join(" | "));
+      check(`${width}: no strip fact counts a category the tabs own`,
+        b.bandLabels.length > 0 && !b.bandLabels.some((l) => /opportunit|idea|decision|task/i.test(l)),
+        b.bandLabels.join(" | ") || "the strip rendered nothing to read");
 
       // The same invariant for DECIDE, since its count is derived the same way.
       const decideRows = b.rows.filter((r) => r.section === "decide");

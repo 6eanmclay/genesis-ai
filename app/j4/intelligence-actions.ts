@@ -168,10 +168,21 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       getBusinessUnderstanding(store.id),
     ]);
 
-  // KEPT: the strip's own "opportunities" count, which officeFacts takes as
-  // an input. The urgent/explanation splits that used to live beside it are
-  // gone — Information is a filter over work now, not a second array.
-  const ideas = observations.filter((o) => o.genesisState === "opportunity");
+  // THE LAST PARALLEL POPULATION, GONE (2026-09-12).
+  //
+  // This line survived the work-list migration because the strip still took
+  // an `opportunities` count as an input — so the number above the tabs was
+  // computed from the raw observation rows while the Ideas tab counted
+  // work.items. The same predicate down two paths, agreeing by coincidence.
+  //
+  // officeFacts' own comment recorded why Needs you and Decisions had already
+  // moved: "so the number above a section and the rows inside it cannot
+  // describe different sets." That was the fix for "2 NEEDS YOU" sitting
+  // above "Nothing is waiting on you right now"; this count never moved.
+  //
+  // The strip no longer carries it, the Ideas tab owns it, and the tab counts
+  // inCategory(work, "ideas"). There is one path: work -> category -> count ->
+  // view.
 
 
   const briefingItems = buildBriefing(
@@ -254,8 +265,6 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     facts: officeFacts(
       {
         activeProducts: activeProductCount,
-        openTasks: openTasks.length,
-        opportunities: ideas.length,
       },
       basePath,
       work,

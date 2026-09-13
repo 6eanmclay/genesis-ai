@@ -233,7 +233,7 @@ async function main() {
     ),
     handled: handledSummary,
     facts: officeFacts(
-      { activeProducts: productCount, openTasks: tasks.length, opportunities: ideas.length },
+      { activeProducts: productCount},
       "/dashboard",
       work,
     ),

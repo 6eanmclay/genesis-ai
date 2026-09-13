@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { officeFacts, everyFactIsSourced, OFFICE_ARC } from "@/lib/j4/officeFacts";
 import { itemsIn } from "@/lib/j4/officeSections";
 import type { OfficeAction } from "@/lib/j4/officeActions";
@@ -46,8 +47,6 @@ const WORK = {
 const REAL = officeFacts(
   {
     activeProducts: 12,
-    openTasks: 0,
-    opportunities: 53,
   },
   BASE,
   WORK,
@@ -73,13 +72,52 @@ for (const f of REAL) console.log(`      ${String(f.value).padStart(4)}  ${f.lab
 // checking a property rather than a coincidence.
 console.log("\n=== the strip cannot disagree with the section ===\n");
 const needsYou = REAL.find((f) => f.label === "Needs you");
-const decides = REAL.find((f) => f.label === "Decisions");
 check("NEEDS YOU counts exactly the needs_you items",
   needsYou?.value === itemsIn(WORK, "needs_you").length,
   `strip ${needsYou?.value} vs section ${itemsIn(WORK, "needs_you").length}`);
-check("DECIDE counts exactly the decide items",
-  decides?.value === itemsIn(WORK, "decide").length,
-  `strip ${decides?.value} vs section ${itemsIn(WORK, "decide").length}`);
+
+// ============================================================================
+console.log("\n=== the strip no longer counts what a tab owns (2026-09-12) ===\n");
+// ============================================================================
+//
+// Sean, after the vocabulary investigation: the strip should stop duplicating
+// counts that already belong to the Office views. Three of its five facts —
+// Opportunities, Decisions, Tasks — were destinations with their own counts
+// forty pixels below, and the same population was called "Opportunities"
+// above and "Ideas" below.
+//
+// What is left is what no tab can say: a business fact, and the arrival
+// section itself. The strip does not need five slots and nothing was invented
+// to keep them.
+check("the strip is exactly the two facts no tab can say",
+  JSON.stringify(REAL.map((f) => f.label)) === JSON.stringify(["Products", "Needs you"]),
+  REAL.map((f) => f.label).join(" | "));
+check("  no fact counts a category the tabs own",
+  !REAL.some((f) => /opportunit|idea|decision|task/i.test(f.label)),
+  REAL.map((f) => f.label).join(" | "));
+check("  and the owner-facing word for that category is never Opportunities",
+  !/Opportunit/.test(readFileSync(join(process.cwd(), "lib", "j4", "officeFacts.ts"), "utf8")),
+  "Opportunity belongs to CognitiveOutput's own label on the activity feed");
+
+// THE PARALLEL POPULATION IS GONE, not merely unused. The count came from
+// `observations.filter(o => o.genesisState === "opportunity")` — the raw rows,
+// before officeWork — while the Ideas tab counted work.items. One predicate,
+// two paths, agreeing by coincidence.
+const intelSource = readFileSync(join(process.cwd(), "app", "j4", "intelligence-actions.ts"), "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/(^|[^:])\/\/.*$/gm, "$1");
+check("no second population is computed for a category count",
+  !/observations\.filter\(/.test(intelSource),
+  "the strip's opportunities count was the last raw-observation read");
+// CODE, NOT THE COMMENTS ABOUT IT. officeFacts' own header still explains what
+// the strip used to carry, and it should — the history is why the field is
+// gone. The assertion is about the type.
+const factsCode = readFileSync(join(process.cwd(), "lib", "j4", "officeFacts.ts"), "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/(^|[^:])\/\/.*$/gm, "$1");
+check("  and officeFacts cannot be handed one",
+  !/opportunities|openTasks/.test(factsCode),
+  "OfficeFactInput no longer has a field to pass a parallel count through");
 
 // A NON-ZERO COUNT CANNOT COEXIST WITH THE EMPTY STATE. The section renders its
 // empty copy when the filter is empty, so the two are the same predicate: a
@@ -91,7 +129,7 @@ check("and it is not marked quiet", needsYou?.quiet === false, `quiet=${needsYou
 // ZERO ITEMS PRODUCES THE EMPTY STATE, from the same source.
 const EMPTY = { items: [{ id: "x", headline: "h", why: null, standingDays: null,
   action: { kind: "internal", because: "not owner-facing" } as OfficeAction }] };
-const emptyFacts = officeFacts({ activeProducts: 0, openTasks: 0, opportunities: 0 }, BASE, EMPTY);
+const emptyFacts = officeFacts({ activeProducts: 0}, BASE, EMPTY);
 const emptyNeeds = emptyFacts.find((f) => f.label === "Needs you");
 check("zero needs_owner items gives a zero count",
   emptyNeeds?.value === 0 && itemsIn(EMPTY, "needs_you").length === 0, `value=${emptyNeeds?.value}`);
@@ -114,10 +152,14 @@ check("every value is a whole count", REAL.every((f) => Number.isInteger(f.value
 console.log("\n=== a zero is shown as a zero ===\n");
 // Hiding an empty count would overstate what J4 is holding. The empty state is
 // information: "no decisions waiting" is a fact the owner wants.
-// Tasks is the zero in this fixture now that Decisions is derived from WORK.
-// The rule is unchanged: a zero renders, marked quiet, rather than hiding.
-const decisions = REAL.find((f) => f.label === "Tasks");
-check("a zero count still renders, marked quiet", decisions?.value === 0 && decisions?.quiet === true, `value=${decisions?.value} quiet=${decisions?.quiet}`);
+// THE ZERO MOVED WITH THE STRIP (2026-09-12). Tasks used to be the zero in
+// this fixture; the strip no longer carries it, so the rule is proven on the
+// fact that can still be zero — Needs you, read from a work list with none.
+// The rule itself is unchanged: a zero renders, marked quiet, rather than
+// hiding, because "nothing is waiting on you" is information.
+check("a zero count still renders, marked quiet",
+  emptyNeeds?.value === 0 && emptyNeeds?.quiet === true,
+  `value=${emptyNeeds?.value} quiet=${emptyNeeds?.quiet}`);
 const products = REAL.find((f) => f.label === "Products");
 check("a non-zero count is not quiet", products?.quiet === false, `quiet=${products?.quiet}`);
 
