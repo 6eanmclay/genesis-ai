@@ -6,22 +6,15 @@ import { getBaseUrl } from "@/lib/integrations/util";
 import { getPendingApprovals, type PendingApproval } from "@/lib/dashboard/pendingApprovals";
 import type { BlueprintContextSubset } from "@/lib/execution/genesisActions";
 import { SECTION_LABELS, type SectionKey } from "@/lib/storefrontSections";
-import { compareObservationPriority } from "@/lib/dashboard/genesisState";
-import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import { toggleStorePublished } from "../actions";
 import {
   approveGenesisAction,
   rejectGenesisAction,
   approveGenesisActionGroup,
-  startIssueConversation,
-  startDiscoveryConversation,
-  startTaskConversation,
-  dismissAttentionCard,
 } from "../ai-actions";
 import { SubmitButton } from "../SubmitButton";
 import { VisualProposal } from "../VisualProposal";
 import { HeroMock } from "../HeroMock";
-import { AttentionCardList } from "../AttentionCardList";
 import { FieldValueList } from "../FieldValueList";
 import { StringListView } from "../StringListView";
 import { FaqListView } from "../FaqListView";
@@ -81,7 +74,7 @@ export async function WebsiteScreen({
       })
     : null;
 
-  const [visions, pendingApprovals, firstProduct, rawObservations, dismissedCardIds] = await Promise.all([
+  const [visions, pendingApprovals, firstProduct] = await Promise.all([
     prisma.storeGeneration.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "asc" },
@@ -92,16 +85,7 @@ export async function WebsiteScreen({
       orderBy: { position: "asc" },
       select: { imageUrl: true },
     }),
-    // Real GenesisObservation rows (Red/Purple) whose own actionHref points
-    // directly at this page — the same real data Live Intelligence/the nav
-    // badges already use, just filtered to this one destination.
-    prisma.genesisObservation.findMany({
-      where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/website" },
-      select: { id: true, dedupeKey: true, genesisState: true, summary: true },
-    }),
-    getDismissedCardIds(store.id),
   ]);
-  const websiteObservations = [...rawObservations].sort(compareObservationPriority);
   const originalVision = visions.find((v) => v.milestone === "original");
   const firstRefinedVision = visions.find((v) => v.milestone === "first_refined");
 
@@ -137,22 +121,30 @@ export async function WebsiteScreen({
   }
   // Contextual deep-linking: websiteApprovals is already scoped to this
   // store/section/PENDING_APPROVAL only, so a match here is automatically
-  // valid — invalid/stale/resolved/mismatched ids simply don't match. Same
-  // reasoning for websiteObservations, already scoped to this exact page.
+  // valid — invalid/stale/resolved/mismatched ids simply don't match.
   const { focus } = await searchParams;
   const focusedWebsiteApproval = focus ? websiteApprovals.find((a) => a.id === focus) : undefined;
-  // Phase 1 (2026-08-08) — observations only; website's own approvals stay
-  // on the existing bespoke VisualProposal rendering above (real visual
-  // mocks/iframe previews per actionType, deliberately not collapsed into
-  // a generic text card — that would be a real regression, not a
-  // consistency improvement).
-  const websiteObservationCards = buildPageAttentionCards({
-    basePath,
-    approvals: [],
-    observations: websiteObservations,
-    highlightId: focus,
-    dismissedCardIds,
-  });
+  // ============ THE OBSERVATION READ IS GONE, NOT SILENCED (2026-09-13) =
+  //
+  // b75a0b8 moved J4's notices to the arrival and deleted the JSX that showed
+  // them here. What it left behind was the whole supply line: a dedicated
+  // indexed GenesisObservation query on every load of this page, a sort, a
+  // getDismissedCardIds call, a buildPageAttentionCards build — and then
+  // nothing. `websiteObservationCards` was assigned and never read, for twelve
+  // days.
+  //
+  // NOT THE SAME KIND OF KEEP AS WEBSITE_ACTION_TYPES ABOVE, which is empty on
+  // purpose and says so: it holds open real per-actionType renderers that a
+  // future in-page use may want back. This held open nothing. The renderer it
+  // fed was deleted by the commit that made the ruling, and the ruling is that
+  // notices belong to the arrival — so there is no future use to hold a seat
+  // for, and the rows themselves are untouched and still shown there.
+  //
+  // IT ALSO MISLED A READER, WHICH IS THE PART THAT MATTERS. A 2026-09-13 audit
+  // of this codebase read the query, concluded the Storefront "shows the
+  // observation", and reported the opposite of the truth — because the page
+  // still looked like it rendered notices. Dead code that costs a query per
+  // request and teaches the wrong thing about the product is not free.
   // Rendered once, standalone, above the grouped list — remove it from
   // whichever group it belongs to so it never renders twice.
   const remainingApprovalGroups = [...websiteApprovalGroups.entries()]
