@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { MemberRow } from "@/lib/security/members";
+import { ROLE_LABEL } from "@/lib/security/roleLabels";
 import { addMemberAction, changeRoleAction, removeMemberAction } from "./actions";
 
 const INPUT =
@@ -30,9 +31,29 @@ export function AccessControls({
         {members.map((member) => (
           <li key={member.userId} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0">
             <div>
+              {/* ============ EVERY ROW SAYS WHAT THAT PERSON IS =========
+                  This badge was gated on `isOwner`, which is the account that
+                  owns the business — not the role. So a member added with the
+                  "Owner" option this very form offers rendered with no role at
+                  all, indistinguishable from an employee, while holding every
+                  owner capability including removing other people and changing
+                  billing.
+
+                  The only thing on the row that betrayed it was the button
+                  reading "Make employee", which asks an owner reviewing access
+                  to infer a person's power from the action offered against it.
+                  `role` was on MemberRow the whole time, fetched and typed, and
+                  used only to choose that button's text.
+
+                  The store owner keeps reading "Owner" because they are one.
+                  What separates them from a role-OWNER member is that they
+                  cannot be demoted or removed, and the absence of controls
+                  beside their name already says that. */}
               <p className="text-sm text-black dark:text-zinc-50">
                 {member.name ?? member.email}
-                {member.isOwner && <span className="ml-2 text-xs text-zinc-500">Owner</span>}
+                <span className="ml-2 text-xs text-zinc-500" data-testid="member-role">
+                  {ROLE_LABEL[member.role]}
+                </span>
               </p>
               <p className="text-xs text-zinc-500">
                 {member.email} · since {member.since.toLocaleDateString()}

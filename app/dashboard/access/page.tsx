@@ -2,6 +2,7 @@ import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/p
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { listMembers, capabilitiesOf } from "@/lib/security/members";
 import { DEFAULT_THEME, themeCssVars, type Theme } from "@/lib/theme";
+import { ROLE_LABEL } from "@/lib/security/roleLabels";
 import { AccessControls } from "./AccessControls";
 
 // WHO CAN REACH THIS BUSINESS.
@@ -56,7 +57,9 @@ export async function AccessScreen({
           {(["OWNER", "EMPLOYEE"] as const).map((r) => (
             <div key={r}>
               <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                {r === "OWNER" ? "Owner" : "Employee"}
+                {/* The same map the roster labels each person with, so a
+                    column heading and a person's row cannot disagree. */}
+                {ROLE_LABEL[r]}
               </p>
               <ul className="mt-2 flex flex-col gap-1.5">
                 {capabilitiesOf(r).map((capability) => (
