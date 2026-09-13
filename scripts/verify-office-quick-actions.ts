@@ -158,9 +158,7 @@ console.log("\n=== 6. It never becomes a second copy of the strip ===\n");
 // If a quick action ever points where a fact already points, the Office has
 // grown a second representation of the same thing, which is precisely what
 // the work-list migration exists to end. Cheaper to forbid than to untangle.
-const FACTS = officeFacts({ activeProducts: 12}, BASE, {
-  items: [],
-});
+const FACTS = officeFacts({ activeProducts: 12 }, BASE);
 const factTargets = new Set(
   FACTS.map((f) => (f.target.kind === "route" ? `route:${f.target.href}` : `view:${f.target.view}`)),
 );

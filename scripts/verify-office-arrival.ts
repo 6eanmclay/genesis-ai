@@ -118,6 +118,58 @@ async function readBriefing(page: Page) {
       // be mistaken for a fact counting tasks.
       bandLabels: [...document.querySelectorAll('[data-testid="office-facts"] [data-testid$="-value"]')]
         .map((v) => (v.nextElementSibling?.textContent ?? "").trim()),
+
+      // ============ THE ARRIVAL HIERARCHY, AS GEOMETRY (2026-09-13) ====
+      //
+      // Sean's success condition is not a pixel number: "the first actionable
+      // WorkItem is actually visible within the initial work viewport, without
+      // requiring the owner to scroll past the entire J4 introduction."
+      //
+      // So this reads the work window itself — the one scrolling region — and
+      // where the first actionable row sits inside it, at scrollTop 0.
+      hierarchy: (() => {
+        const briefingEl = document.querySelector('[data-testid="office-briefing"]');
+        const scroller = briefingEl?.parentElement ?? null;
+        const presence = document.querySelector('[data-testid="office-presence"]');
+        const grounding = document.querySelector('[data-testid="office-band"]');
+        const quick = document.querySelector('[data-testid="office-quick-actions"]');
+        const firstActionable = [...document.querySelectorAll('[data-testid="work-row"]')].find((r) =>
+          r.querySelector(
+            '[data-testid="work-action-open"],[data-testid="work-action-execute"],[data-testid="needs-provide"]',
+          ),
+        );
+        const control = firstActionable?.querySelector(
+          '[data-testid="work-action-open"],[data-testid="work-action-execute"],[data-testid="needs-provide"]',
+        );
+        const s = scroller?.getBoundingClientRect() ?? null;
+        const a = firstActionable?.getBoundingClientRect() ?? null;
+        const c = control?.getBoundingClientRect() ?? null;
+        return {
+          hasScroller: !!scroller,
+          hasPresence: !!presence,
+          // PINNED means outside the region that scrolls. Asserted by
+          // containment rather than by reading a class name, because a class
+          // is a claim and this is the thing itself.
+          presencePinned: !!(presence && scroller && !scroller.contains(presence)),
+          groundingInScroller: !!(grounding && scroller && scroller.contains(grounding)),
+          quickInScroller: !!(quick && scroller && scroller.contains(quick)),
+          workWindow: s ? Math.round(s.height) : -1,
+          // The whole row, controls included, inside the work window.
+          firstActionableFullyVisible: !!(
+            a && s && a.y >= s.y && a.y + a.height <= s.y + s.height
+          ),
+          firstActionableControlVisible: !!(c && s && c.y >= s.y && c.y + c.height <= s.y + s.height),
+          firstActionableAt: a ? Math.round(a.y) : -1,
+          windowTop: s ? Math.round(s.y) : -1,
+          windowBottom: s ? Math.round(s.y + s.height) : -1,
+          controlLabel: (control?.textContent ?? "").trim(),
+          // THE ORDER: the work comes before the shortcuts, in the document.
+          workBeforeQuickActions: !!(
+            firstActionable && quick &&
+            (firstActionable.compareDocumentPosition(quick) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+          ),
+        };
+      })(),
       sections,
       rows,
       handled: handled ? (handled.textContent ?? "").replace(/\s+/g, " ").trim() : null,
@@ -351,21 +403,27 @@ async function main(): Promise<void> {
       const needsSection = b.sections.find((s) => s.key === "needs_you");
       check(`${width}: NEEDS YOU is present even with nothing in it`, !!needsSection, "the section must not vanish");
 
-      // ---- THE STRIP AND THE SECTION, ON ONE SCREEN ------------------
+      // ---- THE SECTION IS THE ONLY PLACE THAT COUNTS IT ---------------
       //
       // The defect a screenshot caught and no assertion did: the strip read
       // "2 NEEDS YOU" directly above a section reading "Nothing is waiting on
-      // you right now". Read together now, from the rendered page, because
-      // that is the only place the contradiction was ever visible.
-      check(`${width}: the strip's NEEDS YOU count equals the rows below it`,
-        b.bandNeedsYou === needsRows.length,
-        `strip ${b.bandNeedsYou} vs ${needsRows.length} rows`);
-      check(`${width}: a non-zero strip count cannot sit above an empty section`,
-        !((b.bandNeedsYou ?? 0) > 0 && needsRows.length === 0),
-        `strip ${b.bandNeedsYou}, rows ${needsRows.length}`);
-      check(`${width}: and the strip says what it now means`,
-        /only you can provide/i.test(b.bandNeedsYouSource ?? ""),
-        b.bandNeedsYouSource ?? "no source");
+      // you right now". The fix was to derive both from one list, and these
+      // assertions proved they agreed.
+      //
+      // THE COUNT IS GONE NOW (2026-09-13), on Sean's rule: "If a fact is
+      // already owned and counted by an Office destination directly below, the
+      // summary strip does not count it again." So there is nothing left to
+      // agree with, and asserting agreement would be asserting a property of
+      // an element that no longer exists — which passes by reading null.
+      //
+      // What is asserted instead is the rule itself, on the rendered page: the
+      // strip does not carry this count, and the section still does.
+      check(`${width}: the strip does not count NEEDS YOU`,
+        b.bandNeedsYou === null,
+        b.bandNeedsYou === null ? "no such cell" : `still reading ${b.bandNeedsYou}`);
+      check(`${width}: the section still owns that count`,
+        needsSection?.count === needsRows.length,
+        `section says ${needsSection?.count}, ${needsRows.length} rows`);
 
       // ---- EVERY COUNTED TASK IS ON THE SCREEN ----------------------
       //
@@ -401,12 +459,47 @@ async function main(): Promise<void> {
       // the work list — one population, two paths, two words, forty pixels
       // apart. Only the room paints this band, which is why it is proven here
       // and not in verify-office-browser, where the Office is a layer.
-      check(`${width}: the strip is exactly the two facts no tab can say`,
-        JSON.stringify(b.bandLabels) === JSON.stringify(["Products", "Needs you"]),
+      check(`${width}: the strip is exactly the one fact no destination owns`,
+        JSON.stringify(b.bandLabels) === JSON.stringify(["Products"]),
         b.bandLabels.join(" | "));
-      check(`${width}: no strip fact counts a category the tabs own`,
-        b.bandLabels.length > 0 && !b.bandLabels.some((l) => /opportunit|idea|decision|task/i.test(l)),
+      check(`${width}: no strip fact counts a population a destination owns`,
+        b.bandLabels.length > 0 && !b.bandLabels.some((l) => /needs you|opportunit|idea|decision|task/i.test(l)),
         b.bandLabels.join(" | ") || "the strip rendered nothing to read");
+
+      // ---- THE ARRIVAL HIERARCHY (2026-09-13) ------------------------
+      //
+      // Measured before this change: the band was pinned and 461px tall at
+      // 390, leaving the work a 177px window holding 2288px of briefing, and
+      // the first actionable row sat 49px BELOW that window's bottom edge. The
+      // phone arrival showed no actionable work at all — two empty-state
+      // sentences and a heading clipped by the composer.
+      //
+      // Sean's success condition, and it is deliberately not a pixel number:
+      // "the first actionable WorkItem is actually visible within the initial
+      // work viewport, without requiring the owner to scroll past the entire
+      // J4 introduction."
+      const h = b.hierarchy;
+      check(`${width}: there is one work window to measure against`,
+        h.hasScroller && h.workWindow > 0, `${h.workWindow}px`);
+      check(`${width}: J4 is pinned outside it, so he never scrolls away`,
+        h.hasPresence && h.presencePinned, h.hasPresence ? "presence row is outside the scroller" : "NO PRESENCE ROW");
+      check(`${width}: and what the room offers is inside it, below the work`,
+        h.groundingInScroller && h.quickInScroller,
+        `grounding ${h.groundingInScroller}, quick actions ${h.quickInScroller}`);
+      check(`${width}: the owner meets the work before the shortcuts`,
+        h.workBeforeQuickActions,
+        "Sean: presence -> work -> quick actions -> supporting context");
+
+      // THE CONDITION ITSELF, on the rendered page.
+      check(`${width}: the first actionable item is IN the work window on arrival`,
+        h.firstActionableFullyVisible,
+        `row at ${h.firstActionableAt}, window ${h.windowTop}..${h.windowBottom}`);
+      // AND ITS CONTROL, because a decision whose Approve is below the fold is
+      // not a decision the owner can take. This is the assertion that would
+      // have failed on the old layout even if the headline had squeaked in.
+      check(`${width}: and its control can be reached without scrolling`,
+        h.firstActionableControlVisible,
+        `${h.controlLabel || "no control"} within ${h.windowTop}..${h.windowBottom}`);
 
       // The same invariant for DECIDE, since its count is derived the same way.
       const decideRows = b.rows.filter((r) => r.section === "decide");

@@ -258,16 +258,11 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     // disagree about the same row.
     work,
     quickActions,
-    // THE STRIP READS THE SAME LIST THE SECTIONS DO. Its "Needs you" and
-    // "Decisions" counts are no longer passed in — officeFacts derives them
-    // from `work` with the same itemsIn the sections use, so the number above
-    // a section and the rows inside it cannot describe different sets.
-    facts: officeFacts(
-      {
-        activeProducts: activeProductCount,
-      },
-      basePath,
-      work,
-    ),
+    // THE STRIP NO LONGER READS THE WORK AT ALL (2026-09-13). It used to be
+    // handed `work` so it could derive "Needs you" through the same `itemsIn`
+    // the sections use — which made the two agree, but did not stop them being
+    // the same sentence twice, forty pixels apart. The NEEDS YOU section owns
+    // that count. What is left is a business fact with no Office destination.
+    facts: officeFacts({ activeProducts: activeProductCount }, basePath),
   };
 }

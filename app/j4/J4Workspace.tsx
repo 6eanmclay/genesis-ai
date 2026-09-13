@@ -29,7 +29,7 @@ import { J4SpeakButton } from "./J4SpeakButton";
 import { decideSpeak, NOTHING_SPOKEN, type SpokenState } from "@/lib/voice/spokenReplies";
 import type { RecordProvenance } from "@prisma/client";
 import { PROVENANCE_LABEL } from "@/lib/businessModel/provenance";
-import { OfficeBand } from "./OfficeBand";
+import { OfficePresence, OfficeGrounding } from "./OfficeBand";
 import { inCategory, categoryDotFor, type WorkItem } from "@/lib/j4/officeSections";
 import { OfficeBriefing, WorkRow } from "./OfficeBriefing";
 import type { HandledSummary } from "@/lib/j4/officeBriefing";
@@ -2116,21 +2116,15 @@ export function J4Workspace({
           work and must not grow a second identity band above the one it
           already has. Talk Mode shows nothing but the conversation, which is
           the whole point of Talk Mode. */}
-      {showsOfficeBand && (
-        <OfficeBand
-          storeName={storeName}
-          state={j4State}
-          facts={facts}
-          // PASS-THROUGH ONLY (2026-09-12). The quick actions are derived
-          // server-side in loadOfficeIntelligence, beside the facts and from
-          // the same reads; this component neither computes nor decides
-          // anything about them. Undefined until intelligence loads, which is
-          // why OfficeBand defaults the prop rather than requiring it — the
-          // needsIntelligence gate is untouched.
-          quickActions={intel?.quickActions}
-          onOpenView={(view: string) => setActiveCategory(view as Category)}
-        />
-      )}
+      {/* PINNED: J4, AND NOTHING ELSE (2026-09-13).
+          Measured at 390x844, the whole band was pinned here and 461px tall,
+          leaving the work a 177px window holding 2288px of briefing — the
+          first actionable row landed below the bottom of its own window, so
+          the phone showed no work at all.
+          What stays pinned is what the owner needs from anywhere: whose room
+          this is, and the rail below. The rest moved into the scrolling
+          region, below the work, as OfficeGrounding. */}
+      {showsOfficeBand && <OfficePresence storeName={storeName} state={j4State} />}
 
       {!talkingOnly && (
         <div
@@ -2563,6 +2557,37 @@ export function J4Workspace({
           )
         )}
         {shownCategory === "conversation" && proposal}
+
+        {/* WHAT THE ROOM OFFERS, AFTER THE WORK IT IS ABOUT (2026-09-13).
+            Sean: "Presence -> Work -> Quick Actions -> Supporting context",
+            and the same order at both widths — "the owner should encounter
+            the work before the shortcuts."
+            Inside the scrolling region, so it is met rather than stood in
+            front of. Nothing was removed: the quick actions, the Products
+            fact, the arc and what this room is for are all still here, and
+            still gated by exactly the permissions and state that gated them.
+            NOT ON THE CONVERSATION, and that is the one deliberate omission.
+            The conversation's scroller is a message log that opens scrolled
+            to its end, so this block would land between the last thing J4
+            said and the composer — inside the exchange rather than after it.
+            J4 is present there through the pinned row above, as he is
+            everywhere else in the room. */}
+        {showsOfficeBand && shownCategory !== "conversation" && (
+          <div className="mt-6">
+            <OfficeGrounding
+              storeName={storeName}
+              facts={facts}
+              // PASS-THROUGH ONLY (2026-09-12). The quick actions are derived
+              // server-side in loadOfficeIntelligence, beside the facts and
+              // from the same reads; this component neither computes nor
+              // decides anything about them. Undefined until intelligence
+              // loads, which is why OfficeGrounding defaults the prop rather
+              // than requiring it — the needsIntelligence gate is untouched.
+              quickActions={intel?.quickActions}
+              onOpenView={(view: string) => setActiveCategory(view as Category)}
+            />
+          </div>
+        )}
       </div>
 
       {showConfirmCeiling && previousUserMessage && (

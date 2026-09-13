@@ -33,31 +33,44 @@ import type { QuickAction } from "@/lib/j4/officeQuickActions";
  * Every number here comes from lib/j4/officeFacts.ts, where a fact cannot be
  * built without naming its source.
  */
-export function OfficeBand({
+/**
+ * J4, HIMSELF, AND NOTHING ELSE — the one thing that is always on screen.
+ *
+ * ============ WHY THE BAND SPLIT IN TWO (2026-09-13) ==================
+ *
+ * Measured at 390x844, the old single band was 461px tall and it was PINNED:
+ * the room is `fixed inset-0` and everything above the list is `shrink-0`, so
+ * the band never scrolled away — it permanently shrank the window the work
+ * was read through to 177px, holding 2288px of briefing. The first row the
+ * owner could act on landed at 784px, below the bottom of that window. On a
+ * phone, the Office arrival showed no actionable work at all.
+ *
+ * The band was also TALLER on the smaller screen — 461 against 302 — because
+ * the intro row stacks J4 above his title below `sm`, the quick actions wrap
+ * to two rows, and the strip's source sentences wrap. It grew where there was
+ * least room.
+ *
+ * Sean's correction is an information hierarchy, not a responsive shrink:
+ * presence -> work -> quick actions -> supporting context, the SAME order at
+ * both widths. So what is pinned is now only what the owner needs from
+ * anywhere — J4, whose room this is, and the tab rail. Everything else moved
+ * into the scrolling region, below the work, as OfficeGrounding.
+ *
+ * Nothing was hidden and nothing was shrunk to achieve it. J4 is the same
+ * size he was; he is simply no longer standing in front of the work.
+ */
+export function OfficePresence({
   storeName,
   state,
-  facts,
-  quickActions = [],
-  onOpenView,
 }: {
   storeName: string;
   state: J4State;
-  facts: OfficeFact[];
-  /**
-   * What the owner can START — verbs, where `facts` are nouns.
-   *
-   * Defaulted to empty so a caller that has not loaded intelligence yet
-   * renders a band with no action row rather than a row of nothing.
-   */
-  quickActions?: QuickAction[];
-  /** An Office category is a view of THIS surface, never a navigation away. */
-  onOpenView: (view: string) => void;
 }) {
   return (
     <section
-      data-testid="office-band"
+      data-testid="office-presence"
       aria-label={`J4's office for ${storeName}`}
-      className="relative overflow-hidden border-b border-[#4ade3a]/15 bg-[#050807]"
+      className="relative shrink-0 overflow-hidden border-b border-[#4ade3a]/15 bg-[#050807]"
     >
       {/* The honeycomb as light rather than an image: the same motif as the
           artwork, without a second asset to keep registered to the first. */}
@@ -70,8 +83,14 @@ export function OfficeBand({
         }}
       />
 
-      <div className="relative flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:gap-5 sm:px-6 sm:py-5">
-        {/* HE IS THE FIRST THING IN THE ROOM. */}
+      {/* BESIDE, AT EVERY WIDTH. The phone was the one place J4 was stacked
+          ABOVE his own title — `flex-col sm:flex-row` — and that stacking
+          bought 81 of the 159 extra pixels the band cost at 390. He is the
+          same 84px he always was; only the adjacency changed, which is why
+          this is not "hiding J4 to gain pixels". */}
+      <div className="relative flex flex-row items-center gap-4 px-4 py-3 sm:gap-5 sm:px-6 sm:py-4">
+        {/* HE IS THE FIRST THING IN THE ROOM, and now the only thing that
+            never leaves it. */}
         <div className="w-[84px] shrink-0 sm:w-[104px]">
           <J4Character state={state} size="fill" title={`J4 — ${state}`} />
         </div>
@@ -83,28 +102,65 @@ export function OfficeBand({
             </h1>
             <p className="truncate text-[13px] text-white/45">{storeName}</p>
           </div>
-
-          {/* The arc, from the direction. A rule rather than a headline: it is
-              how the work is organised, not a slogan to shout. */}
-          <ol className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-medium uppercase tracking-[.18em] text-[#4ade3a]/70">
-            {OFFICE_ARC.map((step, i) => (
-              <li key={step} className="flex items-center gap-2">
-                {step}
-                {i < OFFICE_ARC.length - 1 && (
-                  <span aria-hidden="true" className="text-white/20">
-                    &rsaquo;
-                  </span>
-                )}
-              </li>
-            ))}
-          </ol>
-
-          <p className="mt-2 max-w-prose text-[13px] leading-snug text-white/55">
-            Everything you and I know about this business, in one place. Ask me
-            anything, or start from what I&rsquo;ve found.
-          </p>
         </div>
       </div>
+    </section>
+  );
+}
+
+/**
+ * WHAT THE ROOM OFFERS, BELOW THE WORK IT IS ABOUT.
+ *
+ * The rest of the old band: the shortcuts the owner can start, the business
+ * fact J4 is holding, the arc the work moves through, and what this room is
+ * for. All of it still present, all of it still first-class — it simply sits
+ * after the work rather than in front of it, in the region that scrolls.
+ *
+ * Sean: "The owner should encounter the work before the shortcuts."
+ */
+export function OfficeGrounding({
+  storeName,
+  facts,
+  quickActions = [],
+  onOpenView,
+}: {
+  storeName: string;
+  facts: OfficeFact[];
+  /**
+   * What the owner can START — verbs, where `facts` are nouns.
+   *
+   * Defaulted to empty so a caller that has not loaded intelligence yet
+   * renders nothing here rather than a row of nothing.
+   */
+  quickActions?: QuickAction[];
+  /** An Office category is a view of THIS surface, never a navigation away. */
+  onOpenView: (view: string) => void;
+}) {
+  return (
+    <section
+      data-testid="office-band"
+      aria-label={`What J4's office offers for ${storeName}`}
+      className="relative overflow-hidden rounded-xl border border-white/[.07] bg-[#050807]"
+    >
+      {/* WHAT YOU CAN START — FIRST HERE, because the owner has now already
+          passed the work these shortcuts are shortcuts around. This row used
+          to sit below the counts and above everything; the order within the
+          Office is presence, work, then this.
+
+          There is no fixed set and no overflow. Everything here passed a real
+          permission gate and a real state gate in officeQuickActions — which
+          is why an empty row simply does not render rather than showing
+          disabled buttons. */}
+      {quickActions.length > 0 && (
+        <div
+          data-testid="office-quick-actions"
+          className="relative flex flex-wrap gap-2 px-4 py-3 sm:px-6"
+        >
+          {quickActions.map((action) => (
+            <QuickActionButton key={action.key} action={action} onOpenView={onOpenView} />
+          ))}
+        </div>
+      )}
 
       {/* WHAT HE IS HOLDING FOR THEM. Real counts, each leading somewhere. */}
       <div
@@ -120,25 +176,29 @@ export function OfficeBand({
         ))}
       </div>
 
-      {/* WHAT YOU CAN START. Below the counts on purpose: the strip is what J4
-          is holding for the owner, and this is what the owner can pick up. A
-          row that restated the strip would be the second parallel
-          representation this Office is currently migrating away from.
-
-          There is no fixed set and no overflow. Everything here passed a real
-          permission gate and a real state gate in officeQuickActions — which
-          is why an empty row simply does not render rather than showing
-          disabled buttons. */}
-      {quickActions.length > 0 && (
-        <div
-          data-testid="office-quick-actions"
-          className="relative flex flex-wrap gap-2 border-t border-white/[.06] px-4 py-3 sm:px-6"
-        >
-          {quickActions.map((action) => (
-            <QuickActionButton key={action.key} action={action} onOpenView={onOpenView} />
+      {/* WHAT THIS ROOM IS, last. The arc is how the work is organised and the
+          sentence below it is what the room is for — orientation, which an
+          owner needs once and then needs to be able to scroll past. It was
+          permanent chrome on every visit, in the pixels the work needed. */}
+      <div className="relative border-t border-white/[.06] px-4 py-3 sm:px-6">
+        <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-medium uppercase tracking-[.18em] text-[#4ade3a]/70">
+          {OFFICE_ARC.map((step, i) => (
+            <li key={step} className="flex items-center gap-2">
+              {step}
+              {i < OFFICE_ARC.length - 1 && (
+                <span aria-hidden="true" className="text-white/20">
+                  &rsaquo;
+                </span>
+              )}
+            </li>
           ))}
-        </div>
-      )}
+        </ol>
+
+        <p className="mt-2 max-w-prose text-[13px] leading-snug text-white/55">
+          Everything you and I know about this business, in one place. Ask me
+          anything, or start from what I&rsquo;ve found.
+        </p>
+      </div>
     </section>
   );
 }

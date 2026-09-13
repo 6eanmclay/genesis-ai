@@ -602,6 +602,17 @@ async function main() {
           document.querySelector("[data-j4-presentation='office']")
             ?.querySelectorAll('[data-testid="office-facts"]').length ?? -1)) === 0,
         "the rendered-strip assertions live in verify-office-arrival, on the room");
+      // AND NO PRESENCE ROW EITHER (2026-09-13). The room's band split into a
+      // pinned presence row and a grounding block below the work; both are
+      // gated on the same `!isLayer` the whole band was. Asserted so the split
+      // cannot quietly give the layer an arrival experience it was never
+      // designed to have — that is a separate scope Sean has explicitly
+      // reserved, not something a mobile layout fix may decide.
+      assert("  and the layer grew no presence row from the split",
+        (await page.evaluate(() =>
+          document.querySelector("[data-j4-presentation='office']")
+            ?.querySelectorAll('[data-testid="office-presence"]').length ?? -1)) === 0,
+        "whether the layer should have a briefing at all is its own question");
     }
 
 

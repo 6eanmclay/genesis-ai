@@ -1,5 +1,8 @@
-import { itemsIn } from "./officeSections";
-import type { OfficeAction } from "./officeActions";
+// NO IMPORTS LEFT, and that is the shape of the change (2026-09-13). This
+// module took the work list so it could derive "Needs you" from the same
+// `itemsIn` the sections use. With that count gone — the section below owns
+// it — there is nothing here that depends on the work at all: the strip is
+// business facts, and the work list is the work list.
 
 /**
  * WHAT J4 ACTUALLY KNOWS, AS NUMBERS THAT CAME FROM SOMEWHERE.
@@ -81,6 +84,27 @@ export interface OfficeFact {
  *
  * What stays here is what has no section to agree with: the catalogue, open
  * tasks, and opportunities.
+ *
+ * ============ AND THEN THE RULE ITSELF (2026-09-13) ====================
+ *
+ * Sean, closing the same thread for the last time: "If a fact is already
+ * owned and counted by an Office destination directly below, the summary
+ * strip does not count it again."
+ *
+ * 6a7f9cc removed Opportunities, Decisions and Tasks on that reasoning. NEEDS
+ * YOU was the survivor, and it was the clearest case of all: the strip said
+ * "Needs you 0" directly above a section headed NEEDS YOU saying nothing was
+ * waiting. Deriving both from one list made them agree; it did not stop them
+ * being the same sentence twice.
+ *
+ * Products stays because a product is a real thing in another room and no
+ * Office destination counts it. Nothing was invented to fill the space.
+ *
+ * THE RULE HAS A SHAPE THE COMPILER CAN NEARLY HOLD, and a suite can: an
+ * Office destination is a `view` target, and anything else is a `route`. So
+ * "no strip fact may target an Office view" is the rule restated as
+ * something checkable — see verify-office-facts, which asserts exactly that
+ * rather than a list of banned words.
  */
 export interface OfficeFactInput {
   activeProducts: number;
@@ -104,32 +128,16 @@ export interface OfficeFactInput {
  * Sean named. Products is a real room because a product is a real thing
  * elsewhere.
  */
-export function officeFacts(
-  input: OfficeFactInput,
-  basePath: string,
-  /**
-   * The same list the Office's sections filter.
-   *
-   * Structurally typed, so this module needs nothing from officeWork and
-   * cannot drag the derivation layer anywhere it should not go.
-   */
-  work: { items: { action: OfficeAction }[] },
-): OfficeFact[] {
+export function officeFacts(input: OfficeFactInput, basePath: string): OfficeFact[] {
   const facts: OfficeFact[] = [
     {
       label: "Products",
       value: input.activeProducts,
+      // A ROUTE, AND THAT IS THE WHOLE TEST NOW (see the rule above): a
+      // product is a real thing in another room, so no Office destination
+      // owns this count and the strip is the only place it is said.
       target: { kind: "route", href: `${basePath}/products` },
       source: "active products in your catalogue",
-    },
-    {
-      // ONE SOURCE OF TRUTH WITH THE SECTION BELOW IT. Same list, same filter,
-      // same function — so the number and the rows cannot describe different
-      // sets. What only the owner can supply, not every urgent thing J4 found.
-      label: "Needs you",
-      value: itemsIn(work, "needs_you").length,
-      target: { kind: "view", view: "briefing" },
-      source: "things only you can provide, decide or unblock",
     },
   ];
 

@@ -44,13 +44,7 @@ const WORK = {
   ],
 };
 
-const REAL = officeFacts(
-  {
-    activeProducts: 12,
-  },
-  BASE,
-  WORK,
-);
+const REAL = officeFacts({ activeProducts: 12 }, BASE);
 
 console.log("\n=== every number is traceable ===\n");
 check("every fact names its source", everyFactIsSourced(REAL));
@@ -60,21 +54,39 @@ check("no fact has a blank source", unsourced.length === 0, unsourced.map((f) =>
 
 for (const f of REAL) console.log(`      ${String(f.value).padStart(4)}  ${f.label.padEnd(14)} ${f.source}`);
 
-// ============ THE STRIP AND THE SECTION COUNT THE SAME THINGS =========
+// ============ THE STRIP CANNOT COUNT WHAT A DESTINATION OWNS ==========
 //
-// The defect this exists to prevent, seen on a screenshot and invisible to
-// every suite: the strip read "2 NEEDS YOU" directly above a section reading
-// "Nothing is waiting on you right now". Both were right about their own
-// meaning — the strip counted urgent observations, the section counted
-// needs_owner items — and nothing forced them together.
+// THE RULE, AND NOT A LIST OF BANNED WORDS (2026-09-13).
 //
-// Now both derive from one list through one function, so these assertions are
-// checking a property rather than a coincidence.
-console.log("\n=== the strip cannot disagree with the section ===\n");
-const needsYou = REAL.find((f) => f.label === "Needs you");
-check("NEEDS YOU counts exactly the needs_you items",
-  needsYou?.value === itemsIn(WORK, "needs_you").length,
-  `strip ${needsYou?.value} vs section ${itemsIn(WORK, "needs_you").length}`);
+// Sean: "If a fact is already owned and counted by an Office destination
+// directly below, the summary strip does not count it again."
+//
+// The previous version of this section asserted that the strip's NEEDS YOU
+// equalled `itemsIn(WORK, "needs_you").length`. That was a true property and
+// it fixed the original defect — a strip reading "2 NEEDS YOU" above a section
+// reading "Nothing is waiting on you right now" — by making both derive from
+// one list. What it could not see is that agreeing is not the same as being
+// worth saying twice. The count is gone, so the agreement is not a property
+// of anything any more; the rule that replaced it is below.
+//
+// An Office destination is a `view` target. Everything else is a `route` to
+// another room. So the rule has an exact, checkable shape.
+console.log("\n=== the strip does not count what a destination owns ===\n");
+const viewFacts = REAL.filter((f) => f.target.kind === "view");
+check("no strip fact points at an Office view",
+  viewFacts.length === 0,
+  viewFacts.map((f) => `${f.label} -> ${f.target.kind === "view" ? f.target.view : ""}`).join(", ") || "every fact leads out of the Office");
+check("  which is what stops it counting a section's population",
+  !REAL.some((f) => /needs you|opportunit|idea|decision|task/i.test(f.label)),
+  REAL.map((f) => f.label).join(" | "));
+// AND THE WORK LIST IS NO LONGER REACHABLE FROM HERE AT ALL. officeFacts took
+// the work list only to derive that count; with it gone the module has no
+// imports left. A future fact that needed the work list would be a fact a
+// destination already owns, which is the rule above stated as a dependency.
+const factsModule = readFileSync(join(process.cwd(), "lib", "j4", "officeFacts.ts"), "utf8");
+check("officeFacts imports nothing from the work layer",
+  !/^import\s/m.test(factsModule),
+  "the strip is business facts; the work list is the work list");
 
 // ============================================================================
 console.log("\n=== the strip no longer counts what a tab owns (2026-09-12) ===\n");
@@ -86,17 +98,29 @@ console.log("\n=== the strip no longer counts what a tab owns (2026-09-12) ===\n
 // forty pixels below, and the same population was called "Opportunities"
 // above and "Ideas" below.
 //
-// What is left is what no tab can say: a business fact, and the arrival
-// section itself. The strip does not need five slots and nothing was invented
-// to keep them.
-check("the strip is exactly the two facts no tab can say",
-  JSON.stringify(REAL.map((f) => f.label)) === JSON.stringify(["Products", "Needs you"]),
+// AND THEN NEEDS YOU WENT TOO (2026-09-13). It was the survivor of that pass
+// and the clearest case of the lot: "Needs you 0" directly above a section
+// headed NEEDS YOU saying nothing was waiting. Deriving both from one list
+// made them agree; agreeing is not a reason to say it twice.
+//
+// What is left is the one fact no Office destination owns. The strip does not
+// need five slots, or two, and nothing was invented to keep them.
+check("the strip is exactly the one fact no destination owns",
+  JSON.stringify(REAL.map((f) => f.label)) === JSON.stringify(["Products"]),
   REAL.map((f) => f.label).join(" | "));
-check("  no fact counts a category the tabs own",
-  !REAL.some((f) => /opportunit|idea|decision|task/i.test(f.label)),
+check("  no fact counts a population a destination owns",
+  !REAL.some((f) => /needs you|opportunit|idea|decision|task/i.test(f.label)),
   REAL.map((f) => f.label).join(" | "));
+// CODE, NOT THE PROSE ABOUT IT — the mistake this file records two sections
+// below and then made anyway. This scanned the raw source for "Opportunit",
+// and the history note explaining WHY Opportunities was removed put the word
+// back in the file, so the explanation of the rule failed the rule. Comments
+// stripped first, like every other source scan here.
+const factsProseFree = readFileSync(join(process.cwd(), "lib", "j4", "officeFacts.ts"), "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/(^|[^:])\/\/.*$/gm, "$1");
 check("  and the owner-facing word for that category is never Opportunities",
-  !/Opportunit/.test(readFileSync(join(process.cwd(), "lib", "j4", "officeFacts.ts"), "utf8")),
+  !/Opportunit/.test(factsProseFree),
   "Opportunity belongs to CognitiveOutput's own label on the activity feed");
 
 // THE PARALLEL POPULATION IS GONE, not merely unused. The count came from
@@ -119,28 +143,22 @@ check("  and officeFacts cannot be handed one",
   !/opportunities|openTasks/.test(factsCode),
   "OfficeFactInput no longer has a field to pass a parallel count through");
 
-// A NON-ZERO COUNT CANNOT COEXIST WITH THE EMPTY STATE. The section renders its
-// empty copy when the filter is empty, so the two are the same predicate: a
-// count above zero and an empty section is the contradiction itself.
-check("a non-zero count means the section is NOT empty",
-  (needsYou?.value ?? 0) > 0 && itemsIn(WORK, "needs_you").length > 0);
-check("and it is not marked quiet", needsYou?.quiet === false, `quiet=${needsYou?.quiet}`);
+// THE SECTION STILL OWNS ITS OWN COUNT, and that is why the strip can stop
+// saying it. Read from the same `itemsIn` the section renders with — the
+// population did not move, only the place it is counted.
+check("NEEDS YOU is still a real, countable population",
+  itemsIn(WORK, "needs_you").length === 2,
+  `${itemsIn(WORK, "needs_you").length} needs_owner items in the fixture`);
+check("  and no strip fact is counting it",
+  !REAL.some((f) => f.value === itemsIn(WORK, "needs_you").length && /needs/i.test(f.label)),
+  REAL.map((f) => `${f.label}=${f.value}`).join(" | "));
 
-// ZERO ITEMS PRODUCES THE EMPTY STATE, from the same source.
-const EMPTY = { items: [{ id: "x", headline: "h", why: null, standingDays: null,
-  action: { kind: "internal", because: "not owner-facing" } as OfficeAction }] };
-const emptyFacts = officeFacts({ activeProducts: 0}, BASE, EMPTY);
-const emptyNeeds = emptyFacts.find((f) => f.label === "Needs you");
-check("zero needs_owner items gives a zero count",
-  emptyNeeds?.value === 0 && itemsIn(EMPTY, "needs_you").length === 0, `value=${emptyNeeds?.value}`);
-check("and that zero is shown, marked quiet", emptyNeeds?.quiet === true, `quiet=${emptyNeeds?.quiet}`);
-
-// AND THE COUNT LEADS WHERE THE ITEMS ARE. It pointed at the Information view,
-// which cannot contain a needs_owner item — so following a non-zero count
-// landed on a screen that could not show what was counted.
-check("NEEDS YOU points at the surface that holds them",
-  needsYou?.target.kind === "view" && needsYou.target.view === "briefing",
-  needsYou?.target.kind === "view" ? needsYou.target.view : String(needsYou?.target.kind));
+// ZERO IS STILL SHOWN AS ZERO, on the fact that remains.
+const emptyFacts = officeFacts({ activeProducts: 0 }, BASE);
+const emptyProducts = emptyFacts.find((f) => f.label === "Products");
+check("a catalogue with nothing in it gives a zero count",
+  emptyProducts?.value === 0, `value=${emptyProducts?.value}`);
+check("and that zero is shown, marked quiet", emptyProducts?.quiet === true, `quiet=${emptyProducts?.quiet}`);
 
 console.log("\n=== nothing is a score, a percentage, or a guess ===\n");
 // A health score or a completion percentage is the exact shape of the invented
@@ -152,14 +170,14 @@ check("every value is a whole count", REAL.every((f) => Number.isInteger(f.value
 console.log("\n=== a zero is shown as a zero ===\n");
 // Hiding an empty count would overstate what J4 is holding. The empty state is
 // information: "no decisions waiting" is a fact the owner wants.
-// THE ZERO MOVED WITH THE STRIP (2026-09-12). Tasks used to be the zero in
-// this fixture; the strip no longer carries it, so the rule is proven on the
-// fact that can still be zero — Needs you, read from a work list with none.
-// The rule itself is unchanged: a zero renders, marked quiet, rather than
-// hiding, because "nothing is waiting on you" is information.
+// THE ZERO MOVED TWICE, AND THE RULE DID NOT (2026-09-13). Tasks was the zero
+// in this fixture, then Needs you; both are now owned by their destinations.
+// It is proven on the one fact that remains, which is the only one that can
+// still be zero. The rule is unchanged: a zero renders, marked quiet, rather
+// than hiding, because "nothing in your catalogue" is information.
 check("a zero count still renders, marked quiet",
-  emptyNeeds?.value === 0 && emptyNeeds?.quiet === true,
-  `value=${emptyNeeds?.value} quiet=${emptyNeeds?.quiet}`);
+  emptyProducts?.value === 0 && emptyProducts?.quiet === true,
+  `value=${emptyProducts?.value} quiet=${emptyProducts?.quiet}`);
 const products = REAL.find((f) => f.label === "Products");
 check("a non-zero count is not quiet", products?.quiet === false, `quiet=${products?.quiet}`);
 

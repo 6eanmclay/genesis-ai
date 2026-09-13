@@ -232,11 +232,7 @@ async function main() {
       "/dashboard",
     ),
     handled: handledSummary,
-    facts: officeFacts(
-      { activeProducts: productCount},
-      "/dashboard",
-      work,
-    ),
+    facts: officeFacts({ activeProducts: productCount }, "/dashboard"),
     tasks: tasks.map((t) => ({ id: t.id, title: t.title, summary: t.summary, href: t.actionHref, priority: t.priority })),
     ideas: ideas.map((o) => ({ id: o.id, summary: o.summary, href: officeActionForObservation(o, "/dashboard").kind === "open" ? "x" : null })),
     decisions: approvals.map((a) => ({ id: a.id, summary: a.summary, createdAt: a.createdAt.toISOString(), href: null })),
