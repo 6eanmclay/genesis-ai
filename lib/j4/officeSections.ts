@@ -108,6 +108,32 @@ export interface WorkItem {
    * this representation exists to prevent.
    */
   taskPriority: TaskPriority | null;
+  /**
+   * WHAT APPROVING THIS WOULD ACTUALLY CHANGE (2026-09-12).
+   *
+   * The two halves ActionDiffRows needs, carried from the ApprovalRequest
+   * that already stores them. Null for everything that is not a decision.
+   *
+   * ============ WHY THIS WAS MISSING =================================
+   *
+   * The Decisions view showed a summary and an Approve button and nothing
+   * else, so the owner agreed to a sentence. The evidence was never absent
+   * from the system — ApprovalRequest has stored `input` and
+   * `previousValues` since Phase 6, and ActionDiffRows has rendered them for
+   * the dashboard and the conversation all along. BriefingInput simply took
+   * `{ id, summary, rationale, createdAt }` and left the rest behind, which
+   * is the same drop-at-the-boundary this list has now been fixed for three
+   * times.
+   *
+   * Deliberately NOT a new proposal model. These are the exact fields the
+   * existing renderer takes, in the exact shape it takes them, so there is
+   * one diff in the product rather than an Office-shaped copy of one.
+   *
+   * An empty `input` is possible and must NOT be dressed up as a change —
+   * see WorkRow, which says there is nothing recorded rather than rendering
+   * an empty list under a live Approve button.
+   */
+  proposedChange: { input: Record<string, unknown>; previousValues: Record<string, unknown> } | null;
 }
 
 export interface OfficeWork {

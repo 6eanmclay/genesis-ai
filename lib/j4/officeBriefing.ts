@@ -131,6 +131,8 @@ export interface BriefingItem {
    * Null for decisions, which are not observations.
    */
   genesisState: ObservationState | null;
+  /** What approving would change, for a decision. Null for an observation. */
+  proposedChange: { input: Record<string, unknown>; previousValues: Record<string, unknown> } | null;
 }
 
 export interface HandledSummary {
@@ -177,7 +179,16 @@ export interface HandledSummary {
 }
 
 export interface BriefingInput {
-  decisions: { id: string; summary: string; rationale?: string | null; createdAt: Date | string }[];
+  decisions: {
+    id: string;
+    summary: string;
+    rationale?: string | null;
+    createdAt: Date | string;
+    // THE EVIDENCE, carried rather than left on the row it came from. These
+    // are ActionDiffRows' own two arguments, in its own shape.
+    input?: Record<string, unknown> | null;
+    previousValues?: Record<string, unknown> | null;
+  }[];
   observations: {
     id: string;
     summary: string;
@@ -229,6 +240,7 @@ export function buildBriefing(input: BriefingInput, basePath: string): BriefingI
       why: d.rationale?.trim() ? d.rationale.trim() : null,
       standingDays: daysSince(d.createdAt, now),
       genesisState: null,
+      proposedChange: { input: d.input ?? {}, previousValues: d.previousValues ?? {} },
       // A decision is settled here, not navigated to. approveGenesisAction is
       // the same server action the conversation already uses.
       // A pending approval is a real choice with alternatives, so it offers a
@@ -262,6 +274,7 @@ export function buildBriefing(input: BriefingInput, basePath: string): BriefingI
       standingDays: days,
       action,
       genesisState: o.genesisState,
+      proposedChange: null,
     });
   }
 

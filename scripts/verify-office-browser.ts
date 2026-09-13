@@ -62,6 +62,11 @@ const MARKER = {
 
 type ViewKey = keyof typeof MARKER;
 
+/** The two sides of the seeded decision's diff, so the rendered page can be
+ *  asserted to show the real values rather than a summary of them. */
+const DIFF_BEFORE = "ZZDIFFBEFORE";
+const DIFF_AFTER = "ZZDIFFAFTER";
+
 const TAB_LABEL: Record<ViewKey, string> = {
   conversation: "Conversation",
   tasks: "Tasks",
@@ -418,12 +423,16 @@ async function main() {
       },
     });
     // Decisions — a pending proposal.
+    // A REAL PROPOSAL, because the Decisions view now has to show what
+    // approving would change. Empty input/previousValues rendered an Approve
+    // button over nothing, which is the exact state this suite must be able
+    // to tell apart from a real one.
     await prisma.approvalRequest.create({
       data: {
         storeId: store.id,
         actionType: "update_seo",
-        input: {},
-        previousValues: {},
+        input: { seoTitle: DIFF_AFTER },
+        previousValues: { seoTitle: DIFF_BEFORE },
         summary: `${MARKER.decisions} — rewrite the search listing.`,
         status: "PENDING_APPROVAL",
       },
@@ -549,6 +558,70 @@ async function main() {
       const leaked = (Object.keys(MARKER) as ViewKey[])
         .filter((other) => other !== key && !allowed.includes(other) && text.includes(MARKER[other]));
       check(`${TAB_LABEL[key]} shows nothing belonging to another view`, leaked, []);
+    }
+
+
+    // ======================================================================
+    // A DECISION SHOWS WHAT IT WOULD CHANGE (2026-09-12)
+    // ======================================================================
+    //
+    // The Decisions view used to present a summary and an Approve button and
+    // nothing else, so the owner agreed to a sentence. ApprovalRequest has
+    // stored `input` and `previousValues` since Phase 6 and ActionDiffRows
+    // has rendered them elsewhere all along; BriefingInput simply left them
+    // behind.
+    //
+    // Read off the rendered page, because the claim is about what an owner
+    // can see before they press a live control.
+    {
+      await showView(page, TAB_LABEL.decisions);
+      const decided = await page.evaluate(() => {
+        const portal = document.querySelector("[data-j4-presentation='office']");
+        return [...(portal?.querySelectorAll('[data-testid="work-row"]') ?? [])].map((row) => {
+          const proposal = row.querySelector('[data-testid="work-proposal"]');
+          const control = row.querySelector('[data-testid="work-action-execute"]');
+          const diffText = (proposal?.textContent ?? "").replace(/\s+/g, " ").trim();
+          return {
+            workId: row.getAttribute("data-work-id") ?? "",
+            headline: (row.querySelector("p")?.textContent ?? "").trim(),
+            hasProposal: !!proposal,
+            empty: !!row.querySelector('[data-testid="work-proposal-empty"]'),
+            diffText,
+            // Position, because "before the controls" is the requirement —
+            // evidence that arrives after the question is not evidence.
+            proposalBeforeControl: !!(proposal && control &&
+              (proposal.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
+          };
+        });
+      });
+
+      assert("there are decisions to inspect", decided.length > 0, `${decided.length}`);
+
+      // THE INVERSE: a real proposal produces a real diff.
+      const withDiff = decided.filter((d) => d.hasProposal && !d.empty);
+      assert("a decision shows what approving would change",
+        withDiff.length > 0, JSON.stringify(decided.map((d) => ({ id: d.workId, empty: d.empty }))));
+      // SCOPED TO THE ROW WE SEEDED. Other real decisions are on this page
+      // with diffs of their own, and asserting every one of them showed THIS
+      // fixture's values failed against perfectly correct rendering.
+      const seeded = decided.find((d) => d.headline.includes(MARKER.decisions));
+      assert("the seeded decision is on screen", !!seeded, decided.map((d) => d.headline.slice(0, 40)).join(" | "));
+      assert("  and the change names the real values, not a placeholder",
+        !!seeded && seeded.diffText.includes(DIFF_BEFORE) && seeded.diffText.includes(DIFF_AFTER),
+        seeded?.diffText.slice(0, 200) ?? "(no seeded row)");
+      assert("  the evidence sits above the controls, not after them",
+        withDiff.every((d) => d.proposalBeforeControl),
+        "a diff below the button is a receipt, not a basis for deciding");
+
+      // THE DIFF BELONGS TO THIS ROW. Both the evidence and the controls are
+      // inside the same work row, so there is no way to read one decision's
+      // change beside another's Approve.
+      const misplaced = await page.evaluate(() => {
+        const portal = document.querySelector("[data-j4-presentation='office']");
+        const proposals = [...(portal?.querySelectorAll('[data-testid="work-proposal"]') ?? [])];
+        return proposals.filter((p) => !p.closest('[data-testid="work-row"]')).length;
+      });
+      check("every diff is inside the work row it describes", misplaced, 0);
     }
 
     // ======================================================================

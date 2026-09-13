@@ -165,6 +165,7 @@ export function officeWork(
       // what lets Information tell an explanation from a task later.
       cognitiveKind: thought.kind,
       taskPriority: null,
+      proposedChange: null,
     });
   }
 
@@ -181,6 +182,7 @@ export function officeWork(
       genesisState: null,
       cognitiveKind: null,
       taskPriority: null,
+      proposedChange: null,
     });
   }
 
@@ -199,6 +201,9 @@ export function officeWork(
       genesisState: item.genesisState,
       cognitiveKind: null,
       taskPriority: null,
+      // A DECISION'S OWN EVIDENCE, straight through. buildBriefing already
+      // holds it; this list is where the renderer can reach it.
+      proposedChange: item.proposedChange,
     });
   }
 
@@ -223,6 +228,7 @@ export function officeWork(
       // purple otherwise — dropping it made every task purple, so a failed
       // one read as an opportunity.
       taskPriority: task.priority,
+      proposedChange: null,
     });
   }
 

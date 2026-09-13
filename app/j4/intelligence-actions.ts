@@ -176,7 +176,18 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
 
   const briefingItems = buildBriefing(
     {
-      decisions: pendingApprovals.map((a) => ({ id: a.id, summary: a.summary, rationale: a.rationale, createdAt: a.createdAt })),
+      // THE EVIDENCE TRAVELS WITH THE DECISION. `input` and `previousValues`
+      // have been on the row since Phase 6 and were simply never passed in,
+      // which is why the Decisions view could show an Approve button and no
+      // account of what it would do.
+      decisions: pendingApprovals.map((a) => ({
+        id: a.id,
+        summary: a.summary,
+        rationale: a.rationale,
+        createdAt: a.createdAt,
+        input: a.input as Record<string, unknown> | null,
+        previousValues: a.previousValues as Record<string, unknown> | null,
+      })),
       // NARROWED WHERE THE ROW LEAVES THE DATABASE. genesisState is a text
       // column, so Prisma types it `string`; the domain has exactly two
       // values and buildBriefing now depends on that. Asserting it here, at

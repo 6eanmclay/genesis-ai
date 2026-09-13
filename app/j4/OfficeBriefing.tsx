@@ -6,6 +6,10 @@ import type { HandledSummary } from "@/lib/j4/officeBriefing";
 // ASSET_ROLES, which reaches prisma; importing `itemsIn` from there put the
 // database client in the browser bundle and this panel silently never painted.
 import { itemsIn, type OfficeSection, type OfficeWork, type WorkItem } from "@/lib/j4/officeSections";
+// THE PRODUCT'S ONE DIFF, not an Office copy of it. Already rendered by the
+// dashboard's AttentionCard and by J4Proposal in this same directory.
+import { ActionDiffRows } from "@/lib/execution/ActionDiff";
+import { HIDDEN_DIFF_KEYS } from "@/lib/execution/fieldLabels";
 
 /**
  * WHAT J4 SAYS BEFORE HE IS ASKED.
@@ -197,6 +201,19 @@ const MISSING_LABEL = {
  * existed, in the briefing, on the same items. Two renderers over one model is
  * how an action and the item it belongs to drift apart, so there is one.
  */
+/**
+ * The keys a diff would actually show.
+ *
+ * The same filter ActionDiffRows applies internally, asked here so the row can
+ * tell "there is a change to show" from "there is not" without rendering an
+ * empty list to find out. HIDDEN_DIFF_KEYS is the existing list; this does not
+ * keep a second one.
+ */
+function visibleDiffKeys(change: WorkItem["proposedChange"]): string[] {
+  if (!change) return [];
+  return Object.keys(change.input).filter((key) => !HIDDEN_DIFF_KEYS.has(key));
+}
+
 export function WorkRow({
   item,
   onDecide,
@@ -288,6 +305,35 @@ export function WorkRow({
             happened yet. */}
         {action.kind === "execute" && (
           <div data-testid={action.offer === "decide" ? "work-decide" : "work-ready"}>
+            {/* ============ WHAT YOU WOULD BE AGREEING TO ==============
+                Above the controls, deliberately: the evidence has to arrive
+                before the question does. Until 2026-09-12 a decision showed
+                a sentence and an Approve button, so the owner agreed to a
+                summary and found out afterwards.
+
+                The same ActionDiffRows the dashboard and the conversation
+                already render — not an Office-shaped copy. One diff in the
+                product, taking the two fields the ApprovalRequest has always
+                stored.
+
+                AND NOTHING IS MANUFACTURED. When the row records no visible
+                change, this says so rather than drawing an empty list under
+                a live button: an approval that looks informed and is not is
+                worse than one that admits what it cannot show. */}
+            {action.offer === "decide" && (
+              <div data-testid="work-proposal" className="mb-3">
+                {visibleDiffKeys(item.proposedChange).length > 0 ? (
+                  <ActionDiffRows
+                    input={item.proposedChange!.input}
+                    previousValues={item.proposedChange!.previousValues}
+                  />
+                ) : (
+                  <p data-testid="work-proposal-empty" className="text-[12.5px] leading-snug text-amber-200/80">
+                    I have no record of what this would change. Ask me before you decide.
+                  </p>
+                )}
+              </div>
+            )}
             {/* EVERY REAL ANSWER, NOT JUST THE FIRST. The owner could say yes
                 and had nowhere to say no, on a surface whose own copy reads
                 "Your call". Each control runs a real server action; there is

@@ -137,7 +137,7 @@ const mixed = officeWork(understandingWith({ activeProducts: 0, hasPhoto: true }
   ...emptyState,
   decisions: ALL.map((action, i) => ({
     id: `i${i}`, kind: "decision" as const, headline: `h${i}`, why: null, standingDays: null, action,
-    genesisState: null,
+    genesisState: null, proposedChange: null,
   })),
 }, BASE);
 
@@ -331,6 +331,10 @@ const fiveSources = officeWork(
         standingDays: 2,
         action: officeActionForDecision(),
         genesisState: null,
+        proposedChange: {
+          input: { seoTitle: "Cubit & Coil — hand-wound tensor rings" },
+          previousValues: { seoTitle: "Cubit & Coil" },
+        },
       },
     ],
     observations: [
@@ -344,6 +348,7 @@ const fiveSources = officeWork(
         // `none`, so the action alone cannot tell them apart.
         action: officeActionForObservation({ summary: "x" }, CATEGORY_BASE),
         genesisState: "opportunity" as const,
+        proposedChange: null,
       },
       {
         id: "obs-urgent",
@@ -353,6 +358,7 @@ const fiveSources = officeWork(
         standingDays: 4,
         action: officeActionForObservation({ summary: "y" }, CATEGORY_BASE),
         genesisState: "urgent" as const,
+        proposedChange: null,
       },
     ],
     tasks: [
@@ -459,6 +465,7 @@ const withOpen = officeWork(
         standingDays: 1,
         action: officeActionForObservation({ summary: "z", actionHref: "/dashboard/orders" }, CATEGORY_BASE),
         genesisState: "urgent" as const,
+        proposedChange: null,
       },
     ],
   },
