@@ -32,7 +32,11 @@ import { PROVENANCE_LABEL } from "@/lib/businessModel/provenance";
 import { OfficePresence, OfficeGrounding } from "./OfficeBand";
 import { inCategory, categoryDotFor, type WorkItem } from "@/lib/j4/officeSections";
 import { OfficeBriefing, WorkRow } from "./OfficeBriefing";
-import type { HandledSummary } from "@/lib/j4/officeBriefing";
+// A VALUE IMPORT INTO A CLIENT COMPONENT, checked rather than assumed: this
+// module reaches only officeActions → navConfig + execution/actions, and
+// navConfig is already value-imported by DashboardShell ("use client") while
+// execution/actions imports nothing at all. No server-only code travels here.
+import { surfaceLeadsWithBriefing, type HandledSummary } from "@/lib/j4/officeBriefing";
 import { approveProposalInConversation, rejectProposalInConversation } from "./proposal-actions";
 import { loadDeepKnowledge, correctBelief, type DeepKnowledge } from "./understanding-actions";
 import { loadOfficeIntelligence, type OfficeIntelligence } from "./intelligence-actions";
@@ -936,7 +940,13 @@ export function J4Workspace({
   // loaded on every visit and none of them were on screen. The layer keeps
   // opening on the conversation: it is a panel summoned over the owner's work
   // to talk, not a place they arrive at.
-  const [activeCategory, setActiveCategory] = useState<Category>(isLayer ? "conversation" : "briefing");
+  // Through the one predicate that decides this, rather than a second raw
+  // reading of the surface. It used to test `isLayer` directly while
+  // surfaceShowsBriefing sat in lib/j4/officeBriefing.ts with no callers at
+  // all, promising in its own comment that this line was one of them.
+  const [activeCategory, setActiveCategory] = useState<Category>(
+    surfaceLeadsWithBriefing(surface) ? "briefing" : "conversation",
+  );
 
   // Which decision is executing, so its button can say so rather than looking
   // ignored while a real server action runs.
@@ -1888,7 +1898,15 @@ export function J4Workspace({
   const categoryTabs: { key: Category; label: string; count: number }[] = [
     // Present so the owner can come BACK to the briefing after opening a
     // queue. Not a new place to go - it is where they already are.
-    ...(isLayer ? [] : [{ key: "briefing" as Category, label: "Briefing", count: 0 }]),
+    //
+    // ON BOTH SURFACES SINCE 2026-09-13, and the sentence above is why. The
+    // layer omitted this tab, so an owner who opened Tasks inside their
+    // Business had no way back to the briefing and never saw "Needs you" at
+    // all — measured at 390px and 1280px before it was changed. Opening on the
+    // conversation and not offering the briefing are different decisions; only
+    // the first one was ever made. The first still stands: see
+    // surfaceLeadsWithBriefing above.
+    { key: "briefing" as Category, label: "Briefing", count: 0 },
     { key: "conversation", label: "Conversation", count: 0 },
     { key: "tasks", label: "Tasks", count: tasks.length },
     { key: "ideas", label: "Ideas", count: ideas.length },

@@ -23,7 +23,6 @@ import { getHandledSince } from "@/lib/dashboard/handled";
 import {
   buildBriefing,
   summariseHandled,
-  surfaceShowsBriefing,
   type HandledSummary,
 } from "@/lib/j4/officeBriefing";
 import {

@@ -341,27 +341,43 @@ export function summariseHandled(
 }
 
 /**
- * Which surface leads with a briefing.
+ * Which surface OPENS on the briefing.
  *
- * ============ ONE PREDICATE, READ BY THE FETCH AND THE RENDER ==========
+ * ============ LEADING WITH IT AND OFFERING IT ARE TWO QUESTIONS ========
  *
- * J4Surface.tsx carries a warning earned by two real bugs: `isRoom` was
- * deleted rather than left lying around, because "a ready-made 'the layer is
- * the lesser surface' flag is what the last two bugs were built on." Both were
- * the same shape - the surface started showing something and one upstream read
- * still assumed the old split, so the view rendered its empty state no matter
- * how much data the store had.
+ * This was `surfaceShowsBriefing` and answered both at once, which is how the
+ * layer ended up with no briefing at all rather than with a briefing it simply
+ * did not open on. Worse, it answered neither in practice: it had ZERO callers.
+ * Its own comment promised "the fetch in J4Surface and the render in
+ * J4Workspace both call this, so the day the layer grows a briefing, one edit
+ * here moves both" — J4Surface imported it and never used it, J4Workspace
+ * tested a raw `isLayer` twice, and one edit here moved nothing.
  *
- * The briefing genuinely is Office-only: the layer is a panel summoned over
- * the owner's work to talk, and it opens on the conversation. So there IS a
- * gate. What there is not is a second opinion about it - the fetch in
- * J4Surface and the render in J4Workspace both call this, so the day the layer
- * grows a briefing, one edit here moves both.
+ * So the two questions are separated and only one of them is a gate:
  *
- * That is the same fix the dock and the navigation got: not "remember to keep
- * them in step", but "there is only one of them".
+ *   OFFERED   on every surface. The Briefing tab is in the category list
+ *             unconditionally, because an owner who opens Tasks on the layer
+ *             must be able to get back to the briefing — which is exactly what
+ *             that tab's own comment says it is for ("Not a new place to go -
+ *             it is where they already are"), and on the layer there was no
+ *             way back.
+ *   LED WITH   the room only, which is what this predicate now decides and
+ *             what it is now named for. The layer still opens on the
+ *             conversation: it is summoned over the owner's work to talk.
+ *
+ * Sean, 2026-09-13: "the trigger is the view, not the surface" — the principle
+ * already written into J4Workspace after the same mistake left Tasks, Ideas,
+ * Decisions and Information with no data source on the layer, rendering
+ * "Nothing in Tasks right now." permanently. This is the third time a "the
+ * layer is the lesser surface" flag has cost something, and J4Surface.tsx has
+ * carried the warning about that flag the whole time.
+ *
+ * Nothing about the fetch changed and nothing needed to: the briefing is built
+ * by whoever asks for it, and J4Workspace's own `needsIntelligence` already
+ * loads the tier the moment the active view stops being the conversation. The
+ * layer still costs nothing while J4 is only being talked to.
  */
-export function surfaceShowsBriefing(surface: string): boolean {
+export function surfaceLeadsWithBriefing(surface: string): boolean {
   return surface === "room";
 }
 

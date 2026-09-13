@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
 import { waitForOfficeIntelligence } from "@/scripts/lib/appReadiness";
 
-// THE OFFICE'S SIX VIEWS, THROUGH A REAL BROWSER:
+// THE OFFICE'S SEVEN VIEWS, THROUGH A REAL BROWSER:
 //
 //   powershell -File scripts/run-unelevated.ps1 \
 //     -Command "npx tsx scripts/verify-office-browser.ts" -OutFile out.txt
@@ -165,6 +165,75 @@ async function signIn(page: Page, baseUrl: string, email: string): Promise<void>
  * it. Run at both breakpoints: the panel is a different layout at each, and a
  * check at one width reports a surface half the owners cannot see.
  */
+/**
+ * The layer OFFERS the briefing and still does not OPEN on it.
+ *
+ * ============ TWO DECISIONS THAT WERE ONE FLAG (2026-09-13) ============
+ *
+ * Measured before it was changed, at both widths: the Office opened from
+ * inside a Business reported "a Briefing tab exists on this surface: false"
+ * and never showed "Needs you" anywhere. The layer had no way back to the
+ * briefing after opening a queue — which is the exact thing that tab's own
+ * comment says it is for.
+ *
+ * So two assertions, and they pull in opposite directions on purpose. The tab
+ * must be there, and the surface must still land on the conversation. Either
+ * one alone is satisfied by the behaviour this change was meant to correct or
+ * by overcorrecting past it, and the second is the one that keeps the layer a
+ * panel summoned to talk rather than an arrival experience nobody asked for.
+ *
+ * Run at both breakpoints for the reason the understanding check is: the panel
+ * is a different layout at each, and a check at one width reports a surface
+ * half the owners cannot see.
+ */
+async function readBriefingState(page: Page) {
+  return page.evaluate(() => {
+    const portal = document.querySelector("[data-j4-presentation='office']");
+    const buttons = [...(portal?.querySelectorAll("button") ?? [])];
+    return {
+      hasBriefingTab: buttons.some((b) => (b.textContent ?? "").trim() === "Briefing"),
+      // THE ONLY THING THAT MARKS THE ACTIVE TAB is the violet pill — these
+      // buttons carry no aria-selected and no data attribute. The first
+      // version of this check looked for those, found neither, and would have
+      // reported "(none)" for ever while passing. The inactive class is
+      // `hover:bg-white/[.06]`, so this substring is unambiguous.
+      selected: buttons.find((b) => b.className.includes("bg-[#8b7cf6]"))
+        ?.textContent?.trim() ?? "(none)",
+      // Content, not chrome. The briefing renders "Needs you" even when it is
+      // empty ("Nothing is waiting on you right now."), so its absence here is
+      // a real statement about what the surface opened on.
+      showsNeedsYou: ((portal as HTMLElement | null)?.innerText ?? "").includes("Needs you"),
+    };
+  });
+}
+
+/** The Briefing is reachable. True whatever view the owner is currently on. */
+async function assertBriefingOffered(page: Page, width: number): Promise<void> {
+  const seen = await readBriefingState(page);
+  assert(`[${width}] the layer offers the Briefing, so there is a way back to it`,
+    seen.hasBriefingTab, "tab absent — the state measured at both widths before 2026-09-13");
+}
+
+/**
+ * And it still is not what the layer opens on.
+ *
+ * ONLY MEANINGFUL IMMEDIATELY AFTER A FRESH OPEN, which is why it is separate
+ * from the check above rather than a second assertion inside it. The first
+ * version ran both together at a point where four views had already been
+ * clicked through, so "opens on the conversation" would have been asserting
+ * that the suite had just clicked Conversation.
+ */
+async function assertOpensOnConversation(page: Page, width: number): Promise<void> {
+  const seen = await readBriefingState(page);
+  // EQUALITY, not "is not Briefing". A missing marker reads as "(none)", which
+  // would satisfy an inequality for ever without the surface being right.
+  assert(`[${width}] and opens on the conversation, which is still what it is for`,
+    seen.selected === "Conversation",
+    `the layer is summoned over the owner's work to talk; selected=${seen.selected}`);
+  assert(`[${width}] so no briefing is put in front of the owner unasked`,
+    !seen.showsNeedsYou, "offering the briefing must not mean leading with it");
+}
+
 async function assertUnderstandingEvidence(page: Page, width: number): Promise<void> {
   const evidence = await page.evaluate(() => {
     const facts = [...document.querySelectorAll('[data-testid="understanding-fact"]')];
@@ -465,10 +534,12 @@ async function main() {
     }
 
     // -----------------------------------------------------------------------
-    console.log("\n1. Opening it gives the six views");
+    console.log("\n1. Opening it gives the seven views");
     // -----------------------------------------------------------------------
     await openOffice(page, "mobile");
     check("the Office reports itself open", await officeIsOpen(page), true);
+    // Immediately after the open, while "opens on" still means something.
+    await assertOpensOnConversation(page, 390);
     {
       const tabs = await page.evaluate(() => {
         const btn = Array.from(document.querySelectorAll("button")).find(
@@ -479,8 +550,15 @@ async function main() {
           b.textContent?.replace(/\d+$/, "").trim()
         );
       });
-      check("all six, in the order the architecture names them", tabs, [
-        "Conversation", "Tasks", "Ideas", "Decisions", "Information", "Understanding",
+      // SEVEN SINCE 2026-09-13, AND BRIEFING LEADS THE LIST WITHOUT BEING
+      // SELECTED. This read six until the layer was given the Briefing tab the
+      // room has always had — an owner who opened Tasks here had no way back
+      // to the briefing, and never saw "Needs you" at all. The order is the
+      // room's order, because it is the same list: the surfaces differ in what
+      // they open on, which assertOpensOnConversation above holds down, and no
+      // longer in what they contain.
+      check("all seven, in the order the architecture names them", tabs, [
+        "Briefing", "Conversation", "Tasks", "Ideas", "Decisions", "Information", "Understanding",
       ]);
       assert("Understanding is among them", tabs.includes("Understanding"),
         "GENESIS_SURFACES.md step 2");
@@ -612,7 +690,14 @@ async function main() {
         (await page.evaluate(() =>
           document.querySelector("[data-j4-presentation='office']")
             ?.querySelectorAll('[data-testid="office-presence"]').length ?? -1)) === 0,
-        "whether the layer should have a briefing at all is its own question");
+        "the band is a separate question from the briefing, and is unchanged");
+
+      // THAT QUESTION IS NOW ANSWERED (2026-09-13). The line above used to end
+      // "whether the layer should have a briefing at all is its own question".
+      // Sean settled it: the trigger is the view, not the surface — the layer
+      // offers the briefing and still opens on the conversation. The band is
+      // untouched and is deliberately still absent above.
+      await assertBriefingOffered(page, 390);
     }
 
 
@@ -866,10 +951,16 @@ async function main() {
       check("still exactly one Office after the second door opened it",
         await page.locator("[data-j4-presentation]").count(), 1);
 
+      // A GENUINELY FRESH OPEN, so "opens on" means what it says. The tab row
+      // is a scrolling strip on the phone and a full row here, so a seventh
+      // tab lands differently at each width and both are checked.
+      await assertBriefingOffered(page, 1280);
+      await assertOpensOnConversation(page, 1280);
+
       await showView(page, "Understanding");
       await waitForOfficeIntelligence(page, { tier: "understanding" });
       const text = await officeText(page);
-      assert("with the same six views behind it", text.includes("Assets I can use"),
+      assert("with the same seven views behind it", text.includes("Assets I can use"),
         "one Office, two doors — never two Offices");
 
       // The same evidence, at the other breakpoint. The panel is a different
