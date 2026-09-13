@@ -1,10 +1,8 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { FIELD_LABELS, type BlueprintContextSubset } from "@/lib/execution/genesisActions";
-import { compareObservationPriority } from "@/lib/dashboard/genesisState";
 import { buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
 import {
   approveGenesisAction,
@@ -87,18 +85,10 @@ export async function BrandScreen({
 }) {
   const { store, role } = await requireBusinessPageOrActive(PERMISSIONS.STORE_MANAGE, slug);
   const canReviewApprovals = hasPermission(role, PERMISSIONS.ANALYTICS_VIEW);
-  const [pendingApprovals, rawObservations, dismissedCardIds] = await Promise.all([
+  const [pendingApprovals, dismissedCardIds] = await Promise.all([
     canReviewApprovals ? getPendingApprovals(store.id) : Promise.resolve([]),
-    // Real GenesisObservation rows (Red/Purple) whose own actionHref points
-    // directly at this page — the same real data Live Intelligence/the nav
-    // badges already use, just filtered to this one destination.
-    prisma.genesisObservation.findMany({
-      where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/brand" },
-      select: { id: true, dedupeKey: true, genesisState: true, summary: true },
-    }),
     getDismissedCardIds(store.id),
   ]);
-  const brandObservations = [...rawObservations].sort(compareObservationPriority);
   const identityApprovals = pendingApprovals.filter(
     (a) => a.actionType === "update_brand_identity" || a.actionType === "update_store_identity"
   );
@@ -108,10 +98,34 @@ export async function BrandScreen({
   // is passed straight through: isHighlighted() only ever matches a real
   // card's own approvalRequestId/dedupeKey, so an invalid/stale focus
   // value is already a safe no-op, same as before.
+  // ============ J4'S NOTICES BELONG TO THE ARRIVAL (2026-09-01) ========
+  //
+  // Sean: "J4's notices/observations should be part of the Genesis welcome/
+  // arrival experience, not buried at the bottom of a particular business
+  // page... The notice should feel like J4 communicating with the owner, not
+  // like another section of the Storefront editor."
+  //
+  // This page used to read GenesisObservation rows whose actionHref pointed at
+  // itself — which is precisely the mechanism b75a0b8 named as "what made each
+  // notice the property of a page" when it removed the same rendering from the
+  // Storefront. The arrival deliberately does the opposite: it asks for every
+  // active observation for the business, because "what has J4 noticed" is a
+  // question about the business, not about whichever editor you happen to have
+  // open. Identity was simply missed when that ruling was applied, so the same
+  // notice rendered twice — once in J4's voice on the arrival, once again in
+  // an editor section here (2026-09-13).
+  //
+  // Empty rather than deleted, exactly as the Storefront kept its own: the
+  // grouping, focus deep-linking and dismissal wiring below are real and still
+  // serve this page's own approvals, and an empty argument makes the decision
+  // legible in the diff instead of hiding it.
+  //
+  // NOTHING ABOUT THE DATA OR THE DISMISSAL CHANGED. The rows are untouched,
+  // still active, still shown — on the arrival, where they belong.
   const brandCards = buildPageAttentionCards({
     basePath,
     approvals: identityApprovals,
-    observations: brandObservations,
+    observations: [],
     highlightId: focus,
     dismissedCardIds,
   });
@@ -133,15 +147,21 @@ export async function BrandScreen({
         Who your business is — the identity every part of your presence draws from.
       </p>
 
-      {/* Phase 1 (2026-08-08) — one unified card list (real issues/
-          decisions Genesis noticed about your identity), same compact
-          language Home's own "J4 Noticed" zone uses — replaces the two
-          separate ObservationsPanel/ApprovalRequestsPanel sections this
-          page used to render on its own. */}
+      {/* Phase 1 (2026-08-08) — one unified card list, same compact language
+          Home's own "J4 Noticed" zone uses, replacing the two separate
+          ObservationsPanel/ApprovalRequestsPanel sections this page used to
+          render on its own.
+
+          "Genesis noticed" until 2026-09-13, which stopped being true the
+          moment the notices moved to the arrival above: what can reach this
+          list now is exactly one thing — a pending update_brand_identity or
+          update_store_identity proposal. It is named for what it holds, using
+          the wording the Marketing page already uses for the same thing,
+          rather than a third spelling of "approvals". */}
       {brandCards.length > 0 && (
         <>
           <h2 className="mt-6 text-lg font-semibold text-black dark:text-zinc-50">
-            Genesis noticed ({brandCards.length})
+            Awaiting Your Approval ({brandCards.length})
           </h2>
           <div className="mt-3">
             <AttentionCardList

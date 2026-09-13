@@ -209,6 +209,19 @@ async function main() {
         actionHref: "/dashboard/website",
       },
     });
+    // THE SAME THING, ADDRESSED TO IDENTITY (2026-09-13). Without a real row
+    // pointing at /dashboard/brand, "Identity shows no notices" would pass on
+    // a page that simply had nothing to show — which is how a true-looking
+    // assertion ends up measuring an empty database instead of the rule.
+    const identityNotice = `Your brand story is still empty. ${stamp}`;
+    await prisma.genesisObservation.create({
+      data: {
+        storeId: store.id, status: "ACTIVE", genesisState: "OPPORTUNITY",
+        dedupeKey: `brand-story-${stamp}`,
+        summary: identityNotice,
+        actionHref: "/dashboard/brand",
+      },
+    });
 
     const home = `${server.baseUrl}/b/${store.slug}`;
     browser = await chromium.launch();
@@ -861,6 +874,34 @@ async function main() {
     const siteText = await page.locator("body").innerText();
     assert("the Storefront editor still has no Genesis noticed section",
       !/Genesis noticed/.test(siteText), siteText.slice(-200));
+
+    // ============ IDENTITY IS NOT A PLACE NOTICES LIVE EITHER ===========
+    //
+    // Sean's 2026-09-01 ruling was applied to the Storefront and missed here,
+    // so one notice rendered twice — in J4's voice on the arrival, and again
+    // as an editor section at the foot of Identity.
+    //
+    // Three assertions, and SABOTAGE SAYS WHICH ONE IS LOAD-BEARING. Restoring
+    // the page-scoped query failed exactly one of them — the middle one. The
+    // first passed throughout, because with the list now named for the only
+    // thing that can reach it, "no Genesis noticed" measures the heading and
+    // not the placement; it is named for that here rather than left looking
+    // like the rule it is not. The third is a presence check on the arrival,
+    // so it cannot pass vacuously: without it, deleting the row entirely would
+    // satisfy the other two.
+    await page.goto(`${server.baseUrl}/b/${store.slug}/brand`, { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("domcontentloaded");
+    const identityText = await page.locator("body").innerText();
+    assert("Identity's list is named for what it now holds, not for notices",
+      !/Genesis noticed/.test(identityText), identityText.slice(-200));
+    assert("and Identity does not render the notice addressed to it",
+      !identityText.includes(identityNotice), identityText.slice(-200));
+
+    await page.goto(home, { waitUntil: "domcontentloaded" });
+    await settle(page);
+    assert("because the arrival is where J4 says it",
+      (await page.locator("body").innerText()).includes(identityNotice),
+      "the notice left Identity without arriving anywhere");
 
     await page.goto(home, { waitUntil: "domcontentloaded" });
     await settle(page);
