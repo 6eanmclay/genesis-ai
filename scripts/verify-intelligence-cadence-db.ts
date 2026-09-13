@@ -844,6 +844,7 @@ async function main(): Promise<void> {
       notify: noop,
       learn: noop,
       staffPolicyGap: noop,
+      commerceConditions: noop,
       speak: async () => ({ spoken: 0 }),
     }, () => {});
     assert("detect_change throwing does not stop the observation sweep", sweptAfterDetectChangeThrew);
@@ -857,6 +858,7 @@ async function main(): Promise<void> {
       notify: noop,
       learn: noop,
       staffPolicyGap: noop,
+      commerceConditions: noop,
       speak: async () => ({ spoken: 0 }),
     }, () => {});
     assert("the observation sweep throwing does not stop interpretation",

@@ -1,6 +1,7 @@
 import { speakNewFindings } from "./proactive";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { proposeStaffPolicyGap } from "@/lib/businessModel/staffPolicyGap";
+import { proposeCommerceConditions } from "@/lib/commerce/conditions";
 import { prisma, prismaSystem } from "@/lib/prisma";
 import { computeInsights, INSIGHT_ENGINE_CONSUMER, type Insight } from "./insights";
 import { runTimeBasedDetection } from "./changeDetection";
@@ -65,6 +66,7 @@ export type CycleStage =
   | "notify"
   | "learn"
   | "staff_policy_gap"
+  | "commerce_conditions"
   | "speak";
 
 /**
@@ -112,6 +114,7 @@ export interface CycleStages {
   learn: () => Promise<void>;
 
   staffPolicyGap: () => Promise<void>;
+  commerceConditions: () => Promise<void>;
   speak: () => Promise<{ spoken: number }>;
 }
 
@@ -231,6 +234,16 @@ export async function runCycleStages(
   // justified ask can be raised and said in the same pass.
   await runStage("staff_policy_gap", () => stages.staffPolicyGap());
 
+  // WHAT IS ACTUALLY WRONG IN COMMERCE (2026-09-13). Deterministic and cheap,
+  // like the gap sweep above — two reads, no AI call — so it runs
+  // unconditionally and before the speaking step, letting a newly stale order
+  // be raised and said in the same pass.
+  //
+  // Registered here rather than given a sweep of its own because it IS one of
+  // these: a store-level producer of GenesisObservations, using the same
+  // upsert/resolve lifecycle. Commerce does not get its own attention model.
+  await runStage("commerce_conditions", () => stages.commerceConditions());
+
   // J4 SAYS WHAT IT NOTICED, last and deterministically (Proactive J4).
   //
   // After the findings sweep above, so it speaks about the set that is true
@@ -276,6 +289,7 @@ export async function runIntelligenceCycle(storeId: string): Promise<Intelligenc
     notify: (insights) => notifyFromInsights(storeId, insights),
     learn: () => distillBeliefs(storeId),
     staffPolicyGap: () => proposeStaffPolicyGap(storeId),
+    commerceConditions: () => proposeCommerceConditions(storeId),
     speak: () => speakNewFindings(storeId),
   });
 

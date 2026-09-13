@@ -75,9 +75,15 @@ async function main() {
     // scheduled task; Slice 2 added detect_change; Slice 3 added
     // observation_sweep. Every one shipped while this suite belonged to no
     // runner, so nothing said the list had moved on.
+    //
+    // EIGHT, AND THIS TIME IT SAID SO (2026-09-13). The Commerce condition
+    // producer became a stage, and this assertion failed in the regression
+    // rather than drifting — which is the whole reason it counts the set
+    // instead of checking that each name is present. The list is updated; the
+    // property is unchanged, and every stage still has to reach runStage.
     eq("every stage runs through the isolator",
       staged.sort(),
-      ["detect_change", "insights", "learn", "notify", "observation_sweep", "speak", "staff_policy_gap"]);
+      ["commerce_conditions", "detect_change", "insights", "learn", "notify", "observation_sweep", "speak", "staff_policy_gap"]);
     assert("and notify additionally records the dependency it cannot satisfy",
       /failedStages\.push\("notify"\)/.test(cycleSrc),
       "it needs insights, so a failed insights stage makes it failed too, not merely skipped");
@@ -98,6 +104,7 @@ async function main() {
       notify: async () => { order.push("notify"); },
       learn: async () => { order.push("learn"); throw boom; },
       staffPolicyGap: async () => { order.push("staff_policy_gap"); },
+      commerceConditions: async () => { order.push("commerce_conditions"); },
       speak: async () => { order.push("speak"); return { spoken: 3 }; },
     });
 
@@ -119,6 +126,7 @@ async function main() {
       notify: async () => { notified = true; },
       learn: async () => {},
       staffPolicyGap: async () => {},
+      commerceConditions: async () => {},
       speak: async () => ({ spoken: 0 }),
     });
     assert("notify does NOT run on an empty list when insights failed", !notified,
@@ -135,6 +143,7 @@ async function main() {
       notify: async () => {},
       learn: async () => {},
       staffPolicyGap: async () => {},
+      commerceConditions: async () => {},
       speak: async () => ({ spoken: 0 }),
     });
     eq("CONTROL: nothing failing means nothing named", clean.failedStages, []);
@@ -151,6 +160,7 @@ async function main() {
       notify: async () => {},
       learn: async () => { throw new Error("learn is down"); },
       staffPolicyGap: async () => {},
+      commerceConditions: async () => {},
       speak: async () => ({ spoken: 0 }),
     }, (_message, _error, context) => reported.push({ stage: context.stage, storeId: context.storeId }));
 
@@ -168,6 +178,7 @@ async function main() {
           notify: async () => {},
           learn: async () => {},
           staffPolicyGap: async () => {},
+          commerceConditions: async () => {},
           speak: async () => ({ spoken: 0 }),
         }, () => quiet.push(1));
         return quiet.length === 0;

@@ -572,6 +572,7 @@ async function main() {
     notify: async () => {},
     learn: async () => {},
     staffPolicyGap: async () => {},
+    commerceConditions: async () => {},
     speak: async () => ({ spoken: 7 }),
   });
   assert("and reports what it said",
@@ -584,6 +585,7 @@ async function main() {
     notify: async () => {},
     learn: async () => {},
     staffPolicyGap: async () => {},
+    commerceConditions: async () => {},
     speak: async () => { throw new Error("speaking failed"); },
   }, () => {});
   assert("CONTROL: and never claims to have spoken when it could not",
