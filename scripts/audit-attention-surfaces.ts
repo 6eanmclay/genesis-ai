@@ -138,19 +138,20 @@ async function openArrival(page: Page, baseUrl: string, slug: string): Promise<v
  */
 async function dismissByToken(
   page: Page,
-  prisma: { dismissedAttentionCard: { findMany: (a: unknown) => Promise<{ cardId: string }[]> } },
-  storeId: string,
+  // A READER, NOT THE CLIENT. Taking `prisma` here meant naming a slice of
+  // PrismaClient's generated type, which does not structurally match a
+  // hand-written one — the script ran under tsx (which does not typecheck)
+  // while `tsc --noEmit` failed on it. A callback needs no Prisma types at
+  // all and says exactly what this function needs: the card ids so far.
+  listCardIds: () => Promise<string[]>,
   token: string,
 ): Promise<{ found: boolean; cardId: string | null }> {
-  const before = new Set(
-    (await prisma.dismissedAttentionCard.findMany({ where: { storeId }, select: { cardId: true } })).map((r) => r.cardId),
-  );
+  const before = new Set(await listCardIds());
   const card = page.locator("div.rounded-xl").filter({ hasText: token }).last();
   if ((await card.count()) === 0) return { found: false, cardId: null };
   await card.locator('button[aria-label^="Dismiss"]').first().click();
   for (let i = 0; i < 80; i++) {
-    const now = await prisma.dismissedAttentionCard.findMany({ where: { storeId }, select: { cardId: true } });
-    const added = now.map((r) => r.cardId).find((id) => !before.has(id));
+    const added = (await listCardIds()).find((id) => !before.has(id));
     if (added) return { found: true, cardId: added };
     await page.waitForTimeout(250);
   }
@@ -182,6 +183,10 @@ async function main(): Promise<void> {
     });
 
     const seeded: Seeded[] = [];
+    /** Every dismissal this business has recorded, as the ids the arrival wrote. */
+    const listCardIds = async (): Promise<string[]> =>
+      (await prisma.dismissedAttentionCard.findMany({ where: { storeId: store.id }, select: { cardId: true } }))
+        .map((r) => r.cardId);
     const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
 
     // ---- ONE APPROVAL ------------------------------------------------
@@ -334,7 +339,7 @@ async function main(): Promise<void> {
     } else {
       console.log(`    dismissing ${shared.token} (${shared.kind} ${shared.id}) on the arrival\n`);
       await openArrival(page, server.baseUrl, store.slug);
-      const result = await dismissByToken(page, prisma, store.id, shared.token);
+      const result = await dismissByToken(page, listCardIds, shared.token);
       if (!result.found) {
         console.log("    could not find that card's dismiss control");
       } else if (result.cardId === null) {
@@ -392,7 +397,7 @@ async function main(): Promise<void> {
       // under the task's name. An instrument that reports a stale value as a
       // finding is worse than one that reports nothing. dismissByToken now
       // returns only a cardId that was not there before.
-      const probe = await dismissByToken(page, prisma, store.id, target.token);
+      const probe = await dismissByToken(page, listCardIds, target.token);
       console.log(`    ${target.token}`);
       if (!probe.found) {
         console.log(`      not on the arrival, so its card id cannot be read this way`);
