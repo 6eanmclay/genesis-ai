@@ -2216,9 +2216,27 @@ model ProactiveDelivery {
 // modeling needed, one generic mechanism works uniformly across all five
 // kinds because they already share one canonical id scheme.
 model DismissedAttentionCard {
-  id                String   @id @default(cuid())
-  storeId           String
-  cardId            String
+  id      String @id @default(cuid())
+  storeId String
+  /// The Business arrival's PRESENTATION id — "proposal:<id>",
+  /// "observation:<dedupeKey>", "task:<id>", "issue:<id>", "discovery:<id>".
+  /// Kept, unchanged, and still the key the existing reader and writer use.
+  /// This column is what made a dismissal invisible to the Office: only the
+  /// surface that spelled it this way could ask about it.
+  cardId  String
+
+  /// CANONICAL IDENTITY (2026-09-13). The underlying row this deferral is
+  /// really about — lib/attention/identity.ts. Nullable on purpose and in two
+  /// senses: legacy rows are backfilled by a migration that may leave a row
+  /// unmapped rather than guess, and a dismissal of something outside the
+  /// three canonical sources (an "issue" or a "discovery", which are the
+  /// arrival's own populations) has no canonical identity to carry.
+  ///
+  /// Nothing reads these yet. Migrating the two surfaces onto them is a
+  /// separate commit.
+  source   String?
+  sourceId String?
+
   dismissedAt       DateTime @default(now())
   dismissedByUserId String?
 
@@ -2226,6 +2244,11 @@ model DismissedAttentionCard {
 
   @@unique([storeId, cardId])
   @@index([storeId, dismissedAt])
+  /// NOT UNIQUE, deliberately, in this commit. (storeId, source, sourceId) is
+  /// the key the shared layer will eventually want, but adding the constraint
+  /// here would make the migration able to FAIL on production data instead of
+  /// merely describing it. Prove the population first, constrain it after.
+  @@index([storeId, source, sourceId])
 }
 
 // BUSINESS_ASSETS_ARCHITECTURE.md M1 — the unified representation of "one
