@@ -107,36 +107,72 @@ set and it is not negotiable.
 
 ---
 
-## The one thing this contract cannot yet assert
+## RESOLVED — the production read, 2026-09-13
 
-**Whether production actually holds meaningful attribution volume.** The
-recording path is verified live by reading the code; the row counts are not.
-A read-only production check was attempted on 2026-09-13 and **blocked by the
-environment's permission classifier**, so it has not been run, and nothing
-here claims a number.
+Run read-only with Sean's explicit approval, read-only transaction, SELECT
+only, no writes, no cron. **Classification: A — attribution is populated.**
 
-Before any build, one read-only query decides the shape:
-
-```sql
-SELECT count(*) FROM "StoreVisit";
-SELECT "attributionKind", source, count(*) FROM "StoreVisit" GROUP BY 1,2;
-SELECT count(*), count("attributionKind") FROM "Order";
+```
+StoreVisit          524 rows, 8 stores, 2026-09-02 → 2026-09-13 (continuous)
+StoreTrafficDay       0 rows
+Order                14 total — 7 created before 2026-09-01, 7 since
+                     all 7 created since the ship date carry attribution
 ```
 
-Three outcomes, three different correct builds:
+Visits by kind and source host, as recorded:
 
-1. **Real volume across several stores** — the surface is worth building as
-   described, leading with where visits came from and which sources produced
-   orders.
-2. **Rows exist but thin** — build the same thing; the honest numbers are
-   small, which is a true statement about a young business and exactly what
-   Data & Connections already does.
-3. **Effectively empty** — the finding is not "Marketing needs a traffic
-   section", it is "attribution has been recording nothing for two weeks",
-   which is a different and more urgent investigation and **not a UI task at
-   all**.
+| kind | source | visits |
+|---|---|---|
+| `direct_unknown` | — | 372 |
+| `observed_referral` | facebook.com | 63 |
+| `observed_referral` | m.facebook.com | 30 |
+| `observed_referral` | t.co | 25 |
+| `explicit_tracking` | ig | 14 |
+| `observed_referral` | lm.facebook.com | 8 |
+| `observed_referral` | l.facebook.com | 4 |
+| `observed_referral` | youtube.com / m.youtube.com | 3 |
+| `observed_referral` | verification.example.test | 2 |
+| `explicit_tracking` | deployment-check | 2 |
+| `observed_referral` | checkout.stripe.com | 1 |
 
-Outcome 3 is why this contract does not proceed to implementation on its own.
+Orders carrying attribution: `t.co` 3, direct 2, `m.facebook.com` 1,
+`lm.facebook.com` 1. **`attributionCampaign` is set on zero orders.**
+
+Per store: Cubit & Coil 511 visits / 10 orders / 7 attributed. Every other
+store has exactly one visit.
+
+### What the data proves about the build
+
+1. **Count attributed orders by `attributionKind`, never `attributionSource`.**
+   7 orders carry a kind; only 5 carry a source, because `direct_unknown` has
+   a null source by design. `WHERE "attributionSource" IS NOT NULL` undercounts
+   by 29% and would read as a defect in the recorder rather than the query.
+2. **Read `StoreVisit`, never `StoreTrafficDay`.** The rollup is empty and
+   correctly so: it is written by the prune, the prune is dormant, and nothing
+   is yet 12 months old. A surface built on the rollup shows zero for ever.
+3. **Hosts stay hosts.** The Facebook family is four rows totalling 105 visits.
+   Grouping them is exactly what `classify.ts` forbids — "A HOST IS RECORDED AS
+   THE HOST IT IS", "linktr.ee stays linktr.ee". Four rows, or nothing.
+4. **The campaign table refusal is now evidence-backed**, not merely prudent:
+   no order and no visit has ever carried a campaign.
+5. **Build for n=0 and n=1 first.** 511 of 524 visits are one store; seven
+   stores have a single visit. The typical owner's view is nearly empty, and
+   that is the view that must read correctly.
+6. **`direct_unknown` is 71% of all traffic** and must lead rather than be
+   tucked behind the referrers. A page that shows 152 referred visits and hides
+   372 unknown ones is a more flattering page and a false one.
+
+### Two artefacts in the data, neither a defect
+
+- `verification.example.test` (2) and `deployment-check` (2) are this project's
+  own verification traffic, recorded in production exactly as any visit is.
+- `checkout.stripe.com` (1) is a return from an abandoned Stripe checkout:
+  `cancel_url` sends the customer back to the storefront root, and if their
+  visit token is new at that moment the Referer is Stripe's. It **cannot**
+  overwrite a real source — `recordVisit` never re-classifies an existing row
+  ("THE STORED ROW IS NOT TOUCHED"), so a visitor who arrived from Instagram
+  stays attributed to Instagram. One row in 524; named here so it is not
+  rediscovered later as a mystery.
 
 ---
 
