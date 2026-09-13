@@ -9,6 +9,7 @@ import { SubmitButton } from "../SubmitButton";
 import { isPlatformAdmin } from "@/lib/platformAdmin";
 import { billingReturnNotice } from "@/lib/billing/returnNotice";
 import { formatPlatformPrice } from "@/lib/billing/platformPricing";
+import { genesisActionLabel } from "@/lib/dashboard/authoritySurface";
 
 // Growth Points Economy (Chapter 2) — the owner's own real economy view:
 // current balance, real point history, real usage by action, their own
@@ -187,7 +188,22 @@ export async function GrowthPointsScreen({
           <tbody>
             {usage.map((u) => (
               <tr key={u.actionType} className="border-b border-black/[.06] last:border-0 dark:border-white/[.06]">
-                <td className="px-4 py-2.5 text-black dark:text-zinc-50">{u.actionType}</td>
+                {/* ============ NOT THE KEY (2026-09-13) ===================
+                    This column is headed "Action" and printed the raw
+                    GenesisActionType at the owner — "update_seo",
+                    "refine_storefront" — which is an implementation
+                    identifier, and this project's own rule is that those are
+                    never human-facing.
+
+                    genesisActionLabel is the vocabulary the authority surface
+                    already uses, not a second one: the four named capabilities
+                    keep the phrasing an owner has already read there, and
+                    everything else falls back to a readable form of its own
+                    key rather than disappearing. u.actionType is untouched in
+                    the data, the grouping, and this row's key. */}
+                <td className="px-4 py-2.5 text-black dark:text-zinc-50" data-testid="usage-action">
+                  {genesisActionLabel(u.actionType)}
+                </td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-300">{u.count}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-black dark:text-zinc-50">{u.totalSpent}</td>
               </tr>

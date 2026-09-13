@@ -100,8 +100,25 @@ const CAPABILITY_LABELS: Record<string, string> = {
   communicate_finding: "Tell you something it noticed",
 };
 
-/** A readable fallback, never an invented identifier. */
-function labelFor(actionType: string): string {
+/**
+ * One owner-facing name for a GenesisActionType, and a readable fallback —
+ * never an invented identifier.
+ *
+ * EXPORTED 2026-09-13, because a second reader appeared. The Growth Points
+ * usage table printed raw keys at owners ("update_seo" under a column headed
+ * "Action"), and the honest fix was to use the vocabulary that already exists
+ * rather than start a second one beside it.
+ *
+ * Named for what it labels rather than `labelFor`: that bare name is already
+ * taken as a parameter in lib/social/socialPresentation.ts for a different
+ * kind of label, and an ambiguous export is how two vocabularies quietly
+ * become one confused one.
+ *
+ * It stays in this file because this is where the names are. If a third
+ * consumer ever wants it somewhere neutral, moving it is a relocation, not a
+ * new taxonomy — what must not happen is a second map.
+ */
+export function genesisActionLabel(actionType: string): string {
   const explicit = CAPABILITY_LABELS[actionType];
   if (explicit) return explicit;
   const words = actionType.replace(/_/g, " ");
@@ -168,7 +185,7 @@ export function buildAuthoritySurface(grants: GrantRow[]): AuthoritySurface {
 
     rows.push({
       actionType,
-      label: labelFor(actionType),
+      label: genesisActionLabel(actionType),
       category: def.category,
       chatAuto,
       authorized: grantState === "granted",
