@@ -132,6 +132,28 @@ async function main() {
       assert("and the rendered link carries that exact code",
         code !== null && link.includes(code), `${link} vs ${code}`);
       assert("  pointing at signup", /\/signup\?ref=/.test(link), link);
+
+      // ============ AND IT IS A LINK, NOT A PATH (2026-09-13) ==========
+      //
+      // This was built from `process.env.NEXTAUTH_URL ?? ""`, and NEXTAUTH_URL
+      // is not set in production — the config registry marks it "optional" and
+      // no environment file carries it. So the fallback ran and an owner was
+      // shown "/signup?ref=ABC12345" to copy and send to somebody: a bare path
+      // that resolves nowhere off this page.
+      //
+      // The deployment cases, both covered: with no
+      // VERCEL_PROJECT_PRODUCTION_URL — this harness, and any self-hosted run —
+      // canonicalBaseUrl falls back to the request host, which is what is
+      // asserted here against the server's own origin. With it set, which is
+      // production on Vercel, it returns that stable domain instead. Either way
+      // the one property that matters is the same and is what this checks: an
+      // absolute origin, never a path.
+      assert("the link is absolute, not a bare path",
+        /^https?:\/\//.test(link), link);
+      assert("  and is on this deployment's own origin",
+        link.startsWith(server.baseUrl), `${link} vs ${server.baseUrl}`);
+      assert("  with no empty origin left where a host should be",
+        !link.startsWith("/") && !/^https?:\/\/\//.test(link), link);
     }
 
     // ==================================================================

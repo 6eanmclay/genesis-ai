@@ -3,6 +3,7 @@ import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
 import { getGrowthPointHistory, getGrowthPointUsageByAction, getReferralsSent } from "@/lib/growthPoints/ownerQueries";
 import { readReferralCode } from "@/lib/growthPoints/referral";
+import { canonicalBaseUrl } from "@/lib/integrations/util";
 import { growthPointPackages } from "@/lib/growthPoints/purchaseCatalog";
 import { purchaseGrowthPoints, addGrowthPointsForTesting, createReferralLink } from "./actions";
 import { SubmitButton } from "../SubmitButton";
@@ -80,7 +81,31 @@ export async function GrowthPointsScreen({
     readReferralCode(userId),
   ]);
 
-  const referralLink = referralCode ? `${process.env.NEXTAUTH_URL ?? ""}/signup?ref=${referralCode}` : null;
+  // ============ A LINK SOMEBODY ELSE WILL CLICK (2026-09-13) ==========
+  //
+  // This was `${process.env.NEXTAUTH_URL ?? ""}/signup?ref=...`, and
+  // NEXTAUTH_URL is not set in production — the config registry marks it
+  // "optional" and it appears in no environment file. So the fallback ran, and
+  // the owner was shown "/signup?ref=ABC12345": a bare path, copied and shared
+  // as a link that resolves nowhere.
+  //
+  // canonicalBaseUrl, not getBaseUrl, and the difference is the whole point.
+  // lib/integrations/util.ts spells out the contract: getBaseUrl reads the
+  // request's Host, which is right for an OAuth callback because "the provider
+  // must come back to the origin the person actually used", and wrong for
+  // anything durable — a value minted on a preview deployment "works until the
+  // deployment is rotated". A referral link is durable by definition: it is
+  // copied, sent to somebody else, and clicked later. canonicalBaseUrl prefers
+  // the project's stable production domain and falls back to the request host,
+  // so it is always a real absolute origin and never a bare path.
+  //
+  // Not emailOrigin() either, which is the third resolver: it exists for
+  // background jobs with no request to read, and returns null rather than
+  // guess. There is a request here, so its fallback is available and better
+  // than nothing.
+  const referralLink = referralCode
+    ? `${await canonicalBaseUrl()}/signup?ref=${referralCode}`
+    : null;
   const rewardedReferrals = referrals.filter((r) => r.status === "REWARDED").length;
   const packages = growthPointPackages();
 
