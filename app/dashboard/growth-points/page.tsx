@@ -7,6 +7,7 @@ import { growthPointPackages } from "@/lib/growthPoints/purchaseCatalog";
 import { purchaseGrowthPoints, addGrowthPointsForTesting } from "./actions";
 import { SubmitButton } from "../SubmitButton";
 import { isPlatformAdmin } from "@/lib/platformAdmin";
+import { billingReturnNotice } from "@/lib/billing/returnNotice";
 
 // Growth Points Economy (Chapter 2) — the owner's own real economy view:
 // current balance, real point history, real usage by action, their own
@@ -60,9 +61,12 @@ function NotAvailable({ reason }: { reason: string }) {
 export async function GrowthPointsScreen({
   slug,
   basePath,
+  searchParams,
 }: {
   slug?: string;
   basePath: string;
+  /** Stripe's own return parameters. Optional: the legacy route may pass none. */
+  searchParams?: Promise<{ purchase?: string }>;
 }) {
   const { userId, store, role } = await requireBusinessPageOrActive(PERMISSIONS.ANALYTICS_VIEW, slug);
   const isOperator = await isPlatformAdmin();
@@ -78,6 +82,15 @@ export async function GrowthPointsScreen({
   const rewardedReferrals = referrals.filter((r) => r.status === "REWARDED").length;
   const packages = growthPointPackages();
 
+  // THE OTHER TWO RETURN STATES. purchase=success/cancelled are written by
+  // createGrowthPointCheckoutSession and land here, not on Billing — so this
+  // is where they are consumed. Same helper, same rule: a purchase is NEVER
+  // confirmed from the redirect, because a balance cannot say whether THIS
+  // purchase landed. subscriptionConfirmed is false here for the same reason
+  // it is not asked: no subscription claim is being made on this page.
+  const { purchase } = (await searchParams) ?? {};
+  const returnNotice = billingReturnNotice({ purchase, subscriptionConfirmed: false });
+
   return (
     <div className="min-h-screen p-8 lg:min-h-0">
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Growth Points</h1>
@@ -86,6 +99,17 @@ export async function GrowthPointsScreen({
         questions are always free. Points are only ever invested when you choose to have Genesis execute real
         work on the business.
       </p>
+
+      {returnNotice && (
+        <div
+          data-testid="billing-return-notice"
+          data-tone={returnNotice.tone}
+          className="mt-6 rounded-xl border border-black/[.08] bg-zinc-50 p-4 dark:border-white/[.1] dark:bg-zinc-900/50"
+        >
+          <p className="text-sm font-medium text-black dark:text-zinc-50">{returnNotice.title}</p>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{returnNotice.detail}</p>
+        </div>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card label="Current balance" value={`${store.growthPointBalance}`} sub="Growth Points available" />
@@ -280,6 +304,10 @@ export async function GrowthPointsScreen({
 
 
 // The legacy route — same screen, business resolved from the account.
-export default async function GrowthPointsPage() {
-  return GrowthPointsScreen({ basePath: LEGACY_BUSINESS_BASE });
+export default async function GrowthPointsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ purchase?: string }>;
+}) {
+  return GrowthPointsScreen({ basePath: LEGACY_BUSINESS_BASE, searchParams });
 }

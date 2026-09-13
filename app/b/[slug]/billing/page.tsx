@@ -9,12 +9,15 @@ import { BillingScreen } from "@/app/dashboard/billing/page";
 
 export default async function BusinessBillingScreenPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ subscribe?: string }>;
 }) {
   const { slug } = await params;
   return BillingScreen({
     slug,
     basePath: businessBasePath(slug),
+    searchParams,
   });
 }

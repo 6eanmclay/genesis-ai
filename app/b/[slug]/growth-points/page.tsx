@@ -9,12 +9,15 @@ import { GrowthPointsScreen } from "@/app/dashboard/growth-points/page";
 
 export default async function BusinessGrowthPointsScreenPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ purchase?: string }>;
 }) {
   const { slug } = await params;
   return GrowthPointsScreen({
     slug,
     basePath: businessBasePath(slug),
+    searchParams,
   });
 }
