@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { isHighlighted, type AttentionCard as AttentionCardData } from "@/lib/dashboard/attentionCards";
+import { isHighlighted, attentionRefOf, type AttentionCard as AttentionCardData } from "@/lib/dashboard/attentionCards";
 import { ActionDiffRows } from "@/lib/execution/ActionDiff";
 import { RegenerateImageButton } from "./RegenerateImageButton";
 import { J4_VOICE } from "@/lib/dashboard/j4Voice";
+import type { AttentionRef } from "@/lib/attention/identity";
 
 // Home Redesign (2026-08-08) — "the dashboard shows the business, J4
 // handles the work" (Sean). One shared card language for everything that
@@ -62,7 +63,7 @@ export function AttentionCard({
   // present on every card kind uniformly, deliberately separate from the
   // kind-specific action row below (Approve/Reject/"Have J4 take care of
   // it") — dismissing is never routed through any of those.
-  dismissAction: (cardId: string, currentPath: string, slug?: string) => Promise<void>;
+  dismissAction: (cardId: string, currentPath: string, slug?: string, ref?: AttentionRef | null) => Promise<void>;
   // The owner answering J4's supplier question in place (2026-08-21). Optional
   // for the same reason regenerateAction is: only a caller whose tasks can
   // actually include an economics question ever passes it.
@@ -81,9 +82,20 @@ export function AttentionCard({
   const highlighted = isHighlighted(card, highlightId);
   const hasExpandableDetail =
     card.kind === "proposal" || (card.kind === "task" && card.detail) || card.occurredAt !== null;
+  // WHICH REAL ROW THIS CARD IS ABOUT, on the page (2026-09-13).
+  //
+  // The audit found these cards exposed no identity at all — no id, no data
+  // attribute, nothing — so a rendered card could not be correlated with a
+  // record by anything except its headline. That is also why the only way to
+  // read the arrival's identity for a row was to dismiss it and look at what
+  // the product wrote. Now both surfaces say which item they are showing, in
+  // the same vocabulary, which is what makes a cross-surface proof possible.
+  const ref = attentionRefOf(card);
 
   return (
     <div
+      data-attention-source={ref?.source ?? undefined}
+      data-attention-id={ref?.id ?? undefined}
       className={`rounded-xl border px-4 py-3 ${
         highlighted ? "border-[#2563eb] ring-1 ring-[#2563eb]" : "border-[#2563eb]/15 bg-[#2563eb]/[0.035]"
       }`}
@@ -226,7 +238,11 @@ export function AttentionCard({
             position, every card kind. Hides this card from the Noticed
             presentation only; the real underlying record is completely
             untouched (see dismissAttentionCard's own comment). */}
-        <form action={dismissAction.bind(null, card.id, currentPath, slug)}>
+        {/* THE ITEM, NOT JUST THE CARD (2026-09-13). The canonical row this
+            card is about travels with the dismissal, so "not now" is recorded
+            against the thing rather than against this surface's name for it.
+            Null for issue/discovery, which have no canonical row. */}
+        <form action={dismissAction.bind(null, card.id, currentPath, slug, ref)}>
           <button
             type="submit"
             aria-label="Dismiss — hide this for now"

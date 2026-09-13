@@ -176,19 +176,30 @@ check("  the two surfaces are not forced to render alike",
   "eligibility is shared; presentation is contextual");
 
 // ============================================================================
-console.log("\n=== 6. Nothing consumes this yet, on purpose ===\n");
+console.log("\n=== 6. The surfaces consume this, and it is their only route ===\n");
 // ============================================================================
 //
-// This commit is the contract. The arrival still writes DismissedAttentionCard
-// keyed to its own card ids and the Office still ignores it — that is true
-// until the migration commit, and saying so here stops this suite from being
-// read as proof of a behaviour change it does not make.
-const consumers = ["app/dashboard/HomeWorkspace.tsx", "app/j4/intelligence-actions.ts", "lib/dashboard/attentionCards.ts"];
+// THIS SECTION USED TO ASSERT THE OPPOSITE, and it was right to (2026-09-13).
+//
+// At the contract commit nothing consumed this layer, and saying so here
+// stopped the suite being read as proof of a behaviour change it did not make.
+// The surface migration then made that assertion false, and it failed in the
+// regression rather than quietly going stale — which is exactly what a
+// transitional assertion is for.
+//
+// What replaces it is the permanent version of the same care: the two
+// surfaces reach this state THROUGH this module, and neither keeps a query of
+// its own. verify-attention-consumption proves the behaviour on rendered
+// pages; this proves there is only one door to it.
+const consumers = ["app/dashboard/HomeWorkspace.tsx", "app/j4/intelligence-actions.ts"];
 for (const rel of consumers) {
   const src = readFileSync(join(root, rel), "utf8");
-  check(`${rel} does not read this layer yet`,
-    !/lib\/attention\//.test(src),
-    "migrating the surfaces is a later commit");
+  check(`${rel} reads the shared state`,
+    /loadOwnerAttentionState/.test(src),
+    "one owner-level question, asked once per surface");
+  check(`  and never queries DismissedAttentionCard itself`,
+    !/dismissedAttentionCard/i.test(src),
+    "a second query is how two surfaces come to disagree");
 }
 
 const failed = results.filter((r) => !r.ok);

@@ -94,7 +94,7 @@ export async function BrandScreen({
     // badges already use, just filtered to this one destination.
     prisma.genesisObservation.findMany({
       where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/brand" },
-      select: { dedupeKey: true, genesisState: true, summary: true },
+      select: { id: true, dedupeKey: true, genesisState: true, summary: true },
     }),
     getDismissedCardIds(store.id),
   ]);

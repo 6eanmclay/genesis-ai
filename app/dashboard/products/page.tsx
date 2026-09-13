@@ -74,7 +74,7 @@ export async function ProductsScreen({
       // them. Stored action hrefs are legacy-based and are their own migration
       // — see BUSINESS_CONTEXT.md's remaining-risk list.
       where: { storeId: store.id, status: "ACTIVE", actionHref: "/dashboard/products" },
-      select: { dedupeKey: true, genesisState: true, summary: true },
+      select: { id: true, dedupeKey: true, genesisState: true, summary: true },
     }),
     getDismissedCardIds(store.id),
   ]);

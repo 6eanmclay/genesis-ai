@@ -26,7 +26,7 @@ async function main() {
   // Before dismissal — card should be present.
   const before = buildPageAttentionCards({ basePath: LEGACY_BUSINESS_BASE,
     approvals: [],
-    observations: [{ dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
+    observations: [{ id: observation.id, dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
     dismissedCardIds: await getDismissedCardIds(observation.storeId),
   });
   if (!before.some((c) => c.id === cardId)) throw new Error("Card was already dismissed before the test ran — pick a cleaner test case");
@@ -42,7 +42,7 @@ async function main() {
 
   const after = buildPageAttentionCards({ basePath: LEGACY_BUSINESS_BASE,
     approvals: [],
-    observations: [{ dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
+    observations: [{ id: observation.id, dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
     dismissedCardIds: await getDismissedCardIds(observation.storeId),
   });
   if (after.some((c) => c.id === cardId)) throw new Error("Card still present after dismissal");
@@ -59,7 +59,7 @@ async function main() {
   await prismaSystem.dismissedAttentionCard.delete({ where: { storeId_cardId: { storeId: observation.storeId, cardId } } });
   const restored = buildPageAttentionCards({ basePath: LEGACY_BUSINESS_BASE,
     approvals: [],
-    observations: [{ dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
+    observations: [{ id: observation.id, dedupeKey: observation.dedupeKey, genesisState: observation.genesisState, summary: observation.summary }],
     dismissedCardIds: await getDismissedCardIds(observation.storeId),
   });
   if (!restored.some((c) => c.id === cardId)) throw new Error("Cleanup failed to restore the card");

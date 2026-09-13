@@ -3,6 +3,8 @@ import { ASSET_ROLES } from "@/lib/businessModel/assets";
 import { actionForNeed, type BusinessNeed } from "./ownerCapability";
 import { officeActionForExplanation, officeActionForTask, type OfficeAction } from "./officeActions";
 import type { BriefingItem, HandledSummary } from "./officeBriefing";
+import { approvalRef, observationRef, taskRef } from "@/lib/attention/identity";
+import { itemDeferredUntil, type OwnerAttentionState } from "@/lib/attention/state";
 
 /**
  * WHAT WE SHOULD DO ABOUT THE BUSINESS, DERIVED FROM WHAT WE KNOW ABOUT IT.
@@ -146,7 +148,18 @@ export function officeWork(
   understanding: BusinessUnderstanding,
   state: WorkingState,
   basePath: string,
+  /**
+   * WHAT THE OWNER HAS SET ASIDE (2026-09-13).
+   *
+   * The SAME state the Business arrival reads — there is one query for the
+   * business and one answer per item. Optional so every existing caller and
+   * suite keeps working unchanged: with no state supplied nothing is deferred,
+   * which is exactly the behaviour before this commit.
+   */
+  attention?: OwnerAttentionState,
 ): OfficeWork {
+  const deferred = (ref: ReturnType<typeof approvalRef> | null): Date | null =>
+    ref && attention ? itemDeferredUntil(attention, ref) : null;
   const items: WorkItem[] = [];
 
   // FROM THE CANONICAL MODEL. These used to be a second read of a table the
@@ -166,6 +179,11 @@ export function officeWork(
       cognitiveKind: thought.kind,
       taskPriority: null,
       proposedChange: null,
+      // NO CANONICAL SOURCE. A capability gap, the photography prompt and an
+      // explanation are not ApprovalRequest, Task or GenesisObservation rows,
+      // so there is nothing to defer and nothing to name.
+      ref: null,
+      deferredUntil: null,
     });
   }
 
@@ -183,12 +201,45 @@ export function officeWork(
       cognitiveKind: null,
       taskPriority: null,
       proposedChange: null,
+      // NO CANONICAL SOURCE. A capability gap, the photography prompt and an
+      // explanation are not ApprovalRequest, Task or GenesisObservation rows,
+      // so there is nothing to defer and nothing to name.
+      ref: null,
+      deferredUntil: null,
     });
   }
 
   // FROM THE WORKING STATE. Already carrying their own actions, decided by the
   // rules in officeActions.ts - this does not re-decide one of them.
-  for (const item of [...state.decisions, ...state.observations]) {
+  // TWO LOOPS, NOT ONE OVER A CONCATENATION (2026-09-13).
+  //
+  // These were merged, which was fine while every carried fact was already on
+  // the item. It is not fine now: an ApprovalRequest and a GenesisObservation
+  // are different canonical sources, and the only honest way to know which a
+  // row is comes from the array it arrived in. The alternative — reading the
+  // shape of `item.id`, or checking whether proposedChange is set — is the
+  // inference this whole layer exists to remove.
+  for (const item of state.decisions) {
+    const ref = approvalRef(item.id);
+    items.push({
+      id: item.id,
+      headline: item.headline,
+      why: item.why,
+      standingDays: item.standingDays,
+      action: item.action,
+      genesisState: item.genesisState,
+      cognitiveKind: null,
+      taskPriority: null,
+      // A DECISION'S OWN EVIDENCE, straight through. buildBriefing already
+      // holds it; this list is where the renderer can reach it.
+      proposedChange: item.proposedChange,
+      ref,
+      deferredUntil: deferred(ref),
+    });
+  }
+
+  for (const item of state.observations) {
+    const ref = observationRef(item.id);
     items.push({
       id: item.id,
       headline: item.headline,
@@ -201,9 +252,9 @@ export function officeWork(
       genesisState: item.genesisState,
       cognitiveKind: null,
       taskPriority: null,
-      // A DECISION'S OWN EVIDENCE, straight through. buildBriefing already
-      // holds it; this list is where the renderer can reach it.
       proposedChange: item.proposedChange,
+      ref,
+      deferredUntil: deferred(ref),
     });
   }
 
@@ -229,6 +280,11 @@ export function officeWork(
       // one read as an opportunity.
       taskPriority: task.priority,
       proposedChange: null,
+      // THE ONE IDENTITY BOTH SURFACES ALREADY AGREED ON. The arrival stores
+      // "task:<id>" and the Office renders "task:<id>"; the canonical ref is
+      // the row behind both.
+      ref: taskRef(task.id),
+      deferredUntil: deferred(taskRef(task.id)),
     });
   }
 

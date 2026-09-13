@@ -42,6 +42,7 @@ import { ActivityFeed } from "./ActivityFeed";
 import { AttentionCardList } from "./AttentionCardList";
 import { J4NoticedDisclosure } from "./J4NoticedDisclosure";
 import { buildAttentionCards, buildPageAttentionCards, getDismissedCardIds } from "@/lib/dashboard/attentionCards";
+import { loadOwnerAttentionState } from "@/lib/attention/state";
 import { RecentOrdersCard } from "./RecentOrdersCard";
 import { BusinessMapSection } from "./BusinessMapSection";
 import { BusinessJourney } from "./BusinessJourney";
@@ -322,14 +323,19 @@ export async function HomeWorkspace({
   const observations = canViewAnalytics
     ? await prisma.genesisObservation.findMany({
         where: { storeId: store.id, status: "ACTIVE" },
-        select: { dedupeKey: true, genesisState: true, summary: true },
+        select: { id: true, dedupeKey: true, genesisState: true, summary: true },
       })
     : [];
+  // ONE OWNER-LEVEL STATE, ASKED ONCE (2026-09-13). Both card builders below
+  // and the Office read the same thing; "not now" is a fact about the item,
+  // so the arrival no longer has a dismissal query of its own.
+  const attentionState = await loadOwnerAttentionState(store.id);
+
   const observationCards = buildPageAttentionCards({
     basePath,
     approvals: [],
     observations,
-    dismissedCardIds,
+    attentionState,
   });
 
   const attentionCards = buildAttentionCards({
@@ -349,7 +355,10 @@ export async function HomeWorkspace({
       requiredInput: t.requiredInput,
     })),
     currency: store.currency,
-    dismissedCardIds: dismissedCardIds as Set<string>,
+    // THE SAME STATE THE OFFICE READS. The cap, the ranking and overflowCount
+    // below are untouched — only the question "is this set aside" changed, and
+    // it is now asked of the item rather than of this surface's name for it.
+    attentionState,
   });
 
   return (

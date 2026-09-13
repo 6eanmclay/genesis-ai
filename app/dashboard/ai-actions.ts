@@ -126,6 +126,7 @@ import { CURRENT_EXECUTION_SCHEMA_VERSION } from "@/lib/execution/types";
 import { decryptCredentials } from "@/lib/integrations/credentials";
 import { getFulfillmentConnectors } from "@/lib/fulfillment/registry";
 import type { CreativeDirectionOption, OnboardingState } from "@/lib/onboarding/types";
+import type { AttentionRef } from "@/lib/attention/identity";
 
 const PROMPT_VERSION = "v2";
 
@@ -3760,7 +3761,25 @@ async function uploadPhotoBatchFromChatTurn(formData: FormData) {
 // lookups, a business review, this page's own Decisions/Tasks/etc. list
 // where one exists) is completely unaffected — the real record stays
 // exactly as available to J4 as it always was.
-export async function dismissAttentionCard(cardId: string, currentPath: string, slug?: string) {
+// CARRIES THE CANONICAL ITEM NOW (2026-09-13). A dismissal is owner-level
+// state — Sean: "'Not now' belongs to the owner/business attention state, not
+// to the surface where the owner happened to click it" — so it is recorded
+// against the underlying row as well as the card id that still identifies the
+// card. Without this, every NEW dismissal would land as legacy-only and be
+// invisible to the Office all over again, which is the defect ea55f8b
+// migrated the old rows out of.
+//
+// The ref is PASSED, never derived here: the card knows which real row it is
+// about (attentionRefOf reads its own typed fields), and re-deriving it from
+// the cardId would be the string parsing this whole change removes. Null for
+// `issue:` and `discovery:` cards, which have no canonical row — those keep
+// working exactly as they always have, on cardId alone.
+export async function dismissAttentionCard(
+  cardId: string,
+  currentPath: string,
+  slug?: string,
+  ref?: AttentionRef | null,
+) {
   // THE BUSINESS THE OWNER IS LOOKING AT, not the one the account last chose
   // (2026-08-22). Visiting /b/[slug] deliberately does not set the active
   // business — that write happens only at /choose-business — so resolving the
@@ -3770,8 +3789,19 @@ export async function dismissAttentionCard(cardId: string, currentPath: string, 
 
   await prisma.dismissedAttentionCard.upsert({
     where: { storeId_cardId: { storeId, cardId } },
-    create: { storeId, cardId, dismissedByUserId: userId },
-    update: { dismissedAt: new Date(), dismissedByUserId: userId },
+    create: {
+      storeId, cardId, dismissedByUserId: userId,
+      source: ref?.source ?? null,
+      sourceId: ref?.id ?? null,
+    },
+    update: {
+      dismissedAt: new Date(), dismissedByUserId: userId,
+      // WRITTEN ON UPDATE TOO, so a row that predates the migration and could
+      // not be mapped gains its canonical identity the next time the owner
+      // sets the same thing aside. Never cleared back to null by an update
+      // that has no ref — a card without one is a card with no canonical row.
+      ...(ref ? { source: ref.source, sourceId: ref.id } : {}),
+    },
   });
 
   // /b/[slug] belongs on this list. Without it every business-route path fell

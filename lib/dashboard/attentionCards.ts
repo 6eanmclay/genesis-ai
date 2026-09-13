@@ -7,6 +7,10 @@ import type { NextBestAction } from "@/lib/intelligence/nextBestAction";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { sectionHref } from "@/lib/dashboard/navConfig";
 import { prisma } from "@/lib/prisma";
+import { approvalRef, taskRef, observationRef, type AttentionRef } from "@/lib/attention/identity";
+import {
+  isItemDeferred, isLegacyCardDismissed, type OwnerAttentionState,
+} from "@/lib/attention/state";
 
 // J4 Noticed dismiss/exit (2026-08-08) — one real, shared fetch for every
 // page rendering AttentionCards (Home + the 5 secondary pages), so each
@@ -26,6 +30,27 @@ export async function getDismissedCardIds(storeId: string): Promise<Set<string>>
     select: { cardId: true },
   });
   return new Set(rows.map((r) => r.cardId));
+}
+
+/**
+ * Is this card set aside — asked the one way, for the one owner.
+ *
+ * ============ THE INVARIANT (2026-09-13, Sean) =======================
+ *
+ * "A surface must ask whether the underlying item is deferred by canonical
+ * source/sourceId, never by cardId."
+ *
+ * So a card that HAS a canonical item asks about the item, and a card that
+ * does not — `issue:` and `discovery:`, the arrival's own populations — keeps
+ * the behaviour it has always had. The branch is on whether a real row exists
+ * behind the card, never on which surface is asking.
+ *
+ * This is also why the Office can now see a dismissal made here: both read the
+ * same OwnerAttentionState and ask the same question of it.
+ */
+export function isCardSetAside(card: AttentionCard, state: OwnerAttentionState, now?: Date): boolean {
+  const ref = attentionRefOf(card);
+  return ref === null ? isLegacyCardDismissed(state, card.id) : isItemDeferred(state, ref, now);
 }
 
 // Home Redesign (2026-08-08) — "the dashboard shows the business, J4
@@ -137,6 +162,14 @@ export interface TaskAttentionCard extends AttentionCardCommon {
 export interface ObservationAttentionCard extends AttentionCardCommon {
   kind: "observation";
   dedupeKey: string;
+  /**
+   * THE ROW, not the condition (2026-09-13). `dedupeKey` is how a detection
+   * sweep decides whether it has already seen this condition, and it is what
+   * this card's own id has always been built from — which is exactly why a
+   * dismissal here was invisible to every other surface. The observation's own
+   * id is the canonical identity, and it is carried rather than looked up.
+   */
+  observationId: string;
 }
 
 export type AttentionCard =
@@ -145,6 +178,34 @@ export type AttentionCard =
   | DiscoveryAttentionCard
   | TaskAttentionCard
   | ObservationAttentionCard;
+
+/**
+ * The canonical item a card is about, or null when there is not one.
+ *
+ * ============ A SWITCH, NEVER A STRING (2026-09-13) ===================
+ *
+ * Every branch reads a field the card already carries as its own typed
+ * property — approvalRequestId, taskId, observationId. Nothing here looks at
+ * `card.id`, which is the presentation id and the thing this whole change
+ * exists to stop treating as identity.
+ *
+ * `issue` and `discovery` return null and must: they are the arrival's own
+ * populations, with no row in the three canonical sources. A null here is what
+ * routes them to the unchanged legacy path rather than a guess.
+ */
+export function attentionRefOf(card: AttentionCard): AttentionRef | null {
+  switch (card.kind) {
+    case "proposal":
+      return approvalRef(card.approvalRequestId);
+    case "task":
+      return taskRef(card.taskId);
+    case "observation":
+      return observationRef(card.observationId);
+    case "issue":
+    case "discovery":
+      return null;
+  }
+}
 
 // A calm, fixed J4 identity color for this zone — deliberately NOT the
 // merchant's own --brand-accent (an arbitrary per-store color that could
@@ -236,9 +297,13 @@ function describeIssueSummary(item: { message: string; count?: number }): string
   return `${item.message} (×${item.count})`;
 }
 
-function buildObservationCard(obs: { dedupeKey: string; genesisState: string; summary: string }): ObservationAttentionCard {
+function buildObservationCard(obs: { id: string; dedupeKey: string; genesisState: string; summary: string }): ObservationAttentionCard {
   const isUrgent = obs.genesisState === "urgent";
   return {
+    // UNCHANGED, and it must be: this is what the existing DismissedAttentionCard
+    // rows are keyed on, and the migration in ea55f8b resolved them by
+    // rebuilding exactly this string from the row. Changing it would orphan
+    // every legacy dismissal it just mapped.
     id: `observation:${obs.dedupeKey}`,
     kind: "observation",
     rank: isUrgent ? 0 : 2,
@@ -247,6 +312,7 @@ function buildObservationCard(obs: { dedupeKey: string; genesisState: string; su
     occurredAt: null,
     dotClassName: isUrgent ? DOT_URGENT : DOT_OPPORTUNITY,
     dedupeKey: obs.dedupeKey,
+    observationId: obs.id,
   };
 }
 
@@ -274,18 +340,30 @@ export function buildPageAttentionCards(params: {
    */
   basePath: string;
   approvals: PendingApproval[];
-  observations: { dedupeKey: string; genesisState: string; summary: string }[];
+  observations: { id: string; dedupeKey: string; genesisState: string; summary: string }[];
   highlightId?: string;
   // J4 Noticed dismiss/exit (2026-08-08) — real dismissed AttentionCard.id
   // strings for this store (DismissedAttentionCard rows, fetched by the
   // page itself). Filtered out here, before sort/cap, so a dismissed card
   // simply never appears — never touches the real underlying record.
+  //
+  // STILL ACCEPTED, AND STILL THE ONLY THING THE SECONDARY PAGES PASS
+  // (2026-09-13). Brand, Products, Marketing and Settings each render their
+  // own slice and are not part of this migration; they keep the behaviour
+  // they have. When `attentionState` is supplied — the Business arrival —
+  // the canonical question is asked instead, per item.
   dismissedCardIds?: Set<string>;
+  /** The owner-level state. When present it decides, and cardIds do not. */
+  attentionState?: OwnerAttentionState;
 }): AttentionCard[] {
   const all: AttentionCard[] = [
     ...params.approvals.map((a) => buildProposalCard(a, params.basePath)),
     ...params.observations.map(buildObservationCard),
-  ].filter((card) => !params.dismissedCardIds?.has(card.id));
+  ].filter((card) =>
+    params.attentionState
+      ? !isCardSetAside(card, params.attentionState)
+      : !params.dismissedCardIds?.has(card.id),
+  );
 
   all.sort((a, b) => {
     const aHighlighted = isHighlighted(a, params.highlightId);
@@ -405,6 +483,17 @@ export function buildAttentionCards(params: {
   // J4 Noticed dismiss/exit (2026-08-08) — see buildPageAttentionCards's
   // own identical comment; same real mechanism, same filtering point.
   dismissedCardIds?: Set<string>;
+  /**
+   * The owner-level attention state (2026-09-13). When present it decides
+   * what is set aside, by the item rather than by the card id — so a
+   * deferral made here is one the Office can see, and vice versa.
+   *
+   * THE CAP AND THE OVERFLOW ARE UNTOUCHED. Filtering still happens here,
+   * before sort and cap, exactly where it always did; only the question
+   * changed. ATTENTION_ZONE_CAP, the ranking and overflowCount all behave
+   * as they did — Sean: "existing counts/overflow semantics remain".
+   */
+  attentionState?: OwnerAttentionState;
 }): { cards: AttentionCard[]; overflowCount: number } {
   const all: AttentionCard[] = [];
 
@@ -493,7 +582,11 @@ export function buildAttentionCards(params: {
     });
   }
 
-  const visible = all.filter((card) => !params.dismissedCardIds?.has(card.id));
+  const visible = all.filter((card) =>
+    params.attentionState
+      ? !isCardSetAside(card, params.attentionState)
+      : !params.dismissedCardIds?.has(card.id),
+  );
 
   visible.sort((a, b) => {
     if (a.rank !== b.rank) return a.rank - b.rank;

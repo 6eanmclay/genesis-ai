@@ -11,6 +11,7 @@ import { getHandledSince } from "@/lib/dashboard/handled";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { LEGACY_BUSINESS_BASE, businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import { officeFacts, type OfficeFact } from "@/lib/j4/officeFacts";
+import { loadOwnerAttentionState } from "@/lib/attention/state";
 import { officeQuickActions, type QuickAction } from "@/lib/j4/officeQuickActions";
 import { buildBriefing, summariseHandled } from "@/lib/j4/officeBriefing";
 import { getBusinessUnderstanding } from "@/lib/businessModel/understanding";
@@ -208,6 +209,7 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
     basePath,
   );
   const handled = summariseHandled(handledRaw, basePath);
+  const attentionState = await loadOwnerAttentionState(store.id);
 
   // DERIVED ONCE, READ TWICE. The strip and the sections both need this list,
   // and computing it in two places is exactly how "2 NEEDS YOU" came to sit
@@ -227,6 +229,11 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       handled,
     },
     basePath,
+    // WHAT THE OWNER SET ASIDE, FROM THE SAME PLACE THE ARRIVAL READS IT
+    // (2026-09-13). One owner-level state, two presentations: the arrival
+    // suppresses a deferred item, the Office shows it marked. There is no
+    // second dismissal query anywhere.
+    attentionState,
   );
 
   // THE VERBS, from the same reads the nouns came from. Permissions from the

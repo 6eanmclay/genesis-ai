@@ -236,18 +236,51 @@ export function WorkRow({
   kindDot?: string;
 }) {
   const { action } = item;
+  // SET ASIDE, AND THE OFFICE SAYS SO (2026-09-13).
+  //
+  // Sean: "Office should show deferred items, but clearly marked as deferred
+  // rather than silently hiding them... a deferred approval must not continue
+  // presenting itself as an ordinary currently-actionable approval."
+  //
+  // The Business arrival suppresses these; this surface is where the owner
+  // goes for the complete working picture, so the item stays and the state is
+  // told. Nothing about the execution path, the permissions or the approval
+  // mechanics changes — the controls still run exactly what they ran before.
+  const setAside = item.deferredUntil !== null;
   return (
     <div
       data-testid="work-row"
       data-action={action.kind}
+      // THE CANONICAL ITEM, on the page. The same two values the Business
+      // arrival renders on its own card, so the two surfaces can be shown to
+      // be talking about one row rather than two things that look alike.
+      data-attention-source={item.ref?.source ?? undefined}
+      data-attention-id={item.ref?.id ?? undefined}
+      data-deferred={setAside ? "true" : undefined}
       // The work id, so a suite can prove that what the strip counts is what
       // the page renders. A task carries a `task:` prefix, which is how
       // "counted but missing" became a testable claim after three real open
       // tasks were counted in the strip and rendered in no section at all.
       data-work-id={item.id}
-      className="rounded-xl border border-white/[.07] bg-white/[.02] p-3.5"
+      className={
+        setAside
+          ? "rounded-xl border border-dashed border-white/[.10] bg-white/[.01] p-3.5"
+          : "rounded-xl border border-white/[.07] bg-white/[.02] p-3.5"
+      }
     >
-      <p className="flex items-start gap-2 break-words text-[14.5px] leading-snug text-[#f4f2fb]">
+      {/* SAID BEFORE THE ROW IS READ, not after. An owner who set this aside
+          should know that is why it looks different, rather than discovering
+          it under the controls. */}
+      {setAside && (
+        <p data-testid="work-deferred" className="mb-1.5 text-[11px] font-medium uppercase tracking-[.12em] text-amber-300/70">
+          Not now &mdash; you set this aside
+        </p>
+      )}
+      <p
+        className={`flex items-start gap-2 break-words text-[14.5px] leading-snug ${
+          setAside ? "text-[#f4f2fb]/55" : "text-[#f4f2fb]"
+        }`}
+      >
         {kindDot && (
           <span
             data-testid="work-kind-dot"
@@ -345,8 +378,23 @@ export function WorkRow({
                 data-offer={action.offer}
                 data-intent={action.intent}
                 disabled={deciding !== null}
+                data-deferred={setAside ? "true" : undefined}
                 onClick={() => onDecide(item.id, action.intent)}
-                className="inline-flex items-center gap-1.5 rounded-full bg-[#4ade3a] px-3.5 py-1.5 text-[12.5px] font-semibold text-[#06210a] transition hover:brightness-110 disabled:opacity-60"
+                // NOT THE PRIMARY CONTROL WHILE IT IS SET ASIDE. Sean: "Do
+                // not silently turn a deferred approval into something that
+                // looks currently actionable."
+                //
+                // It still WORKS — same handler, same server action, same
+                // permissions, same execution path — because the owner may
+                // change their mind and the alternative would be a dead
+                // button, which this codebase has spent two commits removing.
+                // What changes is that it stops wearing the solid green of a
+                // decision waiting on an answer.
+                className={
+                  setAside
+                    ? "inline-flex items-center gap-1.5 rounded-full border border-[#4ade3a]/30 px-3.5 py-1.5 text-[12.5px] font-medium text-[#4ade3a]/70 transition hover:border-[#4ade3a]/60 hover:bg-[#4ade3a]/[.06] disabled:opacity-60"
+                    : "inline-flex items-center gap-1.5 rounded-full bg-[#4ade3a] px-3.5 py-1.5 text-[12.5px] font-semibold text-[#06210a] transition hover:brightness-110 disabled:opacity-60"
+                }
               >
                 {deciding === action.intent ? "Doing it…" : action.label}
               </button>

@@ -1,4 +1,5 @@
 import type { OfficeAction } from "./officeActions";
+import type { AttentionRef } from "@/lib/attention/identity";
 import type { ObservationState } from "@/lib/dashboard/genesisObservations";
 
 /**
@@ -134,6 +135,30 @@ export interface WorkItem {
    * an empty list under a live Approve button.
    */
   proposedChange: { input: Record<string, unknown>; previousValues: Record<string, unknown> } | null;
+  /**
+   * THE CANONICAL ITEM THIS ROW IS ABOUT (2026-09-13).
+   *
+   * The same identity the Business arrival uses — lib/attention/identity.ts —
+   * so "has the owner set this aside" is one question with one answer rather
+   * than two surfaces guessing at each other's spellings. Carried, like every
+   * other fact on this type, never derived from `id`: reading the shape of an
+   * id to decide what kind of thing it is would be exactly the parsing the
+   * attention layer exists to remove.
+   *
+   * Null for the items with no canonical source — a capability gap, the
+   * photography prompt, an explanation. Those cannot be deferred because there
+   * is no row to defer.
+   */
+  ref: AttentionRef | null;
+  /**
+   * When a deferral on this item expires, or null if it is not deferred.
+   *
+   * The OFFICE SHOWS DEFERRED WORK, marked — it is the surface an owner opens
+   * on purpose to see the complete picture, and hiding work here would make it
+   * the surface that tells them least. Business suppresses instead. Both read
+   * the same state; see DEFERRED_TREATMENT.
+   */
+  deferredUntil: Date | null;
 }
 
 export interface OfficeWork {

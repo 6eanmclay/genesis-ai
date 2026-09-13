@@ -213,7 +213,15 @@ async function main() {
   );
   assert(
     "and the dismiss action is given it too",
-    /dismissAction\.bind\(null, card\.id, currentPath, slug\)/.test(card),
+    // OPEN AT THE END, CLOSED WHERE IT MATTERS (2026-09-13). This pinned the
+    // whole argument list, so adding the canonical attention ref after `slug`
+    // failed it — while the thing it exists to guarantee, that the business
+    // reaches the action, was never in doubt.
+    //
+    // The first four arguments are still required in order, so dropping or
+    // reordering `slug` fails exactly as it did before. What is permitted is
+    // an argument AFTER it, which cannot displace the business.
+    /dismissAction\.bind\(null, card\.id, currentPath, slug\b/.test(card),
     "dismiss takes arguments rather than FormData, so it is bound instead"
   );
 
